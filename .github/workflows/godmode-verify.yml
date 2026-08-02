@@ -1,0 +1,35 @@
+name: Godmode verification
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Compile Python sources
+        run: python -m compileall scripts hooks tests
+
+      - name: Run acceptance tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Smoke-test the command line
+        run: python scripts/godmode.py --version

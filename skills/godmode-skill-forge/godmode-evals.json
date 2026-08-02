@@ -1,0 +1,20 @@
+{
+  "schema": "godmode-skill-eval-v1",
+  "skill": "godmode-skill-forge",
+  "routing": {
+    "positive": [
+      "Create a project skill for the same missing workflow observed in two real tasks.",
+      "Repair a project skill whose routing and behavior evaluations prove a reusable gap."
+    ],
+    "near_negative": [
+      "Create permanent instructions for a one-off request.",
+      "Add another skill when an installed skill already covers the capability."
+    ]
+  },
+  "behavior_assertions": [
+    "The proposal includes gap evidence, routing positives, near-negatives, and observable assertions.",
+    "Overlapping proposals collapse into one original bounded responsibility."
+  ],
+  "baseline_required": true,
+  "claims_require_evidence": true
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godmode Governance"
+  short_description: "Preview and authorize protected engineering actions."
+  default_prompt: "Use $godmode-governance to classify this operation, preview its impact and recovery, and require exact authorization when protected."

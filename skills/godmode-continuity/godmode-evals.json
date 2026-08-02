@@ -1,0 +1,20 @@
+{
+  "schema": "godmode-skill-eval-v1",
+  "skill": "godmode-continuity",
+  "routing": {
+    "positive": [
+      "Resume work after a break and explain the current branch, obligations, and next action.",
+      "Detect context drift after changing branches or worktrees."
+    ],
+    "near_negative": [
+      "Start a stateless one-off task with no prior project context.",
+      "Archive raw conversations or complete source-code bodies."
+    ]
+  },
+  "behavior_assertions": [
+    "The brief distinguishes current evidence from stale or missing context.",
+    "Private state remains outside the trackable working tree."
+  ],
+  "baseline_required": true,
+  "claims_require_evidence": true
+}

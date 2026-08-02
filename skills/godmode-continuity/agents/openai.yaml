@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godmode Continuity"
+  short_description: "Rebuild and preserve private project context."
+  default_prompt: "Use $godmode-continuity to reconstruct current project reality and leave an evidence-backed local checkpoint."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godmode Investigation"
+  short_description: "Trace failures with evidence and bounded hypotheses."
+  default_prompt: "Use $godmode-investigation to reproduce this failure, locate its earliest supported cause, and test one falsifiable hypothesis."

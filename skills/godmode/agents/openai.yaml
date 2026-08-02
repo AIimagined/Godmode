@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godmode"
+  short_description: "Local continuity and guarded coding workflows."
+  default_prompt: "Use $godmode to reconstruct current repository reality and choose the smallest safe evidence-backed workflow."

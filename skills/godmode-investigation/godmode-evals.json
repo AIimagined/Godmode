@@ -1,0 +1,20 @@
+{
+  "schema": "godmode-skill-eval-v1",
+  "skill": "godmode-investigation",
+  "routing": {
+    "positive": [
+      "Diagnose a reproducible regression whose root cause is unknown.",
+      "Investigate a test failure after several unsuccessful fixes."
+    ],
+    "near_negative": [
+      "Implement an already specified change with a known mechanism.",
+      "Brainstorm an uncommitted product feature without a failure to diagnose."
+    ]
+  },
+  "behavior_assertions": [
+    "Each attempted fix is tied to a falsifiable hypothesis and fresh evidence.",
+    "A hypothesis repeated unsuccessfully three times triggers an architectural reassessment."
+  ],
+  "baseline_required": true,
+  "claims_require_evidence": true
+}
