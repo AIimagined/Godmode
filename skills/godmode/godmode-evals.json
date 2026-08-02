@@ -1,0 +1,20 @@
+{
+  "schema": "godmode-skill-eval-v1",
+  "skill": "godmode",
+  "routing": {
+    "positive": [
+      "Resume a substantive repository task and reconstruct current reality before editing.",
+      "Coordinate continuity, diagnosis, and a protected action across one local project."
+    ],
+    "near_negative": [
+      "Answer a self-contained conceptual question with no repository state.",
+      "Create a standalone image that does not involve a coding project."
+    ]
+  },
+  "behavior_assertions": [
+    "The workflow identifies project context and the smallest applicable specialist skill.",
+    "Claims of completion cite fresh local evidence and disclose remaining limits."
+  ],
+  "baseline_required": true,
+  "claims_require_evidence": true
+}

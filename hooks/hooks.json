@@ -1,0 +1,20 @@
+{
+  "description": "Load bounded Godmode continuity when a Claude Code session starts or resumes.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/hooks/godmode_session_hook.py",
+              "session-start"
+            ],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

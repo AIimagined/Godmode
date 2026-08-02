@@ -1,0 +1,235 @@
+"""Original, deterministic project-skill authoring for Godmode."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import json
+import os
+from pathlib import Path
+import re
+import tempfile
+from typing import Any
+
+from .godmode_errors import ForgeError
+from .godmode_sentinel import enforce_private_payload
+
+
+_NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+_FRONTMATTER = re.compile(r"\A---\r?\n(?P<body>.*?)\r?\n---\r?\n", re.DOTALL)
+
+
+def _yaml_string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _atomic_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+@dataclass(frozen=True)
+class SkillProposal:
+    name: str
+    purpose: str
+    gap_evidence: str
+    repeated_uses: int
+    positive_triggers: tuple[str, ...]
+    negative_triggers: tuple[str, ...]
+    assertions: tuple[str, ...]
+
+    def validate(self) -> None:
+        if not _NAME.fullmatch(self.name):
+            raise ForgeError("Skill name must be lowercase hyphen-case")
+        if len(self.purpose.strip()) < 20 or len(self.purpose) > 500:
+            raise ForgeError("Purpose must contain 20-500 characters")
+        if len(self.gap_evidence.strip()) < 30:
+            raise ForgeError("A concrete capability-gap observation is required")
+        if self.repeated_uses < 2:
+            raise ForgeError("A new skill requires at least two observed reusable uses")
+        if len(self.positive_triggers) < 2 or len(self.negative_triggers) < 2:
+            raise ForgeError("Provide at least two positive and two near-negative triggers")
+        if not self.assertions:
+            raise ForgeError("Provide at least one observable behavior assertion")
+        enforce_private_payload(
+            {
+                "purpose": self.purpose,
+                "gap_evidence": self.gap_evidence,
+                "positive": self.positive_triggers,
+                "negative": self.negative_triggers,
+                "assertions": self.assertions,
+            }
+        )
+        combined = "\n".join(
+            (self.purpose, self.gap_evidence, *self.positive_triggers, *self.negative_triggers)
+        )
+        if re.search(r"(?i)https?://", combined):
+            raise ForgeError("Forge inputs must describe the capability without external source references")
+
+
+def _description(proposal: SkillProposal) -> str:
+    first_trigger = proposal.positive_triggers[0].strip().rstrip(".")
+    description = f"{proposal.purpose.strip().rstrip('.')}. Use when {first_trigger.lower()}."
+    return description[:1024]
+
+
+def _skill_markdown(proposal: SkillProposal) -> str:
+    description = _description(proposal)
+    checks = "\n".join(f"- {assertion.strip().rstrip('.')}" for assertion in proposal.assertions)
+    positives = "\n".join(f"- {trigger.strip()}" for trigger in proposal.positive_triggers)
+    negatives = "\n".join(f"- {trigger.strip()}" for trigger in proposal.negative_triggers)
+    return f"""---
+name: {proposal.name}
+description: {_yaml_string(description)}
+---
+
+# {proposal.name.replace('-', ' ').title()}
+
+## Outcome
+
+{proposal.purpose.strip().rstrip('.')}.
+
+## Route
+
+Use this skill for requests such as:
+
+{positives}
+
+Do not route these nearby requests here:
+
+{negatives}
+
+## Workflow
+
+1. Inspect the current project and identify the concrete input and desired result.
+2. State any material assumption that cannot be established from local evidence.
+3. Make the smallest coherent change that satisfies the requested result.
+4. Run the strongest available verification that directly proves the result.
+5. Report the outcome, evidence, and any remaining limit without claiming more.
+
+## Acceptance
+
+{checks}
+
+If an assertion cannot be proved, report the unmet assertion and next safe action.
+"""
+
+
+def _openai_yaml(proposal: SkillProposal) -> str:
+    display = proposal.name.replace("-", " ").title()
+    short = proposal.purpose.strip().rstrip(".")
+    if len(short) > 64:
+        short = short[:61].rstrip() + "..."
+    if len(short) < 25:
+        short = (short + " for verified project work").strip()[:64]
+    return (
+        "# Generated locally by Godmode.\n"
+        "interface:\n"
+        f"  display_name: {_yaml_string(display)}\n"
+        f"  short_description: {_yaml_string(short)}\n"
+        f"  default_prompt: {_yaml_string(f'Use ${proposal.name} to complete this request and prove its acceptance checks.')}\n"
+    )
+
+
+def _eval_payload(proposal: SkillProposal) -> dict[str, Any]:
+    return {
+        "schema": "godmode-skill-eval-v1",
+        "skill": proposal.name,
+        "routing": {
+            "positive": list(proposal.positive_triggers),
+            "near_negative": list(proposal.negative_triggers),
+        },
+        "behavior_assertions": list(proposal.assertions),
+        "baseline_required": True,
+        "claims_require_evidence": True,
+    }
+
+
+def forge_skill(destination_root: str | Path, proposal: SkillProposal) -> Path:
+    proposal.validate()
+    root = Path(destination_root).expanduser().resolve(strict=False)
+    if root.exists() and root.is_symlink():
+        raise ForgeError("Destination root cannot be a symlink")
+    skill_dir = root / proposal.name
+    if skill_dir.exists():
+        raise ForgeError(f"Skill already exists: {skill_dir}")
+    skill_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        _atomic_text(skill_dir / "SKILL.md", _skill_markdown(proposal))
+        _atomic_text(skill_dir / "agents" / "openai.yaml", _openai_yaml(proposal))
+        _atomic_text(
+            skill_dir / "godmode-evals.json",
+            json.dumps(_eval_payload(proposal), indent=2, ensure_ascii=False) + "\n",
+        )
+        _atomic_text(
+            skill_dir / "references" / "godmode-gap-evidence.md",
+            "# Godmode Capability Gap\n\n"
+            f"Observed reusable uses: {proposal.repeated_uses}\n\n"
+            f"{proposal.gap_evidence.strip()}\n",
+        )
+        validate_skill(skill_dir)
+    except Exception:
+        for path in sorted(skill_dir.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+            if path.is_file():
+                path.unlink(missing_ok=True)
+            elif path.is_dir():
+                path.rmdir()
+        skill_dir.rmdir()
+        raise
+    return skill_dir
+
+
+def validate_skill(skill_dir: str | Path) -> dict[str, Any]:
+    root = Path(skill_dir).resolve(strict=True)
+    skill_file = root / "SKILL.md"
+    metadata_file = root / "agents" / "openai.yaml"
+    eval_file = root / "godmode-evals.json"
+    if not all(path.is_file() for path in (skill_file, metadata_file, eval_file)):
+        raise ForgeError("Skill is missing SKILL.md, agents/openai.yaml, or godmode-evals.json")
+    content = skill_file.read_text(encoding="utf-8")
+    match = _FRONTMATTER.match(content)
+    if not match:
+        raise ForgeError("SKILL.md frontmatter is missing")
+    fields: dict[str, str] = {}
+    for line in match.group("body").splitlines():
+        key, separator, value = line.partition(":")
+        if separator:
+            fields[key.strip()] = value.strip()
+    if set(fields) != {"name", "description"}:
+        raise ForgeError("SKILL.md frontmatter must contain only name and description")
+    if fields["name"] != root.name or not _NAME.fullmatch(fields["name"]):
+        raise ForgeError("Skill name must match its directory")
+    if not fields["description"] or len(fields["description"]) > 1024:
+        raise ForgeError("Skill description is empty or too long")
+    if not re.search(r"(?i)\buse\s+(?:when|before|for)\b", fields["description"]):
+        raise ForgeError("Skill description must include an explicit trigger")
+    if len(content.splitlines()) > 500:
+        raise ForgeError("SKILL.md exceeds the 500-line Godmode limit")
+    try:
+        evals = json.loads(eval_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ForgeError("godmode-evals.json is invalid") from exc
+    if len(evals.get("routing", {}).get("positive", [])) < 2:
+        raise ForgeError("Skill requires at least two positive routing cases")
+    if len(evals.get("routing", {}).get("near_negative", [])) < 2:
+        raise ForgeError("Skill requires at least two near-negative routing cases")
+    if not evals.get("behavior_assertions"):
+        raise ForgeError("Skill requires observable behavior assertions")
+    return {
+        "valid": True,
+        "name": fields["name"],
+        "lines": len(content.splitlines()),
+        "positive_cases": len(evals["routing"]["positive"]),
+        "near_negative_cases": len(evals["routing"]["near_negative"]),
+        "assertions": len(evals["behavior_assertions"]),
+    }

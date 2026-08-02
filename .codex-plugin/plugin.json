@@ -1,0 +1,39 @@
+{
+  "name": "godmode",
+  "version": "0.1.0",
+  "description": "Local-first context continuity and evidence-governance skills for coding agents.",
+  "author": {
+    "name": "AIimagined"
+  },
+  "homepage": "https://github.com/AIimagined/Godmode",
+  "repository": "https://github.com/AIimagined/Godmode",
+  "license": "Apache-2.0",
+  "keywords": [
+    "codex-plugin",
+    "skill-authoring",
+    "context-continuity",
+    "local-first",
+    "developer-tools"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Godmode",
+    "shortDescription": "Local continuity and guarded coding workflows.",
+    "longDescription": "Godmode reconstructs repository reality from local evidence, preserves private continuity, diagnoses failures without looping, previews protected actions, and can forge validated project skills when a reusable gap is proven.",
+    "developerName": "AIimagined",
+    "category": "Productivity",
+    "capabilities": [
+      "context continuity",
+      "evidence-first investigation",
+      "protected action previews",
+      "local skill authoring"
+    ],
+    "defaultPrompt": [
+      "Resume this repository from verified local context.",
+      "Diagnose this failure without repeating failed hypotheses.",
+      "Preview this protected action and its recovery path."
+    ],
+    "brandColor": "#155EEF",
+    "logo": "./assets/godmode-logo.png"
+  }
+}

@@ -1,0 +1,40 @@
+# Godmode private continuity and research state.
+.godmode/
+.godmode-private/
+.godmode-state/
+.research/
+.planning/
+.sprints/
+.checkpoints/
+.handovers/
+.evidence/
+.decisions/
+.lessons/
+/repo.md
+/v*r*j.md
+
+# Defensive private-record patterns.
+**/*sprint*.md
+**/*sprint*.json
+**/*checkpoint*.md
+**/*checkpoint*.json
+**/*handover*.md
+**/*handover*.json
+**/*decision*.md
+**/*decision*.json
+**/*lesson*.md
+**/*lesson*.json
+**/task-plan.md
+**/task_plan.md
+**/STATE.md
+
+# Generated files.
+__pycache__/
+*.py[cod]
+.coverage
+coverage/
+dist/
+build/
+*.log
+.DS_Store
+Thumbs.db

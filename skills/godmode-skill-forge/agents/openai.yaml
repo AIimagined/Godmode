@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godmode Skill Forge"
+  short_description: "Forge a skill from a proven reusable gap."
+  default_prompt: "Use $godmode-skill-forge to prove this recurring gap, create the smallest original skill, and validate its routing and behavior."
