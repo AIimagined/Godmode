@@ -605,6 +605,36 @@ class ArchiveAdoptionTests(unittest.TestCase):
                 moved.verify()
 
 
+class AssessTests(unittest.TestCase):
+    def test_assess_self_check(self) -> None:
+        from godmode_runtime.godmode_assess import _self_check
+
+        _self_check()
+
+    def test_selftest_proves_controls_by_exercising_them(self) -> None:
+        # A control reported as enforced without being exercised is exactly the
+        # claim this command exists to refuse.
+        from godmode_runtime.godmode_assess import selftest
+
+        report = selftest()
+        self.assertEqual(report["verdict"], "enforcing", report["controls"])
+        for control in report["controls"]:
+            self.assertTrue(control["enforced"], control)
+            self.assertTrue(control["observed"], control)
+
+    def test_a_tidy_project_is_not_given_manufactured_findings(self) -> None:
+        from godmode_runtime.godmode_assess import assess
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / "GODMODE.md").write_text(
+                "# Gates\n- Never commit without an explicit ask.\n", encoding="utf-8"
+            )
+            report = assess(project, budget=100_000)
+            self.assertIn(report["verdict"], ("governable", "workable"))
+            self.assertFalse([f for f in report["findings"] if f["severity"] == "high"])
+
+
 class AtlasTests(unittest.TestCase):
     def test_atlas_self_check(self) -> None:
         from godmode_runtime.godmode_atlas import _self_check

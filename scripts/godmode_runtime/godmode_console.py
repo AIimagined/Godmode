@@ -22,6 +22,8 @@ from .godmode_attest import (
     record_claim,
     record_step,
 )
+from .godmode_assess import assess as assess_project
+from .godmode_assess import selftest as run_selftest
 from .godmode_atlas import build as build_atlas
 from .godmode_atlas import slice_file
 from .godmode_attest import GRADES, STATUSES
@@ -322,6 +324,18 @@ def cmd_drift(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 def cmd_capabilities(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult(host_capabilities())
+
+
+def cmd_assess(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    report = assess_project(Path(runtime.anchor.project_root), budget=args.token_budget)
+    if not args.full:
+        report["authority_claims"].pop("top", None)
+    return CommandResult(report, exit_code=1 if report["verdict"] == "at-risk" else 0)
+
+
+def cmd_selftest(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    report = run_selftest()
+    return CommandResult(report, exit_code=0 if report["verdict"] == "enforcing" else 1)
 
 
 def cmd_atlas(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -876,6 +890,14 @@ def _build_parser() -> argparse.ArgumentParser:
     planmode_bind.add_argument("--file", action="append", default=[])
     planmode_bind.add_argument("--session")
     planmode_bind.set_defaults(handler=cmd_planmode_bind)
+
+    assess_parser = sub.add_parser("assess", help="Grade whether this project's own rules can be complied with")
+    assess_parser.add_argument("--token-budget", type=int, default=2500)
+    assess_parser.add_argument("--full", action="store_true")
+    assess_parser.set_defaults(handler=cmd_assess)
+    sub.add_parser("selftest", help="Exercise every control and report what actually held").set_defaults(
+        handler=cmd_selftest
+    )
 
     atlas = sub.add_parser("atlas", help="Map the project's symbols and their relationships")
     atlas_sub = atlas.add_subparsers(dest="atlas_command", required=True)
