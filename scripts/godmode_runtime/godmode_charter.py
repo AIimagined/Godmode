@@ -35,6 +35,20 @@ TRIGGERS = (
 # false enforcement the honest-enforcement guarantee exists to prevent.
 _SHAPES: tuple[tuple[str, str, str, str], ...] = (
     # pattern, verify kind, trigger, enforcement
+    #
+    # Ordered: first match wins, so the specific development disciplines are tried
+    # before the general shapes that would otherwise absorb them into a weaker check.
+    (r"\b(?:failing test|test first|test-first|red before green|red-green)\b"
+     r"|\bbefore (?:writing |any )?implementation\b"
+     r"|\bimplementation before\b.*\btest\b",
+     "test_precedes_implementation", "before_mutation", HARD),
+    (r"\b(?:seen to fail|watch it fail|observed failing|plant(?:ed)? (?:a )?violation)\b"
+     r"|\bguard\b.*\bfail(?:s|ing)? first\b",
+     "guard_observed_failing", "before_completion", HARD),
+    (r"\breview(?:ed)? before (?:merge|merging|commit|committing|shipping|release)\b"
+     r"|\b(?:no|never) merge\b.*\breview\b"
+     r"|\bcode review\b.*\b(?:required|mandatory|before)\b",
+     "review_recorded", "before_completion", HARD),
     (r"\bcite[sd]?\b|\bevidence (?:before|first)\b|\bwith evidence\b",
      "citation_resolves", "before_completion", HARD),
     (r"\bnever\b.*\bwithout\b|\bnot\b.*\bunless\b|\bonly (?:after|with)\b",
@@ -223,6 +237,24 @@ def _self_check() -> None:
         soft = compile_charter(project)
         assert soft["rules"] == 1, soft
         assert soft["enforcement"][ADVISORY] == 1, soft
+
+    # Development disciplines a project states in prose must compile to gates, not
+    # to advisory text that nothing can check.
+    with tempfile.TemporaryDirectory() as raw:
+        disciplined_project = Path(raw)
+        (disciplined_project / "GODMODE.md").write_text(
+            "# Discipline\n"
+            "- Never write implementation before a failing test exists.\n"
+            "- Every guard must be seen to fail before the fix lands.\n"
+            "- All changes are reviewed before merge.\n",
+            encoding="utf-8",
+        )
+        disciplined = compile_charter(disciplined_project)
+        by_kind = {rule["verify"]: rule for rule in disciplined["compiled"]}
+        for expected in ("test_precedes_implementation", "guard_observed_failing", "review_recorded"):
+            assert expected in by_kind, (expected, sorted(by_kind))
+            assert by_kind[expected]["enforcement"] == HARD, by_kind[expected]
+        assert disciplined["enforcement"][ADVISORY] == 0, disciplined["enforcement"]
 
     print("godmode_charter self-check OK")
 
