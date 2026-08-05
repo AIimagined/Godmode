@@ -162,6 +162,22 @@ def resolve_anchor(project: str | Path) -> ProjectAnchor:
     )
 
 
+def nongit_archive_root(project: str | Path) -> Path:
+    """Where this path's archive would live if the project were not a Git repository.
+
+    Running `git init` inside an existing project moves the archive from the
+    application-data directory into Git metadata, orphaning everything recorded
+    before. The old archive is still on disk; only the pointer moved. This resolves
+    that previous location so the records can be found and adopted rather than lost.
+    """
+    requested = canonical_path(Path(project))
+    home = application_home()
+    project_key = hashlib.sha256(
+        _device_salt(home) + str(requested).encode("utf-8")
+    ).hexdigest()[:24]
+    return canonical_path(home / "projects" / project_key)
+
+
 def anchor_fingerprint(anchor: ProjectAnchor) -> str:
     stable = {
         "project_key": anchor.project_key,
