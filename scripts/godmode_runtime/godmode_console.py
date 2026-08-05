@@ -67,6 +67,69 @@ from .godmode_sentinel import (
 )
 
 
+MAX_SUBJECT = 200
+
+
+def subject_text(value: str) -> str:
+    """Validate a subject at parse time, before anything is composed.
+
+    The archive rejects an over-long subject when the record is written, which is
+    after the caller has already assembled everything around it. Failing at the
+    argument instead means the correction costs one edit rather than a rewrite.
+    """
+    trimmed = value.strip()
+    if not trimmed:
+        raise argparse.ArgumentTypeError("must not be empty")
+    if len(trimmed) > MAX_SUBJECT:
+        raise argparse.ArgumentTypeError(
+            f"must be 1-{MAX_SUBJECT} characters; got {len(trimmed)}. "
+            "Put the detail in --value or --evidence, and keep the subject a label."
+        )
+    return trimmed
+
+
+def _brief_line(payload: Any) -> str:
+    """One glanceable line. JSON stays the contract; this is for a human eye.
+
+    Only scalars are rendered. A nested structure summarised into a line stops
+    being glanceable and starts being a truncated dict, which is harder to read
+    than the JSON it was meant to spare you.
+    """
+    if not isinstance(payload, dict):
+        return str(payload)[:200]
+
+    def scalar(key: str) -> str | None:
+        value = payload.get(key)
+        if isinstance(value, bool):
+            return f"{key}={'yes' if value else 'no'}"
+        if isinstance(value, (int, float)):
+            return f"{key}={value}"
+        if isinstance(value, str) and value:
+            return value[:120] if key in _HEADLINE else f"{key}={value[:60]}"
+        if isinstance(value, list):
+            return f"{key}={len(value)}"
+        return None
+
+    parts = [rendered for key in _HEADLINE if (rendered := scalar(key))][:1]
+    parts += [rendered for key in _COUNTS if (rendered := scalar(key))]
+    parts += [rendered for key in _NOTES if (rendered := scalar(key))][:1]
+
+    if not parts:
+        parts = [
+            rendered
+            for key in list(payload)[:6]
+            if not key.startswith("_") and (rendered := scalar(key))
+        ][:4]
+    return " | ".join(parts) or "(no scalar fields; use --json)"
+
+
+# Fields worth leading with, counting, and closing on.
+_HEADLINE = ("verdict", "state", "grade", "class", "message", "error")
+_COUNTS = ("count", "rules", "changed", "records", "adopted", "enforced", "total",
+           "drifted", "dependency_count", "symbols", "files", "written")
+_NOTES = ("reason", "next_action", "detail", "why")
+
+
 @dataclass
 class CommandResult:
     payload: Any
@@ -906,6 +969,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--project", default=".", help="Project directory (default: current directory)")
     parser.add_argument("--json", action="store_true", help="Emit compact JSON")
+    parser.add_argument("--brief", action="store_true",
+                        help="Emit one human-readable line instead of JSON")
     parser.add_argument("--version", action="version", version=f"Godmode {RUNTIME_VERSION}")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -1007,7 +1072,7 @@ def _build_parser() -> argparse.ArgumentParser:
     planmode = sub.add_parser("planmode", help="Gate mutation behind an approved plan contract")
     planmode_sub = planmode.add_subparsers(dest="planmode_command", required=True)
     planmode_start = planmode_sub.add_parser("start")
-    planmode_start.add_argument("--title", required=True)
+    planmode_start.add_argument("--title", required=True, type=subject_text)
     planmode_start.add_argument("--session")
     for field in PLAN_FIELDS:
         planmode_start.add_argument(f"--{field.replace('_', '-')}", dest=field, default="")
@@ -1115,7 +1180,7 @@ def _build_parser() -> argparse.ArgumentParser:
     history.set_defaults(handler=cmd_history)
 
     plan = sub.add_parser("plan", help="Record a private execution contract")
-    plan.add_argument("--title", required=True)
+    plan.add_argument("--title", required=True, type=subject_text)
     plan.add_argument("--step", action="append", default=[])
     plan.add_argument("--obligation", action="append", default=[])
     _evidence(plan)
@@ -1150,7 +1215,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     remember = sub.add_parser("remember", help="Record a decision, invariant, lesson, or obligation")
     remember.add_argument("--kind", choices=["decision", "invariant", "lesson", "obligation"], required=True)
-    remember.add_argument("--subject", required=True)
+    remember.add_argument("--subject", required=True, type=subject_text)
     remember.add_argument("--value", required=True)
     remember.add_argument("--status", default="active")
     remember.add_argument("--guard")
@@ -1266,14 +1331,25 @@ def main(argv: list[str] | None = None) -> int:
                 reconfigure(encoding="utf-8", errors="replace")
             except (OSError, ValueError):  # pragma: no cover - exotic stream
                 pass
+    # Output flags are global, so argparse would demand they precede the
+    # subcommand. Requiring a remembered argument order is the same friction that
+    # suppresses use in the first place, so they are lifted out of wherever they
+    # were written and position stops mattering.
+    raw = list(sys.argv[1:] if argv is None else argv)
+    lifted = [flag for flag in ("--brief", "--json") if flag in raw]
+    raw = [token for token in raw if token not in ("--brief", "--json")]
+
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(lifted + raw)
     if hasattr(args, "token_budget") and not 200 <= args.token_budget <= 10_000:
         parser.error("--token-budget must be between 200 and 10000")
     try:
         runtime = _runtime(args.project)
         handler: Callable[[argparse.Namespace, Runtime], CommandResult] = args.handler
         result = handler(args, runtime)
+        if getattr(args, "brief", False):
+            print(_brief_line(result.payload))
+            return result.exit_code
         print(
             json.dumps(
                 result.payload,
@@ -1286,7 +1362,10 @@ def main(argv: list[str] | None = None) -> int:
         return result.exit_code
     except GodmodeError as exc:
         payload = {"error": exc.__class__.__name__, "message": str(exc)}
-        print(json.dumps(payload, ensure_ascii=False, sort_keys=True), file=sys.stderr)
+        if getattr(args, "brief", False):
+            print(f"{payload['error']}: {payload['message']}", file=sys.stderr)
+        else:
+            print(json.dumps(payload, ensure_ascii=False, sort_keys=True), file=sys.stderr)
         return 2
 
 
