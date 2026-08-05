@@ -22,6 +22,8 @@ from .godmode_attest import (
     record_claim,
     record_step,
 )
+from .godmode_atlas import build as build_atlas
+from .godmode_atlas import slice_file
 from .godmode_attest import GRADES, STATUSES
 from .godmode_charter import TRIGGERS, compile_charter
 from .godmode_drift import capabilities as host_capabilities
@@ -320,6 +322,31 @@ def cmd_drift(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 def cmd_capabilities(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult(host_capabilities())
+
+
+def cmd_atlas(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    atlas = build_atlas(Path(runtime.anchor.project_root))
+    if args.atlas_command == "map":
+        return CommandResult(atlas.view())
+    if args.atlas_command == "affected":
+        return CommandResult(atlas.affected(args.symbol, depth=args.depth,
+                                            evidence=None if args.include_inferred else "extracted"))
+    if args.atlas_command == "cycles":
+        found = atlas.cycles()
+        return CommandResult({"cycles": found}, exit_code=1 if found else 0)
+    if args.atlas_command == "duplicates":
+        pairs = atlas.duplicates(threshold=args.threshold)
+        return CommandResult({"pairs": pairs, "threshold": args.threshold})
+    if args.atlas_command == "orphans":
+        found = atlas.orphans()
+        return CommandResult({"orphans": found, "count": len(found)})
+    report = atlas.diagnose()
+    return CommandResult(report, exit_code=0 if report["trustworthy"] else 1)
+
+
+def cmd_slice(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    window = slice_file(Path(runtime.anchor.project_root) / args.path, args.start, args.end)
+    return CommandResult(window)
 
 
 def cmd_inspect(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -849,6 +876,28 @@ def _build_parser() -> argparse.ArgumentParser:
     planmode_bind.add_argument("--file", action="append", default=[])
     planmode_bind.add_argument("--session")
     planmode_bind.set_defaults(handler=cmd_planmode_bind)
+
+    atlas = sub.add_parser("atlas", help="Map the project's symbols and their relationships")
+    atlas_sub = atlas.add_subparsers(dest="atlas_command", required=True)
+    atlas_sub.add_parser("map").set_defaults(handler=cmd_atlas)
+    atlas_affected = atlas_sub.add_parser("affected")
+    atlas_affected.add_argument("symbol")
+    atlas_affected.add_argument("--depth", type=int, default=2)
+    atlas_affected.add_argument("--include-inferred", action="store_true",
+                                help="Include guessed relationships; excluded by default")
+    atlas_affected.set_defaults(handler=cmd_atlas)
+    atlas_sub.add_parser("cycles").set_defaults(handler=cmd_atlas)
+    atlas_dupes = atlas_sub.add_parser("duplicates")
+    atlas_dupes.add_argument("--threshold", type=float, default=0.72)
+    atlas_dupes.set_defaults(handler=cmd_atlas)
+    atlas_sub.add_parser("orphans").set_defaults(handler=cmd_atlas)
+    atlas_sub.add_parser("diagnose").set_defaults(handler=cmd_atlas)
+
+    sliced = sub.add_parser("slice", help="Read a bounded window that declares its own edges")
+    sliced.add_argument("path")
+    sliced.add_argument("--start", type=int, default=1)
+    sliced.add_argument("--end", type=int)
+    sliced.set_defaults(handler=cmd_slice)
 
     sub.add_parser("drift", help="Compare step sets across sessions and agents").set_defaults(
         handler=cmd_drift

@@ -605,6 +605,61 @@ class ArchiveAdoptionTests(unittest.TestCase):
                 moved.verify()
 
 
+class AtlasTests(unittest.TestCase):
+    def test_atlas_self_check(self) -> None:
+        from godmode_runtime.godmode_atlas import _self_check
+
+        _self_check()
+
+    def test_inferred_edges_never_inflate_a_blast_radius(self) -> None:
+        # A guessed relationship reported as a dependency reads as a complete
+        # answer. Reporting one as fact previously scheduled work on a defect that
+        # did not exist, so extracted-only is the default.
+        from godmode_runtime.godmode_atlas import build
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / "core.py").write_text("def rotate():\n    return 1\n", encoding="utf-8")
+            (project / "api.py").write_text("import core\n", encoding="utf-8")
+            (project / "ui.ts").write_text("import { x } from './core';\n", encoding="utf-8")
+
+            atlas = build(project)
+            strict = {d["id"] for d in atlas.affected("core")["dependents"]}
+            loose = {d["id"] for d in atlas.affected("core", evidence=None)["dependents"]}
+            self.assertFalse(any("ui.ts" in i for i in strict))
+            self.assertTrue(any("ui.ts" in i for i in loose))
+
+    def test_godmode_runtime_has_no_import_cycle(self) -> None:
+        # An external tool reported a chronicle/lens cycle that did not exist; it was
+        # an inferred edge. This asserts the extracted truth so the claim stays checked.
+        from godmode_runtime.godmode_atlas import build
+
+        atlas = build(SCRIPTS)
+        self.assertEqual(atlas.cycles(), [])
+        self.assertEqual(atlas.diagnose()["edges"]["inferred"], 0)
+
+    def test_unparsable_file_is_recorded_not_skipped(self) -> None:
+        from godmode_runtime.godmode_atlas import build
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / "broken.py").write_text("def (:\n", encoding="utf-8")
+            atlas = build(project)
+            self.assertEqual([u["path"] for u in atlas.unparsed], ["broken.py"])
+            self.assertFalse(atlas.diagnose()["trustworthy"])
+
+    def test_slice_declares_its_own_bounds(self) -> None:
+        from godmode_runtime.godmode_atlas import slice_file
+
+        with tempfile.TemporaryDirectory() as raw:
+            target = Path(raw) / "f.txt"
+            target.write_text("\n".join(f"line{i}" for i in range(1, 21)), encoding="utf-8")
+            partial = slice_file(target, start=5, end=9)
+            self.assertFalse(partial["complete"])
+            self.assertTrue(partial["truncated_before"] and partial["truncated_after"])
+            self.assertTrue(slice_file(target)["complete"])
+
+
 class MethodTests(unittest.TestCase):
     def test_method_self_check(self) -> None:
         from godmode_runtime.godmode_method import _self_check
