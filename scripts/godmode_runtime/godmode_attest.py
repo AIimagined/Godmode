@@ -172,6 +172,113 @@ def run_check(
     }
 
 
+def plant_and_observe(
+    archive: Chronicle,
+    session: str,
+    project: Path,
+    name: str,
+    command: list[str],
+    target: str,
+    replace: str | None = None,
+    with_text: str = "",
+    append: str | None = None,
+    rule_ids: list[str] | None = None,
+    timeout: int = 900,
+) -> dict[str, Any]:
+    """Prove a guard can fail, by breaking the thing it guards and watching it.
+
+    A guard that has never been seen failing is a suggestion. It may be asserting
+    nothing, testing the wrong surface, or silently skipping - and all three look
+    exactly like a pass. So the sequence is green, then red with a planted
+    violation, then green again once restored. Only that whole sequence attests.
+
+    The plant itself is verified to have landed: a mutation that changed no bytes
+    would produce a green run that reads as "the guard held" when nothing was ever
+    broken.
+    """
+    import subprocess
+
+    path = project / target
+    if not path.is_file():
+        raise ArchiveError(f"Cannot plant a violation in a missing file: {target}")
+    original = path.read_bytes()
+
+    def run() -> int:
+        try:
+            done = subprocess.run(command, cwd=str(project), capture_output=True,
+                                  text=True, encoding="utf-8", errors="replace", timeout=timeout)
+            return done.returncode
+        except FileNotFoundError:
+            return 127
+        except subprocess.TimeoutExpired:
+            return 124
+
+    steps: dict[str, Any] = {}
+    try:
+        steps["baseline"] = run()
+
+        text = original.decode("utf-8", errors="replace")
+        if append is not None:
+            mutated = text + ("" if text.endswith("\n") else "\n") + append + "\n"
+        elif replace is not None:
+            mutated = text.replace(replace, with_text, 1)
+        else:
+            raise ArchiveError("A plant needs --replace or --append")
+
+        planted_bytes = mutated.encode("utf-8")
+        # A plant that changes nothing turns the whole exercise into a green run
+        # that proves only that the file was untouched.
+        if planted_bytes == original:
+            raise ArchiveError(
+                f"The planted violation changed no bytes in {target}; the guard would "
+                "have been observed passing against unmodified code"
+            )
+        path.write_bytes(planted_bytes)
+        steps["planted_bytes_changed"] = len(planted_bytes) - len(original)
+        steps["with_violation"] = run()
+    finally:
+        path.write_bytes(original)
+    steps["restored"] = run()
+
+    green_first = steps["baseline"] == 0
+    went_red = steps["with_violation"] != 0
+    green_again = steps["restored"] == 0
+    proven = green_first and went_red and green_again
+
+    if proven:
+        detail = f"green({steps['baseline']}) -> red({steps['with_violation']}) -> green({steps['restored']})"
+        reason = ""
+    else:
+        detail = (
+            f"baseline={steps['baseline']} planted={steps['with_violation']} "
+            f"restored={steps['restored']}"
+        )
+        reason = (
+            "guard did not fail against a planted violation" if green_first and not went_red
+            else "guard was not green before planting" if not green_first
+            else "state did not return to green after restoring"
+        )
+
+    record = record_step(
+        archive, session, f"guard:{name}",
+        "ran" if proven else "blocked",
+        result=f"{'observed failing' if proven else 'not observed failing'}: {detail}",
+        evidence=[f"cmd:{' '.join(command)[:120]}", f"file:{target}"],
+        rule_ids=rule_ids,
+        reason=reason,
+    )
+    return {
+        "guard": name,
+        "target": target,
+        "sequence": steps,
+        "observed_failing": proven,
+        "detail": detail,
+        "reason": reason,
+        "attested": "ran" if proven else "blocked",
+        "record": record["sequence"],
+    }
+
+
 def attested_rule_ids(archive: Chronicle, session: str) -> set[str]:
     covered: set[str] = set()
     for record in archive.select(kind="attestation", limit=1000):
@@ -514,6 +621,37 @@ def _self_check() -> None:
             missing = run_check(archive, session, project, "absent",
                                 ["definitely-not-a-real-binary-xyz"])
             assert missing["exit_code"] == 127 and not missing["passed"], missing
+
+            # A guard must be seen failing. A real guard goes green -> red -> green.
+            (project / "value.txt").write_text("42\n", encoding="utf-8")
+            real_guard = [sys.executable, "-c",
+                          "import pathlib,sys; sys.exit(0 if pathlib.Path('value.txt')"
+                          ".read_text().strip()=='42' else 1)"]
+            proven = plant_and_observe(archive, session, project, "value", real_guard,
+                                       target="value.txt", replace="42", with_text="99",
+                                       rule_ids=["R-guard"])
+            assert proven["observed_failing"], proven
+            assert proven["sequence"]["baseline"] == 0 and proven["sequence"]["with_violation"] != 0
+            assert "R-guard" in attested_rule_ids(archive, session)
+            # The file is byte-identical afterwards; a plant must never leak.
+            assert (project / "value.txt").read_text(encoding="utf-8") == "42\n"
+
+            # A guard that asserts nothing stays green under the plant and is refused.
+            hollow = [sys.executable, "-c", "raise SystemExit(0)"]
+            weak = plant_and_observe(archive, session, project, "hollow", hollow,
+                                     target="value.txt", replace="42", with_text="99",
+                                     rule_ids=["R-hollow"])
+            assert not weak["observed_failing"], weak
+            assert "did not fail" in weak["reason"], weak
+            assert "R-hollow" not in attested_rule_ids(archive, session)
+
+            # A plant that changes nothing is refused rather than read as a pass.
+            try:
+                plant_and_observe(archive, session, project, "noop", real_guard,
+                                  target="value.txt", replace="absent-token", with_text="x")
+                raise AssertionError("a no-op plant must be refused")
+            except ArchiveError as exc:
+                assert "changed no bytes" in str(exc), exc
 
             # Reflection notices that a new claim disagrees with a recorded one.
             record_claim(archive, project, session,

@@ -28,7 +28,7 @@ from .godmode_assess import assurance_case
 from .godmode_assess import selftest as run_selftest
 from .godmode_atlas import build as build_atlas
 from .godmode_atlas import slice_file
-from .godmode_attest import GRADES, STATUSES, reflect, run_check
+from .godmode_attest import GRADES, STATUSES, plant_and_observe, reflect, run_check
 from .godmode_charter import TRIGGERS, applicable_rules, compile_charter, traits_of
 from .godmode_drift import capabilities as host_capabilities
 from .godmode_drift import compare as compare_sessions
@@ -250,6 +250,18 @@ def cmd_verify(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     )
     # The runner decides, not the caller: a failing check exits non-zero here too.
     return CommandResult(outcome, exit_code=0 if outcome["passed"] else 1)
+
+
+def cmd_plant(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    outcome = plant_and_observe(
+        runtime.archive, _session(runtime, args.session), Path(runtime.anchor.project_root),
+        args.name, shlex.split(args.command), target=args.file,
+        replace=args.replace, with_text=args.with_text, append=args.append,
+        rule_ids=args.rule,
+    )
+    # A guard that never went red is not a guard, so this exits non-zero.
+    return CommandResult(outcome, exit_code=0 if outcome["observed_failing"] else 1)
 
 
 def cmd_gate(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -911,6 +923,17 @@ def _build_parser() -> argparse.ArgumentParser:
     # follow the first positional, so --rule would land inside the command.
     verify.add_argument("--command", required=True, help="Command to run, as one quoted string")
     verify.set_defaults(handler=cmd_verify)
+
+    plant = sub.add_parser("plant", help="Prove a guard fails by planting a violation")
+    plant.add_argument("name")
+    plant.add_argument("--command", required=True, help="Guard command, as one quoted string")
+    plant.add_argument("--file", required=True, help="File to break, relative to the project")
+    plant.add_argument("--replace", help="Text to replace in that file")
+    plant.add_argument("--with", dest="with_text", default="", help="Replacement text")
+    plant.add_argument("--append", help="Line to append instead of replacing")
+    plant.add_argument("--rule", action="append", default=[])
+    plant.add_argument("--session")
+    plant.set_defaults(handler=cmd_plant)
 
     gate_parser = sub.add_parser("gate", help="Check a trigger; exit non-zero when a HARD rule is unattested")
     gate_parser.add_argument("--trigger", choices=list(TRIGGERS), required=True)
