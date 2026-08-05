@@ -29,6 +29,9 @@ from .godmode_assess import selftest as run_selftest
 from .godmode_atlas import build as build_atlas
 from .godmode_atlas import slice_file
 from .godmode_attest import GRADES, STATUSES, plant_and_observe, reflect, run_check
+from .godmode_bindings import check as bindings_check
+from .godmode_bindings import sbom as build_sbom
+from .godmode_bindings import write as bindings_write
 from .godmode_charter import TRIGGERS, applicable_rules, compile_charter, traits_of
 from .godmode_drift import capabilities as host_capabilities
 from .godmode_drift import compare as compare_sessions
@@ -419,6 +422,18 @@ def cmd_egress(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 def cmd_untrusted(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     report = scan_untrusted(Path(runtime.anchor.project_root))
     return CommandResult(report, exit_code=1 if report["files_with_findings"] else 0)
+
+
+def cmd_bindings(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    project = Path(runtime.anchor.project_root)
+    if args.write:
+        return CommandResult(bindings_write(project))
+    report = bindings_check(project)
+    return CommandResult(report, exit_code=1 if report["drifted"] else 0)
+
+
+def cmd_sbom(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    return CommandResult(build_sbom(Path(runtime.anchor.project_root)))
 
 
 def cmd_atlas(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -1006,6 +1021,11 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("selftest", help="Exercise every control and report what actually held").set_defaults(
         handler=cmd_selftest
     )
+
+    bindings = sub.add_parser("bindings", help="Generate host manifests from one source")
+    bindings.add_argument("--write", action="store_true", help="Regenerate instead of only checking")
+    bindings.set_defaults(handler=cmd_bindings)
+    sub.add_parser("sbom", help="List what ships and what it depends on").set_defaults(handler=cmd_sbom)
 
     egress = sub.add_parser("egress", help="Disclose exactly what an action would send")
     egress.add_argument("action")

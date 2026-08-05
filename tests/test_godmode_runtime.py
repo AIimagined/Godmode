@@ -1086,6 +1086,30 @@ class ConsoleEncodingTests(unittest.TestCase):
             self.assertIn("Gates", completed.stdout)
 
 
+class BindingsTests(unittest.TestCase):
+    def test_bindings_self_check(self) -> None:
+        from godmode_runtime.godmode_bindings import _self_check
+
+        _self_check()
+
+    def test_committed_manifests_match_their_source(self) -> None:
+        # Generation prevents the drift the agreement test could only detect.
+        from godmode_runtime.godmode_bindings import check
+
+        report = check(PLUGIN_ROOT)
+        self.assertEqual(report["verdict"], "current", report["hosts"])
+
+    def test_sbom_does_not_count_the_project_as_its_own_dependency(self) -> None:
+        # A dependency list that includes this project could never reach zero,
+        # which would make "no runtime dependencies" unfalsifiable.
+        from godmode_runtime.godmode_bindings import sbom
+
+        report = sbom(PLUGIN_ROOT)
+        self.assertEqual(report["runtime_dependencies"], [])
+        self.assertEqual(report["verdict"], "no-runtime-dependencies")
+        self.assertIn("godmode_runtime", report["first_party"])
+
+
 class CorpusTests(unittest.TestCase):
     def test_role_resolution_self_check(self) -> None:
         from godmode_runtime.godmode_corpus import _self_check

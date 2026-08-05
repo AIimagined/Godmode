@@ -1,0 +1,70 @@
+{
+  "_comment": "One source for every host manifest. Adding a host is an entry here, not a hand-edited tree. Regenerate with `godmode bindings --write`; `--check` fails when a manifest has drifted from this file.",
+  "identity": {
+    "name": "godmode",
+    "displayName": "Godmode",
+    "version": "0.1.0",
+    "description": "Local-first context continuity and evidence governance for coding agents.",
+    "author": { "name": "AIimagined", "url": "https://github.com/AIimagined" },
+    "homepage": "https://github.com/AIimagined/Godmode",
+    "repository": "https://github.com/AIimagined/Godmode",
+    "license": "Apache-2.0",
+    "skills": "./skills/",
+    "category": "productivity",
+    "keywords": [
+      "context-continuity",
+      "evidence-governance",
+      "local-first",
+      "developer-tools"
+    ]
+  },
+  "hosts": {
+    "claude": {
+      "path": ".claude-plugin/plugin.json",
+      "fields": ["$schema", "name", "displayName", "version", "description", "author",
+                 "homepage", "repository", "license", "keywords", "skills"],
+      "extra": {
+        "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+        "keywords_prefix": ["claude-code-plugin"]
+      },
+      "note": "hooks/hooks.json is loaded by convention; declaring a hooks key causes a duplicate-load error"
+    },
+    "codex": {
+      "path": ".codex-plugin/plugin.json",
+      "fields": ["name", "version", "description", "author", "homepage", "repository",
+                 "license", "keywords", "skills", "interface"],
+      "extra": {
+        "keywords_prefix": ["codex-plugin", "skill-authoring"],
+        "author_url": false,
+        "description": "Local-first context continuity and evidence-governance skills for coding agents.",
+        "interface": {
+          "displayName": "Godmode",
+          "shortDescription": "Local continuity and guarded coding workflows.",
+          "longDescription": "Godmode reconstructs repository reality from local evidence, preserves private continuity, diagnoses failures without looping, previews protected actions, and can forge validated project skills when a reusable gap is proven.",
+          "developerName": "AIimagined",
+          "category": "Productivity",
+          "capabilities": [
+            "context continuity",
+            "evidence-first investigation",
+            "protected action previews",
+            "local skill authoring"
+          ],
+          "defaultPrompt": [
+            "Resume this repository from verified local context.",
+            "Diagnose this failure without repeating failed hypotheses.",
+            "Preview this protected action and its recovery path."
+          ],
+          "brandColor": "#155EEF",
+          "logo": "./assets/godmode-logo.png"
+        }
+      }
+    },
+    "grok": {
+      "path": ".grok-plugin/plugin.json",
+      "fields": ["name", "displayName", "version", "description", "author", "homepage",
+                 "repository", "license", "category", "keywords", "skills"],
+      "extra": {},
+      "note": "same hooks convention as claude"
+    }
+  }
+}
