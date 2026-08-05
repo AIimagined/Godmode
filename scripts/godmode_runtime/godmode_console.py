@@ -42,6 +42,7 @@ from .godmode_plan import CONTRACT_FIELDS as PLAN_FIELDS
 from .godmode_plan import approve as plan_approve
 from .godmode_plan import bind_execution, mutation_verdict
 from .godmode_plan import start as plan_start
+from .godmode_scenarios import run as run_scenarios
 from .godmode_scope import scope as scope_change
 from .godmode_status import STATES, record_item, remaining, survey
 from .godmode_corpus import build_brief, resolve_roles
@@ -507,6 +508,13 @@ def cmd_recurrences(args: argparse.Namespace, runtime: Runtime) -> CommandResult
     # A control that blocked twice on the same cause is a finding about the process,
     # not about that one block.
     return CommandResult(report, exit_code=1 if report["count"] else 0)
+
+
+def cmd_scenarios(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    report = run_scenarios(only=args.only)
+    # A control that passes its unit test and misses the failure it was written
+    # for is the expensive kind of green, so a miss fails the command.
+    return CommandResult(report, exit_code=0 if report["verdict"] == "all-caught" else 1)
 
 
 def cmd_atlas(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -1134,6 +1142,10 @@ def _build_parser() -> argparse.ArgumentParser:
     bindings = sub.add_parser("bindings", help="Generate host manifests from one source")
     bindings.add_argument("--write", action="store_true", help="Regenerate instead of only checking")
     bindings.set_defaults(handler=cmd_bindings)
+    scenarios = sub.add_parser("scenarios", help="Stage known failures and check a control notices")
+    scenarios.add_argument("--only", help="Run a single scenario by name")
+    scenarios.set_defaults(handler=cmd_scenarios)
+
     sub.add_parser("recurrences", help="Find controls that blocked twice on the same cause").set_defaults(
         handler=cmd_recurrences
     )
