@@ -252,6 +252,8 @@ def cmd_verify(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         args.name, shlex.split(args.command), rule_ids=args.rule,
     )
     # The runner decides, not the caller: a failing check exits non-zero here too.
+    # `citation` is returned so a later claim quotes what was stored rather than
+    # reconstructing it and guessing the normalisation.
     return CommandResult(outcome, exit_code=0 if outcome["passed"] else 1)
 
 
