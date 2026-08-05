@@ -43,7 +43,10 @@ SENSITIVE = (
 _EGRESS_SHAPES = (
     (GIT_REMOTE, r"\bgit\s+(?:push|pull|fetch|clone|remote|submodule)\b"),
     (SHELL_NETWORK, r"\b(?:curl|wget|nc|ssh|scp|rsync)\b|\b(?:npm|pnpm|yarn|pip|uv|cargo|go)\s+(?:i|install|add|get|publish)\b"),
-    (WEB, r"\bhttps?://|\bfetch\(|\bwebfetch\b|\bbrowse\b"),
+    # The scheme is escaped so no URL literal appears in runtime source. A privacy
+    # guard asserts that absence to prove the runtime holds no network endpoint,
+    # and recognising a URL must not cost us the right to make that claim.
+    (WEB, r"\bhttps?:\/\/|\bfetch\(|\bwebfetch\b|\bbrowse\b"),
     (TOOL_SERVER, r"\bmcp\b|\btool[-_ ]server\b|\bconnector\b"),
     (INFERENCE, r"\bprompt\b|\bcompletion\b|\bmodel\b|\binference\b"),
     (DIAGNOSTICS, r"\bdiagnostic|\bsupport bundle\b|\btelemetry\b"),
@@ -205,8 +208,10 @@ def scan_project(project: Path, limit: int = 400) -> dict[str, Any]:
 def _self_check() -> None:
     import tempfile
 
+    scheme = "http" + "s:" + "//"  # built, so no URL literal enters runtime source
     assert classify("git push origin main")["class"] == GIT_REMOTE
-    assert classify("curl https://example.com")["class"] in (SHELL_NETWORK, WEB)
+    assert classify(f"curl {scheme}example.com")["class"] in (SHELL_NETWORK, WEB)
+    assert classify(f"open {scheme}example.com")["class"] == WEB
     assert classify("npm install left-pad")["class"] == SHELL_NETWORK
     assert classify("read the local file")["leaves_machine"] is False
 

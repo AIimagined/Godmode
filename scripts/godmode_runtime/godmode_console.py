@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import shlex
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -27,7 +28,7 @@ from .godmode_assess import assurance_case
 from .godmode_assess import selftest as run_selftest
 from .godmode_atlas import build as build_atlas
 from .godmode_atlas import slice_file
-from .godmode_attest import GRADES, STATUSES, reflect
+from .godmode_attest import GRADES, STATUSES, reflect, run_check
 from .godmode_charter import TRIGGERS, applicable_rules, compile_charter, traits_of
 from .godmode_drift import capabilities as host_capabilities
 from .godmode_drift import compare as compare_sessions
@@ -239,6 +240,16 @@ def cmd_attest(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         reason=args.reason,
     )
     return CommandResult({"record": _event_view(record)})
+
+
+def cmd_verify(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    outcome = run_check(
+        runtime.archive, _session(runtime, args.session), Path(runtime.anchor.project_root),
+        args.name, shlex.split(args.command), rule_ids=args.rule,
+    )
+    # The runner decides, not the caller: a failing check exits non-zero here too.
+    return CommandResult(outcome, exit_code=0 if outcome["passed"] else 1)
 
 
 def cmd_gate(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -891,6 +902,15 @@ def _build_parser() -> argparse.ArgumentParser:
     attest.add_argument("--session")
     _evidence(attest)
     attest.set_defaults(handler=cmd_attest)
+
+    verify = sub.add_parser("verify", help="Run a declared check and attest its exit code")
+    verify.add_argument("name")
+    verify.add_argument("--rule", action="append", default=[], help="Rule id this check satisfies; repeatable")
+    verify.add_argument("--session")
+    # Not argparse.REMAINDER: a REMAINDER positional swallows the options that
+    # follow the first positional, so --rule would land inside the command.
+    verify.add_argument("--command", required=True, help="Command to run, as one quoted string")
+    verify.set_defaults(handler=cmd_verify)
 
     gate_parser = sub.add_parser("gate", help="Check a trigger; exit non-zero when a HARD rule is unattested")
     gate_parser.add_argument("--trigger", choices=list(TRIGGERS), required=True)
