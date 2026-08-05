@@ -235,6 +235,68 @@ def selftest() -> dict[str, Any]:
     }
 
 
+def assurance_case() -> str:
+    """Emit an assurance case: every claimed control bound to the check that proves it.
+
+    A security posture asserted in prose is a claim about intent. Generating the
+    document from the same probes that `selftest` runs means a control cannot be
+    documented as enforced unless it was observed refusing something, and a control
+    the host cannot support is printed as unavailable rather than quietly omitted.
+    """
+    surface = selftest()
+    lines: list[str] = [
+        "# Assurance Case",
+        "",
+        "Generated from live probes, not authored. Each control below was exercised",
+        "against a disposable project in this environment; the observation is what the",
+        "probe returned, not a description of intent.",
+        "",
+        f"- Host: `{surface['host']}`",
+        f"- Controls enforcing: **{surface['enforced']} of {surface['total']}**",
+        f"- Verdict: **{surface['verdict']}**",
+        "",
+        "## Controls and their evidence",
+        "",
+        "| Control | Claim | Observed | Enforced |",
+        "|---|---|---|---|",
+    ]
+    for control in surface["controls"]:
+        mark = "yes" if control["enforced"] else "**no**"
+        lines.append(
+            f"| {control['control']} | {control['expected']} | {control['observed']} | {mark} |"
+        )
+
+    lines += ["", "## Boundaries of this claim", ""]
+    if surface["unavailable_here"]:
+        lines.append(
+            "The following controls cannot be enforced in this environment. Any assurance "
+            "resting on them is unverified here:"
+        )
+        lines.append("")
+        for name in surface["unavailable_here"]:
+            lines.append(f"- `{name}` — UNAVAILABLE")
+    else:
+        lines.append("No control was reported unavailable in this environment.")
+
+    lines += [
+        "",
+        "Enforcement is environment-dependent by construction. A control is HARD only",
+        "where the host exposes the boundary it needs; elsewhere it is reported as SOFT",
+        "or UNAVAILABLE rather than presented as protection that is not there.",
+        "",
+        "## Regenerating",
+        "",
+        "```",
+        "godmode assurance",
+        "```",
+        "",
+        "Re-run after any change to the controls. A stale assurance case asserts a",
+        "posture that was true once, which is worse than none.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def _self_check() -> None:
     with tempfile.TemporaryDirectory() as raw:
         project = Path(raw)
@@ -268,6 +330,16 @@ def _self_check() -> None:
     surface = selftest()
     assert surface["total"] == 5, surface
     assert surface["verdict"] == "enforcing", surface["controls"]
+
+    document = assurance_case()
+    # Every probed control appears with its observation, and the unavailable ones
+    # are printed rather than omitted.
+    for control in surface["controls"]:
+        assert control["control"] in document, control["control"]
+        assert control["observed"][:30] in document, control
+    for name in surface["unavailable_here"]:
+        assert name in document, name
+    assert "UNAVAILABLE" in document or not surface["unavailable_here"]
 
     print("godmode_assess self-check OK")
 

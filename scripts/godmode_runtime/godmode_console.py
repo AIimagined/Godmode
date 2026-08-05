@@ -23,10 +23,11 @@ from .godmode_attest import (
     record_step,
 )
 from .godmode_assess import assess as assess_project
+from .godmode_assess import assurance_case
 from .godmode_assess import selftest as run_selftest
 from .godmode_atlas import build as build_atlas
 from .godmode_atlas import slice_file
-from .godmode_attest import GRADES, STATUSES
+from .godmode_attest import GRADES, STATUSES, reflect
 from .godmode_charter import TRIGGERS, applicable_rules, compile_charter, traits_of
 from .godmode_drift import capabilities as host_capabilities
 from .godmode_drift import compare as compare_sessions
@@ -360,6 +361,18 @@ def cmd_scope(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         ]
     # An enumeration that lost an artefact is the failure this command prevents.
     return CommandResult(report, exit_code=0 if report["complete"] else 1)
+
+
+def cmd_assurance(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    return CommandResult({"document": assurance_case()})
+
+
+def cmd_reflect(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    report = reflect(runtime.archive, args.text)
+    # A suspected conflict is a lead for a human, so it is surfaced in the exit
+    # status without being asserted as a contradiction.
+    return CommandResult(report, exit_code=1 if report.get("conflicts") else 0)
 
 
 def cmd_atlas(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -924,6 +937,13 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("selftest", help="Exercise every control and report what actually held").set_defaults(
         handler=cmd_selftest
     )
+
+    sub.add_parser("assurance", help="Emit an assurance case generated from live probes").set_defaults(
+        handler=cmd_assurance
+    )
+    reflect_parser = sub.add_parser("reflect", help="Check a claim against what the record already says")
+    reflect_parser.add_argument("text")
+    reflect_parser.set_defaults(handler=cmd_reflect)
 
     scope_parser = sub.add_parser("scope", help="Enumerate the work before reasoning about it")
     scope_parser.add_argument("--since", help="Compare against this ref instead of the working tree")
