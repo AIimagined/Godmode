@@ -798,6 +798,40 @@ def cmd_authorize_setup(args: argparse.Namespace, runtime: Runtime) -> CommandRe
     return CommandResult({"configured": True, "storage": "local-only"})
 
 
+def cmd_authorize_request(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    # Requesting is always available: an agent has no terminal, and the point is to
+    # let it ask durably rather than be unable to ask at all.
+    return CommandResult(
+        CapabilityBroker(runtime.archive).request(args.operation, args.purpose)
+    )
+
+
+def cmd_authorize_list(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    found = CapabilityBroker(runtime.archive).requests(state=args.state)
+    return CommandResult({"requests": found, "count": len(found)})
+
+
+def cmd_authorize_grant(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    broker = CapabilityBroker(runtime.archive)
+    password = read_password_stdin() if args.password_stdin else None
+    if password is None:
+        from .godmode_sentinel import _require_tty
+
+        _require_tty()
+        import getpass
+
+        password = getpass.getpass("Godmode approval password: ")
+    return CommandResult(broker.grant(args.request, password, args.ttl))
+
+
+def cmd_authorize_deny(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    return CommandResult(CapabilityBroker(runtime.archive).deny(args.request, args.reason))
+
+
 def cmd_authorize_issue(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     preview = classify_action(args.operation)
@@ -1241,6 +1275,27 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Read the password from standard input instead of prompting",
     )
     setup.set_defaults(handler=cmd_authorize_setup)
+    request = authorize_sub.add_parser("request",
+                                       help="Record a request an agent cannot grant itself")
+    request.add_argument("--operation", required=True)
+    request.add_argument("--purpose", default="")
+    request.set_defaults(handler=cmd_authorize_request)
+
+    listing = authorize_sub.add_parser("requests", help="Show recorded requests and outcomes")
+    listing.add_argument("--state", choices=["requested", "granted", "denied"])
+    listing.set_defaults(handler=cmd_authorize_list)
+
+    granting = authorize_sub.add_parser("grant", help="Approve a recorded request")
+    granting.add_argument("--request", required=True)
+    granting.add_argument("--ttl", type=int, default=180)
+    granting.add_argument("--password-stdin", action="store_true")
+    granting.set_defaults(handler=cmd_authorize_grant)
+
+    denial = authorize_sub.add_parser("deny", help="Refuse a request, on the record")
+    denial.add_argument("--request", required=True)
+    denial.add_argument("--reason", required=True)
+    denial.set_defaults(handler=cmd_authorize_deny)
+
     issue = authorize_sub.add_parser("issue")
     issue.add_argument(
         "--password-stdin",

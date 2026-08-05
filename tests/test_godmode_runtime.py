@@ -1164,6 +1164,56 @@ class BindingsTests(unittest.TestCase):
         self.assertIn("godmode_runtime", report["first_party"])
 
 
+class AsyncAuthorizationTests(unittest.TestCase):
+    def test_an_agent_can_ask_without_a_terminal_but_cannot_grant(self) -> None:
+        # The only previous route to a capability was a synchronous terminal
+        # prompt, which an agent cannot drive - and the environment where the
+        # prompt is impossible is the one the product ships into.
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            broker = CapabilityBroker(archive)
+
+            # Asking works before any password exists, and grants nothing.
+            asked = broker.request("git push origin main", purpose="publish")
+            self.assertEqual(asked["state"], "requested")
+            self.assertTrue(asked["request"].startswith("REQ-"))
+            pending = broker.requests(state="requested")
+            self.assertEqual(len(pending), 1)
+
+            # Granting still needs the secret the agent does not have.
+            with self.assertRaises(AuthorizationError):
+                broker.grant(asked["request"], "wrong-password-entirely")
+
+            broker.configure("correct-horse-battery-staple")
+            granted = broker.grant(asked["request"], "correct-horse-battery-staple")
+            self.assertEqual(granted["state"], "granted")
+            self.assertTrue(granted["capability"].startswith("gm1."))
+
+            # A decided request cannot be decided again.
+            with self.assertRaises(AuthorizationError):
+                broker.grant(asked["request"], "correct-horse-battery-staple")
+
+    def test_a_denial_is_recorded_with_its_reason(self) -> None:
+        # A request that goes quiet is indistinguishable from one nobody saw.
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            broker = CapabilityBroker(archive)
+            asked = broker.request("git push --force", purpose="rewrite history")
+
+            with self.assertRaises(AuthorizationError):
+                broker.deny(asked["request"], "   ")
+
+            broker.deny(asked["request"], "force-push not permitted on this branch")
+            self.assertEqual(len(broker.requests(state="denied")), 1)
+            self.assertEqual(broker.requests(state="requested"), [])
+
+    def test_read_only_work_still_needs_no_request(self) -> None:
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            with self.assertRaises(AuthorizationError):
+                CapabilityBroker(archive).request("git status")
+
+
 class UsabilityTests(unittest.TestCase):
     def test_shim_exists_for_both_shells(self) -> None:
         # Every call otherwise costs the caller the full path to the plugin, which
