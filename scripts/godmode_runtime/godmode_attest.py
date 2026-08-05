@@ -151,13 +151,14 @@ def run_check(
         code, detail = 124, f"timed out after {timeout}s"
 
     passed = code == 0
+    citation = f"cmd:{' '.join(command)[:160]}"
     record = record_step(
         archive,
         session,
         f"check:{name}",
         "ran" if passed else "blocked",
         result=f"exit {code}: {detail}",
-        evidence=[f"cmd:{' '.join(command)[:160]}"],
+        evidence=[citation],
         rule_ids=rule_ids,
         reason="" if passed else f"check failed with exit {code}",
     )
@@ -169,6 +170,10 @@ def run_check(
         "detail": detail,
         "attested": "ran" if passed else "blocked",
         "sequence": record["sequence"],
+        # Returned so a caller cites what was stored instead of rebuilding it. A
+        # citation reconstructed by hand has to guess the normalisation, and a near
+        # miss reads exactly like a fabrication.
+        "citation": citation,
     }
 
 
@@ -402,6 +407,32 @@ def _citation_resolves(project: Path, archive: Chronicle, citation: str) -> bool
     return False
 
 
+def known_citations(archive: Chronicle, limit: int = 500) -> list[str]:
+    """Every citation string the archive has actually stored."""
+    found: set[str] = set()
+    for record in archive.select(kind="attestation", limit=limit):
+        found.update(record.get("evidence", []))
+    return sorted(found)
+
+
+def near_miss(citation: str, candidates: list[str], floor: float = 0.6) -> str | None:
+    """The stored citation a failed one most likely meant.
+
+    A citation that nearly matches something real is almost always a formatting
+    guess, not an invention - and the two are indistinguishable in a bare "does not
+    resolve". Naming the near miss turns an unhelpful refusal into a correction,
+    while an invention still matches nothing and stays refused.
+    """
+    from difflib import SequenceMatcher
+
+    best, score = None, floor
+    for candidate in candidates:
+        ratio = SequenceMatcher(None, citation, candidate).ratio()
+        if ratio > score:
+            best, score = candidate, ratio
+    return best
+
+
 def record_claim(
     archive: Chronicle,
     project: Path,
@@ -437,6 +468,9 @@ def record_claim(
             effective, reason = "hypothesis", "no citation"
         elif unresolved:
             effective, reason = "hypothesis", "citation does not resolve"
+            suggestion = near_miss(unresolved[0], known_citations(archive))
+            if suggestion:
+                reason += f"; did you mean {suggestion!r}"
         elif absence and not _cites_a_search(archive, citations):
             # "No X exists" cannot be shown by pointing at somewhere X is not. Without
             # the search that would have found X, the claim cannot be wrong - and a
@@ -758,11 +792,26 @@ def _self_check() -> None:
             assert "absence claim" in pointing["data"]["reason"], pointing["data"]
 
             sweep = [sys.executable, "-c", "print('swept')"]
-            run_check(archive, session, project, "secret-sweep", sweep)
+            swept = run_check(archive, session, project, "secret-sweep", sweep)
+            # Cite what was stored, rather than rebuilding the string and guessing
+            # its normalisation.
             searching = record_claim(archive, project, session,
                                      "There are no secrets in the archive.", "verified",
-                                     cites=[f"cmd:{' '.join(sweep)[:160]}"])
+                                     cites=[swept["citation"]])
             assert searching["data"]["grade"] == "verified", searching["data"]
+
+            # A near miss is corrected rather than merely refused, because a
+            # formatting guess and an invention read identically otherwise.
+            mistyped = record_claim(archive, project, session,
+                                    "There are no secrets in the archive.", "verified",
+                                    cites=[swept["citation"].replace("-c ", "-c  ")])
+            assert mistyped["data"]["grade"] == "hypothesis", mistyped["data"]
+            assert "did you mean" in mistyped["data"]["reason"], mistyped["data"]
+
+            fabricated = record_claim(archive, project, session,
+                                      "There are no orphans.", "verified",
+                                      cites=["cmd:entirely-unlike-anything-recorded"])
+            assert "did you mean" not in fabricated["data"]["reason"], fabricated["data"]
 
             # A command nobody ran cites nothing: the words are not the evidence.
             invented = record_claim(archive, project, session,
