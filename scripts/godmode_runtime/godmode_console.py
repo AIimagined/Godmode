@@ -257,7 +257,8 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # A downgrade is a finding, so it must be visible in the exit status too.
     return CommandResult(
         {"claim": data["text"], "grade": data["grade"], "claimed": data["claimed_grade"],
-         "downgraded": data["downgraded"], "unresolved": data["unresolved"]},
+         "downgraded": data["downgraded"], "reason": data.get("reason", ""),
+         "unresolved": data["unresolved"], "unsupported": data.get("unsupported", [])},
         exit_code=1 if data["downgraded"] else 0,
     )
 
