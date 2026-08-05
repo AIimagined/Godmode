@@ -1164,6 +1164,40 @@ class BindingsTests(unittest.TestCase):
         self.assertIn("godmode_runtime", report["first_party"])
 
 
+class UsabilityTests(unittest.TestCase):
+    def test_shim_exists_for_both_shells(self) -> None:
+        # Every call otherwise costs the caller the full path to the plugin, which
+        # is enough friction to suppress use.
+        for name in ("godmode", "godmode.cmd"):
+            self.assertTrue((PLUGIN_ROOT / "bin" / name).is_file(), name)
+        posix = (PLUGIN_ROOT / "bin" / "godmode").read_text(encoding="utf-8")
+        # Presence on PATH is not the same as being an interpreter: Windows ships
+        # shims that resolve and then refuse to run.
+        self.assertIn("import sys", posix)
+
+    def test_an_over_long_subject_fails_at_parse_time(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, str(SCRIPTS / "godmode.py"), "--project", str(PLUGIN_ROOT),
+             "remember", "--kind", "decision", "--subject", "x" * 250, "--value", "v"],
+            capture_output=True, text=True, encoding="utf-8", timeout=60,
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        # Argparse rejects it before any record is composed or the archive touched.
+        self.assertIn("1-200 characters", completed.stderr)
+
+    def test_output_flags_work_in_any_position(self) -> None:
+        # A flag whose position must be remembered is the same friction again.
+        for argv in (["--brief", "--project", str(PLUGIN_ROOT), "sbom"],
+                     ["--project", str(PLUGIN_ROOT), "sbom", "--brief"]):
+            completed = subprocess.run(
+                [sys.executable, str(SCRIPTS / "godmode.py"), *argv],
+                capture_output=True, text=True, encoding="utf-8", timeout=120,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("no-runtime-dependencies", completed.stdout)
+            self.assertNotIn("{", completed.stdout)
+
+
 class CorpusTests(unittest.TestCase):
     def test_role_resolution_self_check(self) -> None:
         from godmode_runtime.godmode_corpus import _self_check
