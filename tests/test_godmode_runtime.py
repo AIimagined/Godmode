@@ -102,7 +102,9 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(codex["author"]["name"], claude["author"]["name"])
         self.assertEqual(claude["repository"], "https://github.com/AIimagined/Godmode")
         self.assertEqual(claude["skills"], "./skills/")
-        self.assertEqual(claude["hooks"], "./hooks/hooks.json")
+        # hooks/hooks.json is loaded by convention; declaring it in the
+        # manifest again causes a duplicate-hooks load error in Claude Code.
+        self.assertNotIn("hooks", claude)
 
         self.assertEqual(marketplace["name"], "aiimagined")
         self.assertEqual(len(marketplace["plugins"]), 1)

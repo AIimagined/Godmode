@@ -11,11 +11,47 @@ import os
 from pathlib import Path
 import re
 import secrets
+import sys
 import tempfile
 import time
 from typing import Any
 
 from .godmode_errors import AuthorizationError, PrivacyError
+
+
+def _stdin_is_interactive() -> bool:
+    try:
+        if not sys.stdin.isatty():
+            return False
+    except (AttributeError, ValueError):
+        return False
+    if os.name == "nt":
+        # On Windows, isatty() is true for any character device, including
+        # NUL. Only a real console accepts GetConsoleMode, and getpass reads
+        # from the console, so anything else would block forever.
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-10)  # STD_INPUT_HANDLE
+        mode = ctypes.c_uint32()
+        return bool(kernel32.GetConsoleMode(handle, ctypes.byref(mode)))
+    return True
+
+
+def _require_tty() -> None:
+    if not _stdin_is_interactive():
+        raise AuthorizationError(
+            "No interactive terminal is available for password entry. "
+            "Run this command from an interactive shell, or pass "
+            "--password-stdin and pipe the password on standard input."
+        )
+
+
+def read_password_stdin() -> str:
+    password = sys.stdin.readline().rstrip("\r\n")
+    if not password:
+        raise AuthorizationError("No password was received on standard input")
+    return password
 
 
 _SECRET_PATTERNS = (
@@ -177,6 +213,7 @@ class CapabilityBroker:
         _atomic_json(self.path, payload)
 
     def configure_interactive(self) -> None:
+        _require_tty()
         first = getpass.getpass("Create Godmode local authorization password: ")
         second = getpass.getpass("Confirm password: ")
         if first != second:
@@ -242,6 +279,7 @@ class CapabilityBroker:
         return token
 
     def issue_interactive(self, operation: str, ttl_seconds: int = 180) -> str:
+        _require_tty()
         password = getpass.getpass("Godmode authorization password: ")
         return self.issue(operation, password, ttl_seconds)
 
