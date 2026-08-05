@@ -141,6 +141,74 @@ def gate(archive: Chronicle, session: str, charter: dict[str, Any], trigger: str
     return Verdict(allowed=not missing, trigger=trigger, missing=missing)
 
 
+# Words too common to corroborate anything. A claim whose only overlap with the
+# cited line is "the" has not been corroborated.
+_STOPWORDS = frozenset("""
+about after all also and any are because been before being both but can cannot did
+does doing done during each either else every for from had has have how into its
+itself just like made make many may might more most must never new non not now off
+once only other our out over own same should since some such than that the their
+them then there these they this those through too under until use used using very
+was were what when where which while who why will with within would your
+""".split())
+
+# How far either side of a cited line a supporting term may sit. A claim usually
+# refers to a small region rather than one exact line, but not to a whole file.
+POSITION_WINDOW = 3
+
+
+def _salient(text: str) -> set[str]:
+    """Distinctive terms, with identifiers split into their parts.
+
+    Prose says "the widget renders" where code says `render_widget`. Comparing the
+    two as whole tokens finds no overlap and reports a correct citation as drifted,
+    so identifiers contribute both their whole form and their parts, and a crude
+    plural stem closes the rest of the gap.
+    """
+    found: set[str] = set()
+    for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", text):
+        parts = [token] + re.split(r"_|(?<=[a-z0-9])(?=[A-Z])", token)
+        for part in parts:
+            lowered = part.lower()
+            if len(lowered) < 4 or lowered in _STOPWORDS:
+                continue
+            found.add(lowered)
+            if lowered.endswith("s") and len(lowered) > 4:
+                found.add(lowered[:-1])
+    return found
+
+
+def _position_support(project: Path, citation: str, claim: str) -> str | None:
+    """Does the cited line actually say anything the claim is about?
+
+    A citation that resolves proves the location exists; it does not prove the
+    location is the right one. Reported positions drifting off target while still
+    pointing at real lines is a documented failure of agent-produced findings, and
+    it is undetectable by checking existence alone.
+
+    Returns "corroborated", "unsupported", or None when no honest judgement is
+    possible - a claim with no distinctive terms cannot be corroborated or refuted,
+    and guessing either way would be worse than abstaining.
+    """
+    match = _FILE_CITE.match(citation)
+    if not match or match.group("start") is None:
+        return None
+    terms = _salient(claim)
+    if not terms:
+        return None
+    target = project / match.group("path")
+    try:
+        lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    start = int(match.group("start"))
+    end = int(match.group("end") or start)
+    low = max(0, start - 1 - POSITION_WINDOW)
+    high = min(len(lines), end + POSITION_WINDOW)
+    window = _salient(" ".join(lines[low:high]))
+    return "corroborated" if terms & window else "unsupported"
+
+
 def _citation_resolves(project: Path, archive: Chronicle, citation: str) -> bool:
     match = _RECORD_CITE.match(citation)
     if match:
@@ -184,9 +252,23 @@ def record_claim(
     unresolved = [
         citation for citation in citations if not _citation_resolves(project, archive, citation)
     ]
+    # A citation can resolve and still point at the wrong place. Existence and
+    # support are separate claims, so they are checked separately.
+    unsupported = [
+        citation
+        for citation in citations
+        if citation not in unresolved
+        and _position_support(project, citation, text) == "unsupported"
+    ]
     effective = grade
-    if grade == "verified" and (unresolved or not citations):
-        effective = "hypothesis"
+    reason = ""
+    if grade == "verified":
+        if not citations:
+            effective, reason = "hypothesis", "no citation"
+        elif unresolved:
+            effective, reason = "hypothesis", "citation does not resolve"
+        elif unsupported:
+            effective, reason = "hypothesis", "cited location does not support the claim"
     record = archive.append(
         "claim",
         text[:120],
@@ -196,7 +278,9 @@ def record_claim(
             "claimed_grade": grade,
             "grade": effective,
             "unresolved": unresolved,
+            "unsupported": unsupported,
             "downgraded": effective != grade,
+            "reason": reason,
         },
         evidence=citations,
     )
@@ -271,10 +355,31 @@ def _self_check() -> None:
             bare = record_claim(archive, project, session, "The retry path is disabled.", "verified")
             assert bare["data"]["grade"] == "hypothesis", bare["data"]
 
-            # A claim citing a real file line stays verified.
-            good = record_claim(archive, project, session, "The gate exists.", "verified",
+            # A claim whose cited line actually mentions it stays verified.
+            good = record_claim(archive, project, session,
+                                "Commit requires an explicit ask.", "verified",
                                 cites=["file:GODMODE.md#L2"])
             assert good["data"]["grade"] == "verified", good["data"]
+
+            # A claim whose citation resolves but points somewhere unrelated is
+            # downgraded: existence is not support, and drifted positions are the
+            # documented failure mode of agent-reported findings.
+            (project / "rotate.py").write_text(
+                "def rotate():\n    return 1\n\n\ndef unrelated():\n    return 2\n",
+                encoding="utf-8",
+            )
+            drifted = record_claim(archive, project, session,
+                                   "Retention policy expires audit rows after ninety days.",
+                                   "verified", cites=["file:rotate.py#L5"])
+            assert drifted["data"]["grade"] == "hypothesis", drifted["data"]
+            assert drifted["data"]["unsupported"] == ["file:rotate.py#L5"], drifted["data"]
+            assert "does not support" in drifted["data"]["reason"], drifted["data"]
+
+            # And one that lands on the right line survives.
+            landed = record_claim(archive, project, session,
+                                  "The rotate function returns a value.", "verified",
+                                  cites=["file:rotate.py#L1"])
+            assert landed["data"]["grade"] == "verified", landed["data"]
 
             # A claim citing a missing file is downgraded and blocks closure.
             record_claim(archive, project, session, "The absent module is wired.", "verified",

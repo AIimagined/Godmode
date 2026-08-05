@@ -541,6 +541,43 @@ class AttestationTests(unittest.TestCase):
             record_step(archive, session, "preflight", "empty", rule_ids=[hard[0]["id"]])
             self.assertTrue(gate(archive, session, charter, hard[0]["trigger"]).allowed)
 
+    def test_a_citation_that_resolves_but_drifts_is_still_downgraded(self) -> None:
+        # Existence and support are separate claims. A cited line can be real and
+        # still have nothing to do with the assertion; positions drifting off target
+        # while pointing at real lines is a documented failure of agent findings.
+        from godmode_runtime.godmode_attest import open_session, record_claim
+
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            (project / "auth.py").write_text(
+                "def rotate_token():\n    return 1\n\n\ndef render_widget():\n    return 2\n",
+                encoding="utf-8",
+            )
+            session = open_session(archive, "test")
+
+            drifted = record_claim(
+                archive, project, session,
+                "Retention expires audit rows after ninety days.", "verified",
+                cites=["file:auth.py#L5"],
+            )
+            self.assertEqual(drifted["data"]["grade"], "hypothesis")
+            self.assertEqual(drifted["data"]["unsupported"], ["file:auth.py#L5"])
+
+            landed = record_claim(
+                archive, project, session,
+                "The rotate_token function returns a value.", "verified",
+                cites=["file:auth.py#L1"],
+            )
+            self.assertEqual(landed["data"]["grade"], "verified")
+
+            # Prose and identifiers must meet: "the widget renders" corroborates
+            # `render_widget`, or correct citations get reported as drift.
+            prose = record_claim(
+                archive, project, session, "The widget renders.", "verified",
+                cites=["file:auth.py#L5"],
+            )
+            self.assertEqual(prose["data"]["grade"], "verified", prose["data"])
+
     def test_unsupported_claim_is_downgraded_not_warned(self) -> None:
         from godmode_runtime.godmode_attest import open_session, record_claim
 
