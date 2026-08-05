@@ -470,6 +470,37 @@ class CharterTests(unittest.TestCase):
 
         _self_check()
 
+    def test_rules_narrow_to_the_artefact_they_speak_about(self) -> None:
+        from godmode_runtime.godmode_charter import applicable_rules, compile_charter, traits_of
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / "GODMODE.md").write_text(
+                "# Rules\n"
+                "- Never drop a column without a reversible migration.\n"
+                "- Every stylesheet must be reviewed before merge.\n"
+                "- Always confirm the change before committing.\n",
+                encoding="utf-8",
+            )
+            charter = compile_charter(project)
+            self.assertIn("migration", traits_of("db/migrations/001.sql"))
+            self.assertIn("ui", traits_of("src/components/Button.tsx"))
+
+            sql = applicable_rules(charter, "db/migrations/001.sql")
+            tsx = applicable_rules(charter, "src/components/Button.tsx")
+            sql_text = " ".join(r["text"].lower() for r in sql["applicable"])
+            tsx_text = " ".join(r["text"].lower() for r in tsx["applicable"])
+
+            # A rule reaches the artefact it speaks about and not the other one.
+            self.assertIn("column", sql_text)
+            self.assertNotIn("stylesheet", sql_text)
+            self.assertIn("stylesheet", tsx_text)
+            self.assertNotIn("column", tsx_text)
+            # A rule naming no characteristic is universal, never narrowed away.
+            self.assertIn("committing", sql_text)
+            self.assertIn("committing", tsx_text)
+            self.assertGreater(sql["narrowed_away"], 0)
+
     def test_unverifiable_guidance_is_labelled_not_dropped(self) -> None:
         from godmode_runtime.godmode_charter import ADVISORY, compile_charter
 

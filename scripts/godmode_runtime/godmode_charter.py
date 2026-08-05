@@ -189,6 +189,95 @@ def compile_charter(project: Path) -> dict[str, Any]:
     }
 
 
+# A rule about migrations is irrelevant to a stylesheet however the task is worded.
+# Traits narrow the rule set deterministically, at the source, instead of injecting
+# everything and relying on the model to ignore what does not apply.
+_TRAITS: tuple[tuple[str, str], ...] = (
+    ("test", r"(^|/)(tests?|spec|__tests__)/|(^|/)test_|_test\.|\.test\.|\.spec\."),
+    ("migration", r"(^|/)migrations?/|\.sql$|(^|/)alembic/"),
+    ("schema", r"schema|(^|/)models?/|\.prisma$|\.graphql$"),
+    ("config", r"\.(json|ya?ml|toml|ini|cfg|env|properties)$|(^|/)\.[a-z]+rc"),
+    ("ci", r"(^|/)\.github/workflows/|gitlab-ci|jenkinsfile|azure-pipelines|bitbucket-pipelines"),
+    ("docs", r"\.(md|mdx|rst|adoc|txt)$|(^|/)docs?/"),
+    ("ui", r"\.(tsx|jsx|vue|svelte|css|scss|html)$|(^|/)(components?|views?|pages?)/"),
+    ("security", r"auth|crypto|secret|token|password|credential|session|permission|acl"),
+    ("data", r"(^|/)(db|database|repositor(y|ies)|dao|store)/|\.(sqlite3?|db)$"),
+    ("generated", r"(^|/)(dist|build|vendor|node_modules|__pycache__|target)/|\.min\."),
+    ("entrypoint", r"(^|/)(main|index|app|cli|__main__)\.[a-z]+$"),
+    ("infra", r"dockerfile|docker-compose|\.tf$|(^|/)(k8s|helm|charts)/"),
+)
+
+
+# The words a rule actually uses, rather than the trait names. A rule saying "ddl"
+# or "stylesheet" names no trait literally, so without this it defaults to universal
+# and narrowing quietly does nothing. Recall here is what makes the filter useful;
+# a project with its own vocabulary should extend this rather than rename its rules.
+_TRAIT_VOCABULARY: tuple[tuple[str, str], ...] = (
+    ("test", r"\btests?\b|\bassertions?\b|\bguards?\b|\bcoverage\b|\bfixtures?\b|\bmocks?\b|\bsuite\b"),
+    ("migration", r"\bmigrations?\b|\bddl\b|\balter table\b|\bbackfill\b|\brollback script\b"),
+    ("schema", r"\bcolumns?\b|\btables?\b|\bindexe?s?\b|\bconstraints?\b|\bschemas?\b|\bnullable\b|\bforeign key\b"),
+    ("docs", r"\bdocumentation\b|\bchangelog\b|\breadme\b|\brelease notes?\b|\bhelp page\b|\bdocs?\b"),
+    ("ui", r"\binterfaces?\b|\bcomponents?\b|\blayouts?\b|\bstylesheets?\b|\bviewport\b|\bcss\b|\bmodal\b|\bbutton\b|\bscreen\b|\brender(?:s|ing)?\b"),
+    ("security", r"\bsecurity\b|\bprivacy\b|\bsecrets?\b|\bcredentials?\b|\bauth\w*\b|\btokens?\b|\bpasswords?\b|\bpermissions?\b"),
+    ("config", r"\bconfigs?\b|\bconfiguration\b|\benvironment variables?\b|\bfeature flags?\b|\bsettings\b"),
+    ("ci", r"\bci\b|\bpipelines?\b|\bworkflows?\b|\bbuild server\b"),
+    ("data", r"\bdatabase\b|\bquer(?:y|ies)\b|\brows?\b|\bledgers?\b|\bretention\b"),
+    ("generated", r"\bgenerated\b|\bvendored?\b|\bbuild output\b|\bartifacts?\b"),
+    ("infra", r"\bdeploy\w*\b|\bcontainers?\b|\bdocker\b|\bkubernetes\b|\binfrastructure\b"),
+    ("entrypoint", r"\bentry ?points?\b|\bcli\b|\bmain\b"),
+)
+
+
+def traits_of(path: str) -> list[str]:
+    """Classify one artefact by the characteristics rules can key on."""
+    lowered = path.replace("\\", "/").lower()
+    found = [name for name, pattern in _TRAITS if re.search(pattern, lowered)]
+    suffix = lowered.rsplit(".", 1)[-1] if "." in lowered else ""
+    if suffix:
+        found.append(f"ext:{suffix}")
+    return sorted(set(found))
+
+
+def rule_traits(text: str) -> list[str]:
+    """Which artefact characteristics a rule speaks about.
+
+    A rule naming none is universal: it applies everywhere, which is the safe
+    default. Narrowing may only ever happen on an explicit mention.
+    """
+    lowered = text.lower()
+    named = [
+        name for name, _ in _TRAITS
+        if re.search(rf"(?<![a-z]){re.escape(name)}(?![a-z])", lowered)
+    ]
+    for name, extra in _TRAIT_VOCABULARY:
+        if name not in named and re.search(extra, lowered):
+            named.append(name)
+    return sorted(set(named))
+
+
+def applicable_rules(charter: dict[str, Any], path: str) -> dict[str, Any]:
+    """Rules that apply to one artefact, and the reason each was kept or dropped."""
+    traits = set(traits_of(path))
+    kept: list[dict[str, Any]] = []
+    narrowed = 0
+    for rule in charter["compiled"]:
+        wanted = rule.get("traits") or rule_traits(rule["text"])
+        if not wanted:
+            kept.append({**rule, "why": "universal"})
+        elif traits & set(wanted):
+            kept.append({**rule, "why": "matches " + ",".join(sorted(traits & set(wanted)))})
+        else:
+            narrowed += 1
+    return {
+        "path": path,
+        "traits": sorted(traits),
+        "applicable": kept,
+        "kept": len(kept),
+        "narrowed_away": narrowed,
+        "total": charter["rules"],
+    }
+
+
 def rules_for(charter: dict[str, Any], trigger: str, enforcement: str | None = None) -> list[dict[str, Any]]:
     return [
         rule
@@ -255,6 +344,39 @@ def _self_check() -> None:
             assert expected in by_kind, (expected, sorted(by_kind))
             assert by_kind[expected]["enforcement"] == HARD, by_kind[expected]
         assert disciplined["enforcement"][ADVISORY] == 0, disciplined["enforcement"]
+
+    # Rules narrow to the artefact they speak about, deterministically.
+    with tempfile.TemporaryDirectory() as raw:
+        keyed = Path(raw)
+        (keyed / "GODMODE.md").write_text(
+            "# Rules\n"
+            "- Never drop a column without a reversible migration.\n"
+            "- Every UI component must be reviewed before merge.\n"
+            "- Always confirm the change before committing.\n",
+            encoding="utf-8",
+        )
+        charter = compile_charter(keyed)
+        assert charter["rules"] == 3, charter
+
+        assert "migration" in traits_of("db/migrations/0002_add_col.sql")
+        assert "test" in traits_of("tests/test_auth.py")
+        assert "security" in traits_of("src/auth/session.py")
+
+        migration = applicable_rules(charter, "db/migrations/0002_add_col.sql")
+        texts = " ".join(r["text"] for r in migration["applicable"]).lower()
+        assert "migration" in texts, migration
+        assert "ui component" not in texts, migration
+        assert migration["narrowed_away"] >= 1, migration
+
+        component = applicable_rules(charter, "src/components/Button.tsx")
+        component_texts = " ".join(r["text"] for r in component["applicable"]).lower()
+        assert "ui component" in component_texts, component
+        assert "column" not in component_texts, component
+
+        # A rule naming no characteristic is universal and survives every narrowing.
+        for probe in ("db/migrations/x.sql", "src/components/Button.tsx", "README.md"):
+            kept = " ".join(r["text"] for r in applicable_rules(charter, probe)["applicable"])
+            assert "before committing" in kept, (probe, kept)
 
     print("godmode_charter self-check OK")
 

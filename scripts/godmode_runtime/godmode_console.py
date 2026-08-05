@@ -27,7 +27,7 @@ from .godmode_assess import selftest as run_selftest
 from .godmode_atlas import build as build_atlas
 from .godmode_atlas import slice_file
 from .godmode_attest import GRADES, STATUSES
-from .godmode_charter import TRIGGERS, compile_charter
+from .godmode_charter import TRIGGERS, applicable_rules, compile_charter, traits_of
 from .godmode_drift import capabilities as host_capabilities
 from .godmode_drift import compare as compare_sessions
 from .godmode_method import Shape
@@ -200,6 +200,17 @@ def _session(runtime: Runtime, explicit: str | None) -> str:
 
 def cmd_charter(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     charter = _charter(runtime)
+    if args.at:
+        # Narrowing happens here, deterministically, rather than by injecting every
+        # rule and relying on the reader to ignore what does not apply.
+        scoped = applicable_rules(charter, args.at)
+        if not args.full:
+            scoped["applicable"] = [
+                {"id": r["id"], "enforcement": r["enforcement"], "why": r["why"],
+                 "text": r["text"][:120]}
+                for r in scoped["applicable"]
+            ]
+        return CommandResult(scoped)
     if not args.full:
         charter.pop("compiled", None)
     return CommandResult(charter)
@@ -817,6 +828,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     charter = sub.add_parser("charter", help="Compile prose guidance into addressable rules")
     charter.add_argument("--full", action="store_true", help="Include every compiled rule")
+    charter.add_argument("--at", metavar="PATH",
+                         help="Narrow to the rules that apply to this artefact's characteristics")
     charter.set_defaults(handler=cmd_charter)
 
     session = sub.add_parser("session", help="Open or close an attested session")
