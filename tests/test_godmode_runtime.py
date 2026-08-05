@@ -610,6 +610,41 @@ class AttestationTests(unittest.TestCase):
             self.assertEqual(missing["exit_code"], 127)
             self.assertNotIn("R-absent", attested_rule_ids(archive, session))
 
+    def test_a_guard_must_be_seen_failing_to_count(self) -> None:
+        # A guard never observed failing may assert nothing, test the wrong surface,
+        # or skip silently - and all three look exactly like a pass.
+        from godmode_runtime.godmode_attest import (
+            attested_rule_ids, open_session, plant_and_observe,
+        )
+
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            session = open_session(archive, "test")
+            (project / "value.txt").write_text("42\n", encoding="utf-8")
+            real = [sys.executable, "-c",
+                    "import pathlib,sys; sys.exit(0 if pathlib.Path('value.txt')"
+                    ".read_text().strip()=='42' else 1)"]
+
+            proven = plant_and_observe(archive, session, project, "value", real,
+                                       target="value.txt", replace="42", with_text="99",
+                                       rule_ids=["R-real"])
+            self.assertTrue(proven["observed_failing"], proven)
+            self.assertIn("R-real", attested_rule_ids(archive, session))
+            # A plant must never leak into the working tree.
+            self.assertEqual((project / "value.txt").read_text(encoding="utf-8"), "42\n")
+
+            hollow = plant_and_observe(archive, session, project, "hollow",
+                                       [sys.executable, "-c", "raise SystemExit(0)"],
+                                       target="value.txt", replace="42", with_text="99",
+                                       rule_ids=["R-hollow"])
+            self.assertFalse(hollow["observed_failing"])
+            self.assertNotIn("R-hollow", attested_rule_ids(archive, session))
+
+            # A plant that changes nothing is refused, not read as a pass.
+            with self.assertRaises(ArchiveError):
+                plant_and_observe(archive, session, project, "noop", real,
+                                  target="value.txt", replace="absent", with_text="x")
+
     def test_reflection_flags_a_contradiction_without_asserting_one(self) -> None:
         from godmode_runtime.godmode_attest import open_session, record_claim, reflect
 
