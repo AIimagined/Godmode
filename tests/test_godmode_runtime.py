@@ -97,9 +97,31 @@ class PackagingTests(unittest.TestCase):
             (PLUGIN_ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8")
         )
 
+        grok = json.loads(
+            (PLUGIN_ROOT / ".grok-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )
+        grok_marketplace = json.loads(
+            (PLUGIN_ROOT / ".grok-plugin" / "marketplace.json").read_text(encoding="utf-8")
+        )
+
         self.assertEqual(codex["name"], claude["name"])
         self.assertEqual(codex["version"], claude["version"])
         self.assertEqual(codex["author"]["name"], claude["author"]["name"])
+
+        # Three hosts, one product. A version, licence, author or canonical URL that
+        # disagrees across manifests ships a different identity to each host.
+        for field in ("name", "version", "license", "repository", "homepage"):
+            self.assertEqual(grok[field], claude[field], field)
+        self.assertEqual(grok["author"]["name"], claude["author"]["name"])
+        self.assertEqual(grok["skills"], "./skills/")
+        # hooks/hooks.json is loaded by convention on every host; declaring it again
+        # in a manifest causes a duplicate-hooks load error.
+        self.assertNotIn("hooks", grok)
+
+        grok_entry = grok_marketplace["plugins"][0]
+        self.assertEqual(grok_entry["name"], grok["name"])
+        self.assertEqual(grok_entry["version"], grok["version"])
+        self.assertEqual(grok_marketplace["owner"]["name"], claude["author"]["name"])
         self.assertEqual(claude["repository"], "https://github.com/AIimagined/Godmode")
         self.assertEqual(claude["skills"], "./skills/")
         # hooks/hooks.json is loaded by convention; declaring it in the

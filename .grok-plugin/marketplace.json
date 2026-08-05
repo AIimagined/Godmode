@@ -1,0 +1,27 @@
+{
+  "name": "aiimagined",
+  "owner": {
+    "name": "AIimagined",
+    "url": "https://github.com/AIimagined"
+  },
+  "description": "AIimagined plugins for bounded, inspectable agent workflows.",
+  "plugins": [
+    {
+      "name": "godmode",
+      "description": "Local-first context continuity and evidence governance for coding agents.",
+      "version": "0.1.0",
+      "category": "productivity",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/AIimagined/Godmode.git"
+      },
+      "homepage": "https://github.com/AIimagined/Godmode",
+      "keywords": [
+        "context-continuity",
+        "evidence-governance",
+        "local-first",
+        "developer-tools"
+      ]
+    }
+  ]
+}

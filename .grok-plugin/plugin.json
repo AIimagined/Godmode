@@ -1,0 +1,21 @@
+{
+  "name": "godmode",
+  "displayName": "Godmode",
+  "version": "0.1.0",
+  "description": "Local-first context continuity and evidence governance for coding agents.",
+  "author": {
+    "name": "AIimagined",
+    "url": "https://github.com/AIimagined"
+  },
+  "homepage": "https://github.com/AIimagined/Godmode",
+  "repository": "https://github.com/AIimagined/Godmode",
+  "license": "Apache-2.0",
+  "category": "productivity",
+  "keywords": [
+    "context-continuity",
+    "evidence-governance",
+    "local-first",
+    "developer-tools"
+  ],
+  "skills": "./skills/"
+}
