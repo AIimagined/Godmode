@@ -667,6 +667,60 @@ class AttestationTests(unittest.TestCase):
                 plant_and_observe(archive, session, project, "noop", real,
                                   target="value.txt", replace="absent", with_text="x")
 
+    def test_an_absence_claim_needs_the_search_that_would_disprove_it(self) -> None:
+        # Pointing at a file shows one place a thing is not, which says nothing
+        # about everywhere else. A claim nothing could falsify is not verified,
+        # it is unchallenged.
+        from godmode_runtime.godmode_attest import (
+            is_absence_claim, open_session, record_claim, run_check,
+        )
+
+        self.assertTrue(is_absence_claim("The runtime has no network dependencies."))
+        self.assertFalse(is_absence_claim("The rotate function returns a value."))
+
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            (project / "GODMODE.md").write_text("# Gates\nline two\n", encoding="utf-8")
+            session = open_session(archive, "test")
+
+            pointing = record_claim(archive, project, session,
+                                    "There are no secrets in the archive.", "verified",
+                                    cites=["file:GODMODE.md#L2"])
+            self.assertEqual(pointing["data"]["grade"], "hypothesis")
+            self.assertIn("absence claim", pointing["data"]["reason"])
+
+            sweep = [sys.executable, "-c", "print('swept')"]
+            run_check(archive, session, project, "sweep", sweep)
+            searched = record_claim(archive, project, session,
+                                    "There are no secrets in the archive.", "verified",
+                                    cites=[f"cmd:{' '.join(sweep)[:160]}"])
+            self.assertEqual(searched["data"]["grade"], "verified", searched["data"])
+
+            # Naming a command is not running one.
+            invented = record_claim(archive, project, session,
+                                    "There are no orphaned records.", "verified",
+                                    cites=["cmd:a-sweep-that-never-ran"])
+            self.assertEqual(invented["data"]["grade"], "hypothesis")
+
+    def test_the_same_control_blocking_twice_is_a_recurrence(self) -> None:
+        # One block is the control working. Two on the same cause means the rule was
+        # understood and violated again, so the fix belongs upstream of the block.
+        from godmode_runtime.godmode_attest import open_session, record_step, recurrences
+
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            session = open_session(archive, "test")
+
+            record_step(archive, session, "guard:url-literal", "blocked",
+                        result="url literal in fixture", reason="url literal in fixture")
+            self.assertEqual(recurrences(archive)["verdict"], "no-recurrence")
+
+            record_step(archive, session, "guard:url-literal", "blocked",
+                        result="url literal in fixture", reason="url literal in fixture")
+            repeated = recurrences(archive)
+            self.assertEqual(repeated["verdict"], "recurrence-detected")
+            self.assertEqual(repeated["recurrences"][0]["occurrences"], 2)
+
     def test_reflection_flags_a_contradiction_without_asserting_one(self) -> None:
         from godmode_runtime.godmode_attest import open_session, record_claim, reflect
 

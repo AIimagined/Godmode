@@ -372,6 +372,13 @@ def _position_support(project: Path, citation: str, claim: str) -> str | None:
 
 
 def _citation_resolves(project: Path, archive: Chronicle, citation: str) -> bool:
+    if citation.startswith("cmd:"):
+        # A command citation resolves when some attestation records having run it.
+        # Anyone can write the words; only a run leaves the record.
+        return any(
+            citation in record.get("evidence", [])
+            for record in archive.select(kind="attestation", limit=500)
+        )
     match = _RECORD_CITE.match(citation)
     if match:
         digest = match.group("digest")
@@ -424,11 +431,20 @@ def record_claim(
     ]
     effective = grade
     reason = ""
+    absence = is_absence_claim(text)
     if grade == "verified":
         if not citations:
             effective, reason = "hypothesis", "no citation"
         elif unresolved:
             effective, reason = "hypothesis", "citation does not resolve"
+        elif absence and not _cites_a_search(archive, citations):
+            # "No X exists" cannot be shown by pointing at somewhere X is not. Without
+            # the search that would have found X, the claim cannot be wrong - and a
+            # claim nothing could falsify is not verified, it is merely unchallenged.
+            effective, reason = (
+                "hypothesis",
+                "absence claim cites no search that would have found a counter-example",
+            )
         elif unsupported:
             effective, reason = "hypothesis", "cited location does not support the claim"
     record = archive.append(
@@ -495,6 +511,84 @@ def reflect(archive: Chronicle, text: str, limit: int = 200) -> dict[str, Any]:
         "checked": checked,
         "conflicts": conflicts[:5],
         "verdict": "conflict-suspected" if conflicts else "no-conflict-found",
+    }
+
+
+# Claims that assert something is not there. Pointing at a file proves presence;
+# absence is only ever proved by a search that would have found it.
+_ABSENCE = re.compile(
+    r"\b(?:no|zero|none|never|without|nothing|absent|free of|clean of)\b"
+    r"|\bnot? (?:present|found|used|imported|referenced|reachable)\b"
+    r"|\bdoes not (?:exist|contain|appear|reference)\b"
+)
+
+
+def is_absence_claim(text: str) -> bool:
+    return bool(_ABSENCE.search(text.lower()))
+
+
+def _cites_a_search(archive: Chronicle, citations: list[str]) -> bool:
+    """Whether any citation points at something that actually looked.
+
+    A `cmd:` citation is a command that ran. A `rec:` citation may resolve to an
+    attestation, which is a record of a step having been performed. A `file:`
+    citation is neither: it shows one place the thing is not, which says nothing
+    about everywhere else.
+    """
+    for citation in citations:
+        if citation.startswith("cmd:"):
+            return True
+        match = _RECORD_CITE.match(citation)
+        if not match:
+            continue
+        digest = match.group("digest")
+        for record in archive.select(kind="attestation", limit=500):
+            if record["record_hash"].startswith(digest):
+                return True
+    return False
+
+
+def recurrences(archive: Chronicle, limit: int = 500) -> dict[str, Any]:
+    """Find blocks that happened more than once for the same reason.
+
+    A control firing twice on the same cause is a different signal from it firing
+    once. The first time is the control working; the second is evidence that
+    understanding the rule did not install it, and that something upstream - a
+    template, a habit, a missing default - keeps reproducing the violation.
+    """
+    seen: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for record in archive.select(kind="attestation", limit=limit):
+        data = record["data"]
+        if data.get("status") != "blocked":
+            continue
+        cause = (data.get("reason") or data.get("result") or "")[:80]
+        key = (record["subject"], cause)
+        seen.setdefault(key, []).append({
+            "sequence": record["sequence"],
+            "session": data.get("session"),
+            "agent": (data.get("agent") or {}).get("model", "unknown"),
+        })
+
+    repeated = [
+        {
+            "step": step,
+            "cause": cause,
+            "occurrences": len(events),
+            "sessions": sorted({e["session"] for e in events if e["session"]}),
+            "agents": sorted({e["agent"] for e in events}),
+            "why_it_matters": (
+                "the same control blocked the same cause more than once; the rule was "
+                "understood and violated again, so the fix belongs upstream of the block"
+            ),
+        }
+        for (step, cause), events in sorted(seen.items())
+        if len(events) > 1
+    ]
+    return {
+        "checked": sum(len(v) for v in seen.values()),
+        "recurrences": repeated,
+        "count": len(repeated),
+        "verdict": "recurrence-detected" if repeated else "no-recurrence",
     }
 
 
@@ -652,6 +746,37 @@ def _self_check() -> None:
                 raise AssertionError("a no-op plant must be refused")
             except ArchiveError as exc:
                 assert "changed no bytes" in str(exc), exc
+
+            # An absence claim needs the search that would have found a counter-example.
+            assert is_absence_claim("The runtime has no network dependencies.")
+            assert not is_absence_claim("The rotate function returns a value.")
+
+            pointing = record_claim(archive, project, session,
+                                    "There are no secrets in the archive.", "verified",
+                                    cites=["file:GODMODE.md#L2"])
+            assert pointing["data"]["grade"] == "hypothesis", pointing["data"]
+            assert "absence claim" in pointing["data"]["reason"], pointing["data"]
+
+            sweep = [sys.executable, "-c", "print('swept')"]
+            run_check(archive, session, project, "secret-sweep", sweep)
+            searching = record_claim(archive, project, session,
+                                     "There are no secrets in the archive.", "verified",
+                                     cites=[f"cmd:{' '.join(sweep)[:160]}"])
+            assert searching["data"]["grade"] == "verified", searching["data"]
+
+            # A command nobody ran cites nothing: the words are not the evidence.
+            invented = record_claim(archive, project, session,
+                                    "There are no orphaned records.", "verified",
+                                    cites=["cmd:a-sweep-that-never-ran"])
+            assert invented["data"]["grade"] == "hypothesis", invented["data"]
+
+            # A control that blocked twice on the same cause is a recurrence, not noise.
+            for _ in range(2):
+                record_step(archive, session, "guard:url-literal", "blocked",
+                            result="url literal in fixture", reason="url literal in fixture")
+            repeats = recurrences(archive)
+            assert repeats["verdict"] == "recurrence-detected", repeats
+            assert repeats["recurrences"][0]["occurrences"] >= 2, repeats
 
             # Reflection notices that a new claim disagrees with a recorded one.
             record_claim(archive, project, session,
