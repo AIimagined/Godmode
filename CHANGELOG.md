@@ -6,6 +6,19 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+### Added
+
+- `authorize setup --password-stdin` and `authorize issue --password-stdin` for
+  non-interactive hosts that pipe the password on standard input.
+
+### Fixed
+
+- Removed the duplicate `hooks` manifest reference that made Claude Code fail to
+  load the plugin's hooks.
+- `authorize setup` and `authorize issue` now fail immediately with guidance when
+  no interactive console is available instead of blocking forever on the password
+  prompt (including Windows `NUL` redirection, where `isatty()` reports true).
+
 ## [0.1.0] - 2026-08-02
 
 ### Added

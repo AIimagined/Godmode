@@ -25,7 +25,12 @@ from .godmode_lens import (
     make_snapshot,
     observe_git,
 )
-from .godmode_sentinel import CapabilityBroker, classify_action, find_secret_shapes
+from .godmode_sentinel import (
+    CapabilityBroker,
+    classify_action,
+    find_secret_shapes,
+    read_password_stdin,
+)
 
 
 @dataclass
@@ -352,16 +357,21 @@ def cmd_guard(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 def cmd_authorize_setup(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     broker = CapabilityBroker(runtime.archive)
-    broker.configure_interactive()
+    if args.password_stdin:
+        broker.configure(read_password_stdin())
+    else:
+        broker.configure_interactive()
     return CommandResult({"configured": True, "storage": "local-only"})
 
 
 def cmd_authorize_issue(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     preview = classify_action(args.operation)
-    token = CapabilityBroker(runtime.archive).issue_interactive(
-        args.operation, args.ttl
-    )
+    broker = CapabilityBroker(runtime.archive)
+    if args.password_stdin:
+        token = broker.issue(args.operation, read_password_stdin(), args.ttl)
+    else:
+        token = broker.issue_interactive(args.operation, args.ttl)
     return CommandResult(
         {
             "capability": token,
@@ -609,8 +619,19 @@ def _build_parser() -> argparse.ArgumentParser:
 
     authorize = sub.add_parser("authorize", help="Configure or issue local capabilities")
     authorize_sub = authorize.add_subparsers(dest="authorize_command", required=True)
-    authorize_sub.add_parser("setup").set_defaults(handler=cmd_authorize_setup)
+    setup = authorize_sub.add_parser("setup")
+    setup.add_argument(
+        "--password-stdin",
+        action="store_true",
+        help="Read the password from standard input instead of prompting",
+    )
+    setup.set_defaults(handler=cmd_authorize_setup)
     issue = authorize_sub.add_parser("issue")
+    issue.add_argument(
+        "--password-stdin",
+        action="store_true",
+        help="Read the password from standard input instead of prompting",
+    )
     issue.add_argument("--operation", required=True)
     issue.add_argument("--ttl", type=int, default=180)
     issue.set_defaults(handler=cmd_authorize_issue)
