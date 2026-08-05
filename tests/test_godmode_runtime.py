@@ -578,6 +578,38 @@ class AttestationTests(unittest.TestCase):
             )
             self.assertEqual(prose["data"]["grade"], "verified", prose["data"])
 
+    def test_a_failing_check_cannot_be_attested_into_a_pass(self) -> None:
+        # An attestation an agent writes about its own work is a report, and the
+        # moment a check fails is the moment it is least inclined to say so. The
+        # runner records the exit code instead.
+        from godmode_runtime.godmode_attest import (
+            attested_rule_ids, open_session, run_check,
+        )
+
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            session = open_session(archive, "test")
+
+            failing = run_check(archive, session, project, "suite",
+                                [sys.executable, "-c", "raise SystemExit(2)"],
+                                rule_ids=["R-fails"])
+            self.assertEqual(failing["exit_code"], 2)
+            self.assertFalse(failing["passed"])
+            self.assertEqual(failing["attested"], "blocked")
+            self.assertNotIn("R-fails", attested_rule_ids(archive, session))
+
+            passing = run_check(archive, session, project, "suite",
+                                [sys.executable, "-c", "print('ok')"],
+                                rule_ids=["R-passes"])
+            self.assertTrue(passing["passed"])
+            self.assertIn("R-passes", attested_rule_ids(archive, session))
+
+            # A command that cannot run is a failure, not an absence of evidence.
+            missing = run_check(archive, session, project, "absent",
+                                ["definitely-not-a-real-binary-xyz"], rule_ids=["R-absent"])
+            self.assertEqual(missing["exit_code"], 127)
+            self.assertNotIn("R-absent", attested_rule_ids(archive, session))
+
     def test_reflection_flags_a_contradiction_without_asserting_one(self) -> None:
         from godmode_runtime.godmode_attest import open_session, record_claim, reflect
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import sys
 import re
 from typing import Any
 
@@ -115,6 +116,60 @@ def record_step(
         },
         evidence=evidence or [],
     )
+
+
+def run_check(
+    archive: Chronicle,
+    session: str,
+    project: Path,
+    name: str,
+    command: list[str],
+    rule_ids: list[str] | None = None,
+    timeout: int = 900,
+) -> dict[str, Any]:
+    """Run a declared check and attest its exit code, rather than its report.
+
+    An attestation an agent writes about its own work is a report. The gate it
+    satisfies is then only as good as the agent's willingness to say the check
+    failed, which is exactly the moment it is least inclined to. So the runner
+    records the result: a non-zero exit is stored as `blocked`, and `blocked` never
+    satisfies a gate, so a failing check cannot be attested into a pass.
+    """
+    import subprocess
+
+    try:
+        completed = subprocess.run(
+            command, cwd=str(project), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=timeout,
+        )
+        code = completed.returncode
+        tail = ((completed.stdout or "") + (completed.stderr or "")).strip().splitlines()
+        detail = " | ".join(tail[-3:])[:300] if tail else "(no output)"
+    except FileNotFoundError:
+        code, detail = 127, f"command not found: {command[0]}"
+    except subprocess.TimeoutExpired:
+        code, detail = 124, f"timed out after {timeout}s"
+
+    passed = code == 0
+    record = record_step(
+        archive,
+        session,
+        f"check:{name}",
+        "ran" if passed else "blocked",
+        result=f"exit {code}: {detail}",
+        evidence=[f"cmd:{' '.join(command)[:160]}"],
+        rule_ids=rule_ids,
+        reason="" if passed else f"check failed with exit {code}",
+    )
+    return {
+        "check": name,
+        "command": command,
+        "exit_code": code,
+        "passed": passed,
+        "detail": detail,
+        "attested": "ran" if passed else "blocked",
+        "sequence": record["sequence"],
+    }
 
 
 def attested_rule_ids(archive: Chronicle, session: str) -> set[str]:
@@ -436,6 +491,29 @@ def _self_check() -> None:
             verdict = close_session(archive, session, charter)
             assert not verdict["closed"]
             assert verdict["downgraded_claims"]
+
+            # A failing check cannot be attested into a pass: the runner records the
+            # exit code, and 'blocked' never satisfies a gate.
+            # Distinct ids, because a rule already attested earlier in this check
+            # would make the coverage assertions pass for the wrong reason.
+            failed_rule, passed_rule = "R-checkfail", "R-checkpass"
+            failing = run_check(archive, session, project, "failing",
+                                [sys.executable, "-c", "raise SystemExit(3)"],
+                                rule_ids=[failed_rule])
+            assert failing["exit_code"] == 3 and not failing["passed"], failing
+            assert failing["attested"] == "blocked", failing
+            assert failed_rule not in attested_rule_ids(archive, session), \
+                "a failed check satisfied the rule it was run for"
+
+            passing = run_check(archive, session, project, "passing",
+                                [sys.executable, "-c", "print('ok')"], rule_ids=[passed_rule])
+            assert passing["passed"] and passing["attested"] == "ran", passing
+            assert passed_rule in attested_rule_ids(archive, session), \
+                "a passing check did not satisfy its rule"
+
+            missing = run_check(archive, session, project, "absent",
+                                ["definitely-not-a-real-binary-xyz"])
+            assert missing["exit_code"] == 127 and not missing["passed"], missing
 
             # Reflection notices that a new claim disagrees with a recorded one.
             record_claim(archive, project, session,
