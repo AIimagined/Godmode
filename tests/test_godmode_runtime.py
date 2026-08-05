@@ -673,6 +673,54 @@ class ArchiveAdoptionTests(unittest.TestCase):
                 moved.verify()
 
 
+class ScopeTests(unittest.TestCase):
+    def test_scope_self_check(self) -> None:
+        from godmode_runtime.godmode_scope import _self_check
+
+        _self_check()
+
+    def test_a_non_repository_reports_unavailable_not_zero(self) -> None:
+        # An empty result is a claim about the tool until the tool succeeded.
+        # Reporting "nothing changed" where the truth is "cannot be determined" is
+        # the silent omission this module exists to prevent.
+        from godmode_runtime.godmode_scope import scope
+
+        with tempfile.TemporaryDirectory() as raw:
+            report = scope(Path(raw))
+            self.assertEqual(report["changed"], 0)
+            self.assertIn("unavailable", report["source"])
+
+    def test_every_changed_artefact_is_accounted_for(self) -> None:
+        from godmode_runtime.godmode_scope import scope
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            subprocess.run(["git", "init", "-q", str(project)], check=True,
+                           capture_output=True, timeout=30)
+            (project / "seed.md").write_text("seed\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(project), "add", "-A"], check=True,
+                           capture_output=True, timeout=30)
+            subprocess.run(["git", "-C", str(project), "-c", "user.email=t@t",
+                            "-c", "user.name=t", "commit", "-qm", "seed"],
+                           check=True, capture_output=True, timeout=30)
+
+            for rel, body in (("src/a.ts", "x\n"), ("src/a.test.ts", "x\n"),
+                              ("dist/b.js", "x\n"), ("art.png", "x\n")):
+                target = project / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(body, encoding="utf-8")
+
+            report = scope(project)
+            self.assertTrue(report["complete"], report)
+            self.assertEqual(report["accounted_for"], report["changed"])
+
+            bundled = next(u for u in report["units"] if "a.ts" in u["key"])
+            self.assertEqual(set(bundled["paths"]), {"src/a.ts", "src/a.test.ts"})
+            self.assertEqual(bundled["bundled_because"], "implementation and its test")
+            # Nothing is excluded without a stated reason.
+            self.assertTrue(all(entry["why"] for entry in report["filtered"]))
+
+
 class AssessTests(unittest.TestCase):
     def test_assess_self_check(self) -> None:
         from godmode_runtime.godmode_assess import _self_check

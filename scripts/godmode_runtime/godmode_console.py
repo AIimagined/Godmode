@@ -37,6 +37,7 @@ from .godmode_plan import CONTRACT_FIELDS as PLAN_FIELDS
 from .godmode_plan import approve as plan_approve
 from .godmode_plan import bind_execution, mutation_verdict
 from .godmode_plan import start as plan_start
+from .godmode_scope import scope as scope_change
 from .godmode_status import STATES, record_item, survey
 from .godmode_corpus import build_brief, resolve_roles
 from .godmode_errors import ArchiveError, GodmodeError
@@ -348,6 +349,17 @@ def cmd_assess(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 def cmd_selftest(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     report = run_selftest()
     return CommandResult(report, exit_code=0 if report["verdict"] == "enforcing" else 1)
+
+
+def cmd_scope(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    report = scope_change(Path(runtime.anchor.project_root), args.since)
+    if not args.full:
+        report["units"] = [
+            {"key": u["key"], "paths": u["paths"], "bundled_because": u["bundled_because"]}
+            for u in report["units"]
+        ]
+    # An enumeration that lost an artefact is the failure this command prevents.
+    return CommandResult(report, exit_code=0 if report["complete"] else 1)
 
 
 def cmd_atlas(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -912,6 +924,11 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("selftest", help="Exercise every control and report what actually held").set_defaults(
         handler=cmd_selftest
     )
+
+    scope_parser = sub.add_parser("scope", help="Enumerate the work before reasoning about it")
+    scope_parser.add_argument("--since", help="Compare against this ref instead of the working tree")
+    scope_parser.add_argument("--full", action="store_true")
+    scope_parser.set_defaults(handler=cmd_scope)
 
     atlas = sub.add_parser("atlas", help="Map the project's symbols and their relationships")
     atlas_sub = atlas.add_subparsers(dest="atlas_command", required=True)
