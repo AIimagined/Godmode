@@ -283,6 +283,113 @@ class CapabilityBroker:
         password = getpass.getpass("Godmode authorization password: ")
         return self.issue(operation, password, ttl_seconds)
 
+    def request(self, operation: str, purpose: str = "") -> dict[str, Any]:
+        """Record a durable request for authorization the agent cannot grant itself.
+
+        The only previous route to a capability was a synchronous terminal prompt,
+        which an agent cannot drive: it has no terminal, and the environment where
+        the prompt is impossible is exactly the one the product ships into. So the
+        request is separated from the grant. The agent states what it needs and
+        why, durably; a human or host decides later, out of band; the agent then
+        consumes the result.
+
+        This does not weaken the boundary. A request grants nothing, and an agent
+        that could mint its own approval would not need to ask.
+        """
+        classification = classify_action(operation)
+        if not classification["protected"]:
+            raise AuthorizationError("Read-only inspection does not need a capability")
+        record = self.archive.append(
+            "action",
+            f"request:{classification['category']}",
+            {
+                "state": "requested",
+                "operation": operation[:300],
+                "purpose": purpose[:300],
+                "category": classification["category"],
+                "operation_digest": classification["operation_digest"],
+                "preview": classification,
+                "grants_nothing": True,
+            },
+            evidence=[],
+        )
+        return {
+            "request": f"REQ-{record['record_hash'][:12]}",
+            "operation": operation[:300],
+            "category": classification["category"],
+            "state": "requested",
+            "next_action": "a human or host runs `authorize grant --request <id>`; the agent cannot grant its own request",
+        }
+
+    def requests(self, state: str | None = None) -> list[dict[str, Any]]:
+        """Requests and their outcomes, newest last."""
+        decided: dict[str, str] = {}
+        for record in self.archive.select(kind="action", limit=500):
+            data = record["data"]
+            if data.get("state") in ("granted", "denied") and data.get("request"):
+                decided[data["request"]] = data["state"]
+
+        found: list[dict[str, Any]] = []
+        for record in self.archive.select(kind="action", limit=500):
+            data = record["data"]
+            if data.get("state") != "requested":
+                continue
+            identifier = f"REQ-{record['record_hash'][:12]}"
+            current = decided.get(identifier, "requested")
+            if state and current != state:
+                continue
+            found.append({
+                "request": identifier,
+                "state": current,
+                "operation": data.get("operation", ""),
+                "purpose": data.get("purpose", ""),
+                "category": data.get("category", ""),
+                "sequence": record["sequence"],
+            })
+        return found
+
+    def _find_request(self, identifier: str) -> dict[str, Any]:
+        for entry in self.requests():
+            if entry["request"] == identifier:
+                return entry
+        raise AuthorizationError(f"No such request: {identifier}")
+
+    def grant(self, identifier: str, password: str, ttl_seconds: int = 180) -> dict[str, Any]:
+        """Approve a recorded request. Still requires the secret the agent lacks."""
+        entry = self._find_request(identifier)
+        if entry["state"] != "requested":
+            raise AuthorizationError(f"{identifier} is already {entry['state']}")
+        token = self.issue(entry["operation"], password, ttl_seconds)
+        self.archive.append(
+            "action",
+            f"grant:{entry['category']}",
+            {"state": "granted", "request": identifier, "operation": entry["operation"]},
+            evidence=[],
+        )
+        return {"request": identifier, "state": "granted", "capability": token,
+                "operation": entry["operation"], "expires_in_seconds": ttl_seconds}
+
+    def deny(self, identifier: str, reason: str) -> dict[str, Any]:
+        """Refuse a request, on the record.
+
+        A denial is kept because a request that simply goes quiet is
+        indistinguishable from one nobody saw, and the difference matters to
+        whoever reads the trail later.
+        """
+        if not reason.strip():
+            raise AuthorizationError("A denial requires a reason")
+        entry = self._find_request(identifier)
+        if entry["state"] != "requested":
+            raise AuthorizationError(f"{identifier} is already {entry['state']}")
+        self.archive.append(
+            "action",
+            f"deny:{entry['category']}",
+            {"state": "denied", "request": identifier, "reason": reason[:300],
+             "operation": entry["operation"]},
+            evidence=[],
+        )
+        return {"request": identifier, "state": "denied", "reason": reason[:300]}
+
     def consume(self, operation: str, token: str) -> dict[str, Any]:
         classification = classify_action(operation)
         if not classification["protected"]:
