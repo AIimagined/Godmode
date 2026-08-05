@@ -12,9 +12,9 @@ DEFAULT_RECORD_LIMIT = 24
 
 EVENT_KINDS = frozenset(
     {
-        "action", "branch", "change", "checklist", "checkpoint", "database",
-        "decision", "documentation", "incident", "invariant", "inventory",
-        "lesson", "obligation", "plan", "sprint", "version",
+        "action", "attestation", "branch", "change", "checklist", "checkpoint",
+        "claim", "database", "decision", "documentation", "incident", "invariant",
+        "inventory", "lesson", "obligation", "plan", "session", "sprint", "version",
     }
 )
 

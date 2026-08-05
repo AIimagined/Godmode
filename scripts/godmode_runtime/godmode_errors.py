@@ -23,3 +23,7 @@ class AuthorizationError(GodmodeError):
 
 class ForgeError(GodmodeError):
     """A skill could not be created or validated safely."""
+
+
+class CorpusError(GodmodeError):
+    """The project's authority corpus could not be resolved."""

@@ -13,6 +13,28 @@ from typing import Any, Callable
 from .godmode_anchor import ProjectAnchor, resolve_anchor
 from .godmode_chronicle import Chronicle
 from .godmode_constants import DEFAULT_CONTEXT_BUDGET, EVENT_KINDS, RUNTIME_VERSION
+from .godmode_attest import (
+    agent_fingerprint,
+    close_session,
+    gate,
+    latest_session,
+    open_session,
+    record_claim,
+    record_step,
+)
+from .godmode_attest import GRADES, STATUSES
+from .godmode_charter import TRIGGERS, compile_charter
+from .godmode_drift import capabilities as host_capabilities
+from .godmode_drift import compare as compare_sessions
+from .godmode_method import Shape
+from .godmode_method import contract as method_contract
+from .godmode_method import select as select_method
+from .godmode_plan import CONTRACT_FIELDS as PLAN_FIELDS
+from .godmode_plan import approve as plan_approve
+from .godmode_plan import bind_execution, mutation_verdict
+from .godmode_plan import start as plan_start
+from .godmode_status import STATES, record_item, survey
+from .godmode_corpus import build_brief, resolve_roles
 from .godmode_errors import ArchiveError, GodmodeError
 from .godmode_forge import SkillProposal, forge_skill, validate_skill
 from .godmode_lens import (
@@ -51,8 +73,20 @@ def _runtime(project: str) -> Runtime:
 
 
 def _require_archive(runtime: Runtime) -> None:
-    if not runtime.archive.initialized():
-        raise ArchiveError("Godmode is not initialized for this project; run `init` first")
+    if runtime.archive.initialized():
+        return
+    # "Not initialized" is the wrong answer when records exist under a previous
+    # identity: the history is intact and one command away, so say that instead of
+    # implying the project is new.
+    orphaned = runtime.archive.orphaned()
+    if orphaned:
+        raise ArchiveError(
+            f"Godmode is not initialized at this project's current identity, but "
+            f"{orphaned['records']} records exist under its previous one "
+            f"({orphaned['reason']}). Run `adopt --confirm` to relink them, or `init` "
+            f"to start a separate archive and leave them unreachable."
+        )
+    raise ArchiveError("Godmode is not initialized for this project; run `init` first")
 
 
 def _event_view(record: dict[str, Any]) -> dict[str, Any]:
@@ -90,16 +124,202 @@ def _append(
 
 def cmd_init(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     already = runtime.archive.initialized()
+    # Checked before initialize(), because initialize() creates the events directory
+    # and would make an adoptable archive look like a populated one.
+    orphaned = runtime.archive.orphaned()
     runtime.archive.initialize()
+    payload = {
+        "initialized": True,
+        "already_initialized": already,
+        "identity": runtime.anchor.public_view(),
+        "archive": "<git-metadata>" if runtime.anchor.is_git else "<os-application-data>",
+        "network_used": False,
+    }
+    if orphaned:
+        payload["orphaned_archive"] = orphaned
+        payload["next_action"] = (
+            "Records exist under this project's previous identity. Run `adopt` to relink "
+            "them, or continue and they stay unreachable."
+        )
+    return CommandResult(payload)
+
+
+def cmd_adopt(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    orphaned = runtime.archive.orphaned()
+    source = args.source or (orphaned or {}).get("source")
+    if not source:
+        return CommandResult({"adopted": 0, "reason": "no stranded archive found for this project"})
+    if not args.confirm:
+        return CommandResult(
+            {"preview": orphaned or {"source": source}, "confirm_with": "--confirm"},
+            exit_code=1,
+        )
+    runtime.archive.initialize()
+    return CommandResult(runtime.archive.adopt(Path(source)))
+
+
+def cmd_roles(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    # Deliberately usable before `init`: a project must be able to see how its
+    # authority documents resolve before Godmode holds any state for it.
+    resolution = resolve_roles(Path(runtime.anchor.project_root))
+    payload = resolution.view()
+    if args.check and not resolution.healthy:
+        return CommandResult(payload, exit_code=1)
+    return CommandResult(payload)
+
+
+def cmd_brief(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    # The artefact every host adapter requests at session open. Identical project
+    # state plus an identical task must yield an identical brief on every model.
+    brief = build_brief(Path(runtime.anchor.project_root), args.task, args.token_budget)
+    brief["project"] = {
+        "branch": runtime.anchor.branch,
+        "head": runtime.anchor.head,
+        "worktree": runtime.anchor.worktree_root is not None,
+    }
+    if not args.full:
+        for entry in brief["context"]:
+            entry.pop("body", None)
+    return CommandResult(brief)
+
+
+def _charter(runtime: Runtime) -> dict[str, Any]:
+    return compile_charter(Path(runtime.anchor.project_root))
+
+
+def _session(runtime: Runtime, explicit: str | None) -> str:
+    session = explicit or latest_session(runtime.archive)
+    if not session:
+        raise ArchiveError("No open session; run `session open` first")
+    return session
+
+
+def cmd_charter(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    charter = _charter(runtime)
+    if not args.full:
+        charter.pop("compiled", None)
+    return CommandResult(charter)
+
+
+def cmd_session_open(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    session = open_session(runtime.archive, args.label)
+    return CommandResult({"session": session, "agent": agent_fingerprint()})
+
+
+def cmd_attest(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    record = record_step(
+        runtime.archive,
+        _session(runtime, args.session),
+        args.step,
+        args.status,
+        result=args.result,
+        evidence=args.evidence,
+        rule_ids=args.rule,
+        reason=args.reason,
+    )
+    return CommandResult({"record": _event_view(record)})
+
+
+def cmd_gate(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    verdict = gate(runtime.archive, _session(runtime, args.session), _charter(runtime), args.trigger)
+    return CommandResult(verdict.view(), exit_code=0 if verdict.allowed else 1)
+
+
+def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    record = record_claim(
+        runtime.archive,
+        Path(runtime.anchor.project_root),
+        _session(runtime, args.session),
+        args.text,
+        args.grade,
+        cites=args.cite,
+    )
+    data = record["data"]
+    # A downgrade is a finding, so it must be visible in the exit status too.
+    return CommandResult(
+        {"claim": data["text"], "grade": data["grade"], "claimed": data["claimed_grade"],
+         "downgraded": data["downgraded"], "unresolved": data["unresolved"]},
+        exit_code=1 if data["downgraded"] else 0,
+    )
+
+
+def cmd_session_close(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    verdict = close_session(runtime.archive, _session(runtime, args.session), _charter(runtime))
+    return CommandResult(verdict, exit_code=0 if verdict["closed"] else 1)
+
+
+def cmd_method(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    shape = Shape(
+        reports=args.reports,
+        reproducible=not args.unreproducible,
+        ordering_question=args.ordering,
+        components_enumerable=args.components,
+        contributing_conditions=args.conditions,
+    )
+    sequence, reason = select_method(shape)
     return CommandResult(
         {
-            "initialized": True,
-            "already_initialized": already,
-            "identity": runtime.anchor.public_view(),
-            "archive": "<git-metadata>" if runtime.anchor.is_git else "<os-application-data>",
-            "network_used": False,
+            "shape": shape.view(),
+            "sequence": sequence,
+            "reason": reason,
+            "contracts": {method: list(method_contract(method)) for method in sequence},
         }
     )
+
+
+def cmd_status_set(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    record = record_item(
+        runtime.archive, args.item, args.title, args.state,
+        evidence=args.evidence, proof=args.proof,
+    )
+    return CommandResult({"record": _event_view(record)})
+
+
+def cmd_status_survey(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    report = survey(runtime.archive, Path(runtime.anchor.project_root))
+    return CommandResult(report, exit_code=1 if report["verdict"] == "competing-authority" else 0)
+
+
+def cmd_planmode_start(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    contract = {field: getattr(args, field) or "" for field in PLAN_FIELDS}
+    started = plan_start(runtime.archive, _session(runtime, args.session), args.title, contract)
+    return CommandResult(started, exit_code=1 if started["gaps"] else 0)
+
+
+def cmd_planmode_approve(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    verdict = plan_approve(runtime.archive, _session(runtime, args.session))
+    return CommandResult(verdict, exit_code=0 if verdict["approved"] else 1)
+
+
+def cmd_planmode_check(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    verdict = mutation_verdict(runtime.archive, _session(runtime, args.session))
+    return CommandResult(verdict, exit_code=0 if verdict["allowed"] else 1)
+
+
+def cmd_planmode_bind(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    bound = bind_execution(runtime.archive, _session(runtime, args.session), args.summary, args.file)
+    return CommandResult(bound, exit_code=1 if bound["outside_scope"] else 0)
+
+
+def cmd_drift(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    report = compare_sessions(runtime.archive)
+    return CommandResult(report, exit_code=1 if report["verdict"] == "drift-detected" else 0)
+
+
+def cmd_capabilities(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    return CommandResult(host_capabilities())
 
 
 def cmd_inspect(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -147,14 +367,16 @@ def cmd_context_status(args: argparse.Namespace, runtime: Runtime) -> CommandRes
     _require_archive(runtime)
     records = runtime.archive.read_events()
     current = collect_inventory(runtime.anchor.project_root) if args.scan else None
-    return CommandResult(
-        {
-            "archive": runtime.archive.verify(records),
-            "identity": runtime.anchor.public_view(),
-            "issues": detect_context_issues(runtime.anchor, records, current),
-            "scan_performed": args.scan,
-        }
-    )
+    payload = {
+        "archive": runtime.archive.verify(records),
+        "identity": runtime.anchor.public_view(),
+        "issues": detect_context_issues(runtime.anchor, records, current),
+        "scan_performed": args.scan,
+    }
+    orphaned = runtime.archive.orphaned()
+    if orphaned:
+        payload["orphaned_archive"] = orphaned
+    return CommandResult(payload)
 
 
 def cmd_context_rebuild(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -539,6 +761,101 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("init", help="Initialize the private local archive").set_defaults(handler=cmd_init)
+    adopt = sub.add_parser("adopt", help="Relink records stranded by an identity change (e.g. git init)")
+    adopt.add_argument("--source", help="Archive root to adopt; defaults to the detected one")
+    adopt.add_argument("--confirm", action="store_true", help="Perform the relink, not just preview it")
+    adopt.set_defaults(handler=cmd_adopt)
+    roles = sub.add_parser("roles", help="Resolve authority documents by role")
+    roles.add_argument("--check", action="store_true", help="Exit non-zero when two roles claim one path")
+    roles.set_defaults(handler=cmd_roles)
+    brief = sub.add_parser("brief", help="Assemble a bounded, model-independent context brief")
+    brief.add_argument("task", help="What this session is about; drives relevance ranking")
+    brief.add_argument("--token-budget", type=int, default=DEFAULT_CONTEXT_BUDGET)
+    brief.add_argument("--full", action="store_true", help="Include segment bodies, not just the map")
+    brief.set_defaults(handler=cmd_brief)
+
+    charter = sub.add_parser("charter", help="Compile prose guidance into addressable rules")
+    charter.add_argument("--full", action="store_true", help="Include every compiled rule")
+    charter.set_defaults(handler=cmd_charter)
+
+    session = sub.add_parser("session", help="Open or close an attested session")
+    session_sub = session.add_subparsers(dest="session_command", required=True)
+    session_open = session_sub.add_parser("open")
+    session_open.add_argument("--label", default="session")
+    session_open.set_defaults(handler=cmd_session_open)
+    session_close = session_sub.add_parser("close")
+    session_close.add_argument("--session")
+    session_close.set_defaults(handler=cmd_session_close)
+
+    attest = sub.add_parser("attest", help="Record that a mandated step ran, found nothing, or was skipped")
+    attest.add_argument("step")
+    attest.add_argument("--status", choices=list(STATUSES), required=True)
+    attest.add_argument("--result", default="")
+    attest.add_argument("--reason", default="", help="Required when the status is 'skipped'")
+    attest.add_argument("--rule", action="append", default=[], help="Rule id this step satisfies; repeatable")
+    attest.add_argument("--session")
+    _evidence(attest)
+    attest.set_defaults(handler=cmd_attest)
+
+    gate_parser = sub.add_parser("gate", help="Check a trigger; exit non-zero when a HARD rule is unattested")
+    gate_parser.add_argument("--trigger", choices=list(TRIGGERS), required=True)
+    gate_parser.add_argument("--session")
+    gate_parser.set_defaults(handler=cmd_gate)
+
+    claim = sub.add_parser("claim", help="Record a claim; unsupported claims are downgraded, not warned about")
+    claim.add_argument("text")
+    claim.add_argument("--grade", choices=list(GRADES), default="observed")
+    claim.add_argument("--cite", action="append", default=[], help="rec:<hash> or file:<path>#L<n>; repeatable")
+    claim.add_argument("--session")
+    claim.set_defaults(handler=cmd_claim)
+
+    method = sub.add_parser("method", help="Select an analysis method from the evidence shape")
+    method.add_argument("--reports", type=int, default=1)
+    method.add_argument("--unreproducible", action="store_true")
+    method.add_argument("--ordering", action="store_true", help="An ordering, race or latch-time question")
+    method.add_argument("--components", action="store_true", help="Components and failure modes are enumerable")
+    method.add_argument("--conditions", type=int, default=0, help="Contributing conditions on one failure")
+    method.set_defaults(handler=cmd_method)
+
+    status = sub.add_parser("status", help="Single writable status store")
+    status_sub = status.add_subparsers(dest="status_command", required=True)
+    status_set = status_sub.add_parser("set")
+    status_set.add_argument("item")
+    status_set.add_argument("--title", default="")
+    status_set.add_argument("--state", choices=list(STATES), required=True)
+    status_set.add_argument("--proof", default="", help="Required to reopen verified or closed work")
+    _evidence(status_set)
+    status_set.set_defaults(handler=cmd_status_set)
+    status_sub.add_parser("survey").set_defaults(handler=cmd_status_survey)
+
+    # Named `planmode` rather than extending `plan`: `plan` is part of the released
+    # command surface and converting it to subcommands would break existing callers.
+    planmode = sub.add_parser("planmode", help="Gate mutation behind an approved plan contract")
+    planmode_sub = planmode.add_subparsers(dest="planmode_command", required=True)
+    planmode_start = planmode_sub.add_parser("start")
+    planmode_start.add_argument("--title", required=True)
+    planmode_start.add_argument("--session")
+    for field in PLAN_FIELDS:
+        planmode_start.add_argument(f"--{field.replace('_', '-')}", dest=field, default="")
+    planmode_start.set_defaults(handler=cmd_planmode_start)
+    planmode_approve = planmode_sub.add_parser("approve")
+    planmode_approve.add_argument("--session")
+    planmode_approve.set_defaults(handler=cmd_planmode_approve)
+    planmode_check = planmode_sub.add_parser("check")
+    planmode_check.add_argument("--session")
+    planmode_check.set_defaults(handler=cmd_planmode_check)
+    planmode_bind = planmode_sub.add_parser("bind")
+    planmode_bind.add_argument("--summary", required=True)
+    planmode_bind.add_argument("--file", action="append", default=[])
+    planmode_bind.add_argument("--session")
+    planmode_bind.set_defaults(handler=cmd_planmode_bind)
+
+    sub.add_parser("drift", help="Compare step sets across sessions and agents").set_defaults(
+        handler=cmd_drift
+    )
+    sub.add_parser("capabilities", help="Report what this host can actually enforce").set_defaults(
+        handler=cmd_capabilities
+    )
     inspect = sub.add_parser("inspect", help="Capture an on-demand repository snapshot")
     inspect.set_defaults(handler=cmd_inspect)
     resume = sub.add_parser("resume", help="Build a bounded continuity brief")
@@ -706,6 +1023,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows consoles default to a legacy code page, so any non-ASCII character in a
+    # project's own documents would abort the command on output. Project content is
+    # not ours to constrain; the encoding is.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):  # pragma: no cover - exotic stream
+                pass
     parser = _build_parser()
     args = parser.parse_args(argv)
     if hasattr(args, "token_budget") and not 200 <= args.token_budget <= 10_000:

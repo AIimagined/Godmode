@@ -15,6 +15,11 @@ sys.path.insert(0, str(SCRIPTS))
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_runtime.godmode_errors import GodmodeError  # noqa: E402
+from godmode_runtime.godmode_attest import attested_rule_ids, latest_session  # noqa: E402
+from godmode_runtime.godmode_charter import compile_charter  # noqa: E402
+from godmode_runtime.godmode_corpus import resolve_roles  # noqa: E402
+from godmode_runtime.godmode_drift import capabilities as host_capabilities  # noqa: E402
+from godmode_runtime.godmode_drift import compare as compare_sessions  # noqa: E402
 from godmode_runtime.godmode_lens import build_context_brief  # noqa: E402
 from godmode_runtime.godmode_sentinel import CapabilityBroker, classify_action  # noqa: E402
 
@@ -69,6 +74,63 @@ def _emit_claude_context(brief: dict[str, Any]) -> None:
     )
 
 
+def _session_obligations(anchor: Any, archive: Chronicle) -> dict[str, Any]:
+    """What this session already owes, computed at open rather than discovered late.
+
+    Read-only and bounded: the hook runs on every session start, so a slow or noisy
+    adapter is worse than none. Any failure here degrades to a stated limitation
+    instead of taking the session down.
+    """
+    project = Path(anchor.project_root)
+    obligations: dict[str, Any] = {}
+    try:
+        resolution = resolve_roles(project)
+        obligations["authority"] = {
+            "bound": len(resolution.bindings),
+            "missing": [role for role, _ in resolution.missing][:8],
+            "collisions": [path for path, _ in resolution.collisions][:5],
+        }
+    except GodmodeError as exc:
+        obligations["authority"] = {"unavailable": str(exc)[:160]}
+
+    try:
+        charter = compile_charter(project)
+        session = latest_session(archive)
+        pending = charter["enforcement"]["HARD"]
+        if session:
+            covered = attested_rule_ids(archive, session)
+            pending = sum(
+                1
+                for rule in charter["compiled"]
+                if rule["enforcement"] == "HARD" and rule["id"] not in covered
+            )
+        obligations["charter"] = {
+            "rules": charter["rules"],
+            "hard": charter["enforcement"]["HARD"],
+            "advisory": charter["enforcement"]["ADVISORY"],
+            "unattested_hard": pending,
+        }
+    except GodmodeError as exc:
+        obligations["charter"] = {"unavailable": str(exc)[:160]}
+
+    try:
+        drift = compare_sessions(archive)
+        obligations["drift"] = {
+            "verdict": drift["verdict"],
+            "model_correlated": drift["model_correlated"],
+            "agents": drift["agents"][:6],
+        }
+    except GodmodeError as exc:
+        obligations["drift"] = {"unavailable": str(exc)[:160]}
+
+    surface = host_capabilities()
+    obligations["enforcement"] = {
+        "host": surface["host"],
+        "unavailable": surface["unavailable"],
+    }
+    return obligations
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="godmode-session-hook")
     parser.add_argument("event", choices=["session-start", "pre-compact", "session-end", "pre-action"])
@@ -81,12 +143,28 @@ def main(argv: list[str] | None = None) -> int:
         anchor = resolve_anchor(project)
         archive = Chronicle(anchor)
         if not archive.initialized():
-            if not claude_session:
+            # Stay silent for a genuinely new project, but never for one whose history
+            # is merely unreachable: an agent starting here would otherwise be told
+            # nothing while prior records sit one command away.
+            stranded = archive.orphaned()
+            if stranded:
+                notice = {
+                    "godmode": "orphaned-archive",
+                    "records": stranded["records"],
+                    "reason": stranded["reason"],
+                    "next_action": "run `godmode adopt --confirm` to relink this project's history",
+                }
+                if claude_session:
+                    _emit_claude_context(notice)
+                else:
+                    print(json.dumps(notice))
+            elif not claude_session:
                 print(json.dumps({"godmode": "not-initialized", "action": "run godmode init explicitly"}))
             return 0
 
         if args.event == "session-start":
             brief = build_context_brief(anchor, archive)
+            brief["obligations"] = _session_obligations(anchor, archive)
             if claude_session:
                 _emit_claude_context(brief)
             else:

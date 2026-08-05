@@ -464,5 +464,253 @@ class CliAndPrivacyTests(unittest.TestCase):
         self.assertFalse(imported & banned, imported & banned)
 
 
+class CharterTests(unittest.TestCase):
+    def test_compiler_self_check(self) -> None:
+        from godmode_runtime.godmode_charter import _self_check
+
+        _self_check()
+
+    def test_unverifiable_guidance_is_labelled_not_dropped(self) -> None:
+        from godmode_runtime.godmode_charter import ADVISORY, compile_charter
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / "GODMODE.md").write_text(
+                "# Feel\n- The onboarding must feel effortless.\n", encoding="utf-8"
+            )
+            charter = compile_charter(project)
+            self.assertEqual(charter["rules"], 1)
+            self.assertEqual(charter["enforcement"][ADVISORY], 1)
+
+
+class AttestationTests(unittest.TestCase):
+    def test_attestation_self_check(self) -> None:
+        from godmode_runtime.godmode_attest import _self_check
+
+        _self_check()
+
+    def test_unattested_hard_rule_blocks_the_gate(self) -> None:
+        from godmode_runtime.godmode_attest import gate, open_session, record_step
+        from godmode_runtime.godmode_charter import compile_charter
+
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            (project / "GODMODE.md").write_text(
+                "# Gates\n- Never commit without an explicit ask.\n", encoding="utf-8"
+            )
+            charter = compile_charter(project)
+            hard = [rule for rule in charter["compiled"] if rule["enforcement"] == "HARD"]
+            self.assertTrue(hard)
+            session = open_session(archive, "test")
+
+            blocked = gate(archive, session, charter, hard[0]["trigger"])
+            self.assertFalse(blocked.allowed)
+            self.assertTrue(blocked.view()["watch_for"])
+
+            record_step(archive, session, "preflight", "empty", rule_ids=[hard[0]["id"]])
+            self.assertTrue(gate(archive, session, charter, hard[0]["trigger"]).allowed)
+
+    def test_unsupported_claim_is_downgraded_not_warned(self) -> None:
+        from godmode_runtime.godmode_attest import open_session, record_claim
+
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            (project / "GODMODE.md").write_text("# Gates\nline two\n", encoding="utf-8")
+            session = open_session(archive, "test")
+
+            bare = record_claim(archive, project, session, "Retry is disabled.", "verified")
+            self.assertEqual(bare["data"]["grade"], "hypothesis")
+
+            cited = record_claim(
+                archive, project, session, "The gate exists.", "verified",
+                cites=["file:GODMODE.md#L2"],
+            )
+            self.assertEqual(cited["data"]["grade"], "verified")
+
+
+class ArchiveAdoptionTests(unittest.TestCase):
+    def test_git_init_does_not_silently_orphan_an_existing_archive(self) -> None:
+        # Field report: running `git init` mid-project switched the identity from the
+        # salted non-git key to the Git one, so prior records became unreachable and
+        # the project read as "not initialized". Losing continuity silently is the
+        # exact failure this product exists to prevent.
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            for subject in ("storage", "retention", "guards"):
+                archive.append("decision", subject, {"value": subject}, evidence=[])
+            self.assertEqual(len(archive.read_events()), 3)
+
+            subprocess.run(["git", "init", "-q", str(project)], check=True,
+                           capture_output=True, timeout=30)
+
+            moved = Chronicle(resolve_anchor(project))
+            self.assertTrue(moved.anchor.is_git)
+            self.assertFalse(moved.initialized())
+
+            stranded = moved.orphaned()
+            self.assertIsNotNone(stranded)
+            self.assertEqual(stranded["records"], 3)
+
+            moved.initialize()
+            result = moved.adopt(Path(stranded["source"]))
+            self.assertEqual(result["adopted"], 3)
+            self.assertTrue(result["chain"]["valid"])
+            self.assertEqual(len(moved.read_events()), 3)
+
+            # The adopted chain still accepts new records...
+            moved.append("lesson", "post-adopt", {"value": "held"}, evidence=[])
+            self.assertEqual(len(moved.read_events()), 4)
+
+            # ...and adopting a second time is refused rather than merging chains.
+            with self.assertRaises(ArchiveError):
+                moved.adopt(Path(stranded["source"]))
+
+    def test_session_hook_surfaces_a_stranded_archive(self) -> None:
+        # The worst surface for the orphaning bug: a session starts, the hook says
+        # nothing, and the agent never learns the history is one command away.
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            archive.append("decision", "storage", {"value": "local"}, evidence=[])
+            subprocess.run(["git", "init", "-q", str(project)], check=True,
+                           capture_output=True, timeout=30)
+
+            hook = PLUGIN_ROOT / "hooks" / "godmode_session_hook.py"
+            completed = subprocess.run(
+                [sys.executable, str(hook), "session-start"],
+                input=json.dumps({"cwd": str(project), "hook_event_name": "SessionStart",
+                                  "source": "startup"}),
+                capture_output=True, text=True, encoding="utf-8", timeout=60,
+                env=os.environ.copy(),
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            context = json.loads(completed.stdout)["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("orphaned-archive", context)
+            self.assertIn("adopt --confirm", context)
+
+    def test_adoption_does_not_weaken_tamper_detection(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            archive.append("decision", "storage", {"value": "local"}, evidence=[])
+            subprocess.run(["git", "init", "-q", str(project)], check=True,
+                           capture_output=True, timeout=30)
+            moved = Chronicle(resolve_anchor(project))
+            moved.initialize()
+            moved.adopt(Path(moved.orphaned()["source"]))
+
+            first = moved.event_paths()[0]
+            payload = json.loads(first.read_text(encoding="utf-8"))
+            payload["data"]["value"] = "altered"
+            first.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaises(ArchiveError):
+                moved.verify()
+
+
+class MethodTests(unittest.TestCase):
+    def test_method_self_check(self) -> None:
+        from godmode_runtime.godmode_method import _self_check
+
+        _self_check()
+
+    def test_selection_is_a_lookup_not_a_judgment(self) -> None:
+        from godmode_runtime.godmode_method import Shape, select
+
+        pile = Shape(reports=12)
+        self.assertEqual(select(pile)[0], ["fishbone", "pareto", "5-whys"])
+        for _ in range(25):
+            self.assertEqual(select(pile), select(pile))
+
+
+class StatusTests(unittest.TestCase):
+    def test_status_self_check(self) -> None:
+        from godmode_runtime.godmode_status import _self_check
+
+        _self_check()
+
+    def test_verified_work_cannot_silently_reopen(self) -> None:
+        from godmode_runtime.godmode_status import items, record_item
+
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            record_item(archive, "S1-01", "topics", "verified")
+            with self.assertRaises(ArchiveError):
+                record_item(archive, "S1-01", "topics", "active")
+            record_item(archive, "S1-01", "topics", "active", proof="topics absent on the remote")
+            self.assertEqual(items(archive)["S1-01"]["state"], "active")
+
+
+class PlanModeTests(unittest.TestCase):
+    def test_plan_self_check(self) -> None:
+        from godmode_runtime.godmode_plan import _self_check
+
+        _self_check()
+
+    def test_incomplete_contract_holds_mutation_closed(self) -> None:
+        from godmode_runtime.godmode_plan import approve, mutation_verdict, start
+
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            start(archive, "S-1", "fix replay", {"objective": "stop replay"})
+            self.assertFalse(mutation_verdict(archive, "S-1")["allowed"])
+            self.assertFalse(approve(archive, "S-1")["approved"])
+
+
+class DriftTests(unittest.TestCase):
+    def test_drift_self_check(self) -> None:
+        from godmode_runtime.godmode_drift import _self_check
+
+        _self_check()
+
+    def test_capabilities_names_what_it_cannot_enforce(self) -> None:
+        from godmode_runtime.godmode_drift import capabilities
+
+        surface = capabilities()
+        self.assertIn("tool_call_interception", surface["unavailable"])
+        self.assertEqual(surface["controls"]["tool_call_interception"], "UNAVAILABLE")
+
+
+class ConsoleEncodingTests(unittest.TestCase):
+    def test_non_ascii_project_content_does_not_abort_output(self) -> None:
+        # Regression: on a legacy Windows code page, any non-ASCII character in a
+        # project's own documents aborted the command. Project content is not ours
+        # to constrain. Guard planted against the pre-fix behaviour.
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / "GODMODE.md").write_text(
+                "# Gates\n\U0001f534 Never push without an explicit ask. — rule\n",
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [sys.executable, str(SCRIPTS / "godmode.py"), "--project", str(project),
+                 "brief", "push gates", "--full"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                env={**os.environ, "PYTHONIOENCODING": "cp1252"},
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("Gates", completed.stdout)
+
+
+class CorpusTests(unittest.TestCase):
+    def test_role_resolution_self_check(self) -> None:
+        from godmode_runtime.godmode_corpus import _self_check
+
+        _self_check()
+
+    def test_binding_order_is_deterministic(self) -> None:
+        from godmode_runtime.godmode_corpus import resolve_roles
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / "docs").mkdir()
+            (project / "GODMODE.md").write_text("guide", encoding="utf-8")
+            (project / "docs" / "STATE.md").write_text("state", encoding="utf-8")
+            (project / "docs" / "LESSONS.md").write_text("lessons", encoding="utf-8")
+            first = [b.view(project) for b in resolve_roles(project).bindings]
+            for _ in range(5):
+                self.assertEqual(first, [b.view(project) for b in resolve_roles(project).bindings])
+            self.assertEqual([b["role"] for b in first], ["operating-guide", "state", "lessons"])
+
+
 if __name__ == "__main__":
     unittest.main()

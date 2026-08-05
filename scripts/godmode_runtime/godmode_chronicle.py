@@ -14,7 +14,9 @@ import time
 from typing import Any, Iterator
 import uuid
 
-from .godmode_anchor import ProjectAnchor, anchor_fingerprint
+import shutil
+
+from .godmode_anchor import ProjectAnchor, anchor_fingerprint, nongit_archive_root
 from .godmode_constants import EVENT_KINDS, RUNTIME_VERSION, SCHEMA_VERSION
 from .godmode_errors import ArchiveError
 from .godmode_sentinel import enforce_private_payload
@@ -64,6 +66,92 @@ class Chronicle:
 
     def initialized(self) -> bool:
         return self.config.is_file() and self.events.is_dir()
+
+    def accepted_keys(self) -> set[str]:
+        """Identities whose records this archive owns.
+
+        Adopting a stranded archive must not rewrite its records: the ledger is
+        immutable and hash-chained, so editing history to fit a new identity would
+        destroy the very property that makes it trustworthy. Instead the archive
+        remembers which identity it grew out of and accepts those records as its own.
+        """
+        keys = {self.anchor.project_key}
+        if self.config.is_file():
+            try:
+                keys.update(self._read_json(self.config).get("adopted_keys", []))
+            except ArchiveError:
+                pass
+        return keys
+
+    def orphaned(self) -> dict[str, Any] | None:
+        """Report an archive stranded at this project's previous identity.
+
+        Running `git init` in an existing project switches the identity from the
+        salted application-data key to the Git one, so everything recorded before
+        becomes unreachable and the project reads as never initialized. Losing
+        continuity silently is the failure this product exists to prevent, so the
+        stranded archive is surfaced rather than left for the user to notice.
+        """
+        if not self.anchor.is_git:
+            return None
+        previous = nongit_archive_root(self.anchor.project_root)
+        if previous == self.root:
+            return None
+        config = previous / "godmode-archive.json"
+        events = previous / "godmode-events"
+        if not config.is_file() or not events.is_dir():
+            return None
+        records = sorted(events.glob("*.json"))
+        if not records:
+            return None
+        return {
+            "source": str(previous),
+            "records": len(records),
+            "adoptable": not self.event_paths(),
+            "reason": "project became a Git repository after these records were written",
+        }
+
+    def adopt(self, source: Path) -> dict[str, Any]:
+        """Relink a stranded archive to this project's current identity.
+
+        Copies the record files verbatim so the hash chain carries over, then
+        rewrites only the identity in the config. Refuses to merge two histories:
+        combining independent chains would produce a ledger that verifies against
+        neither.
+        """
+        source = Path(source)
+        source_events = source / "godmode-events"
+        source_config = source / "godmode-archive.json"
+        if not source_config.is_file() or not source_events.is_dir():
+            raise ArchiveError(f"No adoptable archive at {source}")
+        if self.event_paths():
+            raise ArchiveError(
+                "This archive already holds records; adopting would merge two "
+                "independent hash chains. Move or clear the current archive first."
+            )
+
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.events.mkdir(parents=True, exist_ok=True)
+        copied = 0
+        for record in sorted(source_events.glob("*.json")):
+            shutil.copy2(record, self.events / record.name)
+            copied += 1
+
+        payload = self._read_json(source_config)
+        inherited = payload.get("project_key")
+        payload["project_key"] = self.anchor.project_key
+        payload["schema_version"] = SCHEMA_VERSION
+        payload["adopted_from"] = "previous-identity"
+        adopted = set(payload.get("adopted_keys", []))
+        if inherited and inherited != self.anchor.project_key:
+            adopted.add(inherited)
+        payload["adopted_keys"] = sorted(adopted)
+        payload["last_anchor"] = asdict(self.anchor)
+        payload["last_anchor_fingerprint"] = anchor_fingerprint(self.anchor)
+        _atomic_json(self.config, payload)
+
+        verified = self.verify()
+        return {"adopted": copied, "source": str(source), "chain": verified}
 
     def initialize(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -154,7 +242,7 @@ class Chronicle:
         for record in records:
             if record.get("schema_version") != SCHEMA_VERSION:
                 raise ArchiveError("Record schema mismatch")
-            if record.get("project_key") != self.anchor.project_key:
+            if record.get("project_key") not in self.accepted_keys():
                 raise ArchiveError("Record project identity mismatch")
             if record.get("sequence") != expected_sequence:
                 raise ArchiveError("Record sequence is not contiguous")
