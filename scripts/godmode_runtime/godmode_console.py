@@ -41,6 +41,8 @@ from .godmode_plan import start as plan_start
 from .godmode_scope import scope as scope_change
 from .godmode_status import STATES, record_item, survey
 from .godmode_corpus import build_brief, resolve_roles
+from .godmode_egress import notice as egress_notice
+from .godmode_egress import scan_project as scan_untrusted
 from .godmode_errors import ArchiveError, GodmodeError
 from .godmode_forge import SkillProposal, forge_skill, validate_skill
 from .godmode_lens import (
@@ -373,6 +375,19 @@ def cmd_reflect(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # A suspected conflict is a lead for a human, so it is surfaced in the exit
     # status without being asserted as a contradiction.
     return CommandResult(report, exit_code=1 if report.get("conflicts") else 0)
+
+
+def cmd_egress(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    disclosure = egress_notice(args.action, args.purpose,
+                               Path(runtime.anchor.project_root), args.path)
+    # A secret inside the requested scope blocks the disclosure rather than
+    # redacting quietly: the user decides, having been told.
+    return CommandResult(disclosure, exit_code=1 if disclosure["blocked"] else 0)
+
+
+def cmd_untrusted(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    report = scan_untrusted(Path(runtime.anchor.project_root))
+    return CommandResult(report, exit_code=1 if report["files_with_findings"] else 0)
 
 
 def cmd_atlas(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -936,6 +951,15 @@ def _build_parser() -> argparse.ArgumentParser:
     assess_parser.set_defaults(handler=cmd_assess)
     sub.add_parser("selftest", help="Exercise every control and report what actually held").set_defaults(
         handler=cmd_selftest
+    )
+
+    egress = sub.add_parser("egress", help="Disclose exactly what an action would send")
+    egress.add_argument("action")
+    egress.add_argument("--purpose", default="unstated")
+    egress.add_argument("--path", action="append", default=[], help="Artefact proposed for inclusion; repeatable")
+    egress.set_defaults(handler=cmd_egress)
+    sub.add_parser("untrusted", help="Report repository text shaped like an instruction").set_defaults(
+        handler=cmd_untrusted
     )
 
     sub.add_parser("assurance", help="Emit an assurance case generated from live probes").set_defaults(
