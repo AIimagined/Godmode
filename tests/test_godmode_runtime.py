@@ -990,6 +990,37 @@ class StatusTests(unittest.TestCase):
 
         _self_check()
 
+    def test_remaining_work_is_derived_and_states_its_own_bounds(self) -> None:
+        # A remaining-work list composed from memory reads as complete because a
+        # list always does. The omission surfaces only when someone asks "anything
+        # left?", and the answer then arrives labelled honest - which is the tell
+        # that the previous one was never audited.
+        from godmode_runtime.godmode_attest import open_session, record_claim
+        from godmode_runtime.godmode_charter import compile_charter
+        from godmode_runtime.godmode_status import record_item, remaining
+
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            (project / "GODMODE.md").write_text(
+                "# Gates\n- Never commit without an explicit ask.\n", encoding="utf-8")
+            charter = compile_charter(project)
+            session = open_session(archive, "test")
+
+            record_item(archive, "S1-01", "wire the adapter", "active")
+            record_claim(archive, project, session, "Everything is wired.", "verified")
+
+            found = remaining(archive, project, session=session, charter=charter)
+            self.assertEqual(found["verdict"], "work-outstanding")
+            # Three different kinds of outstanding work, none of them remembered.
+            self.assertEqual({e["source"] for e in found["remaining"]},
+                             {"status", "rule", "claim"})
+
+            # A narrower query says which sources it could not consult, instead of
+            # returning a shorter list that looks like progress.
+            partial = remaining(archive, project)
+            self.assertTrue(partial["sources_unavailable"])
+            self.assertLess(partial["count"], found["count"])
+
     def test_verified_work_cannot_silently_reopen(self) -> None:
         from godmode_runtime.godmode_status import items, record_item
 
