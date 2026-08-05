@@ -578,6 +578,26 @@ class AttestationTests(unittest.TestCase):
             )
             self.assertEqual(prose["data"]["grade"], "verified", prose["data"])
 
+    def test_reflection_flags_a_contradiction_without_asserting_one(self) -> None:
+        from godmode_runtime.godmode_attest import open_session, record_claim, reflect
+
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            session = open_session(archive, "test")
+            record_claim(archive, project, session,
+                         "The rotation guard is enabled for every account.", "observed")
+
+            conflict = reflect(archive, "The rotation guard is not enabled for every account.")
+            self.assertEqual(conflict["verdict"], "conflict-suspected")
+            self.assertTrue(conflict["conflicts"][0]["shared_terms"])
+            # Suspected, not decided: the record says why it is a lead.
+            self.assertIn("polarity", conflict["conflicts"][0]["why"])
+
+            agreement = reflect(archive, "The rotation guard is enabled for every account today.")
+            self.assertEqual(agreement["verdict"], "no-conflict-found")
+            unrelated = reflect(archive, "Billing exports run nightly.")
+            self.assertEqual(unrelated["verdict"], "no-conflict-found")
+
     def test_unsupported_claim_is_downgraded_not_warned(self) -> None:
         from godmode_runtime.godmode_attest import open_session, record_claim
 
@@ -737,6 +757,18 @@ class AssessTests(unittest.TestCase):
         for control in report["controls"]:
             self.assertTrue(control["enforced"], control)
             self.assertTrue(control["observed"], control)
+
+    def test_assurance_case_cannot_claim_more_than_the_probes_observed(self) -> None:
+        from godmode_runtime.godmode_assess import assurance_case, selftest
+
+        surface = selftest()
+        document = assurance_case()
+        for control in surface["controls"]:
+            self.assertIn(control["control"], document)
+            self.assertIn(control["observed"][:30], document)
+        # A control the host cannot support is printed, never quietly omitted.
+        for name in surface["unavailable_here"]:
+            self.assertIn(name, document)
 
     def test_a_tidy_project_is_not_given_manufactured_findings(self) -> None:
         from godmode_runtime.godmode_assess import assess

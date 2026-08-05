@@ -287,6 +287,55 @@ def record_claim(
     return record
 
 
+_NEGATION = re.compile(
+    r"\b(?:not|never|no longer|cannot|can't|doesn't|does not|isn't|is not|"
+    r"won't|will not|without|disabled|removed|absent|missing|fails?)\b"
+)
+
+
+def reflect(archive: Chronicle, text: str, limit: int = 200) -> dict[str, Any]:
+    """Check a new claim against what the record already says.
+
+    Run as its own step rather than folded into producing the claim, for the same
+    reason a review is not done by the author: the pass that generates an assertion
+    is the pass least able to notice it contradicts something.
+
+    This flags, it does not decide. Polarity disagreement between two claims about
+    the same subject is a lead worth a human look, and calling it a contradiction
+    outright would manufacture findings.
+    """
+    terms = _salient(text)
+    if not terms:
+        return {"checked": 0, "conflicts": [], "note": "claim has no distinctive terms to compare"}
+
+    polarity = bool(_NEGATION.search(text.lower()))
+    conflicts: list[dict[str, Any]] = []
+    checked = 0
+    for record in archive.select(kind="claim", limit=limit):
+        data = record["data"]
+        prior = str(data.get("text", ""))
+        if not prior or prior == text:
+            continue
+        checked += 1
+        overlap = terms & _salient(prior)
+        # Two distinctive terms in common means the claims are about the same thing;
+        # one is coincidence in prose this short.
+        if len(overlap) < 2:
+            continue
+        if bool(_NEGATION.search(prior.lower())) != polarity:
+            conflicts.append({
+                "prior": prior[:160],
+                "prior_grade": data.get("grade"),
+                "shared_terms": sorted(overlap)[:6],
+                "why": "the two claims share a subject but disagree in polarity",
+            })
+    return {
+        "checked": checked,
+        "conflicts": conflicts[:5],
+        "verdict": "conflict-suspected" if conflicts else "no-conflict-found",
+    }
+
+
 def close_session(archive: Chronicle, session: str, charter: dict[str, Any]) -> dict[str, Any]:
     """Refuse closure while any HARD rule is unattested or any claim is unsupported."""
     covered = attested_rule_ids(archive, session)
@@ -387,6 +436,18 @@ def _self_check() -> None:
             verdict = close_session(archive, session, charter)
             assert not verdict["closed"]
             assert verdict["downgraded_claims"]
+
+            # Reflection notices that a new claim disagrees with a recorded one.
+            record_claim(archive, project, session,
+                         "The rotation guard is enabled for every account.", "observed")
+            echo = reflect(archive, "The rotation guard is not enabled for every account.")
+            assert echo["verdict"] == "conflict-suspected", echo
+            assert echo["conflicts"][0]["shared_terms"], echo
+
+            # Agreement is not flagged, and neither is an unrelated subject.
+            assert reflect(archive, "The rotation guard is enabled for every account today."
+                           )["verdict"] == "no-conflict-found"
+            assert reflect(archive, "Billing exports run nightly.")["verdict"] == "no-conflict-found"
 
     print("godmode_attest self-check OK")
 
