@@ -40,7 +40,7 @@ from .godmode_plan import approve as plan_approve
 from .godmode_plan import bind_execution, mutation_verdict
 from .godmode_plan import start as plan_start
 from .godmode_scope import scope as scope_change
-from .godmode_status import STATES, record_item, survey
+from .godmode_status import STATES, record_item, remaining, survey
 from .godmode_corpus import build_brief, resolve_roles
 from .godmode_egress import notice as egress_notice
 from .godmode_egress import scan_project as scan_untrusted
@@ -322,6 +322,14 @@ def cmd_status_set(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         evidence=args.evidence, proof=args.proof,
     )
     return CommandResult({"record": _event_view(record)})
+
+
+def cmd_remaining(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    session = args.session or latest_session(runtime.archive)
+    report = remaining(runtime.archive, Path(runtime.anchor.project_root),
+                       session=session, charter=_charter(runtime))
+    return CommandResult(report, exit_code=1 if report["count"] else 0)
 
 
 def cmd_status_survey(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -965,6 +973,9 @@ def _build_parser() -> argparse.ArgumentParser:
     _evidence(status_set)
     status_set.set_defaults(handler=cmd_status_set)
     status_sub.add_parser("survey").set_defaults(handler=cmd_status_survey)
+    status_remaining = status_sub.add_parser("remaining")
+    status_remaining.add_argument("--session")
+    status_remaining.set_defaults(handler=cmd_remaining)
 
     # Named `planmode` rather than extending `plan`: `plan` is part of the released
     # command surface and converting it to subcommands would break existing callers.

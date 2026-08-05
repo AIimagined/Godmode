@@ -124,6 +124,95 @@ def survey(archive: Chronicle, project: Path) -> dict[str, Any]:
     }
 
 
+def remaining(
+    archive: Chronicle,
+    project: Path,
+    session: str | None = None,
+    charter: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Derive what is left from the records, instead of recalling it.
+
+    A remaining-work list composed from memory is a claim about the project that
+    nothing checked. It reads as complete because a list always does, and the
+    omission only surfaces when someone asks "anything left?" - at which point the
+    answer arrives labelled honest, which is the tell that the previous one was not
+    audited.
+
+    Every source consulted is named, and every source that could not be consulted is
+    named too, so the list carries the bounds of its own completeness rather than
+    implying it has none.
+    """
+    from .godmode_attest import attested_rule_ids
+    from .godmode_plan import active_plan, gaps as plan_gaps
+
+    consulted: list[str] = []
+    unavailable: list[dict[str, str]] = []
+    items_left: list[dict[str, Any]] = []
+
+    current = items(archive)
+    consulted.append("status store")
+    for name, entry in sorted(current.items()):
+        if entry["state"] not in TERMINAL:
+            items_left.append({"source": "status", "id": name,
+                               "detail": f"{entry['title'] or name} is {entry['state']}"})
+
+    obligations = [
+        record for record in archive.select(kind="obligation", limit=500)
+    ]
+    consulted.append("open obligations")
+    for record in obligations:
+        if str(record["data"].get("status", "open")).lower() not in ("closed", "met", "done"):
+            items_left.append({"source": "obligation", "id": record["subject"],
+                               "detail": str(record["data"].get("value", ""))[:160]})
+
+    if charter is None:
+        unavailable.append({"source": "unattested rules",
+                            "why": "no compiled charter supplied to compare against"})
+    elif session is None:
+        unavailable.append({"source": "unattested rules", "why": "no session to attribute attestations to"})
+    else:
+        consulted.append("unattested HARD rules")
+        covered = attested_rule_ids(archive, session)
+        for rule in charter["compiled"]:
+            if rule["enforcement"] == "HARD" and rule["id"] not in covered:
+                items_left.append({"source": "rule", "id": rule["id"],
+                                   "detail": rule["text"][:160]})
+
+    if session is None:
+        unavailable.append({"source": "plan contract", "why": "no session supplied"})
+        unavailable.append({"source": "downgraded claims", "why": "no session supplied"})
+    else:
+        consulted.append("plan contract")
+        plan = active_plan(archive, session)
+        if plan and plan["state"] != "approved":
+            for field in plan_gaps(plan["contract"]):
+                items_left.append({"source": "plan", "id": plan["id"],
+                                   "detail": f"contract field '{field}' is empty"})
+
+        consulted.append("downgraded claims")
+        for record in archive.select(kind="claim", limit=500):
+            data = record["data"]
+            if data.get("session") == session and data.get("downgraded"):
+                items_left.append({"source": "claim", "id": record["subject"][:60],
+                                   "detail": f"downgraded: {data.get('reason', 'unsupported')}"})
+
+    by_source: dict[str, int] = {}
+    for entry in items_left:
+        by_source[entry["source"]] = by_source.get(entry["source"], 0) + 1
+
+    return {
+        "remaining": items_left,
+        "count": len(items_left),
+        "by_source": dict(sorted(by_source.items())),
+        "sources_consulted": consulted,
+        "sources_unavailable": unavailable,
+        # The list is only as complete as the sources behind it, so that is stated
+        # rather than left for the reader to assume.
+        "complete_over": f"{len(consulted)} of {len(consulted) + len(unavailable)} sources",
+        "verdict": "nothing-outstanding" if not items_left else "work-outstanding",
+    }
+
+
 def _self_check() -> None:
     import os
     import tempfile
@@ -168,6 +257,33 @@ def _self_check() -> None:
             report = survey(archive, project)
             assert report["verdict"] == "competing-authority", report
             assert report["authority_claims"]["files"] == 2
+
+            # A remaining-work list is derived, and states what it could not see.
+            from .godmode_attest import open_session, record_claim
+            from .godmode_charter import compile_charter
+
+            (project / "GODMODE.md").write_text(
+                "# Gates\n- Never commit without an explicit ask.\n", encoding="utf-8")
+            charter = compile_charter(project)
+            session = open_session(archive, "remaining-check")
+
+            record_item(archive, "S2-01", "wire the adapter", "active")
+            record_claim(archive, project, session, "Everything is wired.", "verified")
+
+            left = remaining(archive, project, session=session, charter=charter)
+            sources = {entry["source"] for entry in left["remaining"]}
+            assert left["verdict"] == "work-outstanding", left
+            # The active item, the unattested HARD rule and the downgraded claim are
+            # each found without anyone remembering to mention them.
+            assert {"status", "rule", "claim"} <= sources, sources
+            assert "unattested HARD rules" in left["sources_consulted"], left
+
+            # Without a session, the list narrows and says so rather than shrinking
+            # silently into a shorter answer that looks like progress.
+            partial = remaining(archive, project)
+            assert partial["sources_unavailable"], partial
+            assert "of" in partial["complete_over"], partial
+            assert partial["count"] < left["count"], (partial["count"], left["count"])
 
     print("godmode_status self-check OK")
 
