@@ -33,3 +33,17 @@ jobs:
 
       - name: Smoke-test the command line
         run: python scripts/godmode.py --version
+
+      # Separate steps on purpose: one gate per command, so a failure names itself
+      # instead of arriving as a single opaque non-zero exit.
+      - name: Prove the controls enforce
+        run: python scripts/godmode.py --project . selftest --brief
+
+      - name: Stage known failures and check something notices
+        run: python scripts/godmode.py --project . scenarios --brief
+
+      - name: Check host manifests match their source
+        run: python scripts/godmode.py --project . bindings --brief
+
+      - name: Publish the dependency claim
+        run: python scripts/godmode.py --project . sbom --brief

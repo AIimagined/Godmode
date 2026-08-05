@@ -1214,6 +1214,39 @@ class AsyncAuthorizationTests(unittest.TestCase):
                 CapabilityBroker(archive).request("git status")
 
 
+class ScenarioTests(unittest.TestCase):
+    def test_every_staged_failure_is_caught(self) -> None:
+        # A control that passes its unit test and misses the failure it was
+        # written for is the expensive kind of green.
+        from godmode_runtime.godmode_scenarios import run
+
+        report = run()
+        self.assertEqual(report["verdict"], "all-caught", report["missed"])
+        self.assertGreaterEqual(report["total"], 10)
+
+    def test_unreproducible_failures_are_named_not_counted(self) -> None:
+        # A harness covering eight of twenty and reporting twenty is the same
+        # false completeness this project exists to prevent.
+        from godmode_runtime.godmode_scenarios import NEEDS_A_HOST, run
+
+        report = run()
+        self.assertTrue(report["not_reproducible_here"])
+        self.assertEqual(len(report["not_reproducible_here"]), len(NEEDS_A_HOST))
+        for entry in report["not_reproducible_here"]:
+            self.assertTrue(entry["why"])
+            # Named, and excluded from the coverage total.
+            self.assertNotIn(entry["scenario"], [s["scenario"] for s in report["scenarios"]])
+
+    def test_ci_runs_each_gate_as_its_own_step(self) -> None:
+        # One gate per command, so a failure names itself instead of arriving as a
+        # single opaque non-zero exit.
+        workflow = (PLUGIN_ROOT / ".github" / "workflows" / "godmode-verify.yml").read_text(
+            encoding="utf-8"
+        )
+        for gate in ("selftest", "scenarios", "bindings", "sbom"):
+            self.assertIn(gate, workflow, gate)
+
+
 class UsabilityTests(unittest.TestCase):
     def test_shim_exists_for_both_shells(self) -> None:
         # Every call otherwise costs the caller the full path to the plugin, which
