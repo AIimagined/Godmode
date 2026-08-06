@@ -1302,5 +1302,192 @@ class CorpusTests(unittest.TestCase):
             self.assertEqual([b["role"] for b in first], ["operating-guide", "state", "lessons"])
 
 
+@contextmanager
+def isolated_git_project():
+    """A committed git repo with one passing test file, plus its archive."""
+    with tempfile.TemporaryDirectory() as temporary:
+        base = Path(temporary)
+        project = base / "project"
+        state = base / "private-state"
+        project.mkdir()
+        (project / "app.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+        (project / "tests").mkdir()
+        (project / "tests" / "test_app.py").write_text(
+            "from app import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n    assert add(0, 0) == 0\n",
+            encoding="utf-8",
+        )
+        env = {"GODMODE_STATE_HOME": str(state), "GIT_CONFIG_GLOBAL": str(base / "gitconfig")}
+        with mock.patch.dict(os.environ, env, clear=False):
+            git = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-C", str(project)]
+            subprocess.run(git[:1] + ["init", "-q", str(project)], check=True, capture_output=True)
+            subprocess.run(git + ["add", "-A"], check=True, capture_output=True)
+            subprocess.run(git + ["commit", "-q", "-m", "baseline"], check=True, capture_output=True)
+            anchor = resolve_anchor(project)
+            archive = Chronicle(anchor)
+            archive.initialize()
+            yield project, archive
+
+
+class IntegrityTests(unittest.TestCase):
+    def _analyze(self, project, archive):
+        from godmode_runtime.godmode_integrity import analyze
+
+        return analyze(archive, project, base="HEAD")
+
+    def test_innocent_change_produces_no_blocking_findings(self) -> None:
+        with isolated_git_project() as (project, archive):
+            (project / "tests" / "test_app.py").write_text(
+                "from app import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n"
+                "    assert add(0, 0) == 0\n    assert add(-1, 1) == 0\n",
+                encoding="utf-8",
+            )
+            report = self._analyze(project, archive)
+            self.assertFalse(report["blocking"], report["findings"])
+
+    def test_removed_assertion_blocks(self) -> None:
+        with isolated_git_project() as (project, archive):
+            (project / "tests" / "test_app.py").write_text(
+                "from app import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n",
+                encoding="utf-8",
+            )
+            report = self._analyze(project, archive)
+            self.assertTrue(report["blocking"])
+            self.assertIn("assertion-diff", [f["monitor"] for f in report["findings"]])
+
+    def test_added_skip_blocks(self) -> None:
+        with isolated_git_project() as (project, archive):
+            (project / "tests" / "test_app.py").write_text(
+                "import pytest\nfrom app import add\n\n\n@pytest.mark.skip(reason='later')\n"
+                "def test_add():\n    assert add(1, 2) == 3\n    assert add(0, 0) == 0\n",
+                encoding="utf-8",
+            )
+            report = self._analyze(project, archive)
+            self.assertTrue(report["blocking"])
+            self.assertIn("skip-quarantine", [f["monitor"] for f in report["findings"]])
+
+    def test_untested_production_change_is_reported_not_blocked(self) -> None:
+        with isolated_git_project() as (project, archive):
+            (project / "app.py").write_text(
+                "def add(a, b):\n    return a + b\n\n\ndef sub(a, b):\n    return a - b\n",
+                encoding="utf-8",
+            )
+            report = self._analyze(project, archive)
+            self.assertFalse(report["blocking"])
+            self.assertIn("coverage-shape", [f["monitor"] for f in report["findings"]])
+
+    def test_protected_test_change_blocks_without_decision(self) -> None:
+        with isolated_git_project() as (project, archive):
+            archive.append(
+                "invariant", "tests/test_app.py",
+                {"value": "add() contract is protected", "status": "active"},
+            )
+            (project / "tests" / "test_app.py").write_text(
+                "from app import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n"
+                "    assert add(0, 0) == 0\n    assert add(2, 2) == 4\n",
+                encoding="utf-8",
+            )
+            report = self._analyze(project, archive)
+            self.assertIn("protected-test-gate", [f["monitor"] for f in report["findings"]])
+            self.assertTrue(report["blocking"])
+
+    def test_protected_test_change_passes_with_decision(self) -> None:
+        with isolated_git_project() as (project, archive):
+            archive.append(
+                "invariant", "tests/test_app.py",
+                {"value": "add() contract is protected", "status": "active"},
+            )
+            archive.append(
+                "decision", "protected-test-change:tests/test_app.py",
+                {"value": "extending coverage, no assertions weakened", "status": "approved"},
+            )
+            (project / "tests" / "test_app.py").write_text(
+                "from app import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n"
+                "    assert add(0, 0) == 0\n    assert add(2, 2) == 4\n",
+                encoding="utf-8",
+            )
+            report = self._analyze(project, archive)
+            self.assertNotIn(
+                "protected-test-gate",
+                [f["monitor"] for f in report["findings"] if f["blocking"]],
+            )
+
+    def test_skip_marker_inside_string_literal_is_fixture_data(self) -> None:
+        with isolated_git_project() as (project, archive):
+            (project / "tests" / "test_app.py").write_text(
+                "from app import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n"
+                "    assert add(0, 0) == 0\n"
+                '    marker = "@pytest.mark.skip is what the monitor flags"\n'
+                "    assert marker\n",
+                encoding="utf-8",
+            )
+            report = self._analyze(project, archive)
+            self.assertNotIn("skip-quarantine", [f["monitor"] for f in report["findings"]])
+
+    def test_all_nine_monitors_are_present(self) -> None:
+        from godmode_runtime.godmode_integrity import MONITORS
+
+        self.assertEqual(len(MONITORS), 9)
+
+
+class ChangelogTests(unittest.TestCase):
+    def test_code_change_without_fragment_fails_gate(self) -> None:
+        from godmode_runtime.godmode_changelog import check_fragments
+
+        with isolated_git_project() as (project, _archive):
+            (project / "app.py").write_text("def add(a, b):\n    return b + a\n", encoding="utf-8")
+            report = check_fragments(project, base="HEAD")
+            self.assertFalse(report["satisfied"])
+
+    def test_fragment_alongside_change_passes_gate(self) -> None:
+        from godmode_runtime.godmode_changelog import check_fragments
+
+        with isolated_git_project() as (project, _archive):
+            (project / "app.py").write_text("def add(a, b):\n    return b + a\n", encoding="utf-8")
+            fragments = project / "changelog.d"
+            fragments.mkdir()
+            (fragments / "commutative-add.changed.md").write_text(
+                "`add` now evaluates operands in reverse order.\n", encoding="utf-8"
+            )
+            report = check_fragments(project, base="HEAD")
+            self.assertTrue(report["satisfied"], report)
+
+    def test_docs_only_change_needs_no_fragment(self) -> None:
+        from godmode_runtime.godmode_changelog import check_fragments
+
+        with isolated_git_project() as (project, _archive):
+            (project / "README.md").write_text("docs\n", encoding="utf-8")
+            report = check_fragments(project, base="HEAD")
+            self.assertTrue(report["satisfied"], report)
+
+    def test_merge_moves_fragments_into_changelog_and_removes_them(self) -> None:
+        from godmode_runtime.godmode_changelog import merge_fragments
+
+        with isolated_git_project() as (project, _archive):
+            (project / "CHANGELOG.md").write_text(
+                "# Changelog\n\n## [Unreleased]\n\n## [0.1.0] - 2026-01-01\n\n### Added\n\n- Base.\n",
+                encoding="utf-8",
+            )
+            fragments = project / "changelog.d"
+            fragments.mkdir()
+            (fragments / "one.added.md").write_text("New thing.\n", encoding="utf-8")
+            (fragments / "two.fixed.md").write_text("Old bug.\n", encoding="utf-8")
+            report = merge_fragments(project, version="0.2.0", date="2026-08-06")
+            body = (project / "CHANGELOG.md").read_text(encoding="utf-8")
+            self.assertIn("## [0.2.0] - 2026-08-06", body)
+            self.assertIn("- New thing.", body)
+            self.assertIn("- Old bug.", body)
+            self.assertLess(body.index("## [0.2.0]"), body.index("## [0.1.0]"))
+            self.assertEqual(report["merged"], 2)
+            self.assertEqual(list(fragments.glob("*.md")), [])
+
+    def test_merge_with_no_fragments_refuses(self) -> None:
+        from godmode_runtime.godmode_changelog import merge_fragments
+        from godmode_runtime.godmode_errors import ArchiveError
+
+        with isolated_git_project() as (project, _archive):
+            with self.assertRaises(ArchiveError):
+                merge_fragments(project, version="0.2.0", date="2026-08-06")
+
+
 if __name__ == "__main__":
     unittest.main()
