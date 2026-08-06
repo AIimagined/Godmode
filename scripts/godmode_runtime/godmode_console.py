@@ -46,6 +46,7 @@ from .godmode_loop import analyze as analyze_loops
 from .godmode_loop import model_blame_allowed
 from .godmode_mistakes import analyze as analyze_mistakes
 from .godmode_mistakes import stale_runtime
+from .godmode_parity import absorption_check, parity_matrix, schema_ladder
 from .godmode_reconcile import classify_environment, reconcile_docs, reconcile_versions
 from .godmode_removal import REQUIRED_FIELDS as REMOVAL_FIELDS
 from .godmode_removal import record_removal, removal_answer
@@ -1206,6 +1207,21 @@ def cmd_environment(args: argparse.Namespace, runtime: Runtime) -> CommandResult
 
 
 def cmd_database(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if getattr(args, "propose", False):
+        _require_archive(runtime)
+        columns: dict[str, list[str]] = {}
+        for pair in args.existing_column:
+            table, _, column = pair.partition(":")
+            columns.setdefault(table, []).append(column)
+        result = schema_ladder(runtime.archive, {
+            "change": args.change,
+            "existing_tables": args.existing_table,
+            "existing_columns": columns,
+            "proposed_table": args.proposed_table,
+            "proposed_column": args.proposed_column,
+            "review": args.review,
+        })
+        return CommandResult(result, exit_code=0 if result["approved"] else 1)
     return CommandResult(
         {
             "record": _append(
@@ -1294,8 +1310,25 @@ def cmd_export(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     )
 
 
+def cmd_absorb(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    result = absorption_check(runtime.archive, args.path)
+    return CommandResult(result, exit_code=0 if result["absorbed"] else 1)
+
+
 def cmd_parity(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
+    if getattr(args, "matrix", False):
+        result = parity_matrix(runtime.anchor.project_root, args.reference)
+        runtime.archive.append(
+            "decision", "parity-matrix-observation",
+            {"aligned": result["aligned"],
+             "staleness": result.get("reference_staleness"),
+             "verdicts": {name: dim["verdict"] for name, dim in result["dimensions"].items()},
+             "status": "observed"},
+            evidence=[],
+        )
+        return CommandResult(result)
     result = compare_local_reference(runtime.anchor.project_root, args.reference)
     runtime.archive.append(
         "decision",
@@ -1853,6 +1886,13 @@ def _build_parser() -> argparse.ArgumentParser:
     database.add_argument("--change", required=True)
     database.add_argument("--status", required=True)
     database.add_argument("--rollback")
+    database.add_argument("--propose", action="store_true",
+                          help="Run the schema decision ladder instead of recording state")
+    database.add_argument("--proposed-table")
+    database.add_argument("--proposed-column")
+    database.add_argument("--existing-table", action="append", default=[])
+    database.add_argument("--existing-column", action="append", default=[], metavar="TABLE:COLUMN")
+    database.add_argument("--review", default="")
     _evidence(database)
     database.set_defaults(handler=cmd_database)
 
@@ -1886,7 +1926,13 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("explain-context", help="Explain included and excluded continuity data").set_defaults(handler=cmd_context_why)
     parity = sub.add_parser("parity", help="Compare neutral structure with an explicit local reference")
     parity.add_argument("--reference", required=True)
+    parity.add_argument("--matrix", action="store_true",
+                        help="Full eleven-dimension decision matrix instead of category gaps")
     parity.set_defaults(handler=cmd_parity)
+
+    absorb = sub.add_parser("absorb", help="Check whether a synced file is truly absorbed (reader + guard)")
+    absorb.add_argument("--path", required=True)
+    absorb.set_defaults(handler=cmd_absorb)
 
     skill = sub.add_parser("skill", help="Validate or forge a project skill")
     skill_sub = skill.add_subparsers(dest="skill_command", required=True)
