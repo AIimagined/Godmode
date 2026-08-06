@@ -1098,6 +1098,9 @@ class PlanModeTests(unittest.TestCase):
 
         with isolated_project() as (_project, _state, _anchor, archive):
             archive.initialize()
+            from godmode_runtime.godmode_plan import specify
+            specify(archive, "S-1", "fix replay", {
+                "objective": "o", "outcome": "u", "acceptance": "a", "non_goals": "n"})
             start(archive, "S-1", "fix replay", {"objective": "stop replay"})
             self.assertFalse(mutation_verdict(archive, "S-1")["allowed"])
             self.assertFalse(approve(archive, "S-1")["approved"])

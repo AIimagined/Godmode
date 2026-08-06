@@ -154,7 +154,7 @@ def selftest() -> dict[str, Any]:
     from .godmode_chronicle import Chronicle
     from .godmode_drift import capabilities
     from .godmode_errors import ArchiveError
-    from .godmode_plan import mutation_verdict, start as plan_start
+    from .godmode_plan import mutation_verdict, specify as plan_specify, start as plan_start
     from .godmode_status import record_item
 
     controls: list[dict[str, Any]] = []
@@ -213,6 +213,10 @@ def selftest() -> dict[str, Any]:
                     return True, "reopening verified work without proof was refused"
 
             def plan_gates_mutation():
+                # A spec is required before a plan can even start (S22-06), so the
+                # probe supplies one; the control under test is the mutation gate.
+                plan_specify(archive, session, "probe", {
+                    "objective": "o", "outcome": "u", "acceptance": "a", "non_goals": "n"})
                 plan_start(archive, session, "probe", {"objective": "only this field"})
                 verdict = mutation_verdict(archive, session)
                 return not verdict["allowed"], "mutation closed while the plan contract is incomplete"
