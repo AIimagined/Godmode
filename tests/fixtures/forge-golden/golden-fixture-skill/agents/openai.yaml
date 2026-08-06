@@ -1,0 +1,5 @@
+# Generated locally by Godmode.
+interface:
+  display_name: "Golden Fixture Skill"
+  short_description: "A frozen reference skill used only to detect generator drift..."
+  default_prompt: "Use $golden-fixture-skill to complete this request and prove its acceptance checks."

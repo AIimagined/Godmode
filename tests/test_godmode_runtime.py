@@ -2070,5 +2070,45 @@ class WorktreeOwnershipTests(unittest.TestCase):
             self.assertEqual(third["collisions"], [])
 
 
+class ForgeGoldenTests(unittest.TestCase):
+    """S14-02: generator output is diffed against a checked-in golden tree."""
+
+    GOLDEN = PLUGIN_ROOT / "tests" / "fixtures" / "forge-golden" / "golden-fixture-skill"
+
+    def test_regenerated_skill_matches_the_golden_tree(self) -> None:
+        from godmode_runtime.godmode_forge import SkillProposal, forge_skill
+
+        proposal = SkillProposal(
+            name="golden-fixture-skill",
+            purpose="A frozen reference skill used only to detect generator drift in CI.",
+            gap_evidence="seq:1 recurring formatting gap across three sessions",
+            repeated_uses=3,
+            positive_triggers=("format the golden fixture", "regenerate the reference skill"),
+            negative_triggers=("unrelated deployment work", "general refactoring"),
+            assertions=("output matches the checked-in golden tree",
+                        "no timestamp appears in generated text"),
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            generated = forge_skill(raw, proposal)
+            golden_files = sorted(
+                p.relative_to(self.GOLDEN).as_posix()
+                for p in self.GOLDEN.rglob("*") if p.is_file())
+            fresh_files = sorted(
+                p.relative_to(generated).as_posix()
+                for p in Path(generated).rglob("*") if p.is_file())
+            self.assertEqual(golden_files, fresh_files)
+            for name in golden_files:
+                self.assertEqual(
+                    (Path(generated) / name).read_text(encoding="utf-8"),
+                    (self.GOLDEN / name).read_text(encoding="utf-8"),
+                    f"generator drift in {name}; regenerate the golden tree deliberately",
+                )
+
+    def test_learning_loop_phases_are_named(self) -> None:
+        from godmode_runtime.godmode_forge import LEARNING_LOOP
+
+        self.assertEqual(set(LEARNING_LOOP), {"scanner", "analyzer", "writer", "verifier"})
+
+
 if __name__ == "__main__":
     unittest.main()
