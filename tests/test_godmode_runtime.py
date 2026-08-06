@@ -1959,5 +1959,59 @@ class SupplyChainTests(unittest.TestCase):
                 release_checksums(project)["manifest_sha256"], first["manifest_sha256"])
 
 
+class GuardrailTests(unittest.TestCase):
+    def test_ceiling_exceeded_stops_and_reports_what_remained(self) -> None:
+        from godmode_runtime.godmode_guardrails import check_ceilings
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / ".godmode-ceilings.json").write_text(
+                json.dumps({"tokens": 1000, "tool_calls": 50}), encoding="utf-8")
+            over = check_ceilings(project, {"tokens": 1500, "tool_calls": 10})
+            self.assertEqual(over["verdict"], "over-ceiling")
+            self.assertEqual(over["remaining"]["tool_calls"], 40)
+            self.assertEqual(
+                check_ceilings(project, {"tokens": 900})["verdict"], "within-ceilings")
+
+    def test_watchdog_interrupts_on_a_skip_pattern(self) -> None:
+        from godmode_runtime.godmode_attest import open_session, record_step
+        from godmode_runtime.godmode_guardrails import watchdog
+
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            session = open_session(archive, "watch")
+            for step in ("read sources", "run parity", "check invariants"):
+                record_step(archive, session, step, "skipped", reason="in a hurry")
+            verdict = watchdog(archive, session)
+            self.assertEqual(verdict["verdict"], "interrupt")
+            self.assertEqual(len(verdict["skipped"]), 3)
+
+    def test_rewind_previews_only_verified_checkpoints(self) -> None:
+        from godmode_runtime.godmode_guardrails import rewind_preview
+
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            archive.append("checkpoint", "broken state", {"status": "red", "head": "aaa"})
+            archive.append("checkpoint", "stable state", {"status": "green", "head": "bbb"})
+            preview = rewind_preview(archive, 2)
+            self.assertIn("bbb", preview["operation"])
+            self.assertTrue(preview["protected"])
+            with self.assertRaises(ArchiveError):
+                rewind_preview(archive, 1)
+
+    def test_arbiter_prefers_the_complete_smaller_plan(self) -> None:
+        from godmode_runtime.godmode_guardrails import arbitrate
+        from godmode_runtime.godmode_plan import CONTRACT_FIELDS, specify, start
+
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            specify(archive, "S", "approach", {
+                "objective": "o", "outcome": "u", "acceptance": "a", "non_goals": "n"})
+            start(archive, "S", "big rewrite", {f: "x" for f in CONTRACT_FIELDS} | {"points": "13"})
+            start(archive, "S", "small patch", {f: "x" for f in CONTRACT_FIELDS} | {"points": "3"})
+            verdict = arbitrate(archive)
+            self.assertEqual(verdict["winner"], "small patch")
+
+
 if __name__ == "__main__":
     unittest.main()
