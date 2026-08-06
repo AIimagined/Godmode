@@ -1926,5 +1926,35 @@ class ReconcileTests(unittest.TestCase):
             self.assertEqual(reconcile_docs(project, base="HEAD")["verdict"], "reconciled")
 
 
+class SupplyChainTests(unittest.TestCase):
+    def test_standard_sbom_formats_carry_the_zero_dependency_claim(self) -> None:
+        from godmode_runtime.godmode_bindings import sbom_cyclonedx, sbom_spdx
+
+        spdx = sbom_spdx(PLUGIN_ROOT)
+        self.assertEqual(spdx["spdxVersion"], "SPDX-2.3")
+        self.assertEqual(spdx["packages"][0]["licenseDeclared"], "Apache-2.0")
+        cyclone = sbom_cyclonedx(PLUGIN_ROOT)
+        self.assertEqual(cyclone["bomFormat"], "CycloneDX")
+        self.assertEqual(cyclone["dependencies"][0]["dependsOn"], [])
+
+    def test_dependency_gate_holds_the_zero_budget(self) -> None:
+        from godmode_runtime.godmode_bindings import dependency_gate
+
+        verdict = dependency_gate(PLUGIN_ROOT)
+        self.assertEqual(verdict["verdict"], "within-policy", verdict)
+        self.assertEqual(verdict["policy"]["max_dependencies"], 0)
+
+    def test_checksums_are_reproducible_and_verifiable(self) -> None:
+        from godmode_runtime.godmode_bindings import release_checksums
+
+        with isolated_git_project() as (project, _archive):
+            first = release_checksums(project)
+            second = release_checksums(project)
+            self.assertEqual(first["manifest_sha256"], second["manifest_sha256"])
+            (project / "app.py").write_text("def add(a, b):\n    return b + a\n", encoding="utf-8")
+            self.assertNotEqual(
+                release_checksums(project)["manifest_sha256"], first["manifest_sha256"])
+
+
 if __name__ == "__main__":
     unittest.main()

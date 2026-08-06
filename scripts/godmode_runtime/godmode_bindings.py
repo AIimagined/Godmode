@@ -176,6 +176,113 @@ def sbom(project: Path) -> dict[str, Any]:
     }
 
 
+def sbom_spdx(project: Path) -> dict[str, Any]:
+    """The same claim in SPDX 2.3 form, so external tooling can validate it."""
+    base = sbom(project)
+    name = base["product"]
+    return {
+        "spdxVersion": "SPDX-2.3",
+        "dataLicense": "CC0-1.0",
+        "SPDXID": "SPDXRef-DOCUMENT",
+        "name": f"{name}-{base['version']}",
+        "documentNamespace": f"https://spdx.org/spdxdocs/{name}-{base['version']}",
+        "creationInfo": {"creators": [f"Tool: {name}-sbom"], "created": "1970-01-01T00:00:00Z"},
+        "packages": [{
+            "SPDXID": "SPDXRef-Package",
+            "name": name,
+            "versionInfo": base["version"],
+            "licenseConcluded": base["license"],
+            "licenseDeclared": base["license"],
+            "downloadLocation": "NOASSERTION",
+            "filesAnalyzed": False,
+        }],
+        "relationships": [{
+            "spdxElementId": "SPDXRef-DOCUMENT",
+            "relationshipType": "DESCRIBES",
+            "relatedSpdxElement": "SPDXRef-Package",
+        }],
+    }
+
+
+def sbom_cyclonedx(project: Path) -> dict[str, Any]:
+    """The same claim in CycloneDX 1.5 form."""
+    base = sbom(project)
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "version": 1,
+        "components": [{
+            "type": "application",
+            "name": base["product"],
+            "version": base["version"],
+            "licenses": [{"license": {"id": base["license"]}}],
+        }],
+        "dependencies": [{"ref": base["product"], "dependsOn": []}],
+    }
+
+
+DEPENDENCY_POLICY_FILENAME = ".godmode-dependency-policy.json"
+
+
+def dependency_gate(project: Path) -> dict[str, Any]:
+    """The declarative policy gate: a dependency or banned licence fails the build.
+
+    Policy defaults to the product's own promise - zero runtime dependencies -
+    and a project may declare `.godmode-dependency-policy.json` with
+    {"max_dependencies": N, "banned_licenses": [...]}.
+    """
+    policy = {"max_dependencies": 0, "banned_licenses": []}
+    declared = project / DEPENDENCY_POLICY_FILENAME
+    if declared.is_file():
+        try:
+            policy.update(json.loads(declared.read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError):
+            pass
+    base = sbom(project)
+    violations: list[str] = []
+    if base["dependency_count"] > int(policy["max_dependencies"]):
+        violations.append(
+            f"{base['dependency_count']} runtime dependencies exceed the budget of "
+            f"{policy['max_dependencies']}: {', '.join(base['runtime_dependencies'])}"
+        )
+    if base["license"] in policy["banned_licenses"]:
+        violations.append(f"licence {base['license']} is banned by policy")
+    return {
+        "policy": policy,
+        "observed": {"dependencies": base["dependency_count"], "license": base["license"]},
+        "violations": violations,
+        "verdict": "within-policy" if not violations else "policy-violation",
+    }
+
+
+def release_checksums(project: Path) -> dict[str, Any]:
+    """SHA-256 over every tracked file, in `sha256sum -c` format.
+
+    Deterministic from content alone, so two independent clones produce
+    identical output (S1-10's reproducibility claim is checkable).
+    """
+    import hashlib
+
+    from .godmode_anchor import run_git
+
+    listed = run_git(project, "ls-files")
+    if listed is None:
+        raise GodmodeError("Checksums need a Git repository to enumerate tracked files")
+    lines = []
+    for name in sorted(listed.splitlines()):
+        path = project / name
+        if not path.is_file():
+            continue
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        lines.append(f"{digest}  {name}")
+    body = "\n".join(lines) + "\n"
+    return {
+        "files": len(lines),
+        "manifest": body,
+        "manifest_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+    }
+
+
 def _self_check() -> None:
     import tempfile
 
