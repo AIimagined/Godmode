@@ -87,6 +87,9 @@ class Atlas:
     edges: list[Edge] = field(default_factory=list)
     files: list[str] = field(default_factory=list)
     unparsed: list[dict[str, str]] = field(default_factory=list)
+    # symbol id -> shingles over its (approximate) body, so duplicates are found
+    # by what code does, not what it happens to be called.
+    body_signatures: dict[str, frozenset] = field(default_factory=dict)
 
     # ---- queries -------------------------------------------------------------
 
@@ -197,9 +200,17 @@ class Atlas:
             for second in candidates[index + 1:]:
                 if first.name == second.name and first.path == second.path:
                     continue
-                score = _jaccard(signatures[first.id], signatures[second.id])
+                name_score = _jaccard(signatures[first.id], signatures[second.id])
+                # Two implementations of one behaviour under unrelated names have
+                # similar bodies; the name comparison alone would never see them.
+                body_score = _jaccard(
+                    self.body_signatures.get(first.id, frozenset()),
+                    self.body_signatures.get(second.id, frozenset()),
+                ) if self.body_signatures.get(first.id) and self.body_signatures.get(second.id) else 0.0
+                score, basis = max((name_score, "name"), (body_score, "body"))
                 if score >= threshold:
-                    pairs.append({"a": first.view(), "b": second.view(), "similarity": round(score, 3)})
+                    pairs.append({"a": first.view(), "b": second.view(),
+                                  "similarity": round(score, 3), "basis": basis})
         pairs.sort(key=lambda pair: (-pair["similarity"], pair["a"]["id"]))
         return pairs
 
@@ -214,10 +225,31 @@ class Atlas:
             findings.append("most relationships are inferred; treat traversal results as leads")
         if not self.symbols:
             findings.append("no symbols extracted; the atlas cannot answer structural questions")
+        # Per-suffix honesty: a suffix whose files yielded no symbols is counted,
+        # not understood, and any structural claim about those files is unsafe.
+        by_suffix: dict[str, dict[str, int]] = {}
+        symbol_paths = {s.path for s in self.symbols}
+        for name in self.files:
+            suffix = "." + name.rsplit(".", 1)[-1] if "." in name else "(none)"
+            entry = by_suffix.setdefault(suffix, {"files": 0, "understood": 0})
+            entry["files"] += 1
+            if name in symbol_paths:
+                entry["understood"] += 1
+        suffix_support = {
+            suffix: ("parsed" if counts["understood"] else "counted, not understood")
+            for suffix, counts in sorted(by_suffix.items())
+        }
+        opaque = sorted(s for s, v in suffix_support.items() if v != "parsed")
+        if opaque:
+            findings.append(
+                f"suffixes counted but not understood: {', '.join(opaque)}; "
+                "structural claims about those files are unsafe"
+            )
         return {
             "files": len(self.files),
             "unparsed": self.unparsed,
             "symbols": len(self.symbols),
+            "suffix_support": suffix_support,
             "edges": {"total": len(self.edges), "extracted": extracted, "inferred": inferred},
             "findings": findings,
             "trustworthy": not findings,
@@ -353,6 +385,18 @@ def build(project: Path, suffixes: Iterable[str] | None = None) -> Atlas:
             continue
         atlas.symbols.extend(symbols)
         atlas.edges.extend(edges)
+        # Approximate bodies: a symbol runs from its line to the next symbol's.
+        lines = text.splitlines()
+        ordered = sorted((s for s in symbols if s.kind in ("function", "class")),
+                         key=lambda s: s.line)
+        for position, symbol in enumerate(ordered):
+            end = ordered[position + 1].line - 1 if position + 1 < len(ordered) else len(lines)
+            body = " ".join(
+                stripped for raw in lines[symbol.line:end]
+                if (stripped := raw.strip()) and not stripped.startswith(("#", "//"))
+            )
+            if len(body) >= 40:
+                atlas.body_signatures[symbol.id] = _shingles(body)
     return atlas
 
 

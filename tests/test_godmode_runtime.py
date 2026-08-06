@@ -2146,5 +2146,34 @@ class KnowledgeGovernanceTests(unittest.TestCase):
             self.assertIn("bound-reached", report["verdict"])
 
 
+class AtlasDepthTests(unittest.TestCase):
+    def test_unparsed_suffix_is_counted_not_understood(self) -> None:
+        from godmode_runtime.godmode_atlas import build
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / "a.py").write_text("def alpha():\n    return 1\n", encoding="utf-8")
+            (project / "b.cs").write_text("public int Beta() { return 1; }\n", encoding="utf-8")
+            report = build(project).diagnose()
+            self.assertEqual(report["suffix_support"][".py"], "parsed")
+            self.assertEqual(report["suffix_support"][".cs"], "counted, not understood")
+            self.assertFalse(report["trustworthy"])
+
+    def test_same_behaviour_under_unrelated_names_is_a_duplicate(self) -> None:
+        from godmode_runtime.godmode_atlas import build
+
+        body = ("    token = read_token(request)\n"
+                "    if token.expiry < now():\n"
+                "        raise Expired(token.audience)\n"
+                "    return refresh(token, now() + WINDOW)\n")
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / "a.py").write_text(f"def rotate_credentials(request):\n{body}", encoding="utf-8")
+            (project / "b.py").write_text(f"def refresh_key(request):\n{body}", encoding="utf-8")
+            pairs = build(project).duplicates(threshold=0.6)
+            self.assertTrue(pairs, "body-identical functions under unrelated names not reported")
+            self.assertEqual(pairs[0]["basis"], "body")
+
+
 if __name__ == "__main__":
     unittest.main()
