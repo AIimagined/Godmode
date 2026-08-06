@@ -35,7 +35,7 @@ def _is_test_path(path: str) -> bool:
 
 
 def _in_string(line: str, position: int) -> bool:
-    # [private]: quote-parity, not a tokenizer; a marker inside a string literal is
+    # deliberate simplification: quote-parity, not a tokenizer; a marker inside a string literal is
     # fixture data, not a live skip. Multi-line strings still slip through.
     return line.count('"', 0, position) % 2 == 1 or line.count("'", 0, position) % 2 == 1
 
@@ -196,7 +196,7 @@ def _negative_control(ctx: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _protected_test_gate(ctx: dict[str, Any]) -> list[dict[str, Any]]:
-    # [private]: rationale is a recorded decision, not a password capability;
+    # deliberate simplification: rationale is a recorded decision, not a password capability;
     # wire the sentinel broker in if invariants start guarding money paths.
     approved = {
         record["subject"][len("protected-test-change:"):]
