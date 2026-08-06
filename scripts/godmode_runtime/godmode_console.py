@@ -468,6 +468,7 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         args.text,
         args.grade,
         cites=args.cite,
+        external=args.external,
     )
     data = record["data"]
     # A downgrade is a finding, so it must be visible in the exit status too.
@@ -593,6 +594,44 @@ def cmd_changelog_merge(args: argparse.Namespace, runtime: Runtime) -> CommandRe
         Path(runtime.anchor.project_root), version=args.set_version,
         date=args.date or date.today().isoformat(),
     ))
+
+
+def cmd_benchmark(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """S7-04/05/06: measure the budgets locally; transmit nothing."""
+    import time as _time
+
+    from .godmode_corpus import build_brief as corpus_brief
+    from .godmode_lens import build_context_brief
+
+    _require_archive(runtime)
+    project = Path(runtime.anchor.project_root)
+    budgets = {"cold_start": 2500, "resume": 1200, "rca": 3500}
+    results: dict[str, Any] = {}
+
+    started = _time.perf_counter()
+    cold = corpus_brief(project, "resume work on the current objective", budgets["cold_start"])
+    results["cold_start"] = {
+        "elapsed_ms": round((_time.perf_counter() - started) * 1000, 1),
+        "estimated_tokens": cold["budget"]["used"],
+        "budget": budgets["cold_start"],
+        "within_budget": cold["budget"]["used"] <= budgets["cold_start"],
+    }
+
+    started = _time.perf_counter()
+    warm = build_context_brief(runtime.anchor, runtime.archive, token_budget=budgets["resume"])
+    results["resume"] = {
+        "elapsed_ms": round((_time.perf_counter() - started) * 1000, 1),
+        "estimated_tokens": warm["estimated_tokens"],
+        "budget": budgets["resume"],
+        "within_budget": warm["estimated_tokens"] <= budgets["resume"],
+    }
+
+    over = [name for name, entry in results.items() if not entry["within_budget"]]
+    results["rca"] = {"budget": budgets["rca"],
+                      "note": "measured only when an RCA brief is assembled; no synthetic RCA is faked here"}
+    results["transmitted"] = "nothing; metrics are computed and printed locally"
+    results["verdict"] = "within-budgets" if not over else f"over-budget: {', '.join(over)}"
+    return CommandResult(results, exit_code=0 if not over else 1)
 
 
 def cmd_ceilings(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -1449,6 +1488,8 @@ def _build_parser() -> argparse.ArgumentParser:
     claim.add_argument("text")
     claim.add_argument("--grade", choices=list(GRADES), default="observed")
     claim.add_argument("--cite", action="append", default=[], help="rec:<hash> or file:<path>#L<n>; repeatable")
+    claim.add_argument("--external", action="store_true",
+                       help="Claim about an external API/library; requires a doc:/url: primary source")
     claim.add_argument("--session")
     claim.set_defaults(handler=cmd_claim)
 
@@ -1682,6 +1723,9 @@ def _build_parser() -> argparse.ArgumentParser:
     changelog_merge.add_argument("--set-version", required=True)
     changelog_merge.add_argument("--date", help="Release date; defaults to today")
     changelog_merge.set_defaults(handler=cmd_changelog_merge)
+
+    benchmark = sub.add_parser("benchmark", help="Measure brief budgets and timings, locally only")
+    benchmark.set_defaults(handler=cmd_benchmark)
 
     ceilings = sub.add_parser("ceilings", help="Check reported spend against declared run ceilings")
     ceilings.add_argument("--spent", default="",

@@ -2175,5 +2175,24 @@ class AtlasDepthTests(unittest.TestCase):
             self.assertEqual(pairs[0]["basis"], "body")
 
 
+class ExternalClaimTests(unittest.TestCase):
+    def test_external_claim_without_primary_source_is_hypothesis(self) -> None:
+        from godmode_runtime.godmode_attest import open_session, record_claim
+
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            session = open_session(archive, "ext")
+            bare = record_claim(archive, project, session,
+                                "requests.Session retries 3 times by default",
+                                "verified", external=True)
+            self.assertTrue(bare["data"]["downgraded"])
+            self.assertIn("primary source", bare["data"]["reason"])
+            (project / "docs.txt").write_text("retries default", encoding="utf-8")
+            sourced = record_claim(archive, project, session,
+                                   "requests.Session retries 3 times by default",
+                                   "verified", cites=["doc:docs.txt"], external=True)
+            self.assertNotIn("primary source", str(sourced["data"].get("reason", "")))
+
+
 if __name__ == "__main__":
     unittest.main()
