@@ -147,7 +147,7 @@ def run_experiment(archive: Chronicle, project: Path, timeout: int = 300) -> dic
         if field not in spec:
             raise ArchiveError(f"{EXPERIMENT_FILENAME}: $.{field} is required")
     success_exit = int(spec.get("success_exit", 0))
-    max_runs = max(1, min(int(spec["max_runs"]), 20))  # [private]: hard cap 20; raise if a real program needs more
+    max_runs = max(1, min(int(spec["max_runs"]), 20))  # deliberate ceiling: hard cap 20; raise if a real program needs more
     command = shlex.split(str(spec["command"]))
 
     runs: list[dict[str, Any]] = []
