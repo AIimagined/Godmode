@@ -38,7 +38,7 @@ All commands accept `--json` (compact, sort-keyed) for machine parsing and
 
 ```sh
 python scripts/godmode.py --project . --json session open --label task
-python scripts/godmode.py --project . --json verify --name tests --command "python -m unittest"
+python scripts/godmode.py --project . --json verify tests --command "python -m unittest"
 python scripts/godmode.py --project . --json claim "tests pass" --grade verified --cite "cmd:python -m unittest"
 python scripts/godmode.py --project . --json session close
 ```
