@@ -1,0 +1,20 @@
+{
+  "schema": "godmode-skill-eval-v1",
+  "skill": "golden-fixture-skill",
+  "routing": {
+    "positive": [
+      "format the golden fixture",
+      "regenerate the reference skill"
+    ],
+    "near_negative": [
+      "unrelated deployment work",
+      "general refactoring"
+    ]
+  },
+  "behavior_assertions": [
+    "output matches the checked-in golden tree",
+    "no timestamp appears in generated text"
+  ],
+  "baseline_required": true,
+  "claims_require_evidence": true
+}

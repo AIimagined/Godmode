@@ -155,6 +155,17 @@ def _eval_payload(proposal: SkillProposal) -> dict[str, Any]:
     }
 
 
+# The structured learning loop (S14-04): each phase has a named implementation,
+# so "the system learns" is a pipeline you can point at, not a vibe. The
+# registry is the extension point - a project may add phases, never bypass them.
+LEARNING_LOOP: dict[str, str] = {
+    "scanner": "godmode_attest.recurrences - counts repeated, evidenced gaps",
+    "analyzer": "godmode_forge.SkillProposal.validate - routing and behavior gates",
+    "writer": "godmode_forge.forge_skill - emits the skill tree from the proposal",
+    "verifier": "godmode_forge.validate_skill - structural gate on the output",
+}
+
+
 def forge_skill(destination_root: str | Path, proposal: SkillProposal) -> Path:
     proposal.validate()
     root = Path(destination_root).expanduser().resolve(strict=False)
