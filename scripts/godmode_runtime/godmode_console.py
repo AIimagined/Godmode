@@ -55,7 +55,7 @@ from .godmode_plan import specify as plan_specify
 from .godmode_plan import start as plan_start
 from .godmode_scenarios import run as run_scenarios
 from .godmode_scope import scope as scope_change
-from .godmode_status import STATES, record_item, remaining, survey
+from .godmode_status import STATES, handover, record_item, remaining, render_view, survey
 from .godmode_corpus import build_brief, resolve_roles
 from .godmode_egress import notice as egress_notice
 from .godmode_egress import scan_project as scan_untrusted
@@ -988,17 +988,30 @@ def cmd_database(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 
 def cmd_sprint(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
-    return CommandResult(
-        {
-            "record": _append(
-                runtime,
-                "sprint",
-                args.name,
-                {"status": args.status, "capacity": args.capacity, "obligations": args.obligation},
-                args.evidence,
-            )
-        }
+    _require_archive(runtime)
+    # Routed through the single writer: a sprint record that bypassed the store's
+    # validation would be a second truth.
+    record = record_item(
+        runtime.archive, args.name, args.name, args.status,
+        evidence=args.evidence, proof=getattr(args, "proof", "") or "",
+        extra={"capacity": args.capacity, "obligations": args.obligation},
     )
+    return CommandResult({"record": _event_view(record)})
+
+
+def cmd_status_render(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    return CommandResult({"document": render_view(runtime.archive)})
+
+
+def cmd_status_handover(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    view = handover(
+        runtime.archive, Path(runtime.anchor.project_root),
+        session=_session(runtime, args.session) if args.session else None,
+        charter=_charter(runtime) if args.session else None,
+    )
+    return CommandResult(view)
 
 
 def cmd_docs(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -1201,6 +1214,14 @@ def _build_parser() -> argparse.ArgumentParser:
     status_remaining = status_sub.add_parser("remaining")
     status_remaining.add_argument("--session")
     status_remaining.set_defaults(handler=cmd_remaining)
+    status_sub.add_parser(
+        "render", help="The status document, rendered read-only from the store"
+    ).set_defaults(handler=cmd_status_render)
+    status_handover = status_sub.add_parser(
+        "handover", help="One rolling handover view derived from the store"
+    )
+    status_handover.add_argument("--session")
+    status_handover.set_defaults(handler=cmd_status_handover)
 
     # Named `planmode` rather than extending `plan`: `plan` is part of the released
     # command surface and converting it to subcommands would break existing callers.

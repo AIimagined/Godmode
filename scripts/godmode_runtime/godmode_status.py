@@ -36,8 +36,13 @@ def record_item(
     state: str,
     evidence: list[str] | None = None,
     proof: str = "",
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Write one status transition. Reopening finished work needs proof."""
+    """Write one status transition. Reopening finished work needs proof.
+
+    Every writer routes through here - a second writer with its own validation
+    is how two truths start.
+    """
     if state not in STATES:
         raise ArchiveError(f"Unknown state '{state}'; expected one of {', '.join(STATES)}")
     current = items(archive).get(item)
@@ -47,12 +52,10 @@ def record_item(
                 f"'{item}' is {current['state']}; reopening requires --proof naming the code "
                 "evidence of regression or an explicit user instruction"
             )
-    return archive.append(
-        "sprint",
-        item,
-        {"title": title, "state": state, "proof": proof},
-        evidence=evidence or [],
-    )
+    data: dict[str, Any] = {"title": title, "state": state, "proof": proof}
+    if extra:
+        data.update({k: v for k, v in extra.items() if k not in data})
+    return archive.append("sprint", item, data, evidence=evidence or [])
 
 
 def items(archive: Chronicle) -> dict[str, dict[str, Any]]:
@@ -71,6 +74,87 @@ def items(archive: Chronicle) -> dict[str, dict[str, Any]]:
             "evidence": record.get("evidence", []),
         }
     return latest
+
+
+def verify_pending(archive: Chronicle, project: Path) -> dict[str, Any]:
+    """Existence-check every pending item before anyone reads the list.
+
+    An item whose every cited artefact has vanished refers to a world that no
+    longer exists; it is closed in the same pass with the missing paths as
+    evidence, so a phantom cannot reach the user as pending work. Items citing
+    nothing are reported as unverifiable rather than silently trusted.
+    """
+    checked: list[dict[str, Any]] = []
+    closed: list[str] = []
+    for name, entry in sorted(items(archive).items()):
+        if entry["state"] in TERMINAL:
+            continue
+        cited = [e[len("file:"):] for e in entry["evidence"] if e.startswith("file:")]
+        if not cited:
+            checked.append({"item": name, "verdict": "unverifiable", "cited": 0})
+            continue
+        missing = [path for path in cited if not (project / path.split("#")[0]).exists()]
+        if missing and len(missing) == len(cited):
+            record_item(
+                archive, name, entry["title"], "closed",
+                evidence=[f"file:{path}" for path in missing],
+                extra={"closed_because": "every cited artefact is absent from the tree"},
+            )
+            closed.append(name)
+            checked.append({"item": name, "verdict": "phantom-closed", "missing": missing})
+        else:
+            checked.append({"item": name, "verdict": "verified", "cited": len(cited)})
+    return {"checked": checked, "auto_closed": closed}
+
+
+def render_view(archive: Chronicle) -> str:
+    """The status document, rendered from the store. Read-only downstream."""
+    current = items(archive)
+    lines = ["# Status", "", "Rendered from the status store; edits here change nothing.", ""]
+    by_state: dict[str, list[str]] = {}
+    for name, entry in sorted(current.items()):
+        by_state.setdefault(entry["state"], []).append(
+            f"- **{name}** {entry['title'] or ''} "
+            f"({', '.join(entry['evidence'][:2]) or 'no evidence cited'})"
+        )
+    for state in STATES:
+        if state in by_state:
+            lines.append(f"## {state} ({len(by_state[state])})")
+            lines.extend(by_state[state])
+            lines.append("")
+    return "\n".join(lines)
+
+
+def handover(
+    archive: Chronicle,
+    project: Path,
+    session: str | None = None,
+    charter: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """One rolling handover view derived from the store, superseding
+    the file-per-session pattern. Latest state is unambiguous; history stays
+    queryable through the archive itself."""
+    latest_checkpoint = None
+    for record in reversed(archive.select(kind="checkpoint", limit=50)):
+        latest_checkpoint = {
+            "summary": record["subject"],
+            "status": record["data"].get("status"),
+            "next": record["data"].get("next", ""),
+            "recorded_at": record["recorded_at"],
+        }
+        break
+    left = remaining(archive, project, session=session, charter=charter)
+    return {
+        "checkpoint": latest_checkpoint,
+        "remaining": left["remaining"],
+        "remaining_count": left["count"],
+        "complete_over": left["complete_over"],
+        "items": {
+            name: {"state": entry["state"], "title": entry["title"]}
+            for name, entry in sorted(items(archive).items())
+        },
+        "verdict": left["verdict"],
+    }
 
 
 def authority_claims(project: Path, limit: int = 5000) -> list[dict[str, Any]]:
@@ -149,8 +233,12 @@ def remaining(
     unavailable: list[dict[str, str]] = []
     items_left: list[dict[str, Any]] = []
 
+    # A phantom-pending item cannot reach the reader: existence-check first,
+    # closing (with evidence) anything whose cited artefacts are all gone.
+    verification = verify_pending(archive, project)
+
     current = items(archive)
-    consulted.append("status store")
+    consulted.append("status store (existence-checked)")
     for name, entry in sorted(current.items()):
         if entry["state"] not in TERMINAL:
             items_left.append({"source": "status", "id": name,
@@ -204,6 +292,7 @@ def remaining(
         "remaining": items_left,
         "count": len(items_left),
         "by_source": dict(sorted(by_source.items())),
+        "phantoms_closed": verification["auto_closed"],
         "sources_consulted": consulted,
         "sources_unavailable": unavailable,
         # The list is only as complete as the sources behind it, so that is stated
