@@ -1,0 +1,27 @@
+# Godmode
+
+> Local-first context continuity and evidence governance for coding agents.
+> Deterministic Python-stdlib runtime; no telemetry, no network calls, no
+> background processes, no runtime dependencies.
+
+Godmode reconstructs repository reality from inspectable evidence, keeps
+operational memory outside tracked files (inside Git metadata or the OS
+application-data directory), and gates risky actions behind previews and
+scoped one-use local capabilities. It ships as a plugin for Claude Code,
+Codex, and Grok, plus a composite GitHub Action for CI.
+
+## Docs
+
+- [README](README.md): install, first run, command overview
+- [GODMODE.md](GODMODE.md): product guarantees and start sequence
+- [GODMODE_PRIVACY.md](GODMODE_PRIVACY.md): what is stored, where, and what never leaves
+- [GODMODE_SECURITY.md](GODMODE_SECURITY.md): protected actions and the capability model
+- [GODMODE_ACCEPTANCE.md](GODMODE_ACCEPTANCE.md): acceptance criteria the suite enforces
+- [CONTRIBUTING.md](CONTRIBUTING.md): local validation and contribution boundaries
+
+## Interfaces
+
+- CLI: `python scripts/godmode.py --project <root> <command>` (see `--help`)
+- Skills: `skills/*/SKILL.md` route agent work to continuity, investigation, governance, and skill forging
+- CI: `action.yml` runs the integrity and changelog gates on pull requests
+- Locales: `locales/<lang>/` holds validated translations of guidance surfaces
