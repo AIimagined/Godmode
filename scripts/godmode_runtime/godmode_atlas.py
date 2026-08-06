@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import hashlib
+import json
 from pathlib import Path
 import re
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from .godmode_constants import CODE_SUFFIXES, IGNORED_DIRECTORY_NAMES
 from .godmode_errors import GodmodeError
@@ -33,6 +35,16 @@ INFERRED = "inferred"
 DEFINES = "defines"
 IMPORTS = "imports"
 CALLS = "calls"
+# A test importing a module and an app importing it are different obligations:
+# one breaks at runtime, the other is the safety net. Distinct relation kinds
+# keep "who calls this" and "what covers this" answerable separately.
+TESTED_BY = "tested-by"
+DOCUMENTS = "documents"
+
+# Traversal results are bucketed by what the relation means to a caller, not by
+# its literal name, so adding a relation kind does not change the report shape.
+_RELATION_BUCKET = {CALLS: "callers", IMPORTS: "callers",
+                    TESTED_BY: "tests", DOCUMENTS: "docs"}
 
 # Languages without a stdlib parser get a shape-matched extractor. Its output is
 # INFERRED by construction: a regex cannot prove a definition is reachable.
@@ -96,13 +108,22 @@ class Atlas:
     def by_path(self, path: str) -> list[Symbol]:
         return [symbol for symbol in self.symbols if symbol.path == path]
 
-    def affected(self, target: str, depth: int = 2, evidence: str | None = EXTRACTED) -> dict[str, Any]:
+    def affected(self, target: str, depth: int = 2, evidence: str | None = EXTRACTED,
+                 relations: set[str] | None = None) -> dict[str, Any]:
         """Reverse traversal: what breaks if `target` changes.
 
         Defaults to extracted edges only. A blast radius built from guesses is
         worse than none, because it reads as a complete answer.
+
+        `relations` narrows traversal to those relation kinds, because "what
+        tests cover this" and "who calls this" are different questions that
+        happen to share one graph. The answer is also bucketed by relation
+        (callers / tests / docs) so a README mention is never mistaken for a
+        runtime dependency when the two land in one flat list.
         """
-        edges = [e for e in self.edges if evidence is None or e.evidence == evidence]
+        edges = [e for e in self.edges
+                 if (evidence is None or e.evidence == evidence)
+                 and (relations is None or e.relation in relations)]
         # Index by module key so a query works whether the caller names a file path
         # or an import name.
         incoming: dict[str, list[Edge]] = {}
@@ -113,29 +134,41 @@ class Atlas:
         # let the same dependent be rediscovered at every level and report the
         # distance of its last visit rather than its first.
         root = module_key(target)
-        seen: dict[str, tuple[str, int]] = {}
+        seen: dict[str, tuple[str, int, set[str]]] = {}
         frontier = [root]
         for level in range(1, max(1, depth) + 1):
             following: list[str] = []
             for node in frontier:
                 for edge in incoming.get(node, []):
                     source = module_key(edge.source)
-                    if source in seen or source == root:
+                    if source == root:
                         continue
-                    seen[source] = (edge.source, level)
+                    if source in seen:
+                        # A rediscovered dependent keeps its first distance but
+                        # gains the relation kind: a file can import a module
+                        # and also test it, and both facts belong in the answer.
+                        seen[source][2].add(edge.relation)
+                        continue
+                    seen[source] = (edge.source, level, {edge.relation})
                     following.append(source)
             frontier = following
             if not frontier:
                 break
+        buckets: dict[str, list[dict[str, Any]]] = {"callers": [], "tests": [], "docs": []}
+        dependents: list[dict[str, Any]] = []
+        for _, (identifier, level, kinds) in sorted(seen.items()):
+            entry = {"id": identifier, "distance": level, "relations": sorted(kinds)}
+            dependents.append(entry)
+            for bucket in {_RELATION_BUCKET.get(kind, kind) for kind in kinds}:
+                buckets.setdefault(bucket, []).append(entry)
         return {
             "target": target,
             "depth": depth,
             "evidence": evidence or "any",
-            "dependents": [
-                {"id": identifier, "distance": level}
-                for _, (identifier, level) in sorted(seen.items())
-            ],
+            "relations": sorted(relations) if relations else "any",
+            "dependents": dependents,
             "count": len(seen),
+            **buckets,
         }
 
     def cycles(self) -> list[list[str]]:
@@ -332,6 +365,38 @@ def _generic_symbols(path: str, text: str) -> tuple[list[Symbol], list[Edge]]:
     return symbols, edges
 
 
+# Suffix -> extractor. Only Python has a stdlib parser, so it is the only entry
+# by default; every other CODE_SUFFIXES entry falls back to `_generic_symbols`.
+# The registry exists so a third language is one `register_extractor` call, not
+# an edit to `build()` — dispatch hardcoded in core is how language support
+# quietly becomes a fork.
+EXTRACTORS: dict[str, Callable[[str, str], tuple[list[Symbol], list[Edge]]]] = {
+    ".py": _python_symbols,
+}
+
+
+def register_extractor(suffix: str,
+                       extractor: Callable[[str, str], tuple[list[Symbol], list[Edge]]]) -> None:
+    """Route files with `suffix` through `extractor` on the next build.
+
+    Registration also makes the suffix eligible for scanning, so a language
+    outside CODE_SUFFIXES becomes visible with this one call and no core edit.
+    """
+    if not suffix.startswith("."):
+        raise GodmodeError(f"Extractor suffix must start with '.', got {suffix!r}")
+    EXTRACTORS[suffix.lower()] = extractor
+
+
+def _is_test_path(path: str) -> bool:
+    """Whether a relative posix path looks like a test file.
+
+    A test's import is not a runtime dependency but a coverage promise; telling
+    the two apart is what lets `affected` answer "what covers this" honestly.
+    """
+    parts = path.split("/")
+    return "tests" in parts[:-1] or parts[-1].startswith("test_")
+
+
 def slice_file(path: Path, start: int = 1, end: int | None = None, limit: int = 400) -> dict[str, Any]:
     """Return a bounded window that declares its own edges.
 
@@ -361,7 +426,9 @@ def slice_file(path: Path, start: int = 1, end: int | None = None, limit: int = 
 
 
 def build(project: Path, suffixes: Iterable[str] | None = None) -> Atlas:
-    allowed = set(suffixes) if suffixes else set(CODE_SUFFIXES)
+    # Registered suffixes are scanned even outside CODE_SUFFIXES: a registration
+    # that still needed a constants edit would defeat the registry's purpose.
+    allowed = set(suffixes) if suffixes else set(CODE_SUFFIXES) | set(EXTRACTORS)
     atlas = Atlas(project=project)
     for path in sorted(project.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in allowed:
@@ -375,14 +442,20 @@ def build(project: Path, suffixes: Iterable[str] | None = None) -> Atlas:
             atlas.unparsed.append({"path": relative, "reason": str(exc)[:120]})
             continue
         atlas.files.append(relative)
+        extractor = EXTRACTORS.get(path.suffix.lower(), _generic_symbols)
         try:
-            if path.suffix.lower() == ".py":
-                symbols, edges = _python_symbols(relative, text)
-            else:
-                symbols, edges = _generic_symbols(relative, text)
+            symbols, edges = extractor(relative, text)
         except SyntaxError as exc:
             atlas.unparsed.append({"path": relative, "reason": f"syntax error line {exc.lineno}"})
             continue
+        if _is_test_path(relative):
+            # The import stays (it is a real import) and gains a coverage twin,
+            # so evidence tiers and dependent counts are unchanged while the
+            # tests bucket becomes answerable.
+            edges = list(edges) + [
+                Edge(e.source, e.target, TESTED_BY, e.evidence, e.line)
+                for e in edges if e.relation == IMPORTS
+            ]
         atlas.symbols.extend(symbols)
         atlas.edges.extend(edges)
         # Approximate bodies: a symbol runs from its line to the next symbol's.
@@ -397,7 +470,128 @@ def build(project: Path, suffixes: Iterable[str] | None = None) -> Atlas:
             )
             if len(body) >= 40:
                 atlas.body_signatures[symbol.id] = _shingles(body)
+    _link_documentation(project, atlas)
     return atlas
+
+
+def _link_documentation(project: Path, atlas: Atlas) -> None:
+    """Connect markdown files to the modules they mention.
+
+    Documentation is part of a change's blast radius: a rename that leaves the
+    README describing the old name ships a lie. A stem match in prose is still a
+    name match, so these edges are INFERRED — leads to check, never facts — and
+    the markdown files are not added to `atlas.files`, because a doc scan must
+    not change what the atlas claims to have parsed.
+    """
+    # Very short stems ("a", "io") match prose constantly and would drown real
+    # documentation links in noise.
+    stems = {stem: name for name in atlas.files
+             if len(stem := module_key(name)) >= 3}
+    if not stems:
+        return
+    for doc_path in sorted(project.rglob("*.md")):
+        if not doc_path.is_file():
+            continue
+        if any(part in IGNORED_DIRECTORY_NAMES for part in doc_path.parts):
+            continue
+        doc_relative = doc_path.relative_to(project).as_posix()
+        try:
+            doc_text = doc_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for stem, module_file in sorted(stems.items()):
+            if module_key(doc_relative) == stem:
+                continue
+            match = re.search(rf"\b{re.escape(stem)}\b", doc_text)
+            if match:
+                line = doc_text.count("\n", 0, match.start()) + 1
+                atlas.edges.append(
+                    Edge(doc_relative, f"{module_file}::<module>", DOCUMENTS, INFERRED, line))
+
+
+def _file_sha256(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def save_index(atlas: Atlas, destination: Path) -> dict[str, Any]:
+    """Persist the atlas as JSON with per-file content hashes.
+
+    An atlas rebuilt on every question re-reads the world; a persisted one
+    answers instantly but can lie about a world that moved on. Content hashes
+    are stored so a later load can say exactly which answers are still safe —
+    from bytes, not timestamps, because clocks drift across machines and
+    checkouts while content does not.
+    """
+    payload = {
+        "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "project": atlas.project.as_posix(),
+        "files": {name: _file_sha256(atlas.project / name) for name in atlas.files},
+        "symbols": [symbol.view() for symbol in atlas.symbols],
+        "edges": [edge.view() for edge in atlas.edges],
+        "unparsed": atlas.unparsed,
+    }
+    try:
+        # sort_keys makes the output deterministic, so two saves of the same
+        # atlas are byte-identical (bar built_at) and diff cleanly.
+        destination.write_text(json.dumps(payload, indent=2, sort_keys=True),
+                               encoding="utf-8")
+    except OSError as exc:
+        raise GodmodeError(f"Cannot write index {destination}: {exc}") from exc
+    return {
+        "path": str(destination),
+        "built_at": payload["built_at"],
+        "files": len(atlas.files),
+        "symbols": len(atlas.symbols),
+        "edges": len(atlas.edges),
+    }
+
+
+def load_index(path: Path, project: Path) -> dict[str, Any]:
+    """Load a saved index and report which of its claims are still safe.
+
+    The index is not blindly trusted: every stored hash is compared against the
+    file on disk now, so the caller learns what is fresh, what changed, and what
+    vanished — and gets a confidence number instead of a stale map that reads
+    as current.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise GodmodeError(f"Cannot read index {path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise GodmodeError(f"Index {path} is not valid JSON: {exc}") from exc
+    fresh: list[str] = []
+    stale: list[str] = []
+    missing: list[str] = []
+    stored = data.get("files", {})
+    for name in sorted(stored):
+        current = project / name
+        if not current.is_file():
+            missing.append(name)
+        elif stored[name] is not None and _file_sha256(current) == stored[name]:
+            fresh.append(name)
+        else:
+            # A null stored hash means the file was unreadable at save time; a
+            # claim that could not be pinned to content is treated as stale.
+            stale.append(name)
+    total = len(stored)
+    return {
+        "atlas": {
+            "built_at": data.get("built_at"),
+            "project": data.get("project"),
+            "files": total,
+            "symbols": len(data.get("symbols", [])),
+            "edges": len(data.get("edges", [])),
+            "unparsed": len(data.get("unparsed", [])),
+        },
+        "fresh": fresh,
+        "stale": stale,
+        "missing": missing,
+        "confidence": round(len(fresh) / total, 2) if total else 0.0,
+    }
 
 
 def _self_check() -> None:
@@ -471,6 +665,36 @@ def _self_check() -> None:
         assert window["truncated_before"] and not window["complete"], window
         whole = slice_file(project / "core.py")
         assert whole["complete"] and not whole["truncated_after"], whole
+
+        # A new language is one registration away, never a core edit.
+        (project / "spec.xyz").write_text("anything\n", encoding="utf-8")
+        register_extractor(".xyz", lambda path, text: (
+            [Symbol(name="from_xyz", kind="function", path=path, line=1)], []))
+        try:
+            assert "from_xyz" in {s.name for s in build(project).symbols}
+        finally:
+            EXTRACTORS.pop(".xyz", None)
+
+        # A test import and a README mention land in their own buckets, so a
+        # doc mention is never mistaken for a caller.
+        (project / "test_core.py").write_text("import core\n", encoding="utf-8")
+        (project / "README.md").write_text("The core module rotates tokens.\n",
+                                           encoding="utf-8")
+        scoped = build(project).affected("core", evidence=None)
+        assert any("test_core.py" in d["id"] for d in scoped["tests"]), scoped
+        assert any("README.md" in d["id"] for d in scoped["docs"]), scoped
+        only_docs = build(project).affected("core", evidence=None,
+                                            relations={DOCUMENTS})
+        assert only_docs["docs"] and not only_docs["callers"], only_docs
+
+        # A saved index reports staleness from content hashes, not clocks.
+        index_path = project / "atlas-index.json"
+        save_index(build(project), index_path)
+        assert load_index(index_path, project)["confidence"] == 1.0
+        (project / "core.py").write_text("def rotate_token():\n    return 9\n",
+                                         encoding="utf-8")
+        moved = load_index(index_path, project)
+        assert "core.py" in moved["stale"] and moved["confidence"] < 1.0, moved
 
     print("godmode_atlas self-check OK")
 
