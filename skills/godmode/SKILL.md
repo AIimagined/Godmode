@@ -52,5 +52,14 @@ private instructions to the archive. Store structured facts, hashes, relative pa
 statuses, and evidence references only. Godmode is on demand: do not start a watcher,
 listener, proxy, daemon, update ping, or background process.
 
+## Session gates
+
+Open substantive work with `session open` (the handshake states identity, dirty
+files, active plan, obligations, invariants, and the host's enforcement table),
+compile the project's rules with `charter`, and close through `session close` —
+an unattested HARD rule, an uncited claim, or a half-done pair blocks closure.
+`config check`, `roles`, and `operator` validate the project's declared
+configuration; `locale check` validates translated guidance.
+
 Read [godmode-command-surface.md](references/godmode-command-surface.md) only when the
 requested operation needs exact CLI syntax.

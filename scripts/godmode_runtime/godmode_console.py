@@ -1299,6 +1299,9 @@ def cmd_docs_reconcile(args: argparse.Namespace, runtime: Runtime) -> CommandRes
 def cmd_docs(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     if getattr(args, "reconcile", False):
         return cmd_docs_reconcile(args, runtime)
+    # Name the missing flag, not the internal record constraint it would trip.
+    if not args.document or not args.status:
+        raise ArchiveError("docs requires --document and --status (or --reconcile)")
     return CommandResult(
         {
             "record": _append(

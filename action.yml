@@ -17,7 +17,9 @@ inputs:
     required: false
     default: origin/main...
   gates:
-    description: Comma-separated gates to run. Supported. integrity, changelog.
+    description: >-
+      Comma-separated gates to run. Supported: integrity, changelog, grid,
+      config, locale.
     required: false
     default: integrity,changelog
   project:
@@ -53,3 +55,18 @@ runs:
       if: contains(inputs.gates, 'changelog')
       shell: bash
       run: python "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" changelog check --base "${{ inputs.base }}"
+
+    - name: Adversarial control grid
+      if: contains(inputs.gates, 'grid')
+      shell: bash
+      run: python "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" grid --brief
+
+    - name: Config validation
+      if: contains(inputs.gates, 'config')
+      shell: bash
+      run: python "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" config check --brief
+
+    - name: Locale validation
+      if: contains(inputs.gates, 'locale')
+      shell: bash
+      run: python "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" locale check --brief
