@@ -289,6 +289,60 @@ def _session(runtime: Runtime, explicit: str | None) -> str:
     return session
 
 
+# filename -> {json path: (type, required)}. Flat by design: a config too deep
+# to validate by hand is a config too deep to hand-edit.
+_CONFIG_CONTRACTS: dict[str, dict[str, tuple[type, bool]]] = {
+    ".godmode-roles.json": {},          # validated by resolve_roles itself
+    ".godmode-rca.json": {"spines": (list, False)},
+    ".godmode-docs.json": {"triggers": (dict, False)},
+    ".godmode-ceilings.json": {"tokens": (int, False), "tool_calls": (int, False),
+                               "seconds": (int, False)},
+    ".godmode-dependency-policy.json": {"max_dependencies": (int, False),
+                                        "banned_licenses": (list, False)},
+    ".godmode-operator.json": {"persona": (str, True), "hard_gates": (list, True),
+                               "communication": (str, True), "decision_authority": (str, True)},
+    ".godmode-experiment.json": {"hypothesis": (str, True), "command": (str, True),
+                                 "success_exit": (int, False), "max_runs": (int, True)},
+}
+
+
+def cmd_config_check(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """Every declared config file validates with a schema path, not a stack trace."""
+    project = Path(runtime.anchor.project_root)
+    checked: list[dict[str, Any]] = []
+    problems: list[str] = []
+    for filename, contract in sorted(_CONFIG_CONTRACTS.items()):
+        path = project / filename
+        if not path.is_file():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            problems.append(f"{filename}: invalid JSON at line {exc.lineno}: {exc.msg}")
+            checked.append({"file": filename, "state": "unparseable"})
+            continue
+        if not isinstance(payload, dict):
+            problems.append(f"{filename}: $ must be an object")
+            checked.append({"file": filename, "state": "invalid"})
+            continue
+        file_problems = []
+        for key, (expected, required) in contract.items():
+            if key not in payload:
+                if required:
+                    file_problems.append(f"{filename}: $.{key} is required ({expected.__name__})")
+                continue
+            if not isinstance(payload[key], expected):
+                file_problems.append(f"{filename}: $.{key} must be {expected.__name__}")
+        problems.extend(file_problems)
+        checked.append({"file": filename, "state": "invalid" if file_problems else "valid"})
+    return CommandResult(
+        {"checked": checked, "problems": problems,
+         "known_files": sorted(_CONFIG_CONTRACTS),
+         "verdict": "valid" if not problems else "invalid"},
+        exit_code=0 if not problems else 1,
+    )
+
+
 OPERATOR_FILENAME = ".godmode-operator.json"
 _OPERATOR_FIELDS = {
     "persona": str, "hard_gates": list, "communication": str, "decision_authority": str,
@@ -1288,6 +1342,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     operator = sub.add_parser("operator", help="Validate the typed operator profile")
     operator.set_defaults(handler=cmd_operator)
+
+    config = sub.add_parser("config", help="Validate every .godmode-*.json config file")
+    config_sub = config.add_subparsers(dest="config_command", required=True)
+    config_sub.add_parser("check").set_defaults(handler=cmd_config_check)
     charter.set_defaults(handler=cmd_charter)
 
     session = sub.add_parser("session", help="Open or close an attested session")
