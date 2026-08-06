@@ -1774,5 +1774,66 @@ class DriftControlTests(unittest.TestCase):
                 self.assertIn("fix rotation", dumped)
 
 
+class AntiLoopTests(unittest.TestCase):
+    """S4-01/02/03/05/06/07 over archive records."""
+
+    def _archive(self):
+        return isolated_project()
+
+    def test_repeated_patch_blocks_and_cites_the_prior_attempt(self) -> None:
+        from godmode_runtime.godmode_loop import analyze
+
+        with self._archive() as (_p, _s, _a, archive):
+            archive.initialize()
+            for _ in range(2):
+                archive.append("change", "retry the fix", {"files": ["a.py"]})
+            report = analyze(archive)
+            hits = [f for f in report["findings"] if f["detector"] == "repeated-patch"]
+            self.assertTrue(hits and hits[0]["blocking"])
+            self.assertEqual(hits[0]["citations"][0], "seq:1")
+
+    def test_oscillation_names_both_states_and_a_rollback_point(self) -> None:
+        from godmode_runtime.godmode_loop import analyze
+
+        with self._archive() as (_p, _s, _a, archive):
+            archive.initialize()
+            archive.append("checkpoint", "stable", {"status": "green"})
+            for subject in ("use sync io", "use async io", "use sync io"):
+                archive.append("change", subject, {"files": ["io.py"]})
+            report = analyze(archive)
+            hits = [f for f in report["findings"] if f["detector"] == "oscillation"]
+            self.assertTrue(hits)
+            self.assertIn("seq:1", hits[0]["detail"])
+
+    def test_changing_a_guarded_file_without_reobserving_the_guard_blocks(self) -> None:
+        from godmode_runtime.godmode_loop import analyze
+
+        with self._archive() as (_p, _s, _a, archive):
+            archive.initialize()
+            archive.append("lesson", "tokens must expire", {"value": "v"},
+                           evidence=["file:auth.py"])
+            archive.append("change", "refactor auth", {"files": ["auth.py"]})
+            report = analyze(archive)
+            hits = [f for f in report["findings"] if f["detector"] == "prior-fix-reversal"]
+            self.assertTrue(hits and hits[0]["blocking"])
+            # Re-observing the guard clears it.
+            archive.append("attestation", "guard:token-expiry",
+                           {"status": "ran", "session": "s"}, evidence=["file:auth.py"])
+            cleared = analyze(archive)
+            self.assertFalse(
+                [f for f in cleared["findings"] if f["detector"] == "prior-fix-reversal"])
+
+    def test_model_blame_needs_a_non_model_control(self) -> None:
+        from godmode_runtime.godmode_loop import model_blame_allowed
+
+        with self._archive() as (_p, _s, _a, archive):
+            archive.initialize()
+            refused = model_blame_allowed(archive.read_events())
+            self.assertFalse(refused["allowed"])
+            archive.append("attestation", "non-model-control:fixed-input replay",
+                           {"status": "ran", "session": "s"})
+            self.assertTrue(model_blame_allowed(archive.read_events())["allowed"])
+
+
 if __name__ == "__main__":
     unittest.main()

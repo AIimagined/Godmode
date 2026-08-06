@@ -39,6 +39,8 @@ from .godmode_drift import capabilities as host_capabilities
 from .godmode_changelog import check_fragments, merge_fragments
 from .godmode_integrity import analyze as analyze_integrity
 from .godmode_locale import check_locales
+from .godmode_loop import analyze as analyze_loops
+from .godmode_loop import model_blame_allowed
 from .godmode_removal import REQUIRED_FIELDS as REMOVAL_FIELDS
 from .godmode_removal import record_removal, removal_answer
 from .godmode_drift import compare as compare_sessions
@@ -490,6 +492,18 @@ def cmd_changelog_merge(args: argparse.Namespace, runtime: Runtime) -> CommandRe
         Path(runtime.anchor.project_root), version=args.set_version,
         date=args.date or date.today().isoformat(),
     ))
+
+
+def cmd_loop(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    if args.blame:
+        verdict = model_blame_allowed(
+            runtime.archive.read_events(),
+            session=_session(runtime, args.session) if args.session else None,
+        )
+        return CommandResult(verdict, exit_code=0 if verdict["allowed"] else 1)
+    report = analyze_loops(runtime.archive)
+    return CommandResult(report, exit_code=1 if report["blocking"] else 0)
 
 
 def cmd_removal_record(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -1408,6 +1422,12 @@ def _build_parser() -> argparse.ArgumentParser:
     changelog_merge.add_argument("--set-version", required=True)
     changelog_merge.add_argument("--date", help="Release date; defaults to today")
     changelog_merge.set_defaults(handler=cmd_changelog_merge)
+
+    loop = sub.add_parser("loop", help="Detect repetition the repeating agent cannot see")
+    loop.add_argument("--blame", action="store_true",
+                      help="Check whether blaming the model is supported by a non-model control")
+    loop.add_argument("--session")
+    loop.set_defaults(handler=cmd_loop)
 
     removal = sub.add_parser("removal", help="Remember why something was deleted")
     removal_sub = removal.add_subparsers(dest="removal_command", required=True)
