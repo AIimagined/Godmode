@@ -28,13 +28,10 @@ ALL_SKILLS = [
     "godmode-skill-forge",
 ]
 
-# The two positives that genuinely do not route home under leave-one-out scoring
-# today. They are asserted by name so a fix (or a new regression) changes this
-# test loudly instead of drifting silently.
-KNOWN_MISROUTED_POSITIVES = {
-    "Coordinate continuity, diagnosis, and a protected action across one local project.",
-    "Resume work after a break and explain the current branch, obligations, and next action.",
-}
+# The eval's first run found two positives that did not route home; their
+# wording was fixed (home-vocabulary strengthened) and this now pins zero
+# misroutes, so a new regression changes this test loudly.
+KNOWN_MISROUTED_POSITIVES: set[str] = set()
 
 
 def _write_suite(root: Path, skill: str, description: str,
@@ -78,13 +75,13 @@ class RoutingEvalTests(unittest.TestCase):
         self.assertEqual(sorted(report["skills"]), ALL_SKILLS)
 
     def test_observed_positive_routing_accuracy(self):
-        # 8 of the 10 authored positives route home today; the two that do not
-        # are known and named. This asserts observed reality, not aspiration.
+        # Every authored positive routes home since the two originally
+        # misrouted prompts were reworded. Observed reality, kept current.
         report = run_routing_evals(PLUGIN_ROOT)
         totals = report["totals"]
         self.assertEqual(totals["positives_total"], 10)
-        self.assertEqual(totals["positives_routed_correctly"], 8)
-        self.assertEqual(report["verdict"], "routing-drift")
+        self.assertEqual(totals["positives_routed_correctly"], 10)
+        self.assertEqual(report["verdict"], "routing-sound")
         failing = {entry["prompt"] for entry in report["failing_prompts"]}
         self.assertEqual(failing, KNOWN_MISROUTED_POSITIVES)
 
