@@ -5,7 +5,10 @@
     "displayName": "Godmode",
     "version": "0.1.0",
     "description": "Local-first context continuity and evidence governance for coding agents.",
-    "author": { "name": "AIimagined", "url": "https://github.com/AIimagined" },
+    "author": {
+      "name": "AIimagined",
+      "url": "https://github.com/AIimagined"
+    },
     "homepage": "https://github.com/AIimagined/Godmode",
     "repository": "https://github.com/AIimagined/Godmode",
     "license": "Apache-2.0",
@@ -21,20 +24,46 @@
   "hosts": {
     "claude": {
       "path": ".claude-plugin/plugin.json",
-      "fields": ["$schema", "name", "displayName", "version", "description", "author",
-                 "homepage", "repository", "license", "keywords", "skills"],
+      "fields": [
+        "$schema",
+        "name",
+        "displayName",
+        "version",
+        "description",
+        "author",
+        "homepage",
+        "repository",
+        "license",
+        "keywords",
+        "skills"
+      ],
       "extra": {
         "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
-        "keywords_prefix": ["claude-code-plugin"]
+        "keywords_prefix": [
+          "claude-code-plugin"
+        ]
       },
       "note": "hooks/hooks.json is loaded by convention; declaring a hooks key causes a duplicate-load error"
     },
     "codex": {
       "path": ".codex-plugin/plugin.json",
-      "fields": ["name", "version", "description", "author", "homepage", "repository",
-                 "license", "keywords", "skills", "interface"],
+      "fields": [
+        "name",
+        "version",
+        "description",
+        "author",
+        "homepage",
+        "repository",
+        "license",
+        "keywords",
+        "skills",
+        "interface"
+      ],
       "extra": {
-        "keywords_prefix": ["codex-plugin", "skill-authoring"],
+        "keywords_prefix": [
+          "codex-plugin",
+          "skill-authoring"
+        ],
         "author_url": false,
         "description": "Local-first context continuity and evidence-governance skills for coding agents.",
         "interface": {
@@ -61,10 +90,72 @@
     },
     "grok": {
       "path": ".grok-plugin/plugin.json",
-      "fields": ["name", "displayName", "version", "description", "author", "homepage",
-                 "repository", "license", "category", "keywords", "skills"],
+      "fields": [
+        "name",
+        "displayName",
+        "version",
+        "description",
+        "author",
+        "homepage",
+        "repository",
+        "license",
+        "category",
+        "keywords",
+        "skills"
+      ],
       "extra": {},
       "note": "same hooks convention as claude"
+    }
+  },
+  "adapters": {
+    "_comment": "Instruction-file adapters for hosts without a plugin manifest. Controls state what each host can actually hold; the adapter docs must match this matrix (tests enforce agreement).",
+    "opencode": {
+      "wiring": "adapters/opencode/AGENTS-godmode.md",
+      "controls": {
+        "attestation_gate": "HARD",
+        "claim_downgrade": "HARD",
+        "plan_mode_mutation_gate": "HARD",
+        "status_reopen_guard": "HARD",
+        "authority_claim_detection": "HARD",
+        "interactive_authorization": "HARD",
+        "tool_call_interception": "UNAVAILABLE"
+      },
+      "why": {
+        "interactive_authorization": "OpenCode's permission model (ask/allow/deny per tool) prompts the user outside model judgment",
+        "tool_call_interception": "possible via a JS plugin hook, but no shim ships; unavailable until one does"
+      }
+    },
+    "cursor": {
+      "wiring": "adapters/cursor/godmode.mdc",
+      "controls": {
+        "attestation_gate": "HARD",
+        "claim_downgrade": "HARD",
+        "plan_mode_mutation_gate": "HARD",
+        "status_reopen_guard": "HARD",
+        "authority_claim_detection": "HARD",
+        "interactive_authorization": "SOFT",
+        "tool_call_interception": "UNAVAILABLE"
+      },
+      "why": {
+        "interactive_authorization": "auto-run settings can bypass the prompt, so the prompt cannot be counted on",
+        "tool_call_interception": "project rules are advisory text; no pre-tool boundary is exposed"
+      }
+    },
+    "gemini": {
+      "wiring": "adapters/gemini/GEMINI-godmode.md",
+      "controls": {
+        "attestation_gate": "HARD",
+        "claim_downgrade": "HARD",
+        "plan_mode_mutation_gate": "HARD",
+        "status_reopen_guard": "HARD",
+        "authority_claim_detection": "HARD",
+        "interactive_authorization": "HARD",
+        "tool_call_interception": "UNAVAILABLE"
+      },
+      "why": {
+        "interactive_authorization": "approval mode confirms mutations outside model judgment unless the operator enables auto-approval",
+        "tool_call_interception": "GEMINI.md context is advisory; no pre-tool boundary is exposed"
+      }
     }
   }
 }

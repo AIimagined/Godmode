@@ -1,0 +1,36 @@
+---
+description: Godmode session and evidence contract for this repository
+alwaysApply: true
+---
+
+# Godmode adapter for Cursor
+
+Copy this file to `.cursor/rules/godmode.mdc` in the target project. Cursor
+rules are advisory text, so this host runs Godmode in its most honest mode:
+the runtime's own gates stay HARD (they are exit codes, not prose), and
+everything host-side is labelled truthfully below.
+
+## Session contract
+
+Open substantive work with `python scripts/godmode.py --project . session open
+--label <task>`; close with `session close` and treat a non-zero exit as a
+blocker, not advice. Set `GODMODE_HOST=cursor` and `GODMODE_ENFORCEMENT=SOFT`.
+Route checks through `verify`, state claims through `claim --cite ...`, gate
+mutations behind `planmode`, and preview protected operations with `guard`.
+
+## Enforcement on this host — mixed, reported truthfully
+
+| Control | Level |
+| --- | --- |
+| attestation_gate | HARD |
+| claim_downgrade | HARD |
+| plan_mode_mutation_gate | HARD |
+| status_reopen_guard | HARD |
+| authority_claim_detection | HARD |
+| interactive_authorization | SOFT |
+| tool_call_interception | UNAVAILABLE |
+
+interactive_authorization is SOFT because auto-run settings can bypass the
+confirmation prompt; tool_call_interception is UNAVAILABLE because rules
+expose no pre-tool boundary. Claims resting on either stay unverified — say
+so rather than rounding up.
