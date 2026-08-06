@@ -1033,6 +1033,16 @@ def cmd_actions(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 def cmd_branches(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
+    if args.claim:
+        from .godmode_lens import claim_worktree
+
+        outcome = claim_worktree(runtime.archive, runtime.anchor)
+        # A collision is surfaced before mutation, as a non-zero exit.
+        return CommandResult(outcome, exit_code=1 if outcome["collisions"] else 0)
+    if args.release:
+        from .godmode_lens import release_worktree
+
+        return CommandResult(release_worktree(runtime.archive, runtime.anchor))
     observation = observe_git(runtime.anchor)
     if args.record:
         runtime.archive.append(
@@ -1622,6 +1632,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     branches = sub.add_parser("branches", help="Inspect branches and worktrees")
     branches.add_argument("--record", action="store_true")
+    branches.add_argument("--claim", action="store_true",
+                          help="Declare this agent active here; exits 1 if another agent already is")
+    branches.add_argument("--release", action="store_true", help="Release this agent's claim")
     branches.set_defaults(handler=cmd_branches)
 
     version = sub.add_parser("version", help="Record a version fact, or reconcile every surface")

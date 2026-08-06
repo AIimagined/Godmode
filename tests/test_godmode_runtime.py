@@ -2050,5 +2050,25 @@ class CompressionTests(unittest.TestCase):
             self.assertTrue(all("mask" in r for r in brief["records"]))
 
 
+class WorktreeOwnershipTests(unittest.TestCase):
+    def test_second_agent_claim_surfaces_a_collision(self) -> None:
+        from godmode_runtime.godmode_lens import claim_worktree, release_worktree
+
+        with isolated_project() as (_p, _s, anchor, archive):
+            archive.initialize()
+            with mock.patch.dict(os.environ, {"GODMODE_HOST": "h1", "GODMODE_MODEL": "a"}, clear=False):
+                first = claim_worktree(archive, anchor)
+            self.assertEqual(first["collisions"], [])
+            with mock.patch.dict(os.environ, {"GODMODE_HOST": "h2", "GODMODE_MODEL": "b"}, clear=False):
+                second = claim_worktree(archive, anchor)
+            self.assertEqual(len(second["collisions"]), 1)
+            self.assertEqual(second["collisions"][0]["agent"], "h1/a")
+            with mock.patch.dict(os.environ, {"GODMODE_HOST": "h1", "GODMODE_MODEL": "a"}, clear=False):
+                release_worktree(archive, anchor)
+            with mock.patch.dict(os.environ, {"GODMODE_HOST": "h2", "GODMODE_MODEL": "b"}, clear=False):
+                third = claim_worktree(archive, anchor)
+            self.assertEqual(third["collisions"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
