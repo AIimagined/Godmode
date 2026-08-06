@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import os
 import shlex
 from datetime import datetime, timezone
 import json
@@ -35,7 +36,7 @@ from .godmode_bindings import check as bindings_check
 from .godmode_bindings import dependency_gate, release_checksums, sbom_cyclonedx, sbom_spdx
 from .godmode_bindings import sbom as build_sbom
 from .godmode_bindings import write as bindings_write
-from .godmode_charter import TRIGGERS, applicable_rules, compile_charter, traits_of
+from .godmode_charter import TRIGGERS, applicable_rules, bootstrap_rules, compile_charter, traits_of
 from .godmode_drift import capabilities as host_capabilities
 from .godmode_changelog import check_fragments, merge_fragments
 from .godmode_integrity import analyze as analyze_integrity
@@ -288,7 +289,48 @@ def _session(runtime: Runtime, explicit: str | None) -> str:
     return session
 
 
+OPERATOR_FILENAME = ".godmode-operator.json"
+_OPERATOR_FIELDS = {
+    "persona": str, "hard_gates": list, "communication": str, "decision_authority": str,
+}
+
+
+def cmd_operator(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """S21-06: typed operator profile, portable, with no personal name anywhere."""
+    path = Path(runtime.anchor.project_root) / OPERATOR_FILENAME
+    if not path.is_file():
+        return CommandResult(
+            {"present": False,
+             "expected": {k: t.__name__ for k, t in _OPERATOR_FIELDS.items()},
+             "note": f"declare {OPERATOR_FILENAME} with the typed fields; no name field exists on purpose"},
+            exit_code=1,
+        )
+    profile = json.loads(path.read_text(encoding="utf-8"))
+    problems: list[str] = []
+    for field, expected in _OPERATOR_FIELDS.items():
+        if field not in profile:
+            problems.append(f"missing field: {field}")
+        elif not isinstance(profile[field], expected):
+            problems.append(f"{field} must be {expected.__name__}")
+    for banned in ("name", "full_name", "email"):
+        if banned in profile:
+            problems.append(f"'{banned}' is not a profile field; identity stays out of records")
+    serialized = json.dumps(profile, ensure_ascii=False).lower()
+    for source in ("USERNAME", "USER"):
+        value = os.environ.get(source, "")
+        if len(value) >= 3 and value.lower() in serialized:
+            problems.append(f"profile text contains the OS account name; remove it")
+            break
+    return CommandResult(
+        {"present": True, "profile_fields": sorted(k for k in profile),
+         "problems": problems, "verdict": "valid" if not problems else "invalid"},
+        exit_code=0 if not problems else 1,
+    )
+
+
 def cmd_charter(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if args.bootstrap:
+        return CommandResult(bootstrap_rules(Path(runtime.anchor.project_root)))
     charter = _charter(runtime)
     if args.decay:
         _require_archive(runtime)
@@ -1241,6 +1283,11 @@ def _build_parser() -> argparse.ArgumentParser:
                          help="Narrow to the rules that apply to this artefact's characteristics")
     charter.add_argument("--decay", type=int, metavar="N", nargs="?", const=10,
                          help="Surface rules no attestation touched in the last N sessions")
+    charter.add_argument("--bootstrap", action="store_true",
+                         help="Mine candidate invariants from the project's commit history")
+
+    operator = sub.add_parser("operator", help="Validate the typed operator profile")
+    operator.set_defaults(handler=cmd_operator)
     charter.set_defaults(handler=cmd_charter)
 
     session = sub.add_parser("session", help="Open or close an attested session")
@@ -1727,10 +1774,30 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(lifted + raw)
     if hasattr(args, "token_budget") and not 200 <= args.token_budget <= 10_000:
         parser.error("--token-budget must be between 200 and 10000")
+    # S21-01: mode changes exposure, never enforcement. `guided` explains a
+    # refusal in plain language; `expert` reports one line; gates are identical.
+    mode = os.environ.get("GODMODE_MODE", "standard")
+    if mode == "expert" and not getattr(args, "json", False):
+        args.brief = True
     try:
         runtime = _runtime(args.project)
         handler: Callable[[argparse.Namespace, Runtime], CommandResult] = args.handler
         result = handler(args, runtime)
+        if mode == "guided" and result.exit_code != 0 and isinstance(result.payload, dict):
+            missing = (result.payload.get("missing")
+                       or result.payload.get("exceeded")
+                       or result.payload.get("half_done_pairs")
+                       or [f.get("detail") for f in result.payload.get("findings", [])
+                           if isinstance(f, dict) and f.get("blocking")])
+            result.payload["guidance"] = {
+                "what_was_missing": missing or result.payload.get("reason")
+                or result.payload.get("detail") or "see the fields above",
+                "why_this_gate_exists": "each gate encodes a failure that actually recurred; "
+                                        "passing it is cheaper than re-living the failure",
+                "next": result.payload.get("next")
+                or result.payload.get("next_action")
+                or "satisfy the named gap and re-run the same command",
+            }
         if getattr(args, "brief", False):
             print(_brief_line(result.payload))
             return result.exit_code
