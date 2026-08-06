@@ -392,6 +392,52 @@ def build_context_brief(
     return brief
 
 
+def claim_worktree(archive: Chronicle, anchor: ProjectAnchor) -> dict[str, Any]:
+    """Declare this agent active in this worktree, so a collision is visible
+    before two agents mutate the same tree, not after."""
+    from .godmode_chronicle import writer_fingerprint
+
+    record = archive.append(
+        "branch",
+        f"worktree-claim:{anchor.project_key}",
+        {"worktree": "<project-root>", "branch": anchor.branch,
+         "agent": writer_fingerprint(), "state": "claimed"},
+    )
+    return {"claimed": True, "sequence": record["sequence"],
+            "collisions": worktree_collisions(archive, anchor)}
+
+
+def worktree_collisions(archive: Chronicle, anchor: ProjectAnchor) -> list[dict[str, Any]]:
+    """Live claims by a different agent on this same worktree."""
+    from .godmode_chronicle import writer_fingerprint
+
+    me = writer_fingerprint()
+    latest_by_agent: dict[str, dict[str, Any]] = {}
+    for record in archive.select(kind="branch", limit=200):
+        data = record["data"]
+        if record["subject"] != f"worktree-claim:{anchor.project_key}":
+            continue
+        agent = data.get("agent", {})
+        key = f"{agent.get('host')}/{agent.get('model')}"
+        latest_by_agent[key] = {"agent": key, "state": data.get("state"),
+                                "branch": data.get("branch"), "sequence": record["sequence"]}
+    mine = f"{me.get('host')}/{me.get('model')}"
+    return [entry for key, entry in sorted(latest_by_agent.items())
+            if key != mine and entry["state"] == "claimed"]
+
+
+def release_worktree(archive: Chronicle, anchor: ProjectAnchor) -> dict[str, Any]:
+    from .godmode_chronicle import writer_fingerprint
+
+    record = archive.append(
+        "branch",
+        f"worktree-claim:{anchor.project_key}",
+        {"worktree": "<project-root>", "branch": anchor.branch,
+         "agent": writer_fingerprint(), "state": "released"},
+    )
+    return {"released": True, "sequence": record["sequence"]}
+
+
 def explain_context(anchor: ProjectAnchor, archive: Chronicle) -> dict[str, Any]:
     records = archive.read_events() if archive.initialized() else []
     counts = Counter(record["kind"] for record in records)
