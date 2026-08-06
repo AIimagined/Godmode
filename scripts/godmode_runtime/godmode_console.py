@@ -151,9 +151,10 @@ def _brief_line(payload: Any) -> str:
 
 
 # Fields worth leading with, counting, and closing on.
-_HEADLINE = ("verdict", "state", "grade", "class", "message", "error")
-_COUNTS = ("count", "rules", "changed", "records", "adopted", "enforced", "total",
-           "drifted", "dependency_count", "symbols", "files", "written")
+_HEADLINE = ("verdict", "state", "grade", "class", "message", "error", "check")
+_COUNTS = ("passed", "count", "rules", "changed", "records", "adopted", "enforced", "total",
+           "drifted", "dependency_count", "symbols", "files", "written",
+           "branch", "dirty", "session")
 _NOTES = ("reason", "next_action", "detail", "why")
 
 
@@ -393,6 +394,12 @@ def cmd_charter(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     if args.bootstrap:
         return CommandResult(bootstrap_rules(Path(runtime.anchor.project_root)))
     charter = _charter(runtime)
+    if not charter.get("compiled"):
+        # Zero rules means every gate passes vacuously - say so instead of
+        # letting an empty charter read as a green one.
+        charter["detail"] = ("0 rules compiled: gates cannot block anything. Write "
+                             "directives into GODMODE.md (or the operating-guide role "
+                             "document), or mine candidates with `charter --bootstrap`")
     if args.decay:
         _require_archive(runtime)
         return CommandResult(advisory_decay(runtime.archive, charter, window=args.decay))
@@ -418,7 +425,15 @@ def cmd_session_open(args: argparse.Namespace, runtime: Runtime) -> CommandResul
     handshake = opening_handshake(
         runtime.archive, runtime.anchor, Path(runtime.anchor.project_root)
     )
-    return CommandResult({"session": session, "handshake": handshake})
+    # Promoted so --brief shows the handshake's load-bearing facts, not only
+    # the session id - the opening state is the feature, not decoration.
+    return CommandResult({
+        "session": session,
+        "branch": handshake.get("branch"),
+        "dirty": handshake.get("dirty_files", {}).get("count"),
+        "detail": handshake.get("required_sources", {}).get("statement"),
+        "handshake": handshake,
+    })
 
 
 def cmd_attest(args: argparse.Namespace, runtime: Runtime) -> CommandResult:

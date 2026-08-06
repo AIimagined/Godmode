@@ -707,7 +707,7 @@ def close_session(archive: Chronicle, session: str, charter: dict[str, Any]) -> 
     ]
     half_done = half_done_pairs(archive, session, charter)
     allowed = not unattested and not downgraded and not half_done
-    return {
+    verdict: dict[str, Any] = {
         "session": session,
         "closed": allowed,
         "unattested_hard_rules": unattested,
@@ -715,6 +715,11 @@ def close_session(archive: Chronicle, session: str, charter: dict[str, Any]) -> 
         "half_done_pairs": half_done,
         "watch_for": [] if allowed else [text for text, _ in RATIONALIZATIONS],
     }
+    if allowed and not charter.get("compiled"):
+        # A closure no rule could have blocked is not the same as a clean one.
+        verdict["detail"] = ("closed with 0 compiled rules - nothing could have "
+                             "blocked; write GODMODE.md directives so this gate means something")
+    return verdict
 
 
 def half_done_pairs(
