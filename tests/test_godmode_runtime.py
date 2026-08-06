@@ -1489,5 +1489,103 @@ class ChangelogTests(unittest.TestCase):
                 merge_fragments(project, version="0.2.0", date="2026-08-06")
 
 
+class CiActionTests(unittest.TestCase):
+    """S23-03: a repo runs Godmode's gates on a PR with only a checkout of this repo."""
+
+    def _gate(self, consumer: Path, *arguments: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS / "godmode.py"), "--project", str(consumer), *arguments],
+            capture_output=True, text=True, encoding="utf-8", timeout=120,
+        )
+
+    def test_action_manifest_exists_and_names_the_gates(self) -> None:
+        manifest = (PLUGIN_ROOT / "action.yml").read_text(encoding="utf-8")
+        self.assertIn("using: composite", manifest)
+        for command in ("init", "integrity", "changelog check"):
+            self.assertIn(command, manifest)
+
+    def test_gates_run_against_a_consumer_repo_without_local_install(self) -> None:
+        with isolated_git_project() as (consumer, _archive):
+            (consumer / "app.py").write_text(
+                "def add(a, b):\n    return b + a\n", encoding="utf-8"
+            )
+            self.assertEqual(self._gate(consumer, "init").returncode, 0)
+            self.assertEqual(
+                self._gate(consumer, "integrity", "--base", "HEAD").returncode, 0
+            )
+            failing = self._gate(consumer, "changelog", "check", "--base", "HEAD")
+            self.assertEqual(failing.returncode, 1, failing.stdout + failing.stderr)
+            fragments = consumer / "changelog.d"
+            fragments.mkdir()
+            (fragments / "swap.changed.md").write_text("Operand order.\n", encoding="utf-8")
+            passing = self._gate(consumer, "changelog", "check", "--base", "HEAD")
+            self.assertEqual(passing.returncode, 0, passing.stdout + passing.stderr)
+
+
+class LocaleTests(unittest.TestCase):
+    """S23-04: a non-English guidance variant builds and validates."""
+
+    ENGLISH = "# Title\n\nIntro prose.\n\n## Use\n\n```sh\nrun --this\n```\n\n## Scope\n\nMore prose.\n"
+
+    def _project(self, base: Path, variant: str) -> Path:
+        project = base / "project"
+        (project / "locales" / "xx").mkdir(parents=True)
+        (project / "GODMODE.md").write_text(self.ENGLISH, encoding="utf-8")
+        (project / "locales" / "xx" / "GODMODE.md").write_text(variant, encoding="utf-8")
+        return project
+
+    def test_structurally_faithful_variant_validates(self) -> None:
+        from godmode_runtime.godmode_locale import check_locales
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = self._project(
+                Path(raw),
+                "# Titre\n\nProse d'intro.\n\n## Emploi\n\n```sh\nrun --this\n```\n\n## Portee\n\nEncore.\n",
+            )
+            report = check_locales(project)
+            self.assertTrue(report["valid"], report)
+            self.assertEqual(report["locales"]["xx"]["validated"], ["GODMODE.md"])
+
+    def test_missing_heading_fails(self) -> None:
+        from godmode_runtime.godmode_locale import check_locales
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = self._project(
+                Path(raw), "# Titre\n\nProse.\n\n## Emploi\n\n```sh\nrun --this\n```\n"
+            )
+            report = check_locales(project)
+            self.assertFalse(report["valid"])
+
+    def test_translated_code_fence_fails(self) -> None:
+        from godmode_runtime.godmode_locale import check_locales
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = self._project(
+                Path(raw),
+                "# Titre\n\nProse.\n\n## Emploi\n\n```sh\nlancer --ceci\n```\n\n## Portee\n\nEncore.\n",
+            )
+            report = check_locales(project)
+            self.assertFalse(report["valid"])
+
+    def test_orphan_variant_with_no_english_source_fails(self) -> None:
+        from godmode_runtime.godmode_locale import check_locales
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = self._project(
+                Path(raw),
+                "# Titre\n\nProse.\n\n## Emploi\n\n```sh\nrun --this\n```\n\n## Portee\n\nEncore.\n",
+            )
+            (project / "locales" / "xx" / "GHOST.md").write_text("# Fantome\n", encoding="utf-8")
+            report = check_locales(project)
+            self.assertFalse(report["valid"])
+
+    def test_shipped_hindi_variant_validates(self) -> None:
+        from godmode_runtime.godmode_locale import check_locales
+
+        report = check_locales(PLUGIN_ROOT)
+        self.assertTrue(report["valid"], report)
+        self.assertIn("hi", report["locales"])
+
+
 if __name__ == "__main__":
     unittest.main()

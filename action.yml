@@ -1,0 +1,55 @@
+name: Godmode Gates
+description: >-
+  Run Godmode's deterministic gates on a pull request without a local install.
+  Check out your repository, then this action; the runtime is standard-library
+  Python only.
+author: AIimagined
+branding:
+  icon: shield
+  color: purple
+
+inputs:
+  base:
+    description: >-
+      Git ref to diff against. For pull requests pass
+      "origin/${{ github.base_ref }}..." (three dots diffs from the merge base,
+      so unrelated base-branch changes are not attributed to the PR).
+    required: false
+    default: origin/main...
+  gates:
+    description: Comma-separated gates to run. Supported. integrity, changelog.
+    required: false
+    default: integrity,changelog
+  project:
+    description: Path to the repository under review.
+    required: false
+    default: .
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch the base ref so the diff has something to stand on
+      shell: bash
+      working-directory: ${{ inputs.project }}
+      run: |
+        ref="${{ inputs.base }}"
+        ref="${ref%...}"
+        remote="${ref%%/*}"
+        branch="${ref#*/}"
+        if [ "$remote" != "$ref" ]; then
+          git fetch --no-tags --depth=1 "$remote" "$branch" || true
+        fi
+
+    - name: Initialize the ephemeral archive
+      shell: bash
+      run: python "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" init
+
+    - name: Test-integrity monitors
+      if: contains(inputs.gates, 'integrity')
+      shell: bash
+      run: python "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" integrity --base "${{ inputs.base }}"
+
+    - name: Changelog fragment gate
+      if: contains(inputs.gates, 'changelog')
+      shell: bash
+      run: python "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" changelog check --base "${{ inputs.base }}"
