@@ -213,11 +213,23 @@ class Atlas:
         different defect from one that is missing, and they need different fixes.
         """
         referenced = {edge.target for edge in self.edges if edge.relation in (CALLS, IMPORTS)}
+        # An import edge targets `module::name`; a symbol id is `dir/module.py::name`.
+        # Match on (module stem, symbol name) as well, or cross-module references
+        # never resolve and the orphan list is mostly noise.
+        referenced_names = {
+            (module_key(target.rsplit("::", 1)[0]), target.rsplit("::", 1)[1])
+            for target in referenced if "::" in target
+        }
         return [
             symbol.view()
             for symbol in self.symbols
-            if symbol.kind in ("function", "class") and symbol.id not in referenced
+            if symbol.kind in ("function", "class")
+            and symbol.id not in referenced
+            and (module_key(symbol.path), symbol.name) not in referenced_names
             and not symbol.name.startswith("_")
+            # Test files are entry points: the runner discovers them by pattern,
+            # so "never imported" is their normal state, not a defect.
+            and not _is_test_path(symbol.path)
         ]
 
     def duplicates(self, threshold: float = 0.6) -> list[dict[str, Any]]:
@@ -258,6 +270,17 @@ class Atlas:
             findings.append("most relationships are inferred; treat traversal results as leads")
         if not self.symbols:
             findings.append("no symbols extracted; the atlas cannot answer structural questions")
+        # A mostly-orphaned graph is a resolution failure in the atlas, not a
+        # mostly-dead project - report it as this map's defect.
+        named = [s for s in self.symbols if s.kind in ("function", "class")
+                 and not s.name.startswith("_")]
+        if named:
+            orphan_ratio = len(self.orphans()) / len(named)
+            if orphan_ratio > 0.4:
+                findings.append(
+                    f"{orphan_ratio:.0%} of public symbols resolve as orphans; the "
+                    "reference resolver is likely missing edges - distrust the orphan list"
+                )
         # Per-suffix honesty: a suffix whose files yielded no symbols is counted,
         # not understood, and any structural claim about those files is unsafe.
         by_suffix: dict[str, dict[str, int]] = {}
@@ -340,12 +363,27 @@ def _python_symbols(path: str, text: str) -> tuple[list[Symbol], list[Edge]]:
                 edges.append(Edge(f"{path}::<module>", f"{alias.name}::<module>", IMPORTS, EXTRACTED, node.lineno))
         elif isinstance(node, ast.ImportFrom) and node.module:
             edges.append(Edge(f"{path}::<module>", f"{node.module}::<module>", IMPORTS, EXTRACTED, node.lineno))
+            # The imported NAMES are references too. Without them every function
+            # consumed cross-module reads as an orphan, which once made the
+            # orphan report 57% noise - worse than no report.
+            for alias in node.names:
+                if alias.name != "*":
+                    edges.append(Edge(
+                        f"{path}::<module>",
+                        f"{node.module.split('.')[-1]}::{alias.name}",
+                        IMPORTS, EXTRACTED, node.lineno,
+                    ))
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
             if name and name in defined:
                 edges.append(Edge(f"{path}::<module>", defined[name], CALLS, EXTRACTED, node.lineno))
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id in defined:
+            # A function passed as a value (a handler, a callback, a registry
+            # entry) is referenced without being called; missing these once made
+            # every CLI handler read as dead code.
+            edges.append(Edge(f"{path}::<module>", defined[node.id], CALLS, EXTRACTED, node.lineno))
     return symbols, edges
 
 
