@@ -30,6 +30,14 @@ For changes to bundled skills or the plugin manifest, also run the current offic
 Codex skill and plugin validators in your development environment. For Claude Code
 packaging changes, run `claude plugin validate . --strict` from the repository root.
 
+## Dependency budget
+
+The runtime's dependency budget is zero. `godmode sbom` publishes that claim and CI
+fails when a non-stdlib import appears in `scripts/` or `hooks/`. Test-only or
+CI-only tooling may be proposed, but the shipped runtime imports the Python
+standard library and nothing else. A contribution that needs a third-party package
+at runtime needs a design discussion first, not a `requirements.txt`.
+
 ## Pull requests
 
 Keep each pull request focused. Explain the behavior changed, the evidence collected,

@@ -1,0 +1,8 @@
+# The runtime has zero dependencies by design (see `godmode sbom`), so the only
+# surface Dependabot can watch is the CI workflow's actions.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
