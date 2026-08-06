@@ -205,10 +205,27 @@ def detect_context_issues(
     if latest_inventory is None:
         issues.append({"code": "no-baseline", "severity": "warning", "detail": "Run inspect."})
     else:
+        # Decay, not a binary flag: confidence fades with the records written
+        # since the baseline, and the age is reported alongside so 24h1m does
+        # not read identically to a month.
+        from .godmode_compress import confidence as record_confidence
+
+        latest_sequence = records[-1]["sequence"] if records else 0
+        baseline_confidence = record_confidence(latest_inventory["sequence"], latest_sequence)
         captured = _parse_time(latest_inventory["data"].get("captured_at"))
         if captured and (datetime.now(timezone.utc) - captured).total_seconds() > 86_400:
+            age_hours = int((datetime.now(timezone.utc) - captured).total_seconds() // 3600)
             issues.append(
-                {"code": "stale-baseline", "severity": "warning", "detail": "Inventory is over 24 hours old."}
+                {"code": "stale-baseline", "severity": "warning",
+                 "detail": f"Inventory is {age_hours}h old; confidence {baseline_confidence}.",
+                 "confidence": baseline_confidence}
+            )
+        elif baseline_confidence < 0.5:
+            issues.append(
+                {"code": "fading-baseline", "severity": "warning",
+                 "detail": f"{latest_sequence - latest_inventory['sequence']} records written "
+                           f"since the last inventory; confidence {baseline_confidence}. Run inspect.",
+                 "confidence": baseline_confidence}
             )
         if latest_inventory.get("anchor_fingerprint") != anchor_fingerprint(anchor):
             issues.append(
@@ -354,12 +371,23 @@ def build_context_brief(
             "background_monitoring": False,
         },
     }
-    while brief["records"]:
-        estimated = max(1, len(json.dumps(brief, ensure_ascii=False)) // 4)
-        if estimated <= token_budget:
-            break
+    def estimated() -> int:
+        return max(1, len(json.dumps(brief, ensure_ascii=False)) // 4)
+
+    # Degradation ladder: full records, then typed-compressed views (each
+    # declaring its mask and reconstruction handle), then dropped-but-counted.
+    if estimated() > token_budget:
+        from .godmode_compress import compress_brief
+
+        brief["records"] = compress_brief(archive, selected)
+        brief["compression"] = "typed; every view lists removed fields and its seq: handle"
+    dropped = 0
+    while brief["records"] and estimated() > token_budget:
         brief["records"].pop(0)
-    brief["estimated_tokens"] = max(1, len(json.dumps(brief, ensure_ascii=False)) // 4)
+        dropped += 1
+    if dropped:
+        brief["records_dropped"] = dropped
+    brief["estimated_tokens"] = estimated()
     brief["token_budget"] = token_budget
     return brief
 

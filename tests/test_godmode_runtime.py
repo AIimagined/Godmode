@@ -2013,5 +2013,42 @@ class GuardrailTests(unittest.TestCase):
             self.assertEqual(verdict["winner"], "small patch")
 
 
+class CompressionTests(unittest.TestCase):
+    """S11-03/04/05: declared masks, reversibility, confidence decay."""
+
+    def test_compressed_record_declares_its_mask_and_reconstructs(self) -> None:
+        from godmode_runtime.godmode_compress import compress_record, reconstruct
+
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            record = archive.append("claim", "auth works",
+                                    {"grade": "verified", "session": "s",
+                                     "text": "long prose that compression removes"})
+            view = compress_record(record)
+            self.assertIn("text", view["mask"]["removed"])
+            self.assertNotIn("text", view["data"])
+            original = reconstruct(archive, view["sequence"])
+            self.assertEqual(original["data"]["text"], "long prose that compression removes")
+
+    def test_confidence_decays_with_record_distance(self) -> None:
+        from godmode_runtime.godmode_compress import confidence
+
+        self.assertEqual(confidence(100, 100), 1.0)
+        self.assertEqual(confidence(50, 100), 0.5)
+        self.assertLess(confidence(0, 200), confidence(100, 200))
+
+    def test_over_budget_brief_compresses_before_dropping(self) -> None:
+        from godmode_runtime.godmode_lens import build_context_brief
+
+        with isolated_project() as (_p, _s, anchor, archive):
+            archive.initialize()
+            for index in range(12):
+                archive.append("decision", f"decision-{index}",
+                               {"status": "active", "prose": "x" * 400})
+            brief = build_context_brief(anchor, archive, token_budget=700)
+            self.assertIn("compression", brief)
+            self.assertTrue(all("mask" in r for r in brief["records"]))
+
+
 if __name__ == "__main__":
     unittest.main()
