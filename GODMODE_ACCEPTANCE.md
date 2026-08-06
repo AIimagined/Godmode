@@ -40,12 +40,36 @@ Godmode is accepted only from observable local evidence. This matrix connects th
 | CTX-07 | Record recoverable checkpoints, hypotheses, outcomes, and next actions | checkpoint command and history |
 | CTX-08 | Label incomplete coverage rather than silently assuming freshness | doctor/status issue model and private source preflight |
 
+## Enforcement gates and their proof commands
+
+Each gate is proven by a command that exits non-zero on violation; CI runs the
+starred ones on every change.
+
+| Gate | Proof command |
+| --- | --- |
+| Controls actually enforce (E-05, E-09, E-10) | `selftest`* and the 13-cell `grid`* |
+| Staged failures are caught (E-01..E-17, CTX-03..CTX-08) | `scenarios`* (15 staged, each bound to its ID) |
+| Test weakening blocks completion (E-05) | `integrity` (nine §16.2 monitors) |
+| Zero network use is captured, not promised (E-07, E-16-arch) | `netgate`* (plant-proven socket audit) |
+| A change carries its release note (CTX-07) | `changelog check`* |
+| Repetition is stopped from records (E-03, E-07-loop) | `loop`, `mistakes`, `watch` |
+| Secrets stop at every boundary (E-06, SEC-007) | `egress --staged`, `privacy`, archive write scan |
+| Status has one writer and no phantoms (E-17, CTX-04) | `status survey` / `status remaining` |
+| Versions, docs, manifests, locales agree | `version --reconcile`*, `docs --reconcile`, `bindings`*, `locale check`* |
+| The dependency claim validates externally | `sbom --gate`*, `checksums`* |
+| Routing evals execute against snapshots | `evals`* |
+| Configs fail with a field path | `config check`* |
+| Plans need specs and survive handoff (CTX-01, CTX-02) | `planmode` chain, `rewind`, `drift` |
+| Blast radius is classified outside model output (E-16) | `environment`, `db --propose` (E-15) |
+| Removals stay explicable (CTX-03) | `removal why` |
+
 ## Release sequence
 
 1. Run `python -m compileall scripts hooks tests` from the plugin root.
 2. Run `python -m unittest discover -s tests -v`.
 3. Validate every `SKILL.md` with the host's official skill validator.
-4. Validate `.codex-plugin/plugin.json` with the host's official plugin validator.
+4. Validate all three host manifests — `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, `.grok-plugin/plugin.json` — with `bindings` (drift fails) and each host's official validator where available.
 5. Run a CLI lifecycle smoke test in an isolated temporary project and state directory.
-6. Run the private clean-room release scan; no research-source identity or private owner identity may occur in packageable files.
+6. Run the private clean-room release scan across all three manifests; no research-source identity or private owner identity may occur in packageable files.
 7. Inspect package contents and confirm every planning, checkpoint, handoff, decision, lesson, research, and source-ledger path is excluded.
+8. Run the full gate battery above; every starred command must exit zero.

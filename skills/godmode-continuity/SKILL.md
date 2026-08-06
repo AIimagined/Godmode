@@ -47,5 +47,11 @@ requires fresh evidence. Run `doctor` after a material continuity change.
 Godmode cannot guarantee perfect memory. If no valid baseline or adapter exists, say so
 and give the exact rebuild action.
 
+Status truth lives in one writable store: `status set|survey|remaining|render|handover`
+(pending items are existence-checked; phantoms close with evidence). `context why
+--about X` answers with the recorded decisions, fixes, dependencies, and
+invariants touching a surface; `slice` reads bounded file ranges that declare
+their own truncation; `absorb --path X` proves a synced file is truly absorbed.
+
 Read [godmode-continuity-schema.md](references/godmode-continuity-schema.md) when choosing
 record types or interpreting detector output.

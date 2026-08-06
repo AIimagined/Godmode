@@ -181,7 +181,12 @@ approved plan survives the handoff.
 | [THREAT-MODEL.md](./THREAT-MODEL.md) | Threats, controls, and stated non-goals |
 | [GOVERNANCE.md](./GOVERNANCE.md) | Changing a protected guarantee |
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | Local validation and the zero-dependency budget |
+| [CHANGELOG.md](./CHANGELOG.md) | Released changes; unreleased ones live in `changelog.d/` |
+| [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) | Community standards |
+| [RELEASE_NOTES_v0.1.0-draft.md](./RELEASE_NOTES_v0.1.0-draft.md) | Draft notes and the owner release checklist |
 | [llms.txt](./llms.txt) | Machine-readable front door |
+| `locales/` | Validated guidance translations (`locale check`) |
+| `scripts/godmode_docs_site.py` | Renders these documents into an offline HTML site |
 
 ## Contributing and security
 

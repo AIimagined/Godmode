@@ -37,6 +37,14 @@ Read [godmode-forge-contract.md](references/godmode-forge-contract.md) before ap
 - If two proposals overlap, synthesize one coherent skill using the strongest compatible behaviors and one routing boundary.
 - Preserve failed evaluations as evidence; never rewrite a baseline to manufacture improvement.
 
+## Lifecycle
+
+Skills carry a lifecycle state: `skill lifecycle` lists them, `skill retire
+--name X --reason ...` deprecates with a recorded reason, and `evals` executes
+the routing corpus against its snapshots so a wording change shows a diff.
+`lessons` runs the promote-or-retire pipeline: a recorded lesson either gets
+its guard observed running or is retired — never appended forever.
+
 ## Completion
 
 A forged skill is complete only when its structure validates, both positive examples route correctly, near-negative examples stay out, every assertion is evidenced, and its instructions are smaller than the workflow they replace.

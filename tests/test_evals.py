@@ -210,5 +210,23 @@ class AdversarialGridTests(unittest.TestCase):
         self.assertEqual(first, second)
 
 
+class DocsSiteTests(unittest.TestCase):
+    def test_docs_site_builds_offline_from_repo_markdown(self) -> None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "godmode_docs_site", PLUGIN_ROOT / "scripts" / "godmode_docs_site.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as raw:
+            out = Path(raw) / "site"
+            result = module.build(PLUGIN_ROOT, out)
+            self.assertGreaterEqual(result["pages"], 10)
+            index = (out / "index.html").read_text(encoding="utf-8")
+            self.assertIn("Godmode documentation", index)
+            readme = (out / "README.html").read_text(encoding="utf-8")
+            self.assertIn('href="GODMODE.html"', readme)
+
+
 if __name__ == "__main__":
     unittest.main()

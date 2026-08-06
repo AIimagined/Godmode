@@ -10,10 +10,13 @@ permissions:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    # Windows and macOS legs close S1-14: the primary development platform and
+    # the third OS are tested, not assumed.
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.11", "3.13"]
 
     steps:
@@ -50,6 +53,28 @@ jobs:
 
       - name: Enforce the dependency policy
         run: python scripts/godmode.py --project . sbom --gate --brief
+
+      # One gate per step so a failure names itself.
+      - name: Attack every control and require it to hold
+        run: python scripts/godmode.py --project . grid --brief
+
+      - name: Execute the routing evals against their snapshots
+        run: python scripts/godmode.py --project . evals --brief
+
+      - name: Validate every config file
+        run: python scripts/godmode.py --project . config check --brief
+
+      - name: Validate localized guidance against its sources
+        run: python scripts/godmode.py --project . locale check --brief
+
+      - name: Reconcile every version surface
+        run: python scripts/godmode.py --project . version --reconcile --brief
+
+      - name: Diagnose the code atlas
+        run: python scripts/godmode.py --project . atlas diagnose --brief
+
+      - name: Scan repository text for instruction-shaped content
+        run: python scripts/godmode.py --project . untrusted --brief
 
       - name: Prove the checksum manifest is reproducible
         run: |
@@ -133,4 +158,6 @@ jobs:
       - name: Run the gates via the action
         uses: ./
         with:
-          base: ${{ github.event_name == 'pull_request' && format('origin/{0}...', github.base_ref) || 'HEAD' }}
+          # On push, HEAD~1 keeps the gates real; plain HEAD would diff an empty
+          # set and pass vacuously on every push.
+          base: ${{ github.event_name == 'pull_request' && format('origin/{0}...', github.base_ref) || 'HEAD~1' }}

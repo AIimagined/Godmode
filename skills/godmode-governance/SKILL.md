@@ -35,6 +35,14 @@ Read [godmode-protection-matrix.md](references/godmode-protection-matrix.md) whe
 - Do not represent a preview as approval or a guard result as automatic enforcement.
 - Require a rollback or recovery statement for schema, history, release, and destructive filesystem changes.
 
+## Gate routing
+
+- `environment --target X` classifies blast radius before any mutation; unknown fails closed as production and repository text cannot re-label it.
+- `egress --staged` scans staged and untracked content for secret shapes before a commit.
+- `db --propose` walks the schema ladder: existing column, existing table, and only then a reviewed new table.
+- `planmode specify|start|approve|check|arbitrate|bind` gates mutation behind a spec-backed approved plan; `rewind --to SEQ` previews a rollback to a verified checkpoint.
+- `ceilings --spent ...` stops a run that exceeded its declared budget; `removal record|why` keeps deletions explicable.
+
 ## Completion
 
 Report the classification, whether authorization was required, what actually ran, the recovery boundary, and fresh verification. If execution was outside the available host boundary, stop after the preview and say so plainly.
