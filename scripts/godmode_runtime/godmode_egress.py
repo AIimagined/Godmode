@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 from typing import Any
 
+from .godmode_anchor import run_git
 from .godmode_sentinel import find_secret_shapes
 
 INFERENCE = "model-inference"
@@ -62,6 +63,148 @@ _INJECTION = (
     ("exfiltration", r"\b(?:send|post|upload|exfiltrat\w*|leak)\b.*\b(?:secret|token|key|credential|\.env)\b"),
     ("gate-bypass", r"\b(?:skip|bypass|disable|turn off)\b.*\b(?:check|gate|guard|review|approval|confirmation)\b"),
 )
+
+
+# Named secret shapes for boundary scans. find_secret_shapes answers "is a secret
+# present"; these answer "what kind, and where" - a finding a user can act on names
+# the shape and the line without ever repeating the value. Each pattern captures
+# the secret itself in the 'secret' group so masking has an exact target.
+_SECRET_KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("aws-access-key", re.compile(r"\b(?P<secret>AKIA[0-9A-Z]{16})\b")),
+    ("private-key-header", re.compile(r"(?P<secret>-----BEGIN [A-Z ]*PRIVATE KEY-----)")),
+    ("bearer-token", re.compile(r"(?i)\bbearer\s+(?P<secret>[A-Za-z0-9._~+/=-]{12,})")),
+    # A scheme with user:password@host embeds the credential in the address. The
+    # separator is escaped so no URL literal enters runtime source (same reasoning
+    # as the WEB shape above).
+    ("connection-string-password",
+     re.compile(r"(?i)\b[a-z][a-z0-9+.-]{1,30}:\/\/[^\s:@\/]+:(?P<secret>[^\s@\/]{4,})@")),
+    ("credential-assignment",
+     re.compile(r"(?i)\b(?:api[_-]?key|access[_-]?key|auth[_-]?token|token|password|"
+                r"passwd|secret)\s*[:=]\s*[\"']?(?P<secret>[^\s\"',;]{8,})")),
+)
+
+
+def _mask(secret: str) -> str:
+    """First four characters, then asterisks. The count of asterisks is capped so
+    the excerpt does not even disclose the secret's length."""
+    return secret[:4] + "*" * max(4, min(len(secret) - 4, 12))
+
+
+def _secret_on_line(line: str) -> tuple[str, str] | None:
+    """The first named shape on a line, with the value already masked.
+
+    One finding per line: a line matching two shapes is one secret to remove, and
+    reporting it twice would only pad the list the user has to clear.
+
+    A line carrying `godmode: allow-secret` is fixture data by declaration - the
+    pragma is visible in review and greppable, which an assembled-at-runtime
+    fixture would not be.
+    """
+    if "godmode: allow-secret" in line:
+        return None
+    for kind, pattern in _SECRET_KINDS:
+        match = pattern.search(line)
+        if match:
+            return kind, _mask(match.group("secret"))
+    return None
+
+
+def _added_lines_of_diff(diff_text: str):
+    """Yield (path, line_number, text) for every added line of a unified diff.
+
+    Only added lines: a secret in a removed line already lived in history, and
+    flagging it here would block the very commit that deletes it.
+    """
+    path: str | None = None
+    new_line = 0
+    for raw in diff_text.splitlines():
+        if raw.startswith("+++ "):
+            target = raw[4:].strip()
+            if target == "/dev/null":
+                path = None
+            else:
+                path = target[2:] if target.startswith("b/") else target
+        elif raw.startswith("@@"):
+            hunk = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)", raw)
+            if hunk:
+                new_line = int(hunk.group(1))
+        elif raw.startswith("+") and not raw.startswith("+++"):
+            if path is not None:
+                yield path, new_line, raw[1:]
+            new_line += 1
+        elif not raw.startswith(("-", "\\", "diff ", "index ")):
+            new_line += 1
+
+
+def scan_staged(project: Path) -> dict[str, Any]:
+    """Find secret-shaped values in what a commit is about to contain.
+
+    The boundary is the commit, not the push: once a secret is in history, removal
+    means rewriting history, so the only cheap moment to catch it is before the
+    record exists. Untracked files are scanned too, because "git add -A && commit"
+    turns them into staged content with no intermediate state to inspect.
+    """
+    findings: list[dict[str, Any]] = []
+    sources: list[str] = []
+
+    diff = run_git(project, "diff", "--cached", "--unified=0", "--no-color")
+    if diff is not None:
+        sources.append("staged-diff")
+        for path, line, text in _added_lines_of_diff(diff):
+            hit = _secret_on_line(text)
+            if hit:
+                findings.append({"path": path, "line": line,
+                                 "kind": hit[0], "masked_excerpt": hit[1]})
+
+    untracked = run_git(project, "ls-files", "--others", "--exclude-standard")
+    if untracked is not None:
+        sources.append("untracked-would-be-added")
+        for rel in untracked.splitlines():
+            rel = rel.strip()
+            if not rel:
+                continue
+            target = project / rel
+            try:
+                text = target.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for index, line in enumerate(text.splitlines(), 1):
+                hit = _secret_on_line(line)
+                if hit:
+                    findings.append({"path": rel.replace("\\", "/"), "line": index,
+                                     "kind": hit[0], "masked_excerpt": hit[1]})
+
+    # No observable boundary is not a clean boundary: outside a Git repository
+    # nothing was scanned, so nothing can be vouched for.
+    return {
+        "findings": findings,
+        "clean": bool(sources) and not findings,
+        "sources": sources or ["unavailable: not a Git repository"],
+    }
+
+
+def scan_paths(project: Path, paths: list[str]) -> dict[str, Any]:
+    """The same secret scan for arbitrary files: the export/file-change boundary."""
+    findings: list[dict[str, Any]] = []
+    unreadable: list[str] = []
+    for rel in sorted(set(paths)):
+        target = project / rel
+        try:
+            text = target.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            # An unreadable file cannot be vouched for, so it costs the verdict.
+            unreadable.append(rel)
+            continue
+        for index, line in enumerate(text.splitlines(), 1):
+            hit = _secret_on_line(line)
+            if hit:
+                findings.append({"path": rel.replace("\\", "/"), "line": index,
+                                 "kind": hit[0], "masked_excerpt": hit[1]})
+    return {
+        "findings": findings,
+        "clean": not findings and not unreadable,
+        "unreadable": unreadable,
+    }
 
 
 @dataclass(frozen=True)
@@ -263,6 +406,25 @@ def _self_check() -> None:
 
         swept = scan_project(project)
         assert swept["files_with_findings"] >= 1, swept
+
+        # Boundary scanners: the masked excerpt names the shape, never the value.
+        aws = "AKIA" + "IOSFODNN7EXAMPLE"  # assembled so no key literal sits in source
+        hit = _secret_on_line(f'ACCESS = "{aws}"')
+        assert hit and hit[0] == "aws-access-key", hit
+        assert hit[1].startswith("AKIA") and aws not in hit[1], hit
+        assert _secret_on_line("plain prose without credentials") is None
+        synthetic = (
+            "diff --git a/config.py b/config.py\n"
+            "--- a/config.py\n+++ b/config.py\n"
+            "@@ -0,0 +1,2 @@\n"
+            "+harmless = 1\n"
+            f'+password = "hunter2hunter2"\n'
+        )
+        added = list(_added_lines_of_diff(synthetic))
+        assert [(p, n) for p, n, _ in added] == [("config.py", 1), ("config.py", 2)], added
+        outside = scan_paths(project, ["leaky.py", "no-such-file.py"])
+        assert not outside["clean"] and outside["unreadable"] == ["no-such-file.py"], outside
+        assert outside["findings"][0]["kind"] == "credential-assignment", outside
 
     print("godmode_egress self-check OK")
 

@@ -150,6 +150,82 @@ def scope(project: Path, since: str | None = None) -> dict[str, Any]:
     }
 
 
+# Thresholds for size pressure. They mark where review quality measurably drops,
+# not where work becomes wrong - which is why crossing one reports and never blocks.
+_PRESSURE_UNIT_LINES = 400
+_PRESSURE_FILE_LINES = 200
+_PRESSURE_NEW_FILES = 5
+
+
+def _line_count(target: Path) -> int:
+    try:
+        return len(target.read_text(encoding="utf-8", errors="replace").splitlines())
+    except OSError:
+        return 0
+
+
+def minimality(project: Path, base: str = "HEAD") -> dict[str, Any]:
+    """Measure the change's size and name what is bigger than it needs to be.
+
+    Size is a smell, not a sin: a large diff is sometimes the honest shape of the
+    work, so nothing here blocks. But reviewers systematically under-read what
+    they cannot hold in view, and the author is the one person who cannot feel
+    that from inside - so the numbers are always in the report, findings or not,
+    and the pressure findings name concrete artefacts rather than scolding.
+    """
+    numstat = run_git(project, "diff", "--numstat", base)
+    created = run_git(project, "diff", "--name-only", "--diff-filter=A", base)
+    untracked = run_git(project, "ls-files", "--others", "--exclude-standard")
+    if numstat is None and untracked is None:
+        return {"base": base, "source": "unavailable: not a Git repository or ref not found",
+                "files": 0, "added_lines": 0, "largest": None, "new_files": [],
+                "findings": [], "verdict": "unavailable"}
+
+    per_file: dict[str, int] = {}
+    for line in (numstat or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) != 3 or parts[0] == "-":  # "-" marks a binary file
+            continue
+        per_file[parts[2].strip().replace("\\", "/")] = int(parts[0])
+
+    new_files = {p.strip().replace("\\", "/") for p in (created or "").splitlines() if p.strip()}
+    for raw in (untracked or "").splitlines():
+        rel = raw.strip().replace("\\", "/")
+        if not rel:
+            continue
+        # Untracked files are part of the change unit even before "git add": every
+        # line of a new file is an added line the review has to carry.
+        per_file[rel] = _line_count(project / rel)
+        new_files.add(rel)
+
+    total_added = sum(per_file.values())
+    largest = max(per_file.items(), key=lambda item: item[1], default=None)
+
+    findings: list[dict[str, str]] = []
+    if total_added > _PRESSURE_UNIT_LINES:
+        findings.append({"kind": "large-change",
+                         "detail": f"consider splitting: {total_added} lines across "
+                                   f"{len(per_file)} files"})
+    if len(new_files) > _PRESSURE_NEW_FILES:
+        findings.append({"kind": "many-new-files",
+                         "detail": f"{len(new_files)} new files: " + ", ".join(sorted(new_files))})
+    for path in sorted(per_file):
+        if per_file[path] > _PRESSURE_FILE_LINES:
+            findings.append({"kind": "large-file-addition",
+                             "detail": f"{path}: {per_file[path]} added lines"})
+
+    return {
+        "base": base,
+        "source": f"diff --numstat against {base}, plus untracked files",
+        "files": len(per_file),
+        "added_lines": total_added,
+        "largest": ({"path": largest[0], "added_lines": largest[1]} if largest else None),
+        "new_files": sorted(new_files),
+        "findings": findings,
+        "verdict": "pressure" if findings else "within-pressure",
+    }
+
+
 def _self_check() -> None:
     import subprocess
     import tempfile

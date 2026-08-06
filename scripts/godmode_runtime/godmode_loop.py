@@ -145,6 +145,54 @@ def _silent_success(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return findings
 
 
+def hypothesis_reset_required(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Three non-green checkpoints under one hypothesis end that hypothesis.
+
+    A wrong hypothesis does not announce itself; it produces plausible next steps
+    forever. The only external signal is that the checkpoints stop moving while
+    the explanation stays the same - so the record of what stayed constant, not
+    the agent's confidence, decides when the explanation is spent. The finding
+    blocks further mutation because a fourth attempt under the same hypothesis is
+    the same attempt.
+    """
+    findings: list[dict[str, Any]] = []
+    run: list[dict[str, Any]] = []
+    run_key: str | None = None
+
+    def flush() -> None:
+        if len(run) >= REPEAT_THRESHOLD:
+            hypothesis = str(run[0]["data"]["hypothesis"])
+            statuses = ", ".join(str(r["data"].get("status", "unknown")) for r in run)
+            findings.append(_finding(
+                "no-progress-cycle",
+                f"{len(run)} consecutive checkpoints stayed non-green ({statuses}) "
+                f"while the hypothesis stayed constant: '{hypothesis[:120]}'. "
+                "The world moved and the explanation did not, so the explanation is "
+                "spent: a hypothesis reset is required - discard it, state a new "
+                "one, and record it on the next checkpoint before any further mutation",
+                True, [r["sequence"] for r in run],
+            ))
+
+    for record in records:
+        if record["kind"] != "checkpoint":
+            continue
+        hypothesis = record["data"].get("hypothesis")
+        status = str(record["data"].get("status", "")).lower()
+        key = None if hypothesis is None else _signature({"hypothesis": hypothesis})
+        if key is not None and status != "green" and key == run_key:
+            run.append(record)
+            continue
+        flush()
+        if key is not None and status != "green":
+            run, run_key = [record], key
+        else:
+            # A green checkpoint or an absent hypothesis is progress or a fresh
+            # start; either way the streak of sameness is broken.
+            run, run_key = [], None
+    flush()
+    return findings
+
+
 def model_blame_allowed(records: list[dict[str, Any]], session: str | None = None) -> dict[str, Any]:
     """Blaming the model requires a non-model control: the same input through a
     path with no model in it. Without one, the blame is a hypothesis."""
@@ -170,6 +218,7 @@ def analyze(archive: Chronicle) -> dict[str, Any]:
         + _oscillation(records)
         + _prior_fix_reversal(records)
         + _silent_success(records)
+        + hypothesis_reset_required(records)
     )
     blocking = [f for f in findings if f["blocking"]]
     return {
