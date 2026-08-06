@@ -1,0 +1,96 @@
+"""Changelog fragments: a change carries its own release note or fails the gate.
+
+One shared CHANGELOG.md turns every parallel branch into a merge conflict, and a
+note written at release time is written from memory. So each change adds a fragment
+under `changelog.d/<slug>.<category>.md`, the release gate refuses code changes
+that arrive without one, and `merge` folds the fragments into CHANGELOG.md under
+the version being cut.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Any
+
+from .godmode_anchor import run_git
+from .godmode_errors import ArchiveError
+
+FRAGMENT_DIR = "changelog.d"
+CATEGORIES = ("added", "changed", "fixed", "removed", "deprecated", "security")
+# Paths whose changes do not need a release note.
+_EXEMPT = re.compile(
+    r"(^|/)(changelog\.d/|CHANGELOG\.md$|tests?/|docs/|\.github/)|\.md$|\.txt$"
+)
+
+
+def _fragment_category(path: Path) -> str:
+    parts = path.name.split(".")
+    if len(parts) < 3 or parts[-2] not in CATEGORIES:
+        raise ArchiveError(
+            f"Fragment {path.name} must be named <slug>.<category>.md with category "
+            f"one of: {', '.join(CATEGORIES)}"
+        )
+    return parts[-2]
+
+
+def check_fragments(project: Path, base: str = "HEAD") -> dict[str, Any]:
+    """The release gate: a code change without a fragment does not pass."""
+    raw = run_git(project, "diff", "--name-only", "--no-renames", base)
+    if raw is None:
+        raise ArchiveError("The changelog gate needs a Git repository to diff against")
+    tracked = run_git(project, "ls-files", "--others", "--exclude-standard") or ""
+    changed = [p for p in (raw.splitlines() + tracked.splitlines()) if p]
+    needs_note = sorted(p for p in changed if not _EXEMPT.search(p))
+    fragments = sorted(
+        p for p in changed if p.startswith(f"{FRAGMENT_DIR}/") and p.endswith(".md")
+    )
+    for fragment in fragments:
+        _fragment_category(Path(fragment))
+    satisfied = not needs_note or bool(fragments)
+    return {
+        "changes_needing_note": needs_note,
+        "fragments": fragments,
+        "satisfied": satisfied,
+        "verdict": "satisfied" if satisfied else "missing-fragment",
+    }
+
+
+def merge_fragments(project: Path, version: str, date: str) -> dict[str, Any]:
+    """Fold every fragment into CHANGELOG.md under a new version heading."""
+    directory = project / FRAGMENT_DIR
+    fragments = sorted(directory.glob("*.md")) if directory.is_dir() else []
+    if not fragments:
+        raise ArchiveError(f"No fragments to merge in {FRAGMENT_DIR}/")
+
+    grouped: dict[str, list[str]] = {}
+    for fragment in fragments:
+        text = fragment.read_text(encoding="utf-8").strip()
+        if text:
+            grouped.setdefault(_fragment_category(fragment), []).append(text)
+
+    lines = [f"## [{version}] - {date}", ""]
+    for category in CATEGORIES:
+        if category in grouped:
+            lines.append(f"### {category.capitalize()}")
+            lines.append("")
+            for entry in grouped[category]:
+                first, *rest = entry.splitlines()
+                lines.append(f"- {first}")
+                lines.extend(f"  {line}" for line in rest)
+            lines.append("")
+    section = "\n".join(lines)
+
+    changelog = project / "CHANGELOG.md"
+    body = changelog.read_text(encoding="utf-8") if changelog.is_file() else "# Changelog\n"
+    # Insert above the most recent release; keep any [Unreleased] header on top.
+    match = re.search(r"^## \[(?!Unreleased)", body, flags=re.MULTILINE)
+    if match:
+        body = body[: match.start()] + section + "\n" + body[match.start() :]
+    else:
+        body = body.rstrip("\n") + "\n\n" + section + "\n"
+    changelog.write_text(body, encoding="utf-8")
+
+    for fragment in fragments:
+        fragment.unlink()
+    return {"merged": len(fragments), "version": version, "changelog": "CHANGELOG.md"}

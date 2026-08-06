@@ -34,6 +34,8 @@ from .godmode_bindings import sbom as build_sbom
 from .godmode_bindings import write as bindings_write
 from .godmode_charter import TRIGGERS, applicable_rules, compile_charter, traits_of
 from .godmode_drift import capabilities as host_capabilities
+from .godmode_changelog import check_fragments, merge_fragments
+from .godmode_integrity import analyze as analyze_integrity
 from .godmode_drift import compare as compare_sessions
 from .godmode_method import Shape
 from .godmode_method import contract as method_contract
@@ -436,6 +438,27 @@ def cmd_drift(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     report = compare_sessions(runtime.archive)
     return CommandResult(report, exit_code=1 if report["verdict"] == "drift-detected" else 0)
+
+
+def cmd_changelog_check(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    report = check_fragments(Path(runtime.anchor.project_root), base=args.base)
+    return CommandResult(report, exit_code=0 if report["satisfied"] else 1)
+
+
+def cmd_changelog_merge(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    from datetime import date
+
+    return CommandResult(merge_fragments(
+        Path(runtime.anchor.project_root), version=args.set_version,
+        date=args.date or date.today().isoformat(),
+    ))
+
+
+def cmd_integrity(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    report = analyze_integrity(runtime.archive, Path(runtime.anchor.project_root), base=args.base)
+    # E-05: a change that weakens the suite cannot be attested into completion.
+    return CommandResult(report, exit_code=1 if report["blocking"] else 0)
 
 
 def cmd_capabilities(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -1272,6 +1295,26 @@ def _build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--deep", action="store_true")
     doctor.set_defaults(handler=cmd_doctor)
     sub.add_parser("privacy", help="Audit the local privacy boundary").set_defaults(handler=cmd_privacy)
+
+    changelog = sub.add_parser("changelog", help="Fragment-based release notes")
+    changelog_sub = changelog.add_subparsers(dest="changelog_command", required=True)
+    changelog_check = changelog_sub.add_parser(
+        "check", help="Fail when a code change arrives without a changelog.d fragment"
+    )
+    changelog_check.add_argument("--base", default="HEAD", help="Git ref to diff against")
+    changelog_check.set_defaults(handler=cmd_changelog_check)
+    changelog_merge = changelog_sub.add_parser(
+        "merge", help="Fold changelog.d fragments into CHANGELOG.md for a release"
+    )
+    changelog_merge.add_argument("--set-version", required=True)
+    changelog_merge.add_argument("--date", help="Release date; defaults to today")
+    changelog_merge.set_defaults(handler=cmd_changelog_merge)
+
+    integrity = sub.add_parser(
+        "integrity", help="Run the nine test-integrity monitors over the current diff"
+    )
+    integrity.add_argument("--base", default="HEAD", help="Git ref to diff against")
+    integrity.set_defaults(handler=cmd_integrity)
 
     guard = sub.add_parser("guard", help="Preview and authorize an exact operation without executing it")
     guard.add_argument("--operation", required=True)
