@@ -37,6 +37,8 @@ from .godmode_drift import capabilities as host_capabilities
 from .godmode_changelog import check_fragments, merge_fragments
 from .godmode_integrity import analyze as analyze_integrity
 from .godmode_locale import check_locales
+from .godmode_removal import REQUIRED_FIELDS as REMOVAL_FIELDS
+from .godmode_removal import record_removal, removal_answer
 from .godmode_drift import compare as compare_sessions
 from .godmode_method import Shape
 from .godmode_method import contract as method_contract
@@ -453,6 +455,28 @@ def cmd_changelog_merge(args: argparse.Namespace, runtime: Runtime) -> CommandRe
         Path(runtime.anchor.project_root), version=args.set_version,
         date=args.date or date.today().isoformat(),
     ))
+
+
+def cmd_removal_record(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    record = record_removal(
+        runtime.archive, args.subject,
+        {field: getattr(args, field) for field in REMOVAL_FIELDS},
+        evidence=args.evidence,
+    )
+    return CommandResult({"record": _event_view(record)})
+
+
+def cmd_removal_why(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    answer = removal_answer(runtime.archive, args.subject)
+    if answer is None:
+        return CommandResult(
+            {"subject": args.subject, "answer": None,
+             "note": "no removal record; if this was removed, the memory was never written"},
+            exit_code=1,
+        )
+    return CommandResult({"subject": args.subject, "answer": answer})
 
 
 def cmd_locale_check(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -1315,6 +1339,20 @@ def _build_parser() -> argparse.ArgumentParser:
     changelog_merge.add_argument("--set-version", required=True)
     changelog_merge.add_argument("--date", help="Release date; defaults to today")
     changelog_merge.set_defaults(handler=cmd_changelog_merge)
+
+    removal = sub.add_parser("removal", help="Remember why something was deleted")
+    removal_sub = removal.add_subparsers(dest="removal_command", required=True)
+    removal_record = removal_sub.add_parser(
+        "record", help="Record a removal; all six fields are required"
+    )
+    removal_record.add_argument("--subject", required=True, type=subject_text)
+    for field in REMOVAL_FIELDS:
+        removal_record.add_argument(f"--{field}", required=True)
+    _evidence(removal_record)
+    removal_record.set_defaults(handler=cmd_removal_record)
+    removal_why = removal_sub.add_parser("why", help="Answer why something was removed")
+    removal_why.add_argument("--subject", required=True, type=subject_text)
+    removal_why.set_defaults(handler=cmd_removal_why)
 
     locale = sub.add_parser("locale", help="Localized guidance surfaces")
     locale_sub = locale.add_subparsers(dest="locale_command", required=True)

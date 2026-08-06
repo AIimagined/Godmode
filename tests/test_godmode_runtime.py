@@ -1587,5 +1587,46 @@ class LocaleTests(unittest.TestCase):
         self.assertIn("hi", report["locales"])
 
 
+class RemovalMemoryTests(unittest.TestCase):
+    """S3-09 / CTX-03: a removal is remembered with all six fields, retrievably."""
+
+    FIELDS = {
+        "reason": "superseded by the v2 endpoint",
+        "location": "api/v1/orders.py",
+        "replacement": "api/v2/orders.py",
+        "references": "docs/api.md; clients/orders_client.py",
+        "restoration": "git revert abc1234",
+        "authorizer": "project owner",
+    }
+
+    def test_record_and_retrieve_all_six_fields(self) -> None:
+        from godmode_runtime.godmode_removal import record_removal, removal_answer
+
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            record_removal(archive, "orders-v1-endpoint", dict(self.FIELDS))
+            answer = removal_answer(archive, "orders-v1-endpoint")
+            self.assertIsNotNone(answer)
+            for field, value in self.FIELDS.items():
+                self.assertEqual(answer[field], value)
+
+    def test_missing_field_is_refused(self) -> None:
+        from godmode_runtime.godmode_removal import record_removal
+
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            partial = dict(self.FIELDS)
+            del partial["restoration"]
+            with self.assertRaises(ArchiveError):
+                record_removal(archive, "orders-v1-endpoint", partial)
+
+    def test_unknown_removal_returns_none(self) -> None:
+        from godmode_runtime.godmode_removal import removal_answer
+
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            self.assertIsNone(removal_answer(archive, "never-removed"))
+
+
 if __name__ == "__main__":
     unittest.main()
