@@ -1,13 +1,13 @@
-# Godmode v0.1.0 — draft release notes
+# Godmode v0.2.0 — release notes
 
-Status: DRAFT. No tag exists and none will be created without explicit owner
-permission. Every claim below is enforced by the acceptance suite
+Status: RELEASED 2026-08-06 (tag v0.2.0), on explicit owner instruction.
+Every claim below is enforced by the acceptance suite
 (`python -m unittest discover -s tests`), the staged-failure catalogue
 (`godmode scenarios`), and the runtime's own gates — not asserted.
 
-## What v0.1.0 is
+## What v0.2.0 is
 
-The first public preview of a local-first continuity and evidence-governance
+The first tagged public preview of a local-first continuity and evidence-governance
 runtime for coding agents, shipping as a plugin for Claude Code, Codex, and
 Grok, plus a composite GitHub Action.
 
@@ -46,8 +46,10 @@ Grok, plus a composite GitHub Action.
 - Cross-agent live resume and host-marketplace listings require real hosts and
   owner actions; tracked as open items, not claimed.
 
-## Cutting the release (owner checklist)
+## How this release was cut
 
-1. `godmode changelog merge --set-version 0.1.0`
-2. Full suite + `selftest`, `scenarios`, `sbom --gate`, `checksums` all green
-3. Signed tag + published checksum manifest (SEC-008, GOVERNANCE.md)
+1. `changelog merge --set-version 0.2.0` folded 35 fragments into CHANGELOG.md
+2. Full suite (195 tests) plus every gate green at tag time
+3. Annotated tag `v0.2.0` with the checksum manifest recorded; GPG signing
+   remains an owner step (SEC-008) — sign the tag when a key is configured:
+   `git tag -s v0.2.0-signed v0.2.0`
