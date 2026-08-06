@@ -1688,5 +1688,39 @@ class KernelCompletionTests(unittest.TestCase):
             self.assertEqual([r["id"] for r in report["dormant"]], ["R-dead"])
 
 
+class StatusTruthTests(unittest.TestCase):
+    """S18-01/03/05: rendered views, phantom closure, rolling handover."""
+
+    def test_phantom_pending_item_is_closed_before_presentation(self) -> None:
+        from godmode_runtime.godmode_status import record_item, remaining
+
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            (project / "real.py").write_text("x = 1\n", encoding="utf-8")
+            record_item(archive, "real-work", "wire real.py", "active",
+                        evidence=["file:real.py"])
+            record_item(archive, "ghost-work", "wire deleted.py", "active",
+                        evidence=["file:deleted.py"])
+            left = remaining(archive, project)
+            ids = [entry["id"] for entry in left["remaining"] if entry["source"] == "status"]
+            self.assertIn("real-work", ids)
+            self.assertNotIn("ghost-work", ids)
+            self.assertEqual(left["phantoms_closed"], ["ghost-work"])
+
+    def test_rendered_view_and_handover_derive_from_the_store(self) -> None:
+        from godmode_runtime.godmode_status import handover, record_item, render_view
+
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            record_item(archive, "alpha", "first thing", "verified", evidence=["file:a.py"])
+            record_item(archive, "beta", "second thing", "active")
+            document = render_view(archive)
+            self.assertIn("## verified (1)", document)
+            self.assertIn("**beta**", document)
+            view = handover(archive, project)
+            self.assertEqual(view["items"]["alpha"]["state"], "verified")
+            self.assertEqual(view["verdict"], "work-outstanding")
+
+
 if __name__ == "__main__":
     unittest.main()
