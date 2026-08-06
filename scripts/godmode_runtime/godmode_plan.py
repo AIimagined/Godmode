@@ -22,10 +22,17 @@ CONTRACT_FIELDS = (
     "out_of_scope",
     "current_state",
     "assumptions",
+    "parity",
+    "steps",
     "risk",
     "rollback",
     "verification",
+    "points",
 )
+
+# The spec is the what/why; the plan is the how. A plan without a spec is a
+# solution to an unstated problem, so `start` refuses until one exists.
+SPEC_FIELDS = ("objective", "outcome", "acceptance", "non_goals")
 
 OPEN = "open"
 APPROVED = "approved"
@@ -54,20 +61,54 @@ def active_plan(archive: Chronicle, session: str | None = None) -> dict[str, Any
                 "state": data["state"],
                 "session": data.get("session"),
                 "contract": data["contract"],
+                "spec": data.get("spec_id"),
+                "sequence": record["sequence"],
+            }
+    return None
+
+
+def specify(archive: Chronicle, session: str, title: str, fields: dict[str, str]) -> dict[str, Any]:
+    """Record the what/why before any plan states a how."""
+    filled = {field: str(fields.get(field, "")).strip() for field in SPEC_FIELDS}
+    missing = [field for field in SPEC_FIELDS if not filled[field]]
+    if missing:
+        raise ArchiveError("A specification needs every field; missing: " + ", ".join(missing))
+    record = archive.append(
+        "plan", title, {"state": "spec", "session": session, "spec": filled}, evidence=[]
+    )
+    return {"id": f"SPEC-{record['record_hash'][:12]}", "sequence": record["sequence"]}
+
+
+def latest_spec(archive: Chronicle, title: str | None = None) -> dict[str, Any] | None:
+    for record in reversed(archive.select(kind="plan", limit=500)):
+        if "spec" in record["data"] and (title is None or record["subject"] == title):
+            return {
+                "id": f"SPEC-{record['record_hash'][:12]}",
+                "title": record["subject"],
+                "spec": record["data"]["spec"],
                 "sequence": record["sequence"],
             }
     return None
 
 
 def start(archive: Chronicle, session: str, title: str, contract: dict[str, str]) -> dict[str, Any]:
+    spec = latest_spec(archive, title) or latest_spec(archive)
+    if spec is None:
+        raise ArchiveError(
+            "A plan without a spec is refused; run `planmode specify` first so the "
+            "what/why exists before the how"
+        )
     filled = {field: str(contract.get(field, "")).strip() for field in CONTRACT_FIELDS}
     record = archive.append(
         "plan",
         title,
-        {"state": OPEN, "session": session, "contract": filled},
+        {"state": OPEN, "session": session, "contract": filled, "spec_id": spec["id"]},
         evidence=[],
     )
-    return {"id": f"P-{record['record_hash'][:12]}", "state": OPEN, "gaps": gaps(filled)}
+    return {
+        "id": f"P-{record['record_hash'][:12]}", "state": OPEN, "gaps": gaps(filled),
+        "spec": spec["id"],
+    }
 
 
 def gaps(contract: dict[str, str]) -> list[str]:
@@ -76,28 +117,32 @@ def gaps(contract: dict[str, str]) -> list[str]:
 
 def approve(archive: Chronicle, session: str) -> dict[str, Any]:
     """Approve only a complete contract. Missing fields are named, not waived."""
-    plan = active_plan(archive, session)
+    # No session filter: a plan is project state, not conversation state, so the
+    # approving session need not be the authoring one.
+    plan = active_plan(archive)
     if plan is None:
-        raise ArchiveError("No open plan for this session; run `plan start` first")
+        raise ArchiveError("No open plan; run `plan start` first")
     missing = gaps(plan["contract"])
     if missing:
         return {"approved": False, "id": plan["id"], "missing": missing}
     archive.append(
         "plan",
         plan["title"],
-        {"state": APPROVED, "session": session, "contract": plan["contract"]},
+        {"state": APPROVED, "session": session, "contract": plan["contract"],
+         "spec_id": plan.get("spec")},
         evidence=[],
     )
-    return {"approved": True, "id": plan["id"], "missing": []}
+    return {"approved": True, "id": plan["id"], "missing": [], "spec": plan.get("spec")}
 
 
 def mutation_verdict(archive: Chronicle, session: str) -> dict[str, Any]:
     """Plan mode blocks project mutation until the plan is approved.
 
     Read-only and local-compute work is unaffected; this only gates the tier that
-    changes the project.
+    changes the project. The plan is found across sessions: an approved plan
+    survives a handoff, and an unapproved one keeps blocking after one too.
     """
-    plan = active_plan(archive, session)
+    plan = active_plan(archive)
     if plan is None:
         return {"allowed": True, "reason": "no plan mode active"}
     if plan["state"] == APPROVED:
@@ -112,7 +157,7 @@ def mutation_verdict(archive: Chronicle, session: str) -> dict[str, Any]:
 
 def bind_execution(archive: Chronicle, session: str, summary: str, files: list[str]) -> dict[str, Any]:
     """Record work against its plan and report anything outside the declared scope."""
-    plan = active_plan(archive, session)
+    plan = active_plan(archive)
     if plan is None or plan["state"] != APPROVED:
         raise ArchiveError("Implementation must cite an approved plan; run `plan approve` first")
     scope = plan["contract"]["scope"].lower()
@@ -145,9 +190,23 @@ def _self_check() -> None:
 
             assert mutation_verdict(archive, session)["allowed"], "no plan means no plan-mode gate"
 
+            # A plan without a spec is refused: the how needs a stated what/why.
+            try:
+                start(archive, session, "stop token replay", {"objective": "stop replay"})
+                raise AssertionError("plan started without a spec")
+            except ArchiveError:
+                pass
+            specify(archive, session, "stop token replay", {
+                "objective": "stop refresh-token replay",
+                "outcome": "a replayed token is rejected at rotation",
+                "acceptance": "planted replay fails; fresh token passes",
+                "non_goals": "session revocation UX",
+            })
+
             partial = start(archive, session, "stop token replay", {"objective": "stop replay"})
             assert partial["state"] == OPEN
             assert "acceptance" in partial["gaps"]
+            assert partial["spec"].startswith("SPEC-")
 
             # Mutation is closed while the plan is incomplete.
             blocked = mutation_verdict(archive, session)
@@ -163,14 +222,21 @@ def _self_check() -> None:
                 "out_of_scope": "billing",
                 "current_state": "rotation reuses the token",
                 "assumptions": "clock skew under 30s",
+                "parity": "matches the access-token rotation path",
+                "steps": "add nonce; reject repeats; extend tests",
                 "risk": "sessions invalidated early",
                 "rollback": "restore prior checkpoint",
                 "verification": "planted replay fails then passes",
+                "points": "3",
             })
             assert approve(archive, session)["approved"]
             assert mutation_verdict(archive, session)["allowed"]
 
-            bound = bind_execution(archive, session, "reject replayed tokens",
+            # The approved plan survives a handoff: a different session executes it.
+            successor = "S-next-model"
+            carried = mutation_verdict(archive, successor)
+            assert carried["allowed"] and carried["plan"], carried
+            bound = bind_execution(archive, successor, "reject replayed tokens",
                                    ["src/auth/rotate.py", "src/billing/invoice.py"])
             assert bound["outside_scope"] == ["src/billing/invoice.py"], bound
 

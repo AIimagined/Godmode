@@ -335,7 +335,7 @@ def build_context_brief(
     selected: list[dict[str, Any]] = []
     priorities = (
         "invariant", "decision", "obligation", "checklist", "incident", "change",
-        "checkpoint", "branch", "version", "database", "sprint", "documentation",
+        "checkpoint", "plan", "branch", "version", "database", "sprint", "documentation",
     )
     for kind in priorities:
         matches = [record for record in records if record["kind"] == kind]

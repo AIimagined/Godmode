@@ -46,6 +46,8 @@ from .godmode_method import select as select_method
 from .godmode_plan import CONTRACT_FIELDS as PLAN_FIELDS
 from .godmode_plan import approve as plan_approve
 from .godmode_plan import bind_execution, mutation_verdict
+from .godmode_plan import SPEC_FIELDS
+from .godmode_plan import specify as plan_specify
 from .godmode_plan import start as plan_start
 from .godmode_scenarios import run as run_scenarios
 from .godmode_scope import scope as scope_change
@@ -410,6 +412,14 @@ def cmd_status_survey(args: argparse.Namespace, runtime: Runtime) -> CommandResu
     _require_archive(runtime)
     report = survey(runtime.archive, Path(runtime.anchor.project_root))
     return CommandResult(report, exit_code=1 if report["verdict"] == "competing-authority" else 0)
+
+
+def cmd_planmode_specify(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    fields = {field: getattr(args, field) or "" for field in SPEC_FIELDS}
+    return CommandResult(
+        plan_specify(runtime.archive, _session(runtime, args.session), args.title, fields)
+    )
 
 
 def cmd_planmode_start(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -1166,6 +1176,14 @@ def _build_parser() -> argparse.ArgumentParser:
     # command surface and converting it to subcommands would break existing callers.
     planmode = sub.add_parser("planmode", help="Gate mutation behind an approved plan contract")
     planmode_sub = planmode.add_subparsers(dest="planmode_command", required=True)
+    planmode_spec = planmode_sub.add_parser(
+        "specify", help="Record the what/why; a plan without one is refused"
+    )
+    planmode_spec.add_argument("--title", required=True, type=subject_text)
+    planmode_spec.add_argument("--session")
+    for field in SPEC_FIELDS:
+        planmode_spec.add_argument(f"--{field.replace('_', '-')}", dest=field, default="")
+    planmode_spec.set_defaults(handler=cmd_planmode_specify)
     planmode_start = planmode_sub.add_parser("start")
     planmode_start.add_argument("--title", required=True, type=subject_text)
     planmode_start.add_argument("--session")
