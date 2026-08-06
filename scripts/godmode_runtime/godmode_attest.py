@@ -76,6 +76,55 @@ def open_session(archive: Chronicle, label: str) -> str:
     return f"S-{record['record_hash'][:12]}"
 
 
+def opening_handshake(archive: Chronicle, anchor: Any, project: Path) -> dict[str, Any]:
+    """The fixed, model-independent sequence every session opens with.
+
+    The order is part of the contract: whichever model opens the session, the
+    same facts arrive in the same places, so a missing fact is visible as a gap
+    instead of a difference in style. Includes the enforcement table, so the
+    contract degrades honestly on hosts that cannot hold every control.
+    """
+    from .godmode_anchor import run_git
+    from .godmode_drift import capabilities as host_capabilities
+    from .godmode_plan import active_plan
+
+    porcelain = run_git(project, "status", "--porcelain=v1", "--untracked-files=all")
+    dirty = [line[2:].lstrip() for line in porcelain.splitlines()] if porcelain else []
+    plan = active_plan(archive)
+    obligations = [
+        record["subject"]
+        for record in archive.select(kind="obligation", limit=200)
+        if record["data"].get("status") not in ("closed", "done")
+    ]
+    invariants = [
+        record["subject"]
+        for record in archive.select(kind="invariant", limit=200)
+        if record["data"].get("status") != "retired"
+    ]
+    try:
+        from .godmode_corpus import resolve_roles
+
+        sources_total = len(resolve_roles(project).bindings)
+    except Exception:
+        sources_total = 0
+    return {
+        "identity": anchor.public_view() if anchor is not None else None,
+        "branch": getattr(anchor, "branch", None),
+        "head": getattr(anchor, "head", None),
+        "dirty_files": {"count": len(dirty), "paths": sorted(dirty)[:20]},
+        "active_plan": {"id": plan["id"], "state": plan["state"]} if plan else None,
+        "open_obligations": sorted(set(obligations))[:20],
+        "protected_invariants": sorted(set(invariants))[:20],
+        "required_sources": {
+            "documents": sources_total,
+            "read": 0,
+            "statement": f"read 0 of {sources_total} required sources",
+        },
+        "enforcement": host_capabilities()["controls"],
+        "agent": agent_fingerprint(),
+    }
+
+
 def _sessions(archive: Chronicle) -> list[dict[str, Any]]:
     return archive.select(kind="session", limit=200)
 
@@ -639,13 +688,81 @@ def close_session(archive: Chronicle, session: str, charter: dict[str, Any]) -> 
         for record in archive.select(kind="claim", limit=500)
         if record["data"].get("session") == session and record["data"].get("downgraded")
     ]
-    allowed = not unattested and not downgraded
+    half_done = half_done_pairs(archive, session, charter)
+    allowed = not unattested and not downgraded and not half_done
     return {
         "session": session,
         "closed": allowed,
         "unattested_hard_rules": unattested,
         "downgraded_claims": downgraded,
+        "half_done_pairs": half_done,
         "watch_for": [] if allowed else [text for text, _ in RATIONALIZATIONS],
+    }
+
+
+def half_done_pairs(
+    archive: Chronicle, session: str, charter: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """A pair rule attested with one artefact is half a ritual, and blocks closure.
+
+    The attestation for a `pair_complete` rule must cite at least two `file:`
+    artefacts - the thing and its counterpart. One citation names exactly which
+    half moved alone.
+    """
+    pair_rules = {
+        rule["id"]: rule["text"]
+        for rule in charter.get("compiled", [])
+        if rule.get("verify") == "pair_complete"
+    }
+    if not pair_rules:
+        return []
+    findings: list[dict[str, Any]] = []
+    for record in archive.select(kind="attestation", limit=1000):
+        data = record["data"]
+        if data.get("session") != session or data.get("status") != "ran":
+            continue
+        cited_rules = [r for r in data.get("rule_ids") or [] if r in pair_rules]
+        if not cited_rules:
+            continue
+        files = [e for e in record.get("evidence", []) if e.startswith("file:")]
+        if len(files) < 2:
+            findings.append({
+                "rule": cited_rules[0],
+                "text": pair_rules[cited_rules[0]],
+                "moved_alone": files[0] if files else "(no artefact cited)",
+                "missing": "the paired artefact was never cited",
+            })
+    return findings
+
+
+def advisory_decay(
+    archive: Chronicle, charter: dict[str, Any], window: int = 10
+) -> dict[str, Any]:
+    """Rules no session has touched in the last `window` sessions, surfaced.
+
+    A rule that never fires is either dead weight or an unenforced promise;
+    both deserve a decision, not accumulation.
+    """
+    sessions = [f"S-{r['record_hash'][:12]}" for r in archive.select(kind="session", limit=500)
+                if r["data"].get("state") == "open"]
+    recent = set(sessions[-window:])
+    seen: dict[str, set[str]] = {}
+    for record in archive.select(kind="attestation", limit=1000):
+        data = record["data"]
+        if data.get("session") in recent:
+            for rule_id in data.get("rule_ids") or []:
+                seen.setdefault(rule_id, set()).add(data["session"])
+    dormant = [
+        {"id": rule["id"], "text": rule["text"], "enforcement": rule["enforcement"]}
+        for rule in charter.get("compiled", [])
+        if rule["id"] not in seen
+    ]
+    return {
+        "window_sessions": len(recent),
+        "rules_total": len(charter.get("compiled", [])),
+        "rules_dormant": len(dormant),
+        "dormant": dormant[:50],
+        "note": "dormant rules deserve retirement or promotion, not accumulation",
     }
 
 

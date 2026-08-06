@@ -15,11 +15,13 @@ from .godmode_anchor import ProjectAnchor, resolve_anchor
 from .godmode_chronicle import Chronicle
 from .godmode_constants import DEFAULT_CONTEXT_BUDGET, EVENT_KINDS, RUNTIME_VERSION
 from .godmode_attest import (
+    advisory_decay,
     agent_fingerprint,
     close_session,
     gate,
     latest_session,
     open_session,
+    opening_handshake,
     record_claim,
     record_step,
 )
@@ -281,6 +283,9 @@ def _session(runtime: Runtime, explicit: str | None) -> str:
 
 def cmd_charter(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     charter = _charter(runtime)
+    if args.decay:
+        _require_archive(runtime)
+        return CommandResult(advisory_decay(runtime.archive, charter, window=args.decay))
     if args.at:
         # Narrowing happens here, deterministically, rather than by injecting every
         # rule and relying on the reader to ignore what does not apply.
@@ -300,7 +305,10 @@ def cmd_charter(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 def cmd_session_open(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     session = open_session(runtime.archive, args.label)
-    return CommandResult({"session": session, "agent": agent_fingerprint()})
+    handshake = opening_handshake(
+        runtime.archive, runtime.anchor, Path(runtime.anchor.project_root)
+    )
+    return CommandResult({"session": session, "handshake": handshake})
 
 
 def cmd_attest(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -1114,6 +1122,8 @@ def _build_parser() -> argparse.ArgumentParser:
     charter.add_argument("--full", action="store_true", help="Include every compiled rule")
     charter.add_argument("--at", metavar="PATH",
                          help="Narrow to the rules that apply to this artefact's characteristics")
+    charter.add_argument("--decay", type=int, metavar="N", nargs="?", const=10,
+                         help="Surface rules no attestation touched in the last N sessions")
     charter.set_defaults(handler=cmd_charter)
 
     session = sub.add_parser("session", help="Open or close an attested session")

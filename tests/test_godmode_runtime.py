@@ -1648,5 +1648,45 @@ class RcaMethodTests(unittest.TestCase):
             self.assertIn("unknown_without_instrument", verdict["gaps"], method)
 
 
+class KernelCompletionTests(unittest.TestCase):
+    """S16-06/07/08: handshake order, half-done pairs, advisory decay."""
+
+    def test_half_done_pair_blocks_closure_and_names_the_missing_half(self) -> None:
+        from godmode_runtime.godmode_attest import close_session, open_session, record_step
+
+        charter = {"compiled": [{
+            "id": "R-pair", "text": "code and its guard move together",
+            "trigger": "before_completion", "enforcement": "SOFT", "verify": "pair_complete",
+        }]}
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            session = open_session(archive, "pair-test")
+            record_step(archive, session, "sync guard", "ran",
+                        result="moved impl", evidence=["file:src/x.py"], rule_ids=["R-pair"])
+            verdict = close_session(archive, session, charter)
+            self.assertFalse(verdict["closed"])
+            self.assertEqual(verdict["half_done_pairs"][0]["moved_alone"], "file:src/x.py")
+
+            record_step(archive, session, "sync guard", "ran", result="moved both",
+                        evidence=["file:src/x.py", "file:tests/x_test.py"], rule_ids=["R-pair"])
+            # The completed pair attestation exists; only the half-done one still reports.
+            still = close_session(archive, session, charter)
+            self.assertEqual(len(still["half_done_pairs"]), 1)
+
+    def test_advisory_decay_surfaces_untouched_rules(self) -> None:
+        from godmode_runtime.godmode_attest import advisory_decay, open_session, record_step
+
+        charter = {"compiled": [
+            {"id": "R-used", "text": "used", "enforcement": "HARD"},
+            {"id": "R-dead", "text": "never fires", "enforcement": "ADVISORY"},
+        ]}
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            session = open_session(archive, "decay-test")
+            record_step(archive, session, "step", "ran", result="ok", rule_ids=["R-used"])
+            report = advisory_decay(archive, charter, window=10)
+            self.assertEqual([r["id"] for r in report["dormant"]], ["R-dead"])
+
+
 if __name__ == "__main__":
     unittest.main()
