@@ -82,8 +82,7 @@ def opening_handshake(archive: Chronicle, anchor: Any, project: Path) -> dict[st
     instead of a difference in style. Includes the enforcement table, so the
     contract degrades honestly on hosts that cannot hold every control.
     """
-    from .godmode_anchor import run_git
-    from .godmode_drift import capabilities as host_capabilities
+    from .godmode_anchor import host_capabilities, run_git
     from .godmode_plan import active_plan
 
     porcelain = run_git(project, "status", "--porcelain=v1", "--untracked-files=all")

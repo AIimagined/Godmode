@@ -85,32 +85,10 @@ def compare(archive: Chronicle, threshold: int = 1) -> dict[str, Any]:
     }
 
 
-def capabilities() -> dict[str, Any]:
-    """State honestly what this host can enforce. An unknown is reported, not assumed.
-
-    HARD means the control is decided outside model judgment. SOFT means it is
-    surfaced and checked after the fact. UNAVAILABLE means the environment cannot
-    support it, and any claim resting on it stays unverified.
-    """
-    interactive = bool(getattr(__import__("sys").stdin, "isatty", lambda: False)())
-    host = os.environ.get("GODMODE_HOST") or os.environ.get("CLAUDE_CODE_ENTRYPOINT") or "unknown"
-    controls = {
-        "attestation_gate": "HARD",
-        "claim_downgrade": "HARD",
-        "plan_mode_mutation_gate": "HARD",
-        "status_reopen_guard": "HARD",
-        "authority_claim_detection": "HARD",
-        "interactive_authorization": "HARD" if interactive else "UNAVAILABLE",
-        "agent_identity": "HARD" if os.environ.get("GODMODE_MODEL") else "SOFT",
-        "tool_call_interception": "UNAVAILABLE",
-    }
-    return {
-        "host": host,
-        "interactive": interactive,
-        "controls": controls,
-        "unavailable": sorted(k for k, v in controls.items() if v == "UNAVAILABLE"),
-        "note": "UNAVAILABLE controls are not enforced here; claims resting on them stay unverified",
-    }
+# Host capability negotiation lives in godmode_anchor (imported by everything,
+# importing nothing runtime) so both this module and the session handshake can
+# use it without a cycle.
+from .godmode_anchor import host_capabilities as capabilities  # noqa: E402,F401
 
 
 def _self_check() -> None:
