@@ -34,6 +34,25 @@ DEFAULT_SPINES = (
     "process",
 )
 
+RCA_CONFIG_FILENAME = ".godmode-rca.json"
+
+
+def configured_spines(project: Any = None) -> tuple[str, ...]:
+    """Fishbone spines for this project: `.godmode-rca.json` {"spines": [...]}, else defaults."""
+    if project is not None:
+        import json
+        from pathlib import Path
+
+        config = Path(project) / RCA_CONFIG_FILENAME
+        if config.is_file():
+            try:
+                declared = json.loads(config.read_text(encoding="utf-8")).get("spines")
+            except (OSError, json.JSONDecodeError):
+                declared = None
+            if declared and all(isinstance(s, str) and s.strip() for s in declared):
+                return tuple(s.strip() for s in declared)
+    return DEFAULT_SPINES
+
 
 @dataclass(frozen=True)
 class Shape:
@@ -106,15 +125,20 @@ def complete(method: str, record: dict[str, Any]) -> dict[str, Any]:
         if value is None or (hasattr(value, "__len__") and len(value) == 0):
             gaps.append(f"missing:{field}")
 
+    # "Unknown" is never terminal, whichever method produced it: closing without a
+    # root requires shipping an instrument in the same pass.
+    root = str(record.get("root", "")).strip().lower()
+    if root in ("unknown", "unclear") and not str(record.get("instrument", "")).strip():
+        gaps.append("unknown_without_instrument")
+
     if method == FIVE_WHYS:
         links = record.get("links") or []
         # A speculative link cannot advance the chain: every 'why' needs evidence.
         uncited = [index for index, link in enumerate(links, 1) if not _link_is_cited(link)]
         if uncited:
             gaps.append(f"uncited_links:{','.join(str(i) for i in uncited)}")
-        if str(record.get("root", "")).strip().lower() in ("unknown", "unclear", ""):
-            if not str(record.get("instrument", "")).strip():
-                gaps.append("unknown_without_instrument")
+        if not root and not str(record.get("instrument", "")).strip():
+            gaps.append("unknown_without_instrument")
 
     if method == PARETO:
         clusters = record.get("clusters") or []
@@ -140,12 +164,56 @@ def complete(method: str, record: dict[str, Any]) -> dict[str, Any]:
                 gaps.append("mode_missing_score")
                 break
 
+    if method == FAULT_TREE:
+        tree = record.get("tree")
+        if isinstance(tree, dict):
+            derived = fault_tree_cut_sets(tree)
+            stated = [sorted(cs) if isinstance(cs, list) else [cs] for cs in record.get("cut_sets") or []]
+            if sorted(map(sorted, stated)) != sorted(map(sorted, derived)):
+                gaps.append("cut_sets_not_derived_from_tree")
+
     if method == TIMELINE:
         instruments = record.get("instruments") or []
-        if len(instruments) < 2:
-            gaps.append("single_instrument")
+        # One instrument is a log; two is a comparison; a timeline needs three.
+        if len(instruments) < 3:
+            gaps.append("fewer_than_three_instruments")
+        events = record.get("events") or []
+        stamps = [str(e.get("at", "")) for e in events if isinstance(e, dict)]
+        if stamps != sorted(stamps):
+            gaps.append("events_unordered")
+        if "gaps" not in record:
+            # An unmarked gap reads as continuity; the axis must declare its holes.
+            gaps.append("gaps_not_marked")
 
     return {"method": method, "complete": not gaps, "gaps": gaps}
+
+
+def fault_tree_cut_sets(tree: dict[str, Any]) -> list[list[str]]:
+    """Minimal cut sets: the smallest condition sets that produce the top event.
+
+    A node is `{"gate": "and"|"or", "children": [...]}` or a basic-event string.
+    OR unions its children's cut sets; AND crosses them. Supersets are dropped.
+    """
+    def expand(node: Any) -> list[list[str]]:
+        if isinstance(node, str):
+            return [[node]]
+        gate = str(node.get("gate", "or")).lower()
+        children = [expand(child) for child in node.get("children") or []]
+        if not children:
+            return []
+        if gate == "or":
+            return [cut for sets in children for cut in sets]
+        crossed = children[0]
+        for sets in children[1:]:
+            crossed = [sorted(set(a) | set(b)) for a in crossed for b in sets]
+        return crossed
+
+    unique = {tuple(sorted(set(cut))) for cut in expand(tree)}
+    minimal = [
+        cut for cut in unique
+        if not any(other != cut and set(other) <= set(cut) for other in unique)
+    ]
+    return sorted([list(cut) for cut in minimal], key=lambda c: (len(c), c))
 
 
 def rank_fmea(modes: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -212,9 +280,37 @@ def _self_check() -> None:
     assert "cluster_without_root" in complete(PARETO, {
         "clusters": [{"count": 3}], "coverage": 0.8})["gaps"]
 
-    # A timeline built from one instrument is not a timeline.
-    assert "single_instrument" in complete(TIMELINE, {
-        "instruments": ["log"], "events": [{"at": "t0"}]})["gaps"]
+    # A timeline needs three instruments, ordered events, and declared holes.
+    thin = complete(TIMELINE, {"instruments": ["log"], "events": [{"at": "t0"}]})
+    assert "fewer_than_three_instruments" in thin["gaps"] and "gaps_not_marked" in thin["gaps"]
+    assert "events_unordered" in complete(TIMELINE, {
+        "instruments": ["log", "trace", "db"], "gaps": [],
+        "events": [{"at": "t2"}, {"at": "t1"}]})["gaps"]
+    assert complete(TIMELINE, {
+        "instruments": ["log", "trace", "db"], "gaps": ["t1..t2 no trace"],
+        "events": [{"at": "t1"}, {"at": "t2"}]})["complete"]
+
+    # Unknown is not terminal for ANY method, not only 5 Whys.
+    assert "unknown_without_instrument" in complete(TIMELINE, {
+        "instruments": ["log", "trace", "db"], "gaps": [],
+        "events": [{"at": "t1"}], "root": "unknown"})["gaps"]
+
+    # Cut sets are computed from the tree, not typed from memory.
+    tree = {"gate": "and", "children": [
+        "power-loss",
+        {"gate": "or", "children": ["backup-dead", "switch-stuck"]},
+    ]}
+    assert fault_tree_cut_sets(tree) == [
+        ["backup-dead", "power-loss"], ["power-loss", "switch-stuck"]]
+    honest = complete(FAULT_TREE, {
+        "top_event": "outage", "gates": ["and", "or"], "tree": tree,
+        "cut_sets": [["power-loss", "backup-dead"], ["power-loss", "switch-stuck"]]})
+    assert honest["complete"], honest
+    assert "cut_sets_not_derived_from_tree" in complete(FAULT_TREE, {
+        "top_event": "outage", "gates": ["and"], "tree": tree,
+        "cut_sets": [["power-loss"]]})["gaps"]
+
+    assert configured_spines() == DEFAULT_SPINES
 
     ranked = rank_fmea([
         {"name": "silent discard", "severity": 8, "occurrence": 3, "detection": 9},

@@ -40,7 +40,9 @@ from .godmode_locale import check_locales
 from .godmode_removal import REQUIRED_FIELDS as REMOVAL_FIELDS
 from .godmode_removal import record_removal, removal_answer
 from .godmode_drift import compare as compare_sessions
-from .godmode_method import Shape
+from .godmode_method import METHODS as METHOD_NAMES
+from .godmode_method import Shape, configured_spines, fault_tree_cut_sets, pareto_order, rank_fmea
+from .godmode_method import complete as method_complete
 from .godmode_method import contract as method_contract
 from .godmode_method import select as select_method
 from .godmode_plan import CONTRACT_FIELDS as PLAN_FIELDS
@@ -373,6 +375,21 @@ def cmd_session_close(args: argparse.Namespace, runtime: Runtime) -> CommandResu
 
 
 def cmd_method(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if args.check_record:
+        if not args.check_method:
+            raise ArchiveError("--check-record needs --check-method naming the method used")
+        record = json.loads(Path(args.check_record).read_text(encoding="utf-8"))
+        record.setdefault("spines", list(configured_spines(runtime.anchor.project_root)))
+        verdict = method_complete(args.check_method, record)
+        # An RCA cannot be published with its method incomplete.
+        extras: dict[str, Any] = {}
+        if args.check_method == "pareto" and record.get("clusters"):
+            extras["pareto"] = pareto_order(record["clusters"])
+        if args.check_method == "fmea" and record.get("modes"):
+            extras["ranked"] = rank_fmea(record["modes"])
+        if args.check_method == "fault-tree" and isinstance(record.get("tree"), dict):
+            extras["cut_sets"] = fault_tree_cut_sets(record["tree"])
+        return CommandResult({**verdict, **extras}, exit_code=0 if verdict["complete"] else 1)
     shape = Shape(
         reports=args.reports,
         reproducible=not args.unreproducible,
@@ -1156,6 +1173,9 @@ def _build_parser() -> argparse.ArgumentParser:
     method.add_argument("--ordering", action="store_true", help="An ordering, race or latch-time question")
     method.add_argument("--components", action="store_true", help="Components and failure modes are enumerable")
     method.add_argument("--conditions", type=int, default=0, help="Contributing conditions on one failure")
+    method.add_argument("--check-method", choices=list(METHOD_NAMES),
+                        help="Check a finished RCA record against its method's completion contract")
+    method.add_argument("--check-record", help="Path to the RCA record as JSON")
     method.set_defaults(handler=cmd_method)
 
     status = sub.add_parser("status", help="Single writable status store")
