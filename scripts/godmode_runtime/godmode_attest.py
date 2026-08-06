@@ -433,8 +433,11 @@ def _citation_resolves(project: Path, archive: Chronicle, citation: str) -> bool
     match = _RECORD_CITE.match(citation)
     if match:
         digest = match.group("digest")
+        # A claim cannot support a claim: citing one's own earlier hypothesis
+        # would launder confidence - each hop looks locally justified while the
+        # chain rests on nothing. rec: support must come from primary records.
         return any(
-            record["record_hash"].startswith(digest)
+            record["record_hash"].startswith(digest) and record["kind"] != "claim"
             for record in archive.select(limit=2000)
         )
     match = _FILE_CITE.match(citation)
