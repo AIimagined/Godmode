@@ -30,7 +30,7 @@ from .godmode_assess import assess as assess_project
 from .godmode_assess import assurance_case
 from .godmode_assess import selftest as run_selftest
 from .godmode_atlas import build as build_atlas
-from .godmode_atlas import slice_file
+from .godmode_atlas import load_index, save_index, slice_file
 from .godmode_attest import GRADES, STATUSES, plant_and_observe, recurrences, reflect, run_check
 from .godmode_bindings import check as bindings_check
 from .godmode_bindings import dependency_gate, release_checksums, sbom_cyclonedx, sbom_spdx
@@ -40,12 +40,14 @@ from .godmode_charter import TRIGGERS, applicable_rules, bootstrap_rules, compil
 from .godmode_drift import capabilities as host_capabilities
 from .godmode_changelog import check_fragments, merge_fragments
 from .godmode_integrity import analyze as analyze_integrity
+from .godmode_evals import adversarial_grid, check_snapshots, run_routing_evals
 from .godmode_guardrails import arbitrate, check_ceilings, rewind_preview, watchdog
 from .godmode_locale import check_locales
 from .godmode_loop import analyze as analyze_loops
 from .godmode_loop import model_blame_allowed
 from .godmode_mistakes import analyze as analyze_mistakes
 from .godmode_mistakes import stale_runtime
+from .godmode_netgate import differential as netgate_differential
 from .godmode_parity import absorption_check, parity_matrix, schema_ladder
 from .godmode_reconcile import classify_environment, reconcile_docs, reconcile_versions
 from .godmode_removal import REQUIRED_FIELDS as REMOVAL_FIELDS
@@ -68,10 +70,13 @@ from .godmode_status import STATES, handover, record_item, remaining, render_vie
 from .godmode_corpus import build_brief, resolve_roles
 from .godmode_egress import notice as egress_notice
 from .godmode_egress import scan_project as scan_untrusted
+from .godmode_egress import scan_staged
+from .godmode_scope import minimality
 from .godmode_errors import ArchiveError, GodmodeError
 from .godmode_forge import SkillProposal, forge_skill, validate_skill
 from .godmode_lens import (
     build_context_brief,
+    capacity_checkpoint_due,
     collect_inventory,
     compare_local_reference,
     detect_context_issues,
@@ -80,6 +85,7 @@ from .godmode_lens import (
     make_snapshot,
     observe_git,
 )
+from .godmode_lens import why as context_why
 from .godmode_sentinel import (
     CapabilityBroker,
     classify_action,
@@ -733,6 +739,10 @@ def cmd_selftest(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 
 def cmd_scope(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if args.minimality:
+        report = minimality(Path(runtime.anchor.project_root), args.since or "HEAD")
+        # Non-blocking by design: size is a smell, not a sin.
+        return CommandResult(report)
     report = scope_change(Path(runtime.anchor.project_root), args.since)
     if not args.full:
         report["units"] = [
@@ -756,6 +766,11 @@ def cmd_reflect(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 
 def cmd_egress(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if args.staged:
+        report = scan_staged(Path(runtime.anchor.project_root))
+        return CommandResult(report, exit_code=0 if report["clean"] else 1)
+    if args.action is None:
+        raise ArchiveError("egress requires an action or --staged")
     disclosure = egress_notice(args.action, args.purpose,
                                Path(runtime.anchor.project_root), args.path)
     # A secret inside the requested scope blocks the disclosure rather than
@@ -817,12 +832,22 @@ def cmd_scenarios(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 
 def cmd_atlas(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if args.atlas_command == "load":
+        # Load must not rebuild: the whole point is answering from the saved map
+        # while stating how much of it is still true.
+        report = load_index(Path(runtime.anchor.project_root) / args.source,
+                            Path(runtime.anchor.project_root))
+        return CommandResult(report, exit_code=0 if report["confidence"] == 1.0 else 1)
     atlas = build_atlas(Path(runtime.anchor.project_root))
+    if args.atlas_command == "save":
+        return CommandResult(save_index(atlas, Path(runtime.anchor.project_root) / args.to))
     if args.atlas_command == "map":
         return CommandResult(atlas.view())
     if args.atlas_command == "affected":
-        return CommandResult(atlas.affected(args.symbol, depth=args.depth,
-                                            evidence=None if args.include_inferred else "extracted"))
+        return CommandResult(atlas.affected(
+            args.symbol, depth=args.depth,
+            evidence=None if args.include_inferred else "extracted",
+            relations=set(args.relations) if args.relations else None))
     if args.atlas_command == "cycles":
         found = atlas.cycles()
         return CommandResult({"cycles": found}, exit_code=1 if found else 0)
@@ -889,7 +914,8 @@ def cmd_context_status(args: argparse.Namespace, runtime: Runtime) -> CommandRes
     payload = {
         "archive": runtime.archive.verify(records),
         "identity": runtime.anchor.public_view(),
-        "issues": detect_context_issues(runtime.anchor, records, current),
+        "issues": detect_context_issues(runtime.anchor, records, current, archive=runtime.archive),
+        "capacity": capacity_checkpoint_due(runtime.archive),
         "scan_performed": args.scan,
     }
     orphaned = runtime.archive.orphaned()
@@ -904,6 +930,9 @@ def cmd_context_rebuild(args: argparse.Namespace, runtime: Runtime) -> CommandRe
 
 def cmd_context_why(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
+    about = getattr(args, "about", None)
+    if about:
+        return CommandResult(context_why(runtime.anchor, runtime.archive, about))
     return CommandResult(explain_context(runtime.anchor, runtime.archive))
 
 
@@ -1310,6 +1339,28 @@ def cmd_export(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     )
 
 
+def cmd_evals(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    project = Path(runtime.anchor.project_root)
+    if args.write_snapshots:
+        return CommandResult(check_snapshots(project, write=True))
+    routing = run_routing_evals(project)
+    snapshots = check_snapshots(project)
+    payload = {**routing, "snapshots": snapshots}
+    sound = (routing["verdict"] == "routing-sound"
+             and snapshots["verdict"] == "behaviour-stable")
+    return CommandResult(payload, exit_code=0 if sound else 1)
+
+
+def cmd_grid(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    report = adversarial_grid()
+    return CommandResult(report, exit_code=0 if report["verdict"] == "controls-held" else 1)
+
+
+def cmd_netgate(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    report = netgate_differential(Path(runtime.anchor.project_root))
+    return CommandResult(report, exit_code=0 if report["clean"] else 1)
+
+
 def cmd_absorb(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     result = absorption_check(runtime.archive, args.path)
@@ -1622,7 +1673,9 @@ def _build_parser() -> argparse.ArgumentParser:
     checksums.set_defaults(handler=cmd_checksums)
 
     egress = sub.add_parser("egress", help="Disclose exactly what an action would send")
-    egress.add_argument("action")
+    egress.add_argument("action", nargs="?", default=None)
+    egress.add_argument("--staged", action="store_true",
+                        help="Scan staged and untracked-but-addable content for secret shapes")
     egress.add_argument("--purpose", default="unstated")
     egress.add_argument("--path", action="append", default=[], help="Artefact proposed for inclusion; repeatable")
     egress.set_defaults(handler=cmd_egress)
@@ -1640,6 +1693,8 @@ def _build_parser() -> argparse.ArgumentParser:
     scope_parser = sub.add_parser("scope", help="Enumerate the work before reasoning about it")
     scope_parser.add_argument("--since", help="Compare against this ref instead of the working tree")
     scope_parser.add_argument("--full", action="store_true")
+    scope_parser.add_argument("--minimality", action="store_true",
+                              help="Report size pressure on the change; never blocks")
     scope_parser.set_defaults(handler=cmd_scope)
 
     atlas = sub.add_parser("atlas", help="Map the project's symbols and their relationships")
@@ -1650,7 +1705,15 @@ def _build_parser() -> argparse.ArgumentParser:
     atlas_affected.add_argument("--depth", type=int, default=2)
     atlas_affected.add_argument("--include-inferred", action="store_true",
                                 help="Include guessed relationships; excluded by default")
+    atlas_affected.add_argument("--relations", nargs="+", default=None,
+                                help="Restrict traversal to relation kinds, e.g. imports calls tested-by documents")
     atlas_affected.set_defaults(handler=cmd_atlas)
+    atlas_save = atlas_sub.add_parser("save", help="Persist the atlas with per-file content hashes")
+    atlas_save.add_argument("--to", required=True, help="Destination JSON path, relative to the project root")
+    atlas_save.set_defaults(handler=cmd_atlas)
+    atlas_load = atlas_sub.add_parser("load", help="Load a saved atlas and report hash-derived freshness")
+    atlas_load.add_argument("--from", dest="source", required=True, help="Index JSON path, relative to the project root")
+    atlas_load.set_defaults(handler=cmd_atlas)
     atlas_sub.add_parser("cycles").set_defaults(handler=cmd_atlas)
     atlas_dupes = atlas_sub.add_parser("duplicates")
     atlas_dupes.add_argument("--threshold", type=float, default=0.72)
@@ -1683,7 +1746,11 @@ def _build_parser() -> argparse.ArgumentParser:
     context_status.add_argument("--scan", action="store_true")
     context_status.set_defaults(handler=cmd_context_status)
     context_sub.add_parser("rebuild").set_defaults(handler=cmd_context_rebuild)
-    context_sub.add_parser("why").set_defaults(handler=cmd_context_why)
+    context_why_parser = context_sub.add_parser(
+        "why", help="Show recorded decisions, fixes, dependencies, and invariants about a path or topic"
+    )
+    context_why_parser.add_argument("--about", type=subject_text, default=None)
+    context_why_parser.set_defaults(handler=cmd_context_why)
 
     inventory = sub.add_parser("inventory", help="Repository inventory operations")
     inventory_sub = inventory.add_subparsers(dest="inventory_command", required=True)
@@ -1929,6 +1996,17 @@ def _build_parser() -> argparse.ArgumentParser:
     parity.add_argument("--matrix", action="store_true",
                         help="Full eleven-dimension decision matrix instead of category gaps")
     parity.set_defaults(handler=cmd_parity)
+
+    netgate = sub.add_parser("netgate", help="Prove the CLI surfaces make zero network connections")
+    netgate.set_defaults(handler=cmd_netgate)
+
+    evals = sub.add_parser("evals", help="Execute the authored skill evals: routing accuracy plus snapshot diff")
+    evals.add_argument("--write-snapshots", action="store_true",
+                       help="Accept current routing outcomes as the new baseline fixtures")
+    evals.set_defaults(handler=cmd_evals)
+
+    grid = sub.add_parser("grid", help="Attack every enforcement control; report each cell's observed result")
+    grid.set_defaults(handler=cmd_grid)
 
     absorb = sub.add_parser("absorb", help="Check whether a synced file is truly absorbed (reader + guard)")
     absorb.add_argument("--path", required=True)

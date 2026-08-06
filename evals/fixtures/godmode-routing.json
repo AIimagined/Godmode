@@ -1,0 +1,20 @@
+{
+  "routes": {
+    "near_negative": {
+      "Answer a self-contained conceptual question with no repository state.": "godmode",
+      "Create a standalone image that does not involve a coding project.": "godmode"
+    },
+    "positive": {
+      "Coordinate continuity, diagnosis, and a protected action across one local project.": "godmode-continuity",
+      "Resume a substantive repository task and reconstruct current reality before editing.": "godmode"
+    }
+  },
+  "schema": "godmode-routing-snapshot-v1",
+  "skill": "godmode",
+  "summary": {
+    "near_negatives_rejected": 0,
+    "near_negatives_total": 2,
+    "positives_routed_correctly": 1,
+    "positives_total": 2
+  }
+}
