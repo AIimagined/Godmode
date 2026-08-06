@@ -39,6 +39,7 @@ from .godmode_charter import TRIGGERS, applicable_rules, compile_charter, traits
 from .godmode_drift import capabilities as host_capabilities
 from .godmode_changelog import check_fragments, merge_fragments
 from .godmode_integrity import analyze as analyze_integrity
+from .godmode_guardrails import arbitrate, check_ceilings, rewind_preview, watchdog
 from .godmode_locale import check_locales
 from .godmode_loop import analyze as analyze_loops
 from .godmode_loop import model_blame_allowed
@@ -498,6 +499,32 @@ def cmd_changelog_merge(args: argparse.Namespace, runtime: Runtime) -> CommandRe
     ))
 
 
+def cmd_ceilings(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    spent: dict[str, int] = {}
+    for pair in (args.spent or "").split(","):
+        if "=" in pair:
+            name, value = pair.split("=", 1)
+            spent[name.strip()] = int(value)
+    verdict = check_ceilings(Path(runtime.anchor.project_root), spent)
+    return CommandResult(verdict, exit_code=1 if verdict["exceeded"] else 0)
+
+
+def cmd_watch(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    verdict = watchdog(runtime.archive, _session(runtime, args.session))
+    return CommandResult(verdict, exit_code=1 if verdict["anomaly"] else 0)
+
+
+def cmd_rewind(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    return CommandResult(rewind_preview(runtime.archive, args.to))
+
+
+def cmd_planmode_arbitrate(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    return CommandResult(arbitrate(runtime.archive))
+
+
 def cmd_loop(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     if args.blame:
@@ -812,6 +839,8 @@ def cmd_checkpoint(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
                     "next": args.next_action,
                     "hypothesis": args.hypothesis,
                     "outcome": args.outcome or args.status,
+                    # Recorded so a rewind preview can name the exact commit.
+                    "head": runtime.anchor.head,
                 },
                 args.evidence,
             )
@@ -1312,6 +1341,9 @@ def _build_parser() -> argparse.ArgumentParser:
     planmode_check = planmode_sub.add_parser("check")
     planmode_check.add_argument("--session")
     planmode_check.set_defaults(handler=cmd_planmode_check)
+    planmode_sub.add_parser(
+        "arbitrate", help="Score every open plan instead of executing the first one stated"
+    ).set_defaults(handler=cmd_planmode_arbitrate)
     planmode_bind = planmode_sub.add_parser("bind")
     planmode_bind.add_argument("--summary", required=True)
     planmode_bind.add_argument("--file", action="append", default=[])
@@ -1482,6 +1514,19 @@ def _build_parser() -> argparse.ArgumentParser:
     changelog_merge.add_argument("--set-version", required=True)
     changelog_merge.add_argument("--date", help="Release date; defaults to today")
     changelog_merge.set_defaults(handler=cmd_changelog_merge)
+
+    ceilings = sub.add_parser("ceilings", help="Check reported spend against declared run ceilings")
+    ceilings.add_argument("--spent", default="",
+                          help="Comma-separated spend, e.g. tokens=1200,tool_calls=40,seconds=90")
+    ceilings.set_defaults(handler=cmd_ceilings)
+
+    watch = sub.add_parser("watch", help="Per-boundary anomaly scan over this session's attestations")
+    watch.add_argument("--session")
+    watch.set_defaults(handler=cmd_watch)
+
+    rewind = sub.add_parser("rewind", help="Preview a rollback to a prior verified checkpoint")
+    rewind.add_argument("--to", type=int, required=True, metavar="SEQ")
+    rewind.set_defaults(handler=cmd_rewind)
 
     loop = sub.add_parser("loop", help="Detect repetition the repeating agent cannot see")
     loop.add_argument("--blame", action="store_true",
