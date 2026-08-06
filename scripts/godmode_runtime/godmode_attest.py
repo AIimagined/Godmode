@@ -732,6 +732,45 @@ def half_done_pairs(
     return findings
 
 
+def lesson_pipeline(archive: Chronicle) -> dict[str, Any]:
+    """S27-02: a lesson either becomes an executable guard or is retired.
+
+    The 237-lesson corpus failed by unbounded append: every lesson stayed prose
+    forever, so none was enforced and all were re-read. Here each lesson gets a
+    verdict - `promoted` when its guard has been observed running, otherwise
+    `promote-or-retire` with the exact next command.
+    """
+    guarded_files: set[str] = set()
+    for record in archive.select(kind="attestation", limit=1000):
+        if record["subject"].startswith("guard:") and record["data"].get("status") == "ran":
+            guarded_files.update(
+                e[len("file:"):] for e in record.get("evidence", []) if e.startswith("file:"))
+    lessons = []
+    unresolved = 0
+    for record in archive.select(kind="lesson", limit=500):
+        if record["data"].get("status") == "retired":
+            continue
+        cited = {e[len("file:"):] for e in record.get("evidence", []) if e.startswith("file:")}
+        promoted = bool(record["data"].get("generalized_guard")) and bool(cited & guarded_files)
+        if not promoted:
+            unresolved += 1
+        lessons.append({
+            "subject": record["subject"][:80],
+            "sequence": record["sequence"],
+            "verdict": "promoted" if promoted else "promote-or-retire",
+            "next": None if promoted else (
+                "plant a violation so its guard is observed failing, or retire it with "
+                f"`remember --kind lesson --subject \"{record['subject'][:50]}\" --status retired`"),
+        })
+    return {
+        "lessons": lessons,
+        "promoted": sum(1 for l in lessons if l["verdict"] == "promoted"),
+        "unresolved": unresolved,
+        "verdict": "pipeline-clear" if unresolved == 0 else "lessons-awaiting-promotion",
+        "note": "a lesson that stays prose forever is re-read forever and enforced never",
+    }
+
+
 def advisory_decay(
     archive: Chronicle, charter: dict[str, Any], window: int = 10
 ) -> dict[str, Any]:

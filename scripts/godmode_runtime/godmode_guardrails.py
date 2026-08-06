@@ -125,6 +125,61 @@ def rewind_preview(archive: Chronicle, to_sequence: int) -> dict[str, Any]:
     }
 
 
+EXPERIMENT_FILENAME = ".godmode-experiment.json"
+
+
+def run_experiment(archive: Chronicle, project: Path, timeout: int = 300) -> dict[str, Any]:
+    """S27-04/S8-03: the bounded experiment loop as one declarative file.
+
+    `.godmode-experiment.json` declares hypothesis, command, success_exit and
+    max_runs. The loop runs until success or the bound - never past it - and
+    every run is recorded, so "I tried a few times" becomes a numbered series
+    with outcomes.
+    """
+    import shlex
+    import subprocess
+
+    path = project / EXPERIMENT_FILENAME
+    if not path.is_file():
+        raise ArchiveError(f"No {EXPERIMENT_FILENAME}; declare hypothesis, command, max_runs")
+    spec = json.loads(path.read_text(encoding="utf-8"))
+    for field in ("hypothesis", "command", "max_runs"):
+        if field not in spec:
+            raise ArchiveError(f"{EXPERIMENT_FILENAME}: $.{field} is required")
+    success_exit = int(spec.get("success_exit", 0))
+    max_runs = max(1, min(int(spec["max_runs"]), 20))  # [private]: hard cap 20; raise if a real program needs more
+    command = shlex.split(str(spec["command"]))
+
+    runs: list[dict[str, Any]] = []
+    succeeded = False
+    for attempt in range(1, max_runs + 1):
+        try:
+            done = subprocess.run(command, cwd=str(project), capture_output=True,
+                                  text=True, encoding="utf-8", errors="replace", timeout=timeout)
+            code = done.returncode
+        except FileNotFoundError:
+            code = 127
+        except subprocess.TimeoutExpired:
+            code = 124
+        runs.append({"attempt": attempt, "exit": code})
+        if code == success_exit:
+            succeeded = True
+            break
+    archive.append(
+        "action", f"experiment:{str(spec['hypothesis'])[:80]}",
+        {"runs": runs, "succeeded": succeeded, "bound": max_runs},
+    )
+    return {
+        "hypothesis": spec["hypothesis"],
+        "runs": runs,
+        "succeeded": succeeded,
+        "bound": max_runs,
+        "verdict": ("hypothesis-supported" if succeeded else
+                    f"bound-reached: {len(runs)} runs without exit {success_exit}; "
+                    "revise the hypothesis rather than raising the bound"),
+    }
+
+
 def arbitrate(archive: Chronicle) -> dict[str, Any]:
     """Score every open plan instead of executing the first one stated.
 

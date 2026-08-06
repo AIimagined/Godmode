@@ -2110,5 +2110,41 @@ class ForgeGoldenTests(unittest.TestCase):
         self.assertEqual(set(LEARNING_LOOP), {"scanner", "analyzer", "writer", "verifier"})
 
 
+class KnowledgeGovernanceTests(unittest.TestCase):
+    def test_lesson_pipeline_names_promote_or_retire(self) -> None:
+        from godmode_runtime.godmode_attest import lesson_pipeline
+
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            archive.append("lesson", "escape shell args",
+                           {"value": "v", "generalized_guard": "every exec"},
+                           evidence=["file:run.py"])
+            archive.append("lesson", "prose-only lesson", {"value": "v"})
+            stuck = lesson_pipeline(archive)
+            self.assertEqual(stuck["promoted"], 0)
+            self.assertEqual(stuck["unresolved"], 2)
+            archive.append("attestation", "guard:shell-escape",
+                           {"status": "ran", "session": "s"}, evidence=["file:run.py"])
+            after = lesson_pipeline(archive)
+            self.assertEqual(after["promoted"], 1)
+            self.assertEqual(after["unresolved"], 1)
+
+    def test_experiment_loop_stops_at_its_bound(self) -> None:
+        from godmode_runtime.godmode_guardrails import run_experiment
+
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            (project / ".godmode-experiment.json").write_text(json.dumps({
+                "hypothesis": "this command never succeeds",
+                "command": f"{json.dumps(sys.executable)[1:-1]} -c \"raise SystemExit(3)\"",
+                "success_exit": 0,
+                "max_runs": 3,
+            }), encoding="utf-8")
+            report = run_experiment(archive, project, timeout=60)
+            self.assertFalse(report["succeeded"])
+            self.assertEqual(len(report["runs"]), 3)
+            self.assertIn("bound-reached", report["verdict"])
+
+
 if __name__ == "__main__":
     unittest.main()

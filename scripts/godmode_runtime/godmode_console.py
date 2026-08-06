@@ -1271,6 +1271,51 @@ def cmd_parity(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult(result)
 
 
+def cmd_skill_lifecycle(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """S27-01: every skill carries a lifecycle state; stale ones are retired with
+    a reason, not left to accumulate."""
+    project = Path(runtime.anchor.project_root)
+    skills = []
+    for evals in sorted(project.glob("skills/*/godmode-evals.json")):
+        payload = json.loads(evals.read_text(encoding="utf-8"))
+        skills.append({
+            "skill": evals.parent.name,
+            "lifecycle": payload.get("lifecycle", "active"),
+            "reason": payload.get("lifecycle_reason", ""),
+        })
+    return CommandResult({"skills": skills, "states": ["in-progress", "active", "deprecated"]})
+
+
+def cmd_skill_retire(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    project = Path(runtime.anchor.project_root)
+    evals = project / "skills" / args.name / "godmode-evals.json"
+    if not evals.is_file():
+        raise ArchiveError(f"No skill '{args.name}' with a godmode-evals.json")
+    payload = json.loads(evals.read_text(encoding="utf-8"))
+    payload["lifecycle"] = "deprecated"
+    payload["lifecycle_reason"] = args.reason
+    evals.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    _append(runtime, "decision", f"skill-retired:{args.name}",
+            {"value": args.reason, "status": "deprecated"}, [f"file:skills/{args.name}"])
+    return CommandResult({"skill": args.name, "lifecycle": "deprecated", "reason": args.reason})
+
+
+def cmd_lessons(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    from .godmode_attest import lesson_pipeline
+
+    report = lesson_pipeline(runtime.archive)
+    return CommandResult(report, exit_code=0)
+
+
+def cmd_experiment(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    from .godmode_guardrails import run_experiment
+
+    report = run_experiment(runtime.archive, Path(runtime.anchor.project_root))
+    return CommandResult(report, exit_code=0 if report["succeeded"] else 1)
+
+
 def cmd_skill_validate(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult(validate_skill(args.path))
 
@@ -1342,6 +1387,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
     operator = sub.add_parser("operator", help="Validate the typed operator profile")
     operator.set_defaults(handler=cmd_operator)
+
+    lessons = sub.add_parser("lessons", help="The promote-or-retire pipeline over recorded lessons")
+    lessons.set_defaults(handler=cmd_lessons)
+
+    experiment = sub.add_parser(
+        "experiment", help="Run the declared bounded experiment loop from .godmode-experiment.json"
+    )
+    experiment.set_defaults(handler=cmd_experiment)
 
     config = sub.add_parser("config", help="Validate every .godmode-*.json config file")
     config_sub = config.add_subparsers(dest="config_command", required=True)
@@ -1793,6 +1846,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
     skill = sub.add_parser("skill", help="Validate or forge a project skill")
     skill_sub = skill.add_subparsers(dest="skill_command", required=True)
+    skill_sub.add_parser(
+        "lifecycle", help="List each skill's lifecycle state"
+    ).set_defaults(handler=cmd_skill_lifecycle)
+    skill_retire = skill_sub.add_parser("retire", help="Deprecate a skill with a recorded reason")
+    skill_retire.add_argument("--name", required=True)
+    skill_retire.add_argument("--reason", required=True)
+    skill_retire.set_defaults(handler=cmd_skill_retire)
     skill_validate = skill_sub.add_parser("validate")
     skill_validate.add_argument("--path", required=True)
     skill_validate.set_defaults(handler=cmd_skill_validate)
