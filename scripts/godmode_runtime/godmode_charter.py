@@ -78,6 +78,49 @@ _BULLET = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
 _NOISE = re.compile(r"^\s*(?:\||#|>|<)")
 
 
+_BOOTSTRAP = re.compile(
+    r"^(?:fix|hotfix|revert|guard|prevent|block|refuse|stop)\b|"
+    r"\b(?:never again|regression|no longer|must not)\b",
+    re.IGNORECASE,
+)
+
+
+def bootstrap_rules(project: Path, limit: int = 200) -> dict[str, Any]:
+    """Candidate invariants mined from the project's own commit history.
+
+    A repository with history already knows what went wrong; each fix/revert
+    subject is a rule someone paid for once. Candidates are for review, not
+    enforcement - promotion to the charter stays a human decision.
+    """
+    from .godmode_anchor import run_git
+
+    raw = run_git(project, "log", f"--max-count={limit}", "--pretty=%h%x09%s")
+    if raw is None:
+        return {"candidates": [], "note": "no git history to bootstrap from"}
+    candidates = []
+    seen: set[str] = set()
+    for line in raw.splitlines():
+        commit, _, subject = line.partition("\t")
+        if not _BOOTSTRAP.search(subject):
+            continue
+        normalized = subject.strip().lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        candidates.append({
+            "commit": commit,
+            "subject": subject.strip()[:140],
+            "candidate_invariant": f"the condition fixed in {commit} must not recur",
+            "promote_with": f"remember --kind invariant --subject \"{subject.strip()[:60]}\" "
+                            f"--value \"...\" --evidence commit:{commit}",
+        })
+    return {
+        "commits_scanned": len(raw.splitlines()),
+        "candidates": candidates[:50],
+        "note": "candidates are for review; promotion to the charter is a human decision",
+    }
+
+
 @dataclass(frozen=True)
 class Rule:
     """One compiled, addressable rule."""
