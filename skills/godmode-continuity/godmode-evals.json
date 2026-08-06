@@ -3,7 +3,7 @@
   "skill": "godmode-continuity",
   "routing": {
     "positive": [
-      "Resume work after a break and explain the current branch, obligations, and next action.",
+      "Explain the current context after changing branches or worktrees: obligations, drift, and the next action.",
       "Detect context drift after changing branches or worktrees."
     ],
     "near_negative": [
