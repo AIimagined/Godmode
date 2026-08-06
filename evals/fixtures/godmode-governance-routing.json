@@ -1,0 +1,20 @@
+{
+  "routes": {
+    "near_negative": {
+      "Inspect a local file and explain its contents.": "godmode-continuity",
+      "Read repository status without changing state.": "godmode"
+    },
+    "positive": {
+      "Govern a destructive file, database migration, release, or external write.": "godmode-governance",
+      "Preview and authorize an exact Git push or history-changing operation.": "godmode-governance"
+    }
+  },
+  "schema": "godmode-routing-snapshot-v1",
+  "skill": "godmode-governance",
+  "summary": {
+    "near_negatives_rejected": 2,
+    "near_negatives_total": 2,
+    "positives_routed_correctly": 2,
+    "positives_total": 2
+  }
+}
