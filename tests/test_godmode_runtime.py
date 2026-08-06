@@ -1722,5 +1722,57 @@ class StatusTruthTests(unittest.TestCase):
             self.assertEqual(view["verdict"], "work-outstanding")
 
 
+class DriftControlTests(unittest.TestCase):
+    """S19-01/04/05: attribution on every record, brief equivalence, handoff."""
+
+    def test_every_record_kind_carries_the_agent_fingerprint(self) -> None:
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            with mock.patch.dict(os.environ, {"GODMODE_MODEL": "model-a"}, clear=False):
+                record = archive.append("decision", "pick sqlite", {"value": "x"})
+            self.assertEqual(record["agent"]["model"], "model-a")
+            self.assertIn("enforcement", record["agent"])
+
+    def test_brief_is_byte_identical_across_models(self) -> None:
+        from godmode_runtime.godmode_corpus import build_brief
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / "GODMODE.md").write_text(
+                "# Guide\n\nAlways verify before claiming.\n", encoding="utf-8"
+            )
+            briefs = []
+            for model in ("model-a", "model-b", "model-c"):
+                with mock.patch.dict(os.environ, {"GODMODE_MODEL": model}, clear=False):
+                    briefs.append(json.dumps(
+                        build_brief(project, "verify claims", 1200), sort_keys=True
+                    ).encode("utf-8"))
+            self.assertEqual(briefs[0], briefs[1])
+            self.assertEqual(briefs[1], briefs[2])
+
+    def test_approved_plan_and_next_action_survive_a_model_switch(self) -> None:
+        from godmode_runtime.godmode_lens import build_context_brief
+        from godmode_runtime.godmode_plan import approve, mutation_verdict, specify, start
+
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            with mock.patch.dict(os.environ, {"GODMODE_MODEL": "agent-a"}, clear=False):
+                specify(archive, "S-a", "fix rotation", {
+                    "objective": "o", "outcome": "u", "acceptance": "a", "non_goals": "n"})
+                start(archive, "S-a", "fix rotation", {f: "x" for f in
+                      __import__("godmode_runtime.godmode_plan", fromlist=["CONTRACT_FIELDS"]).CONTRACT_FIELDS})
+                approve(archive, "S-a")
+                archive.append("checkpoint", "rotation fix staged",
+                               {"status": "green", "next": "run the replay test"})
+            with mock.patch.dict(os.environ, {"GODMODE_MODEL": "agent-b"}, clear=False):
+                verdict = mutation_verdict(archive, "S-b")
+                self.assertTrue(verdict["allowed"])
+                self.assertTrue(verdict.get("plan"))
+                brief = build_context_brief(_anchor, archive)
+                dumped = json.dumps(brief)
+                self.assertIn("run the replay test", dumped)
+                self.assertIn("fix rotation", dumped)
+
+
 if __name__ == "__main__":
     unittest.main()

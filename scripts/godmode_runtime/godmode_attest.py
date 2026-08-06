@@ -62,11 +62,9 @@ class Verdict:
 
 def agent_fingerprint() -> dict[str, Any]:
     """Identify who is acting, so drift between models is attributable."""
-    return {
-        "host": os.environ.get("GODMODE_HOST") or os.environ.get("CLAUDE_CODE_ENTRYPOINT") or "unknown",
-        "model": os.environ.get("GODMODE_MODEL", "unknown"),
-        "effort": os.environ.get("GODMODE_EFFORT", "unknown"),
-    }
+    from .godmode_chronicle import writer_fingerprint
+
+    return writer_fingerprint()
 
 
 def open_session(archive: Chronicle, label: str) -> str:

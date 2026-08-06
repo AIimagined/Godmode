@@ -17,6 +17,16 @@ import uuid
 import shutil
 
 from .godmode_anchor import ProjectAnchor, anchor_fingerprint, nongit_archive_root
+
+
+def writer_fingerprint() -> dict[str, str]:
+    """Who is writing: host, model, effort, and the adapter's enforcement level."""
+    return {
+        "host": os.environ.get("GODMODE_HOST") or os.environ.get("CLAUDE_CODE_ENTRYPOINT") or "unknown",
+        "model": os.environ.get("GODMODE_MODEL", "unknown"),
+        "effort": os.environ.get("GODMODE_EFFORT", "unknown"),
+        "enforcement": os.environ.get("GODMODE_ENFORCEMENT", "SOFT"),
+    }
 from .godmode_constants import EVENT_KINDS, RUNTIME_VERSION, SCHEMA_VERSION
 from .godmode_errors import ArchiveError
 from .godmode_sentinel import enforce_private_payload
@@ -286,6 +296,9 @@ class Chronicle:
                 "record_id": identifier,
                 "recorded_at": datetime.now(timezone.utc).isoformat(),
                 "anchor_fingerprint": anchor_fingerprint(self.anchor),
+                # Every record attributes its author, so drift between models is
+                # traceable on any kind, not only attestations.
+                "agent": writer_fingerprint(),
                 "kind": kind,
                 "subject": subject,
                 "data": data,
