@@ -1628,5 +1628,25 @@ class RemovalMemoryTests(unittest.TestCase):
             self.assertIsNone(removal_answer(archive, "never-removed"))
 
 
+class RcaMethodTests(unittest.TestCase):
+    def test_spines_configurable_per_project(self) -> None:
+        from godmode_runtime.godmode_method import DEFAULT_SPINES, configured_spines
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            self.assertEqual(configured_spines(project), DEFAULT_SPINES)
+            (project / ".godmode-rca.json").write_text(
+                json.dumps({"spines": ["schema", "migration", "driver"]}), encoding="utf-8"
+            )
+            self.assertEqual(configured_spines(project), ("schema", "migration", "driver"))
+
+    def test_unknown_root_needs_instrument_for_every_method(self) -> None:
+        from godmode_runtime.godmode_method import METHODS, complete
+
+        for method in METHODS:
+            verdict = complete(method, {"root": "unknown"})
+            self.assertIn("unknown_without_instrument", verdict["gaps"], method)
+
+
 if __name__ == "__main__":
     unittest.main()
