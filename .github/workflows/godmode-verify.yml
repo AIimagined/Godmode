@@ -57,6 +57,70 @@ jobs:
           python scripts/godmode.py --project . --json checksums > second.json
           python -c "import json;a=json.load(open('first.json'));b=json.load(open('second.json'));assert a['manifest_sha256']==b['manifest_sha256'],'checksums not reproducible';print('reproducible:',a['manifest_sha256'])"
 
+  # Differential network capture: every PRD-named CLI surface (init, inspect,
+  # resume, doctor, report) runs against a throwaway project under a socket
+  # audit hook; any recorded connection fails the job. The gate first proves it
+  # can detect a planted connection attempt, so an empty capture is evidence of
+  # zero network use, not evidence of a blind detector.
+  netgate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      # Calls the module directly so this gate holds regardless of CLI wiring.
+      - name: Prove the runtime makes zero network connections
+        run: |
+          python -c "import sys, json, pathlib; sys.path.insert(0, 'scripts'); from godmode_runtime.godmode_netgate import differential; r = differential(pathlib.Path('.')); print(json.dumps(r, indent=2)); sys.exit(0 if r['clean'] else 1)"
+
+  # Vulnerability scan with a documented triage path.
+  #
+  # Honesty note: the Godmode runtime is stdlib-only with zero dependencies, so
+  # `pip-audit` has no runtime dependency tree to inspect. What can carry known
+  # vulnerabilities is the CI tooling environment itself (pip, setuptools,
+  # pip-audit's own dependencies, and any future dev tooling), so that surface
+  # is what this job scans - deliberately, and labelled as such.
+  #
+  # Triage path for any finding:
+  #   1. Open an issue labelled `security` quoting the pip-audit output.
+  #   2. Assess the finding against THREAT-MODEL.md. A vulnerability in CI
+  #      tooling (not the runtime) is documented in the issue as CI-surface
+  #      only; it does not weaken the runtime's zero-dependency claim, which
+  #      the `sbom --gate` step enforces separately.
+  #   3. Upgrade or pin the affected tool, then re-run this job to confirm.
+  vuln-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install pip-audit
+        run: python -m pip install --upgrade pip pip-audit
+
+      - name: Audit the CI tooling environment
+        continue-on-error: false
+        run: pip-audit --strict --local
+
+      - name: Print the triage path on failure
+        if: failure()
+        run: |
+          echo "pip-audit found a known vulnerability in the CI tooling environment."
+          echo "Triage: open an issue labelled 'security' quoting the finding, assess"
+          echo "it against THREAT-MODEL.md, and record whether it touches only CI"
+          echo "tooling (the Godmode runtime has zero dependencies, so a CI-tooling"
+          echo "finding does not affect the runtime's dependency claim). Upgrade or"
+          echo "pin the affected tool, then re-run this job."
+
   # The published action, exercised the way a consumer repository would use it.
   action:
     runs-on: ubuntu-latest
