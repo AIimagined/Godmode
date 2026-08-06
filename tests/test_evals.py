@@ -228,5 +228,31 @@ class DocsSiteTests(unittest.TestCase):
             self.assertIn('href="GODMODE.html"', readme)
 
 
+class AdapterHonestyTests(unittest.TestCase):
+    """S9-02/03/04: each adapter document states exactly the declared matrix."""
+
+    def test_adapter_docs_match_the_declared_enforcement_matrix(self) -> None:
+        hosts = json.loads(
+            (PLUGIN_ROOT / "packaging" / "hosts.json").read_text(encoding="utf-8"))
+        adapters = {k: v for k, v in hosts["adapters"].items() if not k.startswith("_")}
+        self.assertEqual(sorted(adapters), ["cursor", "gemini", "opencode"])
+        for host, declared in adapters.items():
+            doc = (PLUGIN_ROOT / declared["wiring"]).read_text(encoding="utf-8")
+            for control, level in declared["controls"].items():
+                self.assertRegex(
+                    doc, rf"\|\s*{control}\s*\|\s*{level}\s*\|",
+                    f"{host}: {control} must be stated as {level} in {declared['wiring']}")
+
+    def test_declared_host_capabilities_resolve_from_cli_layer(self) -> None:
+        hosts = json.loads(
+            (PLUGIN_ROOT / "packaging" / "hosts.json").read_text(encoding="utf-8"))
+        for host, declared in hosts["adapters"].items():
+            if host.startswith("_"):
+                continue
+            self.assertIn("tool_call_interception", declared["controls"])
+            self.assertEqual(declared["controls"]["tool_call_interception"], "UNAVAILABLE")
+            self.assertTrue((PLUGIN_ROOT / declared["wiring"]).is_file(), host)
+
+
 if __name__ == "__main__":
     unittest.main()

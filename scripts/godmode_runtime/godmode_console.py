@@ -723,6 +723,34 @@ def cmd_integrity(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 
 def cmd_capabilities(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if args.host:
+        source = Path(runtime.anchor.project_root) / "packaging" / "hosts.json"
+        adapters = json.loads(source.read_text(encoding="utf-8")).get("adapters", {})
+        declared = adapters.get(args.host)
+        if declared is None:
+            known = sorted(k for k in adapters if not k.startswith("_"))
+            raise ArchiveError(
+                f"No declared adapter for host '{args.host}'; known: {', '.join(known)}"
+            )
+        payload = {
+            "host": args.host,
+            "controls": declared["controls"],
+            "why": declared.get("why", {}),
+            "wiring": declared.get("wiring"),
+            "unavailable": sorted(
+                k for k, v in declared["controls"].items() if v == "UNAVAILABLE"),
+        }
+        if args.record:
+            # The negotiation is a fact worth keeping: which table this session
+            # believed, on which host, decided by declaration rather than memory.
+            _require_archive(runtime)
+            record = runtime.archive.append(
+                "decision", f"capability-negotiation:{args.host}",
+                {"controls": declared["controls"], "status": "negotiated"},
+                evidence=[f"file:packaging/hosts.json"],
+            )
+            payload["recorded"] = record["sequence"]
+        return CommandResult(payload)
     return CommandResult(host_capabilities())
 
 
@@ -1733,9 +1761,13 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("drift", help="Compare step sets across sessions and agents").set_defaults(
         handler=cmd_drift
     )
-    sub.add_parser("capabilities", help="Report what this host can actually enforce").set_defaults(
-        handler=cmd_capabilities
-    )
+    capabilities_parser = sub.add_parser(
+        "capabilities", help="Report what this host can actually enforce")
+    capabilities_parser.add_argument(
+        "--host", help="A declared adapter host (opencode, cursor, gemini) instead of the live one")
+    capabilities_parser.add_argument(
+        "--record", action="store_true", help="Record the negotiated table in the archive")
+    capabilities_parser.set_defaults(handler=cmd_capabilities)
     inspect = sub.add_parser("inspect", help="Capture an on-demand repository snapshot")
     inspect.set_defaults(handler=cmd_inspect)
     resume = sub.add_parser("resume", help="Build a bounded continuity brief")
