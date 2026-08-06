@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import time
 from typing import Any
 
 from .godmode_anchor import ProjectAnchor, anchor_fingerprint, canonical_path, run_git
@@ -23,6 +24,10 @@ from .godmode_constants import (
     MAX_HASH_BYTES,
 )
 from .godmode_errors import IdentityError
+
+# A write lock is held for milliseconds; one that survives ten minutes marks a
+# writer that died mid-write, and every later append will queue behind it.
+STALE_LOCK_SECONDS = 600
 
 
 def _utc_now() -> str:
@@ -198,8 +203,26 @@ def detect_context_issues(
     anchor: ProjectAnchor,
     records: list[dict[str, Any]],
     current_inventory: dict[str, Any] | None = None,
+    *,
+    archive: Chronicle | None = None,
 ) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
+    if archive is not None and archive.root.is_dir():
+        now = time.time()
+        for lock_path in sorted(archive.root.glob("*.lock")):
+            try:
+                age_seconds = now - lock_path.stat().st_mtime
+            except OSError:
+                continue
+            if age_seconds > STALE_LOCK_SECONDS:
+                issues.append(
+                    {
+                        "code": "stale-lock",
+                        "severity": "warning",
+                        "detail": f"{lock_path.name} has held the archive for "
+                                  f"{int(age_seconds // 60)} minutes; a writer likely died mid-write.",
+                    }
+                )
     inventory_records = [record for record in records if record["kind"] == "inventory"]
     latest_inventory = inventory_records[-1] if inventory_records else None
     if latest_inventory is None:
@@ -239,6 +262,30 @@ def detect_context_issues(
                         "code": "undocumented-drift",
                         "severity": "warning",
                         "detail": f"{len(drift['added'])} added, {len(drift['changed'])} changed, {len(drift['removed'])} removed.",
+                    }
+                )
+            # An mtime can only move forward on an untouched tree; one that
+            # moved backward means a restore or a clock change rewrote reality
+            # underneath the baseline, so freshness reasoning cannot be trusted.
+            recorded_entries = {
+                entry["path"]: entry
+                for entry in latest_inventory["data"].get("entries", [])
+            }
+            regressed = sorted(
+                entry["path"]
+                for entry in current_inventory.get("entries", [])
+                if entry["path"] in recorded_entries
+                and isinstance(entry.get("mtime_ns"), int)
+                and isinstance(recorded_entries[entry["path"]].get("mtime_ns"), int)
+                and entry["mtime_ns"] < recorded_entries[entry["path"]]["mtime_ns"]
+            )
+            if regressed:
+                issues.append(
+                    {
+                        "code": "clock-or-restore-anomaly",
+                        "severity": "warning",
+                        "detail": f"{len(regressed)} files' mtimes moved backward since the "
+                                  f"baseline (e.g. {regressed[0]}); a restore or clock change happened.",
                     }
                 )
 
@@ -362,7 +409,7 @@ def build_context_brief(
     brief = {
         "generated_at": _utc_now(),
         "identity": anchor.public_view(),
-        "issues": detect_context_issues(anchor, records, current_inventory),
+        "issues": detect_context_issues(anchor, records, current_inventory, archive=archive),
         "records": [_record_summary(record) for record in selected],
         "limits": {
             "perfect_memory": False,
@@ -390,6 +437,35 @@ def build_context_brief(
     brief["estimated_tokens"] = estimated()
     brief["token_budget"] = token_budget
     return brief
+
+
+def capacity_checkpoint_due(
+    archive: Chronicle, token_budget: int = DEFAULT_CONTEXT_BUDGET
+) -> dict[str, Any]:
+    """Deterministic pre-compaction signal: is the context brief near capacity?
+
+    A host hook calls this to decide whether to write an atomic checkpoint
+    before compaction; the decision must live here, not in the hook, so every
+    host applies the same threshold. The signal fires at 80% rather than 100%
+    because by the time the brief overflows, the degradation ladder has already
+    discarded detail a checkpoint should have preserved. The checkpoint itself
+    is deliberately not written here: writing is a policy action that belongs
+    to the caller, while this function stays a pure measurement.
+    """
+    brief = build_context_brief(archive.anchor, archive, token_budget=token_budget)
+    estimated = brief["estimated_tokens"]
+    threshold = int(token_budget * 0.8)
+    due = estimated > threshold
+    return {
+        "due": due,
+        "estimated_tokens": estimated,
+        "budget": token_budget,
+        "detail": (
+            f"Brief estimate {estimated} tokens vs threshold {threshold} (80% of {token_budget}); "
+            + ("write an atomic checkpoint before compaction." if due
+               else "capacity is comfortable.")
+        ),
+    }
 
 
 def claim_worktree(archive: Chronicle, anchor: ProjectAnchor) -> dict[str, Any]:
@@ -464,6 +540,66 @@ def explain_context(anchor: ProjectAnchor, archive: Chronicle) -> dict[str, Any]
         ],
         "identity": anchor.public_view(),
     }
+
+
+def why(anchor: ProjectAnchor, archive: Chronicle, about: str) -> dict[str, Any]:
+    """Answer "why is this the way it is?" for a named path or topic.
+
+    The answer is built from actual archive records, never inference: a claim
+    with no sequence number behind it is a guess wearing a badge. Categories
+    are always present even when empty, because "no recorded decision touches
+    this file" is itself an answer a caller must be able to distinguish from
+    "the question was not asked". Matching is a case-insensitive substring
+    over subject, data values, and evidence — cheap and predictable beats
+    clever here, since the caller can always widen or narrow `about`. Atlas
+    `affected` edges are deliberately not consulted: dependencies reported
+    here are ones a change record actually named, so every entry stays
+    evidence-linked.
+    """
+    needle = about.strip().lower()
+    records = archive.read_events() if archive.initialized() else []
+
+    def mentions(record: dict[str, Any]) -> bool:
+        if needle in record["subject"].lower():
+            return True
+        if needle in json.dumps(record["data"], ensure_ascii=False, default=str).lower():
+            return True
+        return any(needle in str(item).lower() for item in record.get("evidence", []))
+
+    def entry(record: dict[str, Any]) -> dict[str, Any]:
+        evidence = record.get("evidence") or []
+        return {
+            "subject": record["subject"],
+            "sequence": record["sequence"],
+            "recorded_at": record["recorded_at"],
+            "evidence": evidence[0] if evidence else f"seq:{record['sequence']}",
+        }
+
+    answer: dict[str, Any] = {
+        "about": about,
+        "decisions": [],
+        "fixes": [],
+        "dependencies": [],
+        "invariants": [],
+    }
+    for record in records:
+        if not needle or not mentions(record):
+            continue
+        kind = record["kind"]
+        data = record["data"]
+        if kind == "decision":
+            answer["decisions"].append(entry(record))
+        elif kind == "invariant":
+            answer["invariants"].append(entry(record))
+        elif kind == "lesson":
+            answer["fixes"].append(entry(record))
+        elif kind == "checkpoint" and str(data.get("status", "")).lower() in {"green", "fixed"}:
+            answer["fixes"].append(entry(record))
+        elif kind == "change" and any(
+            needle in str(name).lower() for name in data.get("files", [])
+        ):
+            answer["dependencies"].append(entry(record))
+    return answer
 
 
 def compare_local_reference(project: str | Path, reference: str | Path) -> dict[str, Any]:
