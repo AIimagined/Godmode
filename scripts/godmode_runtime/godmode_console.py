@@ -43,6 +43,7 @@ from .godmode_loop import analyze as analyze_loops
 from .godmode_loop import model_blame_allowed
 from .godmode_mistakes import analyze as analyze_mistakes
 from .godmode_mistakes import stale_runtime
+from .godmode_reconcile import classify_environment, reconcile_docs, reconcile_versions
 from .godmode_removal import REQUIRED_FIELDS as REMOVAL_FIELDS
 from .godmode_removal import record_removal, removal_answer
 from .godmode_drift import compare as compare_sessions
@@ -993,8 +994,18 @@ def cmd_branches(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 
 def cmd_version(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if args.reconcile:
+        report = reconcile_versions(Path(runtime.anchor.project_root))
+        return CommandResult(report, exit_code=0 if report["verdict"] == "agreed" else 1)
     return CommandResult(
         {"record": _append(runtime, "version", args.name, {"value": args.value, "status": args.status}, args.evidence)}
+    )
+
+
+def cmd_environment(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    verdict = classify_environment(args.target)
+    return CommandResult(
+        verdict, exit_code=0 if verdict["mutation_allowed_without_capability"] else 1
     )
 
 
@@ -1039,7 +1050,14 @@ def cmd_status_handover(args: argparse.Namespace, runtime: Runtime) -> CommandRe
     return CommandResult(view)
 
 
+def cmd_docs_reconcile(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    report = reconcile_docs(Path(runtime.anchor.project_root), base=args.base)
+    return CommandResult(report, exit_code=0 if report["verdict"] == "reconciled" else 1)
+
+
 def cmd_docs(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if getattr(args, "reconcile", False):
+        return cmd_docs_reconcile(args, runtime)
     return CommandResult(
         {
             "record": _append(
@@ -1440,6 +1458,12 @@ def _build_parser() -> argparse.ArgumentParser:
     loop.add_argument("--session")
     loop.set_defaults(handler=cmd_loop)
 
+    environment = sub.add_parser(
+        "environment", help="Classify a mutation target's blast radius; unknown fails closed"
+    )
+    environment.add_argument("--target", required=True)
+    environment.set_defaults(handler=cmd_environment)
+
     mistakes = sub.add_parser("mistakes", help="Run the mistake-class detectors")
     mistakes.add_argument("--process-started", metavar="ISO",
                           help="Check the running process against source mtimes before an RCA")
@@ -1524,9 +1548,11 @@ def _build_parser() -> argparse.ArgumentParser:
     branches.add_argument("--record", action="store_true")
     branches.set_defaults(handler=cmd_branches)
 
-    version = sub.add_parser("version", help="Record a project version fact")
-    version.add_argument("--name", required=True)
-    version.add_argument("--value", required=True)
+    version = sub.add_parser("version", help="Record a version fact, or reconcile every surface")
+    version.add_argument("--reconcile", action="store_true",
+                         help="Diff the version across every surface that states one")
+    version.add_argument("--name", default="")
+    version.add_argument("--value", default="")
     version.add_argument("--status", default="observed")
     _evidence(version)
     version.set_defaults(handler=cmd_version)
@@ -1547,9 +1573,12 @@ def _build_parser() -> argparse.ArgumentParser:
     _evidence(sprint)
     sprint.set_defaults(handler=cmd_sprint)
 
-    docs = sub.add_parser("docs", help="Record documentation obligations")
-    docs.add_argument("--document", required=True)
-    docs.add_argument("--status", required=True)
+    docs = sub.add_parser("docs", help="Record documentation obligations, or reconcile the trigger table")
+    docs.add_argument("--reconcile", action="store_true",
+                      help="Fail when a change mandates a documentation move that did not happen")
+    docs.add_argument("--base", default="HEAD")
+    docs.add_argument("--document", default="")
+    docs.add_argument("--status", default="")
     docs.add_argument("--note")
     _evidence(docs)
     docs.set_defaults(handler=cmd_docs)

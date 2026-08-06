@@ -1887,5 +1887,44 @@ class MistakeClassTests(unittest.TestCase):
             self.assertFalse(stale_runtime(project, after.isoformat())["stale"])
 
 
+class ReconcileTests(unittest.TestCase):
+    def test_environment_classifier_fails_closed_on_unknown(self) -> None:
+        from godmode_runtime.godmode_reconcile import classify_environment
+
+        self.assertEqual(classify_environment("postgres://prod-db/orders")["environment"], "production")
+        self.assertEqual(classify_environment("localhost:5432")["environment"], "development")
+        unknown = classify_environment("10.40.2.7:9042")
+        self.assertEqual(unknown["environment"], "unknown")
+        self.assertFalse(unknown["mutation_allowed_without_capability"])
+        self.assertFalse(classify_environment("prod-db")["overridable"])
+
+    def test_version_drift_across_surfaces_is_reported(self) -> None:
+        from godmode_runtime.godmode_reconcile import reconcile_versions
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            runtime = project / "scripts" / "godmode_runtime"
+            runtime.mkdir(parents=True)
+            (runtime / "godmode_constants.py").write_text('RUNTIME_VERSION = "0.2.0"\n', encoding="utf-8")
+            (runtime / "__init__.py").write_text('__version__ = "0.1.0"\n', encoding="utf-8")
+            report = reconcile_versions(project)
+            self.assertEqual(report["verdict"], "version-drift")
+            self.assertEqual(sorted(report["drift"]), ["0.1.0", "0.2.0"])
+
+    def test_doc_trigger_table_blocks_a_code_change_without_its_counterpart(self) -> None:
+        from godmode_runtime.godmode_reconcile import reconcile_docs
+
+        with isolated_git_project() as (project, _archive):
+            scripts = project / "scripts"
+            scripts.mkdir()
+            (scripts / "new.py").write_text("x = 1\n", encoding="utf-8")
+            blocked = reconcile_docs(project, base="HEAD")
+            self.assertEqual(blocked["verdict"], "documentation-missing")
+            fragments = project / "changelog.d"
+            fragments.mkdir()
+            (fragments / "new.added.md").write_text("New module.\n", encoding="utf-8")
+            self.assertEqual(reconcile_docs(project, base="HEAD")["verdict"], "reconciled")
+
+
 if __name__ == "__main__":
     unittest.main()
