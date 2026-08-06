@@ -36,6 +36,7 @@ from .godmode_charter import TRIGGERS, applicable_rules, compile_charter, traits
 from .godmode_drift import capabilities as host_capabilities
 from .godmode_changelog import check_fragments, merge_fragments
 from .godmode_integrity import analyze as analyze_integrity
+from .godmode_locale import check_locales
 from .godmode_drift import compare as compare_sessions
 from .godmode_method import Shape
 from .godmode_method import contract as method_contract
@@ -452,6 +453,11 @@ def cmd_changelog_merge(args: argparse.Namespace, runtime: Runtime) -> CommandRe
         Path(runtime.anchor.project_root), version=args.set_version,
         date=args.date or date.today().isoformat(),
     ))
+
+
+def cmd_locale_check(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    report = check_locales(Path(runtime.anchor.project_root))
+    return CommandResult(report, exit_code=0 if report["valid"] else 1)
 
 
 def cmd_integrity(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -1309,6 +1315,13 @@ def _build_parser() -> argparse.ArgumentParser:
     changelog_merge.add_argument("--set-version", required=True)
     changelog_merge.add_argument("--date", help="Release date; defaults to today")
     changelog_merge.set_defaults(handler=cmd_changelog_merge)
+
+    locale = sub.add_parser("locale", help="Localized guidance surfaces")
+    locale_sub = locale.add_subparsers(dest="locale_command", required=True)
+    locale_check = locale_sub.add_parser(
+        "check", help="Validate locales/ variants against their English sources"
+    )
+    locale_check.set_defaults(handler=cmd_locale_check)
 
     integrity = sub.add_parser(
         "integrity", help="Run the nine test-integrity monitors over the current diff"
