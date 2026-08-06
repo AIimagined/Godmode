@@ -363,11 +363,15 @@ def _relevance_fallback(segments: list[Segment], terms: list[str]) -> dict[int, 
     return scores
 
 
-def rank(segments: list[Segment], task: str) -> list[tuple[Segment, float]]:
-    """Score every segment. Role weight always counts; relevance modulates it.
+def rank(
+    segments: list[Segment], task: str, project: Path | None = None
+) -> list[tuple[Segment, float]]:
+    """Score every segment: role weight x relevance x freshness.
 
     A segment matching nothing still ranks by role, so a high-authority document is
-    never invisible merely because the task wording missed it.
+    never invisible merely because the task wording missed it. Freshness breaks
+    ties toward recently-edited sources: same project state gives the same
+    ordering, but a stale document cannot outrank a fresh sibling on weight alone.
     """
     terms = _terms(task)
     raw: dict[int, float] = {}
@@ -375,11 +379,26 @@ def rank(segments: list[Segment], task: str) -> list[tuple[Segment, float]]:
         raw = _relevance_fts5(segments, terms) if fts5_available() else _relevance_fallback(segments, terms)
     top = max(raw.values(), default=0.0) or 1.0
 
+    freshness: dict[str, float] = {}
+    if project is not None:
+        stamps: dict[str, int] = {}
+        for path in {segment.path for segment in segments}:
+            try:
+                stamps[path] = (project / path).stat().st_mtime_ns
+            except OSError:
+                stamps[path] = 0
+        newest_first = sorted(stamps, key=lambda p: (-stamps[p], p))
+        # A small, bounded factor: freshness reorders equals, never outvotes weight.
+        for position, path in enumerate(newest_first):
+            freshness[path] = 1.0 + 0.05 / (1 + position)
+
     scored: list[tuple[Segment, float]] = []
     for index, segment in enumerate(segments):
         relevance = raw.get(index, 0.0) / top
         # Rounded so float noise cannot reorder identical corpora across hosts.
-        score = round(segment.weight * (1.0 + relevance), 6)
+        score = round(
+            segment.weight * (1.0 + relevance) * freshness.get(segment.path, 1.0), 6
+        )
         scored.append((segment, score))
 
     scored.sort(key=lambda pair: (-pair[1], pair[0].path, pair[0].start_line))
@@ -397,7 +416,7 @@ def build_brief(project: Path, task: str, budget: int) -> dict[str, Any]:
     for binding in resolution.bindings:
         segments.extend(segment_document(binding, resolution.project))
 
-    scored = rank(segments, task)
+    scored = rank(segments, task, project=resolution.project)
     included: list[dict[str, Any]] = []
     used = 0
     for segment, score in scored:
@@ -422,8 +441,13 @@ def build_brief(project: Path, task: str, budget: int) -> dict[str, Any]:
         "sources": {
             "roles": len({binding.role for binding in resolution.bindings}),
             "documents": len(resolution.bindings),
+            "documents_read": len({entry["path"] for entry in included}),
             "segments": len(segments),
             "segments_read": len(included),
+            "statement": (
+                f"read {len({entry['path'] for entry in included})} of "
+                f"{len(resolution.bindings)} required sources"
+            ),
         },
         "required_but_unread": [
             {"role": role, "segments": count} for role, count in sorted(unread.items())
