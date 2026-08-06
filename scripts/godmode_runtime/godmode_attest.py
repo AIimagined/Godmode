@@ -486,15 +486,32 @@ def record_claim(
     text: str,
     grade: str,
     cites: list[str] | None = None,
+    external: bool = False,
 ) -> dict[str, Any]:
     """Persist a claim, downgrading it when its citations do not resolve.
 
     Not a warning. A claim the evidence does not support is stored as a hypothesis,
     because a claim asserted at full confidence is what a later session will trust.
+
+    A claim about an external API or library (`external=True`) must cite a
+    primary source read this session (`doc:` or `url:` citation) - memory of a
+    library is a hypothesis about a version that may no longer exist.
     """
     if grade not in GRADES:
         raise ArchiveError(f"Unknown claim grade '{grade}'; expected one of {', '.join(GRADES)}")
     citations = cites or []
+    if external and grade == "verified":
+        primary = [c for c in citations if c.startswith(("doc:", "url:"))]
+        if not primary:
+            record = archive.append(
+                "claim", text[:120],
+                {"text": text, "grade": "hypothesis", "requested": grade, "session": session,
+                 "downgraded": True, "unresolved": [],
+                 "reason": "external claim without a primary source read this session; "
+                           "cite doc:<path> or url:<address> from a source actually opened"},
+                evidence=citations,
+            )
+            return record
     unresolved = [
         citation for citation in citations if not _citation_resolves(project, archive, citation)
     ]
