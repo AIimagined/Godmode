@@ -1835,5 +1835,57 @@ class AntiLoopTests(unittest.TestCase):
             self.assertTrue(model_blame_allowed(archive.read_events())["allowed"])
 
 
+class MistakeClassTests(unittest.TestCase):
+    def test_label_used_as_evidence_must_trace_to_its_assignment(self) -> None:
+        from godmode_runtime.godmode_mistakes import analyze
+
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            archive.append("claim", "S1 is done", {"text": "S1 is done"},
+                           evidence=["status:S1"])
+            report = analyze(archive)
+            self.assertTrue([f for f in report["findings"] if f["detector"] == "label-as-fact"])
+            archive.append("claim", "S2 is done", {"text": "S2 is done"},
+                           evidence=["status:S2", "seq:1"])
+            names = [f["detail"] for f in analyze(archive)["findings"]
+                     if f["detector"] == "label-as-fact"]
+            self.assertEqual(len(names), 1)
+
+    def test_generalized_guard_citing_one_surface_blocks(self) -> None:
+        from godmode_runtime.godmode_mistakes import analyze
+
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            archive.append("lesson", "escape all shell args",
+                           {"value": "v", "generalized_guard": "every exec call"},
+                           evidence=["file:run.py"])
+            report = analyze(archive)
+            self.assertTrue(
+                [f for f in report["findings"] if f["detector"] == "invariant-vs-instance"])
+
+    def test_bundled_claims_are_split(self) -> None:
+        from godmode_runtime.godmode_mistakes import analyze
+
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            archive.append("claim", "everything works",
+                           {"text": "auth is fixed; billing works; the cache passes"})
+            report = analyze(archive)
+            self.assertTrue([f for f in report["findings"] if f["detector"] == "claim-splitting"])
+
+    def test_stale_runtime_blocks_rca_against_a_dead_program(self) -> None:
+        from godmode_runtime.godmode_mistakes import stale_runtime
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / "app.py").write_text("x = 1\n", encoding="utf-8")
+            newest = (project / "app.py").stat().st_mtime
+            from datetime import datetime, timedelta, timezone
+            before = datetime.fromtimestamp(newest, tz=timezone.utc) - timedelta(minutes=5)
+            after = datetime.fromtimestamp(newest, tz=timezone.utc) + timedelta(minutes=5)
+            self.assertTrue(stale_runtime(project, before.isoformat())["stale"])
+            self.assertFalse(stale_runtime(project, after.isoformat())["stale"])
+
+
 if __name__ == "__main__":
     unittest.main()

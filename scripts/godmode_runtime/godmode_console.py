@@ -41,6 +41,8 @@ from .godmode_integrity import analyze as analyze_integrity
 from .godmode_locale import check_locales
 from .godmode_loop import analyze as analyze_loops
 from .godmode_loop import model_blame_allowed
+from .godmode_mistakes import analyze as analyze_mistakes
+from .godmode_mistakes import stale_runtime
 from .godmode_removal import REQUIRED_FIELDS as REMOVAL_FIELDS
 from .godmode_removal import record_removal, removal_answer
 from .godmode_drift import compare as compare_sessions
@@ -503,6 +505,15 @@ def cmd_loop(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         )
         return CommandResult(verdict, exit_code=0 if verdict["allowed"] else 1)
     report = analyze_loops(runtime.archive)
+    return CommandResult(report, exit_code=1 if report["blocking"] else 0)
+
+
+def cmd_mistakes(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    if args.process_started:
+        verdict = stale_runtime(Path(runtime.anchor.project_root), args.process_started)
+        return CommandResult(verdict, exit_code=1 if verdict["stale"] else 0)
+    report = analyze_mistakes(runtime.archive)
     return CommandResult(report, exit_code=1 if report["blocking"] else 0)
 
 
@@ -1428,6 +1439,11 @@ def _build_parser() -> argparse.ArgumentParser:
                       help="Check whether blaming the model is supported by a non-model control")
     loop.add_argument("--session")
     loop.set_defaults(handler=cmd_loop)
+
+    mistakes = sub.add_parser("mistakes", help="Run the mistake-class detectors")
+    mistakes.add_argument("--process-started", metavar="ISO",
+                          help="Check the running process against source mtimes before an RCA")
+    mistakes.set_defaults(handler=cmd_mistakes)
 
     removal = sub.add_parser("removal", help="Remember why something was deleted")
     removal_sub = removal.add_subparsers(dest="removal_command", required=True)
