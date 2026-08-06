@@ -48,6 +48,15 @@ jobs:
       - name: Publish the dependency claim
         run: python scripts/godmode.py --project . sbom --brief
 
+      - name: Enforce the dependency policy
+        run: python scripts/godmode.py --project . sbom --gate --brief
+
+      - name: Prove the checksum manifest is reproducible
+        run: |
+          python scripts/godmode.py --project . --json checksums > first.json
+          python scripts/godmode.py --project . --json checksums > second.json
+          python -c "import json;a=json.load(open('first.json'));b=json.load(open('second.json'));assert a['manifest_sha256']==b['manifest_sha256'],'checksums not reproducible';print('reproducible:',a['manifest_sha256'])"
+
   # The published action, exercised the way a consumer repository would use it.
   action:
     runs-on: ubuntu-latest

@@ -32,6 +32,7 @@ from .godmode_atlas import build as build_atlas
 from .godmode_atlas import slice_file
 from .godmode_attest import GRADES, STATUSES, plant_and_observe, recurrences, reflect, run_check
 from .godmode_bindings import check as bindings_check
+from .godmode_bindings import dependency_gate, release_checksums, sbom_cyclonedx, sbom_spdx
 from .godmode_bindings import sbom as build_sbom
 from .godmode_bindings import write as bindings_write
 from .godmode_charter import TRIGGERS, applicable_rules, compile_charter, traits_of
@@ -613,7 +614,28 @@ def cmd_bindings(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 
 def cmd_sbom(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
-    return CommandResult(build_sbom(Path(runtime.anchor.project_root)))
+    project = Path(runtime.anchor.project_root)
+    if args.gate:
+        verdict = dependency_gate(project)
+        return CommandResult(verdict, exit_code=0 if verdict["verdict"] == "within-policy" else 1)
+    if args.format == "spdx":
+        return CommandResult(sbom_spdx(project))
+    if args.format == "cyclonedx":
+        return CommandResult(sbom_cyclonedx(project))
+    return CommandResult(build_sbom(project))
+
+
+def cmd_checksums(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    report = release_checksums(Path(runtime.anchor.project_root))
+    if args.verify:
+        expected = Path(args.verify).read_text(encoding="utf-8")
+        matched = expected == report["manifest"]
+        return CommandResult(
+            {"files": report["files"], "matched": matched,
+             "manifest_sha256": report["manifest_sha256"]},
+            exit_code=0 if matched else 1,
+        )
+    return CommandResult(report)
 
 
 def cmd_recurrences(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -1314,7 +1336,16 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("recurrences", help="Find controls that blocked twice on the same cause").set_defaults(
         handler=cmd_recurrences
     )
-    sub.add_parser("sbom", help="List what ships and what it depends on").set_defaults(handler=cmd_sbom)
+    sbom_parser = sub.add_parser("sbom", help="List what ships and what it depends on")
+    sbom_parser.add_argument("--format", choices=["spdx", "cyclonedx"],
+                             help="Emit the claim in a standard SBOM format")
+    sbom_parser.add_argument("--gate", action="store_true",
+                             help="Fail when the dependency policy is violated")
+    sbom_parser.set_defaults(handler=cmd_sbom)
+    checksums = sub.add_parser("checksums", help="SHA-256 manifest over every tracked file")
+    checksums.add_argument("--verify", metavar="FILE",
+                           help="Compare a stored manifest against the current tree")
+    checksums.set_defaults(handler=cmd_checksums)
 
     egress = sub.add_parser("egress", help="Disclose exactly what an action would send")
     egress.add_argument("action")
