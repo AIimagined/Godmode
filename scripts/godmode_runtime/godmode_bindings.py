@@ -185,7 +185,9 @@ def sbom_spdx(project: Path) -> dict[str, Any]:
         "dataLicense": "CC0-1.0",
         "SPDXID": "SPDXRef-DOCUMENT",
         "name": f"{name}-{base['version']}",
-        "documentNamespace": f"https://spdx.org/spdxdocs/{name}-{base['version']}",
+        # A URN, not a URL: the privacy guard proves no runtime file names a
+        # network endpoint, and SPDX accepts any URI here.
+        "documentNamespace": f"urn:godmode:spdx:{name}-{base['version']}",
         "creationInfo": {"creators": [f"Tool: {name}-sbom"], "created": "1970-01-01T00:00:00Z"},
         "packages": [{
             "SPDXID": "SPDXRef-Package",
