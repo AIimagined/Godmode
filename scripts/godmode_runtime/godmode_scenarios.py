@@ -173,26 +173,111 @@ def _identity_change_orphaning_history(project: Path, archive: Chronicle) -> tup
     return bool(stranded), f"stranded records: {(stranded or {}).get('records', 0)}"
 
 
-SCENARIOS: tuple[tuple[str, str, Callable[[Path, Chronicle], tuple[bool, str]]], ...] = (
-    ("duplicate-capability", "one capability written twice under different names", _duplicate_capability),
-    ("present-but-unwired", "code exists and nothing reaches it", _present_but_unwired),
-    ("hollow-guard", "a guard that asserts nothing and never fails", _hollow_guard),
-    ("secret-in-outbound-scope", "a credential inside the set proposed for transmission", _secret_in_outbound_scope),
-    ("forged-capability", "a protected action attempted with an invented capability", _protected_action_without_capability),
-    ("stale-backlog", "finished work still reported as outstanding", _stale_backlog),
-    ("unfalsifiable-absence", "an absence asserted without the search that would disprove it", _absence_claimed_without_search),
-    ("drifted-citation", "a citation resolving to a line that says something else", _drifted_citation),
-    ("instruction-shaped-content", "repository text attempting to give the agent orders", _repository_text_giving_orders),
-    ("orphaned-history", "history made unreachable by an identity change", _identity_change_orphaning_history),
+def _fix_oscillation(project: Path, archive: Chronicle) -> tuple[bool, str]:
+    """E-03: A->B->A edits over the same files must be stopped, not repeated."""
+    from .godmode_loop import analyze
+
+    archive.append("checkpoint", "stable", {"status": "green"}, evidence=[])
+    for subject in ("use sync io", "use async io", "use sync io"):
+        archive.append("change", subject, {"files": ["io.py"]}, evidence=[])
+    report = analyze(archive)
+    hits = [f for f in report["findings"] if f["detector"] == "oscillation"]
+    return bool(hits and report["blocking"]), (hits[0]["detail"][:150] if hits else "not detected")
+
+
+def _test_weakening(project: Path, archive: Chronicle) -> tuple[bool, str]:
+    """E-05: an assertion quietly removed must block completion."""
+    import subprocess
+
+    from .godmode_integrity import analyze
+
+    git = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-C", str(project)]
+    tests = project / "tests"
+    tests.mkdir(exist_ok=True)
+    (tests / "test_app.py").write_text(
+        "def test_a():\n    assert 1 == 1\n    assert 2 == 2\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(project)], check=True, capture_output=True, timeout=30)
+    subprocess.run(git + ["add", "-A"], check=True, capture_output=True, timeout=30)
+    subprocess.run(git + ["commit", "-q", "-m", "baseline"], check=True, capture_output=True, timeout=30)
+    (tests / "test_app.py").write_text("def test_a():\n    assert 1 == 1\n", encoding="utf-8")
+    report = analyze(Chronicle(resolve_anchor(project)), project, base="HEAD")
+    return report["blocking"], report["verdict"]
+
+
+def _wrong_environment(project: Path, archive: Chronicle) -> tuple[bool, str]:
+    """E-16: a production mutation must be blocked regardless of who asks."""
+    from .godmode_reconcile import classify_environment
+
+    verdict = classify_environment("postgres://prod-db.internal/orders")
+    caught = (verdict["environment"] == "production"
+              and not verdict["mutation_allowed_without_capability"]
+              and not verdict["overridable"])
+    return caught, f"classified {verdict['environment']}, override {verdict['overridable']}"
+
+
+def _removal_forgotten(project: Path, archive: Chronicle) -> tuple[bool, str]:
+    """CTX-03: a removal missing any of its six fields is refused, and a
+    complete one answers every question."""
+    from .godmode_errors import ArchiveError
+    from .godmode_removal import record_removal, removal_answer
+
+    try:
+        record_removal(archive, "old-endpoint", {"reason": "superseded"})
+        return False, "a five-answers-and-a-shrug removal was accepted"
+    except ArchiveError:
+        pass
+    record_removal(archive, "old-endpoint", {
+        "reason": "superseded", "location": "api/v1.py", "replacement": "api/v2.py",
+        "references": "docs/api.md", "restoration": "git revert abc", "authorizer": "owner"})
+    answer = removal_answer(archive, "old-endpoint")
+    complete = answer is not None and all(answer.get(f) for f in (
+        "reason", "location", "replacement", "references", "restoration", "authorizer"))
+    return complete, "all six fields retrieved" if complete else "fields missing"
+
+
+def _undocumented_change(project: Path, archive: Chronicle) -> tuple[bool, str]:
+    """CTX-07: a code change without its mandated documentation move must fail."""
+    import subprocess
+
+    from .godmode_changelog import check_fragments
+
+    subprocess.run(["git", "init", "-q", str(project)], check=True, capture_output=True, timeout=30)
+    git = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-C", str(project)]
+    (project / "app.py").write_text("x = 1\n", encoding="utf-8")
+    subprocess.run(git + ["add", "-A"], check=True, capture_output=True, timeout=30)
+    subprocess.run(git + ["commit", "-q", "-m", "baseline"], check=True, capture_output=True, timeout=30)
+    (project / "app.py").write_text("x = 2\n", encoding="utf-8")
+    report = check_fragments(project, base="HEAD")
+    return not report["satisfied"], report["verdict"]
+
+
+SCENARIOS: tuple[tuple[str, str, str, Callable[[Path, Chronicle], tuple[bool, str]]], ...] = (
+    ("duplicate-capability", "E-01", "one capability written twice under different names", _duplicate_capability),
+    ("present-but-unwired", "E-02", "code exists and nothing reaches it", _present_but_unwired),
+    ("fix-oscillation", "E-03", "A->B->A edits over the same files", _fix_oscillation),
+    ("test-weakening", "E-05", "an assertion quietly removed from a test", _test_weakening),
+    ("hollow-guard", "E-05", "a guard that asserts nothing and never fails", _hollow_guard),
+    ("secret-in-outbound-scope", "E-06", "a credential inside the set proposed for transmission", _secret_in_outbound_scope),
+    ("forged-capability", "E-09", "a protected action attempted with an invented capability", _protected_action_without_capability),
+    ("wrong-environment", "E-16", "a mutation aimed at production", _wrong_environment),
+    ("stale-backlog", "E-17/CTX-04", "finished work still reported as outstanding", _stale_backlog),
+    ("removal-forgotten", "CTX-03", "a removal recorded without its six answers", _removal_forgotten),
+    ("unfalsifiable-absence", "CTX-06", "an absence asserted without the search that would disprove it", _absence_claimed_without_search),
+    ("undocumented-change", "CTX-07", "a code change without its documentation move", _undocumented_change),
+    ("drifted-citation", "CTX-05", "a citation resolving to a line that says something else", _drifted_citation),
+    ("instruction-shaped-content", "E-13", "repository text attempting to give the agent orders", _repository_text_giving_orders),
+    ("orphaned-history", "CTX-08", "history made unreachable by an identity change", _identity_change_orphaning_history),
 )
 
 
 def run(only: str | None = None) -> dict[str, Any]:
     """Stage each failure in a disposable project and report what noticed."""
     outcomes: list[Outcome] = []
-    for name, failure, staged in SCENARIOS:
+    refs: dict[str, str] = {}
+    for name, ref, failure, staged in SCENARIOS:
         if only and only != name:
             continue
+        refs[name] = ref
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(root / "state")}, clear=False):
@@ -205,7 +290,8 @@ def run(only: str | None = None) -> dict[str, Any]:
 
     caught = [o for o in outcomes if o.caught]
     return {
-        "scenarios": [o.view() for o in outcomes],
+        "scenarios": [{**o.view(), "ref": refs.get(o.scenario, "")} for o in outcomes],
+        "acceptance_refs": sorted({r for r in refs.values()}),
         "caught": len(caught),
         "total": len(outcomes),
         "missed": [o.scenario for o in outcomes if not o.caught],

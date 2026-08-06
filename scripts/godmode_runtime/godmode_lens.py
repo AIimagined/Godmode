@@ -367,7 +367,15 @@ def build_context_brief(
 def explain_context(anchor: ProjectAnchor, archive: Chronicle) -> dict[str, Any]:
     records = archive.read_events() if archive.initialized() else []
     counts = Counter(record["kind"] for record in records)
+    # What loading this context would cost, shown before anything loads.
+    brief = build_context_brief(anchor, archive)
     return {
+        "cost": {
+            "estimated_tokens": brief["estimated_tokens"],
+            "token_budget": brief["token_budget"],
+            "records_included": len(brief.get("records", brief.get("selected", []))) or None,
+            "records_total": len(records),
+        },
         "included": {
             "current_identity": "branch, HEAD, worktree identity, and hashed remotes",
             "structured_records": dict(sorted(counts.items())),
