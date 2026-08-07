@@ -101,6 +101,28 @@ SHELL_CONTROL_FLOW = (
     "test -d scripts && ls scripts",
 )
 
+# Redirection and substitution. Found live again, one release later: an input
+# redirect reads a file and was classified as writing one, and every command
+# substitution was refused outright — including `echo $(ls)`, which runs
+# nothing the classifier could not already see.
+REDIRECTION_AND_SUBSTITUTION = (
+    "wc -l < README.md",
+    "cat < input.txt",
+    "sort < names.txt",
+    "python -m unittest discover -s tests < /dev/null",
+    # `2>&1` duplicates a file descriptor. Making a bare `&` a separator so
+    # `ls & rm` could not launder split this at the `&`, leaving a bare `1`
+    # that classified as an unknown mutation.
+    "python -m unittest discover -s tests 2>&1",
+    "make build 1>&2",
+    "grep -rn TODO scripts 2>&1 | head -20",
+    # A substitution is a command; it is classified, not refused on sight.
+    "echo $(ls)",
+    "echo $(git rev-parse HEAD)",
+    "for f in $(ls *.md); do wc -l $f; done",
+    "echo `pwd`",
+)
+
 STILL_PROTECTED = (
     "git push origin main",
     "git push --force",
@@ -139,6 +161,13 @@ WINDOWS_STILL_PROTECTED = (
     # Control flow is structure; the body inside it is still judged.
     "for f in *; do rm -rf $f; done",
     "if true; then git push --force; fi",
+    # A redirect that lands outside the working tree is still a write there.
+    "cat notes.txt >> /etc/hosts",
+    "echo x > ../outside.txt",
+    # A substitution is classified on what it runs, so a dangerous inner
+    # command is caught rather than hidden by the outer one being safe.
+    "echo $(rm -rf build)",
+    "ls `git push --force`",
 )
 
 
@@ -221,6 +250,58 @@ class ShellControlFlowTests(unittest.TestCase):
         """`do` must not become a prefix that launders what follows it."""
         self.assertTrue(classify_action("do rm -rf build")["protected"])
         self.assertTrue(classify_action("then git push --force")["protected"])
+
+
+class RedirectionAndSubstitutionTests(unittest.TestCase):
+    """Reading from a file is not writing to one, and a substitution is a
+    command rather than a reason to refuse."""
+
+    def test_ordinary_redirection_and_substitution_are_not_blocked(self) -> None:
+        blocked = [c for c in REDIRECTION_AND_SUBSTITUTION
+                   if classify_action(c)["protected"]]
+        self.assertEqual(blocked, [], f"the gate would stop ordinary work: {blocked}")
+
+    def test_an_input_redirect_is_a_read(self) -> None:
+        verdict = classify_action("wc -l < README.md")
+        self.assertFalse(verdict["protected"])
+        self.assertEqual(verdict["tier"], "R0")
+
+    def test_an_output_redirect_inside_the_tree_is_ordinary_work(self) -> None:
+        """The same act as an `Edit` of that path, judged the same way.
+
+        Refusing every redirect while permitting the declared edit of the same
+        file gated the honest form and not the other.
+        """
+        for operation in ("echo x > out.txt", "make build >> build.log"):
+            verdict = classify_action(operation, project_root=PLUGIN_ROOT)
+            self.assertFalse(verdict["protected"], operation)
+
+    def test_an_output_redirect_outside_the_tree_is_protected(self) -> None:
+        for operation in ("cat notes.txt >> /etc/hosts",
+                          "echo x > ../outside.txt",
+                          "echo x > .git/config"):
+            verdict = classify_action(operation, project_root=PLUGIN_ROOT)
+            self.assertTrue(verdict["protected"], operation)
+            self.assertEqual(verdict["category"], "worktree-file-mutation", operation)
+
+    def test_a_substitution_is_judged_on_what_it_runs(self) -> None:
+        self.assertFalse(classify_action("echo $(git rev-parse HEAD)")["protected"])
+        self.assertTrue(classify_action("echo $(rm -rf build)")["protected"])
+        self.assertTrue(classify_action("ls `git push --force`")["protected"])
+
+    def test_a_descriptor_duplication_is_not_a_separator(self) -> None:
+        """`2>&1` is one token. Splitting it left a bare `1` behind, which
+        classified as an unknown mutation and refused the whole command."""
+        from godmode_runtime.godmode_sentinel import shell_segments
+
+        self.assertEqual(shell_segments("make test 2>&1"), ["make test 2>&1"])
+        self.assertEqual(shell_segments("a 2>&1 | b"), ["a 2>&1", "b"])
+        # The reason the separator was added in the first place still holds.
+        self.assertEqual(shell_segments("ls & rm -rf x"), ["ls", "rm -rf x"])
+
+    def test_a_variable_is_not_a_substitution(self) -> None:
+        for operation in ("echo $HOME", "echo ${HOME}", "wc -l $f"):
+            self.assertFalse(classify_action(operation)["protected"], operation)
 
 
 class RealToolPayloadTests(unittest.TestCase):
@@ -329,14 +410,23 @@ class ReadPrefixLaunderingTests(unittest.TestCase):
         verdict = classify_action("ls & Invoke-WebRequest https://example.com")
         self.assertTrue(verdict["protected"])
 
-    def test_substitution_is_denied_because_it_cannot_be_split_out(self) -> None:
-        """A substitution runs a command that is not a segment of the line, so
-        there is nothing to classify — the read allowance is withheld rather
-        than extended over an operation the gate never saw."""
+    def test_a_substitution_cannot_launder_what_it_runs(self) -> None:
+        """The inner command is extracted and classified alongside the outer.
+
+        This began as a blanket refusal of anything containing `$( )`, which
+        held the line but denied `echo $(ls)` along with it — heavy enough that
+        it made ordinary shell use impossible. Classifying what the
+        substitution actually runs stops the laundering just as firmly and
+        costs nothing legitimate.
+        """
         for operation in ("ls $(curl -s https://example.com)",
                           "ls `curl -s https://example.com`",
-                          "cat ${EVIL}"):
+                          "echo $(rm -rf build)"):
             self.assertTrue(classify_action(operation)["protected"], operation)
+
+    def test_expansion_is_not_execution(self) -> None:
+        """`${VAR}` yields a value; only `$( )` and backticks run anything."""
+        self.assertFalse(classify_action("cat ${EVIL}")["protected"])
 
     def test_a_shell_variable_is_not_a_substitution(self) -> None:
         for operation in ("echo $HOME",

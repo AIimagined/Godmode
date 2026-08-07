@@ -193,8 +193,11 @@ _LOCAL_COMPUTE = re.compile(
     r"pytest|unittest|npm\s+(?:test|run\s+\w+)|pnpm|yarn|make|tox|nox|uv|pip)\b"
 )
 
-# A redirect writes a file, whatever the verb in front of it says.
-_REDIRECT = re.compile(r"(?<![0-9<>])>{1,2}(?!&)|(?<![<>])<(?![<])")
+# An *output* redirect writes a file, whatever the verb in front of it says.
+# An input redirect does not: `wc -l < README.md` reads it. Treating both as
+# writes refused a plain word count, and the symmetry of the characters was the
+# only reason they were ever grouped.
+_REDIRECT = re.compile(r"(?<![0-9<>])>{1,2}(?!&)\s*(?P<target>[^\s;&|<>]*)")
 
 # Editing a file in the working tree is the work, not a protected action. What
 # guards a bad edit is the integrity monitor, the plan gate and the secret
@@ -256,13 +259,32 @@ _ASSIGNMENT_PREFIX = re.compile(r"^\s*[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']
 # hiding behind; the read allowance made that omission exploitable. `&&` and
 # `||` are listed first so the alternation cannot take a single character of
 # them and leave the other behind.
-_SEPARATORS = re.compile(r"[ \t]*(?:\|\||&&|[;|&\r\n])[ \t\r\n]*")
+# A bare `&` starts a second command, but `2>&1` duplicates a descriptor and is
+# one token. Splitting there left a bare `1` behind, which classified as an
+# unknown mutation and refused the whole command - a regression introduced by
+# adding `&` so that `ls & rm` could not launder.
+_SEPARATORS = re.compile(r"[ \t]*(?:\|\||&&|[;|\r\n]|(?<![<>])&)[ \t\r\n]*")
 
-# A substitution runs a command that never appears as a segment, so there is
-# nothing for the classifier to see. It is denied rather than read through:
-# `ls $(curl …)` is not a listing. A plain `$VAR` or PowerShell's `$env:` and
-# `$_` expand to a value and are not this.
-_SUBSTITUTION = re.compile(r"\$\(|\$\{|`")
+# A substitution runs a command that never appears as a segment. Refusing it
+# on sight was too blunt: `echo $(ls)` runs nothing the classifier could not
+# already see, and denying every one of them made ordinary shell use
+# impossible. The inner command is extracted and classified alongside the
+# outer, so `echo $(ls)` is a read and `ls $(curl …)` is protected on the
+# merits of what it actually runs.
+#
+# `${VAR}` is excluded: it expands a value rather than running anything. Only
+# `$( )` and backticks execute.
+_SUBSTITUTION = re.compile(r"\$\((?P<paren>[^()]*)\)|`(?P<tick>[^`]*)`")
+
+
+def substituted_commands(command: str) -> list[str]:
+    """Every command a substitution would run, so each can be classified."""
+    found: list[str] = []
+    for match in _SUBSTITUTION.finditer(command):
+        inner = (match.group("paren") or match.group("tick") or "").strip()
+        if inner:
+            found.append(inner)
+    return found
 
 
 def shell_segments(command: str) -> list[str]:
@@ -429,13 +451,18 @@ def _categorize(normalized: str, project_root: Path | None = None) -> tuple[str,
             return category, True, list(impact)
     # A redirect writes a file whatever the verb says, so it is checked after
     # the named mutations but before the read allowances.
-    if _REDIRECT.search(normalized):
-        return "worktree-file-mutation", True, ["a redirected write to the filesystem"]
+    redirect = _REDIRECT.search(normalized)
+    if redirect:
+        # The same act as an `Edit`, judged the same way. Refusing every
+        # redirect while permitting the declared edit of the same path gated
+        # the honest form and not the other, which is all cost and no cover.
+        target = redirect.group("target")
+        if not target or not _contained(target, project_root) or _SENSITIVE_EDIT.search(target):
+            return ("worktree-file-mutation", True,
+                    [f"a redirected write outside ordinary working files: {target[:80]}"])
+        return "worktree-file-mutation", False, ["a redirected write inside the working tree"]
     if _FIND_MUTATION.search(normalized):
         return "filesystem-mutation", True, ["local files", "recoverability"]
-    if _SUBSTITUTION.search(normalized):
-        return ("unclassified-mutation", True,
-                ["a substituted command the classifier never saw"])
     if (_SAFE_SHELL_READS.match(normalized) or _POWERSHELL_READS.match(normalized)
             or _TEST_BUILTIN.match(normalized)):
         return "read-only-inspection", False, ["local read-only state"]
@@ -493,6 +520,19 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     normalized = operation.strip()
     if not normalized:
         raise AuthorizationError("Operation description cannot be empty")
+
+    # What a substitution runs is a command like any other, judged alongside
+    # the line that contains it rather than taken on trust or refused on sight.
+    inner = substituted_commands(normalized)
+    if inner:
+        stripped = _SUBSTITUTION.sub(" ", normalized).strip() or "echo"
+        parts = [classify_action(stripped, extra_protected, project_root)]
+        parts += [classify_action(one, extra_protected, project_root) for one in inner]
+        worst = max(parts, key=lambda v: (v["protected"], v["tier"]))
+        worst["impact"] = sorted({item for v in parts for item in v["impact"]})
+        worst["operation_digest"] = hashlib.sha256(normalized.encode()).hexdigest()
+        worst["substitutions"] = len(inner)
+        return worst
 
     segments = shell_segments(normalized)
     if len(segments) > 1:
