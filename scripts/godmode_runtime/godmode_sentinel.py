@@ -145,6 +145,80 @@ _SAFE_PREFIXES = re.compile(
     r"(?i)^\s*(?:git\s+(?:status|diff|log|show|rev-parse|worktree\s+list|"
     r"stash\s+(?:list|show))|inspect|read|list|show|explain|doctor|privacy)\b"
 )
+
+# Ordinary inspection. Absent these, every `ls` fell through to
+# unclassified-mutation and the gate denied a working session - failing closed
+# on an unknown mutation is right, and applying it to `ls` is the approval
+# fatigue the threat model warns about.
+_SAFE_SHELL_READS = re.compile(
+    r"(?i)^\s*(?:ls|dir|pwd|cat|bat|head|tail|wc|nl|file|stat|du|df|tree|echo|"
+    r"printf|which|type|whoami|date|env|printenv|basename|dirname|realpath|"
+    r"readlink|sort|uniq|cut|awk|sed\s+-n|grep|egrep|fgrep|rg|ag|diff|cmp|"
+    r"md5sum|sha256sum|cd|pushd|popd)\b"
+)
+
+# Interpreters and task runners. Recorded as local compute rather than
+# protected: gating every `python -m unittest` would duplicate the host's own
+# execution consent and stop the gate being usable at all. The boundary is
+# stated in classify_action's docstring rather than left implied.
+_LOCAL_COMPUTE = re.compile(
+    r"(?i)^\s*(?:python[\d.]*|py|node|deno|bun|ruby|perl|go|cargo|dotnet|java|"
+    r"pytest|unittest|npm\s+(?:test|run\s+\w+)|pnpm|yarn|make|tox|nox|uv|pip)\b"
+)
+
+# A redirect writes a file, whatever the verb in front of it says.
+_REDIRECT = re.compile(r"(?<![0-9<>])>{1,2}(?!&)|(?<![<>])<(?![<])")
+
+# Editing a file in the working tree is the work, not a protected action. What
+# guards a bad edit is the integrity monitor, the plan gate and the secret
+# scan - a per-write capability prompt only teaches the operator to switch the
+# gate off. Paths that are not ordinary working files are excluded below.
+_TOOL_FILE_EDIT = re.compile(r"(?i)^(?:write|edit) file\s+(?P<path>.+)$")
+_SENSITIVE_EDIT = re.compile(
+    r"(?i)(?:^|[/\\])\.git[/\\]|(?:^|[/\\])\.env\b|credential|\bid_rsa\b|"
+    r"\.pem$|\.key$|(?:^|[/\\])\.\.(?:[/\\]|$)|^[a-z]:[/\\]|^/"
+)
+
+# `VAR=value` alone changes nothing; `VAR=value cmd` is classified on cmd.
+_ASSIGNMENT_PREFIX = re.compile(r"^\s*[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\S*)\s*")
+
+_SEPARATORS = re.compile(r"\s*(?:\|\||&&|[;|])\s*")
+
+
+def shell_segments(command: str) -> list[str]:
+    """Split a compound command into the parts that run, respecting quotes.
+
+    A pipeline of read-only commands is read-only, and a safe head must not
+    launder a dangerous tail: both facts need the parts separately, so the
+    classifier stops reading a whole shell line as one opaque operation.
+    """
+    segments: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    index = 0
+    while index < len(command):
+        character = command[index]
+        if quote:
+            current.append(character)
+            if character == quote:
+                quote = None
+            index += 1
+            continue
+        if character in "\"'":
+            quote = character
+            current.append(character)
+            index += 1
+            continue
+        match = _SEPARATORS.match(command, index)
+        if match:
+            segments.append("".join(current).strip())
+            current = []
+            index = match.end()
+            continue
+        current.append(character)
+        index += 1
+    segments.append("".join(current).strip())
+    return [segment for segment in segments if segment]
 _SAFE_INSPECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     _SAFE_PREFIXES,
     _SAFE_GIT_BRANCH,
@@ -227,6 +301,27 @@ def _categorize(normalized: str) -> tuple[str, bool, list[str]]:
     """Order is the security property: mutation flags are checked before the
     safe listings so a delete can never hide behind a read-only prefix, and
     everything unrecognized fails closed as a mutation."""
+    edit = _TOOL_FILE_EDIT.match(normalized)
+    if edit:
+        path = edit.group("path").strip().strip("\"'")
+        if _SENSITIVE_EDIT.search(path):
+            return ("worktree-file-mutation", True,
+                    [f"edit outside ordinary working files: {path[:80]}"])
+        return "worktree-file-mutation", False, ["a file in the working tree"]
+
+    # Strip leading assignments so `VAR=x cmd` is judged on cmd; an assignment
+    # with nothing after it changes no state at all.
+    stripped = normalized
+    while True:
+        trimmed = _ASSIGNMENT_PREFIX.sub("", stripped, count=1)
+        if trimmed == stripped:
+            break
+        stripped = trimmed
+    if not stripped.strip():
+        return "read-only-inspection", False, ["a shell variable assignment"]
+    if stripped != normalized:
+        return _categorize(stripped)
+
     if _GIT_BRANCH_MUTATION.search(normalized):
         return (
             "git-branch-mutation",
@@ -238,6 +333,14 @@ def _categorize(normalized: str) -> tuple[str, bool, list[str]]:
     for category, pattern, impact in _ACTION_PATTERNS:
         if pattern.search(normalized):
             return category, True, list(impact)
+    # A redirect writes a file whatever the verb says, so it is checked after
+    # the named mutations but before the read allowances.
+    if _REDIRECT.search(normalized):
+        return "worktree-file-mutation", True, ["a redirected write to the filesystem"]
+    if _SAFE_SHELL_READS.match(normalized):
+        return "read-only-inspection", False, ["local read-only state"]
+    if _LOCAL_COMPUTE.match(normalized):
+        return "local-compute-or-state", False, ["local computation; no protected surface named"]
     return (
         "unclassified-mutation",
         True,
@@ -262,6 +365,18 @@ def _risk_tier(category: str, normalized: str) -> tuple[str, bool]:
 def classify_action(operation: str, extra_protected: tuple[str, ...] = ()) -> dict[str, Any]:
     """Deterministic preview of what an operation would touch.
 
+    A compound command is classified part by part and takes the risk of its
+    worst part: a pipeline of reads is a read, and a safe head never launders a
+    dangerous tail.
+
+    **Scope, stated rather than implied.** This gate answers "does this name a
+    protected operation" - history rewriting, remote writes, branch and file
+    deletion, schema drops - and fails closed on anything mutation-shaped it
+    does not recognise. It is not a sandbox: running an interpreter is recorded
+    as local compute, because gating every `python -m unittest` duplicates the
+    host's own execution consent and, tried once in a live session, denied `ls`
+    and stopped all work.
+
     `extra_protected` lets a local policy widen the protected set by category
     name; it can only add protection, never remove it, because a policy file
     inside the repository must not be able to declare a mutation safe.
@@ -269,6 +384,18 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = ()) -> di
     normalized = operation.strip()
     if not normalized:
         raise AuthorizationError("Operation description cannot be empty")
+
+    segments = shell_segments(normalized)
+    if len(segments) > 1:
+        # The worst part decides, ranked by tier, so `git status && git push
+        # --force` is a force push rather than a status call.
+        verdicts = [classify_action(segment, extra_protected) for segment in segments]
+        worst = max(verdicts, key=lambda v: (v["protected"], v["tier"]))
+        worst["impact"] = sorted({item for v in verdicts for item in v["impact"]})
+        worst["operation_digest"] = hashlib.sha256(normalized.encode()).hexdigest()
+        worst["segments"] = len(segments)
+        return worst
+
     category, protected, impact = _categorize(normalized)
     if not protected and category in tuple(extra_protected):
         protected = True
