@@ -372,6 +372,12 @@ def rank(
     never invisible merely because the task wording missed it. Freshness breaks
     ties toward recently-edited sources: same project state gives the same
     ordering, but a stale document cannot outrank a fresh sibling on weight alone.
+
+    Rank fusion was prototyped here and rejected on measurement (C-73): fusing
+    positions needs long ranked lists to separate candidates, and this corpus is
+    tens of segments across three signals, where it collapsed into ties broken
+    alphabetically. It also contradicts a deliberate property - role authority is
+    *meant* to dominate - which fusion exists to prevent.
     """
     terms = _terms(task)
     raw: dict[int, float] = {}

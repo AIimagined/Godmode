@@ -275,8 +275,7 @@ Contributions must keep the dependency budget at zero — see
 
 ## License
 
-[Apache License 2.0](./LICENSE) — chosen over MIT for its explicit patent grant,
-patent-retaliation clause, and trademark reservation, which keep the project
-name attached to the project. Attribution notices live in [NOTICE](./NOTICE).
+Licensed under the [Apache License 2.0](./LICENSE). Attribution and project
+identity notices are preserved in [NOTICE](./NOTICE).
 
 Developed by AIimagined.

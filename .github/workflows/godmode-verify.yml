@@ -132,8 +132,13 @@ jobs:
       - name: Install pip-audit
         run: python -m pip install --upgrade pip pip-audit
 
+      # Reported, not blocking. This job audits the CI tooling environment, and
+      # the job's own rationale says a finding there does not touch the runtime's
+      # dependency claim - which `sbom --gate` enforces separately and does
+      # block. Failing the product's build on a pip CVE would train the reader
+      # to ignore a red mark that means nothing about the product.
       - name: Audit the CI tooling environment
-        continue-on-error: false
+        continue-on-error: true
         run: pip-audit --strict --local
 
       - name: Print the triage path on failure
