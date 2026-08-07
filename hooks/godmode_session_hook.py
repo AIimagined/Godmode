@@ -21,6 +21,8 @@ from godmode_runtime.godmode_corpus import resolve_roles  # noqa: E402
 from godmode_runtime.godmode_drift import capabilities as host_capabilities  # noqa: E402
 from godmode_runtime.godmode_drift import compare as compare_sessions  # noqa: E402
 from godmode_runtime.godmode_lens import build_context_brief  # noqa: E402
+from godmode_runtime.godmode_contribution import contribution  # noqa: E402
+from godmode_runtime.godmode_contribution import render_line as render_contribution  # noqa: E402
 from godmode_runtime.godmode_guardrails import check_ceilings  # noqa: E402
 from godmode_runtime.godmode_guardrails import meter_tool_call, tool_operation, watchdog  # noqa: E402
 from godmode_runtime.godmode_sentinel import CapabilityBroker, classify_action  # noqa: E402
@@ -202,7 +204,17 @@ def main(argv: list[str] | None = None) -> int:
                 },
                 evidence=_bounded_list(submitted.get("evidence")),
             )
-            print(json.dumps({"godmode": "checkpoint", "stored": True, "sequence": record["sequence"]}))
+            payload = {"godmode": "checkpoint", "stored": True,
+                       "sequence": record["sequence"]}
+            # What the gates did this run, at the moment the run ends. Silent
+            # when nothing fired, and switched off by .godmode-report.json.
+            session = latest_session(archive)
+            if session:
+                summary = render_contribution(
+                    contribution(archive, Path(anchor.project_root), session))
+                if summary:
+                    payload["summary"] = summary
+            print(json.dumps(payload, ensure_ascii=False))
             return 0
 
         # Pre-tool boundary. Two callers, one decision: a host passing its own

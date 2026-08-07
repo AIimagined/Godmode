@@ -59,6 +59,9 @@ from .godmode_parity import absorption_check, parity_matrix, schema_ladder
 from .godmode_reconcile import classify_environment, reconcile_docs, reconcile_versions, record_triggers
 from .godmode_removal import REQUIRED_FIELDS as REMOVAL_FIELDS
 from .godmode_report import completion_report, render_markdown
+from .godmode_docslint import lint_docs
+from .godmode_contribution import contribution
+from .godmode_contribution import render_line as render_contribution
 from .godmode_fuzz import fuzz as run_fuzz
 from .godmode_metrics import metrics as product_metrics
 from .godmode_metrics import render_markdown as render_metrics
@@ -524,7 +527,14 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 def cmd_session_close(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
-    verdict = close_session(runtime.archive, _session(runtime, args.session), _charter(runtime))
+    session = _session(runtime, args.session)
+    verdict = close_session(runtime.archive, session, _charter(runtime))
+    # What the gates actually did this session, so the friction has a
+    # counterpart. Silent when nothing fired.
+    report = contribution(runtime.archive, Path(runtime.anchor.project_root), session)
+    if report["reportable"]:
+        verdict["contribution"] = report
+        verdict["summary"] = render_contribution(report)
     return CommandResult(verdict, exit_code=0 if verdict["closed"] else 1)
 
 
@@ -1451,6 +1461,12 @@ def cmd_status_handover(args: argparse.Namespace, runtime: Runtime) -> CommandRe
         charter=_charter(runtime) if args.session else None,
         anchor=runtime.anchor,
     )
+    session = latest_session(runtime.archive)
+    if session:
+        report = contribution(runtime.archive, Path(runtime.anchor.project_root), session)
+        if report["reportable"]:
+            view["contribution"] = report
+            view["summary"] = render_contribution(report)
     return CommandResult(view)
 
 
@@ -1460,6 +1476,11 @@ def cmd_docs_reconcile(args: argparse.Namespace, runtime: Runtime) -> CommandRes
 
 
 def cmd_docs(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if getattr(args, "lint", False):
+        report = lint_docs(Path(runtime.anchor.project_root))
+        # High severity means something shipped that was never meant to; the
+        # rest is reported without failing the command.
+        return CommandResult(report, exit_code=1 if report["high_severity"] else 0)
     if getattr(args, "records", False):
         _require_archive(runtime)
         report = record_triggers(runtime.archive, base_sequence=args.base_sequence)
@@ -1468,7 +1489,7 @@ def cmd_docs(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         return cmd_docs_reconcile(args, runtime)
     # Name the missing flag, not the internal record constraint it would trip.
     if not args.document or not args.status:
-        raise ArchiveError("docs requires --document and --status (or --reconcile)")
+        raise ArchiveError("docs requires --document and --status (or --reconcile / --lint)")
     return CommandResult(
         {
             "record": _append(
@@ -2231,6 +2252,8 @@ def _build_parser() -> argparse.ArgumentParser:
     sprint.set_defaults(handler=cmd_sprint)
 
     docs = sub.add_parser("docs", help="Record documentation obligations, or reconcile the trigger table")
+    docs.add_argument("--lint", action="store_true",
+                      help="Check public prose for leaked rationale and unverifiable claims")
     docs.add_argument("--reconcile", action="store_true",
                       help="Fail when a change mandates a documentation move that did not happen")
     docs.add_argument("--base", default="HEAD")
