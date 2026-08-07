@@ -356,6 +356,13 @@ class LocalGitTests(unittest.TestCase):
                           "git checkout -- .", "git branch -D main"):
             self.assertTrue(classify_action(operation)["protected"], operation)
 
+    def test_amend_is_named_rather_than_left_to_fail_closed(self) -> None:
+        """It was refused either way, but as an unclassified mutation — which
+        tells the reader nothing about why the gate stopped them."""
+        verdict = classify_action("git commit --amend -m 'reword'")
+        self.assertTrue(verdict["protected"])
+        self.assertEqual(verdict["category"], "git-history-or-remote")
+
     def test_a_commit_still_cannot_launder_a_push(self) -> None:
         verdict = classify_action("git commit -m x && git push origin main")
         self.assertTrue(verdict["protected"])
