@@ -465,7 +465,37 @@ def _citation_resolves(project: Path, archive: Chronicle, citation: str) -> bool
         except OSError:
             return False
         return 1 <= int(start) <= len(lines)
+    # A source outside the worktree is the operator's assertion that they read
+    # it. Nothing local can confirm that, and confirming it over the network is
+    # not something this runtime does - so it resolves as a declaration and the
+    # claim carries a marker saying the evidence was asserted rather than
+    # checked. Without this the external gate was unsatisfiable: it demanded a
+    # `doc:` or `url:` citation and then rejected every one of them, so a claim
+    # about the outside world could never be recorded as verified whatever the
+    # author had actually read.
+    if citation.startswith(("doc:", "url:")):
+        return _is_plausible_source_reference(citation.split(":", 1)[1])
     return False
+
+
+# What the operator asserts they read has to look like a reference to something.
+# Accepting any non-empty remainder let a fuzzed citation of control characters
+# and encoded traversal earn a verified grade - garbage is not an assertion, and
+# a gate that accepts it is worse than one that accepts nothing, because it
+# reports confidence it never had.
+_PLAUSIBLE_REFERENCE = re.compile(r"^[^\x00-\x1f\x7f]{4,512}$")
+_ENCODED_TRAVERSAL = re.compile(r"(?i)%2e%2e|\.\.[/\\]")
+
+
+def _is_plausible_source_reference(reference: str) -> bool:
+    reference = reference.strip()
+    if not _PLAUSIBLE_REFERENCE.fullmatch(reference):
+        return False
+    if _ENCODED_TRAVERSAL.search(reference):
+        return False
+    # At least one readable word, so a string of punctuation cannot pass as the
+    # name of a document somebody opened.
+    return re.search(r"[A-Za-z0-9]{3,}", reference) is not None
 
 
 def known_citations(archive: Chronicle, limit: int = 500) -> list[str]:
@@ -494,6 +524,47 @@ def near_miss(citation: str, candidates: list[str], floor: float = 0.6) -> str |
     return best
 
 
+# A claim about the outside world, recognised without being declared.
+#
+# The external check already existed and already worked; it simply only ran
+# when the caller passed the flag, so it protected whoever remembered they were
+# talking about a remote system. The seed case was an assertion that a pinned
+# action version did not exist - stated from recall, wrong, and caught only
+# because a human checked. No flag was passed, because it did not feel like a
+# claim about anything remote. It was one.
+#
+# Narrow on purpose. A detector that fires on ordinary local statements teaches
+# the operator to route around it, so this names third-party artefacts and
+# version behaviour and nothing else.
+_THIRD_PARTY_PIN = re.compile(
+    r"(?i)\b[\w.-]+/[\w.-]+@v?\d"        # org/repo@v7 - an action or package pin
+    r"|\b[\w.-]{2,}@\d+(?:\.\d+)*\b"     # react@19
+)
+_VERSION_BEHAVIOUR = re.compile(
+    r"(?i)\b(?:latest|newest|current)\s+(?:stable\s+)?version\s+of\b"
+    r"|\b[A-Z][\w.+-]*\s+\d+(?:\.\d+)*\s+(?:supports?|introduced|added|"
+    r"removed|dropped|deprecat\w+|requires?|is\s+(?:not\s+)?(?:yet\s+)?"
+    r"released)\b"
+    r"|\b(?:was|were)\s+(?:removed|added|introduced|deprecated)\s+in\s+"
+    r"[A-Z][\w.+-]*\s*\d"
+)
+
+
+def looks_external(text: str) -> tuple[bool, str]:
+    """Whether a claim asserts something about a system outside this worktree.
+
+    Returns the verdict and what triggered it, so a downgrade can say why
+    rather than leaving the author to guess which words tripped it.
+    """
+    match = _THIRD_PARTY_PIN.search(text)
+    if match:
+        return True, f"names a third-party artefact at a pinned version: {match.group(0)}"
+    match = _VERSION_BEHAVIOUR.search(text)
+    if match:
+        return True, f"asserts what a released version does: {match.group(0)}"
+    return False, ""
+
+
 def record_claim(
     archive: Chronicle,
     project: Path,
@@ -515,6 +586,10 @@ def record_claim(
     if grade not in GRADES:
         raise ArchiveError(f"Unknown claim grade '{grade}'; expected one of {', '.join(GRADES)}")
     citations = cites or []
+    # Detected as well as declared: the check protected whoever remembered to
+    # pass the flag, which is not the person who needs it.
+    if not external and grade == "verified":
+        external, _reason = looks_external(text)
     if external and grade == "verified":
         primary = [c for c in citations if c.startswith(("doc:", "url:"))]
         if not primary:
@@ -571,6 +646,13 @@ def record_claim(
             "unsupported": unsupported,
             "downgraded": effective != grade,
             "reason": reason,
+            # Named rather than implied: a later reader can see which part of
+            # the support was machine-checked and which was taken on the
+            # author's word, instead of reading one uniform "verified".
+            "operator_asserted": [
+                citation for citation in citations
+                if citation.startswith(("doc:", "url:"))
+            ],
         },
         evidence=citations,
     )

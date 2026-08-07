@@ -72,3 +72,16 @@ Grok, plus a composite GitHub Action.
 3. Annotated tag `v0.2.1` with the checksum manifest recorded; GPG signing
    remains an owner step (SEC-008) — sign the tag when a key is configured:
    `git tag -s v0.2.1-signed v0.2.1`
+
+## Verifying
+
+```
+python -m unittest discover -s tests        # 387 tests at this tag
+python scripts/godmode.py --project . selftest --brief
+python scripts/godmode.py --project . version --reconcile --brief
+```
+
+This section was added retroactively. The document-linter contract that
+requires it did not exist when this release was cut, and every check the linter
+carried at the time asked only whether a document contained something it should
+not — so a release note with no verification instructions was reported clean.
