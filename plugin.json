@@ -1,0 +1,39 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "godmode",
+  "version": "0.2.2",
+  "description": "Local-first context continuity and evidence governance for coding agents. The portable package carries skills; the action gate needs a host with hook support.",
+  "author": {
+    "name": "AIimagined",
+    "url": "https://github.com/AIimagined"
+  },
+  "homepage": "https://github.com/AIimagined/Godmode",
+  "repository": "https://github.com/AIimagined/Godmode",
+  "license": "Apache-2.0",
+  "keywords": [
+    "context-continuity",
+    "evidence-governance",
+    "local-first",
+    "developer-tools"
+  ],
+  "extensions": {
+    "ai.aiimagined.godmode": {
+      "portable_components": ["skills"],
+      "requires_host_support": {
+        "pre_tool_gate": "The action gate is a host hook. Hooks are outside the v1 portable format, so a client without hook support installs the skills and no enforcement.",
+        "archive": "Continuity records are written under the repository's git metadata directory by the bundled runtime, not by the host."
+      },
+      "runtime": {
+        "entrypoint": "scripts/godmode.py",
+        "language": "python",
+        "minimum_version": "3.11",
+        "runtime_dependencies": 0
+      },
+      "host_manifests": {
+        "claude-code": ".claude-plugin/plugin.json",
+        "codex": ".codex-plugin/plugin.json",
+        "grok": ".grok-plugin/plugin.json"
+      }
+    }
+  }
+}
