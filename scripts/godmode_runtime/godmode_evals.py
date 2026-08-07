@@ -15,13 +15,29 @@ control the way an agent under pressure would - fabricated citations, blank
 reasons, unapproved plans - and reports every cell's observed result, including
 the attacks that succeed: a grid that only reports the refusals it expected is
 the same self-flattery the controls exist to prevent.
+
+Behaviour assertions get the same treatment as routing: an assertion may carry a
+`check` - an argv string plus expectations on exit code and output - and then it
+runs, for real, against this project. A bare string stays legal and is reported
+declared-only, because pretending an unexecutable sentence passed would be the
+exact dishonesty the runner exists to remove; the counts make the gap visible
+instead. Two further snapshot families extend the routing idiom to the other
+behaviours that can drift silently: the charter snapshot freezes every compiled
+rule (id, trigger, enforcement, verify, and a hash of its text, so a wording
+edit is visible without duplicating the prose into a second file), and the
+ranking snapshot freezes which segments the context brief selects, in order, for
+a fixed set of tasks - the spec's own test for whether retrieval still behaves.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import re
+import shlex
+import subprocess
+import sys
 import tempfile
 from typing import Any
 
@@ -29,6 +45,22 @@ from .godmode_errors import GodmodeError
 
 EVAL_SCHEMA = "godmode-skill-eval-v1"
 SNAPSHOT_SCHEMA = "godmode-routing-snapshot-v1"
+ASSERTION_SCHEMA = "godmode-behavior-assertions-v1"
+CHARTER_SNAPSHOT_SCHEMA = "godmode-charter-snapshot-v1"
+RANKING_SNAPSHOT_SCHEMA = "godmode-ranking-snapshot-v1"
+
+# One probe may not hang the whole eval run; a minute is generous for a local CLI.
+ASSERTION_TIMEOUT_SECONDS = 60
+
+# The fixed task set the ranking snapshot is taken over. Fixed on purpose: a
+# snapshot over varying tasks measures the tasks, not the ranking. Three tasks
+# with distinct vocabularies exercise different regions of the corpus.
+RANKING_TASKS = (
+    "fix a failing test without breaking the guard suite",
+    "prepare a release: changelog, version surfaces, and docs",
+    "investigate a regression in context continuity after a branch switch",
+)
+RANKING_BUDGET = 1200
 
 # Words too common in workflow prose to distinguish one skill from another.
 _STOPWORDS = frozenset(
@@ -75,6 +107,7 @@ def load_suites(project: Path) -> dict[str, dict[str, Any]]:
             "positive": [str(p) for p in routing.get("positive", [])],
             "near_negative": [str(p) for p in routing.get("near_negative", [])],
             "description": _description_line(path.parent),
+            "behavior_assertions": list(data.get("behavior_assertions", [])),
         }
     if not suites:
         raise GodmodeError(
@@ -265,6 +298,258 @@ def check_snapshots(project: Path, write: bool = False) -> dict[str, Any]:
         "missing_snapshots": missing,
         "stale_snapshots": stale,
         "verdict": "behaviour-changed" if changed else "behaviour-stable",
+    }
+
+
+def _run_check(project: Path, check: dict[str, Any]) -> tuple[bool, str]:
+    """Execute one assertion's declared probe and say what was observed.
+
+    The command is an argv string, split with shlex and run without a shell:
+    a probe that needs shell features is a probe whose behaviour differs per
+    machine, which is the opposite of an eval. `python` maps to the interpreter
+    running the evals, because the probe must test this runtime, not whichever
+    binary PATH happens to resolve today.
+    """
+    command = str(check.get("command", "")).strip()
+    if not command:
+        return False, "check declares no command"
+    argv = shlex.split(command)
+    if argv[0] == "python":
+        argv[0] = sys.executable
+    try:
+        proc = subprocess.run(
+            argv, cwd=str(project), capture_output=True, text=True,
+            timeout=ASSERTION_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"probe did not run: {type(exc).__name__}: {exc}"[:200]
+    output = (proc.stdout or "") + (proc.stderr or "")
+    expected_exit = int(check.get("expect_exit", 0))
+    if proc.returncode != expected_exit:
+        return False, (
+            f"exit {proc.returncode}, expected {expected_exit}; output: "
+            f"{output.strip()[:160]}"
+        )
+    needle = check.get("expect_contains")
+    if needle is not None and str(needle) not in output:
+        return False, f"output lacks {str(needle)!r}; output: {output.strip()[:160]}"
+    observed = f"exit {proc.returncode}"
+    if needle is not None:
+        observed += f", output contains {str(needle)!r}"
+    return True, observed
+
+
+def run_behavior_assertions(project: Path) -> dict[str, Any]:
+    """Run every executable behaviour assertion; count the rest honestly.
+
+    An assertion object carrying a `check` is executed for real - its command
+    runs from the project root and its exit code and output are held against the
+    declared expectations. A bare string cannot be executed, so it is reported
+    declared-only rather than imagined as passing: the per-skill counts keep the
+    gap between promised and proven behaviour in plain sight, which is the whole
+    reason to run assertions instead of admiring them.
+    """
+    suites = load_suites(project)
+    skills: dict[str, dict[str, Any]] = {}
+    totals = {"executable": 0, "passed": 0, "failed": 0, "declared_only": 0}
+
+    for skill in sorted(suites):
+        assertions: list[dict[str, Any]] = []
+        passed = failed = declared_only = 0
+        for entry in suites[skill]["behavior_assertions"]:
+            if isinstance(entry, dict) and entry.get("check"):
+                check = entry["check"]
+                held, observed = _run_check(project, check)
+                if held:
+                    passed += 1
+                else:
+                    failed += 1
+                assertions.append({
+                    "assert": str(entry.get("assert", "")).strip(),
+                    "mode": "executable",
+                    "command": str(check.get("command", "")),
+                    "observed": observed,
+                    "outcome": "pass" if held else "fail",
+                })
+            else:
+                declared_only += 1
+                text = entry if isinstance(entry, str) else str(entry.get("assert", ""))
+                assertions.append({
+                    "assert": text.strip(),
+                    "mode": "declared-only",
+                    "outcome": "not-run",
+                })
+        skills[skill] = {
+            "assertions": assertions,
+            "executable": passed + failed,
+            "passed": passed,
+            "failed": failed,
+            "declared_only": declared_only,
+        }
+        totals["executable"] += passed + failed
+        totals["passed"] += passed
+        totals["failed"] += failed
+        totals["declared_only"] += declared_only
+
+    return {
+        "schema": ASSERTION_SCHEMA,
+        "skills": skills,
+        "totals": totals,
+        "verdict": "assertions-held" if totals["failed"] == 0 else "assertion-failed",
+    }
+
+
+def _charter_view(project: Path) -> dict[str, Any]:
+    """The compiled rule set, serialized for snapshotting.
+
+    Each rule keeps its enforcement-bearing fields plus a hash of its text: the
+    hash makes a wording edit visible without copying the prose into a second
+    file that would then drift from the first.
+    """
+    from .godmode_charter import compile_charter
+
+    charter = compile_charter(project)
+    rules = {
+        rule["id"]: {
+            "trigger": rule["trigger"],
+            "enforcement": rule["enforcement"],
+            "verify": rule["verify"],
+            "text_hash": hashlib.sha256(
+                rule["text"].encode("utf-8")).hexdigest()[:16],
+        }
+        for rule in charter["compiled"]
+    }
+    return {
+        "schema": CHARTER_SNAPSHOT_SCHEMA,
+        "rules": rules,
+        "summary": {"rules": charter["rules"], "enforcement": charter["enforcement"]},
+    }
+
+
+def charter_snapshot(project: Path, write: bool = False) -> dict[str, Any]:
+    """Diff the compiled charter against its last-accepted snapshot.
+
+    Editing a prose rule must show up as a diff (K-13): a reworded rule compiles
+    to a new id, so it reports as one rule removed and one added; a rule whose
+    text survived but now classifies differently - a compiler change - reports
+    field-level, the same way routing snapshots do. `write=True` accepts the
+    current rule set as the new baseline.
+    """
+    fixture = project / "evals" / "fixtures" / "charter-rules.json"
+    current = _charter_view(project)
+
+    if write:
+        fixture.parent.mkdir(parents=True, exist_ok=True)
+        fixture.write_text(
+            json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return {"fixture": str(fixture), "rules": len(current["rules"]),
+                "verdict": "snapshot-written"}
+
+    if not fixture.is_file():
+        return {"fixture": str(fixture), "missing_snapshot": True,
+                "added": sorted(current["rules"]), "removed": [], "changed": [],
+                "verdict": "charter-changed"}
+    try:
+        stored = json.loads(fixture.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise GodmodeError(f"Unreadable snapshot {fixture.name}: {exc}")
+
+    old, new = stored.get("rules", {}), current["rules"]
+    added = sorted(set(new) - set(old))
+    removed = sorted(set(old) - set(new))
+    changed: list[dict[str, Any]] = []
+    for rule_id in sorted(set(old) & set(new)):
+        for field, after in new[rule_id].items():
+            before = old[rule_id].get(field, "<field absent>")
+            if before != after:
+                changed.append({"rule": rule_id, "field": field,
+                                "was": before, "now": after})
+    old_summary = stored.get("summary", {})
+    for field, after in current["summary"].items():
+        before = old_summary.get(field, "<field absent>")
+        if before != after:
+            changed.append({"rule": "<summary>", "field": field,
+                            "was": before, "now": after})
+
+    stable = not (added or removed or changed)
+    return {
+        "fixture": str(fixture),
+        "missing_snapshot": False,
+        "rules_checked": len(new),
+        "added": added,
+        "removed": removed,
+        "changed": changed,
+        "verdict": "charter-stable" if stable else "charter-changed",
+    }
+
+
+def _ranking_view(project: Path) -> dict[str, Any]:
+    """The ordered segment selection the brief makes for each fixed task."""
+    from .godmode_corpus import build_brief
+
+    tasks: dict[str, list[list[Any]]] = {}
+    scorer = None
+    for task in RANKING_TASKS:
+        brief = build_brief(project, task, RANKING_BUDGET)
+        scorer = brief["scorer"]
+        tasks[task] = [
+            [entry["path"], entry["lines"][0]] for entry in brief["context"]
+        ]
+    return {
+        "schema": RANKING_SNAPSHOT_SCHEMA,
+        "scorer": scorer,
+        "budget": RANKING_BUDGET,
+        "tasks": tasks,
+    }
+
+
+def ranking_snapshot(project: Path, write: bool = False) -> dict[str, Any]:
+    """Diff the brief's ranking for the fixed task set against its snapshot.
+
+    The spec's own acceptance for retrieval is "snapshot the ranking for a fixed
+    task set": what is recorded is exactly what a model would be given - which
+    segments, in which order - so a corpus or scorer change that silently
+    reshuffles context fails here instead of surfacing as a confused agent. The
+    scorer name is part of the snapshot because fts5 and the fallback are
+    different rankers, and pretending their outputs are interchangeable would
+    hide exactly the drift this exists to catch.
+    """
+    fixture = project / "evals" / "fixtures" / "ranking.json"
+    current = _ranking_view(project)
+
+    if write:
+        fixture.parent.mkdir(parents=True, exist_ok=True)
+        fixture.write_text(
+            json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return {"fixture": str(fixture), "tasks": len(RANKING_TASKS),
+                "verdict": "snapshot-written"}
+
+    if not fixture.is_file():
+        return {"fixture": str(fixture), "missing_snapshot": True, "diffs": [],
+                "verdict": "ranking-changed"}
+    try:
+        stored = json.loads(fixture.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise GodmodeError(f"Unreadable snapshot {fixture.name}: {exc}")
+
+    diffs: list[dict[str, Any]] = []
+    for field in ("scorer", "budget"):
+        before = stored.get(field, "<field absent>")
+        if before != current[field]:
+            diffs.append({"field": field, "was": before, "now": current[field]})
+    old_tasks = stored.get("tasks", {})
+    for task in sorted(set(old_tasks) | set(current["tasks"])):
+        before = old_tasks.get(task, "<task absent>")
+        after = current["tasks"].get(task, "<task absent>")
+        if before != after:
+            diffs.append({"field": f"tasks[{task}]", "was": before, "now": after})
+
+    return {
+        "fixture": str(fixture),
+        "missing_snapshot": False,
+        "tasks_checked": len(current["tasks"]),
+        "diffs": diffs,
+        "verdict": "ranking-stable" if not diffs else "ranking-changed",
     }
 
 

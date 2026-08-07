@@ -160,3 +160,84 @@ def reconcile_docs(project: Path, base: str = "HEAD") -> dict[str, Any]:
         "missing": missing,
         "verdict": "reconciled" if not missing else "documentation-missing",
     }
+
+
+# §20 record-based trigger table: an archive record → the counterpart record
+# that must accompany it. Path prefixes catch file drift; this table catches
+# knowledge drift - work that happened without the record that makes it
+# survivable across sessions.
+#   change            → a checkpoint after it (unanchored work cannot be rewound)
+#   bug close (sprint) → an invariant or lesson (a fix without a guard reverts)
+#   decision reversal  → a decision citing the one it reverses (report only)
+#   sprint transition  → nothing; the record is its own documentation
+#   incident           → a lesson in the same window (report only)
+
+
+def record_triggers(archive: Any, base_sequence: int = 0) -> dict[str, Any]:
+    """Check the record-based trigger table over records after base_sequence.
+
+    Report-only by design: the output names what is satisfied and what is
+    missing, and the caller decides whether that blocks. Two rules are further
+    marked report_only because their counterpart may legitimately arrive later
+    (a reversal citation, an incident lesson); the caller should surface them
+    without treating them as gate failures.
+
+    Deterministic: the same archive window always yields the same lists, in
+    record-sequence order, so two sessions reading the report agree.
+    """
+    window = [r for r in archive.read_events() if r["sequence"] > base_sequence]
+    all_decisions = [r for r in archive.read_events() if r["kind"] == "decision"]
+    satisfied: list[dict[str, Any]] = []
+    missing: list[dict[str, Any]] = []
+
+    def later(kind_names: tuple[str, ...], after: int) -> bool:
+        return any(r["kind"] in kind_names and r["sequence"] > after for r in window)
+
+    for record in window:
+        kind, sequence, subject = record["kind"], record["sequence"], record["subject"]
+        if kind == "change":
+            entry = {"rule": "change-requires-checkpoint", "sequence": sequence,
+                     "subject": subject, "requires": "a checkpoint record after this change"}
+            (satisfied if later(("checkpoint",), sequence) else missing).append(entry)
+        elif kind == "sprint":
+            data = record["data"]
+            if data.get("item_type") == "bug" and data.get("state") in ("verified", "closed"):
+                entry = {"rule": "bug-close-requires-guard", "sequence": sequence,
+                         "subject": subject,
+                         "requires": "an invariant or lesson record capturing the guard"}
+                (satisfied if later(("invariant", "lesson"), sequence) else missing).append(entry)
+            else:
+                satisfied.append({"rule": "sprint-transition", "sequence": sequence,
+                                  "subject": subject,
+                                  "requires": "nothing (self-recording)"})
+        elif kind == "decision":
+            reversed_by_this = [
+                d for d in all_decisions
+                if d["sequence"] < sequence and d["subject"] == subject
+                and d["data"].get("value") != record["data"].get("value")
+            ]
+            if not reversed_by_this:
+                continue
+            cites_earlier = any(
+                f"seq:{d['sequence']}" in record.get("evidence", [])
+                for d in reversed_by_this
+            )
+            entry = {"rule": "decision-reversal-requires-citation", "sequence": sequence,
+                     "subject": subject, "report_only": True,
+                     "requires": "a decision record citing (seq:N) the decision it reverses",
+                     "reverses": [d["sequence"] for d in reversed_by_this]}
+            (satisfied if cites_earlier else missing).append(entry)
+        elif kind == "incident":
+            entry = {"rule": "incident-requires-lesson", "sequence": sequence,
+                     "subject": subject, "report_only": True,
+                     "requires": "a lesson record within the same window"}
+            in_window_lesson = any(r["kind"] == "lesson" for r in window)
+            (satisfied if in_window_lesson else missing).append(entry)
+
+    return {
+        "base_sequence": base_sequence,
+        "considered": len(window),
+        "satisfied": satisfied,
+        "missing": missing,
+        "verdict": "reconciled" if not missing else "documentation-missing",
+    }

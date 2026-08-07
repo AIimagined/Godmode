@@ -12,7 +12,14 @@
     ]
   },
   "behavior_assertions": [
-    "The brief distinguishes current evidence from stale or missing context.",
+    {
+      "assert": "The brief distinguishes current evidence from stale or missing context.",
+      "check": {
+        "command": "python scripts/godmode.py --project . context status --scan",
+        "expect_exit": 0,
+        "expect_contains": "scan_performed"
+      }
+    },
     "Private state remains outside the trackable working tree."
   ],
   "baseline_required": true,

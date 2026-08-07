@@ -12,7 +12,14 @@
     ]
   },
   "behavior_assertions": [
-    "Protected operations expose scope, impact, recovery, and verification before execution.",
+    {
+      "assert": "Protected operations expose scope, impact, recovery, and verification before execution.",
+      "check": {
+        "command": "python scripts/godmode.py --project . guard --operation \"git push origin main\"",
+        "expect_exit": 3,
+        "expect_contains": "\"protected\": true"
+      }
+    },
     "A capability is exact-operation-bound, expiring, and single-use."
   ],
   "baseline_required": true,

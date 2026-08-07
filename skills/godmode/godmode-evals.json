@@ -12,7 +12,14 @@
     ]
   },
   "behavior_assertions": [
-    "The workflow identifies project context and the smallest applicable specialist skill.",
+    {
+      "assert": "The workflow identifies project context and the smallest applicable specialist skill.",
+      "check": {
+        "command": "python scripts/godmode.py --project . --brief charter",
+        "expect_exit": 0,
+        "expect_contains": "rules"
+      }
+    },
     "Claims of completion cite fresh local evidence and disclose remaining limits."
   ],
   "baseline_required": true,

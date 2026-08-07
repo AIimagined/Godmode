@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -13,10 +16,17 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from godmode_runtime.godmode_evals import (  # noqa: E402
+    ASSERTION_SCHEMA,
+    CHARTER_SNAPSHOT_SCHEMA,
     EVAL_SCHEMA,
+    RANKING_SNAPSHOT_SCHEMA,
+    RANKING_TASKS,
     SNAPSHOT_SCHEMA,
     adversarial_grid,
+    charter_snapshot,
     check_snapshots,
+    ranking_snapshot,
+    run_behavior_assertions,
     run_routing_evals,
 )
 
@@ -35,7 +45,8 @@ KNOWN_MISROUTED_POSITIVES: set[str] = set()
 
 
 def _write_suite(root: Path, skill: str, description: str,
-                 positive: list[str], near_negative: list[str]) -> None:
+                 positive: list[str], near_negative: list[str],
+                 assertions: list | None = None) -> None:
     directory = root / "skills" / skill
     directory.mkdir(parents=True)
     (directory / "SKILL.md").write_text(
@@ -47,7 +58,7 @@ def _write_suite(root: Path, skill: str, description: str,
             "schema": EVAL_SCHEMA,
             "skill": skill,
             "routing": {"positive": positive, "near_negative": near_negative},
-            "behavior_assertions": ["observable"],
+            "behavior_assertions": assertions if assertions is not None else ["observable"],
         }),
         encoding="utf-8",
     )
@@ -208,6 +219,194 @@ class AdversarialGridTests(unittest.TestCase):
         first = adversarial_grid()
         second = adversarial_grid()
         self.assertEqual(first, second)
+
+
+class BehaviorAssertionTests(unittest.TestCase):
+    def _project(self, root: Path, assertions: list) -> None:
+        _write_suite(root, "gamma", "Audit ledger totals for quarterly review.",
+                     ["Audit the ledger totals for the quarterly review."], [],
+                     assertions=assertions)
+
+    def test_executable_assertions_pass_and_fail_correctly(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self._project(root, [
+                {"assert": "the interpreter prints ok",
+                 "check": {"command": "python -c \"print('ok')\"",
+                           "expect_exit": 0, "expect_contains": "ok"}},
+                {"assert": "expected text is absent",
+                 "check": {"command": "python -c \"print('ok')\"",
+                           "expect_contains": "absent-text"}},
+                {"assert": "a declared nonzero exit is honoured",
+                 "check": {"command": "python -c \"import sys; sys.exit(3)\"",
+                           "expect_exit": 3}},
+            ])
+            report = run_behavior_assertions(root)
+            self.assertEqual(report["schema"], ASSERTION_SCHEMA)
+            entry = report["skills"]["gamma"]
+            self.assertEqual(
+                [a["outcome"] for a in entry["assertions"]], ["pass", "fail", "pass"])
+            self.assertEqual(entry["passed"], 2)
+            self.assertEqual(entry["failed"], 1)
+            self.assertEqual(entry["declared_only"], 0)
+            self.assertEqual(report["totals"]["failed"], 1)
+            self.assertEqual(report["verdict"], "assertion-failed")
+            # The failing assertion states what was observed, not just that it failed.
+            failing = entry["assertions"][1]
+            self.assertIn("absent-text", failing["observed"])
+
+    def test_declared_only_assertions_are_counted_not_run(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self._project(root, [
+                "The workflow stays honest about missing evidence.",
+                {"assert": "an object without a check is still declared-only"},
+            ])
+            report = run_behavior_assertions(root)
+            entry = report["skills"]["gamma"]
+            self.assertEqual(entry["declared_only"], 2)
+            self.assertEqual(entry["executable"], 0)
+            self.assertEqual(entry["passed"], 0)
+            self.assertEqual(entry["failed"], 0)
+            for assertion in entry["assertions"]:
+                self.assertEqual(assertion["mode"], "declared-only")
+                self.assertEqual(assertion["outcome"], "not-run")
+                self.assertNotIn("observed", assertion)
+            # Declared-only is reported, never failed: nothing ran, so nothing broke.
+            self.assertEqual(report["verdict"], "assertions-held")
+            self.assertEqual(report["totals"]["declared_only"], 2)
+
+    def test_repo_suites_each_ship_a_passing_executable_assertion(self):
+        # Probes run against a disposable state home so this test never depends
+        # on (or mutates) the developer's real archive.
+        with tempfile.TemporaryDirectory() as raw, mock.patch.dict(
+            os.environ, {"GODMODE_STATE_HOME": str(Path(raw) / "state")}, clear=False
+        ):
+            init = subprocess.run(
+                [sys.executable, "scripts/godmode.py", "--project", ".", "init"],
+                cwd=PLUGIN_ROOT, capture_output=True, text=True, timeout=120)
+            self.assertEqual(init.returncode, 0, init.stderr)
+            report = run_behavior_assertions(PLUGIN_ROOT)
+        self.assertEqual(sorted(report["skills"]), ALL_SKILLS)
+        for skill, entry in report["skills"].items():
+            self.assertGreaterEqual(entry["executable"], 1, skill)
+            self.assertEqual(entry["failed"], 0, entry["assertions"])
+            self.assertGreaterEqual(entry["declared_only"], 1, skill)
+        self.assertEqual(report["verdict"], "assertions-held")
+
+
+def _charter_project(root: Path) -> None:
+    (root / "GODMODE.md").write_text(
+        "# Gates\n"
+        "- Never commit without an explicit ask.\n"
+        "- A claim must cite evidence before completion.\n",
+        encoding="utf-8",
+    )
+
+
+class CharterSnapshotTests(unittest.TestCase):
+    def test_write_then_check_is_stable(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            _charter_project(root)
+            written = charter_snapshot(root, write=True)
+            self.assertEqual(written["verdict"], "snapshot-written")
+            fixture = root / "evals" / "fixtures" / "charter-rules.json"
+            data = json.loads(fixture.read_text(encoding="utf-8"))
+            self.assertEqual(data["schema"], CHARTER_SNAPSHOT_SCHEMA)
+            self.assertGreaterEqual(len(data["rules"]), 2)
+            outcome = charter_snapshot(root)
+            self.assertEqual(outcome["verdict"], "charter-stable", outcome)
+            self.assertEqual(outcome["added"], [])
+            self.assertEqual(outcome["removed"], [])
+            self.assertEqual(outcome["changed"], [])
+
+    def test_editing_a_prose_rule_shows_a_diff(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            _charter_project(root)
+            charter_snapshot(root, write=True)
+            document = root / "GODMODE.md"
+            document.write_text(
+                document.read_text(encoding="utf-8").replace(
+                    "Never commit without an explicit ask.",
+                    "Never push without an explicit ask."),
+                encoding="utf-8")
+            outcome = charter_snapshot(root)
+            self.assertEqual(outcome["verdict"], "charter-changed", outcome)
+            # The reworded rule has a new id: the edit surfaces as one rule
+            # leaving the charter and one arriving, never as silence.
+            self.assertEqual(len(outcome["added"]), 1)
+            self.assertEqual(len(outcome["removed"]), 1)
+
+    def test_field_change_is_reported_field_level(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            _charter_project(root)
+            charter_snapshot(root, write=True)
+            fixture = root / "evals" / "fixtures" / "charter-rules.json"
+            data = json.loads(fixture.read_text(encoding="utf-8"))
+            rule_id = sorted(data["rules"])[0]
+            data["rules"][rule_id]["enforcement"] = "TAMPERED"
+            fixture.write_text(json.dumps(data), encoding="utf-8")
+            outcome = charter_snapshot(root)
+            self.assertEqual(outcome["verdict"], "charter-changed")
+            fields = {(c["rule"], c["field"]) for c in outcome["changed"]}
+            self.assertIn((rule_id, "enforcement"), fields)
+            for change in outcome["changed"]:
+                self.assertIn("was", change)
+                self.assertIn("now", change)
+
+    def test_missing_snapshot_is_reported(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            _charter_project(root)
+            outcome = charter_snapshot(root)
+            self.assertEqual(outcome["verdict"], "charter-changed")
+            self.assertTrue(outcome["missing_snapshot"])
+
+    def test_repo_charter_snapshot_is_current(self):
+        outcome = charter_snapshot(PLUGIN_ROOT)
+        self.assertEqual(outcome["verdict"], "charter-stable", outcome)
+
+
+class RankingSnapshotTests(unittest.TestCase):
+    def test_task_set_is_fixed(self):
+        self.assertEqual(len(RANKING_TASKS), 3)
+        self.assertTrue(all(isinstance(task, str) and task for task in RANKING_TASKS))
+
+    def test_stable_across_two_runs(self):
+        first = ranking_snapshot(PLUGIN_ROOT)
+        second = ranking_snapshot(PLUGIN_ROOT)
+        self.assertEqual(first, second)
+        self.assertEqual(first["verdict"], "ranking-stable", first)
+
+    def test_ranking_change_is_detected(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "GODMODE.md").write_text(
+                "# Guide\n- Always check the failing test first.\n", encoding="utf-8")
+            written = ranking_snapshot(root, write=True)
+            self.assertEqual(written["verdict"], "snapshot-written")
+            self.assertEqual(ranking_snapshot(root)["verdict"], "ranking-stable")
+            (root / "GODMODE.md").write_text(
+                "# Guide\n\n## Release\nPrepare the changelog and docs early.\n\n"
+                "## Tests\n- Always check the failing test first.\n",
+                encoding="utf-8")
+            outcome = ranking_snapshot(root)
+            self.assertEqual(outcome["verdict"], "ranking-changed", outcome)
+            self.assertTrue(outcome["diffs"])
+            for diff in outcome["diffs"]:
+                self.assertIn("was", diff)
+                self.assertIn("now", diff)
+
+    def test_repo_ranking_snapshot_is_current(self):
+        outcome = ranking_snapshot(PLUGIN_ROOT)
+        self.assertEqual(outcome["verdict"], "ranking-stable", outcome)
+        fixture = PLUGIN_ROOT / "evals" / "fixtures" / "ranking.json"
+        data = json.loads(fixture.read_text(encoding="utf-8"))
+        self.assertEqual(data["schema"], RANKING_SNAPSHOT_SCHEMA)
+        self.assertEqual(sorted(data["tasks"]), sorted(RANKING_TASKS))
 
 
 class DocsSiteTests(unittest.TestCase):

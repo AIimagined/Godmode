@@ -83,10 +83,12 @@ def opening_handshake(archive: Chronicle, anchor: Any, project: Path) -> dict[st
     contract degrades honestly on hosts that cannot hold every control.
     """
     from .godmode_anchor import host_capabilities, run_git
+    from .godmode_lens import repo_state
     from .godmode_plan import active_plan
 
     porcelain = run_git(project, "status", "--porcelain=v1", "--untracked-files=all")
     dirty = [line[2:].lstrip() for line in porcelain.splitlines()] if porcelain else []
+    state = repo_state(project)
     plan = active_plan(archive)
     obligations = [
         record["subject"]
@@ -104,11 +106,14 @@ def opening_handshake(archive: Chronicle, anchor: Any, project: Path) -> dict[st
         sources_total = len(resolve_roles(project).bindings)
     except Exception:
         sources_total = 0
-    return {
+    handshake: dict[str, Any] = {
         "identity": anchor.public_view() if anchor is not None else None,
         "branch": getattr(anchor, "branch", None),
         "head": getattr(anchor, "head", None),
         "dirty_files": {"count": len(dirty), "paths": sorted(dirty)[:20]},
+        # Directly after dirty_files, because an unfinished git operation is
+        # what a dirty count silently hides.
+        "repo_state": state,
         "active_plan": {"id": plan["id"], "state": plan["state"]} if plan else None,
         "open_obligations": sorted(set(obligations))[:20],
         "protected_invariants": sorted(set(invariants))[:20],
@@ -120,6 +125,13 @@ def opening_handshake(archive: Chronicle, anchor: Any, project: Path) -> dict[st
         "enforcement": host_capabilities()["controls"],
         "agent": agent_fingerprint(),
     }
+    if state["crisis"]:
+        operations = state["in_progress"] or ["detached-head"]
+        handshake["warning"] = (
+            f"repository has an in-progress git operation: {', '.join(operations)}; "
+            "finish or abort it before substantive work"
+        )
+    return handshake
 
 
 def _sessions(archive: Chronicle) -> list[dict[str, Any]]:
@@ -755,6 +767,135 @@ def half_done_pairs(
                 "missing": "the paired artefact was never cited",
             })
     return findings
+
+
+# §15.2: the only order in which confidence about a finding may grow. Each
+# step names what was added — a corroborating signal, a root cause, a local
+# fix, a verification — so skipping a rung means asserting work never done.
+EVIDENCE_LEVELS = (
+    "observation", "hypothesis", "corroborated", "rooted",
+    "fixed-locally", "verified", "closed",
+)
+
+
+def record_lesson_scoped(
+    archive: Chronicle,
+    subject: str,
+    value: Any,
+    *,
+    project_tag: str,
+    surface: str = "",
+    framework: str = "",
+    confidence: str = "observed",
+    guard: dict[str, Any] | None = None,
+    evidence: list[str] | None = None,
+) -> dict[str, Any]:
+    """§21.1: a lesson tagged with where it was learned, so it cannot leak.
+
+    A lesson recorded in one project and replayed verbatim in another is
+    cross-project contamination: "always mock the payment client" is wisdom in
+    the repo with a payment client and noise everywhere else. The tag is
+    mandatory because an untagged lesson is exactly the kind that leaks; a
+    lesson meant to travel must say so explicitly with portable=True, never by
+    omission.
+    """
+    if not str(project_tag).strip():
+        raise ArchiveError(
+            "A scoped lesson requires a non-empty project_tag; an untagged lesson "
+            "is the cross-project leak this scoping exists to stop"
+        )
+    return archive.append(
+        "lesson",
+        subject,
+        {
+            "value": value,
+            "project_tag": str(project_tag).strip(),
+            "surface": surface,
+            "framework": framework,
+            "confidence": confidence,
+            "guard": guard,
+            "portable": False,
+        },
+        evidence=evidence or [],
+    )
+
+
+def lessons_for(archive: Chronicle, project_tag: str) -> list[dict[str, Any]]:
+    """Lessons that legitimately apply here: this project's, or marked portable.
+
+    Filtering happens at read time rather than write time because the writer
+    cannot know every future reader; only the reader knows which project it is
+    standing in. A lesson with a foreign tag and no explicit portable=True is
+    excluded even if it looks universally useful — usefulness is exactly the
+    judgement portable exists to record.
+    """
+    tag = str(project_tag).strip()
+    return [
+        record
+        for record in archive.select(kind="lesson", limit=500)
+        if record["data"].get("portable") is True
+        or record["data"].get("project_tag") == tag
+    ]
+
+
+def advance_evidence(
+    archive: Chronicle,
+    subject: str,
+    level: str,
+    evidence: str | list[str],
+    *,
+    reason: str = "",
+) -> dict[str, Any]:
+    """§15.2: move a subject along the evidence ladder one rung at a time.
+
+    Confidence that jumps from observation to verified has skipped the steps
+    where it could have been proven wrong, which is how a hunch gets stored
+    wearing a certainty it never earned. The current rung is read from the
+    archive rather than trusted from the caller, so the ladder cannot be
+    climbed by assertion. Downward is always open — reality demoting a finding
+    must never be blocked — but it must carry a reason, because an unexplained
+    demotion erases history instead of correcting it.
+    """
+    if level not in EVIDENCE_LEVELS:
+        raise ArchiveError(
+            f"Unknown evidence level '{level}'; expected one of {', '.join(EVIDENCE_LEVELS)}"
+        )
+    prior = [
+        record
+        for record in archive.select(subject=subject, limit=500)
+        if record["data"].get("evidence_level") in EVIDENCE_LEVELS
+    ]
+    current = prior[-1]["data"]["evidence_level"] if prior else EVIDENCE_LEVELS[0]
+    current_index = EVIDENCE_LEVELS.index(current)
+    new_index = EVIDENCE_LEVELS.index(level)
+    if new_index - current_index > 1:
+        skipped = ", ".join(EVIDENCE_LEVELS[current_index + 1:new_index])
+        raise ArchiveError(
+            f"Evidence for '{subject}' is at '{current}'; jumping to '{level}' skips "
+            f"{skipped}. Record each intermediate level with its own evidence first."
+        )
+    if new_index < current_index and not reason.strip():
+        raise ArchiveError(
+            "Demoting evidence is always allowed but requires a reason; an "
+            "unexplained demotion erases history instead of correcting it"
+        )
+    citations = [evidence] if isinstance(evidence, str) else list(evidence or [])
+    direction = (
+        "down" if new_index < current_index
+        else "up" if new_index > current_index
+        else "same"
+    )
+    return archive.append(
+        "claim",
+        subject,
+        {
+            "evidence_level": level,
+            "previous_level": current,
+            "direction": direction,
+            "reason": reason,
+        },
+        evidence=citations,
+    )
 
 
 def lesson_pipeline(archive: Chronicle) -> dict[str, Any]:

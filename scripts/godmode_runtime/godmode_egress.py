@@ -14,6 +14,8 @@ something other than the model being addressed.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import fnmatch
+import json
 from pathlib import Path
 import re
 from typing import Any
@@ -40,6 +42,61 @@ SENSITIVE = (
     (r"(^|/)\.netrc$|(^|/)\.npmrc$|(^|/)\.pypirc$", "registry credentials"),
     (r"(^|/)\.git/config$", "git configuration; may embed tokens"),
 )
+
+# User-declared privacy classes live at the project root. The file can only add
+# denials on top of SENSITIVE, never remove one: a config that could shrink the
+# built-in boundary would turn a text file into an egress override.
+PRIVACY_FILENAME = ".godmode-privacy.json"
+
+
+def _contained(project: Path, path: str) -> Path | None:
+    """The resolved target, or None when the path would leave the project root.
+
+    Every read that a manifest or scan performs goes through this gate first:
+    a `..` component, an absolute path, or a symlink that resolves elsewhere all
+    end outside `project.resolve()` and are refused before any byte is read.
+    Refusal before reading matters - a file outside the root must not even have
+    its existence or content reflected in a finding.
+    """
+    candidate = Path(path)
+    # An anchored path (drive, root, or UNC) is refused outright: manifest scope
+    # is declared relative to the project, and an absolute path is a claim to
+    # address the filesystem directly.
+    if candidate.is_absolute() or candidate.anchor:
+        return None
+    try:
+        root = project.resolve()
+        resolved = (project / candidate).resolve()
+    except OSError:
+        return None
+    return resolved if resolved.is_relative_to(root) else None
+
+
+def _privacy_rules(project: Path) -> dict[str, list[str]]:
+    """User-declared glob classes from .godmode-privacy.json, or empty lists.
+
+    A missing, unparseable, or mis-typed file yields no rules rather than an
+    error: the built-in SENSITIVE boundary still holds in full, so the failure
+    mode is "no extra protection", never "less protection".
+    """
+    rules: dict[str, list[str]] = {"sensitive_paths": [], "never_leave": []}
+    target = project / PRIVACY_FILENAME
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return rules
+    if not isinstance(payload, dict):
+        return rules
+    for key in rules:
+        declared = payload.get(key)
+        if isinstance(declared, list):
+            rules[key] = [pattern for pattern in declared if isinstance(pattern, str)]
+    return rules
+
+
+def _matches_any(path: str, patterns: list[str]) -> bool:
+    posix = path.replace("\\", "/")
+    return any(fnmatch.fnmatch(posix, pattern) for pattern in patterns)
 
 _EGRESS_SHAPES = (
     (GIT_REMOTE, r"\bgit\s+(?:push|pull|fetch|clone|remote|submodule)\b"),
@@ -79,8 +136,12 @@ _SECRET_KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("connection-string-password",
      re.compile(r"(?i)\b[a-z][a-z0-9+.-]{1,30}:\/\/[^\s:@\/]+:(?P<secret>[^\s@\/]{4,})@")),
     ("credential-assignment",
+     # Two shapes: a quoted literal (any content), or a bare value that cannot
+     # be code - `token = broker.issue(...)` assigns a variable named token,
+     # not a credential, so dots and parens disqualify the unquoted branch.
      re.compile(r"(?i)\b(?:api[_-]?key|access[_-]?key|auth[_-]?token|token|password|"
-                r"passwd|secret)\s*[:=]\s*[\"']?(?P<secret>[^\s\"',;]{8,})")),
+                r"passwd|secret)\s*[:=]\s*"
+                r"(?:[\"'](?P<secret>[^\"']{8,})[\"']|(?P<secret2>[^\s\"',;().]{8,})$)")),
 )
 
 
@@ -105,7 +166,8 @@ def _secret_on_line(line: str) -> tuple[str, str] | None:
     for kind, pattern in _SECRET_KINDS:
         match = pattern.search(line)
         if match:
-            return kind, _mask(match.group("secret"))
+            groups = match.groupdict()
+            return kind, _mask(groups.get("secret") or groups.get("secret2") or "")
     return None
 
 
@@ -163,7 +225,13 @@ def scan_staged(project: Path) -> dict[str, Any]:
             rel = rel.strip()
             if not rel:
                 continue
-            target = project / rel
+            target = _contained(project, rel)
+            if target is None:
+                # Refused unread: nothing about the target's content may leak
+                # into the finding, only the fact that the path escapes.
+                findings.append({"path": rel.replace("\\", "/"), "kind": "path-escape",
+                                 "detail": "resolves outside the project root; refused unread"})
+                continue
             try:
                 text = target.read_text(encoding="utf-8", errors="replace")
             except OSError:
@@ -188,7 +256,11 @@ def scan_paths(project: Path, paths: list[str]) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
     unreadable: list[str] = []
     for rel in sorted(set(paths)):
-        target = project / rel
+        target = _contained(project, rel)
+        if target is None:
+            findings.append({"path": rel.replace("\\", "/"), "kind": "path-escape",
+                             "detail": "resolves outside the project root; refused unread"})
+            continue
         try:
             text = target.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -226,44 +298,77 @@ def classify(action: str) -> dict[str, Any]:
     return {"action": action[:200], "class": LOCAL, "leaves_machine": False}
 
 
-def _sensitivity(path: str) -> str | None:
+def _sensitivity(path: str, user_patterns: list[str] | None = None) -> str | None:
     lowered = path.replace("\\", "/").lower()
     for pattern, why in SENSITIVE:
         if re.search(pattern, lowered):
             return why
+    # User globs extend the built-in tuple; they can never remove an entry above
+    # because the built-ins have already had their say by this line.
+    if user_patterns and _matches_any(path, user_patterns):
+        return "user-declared sensitive path"
     return None
 
 
-def manifest(project: Path, paths: list[str]) -> dict[str, Any]:
+def manifest(project: Path, paths: list[str], redact: bool = False) -> dict[str, Any]:
     """Exactly what would leave, and what was withheld and why.
 
     A manifest that lists only what is sent is half a disclosure. The withheld set
     is the half that lets a user check the boundary held.
+
+    With redact=True the blocking items (secret-bearing content, user-declared
+    never-leave) are replaced by a bare {"path", "included": False, "reason":
+    "redacted"} entry - no counts, no excerpts - and stop blocking: this is the
+    "redact further and send less" choice made real rather than advisory.
     """
+    rules = _privacy_rules(project)
     items: list[Item] = []
     secrets: list[dict[str, Any]] = []
+    never_leave: list[dict[str, Any]] = []
+    escapes: list[dict[str, str]] = []
     for path in sorted(set(paths)):
-        why = _sensitivity(path)
-        if why:
-            items.append(Item(path=path, included=False, reason=f"denied: {why}"))
+        display = path.replace("\\", "/")
+        # Containment first: an escaping path is refused before any other rule
+        # gets to look at it, because every other rule involves naming or reading.
+        resolved = _contained(project, path)
+        if resolved is None:
+            items.append(Item(path=display, included=False,
+                              reason="refused: path-escape (resolves outside the project root)"))
+            escapes.append({"path": display, "kind": "path-escape"})
             continue
-        target = project / path
-        if not target.is_file():
-            items.append(Item(path=path, included=False, reason="denied: not a readable file"))
+        if _matches_any(display, rules["never_leave"]):
+            if redact:
+                items.append(Item(path=display, included=False, reason="redacted"))
+            else:
+                items.append(Item(path=display, included=False,
+                                  reason="denied: user-declared never-leave"))
+                never_leave.append({"path": display, "rule": "user-declared never-leave"})
+            continue
+        why = _sensitivity(display, rules["sensitive_paths"])
+        if why:
+            items.append(Item(path=display, included=False, reason=f"denied: {why}"))
+            continue
+        if not resolved.is_file():
+            items.append(Item(path=display, included=False, reason="denied: not a readable file"))
             continue
         try:
-            text = target.read_text(encoding="utf-8", errors="replace")
+            text = resolved.read_text(encoding="utf-8", errors="replace")
         except OSError as exc:
-            items.append(Item(path=path, included=False, reason=f"denied: unreadable ({exc.strerror})"))
+            items.append(Item(path=display, included=False, reason=f"denied: unreadable ({exc.strerror})"))
             continue
         found = find_secret_shapes(text)
         if found:
             # Withheld even though the path looks ordinary: the content decides.
-            items.append(Item(path=path, included=False,
-                              reason=f"denied: {len(found)} secret-shaped value(s) in content"))
-            secrets.append({"path": path, "matches": len(found)})
+            # Under redact the count is withheld too - "redacted" says everything
+            # a receiving party is entitled to learn about this file.
+            if redact:
+                items.append(Item(path=display, included=False, reason="redacted"))
+            else:
+                items.append(Item(path=display, included=False,
+                                  reason=f"denied: {len(found)} secret-shaped value(s) in content"))
+                secrets.append({"path": display, "matches": len(found)})
             continue
-        items.append(Item(path=path, included=True, reason="no sensitive path or secret shape found"))
+        items.append(Item(path=display, included=True, reason="no sensitive path or secret shape found"))
 
     included = [item for item in items if item.included]
     withheld = [item for item in items if not item.included]
@@ -272,18 +377,30 @@ def manifest(project: Path, paths: list[str]) -> dict[str, Any]:
         "withheld": [item.view() for item in withheld],
         "counts": {"requested": len(items), "included": len(included), "withheld": len(withheld)},
         "secrets_found_in": secrets,
-        "clean": not secrets,
+        "never_leave": never_leave,
+        "path_escapes": escapes,
+        "redacted": redact,
+        "clean": not secrets and not never_leave,
     }
 
 
-def notice(action: str, purpose: str, project: Path, paths: list[str]) -> dict[str, Any]:
-    """The pre-egress disclosure: destination, purpose, exact scope, and the limit."""
+def notice(action: str, purpose: str, project: Path, paths: list[str],
+           destination: str | None = None, redact: bool = False) -> dict[str, Any]:
+    """The pre-egress disclosure: destination, purpose, exact scope, and the limit.
+
+    The destination is stated even when unknown: an absent field reads as an
+    oversight, while "unknown" is itself information the user decides on.
+    """
     kind = classify(action)
-    scope = manifest(project, paths)
+    scope = manifest(project, paths, redact=redact)
+    known = destination is not None and bool(destination.strip())
     return {
         "action": kind["action"],
         "class": kind["class"],
         "leaves_machine": kind["leaves_machine"],
+        "destination": (destination.strip()[:200] if known
+                        else "unknown: the caller did not name the receiving party"),
+        "destination_known": known,
         "purpose": purpose[:300],
         "data_proposed": [item["path"] for item in scope["included"]],
         "excluded": scope["withheld"],

@@ -12,7 +12,14 @@
     ]
   },
   "behavior_assertions": [
-    "Each attempted fix is tied to a falsifiable hypothesis and fresh evidence.",
+    {
+      "assert": "Each attempted fix is tied to a falsifiable hypothesis and fresh evidence.",
+      "check": {
+        "command": "python scripts/godmode.py --project . method --reports 1 --components",
+        "expect_exit": 0,
+        "expect_contains": "fmea"
+      }
+    },
     "A hypothesis repeated unsuccessfully three times triggers an architectural reassessment."
   ],
   "baseline_required": true,
