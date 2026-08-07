@@ -21,10 +21,16 @@ from godmode_runtime.godmode_corpus import resolve_roles  # noqa: E402
 from godmode_runtime.godmode_drift import capabilities as host_capabilities  # noqa: E402
 from godmode_runtime.godmode_drift import compare as compare_sessions  # noqa: E402
 from godmode_runtime.godmode_lens import build_context_brief  # noqa: E402
+from godmode_runtime.godmode_guardrails import check_ceilings  # noqa: E402
+from godmode_runtime.godmode_guardrails import meter_tool_call, tool_operation, watchdog  # noqa: E402
 from godmode_runtime.godmode_sentinel import CapabilityBroker, classify_action  # noqa: E402
 
 
 CLAUDE_CONTEXT_LIMIT = 9_000
+
+# Tools that read and cannot write. Named rather than inferred: a tool absent
+# from this set is treated as capable of mutation and pays the full check.
+_READ_ONLY_TOOLS = frozenset({"Read", "Glob", "Grep", "WebFetch", "WebSearch", "TodoWrite"})
 
 
 def _input() -> dict[str, Any]:
@@ -139,6 +145,14 @@ def main(argv: list[str] | None = None) -> int:
     submitted = _input()
     claude_session = _is_claude_session(submitted)
     project = args.project or str(submitted.get("cwd") or ".")
+
+    # A tool that cannot change anything gets no gate and no cost. Resolving the
+    # repository identity costs several git calls, which is worth paying before a
+    # mutation and not worth paying before a file read - and the shipped matcher
+    # already limits this hook to mutating tools, so this only protects a host
+    # that widened it.
+    if args.event == "pre-action" and str(submitted.get("tool_name", "")) in _READ_ONLY_TOOLS:
+        return 0
     try:
         anchor = resolve_anchor(project)
         archive = Chronicle(anchor)
@@ -191,10 +205,47 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"godmode": "checkpoint", "stored": True, "sequence": record["sequence"]}))
             return 0
 
-        operation = str(submitted.get("operation", "")).strip()
-        preview = classify_action(operation)
+        # Pre-tool boundary. Two callers, one decision: a host passing its own
+        # PreToolUse payload (tool_name/tool_input), and anything passing a bare
+        # operation string. The host form answers in the host's contract so the
+        # decision is enforced rather than advised.
+        pretool = submitted.get("hook_event_name") == "PreToolUse"
+        tool = str(submitted.get("tool_name", "")).strip()
+        if tool:
+            operation = tool_operation(tool, submitted.get("tool_input"))
+        else:
+            operation = str(submitted.get("operation", "")).strip()
+
+        session = latest_session(archive)
+        blocked_reason = None
+
+        # Metering first, and never conditional on a session record: a call that
+        # is about to be refused still happened, and a run that skipped opening a
+        # session must not thereby earn an unlimited budget.
+        spent = meter_tool_call(archive, session or "unsessioned", tool or "operation")
+        ceiling = check_ceilings(Path(anchor.project_root), spent)
+        if ceiling["exceeded"]:
+            first = ceiling["exceeded"][0]
+            blocked_reason = (
+                f"run ceiling reached: {first['spent']} {first['ceiling']} against a "
+                f"declared limit of {first['limit']}; stop and report what remained"
+            )
+        if blocked_reason is None and session:
+            anomaly = watchdog(archive, session)
+            if anomaly["anomaly"]:
+                blocked_reason = (
+                    f"{len(anomaly['skipped'])} mandated steps were skipped this "
+                    "session; resolve the pattern before the next tool call"
+                )
+
+        preview = classify_action(operation) if operation else {
+            "protected": True, "category": "unclassified-mutation",
+            "impact": ["no operation described"]}
         preview["executes_operation"] = False
-        if not preview["protected"]:
+        if blocked_reason is not None:
+            preview["allow"] = False
+            preview["reason"] = blocked_reason
+        elif not preview["protected"]:
             preview["allow"] = True
         elif submitted.get("capability"):
             CapabilityBroker(archive).consume(operation, str(submitted["capability"]))
@@ -203,6 +254,19 @@ def main(argv: list[str] | None = None) -> int:
         else:
             preview["allow"] = False
             preview["reason"] = "protected operation requires an exact one-use Godmode capability"
+
+        if pretool:
+            # Silence is the allow signal in this contract; only a refusal speaks,
+            # so an allowed tool call costs the host nothing but the exit code.
+            if not preview["allow"]:
+                print(json.dumps({
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": preview["reason"],
+                    }
+                }, ensure_ascii=False))
+            return 0
         print(json.dumps(preview))
         return 0 if preview["allow"] else 3
     except GodmodeError as exc:

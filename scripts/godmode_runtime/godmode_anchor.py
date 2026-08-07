@@ -181,7 +181,12 @@ def host_capabilities() -> dict[str, Any]:
         "authority_claim_detection": "HARD",
         "interactive_authorization": "HARD" if interactive else "UNAVAILABLE",
         "agent_identity": "HARD" if os.environ.get("GODMODE_MODEL") else "SOFT",
-        "tool_call_interception": "UNAVAILABLE",
+        # HARD only where a host actually calls the pre-tool gate and honours its
+        # decision; the installed hook sets GODMODE_PRETOOL_GATE. Claiming the
+        # control without the caller would be exactly the overstatement this
+        # table exists to prevent - and understating it once the gate is live
+        # would be the same failure pointing the other way.
+        "tool_call_interception": "HARD" if os.environ.get("GODMODE_PRETOOL_GATE") else "UNAVAILABLE",
     }
     return {
         "host": host,
