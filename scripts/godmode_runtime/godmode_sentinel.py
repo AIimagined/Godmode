@@ -95,7 +95,11 @@ _ACTION_PATTERNS: tuple[tuple[str, re.Pattern[str], tuple[str, ...]], ...] = (
     (
         "git-history-or-remote",
         re.compile(
-            r"(?i)\bgit\s+(?:push|merge|rebase|reset|clean|tag|checkout|switch|"
+            # `commit --amend` is named here rather than left to fail closed:
+            # it was protected either way, but the refusal called it an
+            # unclassified mutation, which tells the reader nothing about why.
+            r"(?i)\bgit\s+commit\b[^;|&]*\s--amend\b|"
+            r"\bgit\s+(?:push|merge|rebase|reset|clean|tag|checkout|switch|"
             r"branch\s+(?:-[dDmM]|--delete)|worktree\s+(?:remove|prune|move)|"
             r"stash\s+(?:drop|pop|clear|apply|push|save|branch|create|store)|"
             r"remote\s+(?:add|remove|rm|rename|set-url|set-head|set-branches|prune|update))\b"
