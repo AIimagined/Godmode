@@ -117,7 +117,14 @@ _INJECTION = (
     ("persona", r"\byou are now\b|\bact as\b.*\b(?:admin|root|developer mode)\b|\bpretend to be\b"),
     ("role-forgery", r"^\s*(?:system|assistant|developer)\s*:", ),
     ("authority", r"\bnew instructions?\b|\bupdated (?:system )?prompt\b|\bthis overrides\b"),
-    ("exfiltration", r"\b(?:send|post|upload|exfiltrat\w*|leak)\b.*\b(?:secret|token|key|credential|\.env)\b"),
+    # The verb must govern the object, within a few words. Matching the two
+    # anywhere on one line detects vocabulary, not instruction: a threat model
+    # row naming a "memory leak" and, sixty characters later, a "secret scan"
+    # is documentation of the defence, and flagging the document that describes
+    # the attack teaches the reader to stop writing it down.
+    ("exfiltration",
+     r"\b(?:send|post|upload|exfiltrat\w*|leak)\s+(?:\w+[\s'\"-]+){0,4}"
+     r"(?:secret|token|key|credential|\.env)\b"),
     ("gate-bypass", r"\b(?:skip|bypass|disable|turn off)\b.*\b(?:check|gate|guard|review|approval|confirmation)\b"),
 )
 

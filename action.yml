@@ -30,6 +30,21 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Resolve a Python interpreter
+      shell: bash
+      run: |
+        # ubuntu-latest ships python3 but no bare `python` unless setup-python
+        # ran. A published action cannot assume a consumer wired that up, and
+        # failing with "command not found" teaches nothing, so resolve it here.
+        if command -v python >/dev/null 2>&1; then
+          echo "GODMODE_PY=python" >> "$GITHUB_ENV"
+        elif command -v python3 >/dev/null 2>&1; then
+          echo "GODMODE_PY=python3" >> "$GITHUB_ENV"
+        else
+          echo "::error::Godmode needs Python 3.11+ on PATH. Add actions/setup-python before this action."
+          exit 1
+        fi
+
     - name: Fetch the base ref so the diff has something to stand on
       shell: bash
       working-directory: ${{ inputs.project }}
@@ -44,29 +59,29 @@ runs:
 
     - name: Initialize the ephemeral archive
       shell: bash
-      run: python "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" init
+      run: "$GODMODE_PY" "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" init
 
     - name: Test-integrity monitors
       if: contains(inputs.gates, 'integrity')
       shell: bash
-      run: python "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" integrity --base "${{ inputs.base }}"
+      run: "$GODMODE_PY" "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" integrity --base "${{ inputs.base }}"
 
     - name: Changelog fragment gate
       if: contains(inputs.gates, 'changelog')
       shell: bash
-      run: python "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" changelog check --base "${{ inputs.base }}"
+      run: "$GODMODE_PY" "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" changelog check --base "${{ inputs.base }}"
 
     - name: Adversarial control grid
       if: contains(inputs.gates, 'grid')
       shell: bash
-      run: python "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" grid --brief
+      run: "$GODMODE_PY" "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" grid --brief
 
     - name: Config validation
       if: contains(inputs.gates, 'config')
       shell: bash
-      run: python "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" config check --brief
+      run: "$GODMODE_PY" "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" config check --brief
 
     - name: Locale validation
       if: contains(inputs.gates, 'locale')
       shell: bash
-      run: python "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" locale check --brief
+      run: "$GODMODE_PY" "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" locale check --brief

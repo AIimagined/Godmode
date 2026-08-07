@@ -160,6 +160,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The action resolves python3 on its own, but pinning the version here
+      # exercises the path a consumer repository is most likely to use.
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
       - name: Run the gates via the action
         uses: ./
         with:
