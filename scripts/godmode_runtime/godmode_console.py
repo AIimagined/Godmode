@@ -60,6 +60,7 @@ from .godmode_reconcile import classify_environment, reconcile_docs, reconcile_v
 from .godmode_removal import REQUIRED_FIELDS as REMOVAL_FIELDS
 from .godmode_report import completion_report, render_markdown
 from .godmode_docslint import lint_docs
+from .godmode_trust import scan_agent_configuration
 from .godmode_contribution import contribution
 from .godmode_contribution import render_line as render_contribution
 from .godmode_fuzz import fuzz as run_fuzz
@@ -807,6 +808,18 @@ def cmd_assess(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     if not args.full:
         report["authority_claims"].pop("top", None)
     return CommandResult(report, exit_code=1 if report["verdict"] == "at-risk" else 0)
+
+
+def cmd_trust(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """Report what a repository's checked-in agent configuration would run.
+
+    High severity fails the command, because a blanket permission grant or a
+    fetch-and-run hook answers a question the operator was never asked. Lower
+    findings are reported without failing: a declared server is ordinary, and
+    a gate that stopped every clone carrying one would be switched off.
+    """
+    report = scan_agent_configuration(Path(runtime.anchor.project_root))
+    return CommandResult(report, exit_code=1 if report["high_severity"] else 0)
 
 
 def cmd_selftest(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -1870,6 +1883,10 @@ def _build_parser() -> argparse.ArgumentParser:
     assess_parser.add_argument("--token-budget", type=int, default=2500)
     assess_parser.add_argument("--full", action="store_true")
     assess_parser.set_defaults(handler=cmd_assess)
+    sub.add_parser(
+        "trust",
+        help="Report what checked-in agent configuration would run or permit",
+    ).set_defaults(handler=cmd_trust)
     sub.add_parser("selftest", help="Exercise every control and report what actually held").set_defaults(
         handler=cmd_selftest
     )

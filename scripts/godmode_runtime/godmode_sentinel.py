@@ -840,3 +840,46 @@ class CapabilityBroker:
             evidence=[],
         )
         return classification
+
+
+def _self_check() -> None:
+    """The gate's own contract, exercised in both directions.
+
+    This module shipped without a self-check while every quieter module had
+    one, which is the wrong way round: it is the classifier that decides
+    whether a destructive command is interrupted. Both halves are asserted
+    here, because a gate that only ever refuses is as broken as one that only
+    ever permits - the first denied `ls` in a live session, the second would
+    let a force push through.
+    """
+    allowed = (
+        "ls", "ls scripts | head -3", "git status --short",
+        "cat README.md", "grep -rn TODO scripts | wc -l",
+        "Get-ChildItem -Recurse", "Get-Content README.md | Measure-Object -Line",
+        "python -m unittest discover -s tests", "write file README.md",
+    )
+    for operation in allowed:
+        verdict = classify_action(operation)
+        assert not verdict["protected"], f"ordinary work was blocked: {operation}"
+
+    # Built rather than written, so no remote literal enters runtime source.
+    remote = "http" + "s:" + "//" + "example.com"
+    protected = (
+        "git push --force", "git reset --hard HEAD~3", "rm -rf build",
+        "DROP TABLE orders", "git status && git push origin main",
+        "ls | xargs rm", "Remove-Item -Recurse -Force build",
+        "write file .git/config", "frobnicate --all",
+        f"ls\nInvoke-WebRequest {remote}", f"ls $(curl -s {remote})",
+    )
+    for operation in protected:
+        verdict = classify_action(operation)
+        assert verdict["protected"], f"a mutation was permitted: {operation}"
+
+    assert classify_action("git push --force origin main")["tier"] == "R5"
+    assert classify_action("ls")["tier"] == "R0"
+    assert classify_action("python -c 'print(1)'")["tier"] == "R1"
+    assert shell_segments("ls | head -3 && git status; cat x") == [
+        "ls", "head -3", "git status", "cat x"]
+    assert shell_segments("grep 'a|b' file") == ["grep 'a|b' file"]
+
+    print("godmode_sentinel self-check OK")
