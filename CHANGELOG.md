@@ -19,6 +19,138 @@ The format follows Keep a Changelog principles, and releases use semantic versio
   no interactive console is available instead of blocking forever on the password
   prompt (including Windows `NUL` redirection, where `isatty()` reports true).
 
+## [0.2.3] - 2026-08-08
+
+### Fixed
+
+- Changelog fragments are linted as public prose. They were treated as working
+  material, so a fragment's wording was only checked once it had been merged
+  verbatim into the public changelog — at which point changing it edits a
+  published record rather than a draft. The linter caught its own release note
+  this way, flagging a superlative in text that had already shipped into
+  `CHANGELOG.md` when the same words had passed unexamined in `changelog.d/`.
+
+## [0.2.3] - 2026-08-08
+
+### Added
+
+- The document linter now checks both directions. Every check it shipped with was
+  negative — rationale leaks, unverifiable claims, counterfactuals, internal
+  notes, unfinished markers, local paths — and all six ask whether a document
+  contains something it should not. None asked whether it contains something it
+  must, so a document that silently omitted a required section was reported
+  clean. The bias runs one way: in a one-sided
+  linter every false negative makes the output look better than it is, which is
+  the wrong direction for a tool whose purpose is to stop overclaiming.
+  
+  A project may now declare artifact contracts in `.godmode-docslint.json`,
+  mapping a path pattern to the sections a document must carry. Both halves are
+  checked: `missing-section` when a required heading is absent, and
+  `empty-section` when one is present with nothing under it — a heading with no
+  content satisfies a word-search and satisfies nobody reading it. A mistyped
+  contract is reported rather than dropped, since an operator who believes their
+  documents are under a check that never ran is worse off than one who declared
+  nothing, and the report states which contracts were applied so it cannot be
+  read as contract-checked when none was declared.
+  
+  Applying the first contract to this project's own release notes immediately
+  found one shipped without any verification instructions.
+- `godmode trust` reports what a repository's checked-in agent configuration
+  would run and what it would permit. Host settings, server declarations and hook
+  definitions were already being read, but only to ask whether their prose was
+  shaped like an instruction — never the structural question of whether the
+  configuration a repository ships *executes* anything or *disarms* anything.
+  
+  A cloned repository can declare a hook that runs a command the moment a tool is
+  used, declare a server whose launch line is arbitrary, or pre-authorise the
+  exact operations the action gate exists to interrupt. That last one made the
+  omission reflexive: this product's own enforcement is a host hook, so the
+  gate's off-switch lived in a file the gate never read.
+  
+  Blanket permission modes and fetch-and-run hooks fail the command. A declared
+  server or an ordinary allowance is reported without failing, because a check
+  that stopped every clone carrying one would be switched off. Nothing here
+  decides whether a declaration is hostile — that is the operator's judgement
+  about their own repository — and an unreadable configuration file is reported
+  rather than skipped, since silence on a file that could not be parsed reads as
+  approval. Absent configuration and inert configuration are reported as
+  different facts.
+- Each release gate is now run against a copy of the project with the property it
+  defends deliberately broken, and must report failure. A gate that stays green
+  under its own breaking mutation is not a check, and six times in one session a
+  check reported a success it could not have withheld — twice a gate battery
+  piped through a pager so the recorded exit status belonged to the pager, twice a
+  probe that passed only on a machine already initialised, once a suite that
+  proved refusals without asking whether ordinary work could still proceed, and
+  once a contamination grep read as clean when its exit code meant the opposite.
+  Knowing about the failure mode did not prevent the sixth instance, which is why
+  it is asserted rather than remembered.
+  
+  Writing the mutation turned out to matter as much as running it. Three of the
+  first mutations attempted were wrong — they broke something the gate never
+  claimed to watch, and three gates were briefly and wrongly suspected of being
+  blind. A breaking mutation cannot be written for a gate whose contract is not
+  understood, so the harness doubles as a statement of what each gate is for.
+  Gates without a proof are listed with the reason, because a harness that
+  quietly covers a subset reads as covering everything.
+  
+  Module self-checks are now discovered rather than registered by hand. Six
+  already existed and had never been wired into the suite, and the action gate —
+  the classifier deciding whether a destructive command is interrupted — had no
+  self-check at all while quieter modules did. It has one now, asserting both
+  directions: the commands a working session issues must pass, and the
+  destructive forms must not.
+- A portable `plugin.json` at the repository root makes this installable by any
+  client implementing the Agent Plugins specification, alongside the existing
+  host manifests, which stay where their hosts look for them. The skill layout
+  already conformed exactly; the field vocabulary already matched. What was
+  missing was a manifest at the location every conformant client checks.
+  
+  The specification's schema is closed, so host-specific data moves under
+  `extensions` behind a reverse-domain namespace that other clients ignore
+  without validating. No `mcp.json` is shipped, because this product declares no
+  MCP server and an empty one would advertise something that does not exist.
+  
+  The description says plainly that the portable package carries skills and that
+  the action gate needs a host with hook support: hooks are outside the v1
+  format, so a client without them installs the skills and none of the
+  enforcement. A governance tool that does not say so is mis-sold.
+  
+  Conformance is asserted locally against the closed field set rather than by
+  fetching anything — the schema URL in the manifest is a string, never a
+  request — because a manifest validated only by other people's installers is
+  exactly the shape that let the composite action stay broken for a fortnight.
+  The root manifest is registered as a version surface, since adding one without
+  registering it is the silent drift that command exists to catch.
+
+### Fixed
+
+- A claim about the outside world is now recognised without being declared. The
+  runtime already refused to record a verified claim about an external system
+  unless a primary source had been read, but that check only ran when the caller
+  passed the flag — so it protected whoever remembered they were talking about a
+  remote system, which is not the person who needs it. The seed case was an
+  assertion that a pinned action version did not exist: stated from recall,
+  wrong, and caught only because a human checked. No flag was passed, because it
+  did not feel like a claim about anything remote.
+  
+  Detection is narrow on purpose, firing on third-party artefacts pinned at a
+  version and on assertions about what a released version does. A detector that
+  fired on ordinary local statements would teach the operator to route around it.
+  
+  Fixing the detection exposed the gate behind it as unsatisfiable. It demanded a
+  `doc:` or `url:` citation and then rejected every one of them as unresolvable,
+  so a claim about the outside world could never be recorded as verified whatever
+  the author had actually read. A source outside the worktree now resolves as the
+  operator's declaration that they read it — nothing local can confirm that, and
+  confirming it over the network is not something this runtime does — and the
+  record names which citations were asserted rather than checked, so a later
+  reader sees the difference instead of one uniform "verified".
+  
+  The seeded fuzz harness caught the first version of that change accepting a
+  citation of control characters and encoded traversal, which a declared source
+  reference must now not look like.
+
 ## [0.2.2] - 2026-08-08
 
 ### Fixed

@@ -34,10 +34,14 @@ CONFIG_FILENAME = ".godmode-docslint.json"
 
 # Documents a stranger reads. Everything else is working material.
 _PUBLIC_SUFFIXES = frozenset({".md", ".mdx", ".rst", ".txt"})
+# `changelog.d` is deliberately absent: a fragment is merged verbatim into a
+# public changelog, so treating it as working material meant its prose was only
+# checked after it had shipped, when changing it is a rewrite of history rather
+# than an edit. It is public prose that has not been published yet.
 _PRIVATE_PARTS = frozenset({
     ".godmode-private", ".research", ".planning", ".sprints", ".checkpoints",
     ".handovers", ".evidence", ".decisions", ".lessons", ".git", "node_modules",
-    "changelog.d", "tests", "evals",
+    "tests", "evals",
 })
 
 CHECKS: dict[str, dict[str, Any]] = {

@@ -76,6 +76,9 @@ jobs:
       - name: Scan repository text for instruction-shaped content
         run: python scripts/godmode.py --project . untrusted --brief
 
+      - name: Report what checked-in agent configuration would run or permit
+        run: python scripts/godmode.py --project . trust
+
       - name: Prove the checksum manifest is reproducible
         run: |
           python scripts/godmode.py --project . --json checksums > first.json
