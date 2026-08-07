@@ -250,7 +250,11 @@ def main(argv: list[str] | None = None) -> int:
                     "session; resolve the pattern before the next tool call"
                 )
 
-        preview = classify_action(operation) if operation else {
+        # The root is passed, not inferred: containment decides whether an edit
+        # is ordinary work, and without it every edit the host sends - always
+        # an absolute path - was judged to be outside the tree and refused.
+        preview = classify_action(
+            operation, project_root=Path(anchor.project_root)) if operation else {
             "protected": True, "category": "unclassified-mutation",
             "impact": ["no operation described"]}
         preview["executes_operation"] = False
@@ -265,7 +269,19 @@ def main(argv: list[str] | None = None) -> int:
             preview["capability_consumed"] = True
         else:
             preview["allow"] = False
-            preview["reason"] = "protected operation requires an exact one-use Godmode capability"
+            # Name a remedy the reader can actually perform. A host tool call
+            # carries no field a capability could travel in, so the broker -
+            # the answer this message used to give - is unreachable from here,
+            # and pointing at it sent the operator hunting for a token they
+            # had no way to supply. Every refusal is therefore total, which is
+            # also why this gate must be conservative about what it stops.
+            preview["reason"] = (
+                f"refused: this names a protected operation ({preview['category']}, "
+                f"{preview.get('tier', 'R?')}). No capability can be attached to a host "
+                "tool call, so there is no in-session approval: run it yourself, "
+                "rephrase it as something narrower, or disable the plugin for this "
+                "session if the refusal is wrong."
+            )
 
         if pretool:
             # Silence is the allow signal in this contract; only a refusal speaks,

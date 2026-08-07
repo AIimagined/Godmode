@@ -201,10 +201,51 @@ _REDIRECT = re.compile(r"(?<![0-9<>])>{1,2}(?!&)|(?<![<>])<(?![<])")
 # scan - a per-write capability prompt only teaches the operator to switch the
 # gate off. Paths that are not ordinary working files are excluded below.
 _TOOL_FILE_EDIT = re.compile(r"(?i)^(?:write|edit) file\s+(?P<path>.+)$")
+
+# Sensitive by name, wherever they sit. Containment is a separate question and
+# is answered separately: a path can be inside the working tree and still be
+# none of the agent's business.
 _SENSITIVE_EDIT = re.compile(
     r"(?i)(?:^|[/\\])\.git[/\\]|(?:^|[/\\])\.env\b|credential|\bid_rsa\b|"
-    r"\.pem$|\.key$|(?:^|[/\\])\.\.(?:[/\\]|$)|^[a-z]:[/\\]|^/"
+    r"\.pem$|\.key$"
 )
+
+
+def _contained(target: str, root: Path | None) -> bool:
+    """Whether an edit lands inside the working tree.
+
+    The previous test was whether the path looked absolute, which read as a
+    reasonable proxy and was not one: every host tool passes an absolute
+    `file_path`, so the allowance for ordinary working files could never fire
+    and no edit was permitted in a real session. Normalisation collapses `..`
+    first, so a traversal out of the tree fails containment rather than needing
+    its own pattern.
+    """
+    # A relative path means relative to where you are, so an absent root falls
+    # back to the working directory rather than failing closed on every edit.
+    # The hook always passes the real project root, so the security-relevant
+    # path never depends on this default.
+    root = Path.cwd() if root is None else root
+    try:
+        candidate = Path(target.strip().strip("\"'"))
+        if not candidate.is_absolute():
+            candidate = Path(root) / candidate
+        normalised = Path(os.path.normcase(os.path.normpath(str(candidate))))
+        base = Path(os.path.normcase(os.path.normpath(str(root))))
+    except (OSError, ValueError):
+        return False
+    return normalised == base or base in normalised.parents
+
+
+# Shell control flow is structure, not a command. `for`, `do` and `done` are
+# not verbs, matched nothing, and failed closed - so an ordinary loop over a
+# few files was refused. The body inside the loop is still a segment of its
+# own and is still classified, so `do rm -rf x` stays protected.
+_CONTROL_ONLY = re.compile(r"(?i)^\s*(?:done|fi|esac|else|then|do|\{|\}|\(|\)|;;)\s*$")
+_CONTROL_PREFIX = re.compile(r"(?i)^\s*(?:do|then|else|elif|if|while|until)\s+")
+_LOOP_HEADER = re.compile(
+    r"(?i)^\s*(?:for|select)\s+\w+\s+in\b|^\s*case\s+\S+\s+in\s*$|^\s*for\s*\(\(")
+_TEST_BUILTIN = re.compile(r"(?i)^\s*(?:\[\[?|test)\s")
 
 # `VAR=value` alone changes nothing; `VAR=value cmd` is classified on cmd.
 _ASSIGNMENT_PREFIX = re.compile(r"^\s*[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\S*)\s*")
@@ -336,7 +377,7 @@ def enforce_private_payload(value: Any) -> None:
         )
 
 
-def _categorize(normalized: str) -> tuple[str, bool, list[str]]:
+def _categorize(normalized: str, project_root: Path | None = None) -> tuple[str, bool, list[str]]:
     """Order is the security property: mutation flags are checked before the
     safe listings so a delete can never hide behind a read-only prefix, and
     everything unrecognized fails closed as a mutation."""
@@ -345,7 +386,10 @@ def _categorize(normalized: str) -> tuple[str, bool, list[str]]:
         path = edit.group("path").strip().strip("\"'")
         if _SENSITIVE_EDIT.search(path):
             return ("worktree-file-mutation", True,
-                    [f"edit outside ordinary working files: {path[:80]}"])
+                    [f"not an ordinary working file: {path[:80]}"])
+        if not _contained(path, project_root):
+            return ("worktree-file-mutation", True,
+                    [f"outside the working tree: {path[:80]}"])
         return "worktree-file-mutation", False, ["a file in the working tree"]
 
     # Strip leading assignments so `VAR=x cmd` is judged on cmd; an assignment
@@ -359,7 +403,18 @@ def _categorize(normalized: str) -> tuple[str, bool, list[str]]:
     if not stripped.strip():
         return "read-only-inspection", False, ["a shell variable assignment"]
     if stripped != normalized:
-        return _categorize(stripped)
+        return _categorize(stripped, project_root)
+
+    # Control flow carries no action of its own. A keyword is stripped and the
+    # remainder judged, exactly as an assignment prefix is, so the structure
+    # never becomes a prefix that launders what follows it.
+    if _CONTROL_ONLY.match(normalized):
+        return "read-only-inspection", False, ["shell control flow"]
+    without_keyword = _CONTROL_PREFIX.sub("", normalized, count=1)
+    if without_keyword != normalized and without_keyword.strip():
+        return _categorize(without_keyword, project_root)
+    if _LOOP_HEADER.match(normalized):
+        return "read-only-inspection", False, ["a loop header; its body is judged separately"]
 
     if _GIT_BRANCH_MUTATION.search(normalized):
         return (
@@ -381,7 +436,8 @@ def _categorize(normalized: str) -> tuple[str, bool, list[str]]:
     if _SUBSTITUTION.search(normalized):
         return ("unclassified-mutation", True,
                 ["a substituted command the classifier never saw"])
-    if _SAFE_SHELL_READS.match(normalized) or _POWERSHELL_READS.match(normalized):
+    if (_SAFE_SHELL_READS.match(normalized) or _POWERSHELL_READS.match(normalized)
+            or _TEST_BUILTIN.match(normalized)):
         return "read-only-inspection", False, ["local read-only state"]
     if _LOCAL_COMPUTE.match(normalized):
         return "local-compute-or-state", False, ["local computation; no protected surface named"]
@@ -406,12 +462,21 @@ def _risk_tier(category: str, normalized: str) -> tuple[str, bool]:
     return _TIER_BY_CATEGORY.get(category, "R3"), False
 
 
-def classify_action(operation: str, extra_protected: tuple[str, ...] = ()) -> dict[str, Any]:
+def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
+                    project_root: Path | None = None) -> dict[str, Any]:
     """Deterministic preview of what an operation would touch.
 
     A compound command is classified part by part and takes the risk of its
     worst part: a pipeline of reads is a read, and a safe head never launders a
     dangerous tail.
+
+    `project_root` decides whether a file edit lands inside the working
+    tree; absent, the working directory stands in, which is what a
+    relative path already means. The hook passes the real root, so the
+    security-relevant path never rests on that default. Testing
+    containment by whether a path looked absolute was
+    the defect this replaces - every host tool passes an absolute
+    `file_path`, so the allowance for ordinary working files never fired.
 
     **Scope, stated rather than implied.** This gate answers "does this name a
     protected operation" - history rewriting, remote writes, branch and file
@@ -433,14 +498,15 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = ()) -> di
     if len(segments) > 1:
         # The worst part decides, ranked by tier, so `git status && git push
         # --force` is a force push rather than a status call.
-        verdicts = [classify_action(segment, extra_protected) for segment in segments]
+        verdicts = [classify_action(segment, extra_protected, project_root)
+                    for segment in segments]
         worst = max(verdicts, key=lambda v: (v["protected"], v["tier"]))
         worst["impact"] = sorted({item for v in verdicts for item in v["impact"]})
         worst["operation_digest"] = hashlib.sha256(normalized.encode()).hexdigest()
         worst["segments"] = len(segments)
         return worst
 
-    category, protected, impact = _categorize(normalized)
+    category, protected, impact = _categorize(normalized, project_root)
     if not protected and category in tuple(extra_protected):
         protected = True
         impact = list(impact) + ["protection extended by local authorization policy"]
