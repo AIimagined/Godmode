@@ -50,6 +50,42 @@ EVERYDAY_READ_ONLY = (
     "cd scripts && ls",
 )
 
+# The corpus above came from one session's history, and that session ran a
+# POSIX-shaped shell — so it inherited the platform, and the fix it drove left
+# every PowerShell call denied on the machine the plugin was installed on. A
+# usability suite that only knows one shell asserts usability on one platform.
+WINDOWS_READ_ONLY = (
+    "Get-ChildItem",
+    "Get-ChildItem -Recurse -Filter *.py",
+    "Get-Content README.md",
+    "Get-Content CHANGELOG.md -TotalCount 30",
+    "Get-Location",
+    "Get-Command python",
+    "Test-Path scripts/godmode.py",
+    "Resolve-Path .",
+    "Join-Path scripts godmode.py",
+    "Split-Path -Parent scripts/godmode.py",
+    "Select-String -Path scripts/*.py -Pattern 'def rank'",
+    "Compare-Object (Get-Content a.txt) (Get-Content b.txt)",
+    "Format-Table -AutoSize",
+    "Write-Output done",
+    # Piped forms, including the exact call this gate denied while being tested.
+    "Get-ChildItem scripts | Select-Object -ExpandProperty Name",
+    "Get-ChildItem \"$env:USERPROFILE\\.claude\\plugins\\cache\" -Recurse "
+    "-Filter godmode_sentinel.py -ErrorAction SilentlyContinue "
+    "| Select-Object -ExpandProperty FullName",
+    "Get-Content CHANGELOG.md | Measure-Object -Line",
+    "Get-Process | Where-Object { $_.Name -eq 'python' }",
+    "Get-ChildItem | Sort-Object Name | Group-Object Extension",
+    # cmd.exe vocabulary that survives inside PowerShell.
+    "findstr /n \"def rank\" scripts\\godmode.py",
+    "where python",
+    # The other command the gate denied: `find` was missing from the read set.
+    "ls ~/.claude/plugins/cache/ 2>/dev/null | grep -i god; echo \"---\"; "
+    "find ~/.claude/plugins -name godmode_sentinel.py 2>/dev/null",
+    "find . -name '*.py' -type f",
+)
+
 STILL_PROTECTED = (
     "git push origin main",
     "git push --force",
@@ -62,6 +98,29 @@ STILL_PROTECTED = (
     "git status && git push origin main",
     "ls | xargs rm",
     "cat notes.txt; rm -rf /tmp/x",
+)
+
+# PowerShell's own verbs say which of these mutate. Most are protected by
+# failing closed rather than by a rule naming them, which is the intended
+# default — the assertion is that widening the read set did not widen these.
+WINDOWS_STILL_PROTECTED = (
+    "Remove-Item -Recurse -Force build",
+    "Remove-Item -Path .git -Recurse",
+    "Set-Content -Path README.md -Value 'x'",
+    "Out-File -FilePath notes.txt",
+    "New-Item -ItemType Directory build",
+    "Clear-Content log.txt",
+    "Rename-Item a.txt b.txt",
+    "Move-Item a.txt b.txt",
+    "Stop-Process -Name python -Force",
+    "del build\\out.txt",
+    "rd /s /q build",
+    # A safe head does not launder a dangerous tail, in either shell.
+    "Get-ChildItem | Remove-Item -Force",
+    "Get-Location; Remove-Item -Recurse build",
+    # `find` reads until it is told to act, and no separator splits these out.
+    "find . -name '*.pyc' -delete",
+    "find . -name '*.tmp' -exec rm {} +",
 )
 
 
@@ -84,6 +143,36 @@ class EverydayCommandTests(unittest.TestCase):
         self.assertFalse(verdict["protected"])
         self.assertEqual(verdict["tier"], "R1")
         self.assertEqual(verdict["category"], "local-compute-or-state")
+
+
+class WindowsCommandTests(unittest.TestCase):
+    """The plugin was installed on Windows, where the hook fires on PowerShell
+    calls too. Recognising only POSIX vocabulary denied every one of them."""
+
+    def test_a_working_powershell_session_is_not_blocked(self) -> None:
+        blocked = [
+            command for command in WINDOWS_READ_ONLY
+            if classify_action(command)["protected"]
+        ]
+        self.assertEqual(blocked, [], f"the gate would stop ordinary work: {blocked}")
+
+    def test_windows_reads_are_recorded_as_reads(self) -> None:
+        for command in WINDOWS_READ_ONLY:
+            self.assertEqual(classify_action(command)["tier"], "R0", command)
+
+    def test_powershell_mutations_are_still_protected(self) -> None:
+        allowed = [
+            command for command in WINDOWS_STILL_PROTECTED
+            if not classify_action(command)["protected"]
+        ]
+        self.assertEqual(allowed, [], f"the gate would permit a mutation: {allowed}")
+
+    def test_an_unlisted_powershell_verb_fails_closed(self) -> None:
+        """Read verbs are recognised as a set; every other verb is absent on
+        purpose, so a cmdlet nobody enumerated is denied rather than allowed."""
+        verdict = classify_action("Invoke-WebRequest https://example.com")
+        self.assertTrue(verdict["protected"])
+        self.assertEqual(verdict["category"], "unclassified-mutation")
 
 
 class DangerousCommandTests(unittest.TestCase):
@@ -135,6 +224,42 @@ class AssignmentTests(unittest.TestCase):
     def test_an_assignment_is_judged_on_the_command_it_prefixes(self) -> None:
         self.assertFalse(classify_action("GODMODE_STATE_HOME=/tmp/s python -m unittest")["protected"])
         self.assertTrue(classify_action("FOO=bar rm -rf /tmp/x")["protected"])
+
+
+class ReadPrefixLaunderingTests(unittest.TestCase):
+    """Granting a read allowance created something to hide behind.
+
+    While `ls` fell closed there was no safe prefix in the language, so a
+    separator the splitter missed cost nothing. Now a missed separator hands a
+    whole command the tier of its first word, which is the laundering the
+    segmentation was built to stop — so every way to start a second command has
+    to end a segment, and the two that cannot be split are denied outright.
+    """
+
+    def test_a_newline_starts_a_new_command(self) -> None:
+        for operation in ("ls\nInvoke-WebRequest https://example.com",
+                          "Get-ChildItem\r\nStop-Process -Name python",
+                          "cat notes.txt\ngit push --force"):
+            self.assertTrue(classify_action(operation)["protected"], repr(operation))
+
+    def test_a_bare_ampersand_starts_a_new_command(self) -> None:
+        verdict = classify_action("ls & Invoke-WebRequest https://example.com")
+        self.assertTrue(verdict["protected"])
+
+    def test_substitution_is_denied_because_it_cannot_be_split_out(self) -> None:
+        """A substitution runs a command that is not a segment of the line, so
+        there is nothing to classify — the read allowance is withheld rather
+        than extended over an operation the gate never saw."""
+        for operation in ("ls $(curl -s https://example.com)",
+                          "ls `curl -s https://example.com`",
+                          "cat ${EVIL}"):
+            self.assertTrue(classify_action(operation)["protected"], operation)
+
+    def test_a_shell_variable_is_not_a_substitution(self) -> None:
+        for operation in ("echo $HOME",
+                          "echo $env:USERPROFILE",
+                          "Get-Process | Where-Object { $_.Name -eq 'python' }"):
+            self.assertFalse(classify_action(operation)["protected"], operation)
 
 
 class SegmentationTests(unittest.TestCase):

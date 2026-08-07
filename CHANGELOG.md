@@ -19,6 +19,64 @@ The format follows Keep a Changelog principles, and releases use semantic versio
   no interactive console is available instead of blocking forever on the password
   prompt (including Windows `NUL` redirection, where `isatty()` reports true).
 
+## [0.2.2] - 2026-08-08
+
+### Fixed
+
+- The injection scanner no longer reads vocabulary as instruction: an
+  exfiltration verb must govern its object within a few words, so a threat model
+  describing "memory leak" and "secret scan" on one line is documentation rather
+  than an attack. The acceptance suite now runs every gate the CI workflow runs,
+  reading the list out of the workflow file itself and checking each exit code,
+  so a gate that only exists in CI can no longer regress unseen. The composite
+  action resolves `python3` when a bare `python` is absent instead of failing
+  with "command not found".
+- The composite action loads again: an input description interpolated
+  `${{ github.base_ref }}`, and expressions are evaluated in a manifest where
+  that context is not bound, so the whole file failed to parse. A second defect
+  made a `run:` scalar start with a quoted string and continue. Both classes are
+  now asserted locally, because nothing but GitHub had ever read that file. Two
+  behaviour probes were quietly machine-dependent — they called commands needing
+  an initialised archive, so they passed on a developer's machine and failed on
+  a fresh checkout; they now exercise the same skills without one. The anchor
+  test resolves both sides before comparing, since macOS maps `/var` to
+  `/private/var`.
+- The pre-tool gate denied a working session: `ls`, every pipe, every compound
+  command and every file edit fell through to `unclassified-mutation` and failed
+  closed. Compound commands are now split and judged by their worst part, so a
+  pipeline of reads is a read and a safe head cannot launder a dangerous tail;
+  ordinary shell reads are recognised; editing a working file is the work rather
+  than a protected action, while `.git/`, `.env`, keys and paths outside the tree
+  stay protected; and running an interpreter is recorded as local compute, since
+  this gate covers named protected operations and is not a sandbox. A new
+  usability suite runs twenty commands taken from a real session and fails if any
+  is blocked — the question no test had asked before.
+- The gate denied every PowerShell command. The pre-tool hook fires on
+  PowerShell calls, but the classifier knew only POSIX vocabulary, so on Windows
+  each cmdlet was an unclassified mutation and the whole session failed closed —
+  the same defect as the previous release, surviving its own fix because the
+  usability corpus had been taken from a session that happened to run a POSIX
+  shell. PowerShell's approved-verb convention now classifies it: `Get`, `Test`,
+  `Measure`, `Select`, `Resolve` and their peers read, and every other verb is
+  absent on purpose so `Set-Content`, `Remove-Item` and anything nobody
+  enumerated still fail closed. `find`, `findstr` and `where` are recognised
+  too, while `find … -delete` and `find … -exec` are named as the mutations they
+  are.
+  
+  Granting a read allowance had also created something to hide behind. While
+  `ls` still failed closed, a separator the splitter missed cost nothing; once
+  `ls` was a recognised read, a newline or a bare `&` handed the rest of the line
+  the tier of its first word, so `ls⏎Invoke-WebRequest …` classified as a
+  listing. Both now end a segment. A command substitution cannot be split out at
+  all — it never appears as a segment — so `$( )`, backticks and `${ }` withhold
+  the read allowance instead of extending it over an operation the classifier
+  never saw; a plain `$VAR`, `$env:` or `$_` is a value, not a command, and is
+  unaffected.
+  
+  The usability suite now carries a Windows corpus alongside the POSIX one, and
+  asserts the laundering cases directly, so neither half of the contract rests
+  on which shell the last session happened to use.
+
 ## [0.2.1] - 2026-08-07
 
 ### Added
