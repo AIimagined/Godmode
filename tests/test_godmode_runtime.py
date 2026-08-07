@@ -61,8 +61,12 @@ class AnchorTests(unittest.TestCase):
             repeated = resolve_anchor(project)
             self.assertFalse(anchor.is_git)
             self.assertEqual(anchor.project_key, repeated.project_key)
-            self.assertTrue(Path(anchor.archive_root).is_relative_to(state))
-            self.assertFalse(Path(anchor.archive_root).is_relative_to(project))
+            # Both sides resolved: the runtime canonicalises paths, and on macOS
+            # a temp directory under /var resolves to /private/var, so comparing
+            # a canonical path against a raw one fails on that platform alone.
+            archive_root = Path(anchor.archive_root).resolve()
+            self.assertTrue(archive_root.is_relative_to(state.resolve()))
+            self.assertFalse(archive_root.is_relative_to(project.resolve()))
             public = anchor.public_view()
             self.assertEqual(public["project_root"], ".")
             self.assertEqual(public["archive_root"], "<local-state>")

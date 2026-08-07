@@ -71,5 +71,48 @@ class WorkflowGateTests(unittest.TestCase):
         self.assertEqual(failures, [], "gates CI runs that fail locally:\n" + "\n".join(failures))
 
 
+class ActionManifestTests(unittest.TestCase):
+    """The composite action failed to load for a fortnight, unnoticed.
+
+    Both defects were invisible to every check that existed: the manifest is
+    only parsed by GitHub, so nothing local ever read it. These assert the two
+    shapes that actually broke it.
+    """
+
+    MANIFEST = PLUGIN_ROOT / "action.yml"
+
+    def _inputs_block(self) -> str:
+        text = self.MANIFEST.read_text(encoding="utf-8")
+        return text.split("inputs:", 1)[1].split("\nruns:", 1)[0]
+
+    def test_no_github_context_inside_inputs(self) -> None:
+        """Expressions are evaluated in a manifest, and `github` is not bound
+        there - even inside a description, where it reads as documentation."""
+        hits = re.findall(r"\$\{\{[^}]*\bgithub\b[^}]*\}\}", self._inputs_block())
+        self.assertEqual(hits, [], f"github context is unavailable in inputs: {hits}")
+
+    def test_run_scalars_are_not_quote_prefixed(self) -> None:
+        """`run: "$VAR" more words` is not a YAML scalar; it parses as a quoted
+        string followed by rubbish, and the manifest fails to load whole."""
+        bad = [
+            line.strip()
+            for line in self.MANIFEST.read_text(encoding="utf-8").splitlines()
+            if re.match(r'\s*run:\s*"', line) and not line.rstrip().endswith('"')
+        ]
+        self.assertEqual(bad, [], f"run scalars that start quoted but continue: {bad}")
+
+    def test_every_step_declares_a_shell(self) -> None:
+        text = self.MANIFEST.read_text(encoding="utf-8")
+        runs = text.count("      run:")
+        shells = text.count("      shell:")
+        self.assertGreaterEqual(shells, runs,
+                                "a composite step with `run` must declare `shell`")
+
+    def test_manifest_declares_the_required_roots(self) -> None:
+        text = self.MANIFEST.read_text(encoding="utf-8")
+        for key in ("name:", "description:", "runs:", "  using: composite"):
+            self.assertIn(key, text, key)
+
+
 if __name__ == "__main__":
     unittest.main()

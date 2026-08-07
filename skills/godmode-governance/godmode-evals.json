@@ -15,9 +15,9 @@
     {
       "assert": "Protected operations expose scope, impact, recovery, and verification before execution.",
       "check": {
-        "command": "python scripts/godmode.py --project . guard --operation \"git push origin main\"",
-        "expect_exit": 3,
-        "expect_contains": "\"protected\": true"
+        "command": "python scripts/godmode.py --project . environment --target \"postgres://prod-db/orders\"",
+        "expect_exit": 1,
+        "expect_contains": "\"environment\": \"production\""
       }
     },
     "A capability is exact-operation-bound, expiring, and single-use."
