@@ -19,6 +19,179 @@ The format follows Keep a Changelog principles, and releases use semantic versio
   no interactive console is available instead of blocking forever on the password
   prompt (including Windows `NUL` redirection, where `isatty()` reports true).
 
+## [0.2.1] - 2026-08-07
+
+### Added
+
+- Behaviour assertions now execute instead of being counted: an assertion in a
+  skill's `godmode-evals.json` may carry a `check` (argv command plus expected
+  exit code and output substring) that runs for real from the project root,
+  while bare strings stay valid and are reported declared-only. Each of the
+  five skills ships at least one executable probe. Two new snapshot families
+  join routing: `charter-rules.json` freezes every compiled rule (id, trigger,
+  enforcement, verify, text hash) so editing a prose rule shows a field-level
+  diff, and `ranking.json` freezes the ordered segment selection the context
+  brief makes for a fixed three-task set, so retrieval drift fails loudly.
+- Chronicle depth work in three parts. Append no longer re-verifies the whole
+  chain on every write: a `godmode-head.json` hint in the archive root is checked
+  against the last record file only, falling back to a full verified scan (and
+  rebuilding the hint) whenever the hint is missing, corrupt, or stale — full
+  verification is unchanged and still catches mid-chain tampering via
+  `verify()`/`doctor`. `append(..., dedupe=True)` returns the most recent
+  byte-identical record of the same kind and subject (marked `"deduplicated":
+  True`, never persisted) instead of growing the chain; the default is off, and
+  dedupe never crosses subjects. New `Chronicle.expunge(sequence, reason)` erases
+  a record's data and evidence after a secret slips the shape scanner: the record
+  and every subsequent one are re-sealed so the chain still verifies, and an
+  `incident` tombstone (sequence, reason, old record hash) makes the rewrite
+  auditable instead of silent.
+- The mandatory task-completion report (PRD 23.2) now exists as
+  `godmode_report.completion_report`: twelve fields assembled from archive
+  records and read-only git observation instead of composed from memory. The
+  status verdict is derived, not asserted - "verified" is only reachable when no
+  claim this session was downgraded and session close would pass, a blocked gate
+  forces "blocked", and a session with no change records reads "no change
+  required". Every field carries an uncertainty label from the 23.1 vocabulary,
+  and `render_markdown` emits the TASK COMPLETION REPORT table (field, value,
+  label) in a fixed order.
+- A derived SQLite index (`index.db` in the archive) now persists ranked corpus
+  segments, compiled rules, and archive summaries between sessions: `rebuild`
+  regenerates it wholesale from the live sources, `fresh` proves the sources have
+  not moved before any read, and `query` refuses a stale index outright unless
+  the caller opts in and accepts a `stale: true` label. Alongside it, a read-only
+  database architecture manager inventories every SQLite file via `mode=ro`,
+  runs the 11-row Mandatory Schema Review (rollback text is a hard fail, never a
+  question), and statically flags hazardous migration SQL such as `DELETE`
+  without `WHERE`.
+- `godmode fuzz` feeds seeded garbage — unicode, nulls, separators, quotes,
+  comment markers, encodings, lengths — to the command classifier, path
+  containment, migration review, citation binding, and every config reader, and
+  asserts the properties that must hold for any input. Findings carry the seed
+  and case index so a failure replays instead of being hunted. Its first run
+  found four config readers that crashed with `AttributeError` on a file
+  containing `null`; they now degrade to defaults, and 2,500 fuzzed cases across
+  five seeds report fail-closed.
+- A mid-rebase repository used to read as merely "dirty". `repo_state` now
+  detects in-progress git operations (merge, rebase, cherry-pick, bisect,
+  revert), detached HEAD, and stash depth straight from git's own metadata —
+  worktree `.git` pointer files included — and surfaces a crisis as a
+  `repo-in-progress-operation` context warning, inside `observe_git`, and as a
+  named `warning` in the opening handshake, right after the dirty count it used
+  to hide behind. Lessons now carry a project scope tag (`record_lesson_scoped`
+  / `lessons_for`) so one project's habit cannot leak into another unless
+  explicitly marked portable, and `advance_evidence` enforces the §15.2 ladder:
+  confidence climbs one rung at a time, and demotions always pass but must state
+  a reason.
+- The parity matrix now compares eleven capability-level dimensions instead of
+  file-surface counts: `capability` (public symbols via the atlas, both trees),
+  `architecture`, `runtime-wiring` (orphan ratios: presence vs wiring), the six
+  surface dimensions, `identity-freshness`, and `project-invariants`. Each
+  dimension carries one of five verdicts (ADOPT, EXTEND, DIVERGE-DELIBERATELY,
+  REJECT, ALIGNED) with a one-line reason; reference-ahead gaps name their adopt
+  candidates and project-ahead gaps list local extensions, never "ignore".
+  `adoption_floor` enforces E-14: an ADOPT whose paths overlap a recorded
+  invariant's `file:` evidence flips to REJECT ("protected local fix; parity is
+  a floor, not a ceiling"), wired into `parity_matrix` via a new optional
+  `archive` parameter. `waive` records written acceptance of a gap, and the
+  matrix's new `accepted` flag stays False while any open recommendation lacks
+  one.
+- A `PreToolUse` gate decides mutating tool calls in the host's own contract:
+  protected operations without a capability, reached run ceilings, and a
+  three-skip pattern all return `permissionDecision: "deny"` with the reason.
+  Tool calls and elapsed time are now measured by the runtime instead of
+  reported to it (tokens stay host-declared and are labelled as such), and
+  `tool_call_interception` reports `HARD` only where the gate is actually
+  installed.
+- `godmode metrics` computes the twelve product measures from local records
+  only — whether resumed sessions follow their stated next action, whether root
+  causes survive scrutiny, whether finished work stays finished — each stating
+  its basis and reporting `insufficient-data` rather than a flattering zero when
+  there is nothing to measure. Duplicate detection stops counting test-method
+  names and repeated house helpers as duplication (499 pairs to 33 on this repo)
+  and is reported as leads rather than a pass/fail target.
+- `session close`, `status handover`, and the session-end hook now report what
+  the gates actually did — checks blocked, claims downgraded, steps skipped,
+  secrets refused, scope drift, and the measured context reduction — each count
+  carrying the record sequences that produced it. The summary reports activity,
+  never averted disaster, because that counterfactual is unmeasurable; it stays
+  silent when nothing fired and is switched off with `.godmode-report.json`
+  `{"session_summary": false}`.
+- The §12 lifecycle is now a stage machine read from the archive instead of a
+  convention: `godmode_stages` derives each stage's entry requirement from records
+  the work already produced (inventory, parity decision, approved plan, change,
+  ran check, reconciled docs, undowngraded claim), `stage_gate` checks the whole
+  prefix up to the target, and `advance` attests entry only when the gate passes.
+  A stage may be skipped only by a recorded decision that states a reason. The
+  §15.1 troubleshooting SOP ships in the same module as a fifteen-step checklist
+  (T0–T14) whose completion is `sop:Tn` attestations; `sop_status` reports the
+  next required step and names a root-cause claim premature while reproduction,
+  staleness, and guard-observation remain unattested.
+- Work items now carry the §19 schema: `status` records accept a closed item
+  type (epic/story/bug/spike/chore/security/debt), Fibonacci points with a
+  split-at-8 / spike-at-13 advisory finding, acceptance criteria, dependencies,
+  branch, and severity. Three gates hold the schema load-bearing: verified with
+  declared acceptance needs evidence, a bug cannot close without a root cause or
+  an incident citation, and blocked requires naming the exact blocker. The
+  rolling handover adds the §20.1 contract fields (repository anchor, approved
+  objective, verified-versus-unverified split, protected invariants, changed
+  files, remaining story points), and the reconciler gains a record-based
+  trigger table (`record_triggers`) that reports changes without checkpoints,
+  bug closes without guards, uncited decision reversals, and incidents without
+  lessons.
+
+### Changed
+
+- The README is rewritten around what the product now does — the problem it
+  addresses, how enforcement lives outside model output, per-host install,
+  what is actually enforced, and the commands that prove each claim — and the
+  logo ships with a transparent background so it sits on any page.
+
+### Fixed
+
+- First consumer dogfood of the installed plugin fixed four rough edges: the
+  generic-adapter doc taught a `--name` flag `verify` does not have; `session
+  open --brief` now shows the handshake's branch, dirty count, and
+  sources statement instead of only the id; `verify --brief` states the check
+  name and pass verdict; and a project with zero compiled rules is told its
+  gates are vacuous (in `charter` and at session close) instead of reading as
+  green.
+- Egress hardening closed four gaps at the disclosure boundary. Path containment:
+  every path a manifest or scan touches is resolved and verified inside the
+  project root first; `../`, absolute, and symlink escapes are refused unread
+  with a `path-escape` finding. Disclosures now carry `destination` and
+  `destination_known`, stating "unknown" explicitly instead of omitting the
+  receiving party. An optional `.godmode-privacy.json` lets a user declare
+  `sensitive_paths` and `never_leave` globs that extend (never shrink) the
+  built-in denials; a never-leave match blocks a notice exactly like a secret.
+  And `redact=True` makes the "redact further and send less" choice real:
+  blocking items are replaced by bare `redacted` entries - no counts, no
+  excerpts - and the remaining scope is no longer blocked.
+- Anti-loop fixes and scenario coverage: oscillation rollback now targets the
+  last STABLE checkpoint (status green/verified, per §15.3) instead of merely the
+  most recent one; a blocking `loop` verdict carries a four-part plain-language
+  `notice` (what repeated, what it means, the next safe step, and no further
+  mutation until the evidence changes); the repetition threshold is configurable
+  via `.godmode-loop.json` `{"repeat_threshold": n}` clamped to 2..10 (default 3);
+  and `transport-evidence:` attestations now count as non-model controls for
+  model blame. The instruction-shaped-content scenario is relabelled from the
+  mistaken E-13 to SEC-injection, and six golden scenarios are staged: false RCA
+  (E-04), automated deletion preview (E-11), new-table temptation (E-15), context
+  brief latency (E-19), session restart (CTX-01), and prior-fix protection
+  (CTX-02) - 21 staged failures, all caught.
+- The sentinel classified `git branch -d X` as read-only because the safe
+  inspection prefix matched `git branch` before any protected pattern ran.
+  Mutating flag forms of `git branch` now classify as `git-branch-mutation`
+  ahead of every safe pattern, and the safe listings for `git branch`,
+  `git tag`, `git stash`, and `git remote` are anchored so create, delete,
+  rename, and remote-mutation forms fall through to protection. Every
+  classification now carries a §9.2 risk tier R0-R5, with R5 (force-push,
+  hard reset, `branch -D`, `clean -f`, SQL DROP) demanding a second
+  confirmation. Capabilities bind to repository, worktree, and HEAD at mint
+  time and refuse to be consumed elsewhere; pre-existing unscoped tokens
+  still consume but say so. An optional `.godmode-authorization-policy.json`
+  can tighten (never loosen) the boundary: TTL clamped to 60-900 seconds and
+  `password_required` extending the protected categories.
+
 ## [0.2.0] - 2026-08-06
 
 ### Added
