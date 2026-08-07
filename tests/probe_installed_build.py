@@ -95,6 +95,8 @@ def main() -> int:
             print("  " + line)
         return 1
     print(f"the installed {installed.name} build behaves as released.")
+    print("Run it against a live session too: the probe proves the artifact is "
+          "right, only a session proves the integration is.")
     return 0
 
 
