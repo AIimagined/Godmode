@@ -33,8 +33,12 @@ def declared_ceilings(project: Path) -> dict[str, int]:
     if path.is_file():
         try:
             declared = json.loads(path.read_text(encoding="utf-8"))
-            ceilings.update({k: int(v) for k, v in declared.items() if k in ceilings})
-        except (OSError, json.JSONDecodeError, ValueError):
+            # `null`, a list, or a number all parse cleanly and are all not a
+            # config: a malformed file degrades to the defaults rather than
+            # taking the caller down with an AttributeError.
+            if isinstance(declared, dict):
+                ceilings.update({k: int(v) for k, v in declared.items() if k in ceilings})
+        except (OSError, json.JSONDecodeError, ValueError, TypeError):
             pass
     return ceilings
 

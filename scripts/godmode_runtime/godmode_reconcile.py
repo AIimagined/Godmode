@@ -82,7 +82,8 @@ def version_surfaces(project: Path) -> list[dict[str, str]]:
         path = project / manifest
         if path.is_file():
             try:
-                version = json.loads(path.read_text(encoding="utf-8")).get("version", "(absent)")
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                version = loaded.get("version", "(absent)") if isinstance(loaded, dict) else "(unreadable)"
                 surfaces.append({"surface": manifest, "version": version})
             except json.JSONDecodeError:
                 surfaces.append({"surface": manifest, "version": "(unreadable)"})
@@ -126,10 +127,12 @@ def doc_triggers(project: Path) -> dict[str, list[str]]:
     config = project / ".godmode-docs.json"
     if config.is_file():
         try:
-            declared = json.loads(config.read_text(encoding="utf-8")).get("triggers")
+            loaded = json.loads(config.read_text(encoding="utf-8"))
+            # `null` and `[]` parse as valid JSON and are not a config.
+            declared = loaded.get("triggers") if isinstance(loaded, dict) else None
             if isinstance(declared, dict) and declared:
                 return {str(k): [str(v) for v in vs] for k, vs in declared.items()}
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError, TypeError):
             pass
     return DEFAULT_DOC_TRIGGERS
 
