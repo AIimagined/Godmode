@@ -56,6 +56,49 @@ def check_fragments(project: Path, base: str = "HEAD") -> dict[str, Any]:
     }
 
 
+def _existing_section(body: str, version: str) -> tuple[str | None, str, str]:
+    """The section already recorded for `version`, and the text either side."""
+    opening = re.search(
+        rf"^## \[{re.escape(version)}\][^\n]*$", body, flags=re.MULTILINE)
+    if not opening:
+        return None, "", ""
+    following = re.search(r"^## \[", body[opening.end():], flags=re.MULTILINE)
+    end = opening.end() + following.start() if following else len(body)
+    return body[opening.start():end], body[:opening.start()], body[end:]
+
+
+def _parse_entries(section: str | None) -> dict[str, list[str]]:
+    """Bullets already recorded, kept verbatim so a re-merge never reformats
+    prose that has already been published."""
+    if not section:
+        return {}
+    entries: dict[str, list[str]] = {}
+    category: str | None = None
+    current: list[str] = []
+
+    def flush() -> None:
+        if category and current:
+            text = "\n".join(current).rstrip()
+            if text:
+                entries.setdefault(category, []).append(text)
+
+    for line in section.splitlines():
+        heading = re.match(r"^### (?P<name>.+?)\s*$", line)
+        if heading:
+            flush()
+            current = []
+            category = heading.group("name").strip().lower()
+            continue
+        if line.startswith("- "):
+            flush()
+            current = [line]
+            continue
+        if current:
+            current.append(line)
+    flush()
+    return entries
+
+
 def merge_fragments(project: Path, version: str, date: str) -> dict[str, Any]:
     """Fold every fragment into CHANGELOG.md under a new version heading."""
     directory = project / FRAGMENT_DIR
@@ -69,26 +112,42 @@ def merge_fragments(project: Path, version: str, date: str) -> dict[str, Any]:
         if text:
             grouped.setdefault(_fragment_category(fragment), []).append(text)
 
+    changelog = project / "CHANGELOG.md"
+    body = changelog.read_text(encoding="utf-8") if changelog.is_file() else "# Changelog\n"
+
+    # A release is rarely cut in one pass: a fragment arrives after the first
+    # merge, usually because a gate caught something. Inserting a second
+    # heading for the same version made the changelog ambiguous about its own
+    # subject, and one shipped in a tagged release with every gate green,
+    # because nothing had asked whether a version appears once.
+    existing, before, after = _existing_section(body, version)
+    for category, entries in _parse_entries(existing).items():
+        grouped.setdefault(category, [])
+        # Earlier entries keep their position; the late arrival follows.
+        grouped[category] = entries + grouped[category]
+
     lines = [f"## [{version}] - {date}", ""]
     for category in CATEGORIES:
-        if category in grouped:
+        if category in grouped and grouped[category]:
             lines.append(f"### {category.capitalize()}")
             lines.append("")
             for entry in grouped[category]:
                 first, *rest = entry.splitlines()
-                lines.append(f"- {first}")
-                lines.extend(f"  {line}" for line in rest)
+                lines.append(f"- {first}" if not first.startswith("- ") else first)
+                lines.extend(f"  {line}" if line.strip() and not line.startswith("  ")
+                             else line for line in rest)
             lines.append("")
     section = "\n".join(lines)
 
-    changelog = project / "CHANGELOG.md"
-    body = changelog.read_text(encoding="utf-8") if changelog.is_file() else "# Changelog\n"
-    # Insert above the most recent release; keep any [Unreleased] header on top.
-    match = re.search(r"^## \[(?!Unreleased)", body, flags=re.MULTILINE)
-    if match:
-        body = body[: match.start()] + section + "\n" + body[match.start() :]
+    if existing is not None:
+        body = before + section + "\n" + after
     else:
-        body = body.rstrip("\n") + "\n\n" + section + "\n"
+        # Insert above the most recent release; keep any [Unreleased] header on top.
+        match = re.search(r"^## \[(?!Unreleased)", body, flags=re.MULTILINE)
+        if match:
+            body = body[: match.start()] + section + "\n" + body[match.start():]
+        else:
+            body = body.rstrip("\n") + "\n\n" + section + "\n"
     changelog.write_text(body, encoding="utf-8")
 
     for fragment in fragments:

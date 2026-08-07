@@ -21,17 +21,6 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [0.2.3] - 2026-08-08
 
-### Fixed
-
-- Changelog fragments are linted as public prose. They were treated as working
-  material, so a fragment's wording was only checked once it had been merged
-  verbatim into the public changelog — at which point changing it edits a
-  published record rather than a draft. The linter caught its own release note
-  this way, flagging a superlative in text that had already shipped into
-  `CHANGELOG.md` when the same words had passed unexamined in `changelog.d/`.
-
-## [0.2.3] - 2026-08-08
-
 ### Added
 
 - The document linter now checks both directions. Every check it shipped with was
@@ -125,6 +114,12 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ### Fixed
 
+- Changelog fragments are linted as public prose. They were treated as working
+  material, so a fragment's wording was only checked once it had been merged
+  verbatim into the public changelog — at which point changing it edits a
+  published record rather than a draft. The linter caught its own release note
+  this way, flagging a superlative in text that had already shipped into
+  `CHANGELOG.md` when the same words had passed unexamined in `changelog.d/`.
 - A claim about the outside world is now recognised without being declared. The
   runtime already refused to record a verified claim about an external system
   unless a primary source had been read, but that check only ran when the caller
