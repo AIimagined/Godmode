@@ -1,15 +1,21 @@
 """Runtime guardrails: controls that act during a run, at every boundary crossed.
 
-Godmode starts no watcher and no daemon, so "live" here means: cheap enough to
-run at every hook boundary. The watchdog is an anomaly scan a host calls per
-turn; ceilings are declared limits the host reports spend against; rewind is a
-preview-and-authorize mechanism (Godmode never executes the rollback itself);
-the arbiter scores competing open plans instead of taking the first.
+Godmode starts no watcher and no daemon, so "live" here means: invoked by the
+host at a boundary it already crosses. Where a host offers a pre-tool boundary,
+that invocation is the interrupt - the watchdog scan and the ceiling check run
+there and answer before the tool does. Where it does not, the same functions
+still answer on demand, and `capabilities` says which of the two is true rather
+than implying the stronger one.
+
+Spend is measured here, not reported to us: tool calls and elapsed time are
+counted at the boundary Godmode is called on. Tokens are the host's number and
+stay declared, so the ceiling report names which figures it measured.
 """
 
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +24,7 @@ from .godmode_errors import ArchiveError
 
 CEILINGS_FILENAME = ".godmode-ceilings.json"
 DEFAULT_CEILINGS = {"tokens": 0, "tool_calls": 0, "seconds": 0}  # 0 = no ceiling
+METER_FILENAME = "godmode-meter.json"
 
 
 def declared_ceilings(project: Path) -> dict[str, int]:
@@ -32,8 +39,85 @@ def declared_ceilings(project: Path) -> dict[str, int]:
     return ceilings
 
 
+def _meter_path(archive: Chronicle) -> Path:
+    return archive.root / METER_FILENAME
+
+
+def _load_meter(archive: Chronicle) -> dict[str, Any]:
+    """Disposable operational state, deliberately outside the hash chain.
+
+    A counter that ticks on every tool call would bury the evidence record in
+    bookkeeping, and losing a count costs nothing: the meter restarts, the
+    archive stays the record of what happened.
+    """
+    path = _meter_path(archive)
+    if not path.is_file():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def read_meter(archive: Chronicle, session: str) -> dict[str, Any]:
+    """Measured spend for one session: calls counted, seconds elapsed since first."""
+    entry = _load_meter(archive).get(session)
+    if not isinstance(entry, dict):
+        return {"tool_calls": 0, "seconds": 0, "by_tool": {}, "source": "measured"}
+    started = float(entry.get("started_at") or time.time())
+    return {
+        "tool_calls": int(entry.get("tool_calls", 0)),
+        "seconds": int(max(0.0, time.time() - started)),
+        "by_tool": dict(entry.get("by_tool") or {}),
+        "started_at": started,
+        "source": "measured",
+    }
+
+
+def meter_tool_call(archive: Chronicle, session: str, tool: str) -> dict[str, Any]:
+    """Count one crossing of the pre-tool boundary. Cheap enough to run always."""
+    meter = _load_meter(archive)
+    entry = meter.get(session)
+    if not isinstance(entry, dict):
+        entry = {"tool_calls": 0, "by_tool": {}, "started_at": time.time()}
+    entry["tool_calls"] = int(entry.get("tool_calls", 0)) + 1
+    by_tool = dict(entry.get("by_tool") or {})
+    by_tool[tool] = int(by_tool.get(tool, 0)) + 1
+    entry["by_tool"] = by_tool
+    entry.setdefault("started_at", time.time())
+    meter[session] = entry
+    # Bounded: only the most recent sessions are kept, so the meter cannot grow
+    # without limit on a long-lived project.
+    if len(meter) > 20:
+        for stale in sorted(meter, key=lambda key: meter[key].get("started_at", 0))[:-20]:
+            meter.pop(stale, None)
+    try:
+        _meter_path(archive).write_text(
+            json.dumps(meter, sort_keys=True), encoding="utf-8")
+    except OSError:
+        # A meter that cannot be written must not stop the tool call it precedes.
+        pass
+    return read_meter(archive, session)
+
+
+# Tool payload -> an operation string the action classifier already understands.
+# The mapping is deliberately literal: a tool this does not know becomes an
+# unclassifiable operation, which the classifier fails closed on.
+def tool_operation(tool: str, tool_input: dict[str, Any] | None) -> str:
+    payload = tool_input or {}
+    if tool in ("Bash", "PowerShell"):
+        return str(payload.get("command", "")).strip() or f"{tool} with no command"
+    if tool in ("Write", "Edit", "NotebookEdit"):
+        verb = "write" if tool == "Write" else "edit"
+        return f"{verb} file {payload.get('file_path', '(unnamed)')}"
+    if tool in ("Read", "Glob", "Grep"):
+        return f"read {tool.lower()} {payload.get('file_path') or payload.get('pattern') or ''}".strip()
+    return f"{tool} tool invocation"
+
+
 def check_ceilings(project: Path, spent: dict[str, int]) -> dict[str, Any]:
-    """The host reports spend; the verdict is computed here, outside the run."""
+    """Compare spend against the declared limits, naming which figures were measured."""
     ceilings = declared_ceilings(project)
     exceeded = []
     for name, limit in ceilings.items():
@@ -45,11 +129,20 @@ def check_ceilings(project: Path, spent: dict[str, int]) -> dict[str, Any]:
         name: (limit - int(spent.get(name, 0)) if limit else None)
         for name, limit in ceilings.items()
     }
+    measured = spent.get("source") == "measured"
     return {
         "ceilings": ceilings,
-        "spent": {k: int(v) for k, v in spent.items()},
+        "spent": {k: int(v) for k, v in spent.items() if isinstance(v, (int, float))},
         "remaining": remaining,
         "exceeded": exceeded,
+        # Which numbers Godmode counted itself, and which it was handed. Tokens
+        # are the host's figure; treating them as measured would overstate what
+        # this ceiling can actually hold.
+        "measurement": {
+            "tool_calls": "measured" if measured else "declared",
+            "seconds": "measured" if measured else "declared",
+            "tokens": "declared (host-reported)",
+        },
         "verdict": "over-ceiling" if exceeded else "within-ceilings",
         "detail": ("stop the run and report what remained" if exceeded
                    else "spend is within every declared ceiling"),

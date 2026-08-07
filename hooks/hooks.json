@@ -1,5 +1,5 @@
 {
-  "description": "Load bounded Godmode continuity when a Claude Code session starts or resumes.",
+  "description": "Load bounded Godmode continuity at session start, and decide protected tool calls at the pre-tool boundary.",
   "hooks": {
     "SessionStart": [
       {
@@ -10,6 +10,22 @@
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/hooks/godmode_session_hook.py",
               "session-start"
+            ],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell|Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/hooks/godmode_session_hook.py",
+              "pre-action"
             ],
             "timeout": 10
           }
