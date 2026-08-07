@@ -59,6 +59,8 @@ from .godmode_parity import absorption_check, parity_matrix, schema_ladder
 from .godmode_reconcile import classify_environment, reconcile_docs, reconcile_versions, record_triggers
 from .godmode_removal import REQUIRED_FIELDS as REMOVAL_FIELDS
 from .godmode_report import completion_report, render_markdown
+from .godmode_metrics import metrics as product_metrics
+from .godmode_metrics import render_markdown as render_metrics
 from .godmode_stages import advance as stage_advance
 from .godmode_stages import skip_stage, sop_attest, sop_status, stage_gate
 from .godmode_index import IndexStale
@@ -1305,6 +1307,16 @@ def cmd_environment(args: argparse.Namespace, runtime: Runtime) -> CommandResult
     )
 
 
+def cmd_metrics(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    report = product_metrics(
+        runtime.archive, Path(runtime.anchor.project_root), window=args.window)
+    if args.markdown:
+        return CommandResult({"markdown": render_metrics(report)})
+    # Below target is a finding about the product, not an error in the command.
+    return CommandResult(report, exit_code=1 if report["verdict"] == "below-target" else 0)
+
+
 def cmd_expunge(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     return CommandResult(runtime.archive.expunge(args.sequence, args.reason))
@@ -2156,6 +2168,12 @@ def _build_parser() -> argparse.ArgumentParser:
                           help="Static review of a migration SQL file")
     _evidence(database)
     database.set_defaults(handler=cmd_database)
+
+    metrics_parser = sub.add_parser(
+        "metrics", help="Measure whether the product works, from local records only")
+    metrics_parser.add_argument("--window", type=int, default=500)
+    metrics_parser.add_argument("--markdown", action="store_true")
+    metrics_parser.set_defaults(handler=cmd_metrics)
 
     expunge_parser = sub.add_parser(
         "expunge",
