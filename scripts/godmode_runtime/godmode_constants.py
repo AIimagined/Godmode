@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 PRODUCT = "Godmode"
-RUNTIME_VERSION = "0.2.3"
+RUNTIME_VERSION = "0.2.4"
 SCHEMA_VERSION = 1
 ARCHIVE_DIRNAME = "godmode-state"
 MAX_HASH_BYTES = 5 * 1024 * 1024
