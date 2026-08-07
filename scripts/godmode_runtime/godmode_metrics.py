@@ -1,0 +1,308 @@
+"""Whether the product works, measured — not whether its tests pass.
+
+A green suite proves the code does what it was written to do. It says nothing
+about whether the thing being built actually prevents the failures it exists to
+prevent: whether a resumed session picks up the stated next action, whether a
+root cause survives scrutiny, whether finished work stays finished. Those are
+properties of the record the product produced while being used, so they are
+computed from the archive rather than asserted.
+
+Two rules keep the numbers honest:
+
+* A metric with no denominator reports `insufficient-data` and a null value. A
+  zero-over-zero rendered as 1.0 is the cheapest way to look healthy while
+  measuring nothing, and it is exactly the self-report this project exists to
+  refuse.
+* Every metric states its `basis` - what was counted - so a suspicious number
+  can be checked against the records instead of believed.
+
+Nothing here transmits: the metrics are computed locally and printed locally.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+from typing import Any
+
+from .godmode_chronicle import Chronicle
+
+# metric -> (target value, comparison, prose target for the report)
+_TARGETS: dict[str, tuple[float | None, str, str]] = {
+    "resume_accuracy": (0.9, ">=", ">= 0.9"),
+    # A similarity heuristic generates leads, not verdicts: a hard target here
+    # would read red forever on near-names and train the reader to ignore it.
+    "duplicate_build_prevention": (None, "", "reported; each pair is a lead to judge"),
+    "rca_precision": (0.8, ">=", ">= 0.8"),
+    "same_root_recurrence": (0.03, "<", "< 0.03"),
+    "regression_escape": (0, "<=", "0 reversals"),
+    "false_complete_rate": (0.02, "<", "< 0.02"),
+    "action_transparency": (1.0, ">=", "1.0"),
+    "documentation_parity": (0.98, ">=", ">= 0.98"),
+    "token_reduction": (0.6, ">=", ">= 0.6"),
+    "gate_effectiveness": (None, "", "reported, no target"),
+    "evidence_density": (1.0, ">=", ">= 1.0"),
+    "attestation_coverage": (0.9, ">=", ">= 0.9"),
+}
+
+METRIC_ORDER: tuple[str, ...] = tuple(_TARGETS)
+
+_STOPWORDS = frozenset({
+    "the", "a", "an", "and", "or", "to", "of", "in", "on", "for", "with", "run",
+    "then", "next", "this", "that", "it", "is", "be", "at", "by", "from",
+})
+
+
+def _tokens(text: str) -> set[str]:
+    return {
+        word for word in re.findall(r"[a-z0-9]+", str(text).lower())
+        if len(word) > 2 and word not in _STOPWORDS
+    }
+
+
+def _entry(value: float | None, name: str, basis: str) -> dict[str, Any]:
+    target, comparison, prose = _TARGETS[name]
+    if value is None:
+        return {"value": None, "target": prose, "meets_target": None,
+                "basis": basis, "confidence": "insufficient-data"}
+    meets: bool | None
+    if target is None:
+        meets = None
+    elif comparison == ">=":
+        meets = value >= target
+    elif comparison == "<":
+        meets = value < target
+    else:
+        meets = value <= target
+    return {"value": round(value, 4), "target": prose, "meets_target": meets,
+            "basis": basis, "confidence": "measured"}
+
+
+def _ratio(numerator: int, denominator: int) -> float | None:
+    return None if denominator <= 0 else numerator / denominator
+
+
+def _resume_accuracy(records: list[dict[str, Any]]) -> tuple[float | None, str]:
+    """Did the session that followed a checkpoint do what the checkpoint said next?"""
+    checkpoints = [r for r in records if r["kind"] == "checkpoint" and r["data"].get("next")]
+    considered = followed = 0
+    for checkpoint in checkpoints:
+        after = [r for r in records if r["sequence"] > checkpoint["sequence"]]
+        opening = next((r for r in after if r["kind"] == "session"), None)
+        if opening is None:
+            continue
+        first_work = next(
+            (r for r in after
+             if r["sequence"] > opening["sequence"]
+             and r["kind"] in ("attestation", "change", "action")), None)
+        if first_work is None:
+            continue
+        considered += 1
+        stated = checkpoint["data"]["next"]
+        wanted = _tokens(" ".join(stated) if isinstance(stated, list) else stated)
+        if wanted & _tokens(first_work["subject"]):
+            followed += 1
+    return _ratio(followed, considered), f"{followed} of {considered} resumed sessions"
+
+
+def _rca_precision(records: list[dict[str, Any]]) -> tuple[float | None, str]:
+    claims = [
+        r for r in records
+        if r["kind"] == "claim"
+        and "root cause" in str(r["data"].get("text", r["subject"])).lower()
+    ]
+    held = [r for r in claims if not r["data"].get("downgraded")]
+    return _ratio(len(held), len(claims)), f"{len(held)} of {len(claims)} root-cause claims held"
+
+
+def _same_root_recurrence(records: list[dict[str, Any]]) -> tuple[float | None, str]:
+    subjects: dict[str, int] = {}
+    for record in records:
+        if record["kind"] in ("incident", "lesson"):
+            subjects[record["subject"]] = subjects.get(record["subject"], 0) + 1
+    repeated = sum(1 for count in subjects.values() if count > 1)
+    return _ratio(repeated, len(subjects)), f"{repeated} of {len(subjects)} roots recurred"
+
+
+def _false_complete_rate(records: list[dict[str, Any]]) -> tuple[float | None, str]:
+    """Work that reached a terminal state and had to be reopened with proof."""
+    terminal: set[str] = set()
+    reopened: set[str] = set()
+    for record in records:
+        if record["kind"] != "sprint" or "state" not in record["data"]:
+            continue
+        state = record["data"]["state"]
+        if state in ("verified", "closed"):
+            terminal.add(record["subject"])
+        elif record["subject"] in terminal and str(record["data"].get("proof", "")).strip():
+            reopened.add(record["subject"])
+    return _ratio(len(reopened), len(terminal)), f"{len(reopened)} of {len(terminal)} finished items reopened"
+
+
+def _action_transparency(records: list[dict[str, Any]]) -> tuple[float | None, str]:
+    actions = [r for r in records if r["kind"] == "action"]
+    if not actions:
+        return None, "0 action records"
+    previewed = sum(
+        1 for action in actions
+        if any(r["kind"] == "attestation" and r["sequence"] < action["sequence"]
+               and (r["subject"].startswith(("guard:", "check:", "preview"))
+                    or "guard" in r["subject"])
+               for r in records)
+    )
+    return _ratio(previewed, len(actions)), f"{previewed} of {len(actions)} actions preceded by a check"
+
+
+def _token_reduction(archive: Chronicle, records: list[dict[str, Any]]) -> tuple[float | None, str]:
+    """How much of the raw record mass the bounded brief spares the model."""
+    if not records:
+        return None, "no records to bound"
+    raw = max(1, len(json.dumps(records, ensure_ascii=False, default=str)) // 4)
+    try:
+        from .godmode_lens import build_context_brief
+
+        brief = build_context_brief(archive.anchor, archive)
+        bounded = int(brief.get("estimated_tokens") or raw)
+    except Exception:  # pragma: no cover - a brief that cannot build measures nothing
+        return None, "context brief unavailable"
+    return max(0.0, 1 - bounded / raw), f"{bounded} of {raw} est. tokens after bounding"
+
+
+def _gate_effectiveness(records: list[dict[str, Any]]) -> tuple[float | None, str]:
+    blocked = sum(1 for r in records
+                  if r["kind"] == "attestation" and r["data"].get("status") == "blocked")
+    total = sum(1 for r in records if r["kind"] == "attestation")
+    return _ratio(blocked, total), f"{blocked} of {total} attested steps were blocked"
+
+
+def _evidence_density(records: list[dict[str, Any]]) -> tuple[float | None, str]:
+    claims = [r for r in records if r["kind"] == "claim"]
+    cited = sum(len(r.get("evidence") or []) for r in claims)
+    return _ratio(cited, len(claims)), f"{cited} citations across {len(claims)} claims"
+
+
+def _attestation_coverage(project: Path, records: list[dict[str, Any]]) -> tuple[float | None, str]:
+    try:
+        from .godmode_charter import compile_charter
+
+        hard = [r for r in compile_charter(project)["compiled"] if r["enforcement"] == "HARD"]
+    except Exception:  # pragma: no cover - no charter is no denominator
+        return None, "charter unavailable"
+    if not hard:
+        return None, "no HARD rules compiled"
+    attested: set[str] = set()
+    for record in records:
+        if record["kind"] == "attestation":
+            attested.update(record["data"].get("rule_ids") or [])
+    covered = sum(1 for rule in hard if rule["id"] in attested)
+    return _ratio(covered, len(hard)), f"{covered} of {len(hard)} HARD rules attested"
+
+
+def _duplicates_and_regressions(
+    archive: Chronicle, project: Path, records: list[dict[str, Any]]
+) -> tuple[tuple[float | None, str], tuple[float | None, str]]:
+    duplicates: tuple[float | None, str] = (None, "atlas unavailable")
+    try:
+        from .godmode_atlas import build as build_atlas
+
+        atlas = build_atlas(project)
+        if not atlas.symbols:
+            # Zero duplicates in a project with no symbols is arithmetic, not
+            # evidence that duplication was prevented.
+            duplicates = (None, "no symbols extracted; nothing to duplicate")
+        else:
+            pairs = atlas.duplicates()
+            duplicates = (float(len(pairs)),
+                          f"{len(pairs)} near-duplicate pairs across {len(atlas.symbols)} symbols")
+    except Exception:  # pragma: no cover - an unbuildable atlas measures nothing
+        pass
+
+    regressions: tuple[float | None, str] = (None, "no protected fixes recorded")
+    # A reversal can only be counted where a fix was recorded to reverse.
+    guarded = [r for r in records if r["kind"] in ("lesson", "invariant")]
+    if guarded:
+        try:
+            from .godmode_loop import analyze
+
+            found = [f for f in analyze(archive)["findings"]
+                     if f["detector"] == "prior-fix-reversal"]
+            regressions = (float(len(found)),
+                           f"{len(found)} reversals across {len(guarded)} protected fixes")
+        except Exception:  # pragma: no cover
+            regressions = (None, "loop analysis unavailable")
+    return duplicates, regressions
+
+
+def _documentation_parity(archive: Chronicle) -> tuple[float | None, str]:
+    try:
+        from .godmode_reconcile import record_triggers
+
+        report = record_triggers(archive)
+    except Exception:  # pragma: no cover
+        return None, "trigger table unavailable"
+    satisfied = len(report.get("satisfied") or [])
+    missing = len(report.get("missing") or [])
+    return _ratio(satisfied, satisfied + missing), f"{satisfied} of {satisfied + missing} triggers satisfied"
+
+
+def metrics(archive: Chronicle, project: Path, window: int = 500) -> dict[str, Any]:
+    """The twelve product metrics, computed locally from the archive."""
+    records = archive.read_events()[-max(1, window):] if archive.initialized() else []
+
+    duplicates, regressions = _duplicates_and_regressions(archive, project, records)
+    computed: dict[str, tuple[float | None, str]] = {
+        "resume_accuracy": _resume_accuracy(records),
+        "duplicate_build_prevention": duplicates,
+        "rca_precision": _rca_precision(records),
+        "same_root_recurrence": _same_root_recurrence(records),
+        "regression_escape": regressions,
+        "false_complete_rate": _false_complete_rate(records),
+        "action_transparency": _action_transparency(records),
+        "documentation_parity": _documentation_parity(archive) if records else (None, "no records"),
+        "token_reduction": _token_reduction(archive, records),
+        "gate_effectiveness": _gate_effectiveness(records),
+        "evidence_density": _evidence_density(records),
+        "attestation_coverage": _attestation_coverage(project, records),
+    }
+
+    report: dict[str, Any] = {}
+    for name in METRIC_ORDER:
+        value, basis = computed[name]
+        report[name] = _entry(value, name, basis)
+
+    measured = [e for e in report.values() if e["confidence"] == "measured"]
+    meeting = [e for e in measured if e["meets_target"] is True]
+    failing = [e for e in measured if e["meets_target"] is False]
+    return {
+        "records_considered": len(records),
+        "window": window,
+        "metrics": report,
+        "summary": {
+            "measured": len(measured),
+            "meeting_target": len(meeting),
+            "below_target": len(failing),
+            "insufficient_data": len(METRIC_ORDER) - len(measured),
+        },
+        "transmitted": "nothing; metrics are computed and printed locally",
+        "verdict": ("insufficient-data" if not measured
+                    else "below-target" if failing else "healthy"),
+    }
+
+
+def render_markdown(report: dict[str, Any]) -> str:
+    lines = [
+        "# PRODUCT METRICS",
+        "",
+        f"Computed from {report['records_considered']} local records. "
+        f"Verdict: **{report['verdict']}**.",
+        "",
+        "| metric | value | target | meets | basis |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for name in METRIC_ORDER:
+        entry = report["metrics"][name]
+        value = "insufficient data" if entry["value"] is None else entry["value"]
+        meets = {True: "yes", False: "no", None: "-"}[entry["meets_target"]]
+        lines.append(f"| {name} | {value} | {entry['target']} | {meets} | {entry['basis']} |")
+    return "\n".join(lines) + "\n"

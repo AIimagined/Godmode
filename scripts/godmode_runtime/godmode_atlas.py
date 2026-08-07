@@ -237,8 +237,21 @@ class Atlas:
 
         Catches the same capability implemented twice under different names, which a
         literal search never finds because the names differ by design.
+
+        Two populations are excluded because they are conventions, not
+        duplication, and reporting them buries the real finding: test methods,
+        which are named descriptively and therefore similarly by design, and
+        private helpers, where a repeated `_self_check` or `_finding` across
+        modules is the house pattern being followed rather than a capability
+        built twice.
         """
-        candidates = [s for s in self.symbols if s.kind in ("function", "class") and len(s.name) >= 6]
+        candidates = [
+            s for s in self.symbols
+            if s.kind in ("function", "class")
+            and len(s.name) >= 6
+            and not s.name.startswith("_")
+            and not _is_test_path(s.path)
+        ]
         signatures = {s.id: _shingles(s.name) for s in candidates}
         pairs: list[dict[str, Any]] = []
         for index, first in enumerate(candidates):
@@ -253,6 +266,12 @@ class Atlas:
                     self.body_signatures.get(second.id, frozenset()),
                 ) if self.body_signatures.get(first.id) and self.body_signatures.get(second.id) else 0.0
                 score, basis = max((name_score, "name"), (body_score, "body"))
+                # An identical name in two modules with different bodies is an
+                # interface convention - every detector exposing `analyze` is the
+                # pattern being followed, not a capability built twice. Only the
+                # bodies agreeing makes it a duplicate worth reporting.
+                if first.name == second.name and body_score < threshold:
+                    continue
                 if score >= threshold:
                     pairs.append({"a": first.view(), "b": second.view(),
                                   "similarity": round(score, 3), "basis": basis})
