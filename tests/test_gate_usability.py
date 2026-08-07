@@ -86,6 +86,21 @@ WINDOWS_READ_ONLY = (
     "find . -name '*.py' -type f",
 )
 
+# Shell control flow. Found by running the gate against a live session for the
+# third time: a `for` loop over config files was denied, because `for`, `do`
+# and `done` are not commands and matched nothing. The corpus above could not
+# have caught it — it was lifted from commands that had been *blocked*, and
+# every loop in this project's history ran while the plugin was switched off.
+SHELL_CONTROL_FLOW = (
+    "for f in a.json b.json; do echo $f; done",
+    "for f in *.py; do wc -l $f; done",
+    "if [ -f README.md ]; then cat README.md; fi",
+    "while read line; do echo $line; done",
+    "for g in selftest evals; do python scripts/godmode.py --project . $g; done",
+    "[ -f README.md ] && echo present",
+    "test -d scripts && ls scripts",
+)
+
 STILL_PROTECTED = (
     "git push origin main",
     "git push --force",
@@ -121,6 +136,9 @@ WINDOWS_STILL_PROTECTED = (
     # `find` reads until it is told to act, and no separator splits these out.
     "find . -name '*.pyc' -delete",
     "find . -name '*.tmp' -exec rm {} +",
+    # Control flow is structure; the body inside it is still judged.
+    "for f in *; do rm -rf $f; done",
+    "if true; then git push --force; fi",
 )
 
 
@@ -192,6 +210,71 @@ class DangerousCommandTests(unittest.TestCase):
         verdict = classify_action("frobnicate --all")
         self.assertTrue(verdict["protected"])
         self.assertEqual(verdict["category"], "unclassified-mutation")
+
+
+class ShellControlFlowTests(unittest.TestCase):
+    def test_a_loop_is_not_a_mutation(self) -> None:
+        blocked = [c for c in SHELL_CONTROL_FLOW if classify_action(c)["protected"]]
+        self.assertEqual(blocked, [], f"the gate would stop ordinary work: {blocked}")
+
+    def test_the_body_of_a_loop_is_still_judged(self) -> None:
+        """`do` must not become a prefix that launders what follows it."""
+        self.assertTrue(classify_action("do rm -rf build")["protected"])
+        self.assertTrue(classify_action("then git push --force")["protected"])
+
+
+class RealToolPayloadTests(unittest.TestCase):
+    """Through `tool_operation`, not around it.
+
+    Every gate defect found in a live session came from the same place: the
+    suite fed the classifier operation strings written by hand, and the host
+    sends something else. The file-edit allowance was asserted with
+    `write file README.md` and passed, while the host sends an absolute path
+    for every edit — a form the classifier treated as outside the working
+    tree, so in a real session no edit was ever permitted.
+
+    These build their cases the way the hook does, so a hand-written form can
+    never pass while the real one fails.
+    """
+
+    def _operation(self, tool: str, **payload: object) -> str:
+        from godmode_runtime.godmode_guardrails import tool_operation
+
+        return tool_operation(tool, dict(payload))
+
+    def test_editing_a_project_file_by_absolute_path_is_ordinary_work(self) -> None:
+        for tool in ("Write", "Edit"):
+            operation = self._operation(
+                tool, file_path=str(PLUGIN_ROOT / "tests" / "test_gate_usability.py"))
+            verdict = classify_action(operation, project_root=PLUGIN_ROOT)
+            self.assertFalse(verdict["protected"], f"{tool}: {operation}")
+            self.assertEqual(verdict["tier"], "R2", operation)
+
+    def test_editing_outside_the_project_stays_protected(self) -> None:
+        outside = PLUGIN_ROOT.parent / "elsewhere" / "secrets.txt"
+        operation = self._operation("Write", file_path=str(outside))
+        self.assertTrue(classify_action(operation, project_root=PLUGIN_ROOT)["protected"])
+
+    def test_editing_the_git_directory_stays_protected_even_inside_the_tree(self) -> None:
+        for relative in (".git/config", ".env", "keys/id_rsa", "certs/server.pem"):
+            operation = self._operation("Edit", file_path=str(PLUGIN_ROOT / relative))
+            self.assertTrue(
+                classify_action(operation, project_root=PLUGIN_ROOT)["protected"], relative)
+
+    def test_a_traversal_out_of_the_tree_is_not_contained(self) -> None:
+        operation = self._operation(
+            "Write", file_path=str(PLUGIN_ROOT / ".." / "outside.txt"))
+        self.assertTrue(classify_action(operation, project_root=PLUGIN_ROOT)["protected"])
+
+    def test_the_read_tools_are_read_only(self) -> None:
+        for tool in ("Read", "Glob", "Grep"):
+            operation = self._operation(tool, file_path=str(PLUGIN_ROOT / "README.md"))
+            self.assertFalse(classify_action(operation, project_root=PLUGIN_ROOT)["protected"],
+                             operation)
+
+    def test_a_bash_payload_reaches_the_classifier_unchanged(self) -> None:
+        self.assertEqual(self._operation("Bash", command="ls -la"), "ls -la")
+        self.assertFalse(classify_action(self._operation("Bash", command="ls -la"))["protected"])
 
 
 class FileEditTests(unittest.TestCase):
