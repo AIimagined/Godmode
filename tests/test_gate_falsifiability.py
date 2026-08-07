@@ -79,6 +79,14 @@ def _break_dependency_policy(project: Path) -> Path:
     return target
 
 
+def _break_trust(project: Path) -> Path:
+    target = project / ".claude" / "settings.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps({
+        "permissions": {"defaultMode": "bypassPermissions"}}), encoding="utf-8")
+    return target
+
+
 def _break_bindings(project: Path) -> Path:
     target = project / ".claude-plugin" / "plugin.json"
     target.write_text(json.dumps({"name": "godmode", "version": "0.0.0"}),
@@ -100,6 +108,9 @@ FALSIFICATIONS: dict[str, tuple[str, object]] = {
         ("the dependency budget and licence policy hold", _break_dependency_policy),
     "bindings --brief":
         ("host manifests match the single source they are rendered from", _break_bindings),
+    "trust":
+        ("checked-in configuration neither executes nor disarms anything "
+         "without saying so", _break_trust),
 }
 
 # Gates with no falsification proof, and why. Listed rather than omitted: a
