@@ -11,9 +11,9 @@ branding:
 inputs:
   base:
     description: >-
-      Git ref to diff against. For pull requests pass
-      "origin/${{ github.base_ref }}..." (three dots diffs from the merge base,
-      so unrelated base-branch changes are not attributed to the PR).
+      Git ref to diff against. For pull requests pass the base branch as
+      origin/BRANCH... - three dots diff from the merge base, so unrelated
+      base-branch changes are not attributed to the pull request.
     required: false
     default: origin/main...
   gates:
@@ -59,29 +59,29 @@ runs:
 
     - name: Initialize the ephemeral archive
       shell: bash
-      run: "$GODMODE_PY" "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" init
+      run: $GODMODE_PY "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" init
 
     - name: Test-integrity monitors
       if: contains(inputs.gates, 'integrity')
       shell: bash
-      run: "$GODMODE_PY" "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" integrity --base "${{ inputs.base }}"
+      run: $GODMODE_PY "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" integrity --base "${{ inputs.base }}"
 
     - name: Changelog fragment gate
       if: contains(inputs.gates, 'changelog')
       shell: bash
-      run: "$GODMODE_PY" "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" changelog check --base "${{ inputs.base }}"
+      run: $GODMODE_PY "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" changelog check --base "${{ inputs.base }}"
 
     - name: Adversarial control grid
       if: contains(inputs.gates, 'grid')
       shell: bash
-      run: "$GODMODE_PY" "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" grid --brief
+      run: $GODMODE_PY "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" grid --brief
 
     - name: Config validation
       if: contains(inputs.gates, 'config')
       shell: bash
-      run: "$GODMODE_PY" "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" config check --brief
+      run: $GODMODE_PY "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" config check --brief
 
     - name: Locale validation
       if: contains(inputs.gates, 'locale')
       shell: bash
-      run: "$GODMODE_PY" "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" locale check --brief
+      run: $GODMODE_PY "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" locale check --brief
