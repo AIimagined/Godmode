@@ -43,6 +43,17 @@ MUST_ALLOW = (
      {"command": "Get-ChildItem | Select-Object -ExpandProperty Name"}),
     ("run the suite", "Bash", {"command": "python -m unittest discover -s tests"}),
     ("read a file", "Read", {"file_path": str(PLUGIN_ROOT / "README.md")}),
+    # Everything v0.2.5 unblocked, asserted where the host will hit it rather
+    # than only against the classifier. Each of these was refused by a shipped
+    # build while the suite of the day reported green.
+    ("stage changes", "Bash", {"command": "git add -A"}),
+    ("commit", "Bash", {"command": "git commit -m 'a message'"}),
+    ("name a protected command in an argument", "Bash",
+     {"command": 'grep "git push" CHANGELOG.md'}),
+    ("input redirect", "Bash", {"command": "wc -l < README.md"}),
+    ("descriptor duplication", "Bash", {"command": "python -m unittest discover -s tests 2>&1"}),
+    ("substitution over a read", "Bash", {"command": "echo $(git rev-parse HEAD)"}),
+    ("redirect inside the tree", "Bash", {"command": "echo hello > scratch.txt"}),
 )
 
 MUST_DENY = (
@@ -52,6 +63,12 @@ MUST_DENY = (
     ("recursive delete", "Bash", {"command": "rm -rf build"}),
     ("a delete inside a loop", "Bash", {"command": "for f in *; do rm -rf $f; done"}),
     ("safe head, dangerous tail", "Bash", {"command": "git status && git push origin main"}),
+    # The line each v0.2.5 relaxation stopped at.
+    ("amend rewrites history", "Bash", {"command": "git commit --amend"}),
+    ("a quoted script is still unrecognised", "Bash", {"command": 'bash -c "rm -rf /"'}),
+    ("a substitution that destroys", "Bash", {"command": "echo $(rm -rf build)"}),
+    ("a redirect out of the tree", "Bash", {"command": "echo x > ../outside.txt"}),
+    ("discarding working changes", "Bash", {"command": "git checkout -- ."}),
 )
 
 
