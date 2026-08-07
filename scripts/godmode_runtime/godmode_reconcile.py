@@ -77,8 +77,11 @@ def version_surfaces(project: Path) -> list[dict[str, str]]:
         if match:
             surfaces.append({"surface": "CHANGELOG.md latest release", "version": match.group(1)})
 
-    for manifest in (".claude-plugin/plugin.json", ".codex-plugin/plugin.json",
-                     ".grok-plugin/plugin.json"):
+    # The portable manifest is a version surface like any other. Adding one
+    # without registering it here is precisely the silent drift this command
+    # exists to catch, and it caught exactly that on the previous release.
+    for manifest in ("plugin.json", ".claude-plugin/plugin.json",
+                     ".codex-plugin/plugin.json", ".grok-plugin/plugin.json"):
         path = project / manifest
         if path.is_file():
             try:
