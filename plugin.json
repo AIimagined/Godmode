@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "godmode",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Local-first context continuity and evidence governance for coding agents. The portable package carries skills; the action gate needs a host with hook support.",
   "author": {
     "name": "AIimagined",
