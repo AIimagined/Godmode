@@ -59,6 +59,7 @@ from .godmode_parity import absorption_check, parity_matrix, schema_ladder
 from .godmode_reconcile import classify_environment, reconcile_docs, reconcile_versions, record_triggers
 from .godmode_removal import REQUIRED_FIELDS as REMOVAL_FIELDS
 from .godmode_report import completion_report, render_markdown
+from .godmode_fuzz import fuzz as run_fuzz
 from .godmode_metrics import metrics as product_metrics
 from .godmode_metrics import render_markdown as render_metrics
 from .godmode_stages import advance as stage_advance
@@ -1307,6 +1308,13 @@ def cmd_environment(args: argparse.Namespace, runtime: Runtime) -> CommandResult
     )
 
 
+def cmd_fuzz(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    report = run_fuzz(seed=args.seed, iterations=args.iterations)
+    # A critical finding is a gate that let something through; anything else is
+    # reported without failing the command.
+    return CommandResult(report, exit_code=1 if report["critical"] else 0)
+
+
 def cmd_metrics(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     report = product_metrics(
@@ -2168,6 +2176,12 @@ def _build_parser() -> argparse.ArgumentParser:
                           help="Static review of a migration SQL file")
     _evidence(database)
     database.set_defaults(handler=cmd_database)
+
+    fuzz_parser = sub.add_parser(
+        "fuzz", help="Feed the classifiers seeded garbage and require them to fail closed")
+    fuzz_parser.add_argument("--seed", type=int, default=0)
+    fuzz_parser.add_argument("--iterations", type=int, default=200)
+    fuzz_parser.set_defaults(handler=cmd_fuzz)
 
     metrics_parser = sub.add_parser(
         "metrics", help="Measure whether the product works, from local records only")

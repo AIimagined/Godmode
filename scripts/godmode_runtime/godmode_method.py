@@ -46,7 +46,9 @@ def configured_spines(project: Any = None) -> tuple[str, ...]:
         config = Path(project) / RCA_CONFIG_FILENAME
         if config.is_file():
             try:
-                declared = json.loads(config.read_text(encoding="utf-8")).get("spines")
+                loaded = json.loads(config.read_text(encoding="utf-8"))
+                # A file that parses is not yet a config; `null` and `[]` parse.
+                declared = loaded.get("spines") if isinstance(loaded, dict) else None
             except (OSError, json.JSONDecodeError):
                 declared = None
             if declared and all(isinstance(s, str) and s.strip() for s in declared):
