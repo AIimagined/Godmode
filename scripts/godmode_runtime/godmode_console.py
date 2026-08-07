@@ -61,6 +61,7 @@ from .godmode_removal import REQUIRED_FIELDS as REMOVAL_FIELDS
 from .godmode_report import completion_report, render_markdown
 from .godmode_docslint import lint_docs
 from .godmode_trust import scan_agent_configuration
+from .godmode_obligations import review_obligations
 from .godmode_contribution import contribution
 from .godmode_contribution import render_line as render_contribution
 from .godmode_fuzz import fuzz as run_fuzz
@@ -1087,6 +1088,24 @@ def cmd_build(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 
 def cmd_checkpoint(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """Record a handoff, and question the obligations already being carried.
+
+    `--review` asks the other half of the continuity question. Recording what
+    must not be forgotten was always here; nothing asked whether a carried
+    obligation was still worth doing, so one recorded validly and made moot by
+    a later release was restated in every handover until a human noticed.
+    """
+    if getattr(args, "review", False):
+        _require_archive(runtime)
+        report = review_obligations(
+            list(reversed(runtime.archive.select(kind="checkpoint", limit=200))))
+        # Reported, never failed: a standing obligation that looks stale is a
+        # question for the operator, not a verdict the runtime is entitled to.
+        return CommandResult(report, exit_code=0)
+    # Naming the missing flag rather than letting argparse describe a
+    # requirement that only applies when not reviewing.
+    if not args.summary or not args.status:
+        raise ArchiveError("checkpoint requires --summary and --status (or --review)")
     if args.status in {"complete", "fixed"} and not args.evidence:
         raise ArchiveError("Completion requires at least one --evidence reference")
     return CommandResult(
@@ -2027,8 +2046,11 @@ def _build_parser() -> argparse.ArgumentParser:
     build.set_defaults(handler=cmd_build)
 
     checkpoint = sub.add_parser("checkpoint", help="Record a recoverable handoff point")
-    checkpoint.add_argument("--summary", required=True)
-    checkpoint.add_argument("--status", required=True)
+    checkpoint.add_argument(
+        "--review", action="store_true",
+        help="Report carried obligations a later handoff may have made moot")
+    checkpoint.add_argument("--summary", required=False)
+    checkpoint.add_argument("--status", required=False)
     checkpoint.add_argument("--next", dest="next_action", action="append", default=[])
     checkpoint.add_argument("--hypothesis")
     checkpoint.add_argument("--outcome")
