@@ -1,0 +1,73 @@
+{
+  "budget": 1200,
+  "schema": "godmode-ranking-snapshot-v1",
+  "scorer": "fts5-bm25",
+  "tasks": {
+    "fix a failing test without breaking the guard suite": [
+      [
+        "GODMODE.md",
+        34
+      ],
+      [
+        "GODMODE.md",
+        1
+      ],
+      [
+        "GODMODE.md",
+        7
+      ],
+      [
+        "GODMODE.md",
+        23
+      ],
+      [
+        "GODMODE.md",
+        42
+      ]
+    ],
+    "investigate a regression in context continuity after a branch switch": [
+      [
+        "GODMODE.md",
+        7
+      ],
+      [
+        "GODMODE.md",
+        34
+      ],
+      [
+        "GODMODE.md",
+        1
+      ],
+      [
+        "GODMODE.md",
+        23
+      ],
+      [
+        "GODMODE.md",
+        42
+      ]
+    ],
+    "prepare a release: changelog, version surfaces, and docs": [
+      [
+        "GODMODE.md",
+        34
+      ],
+      [
+        "GODMODE.md",
+        1
+      ],
+      [
+        "GODMODE.md",
+        7
+      ],
+      [
+        "GODMODE.md",
+        42
+      ],
+      [
+        "GODMODE.md",
+        23
+      ]
+    ]
+  }
+}

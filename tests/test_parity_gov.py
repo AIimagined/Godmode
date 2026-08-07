@@ -16,11 +16,13 @@ if str(SCRIPTS) not in sys.path:
 
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
-from godmode_runtime.godmode_errors import IdentityError  # noqa: E402
+from godmode_runtime.godmode_errors import ArchiveError, IdentityError  # noqa: E402
 from godmode_runtime.godmode_parity import (  # noqa: E402
     absorption_check,
+    adoption_floor,
     parity_matrix,
     schema_ladder,
+    waive,
 )
 
 
@@ -44,6 +46,19 @@ def _build_tree(root: Path, files: dict[str, str]) -> None:
         destination.write_text(content, encoding="utf-8")
 
 
+@contextmanager
+def two_trees(project_files: dict[str, str], reference_files: dict[str, str]):
+    with tempfile.TemporaryDirectory() as temporary:
+        base = Path(temporary)
+        project = base / "project"
+        reference = base / "reference"
+        project.mkdir()
+        reference.mkdir()
+        _build_tree(project, project_files)
+        _build_tree(reference, reference_files)
+        yield project, reference
+
+
 RICH_TREE = {
     "src/main.py": "print('hello')\n",
     "tests/test_main.py": "def test_main():\n    pass\n",
@@ -61,74 +76,56 @@ BARE_TREE = {
 }
 
 DIMENSIONS = (
-    "file-categories", "entry-points", "test-surface", "documentation-surface",
-    "configuration", "dependency-declarations", "ci-surface", "licence",
-    "security-docs", "version-surfaces", "guidance-surfaces",
+    "capability", "architecture", "runtime-wiring", "tests", "documentation",
+    "configuration", "dependency-declarations", "licence", "security-docs",
+    "identity-freshness", "project-invariants",
 )
+
+VERDICTS = ("ADOPT", "EXTEND", "DIVERGE-DELIBERATELY", "REJECT", "ALIGNED")
 
 
 class ParityMatrixTests(unittest.TestCase):
     def test_divergent_trees_disagree_per_dimension(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            base = Path(temporary)
-            project = base / "project"
-            reference = base / "reference"
-            project.mkdir()
-            reference.mkdir()
-            _build_tree(project, RICH_TREE)
-            _build_tree(reference, BARE_TREE)
+        with two_trees(RICH_TREE, BARE_TREE) as (project, reference):
             result = parity_matrix(project, reference)
             self.assertFalse(result["aligned"])
+            self.assertFalse(result["accepted"])
             dimensions = result["dimensions"]
             self.assertEqual(sorted(dimensions), sorted(DIMENSIONS))
-            # Project has tests and CI, the reference has neither.
-            self.assertEqual(dimensions["test-surface"]["verdict"], "project-ahead")
-            self.assertEqual(dimensions["test-surface"]["action"], "ignore")
-            self.assertEqual(dimensions["ci-surface"]["verdict"], "project-ahead")
-            # Reference has more documentation, so the matrix says adopt.
-            self.assertEqual(dimensions["documentation-surface"]["verdict"], "reference-ahead")
-            self.assertEqual(dimensions["documentation-surface"]["action"], "adopt")
-            # Security surfaces never auto-resolve; mismatches demand a human look.
-            self.assertEqual(dimensions["security-docs"]["verdict"], "reference-ahead")
-            self.assertEqual(dimensions["security-docs"]["action"], "investigate")
-            self.assertEqual(dimensions["licence"]["verdict"], "project-ahead")
-            self.assertEqual(dimensions["licence"]["action"], "investigate")
+            # Project has tests the reference lacks: an extension to keep, never ignore.
+            self.assertEqual(dimensions["tests"]["verdict"], "EXTEND")
+            self.assertIn("tests/test_main.py", dimensions["tests"]["local_extensions"])
+            # The project also exposes a public symbol the reference has no twin for.
+            self.assertEqual(dimensions["capability"]["verdict"], "EXTEND")
+            self.assertIn("test_main", dimensions["capability"]["local_extensions"])
+            # Reference has more documentation, so the matrix names adopt candidates.
+            self.assertEqual(dimensions["documentation"]["verdict"], "ADOPT")
+            self.assertIn("SECURITY.md", dimensions["documentation"]["adopt_candidates"])
+            # Sensitive surfaces never auto-resolve; divergence must be deliberate.
+            self.assertEqual(dimensions["security-docs"]["verdict"], "DIVERGE-DELIBERATELY")
+            self.assertEqual(dimensions["licence"]["verdict"], "DIVERGE-DELIBERATELY")
             for name in DIMENSIONS:
                 entry = dimensions[name]
                 self.assertEqual(
                     entry["delta"],
                     entry["present_in_project"] - entry["present_in_reference"],
                 )
-                self.assertIn(entry["verdict"],
-                              ("aligned", "project-ahead", "reference-ahead", "both-empty"))
-                self.assertIn(entry["action"], ("adopt", "ignore", "investigate", "none"))
+                self.assertIn(entry["verdict"], VERDICTS)
+                self.assertTrue(entry["reason"])
+                self.assertNotIn("\n", entry["reason"])
 
     def test_identical_trees_align_on_every_dimension(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            base = Path(temporary)
-            project = base / "project"
-            reference = base / "reference"
-            project.mkdir()
-            reference.mkdir()
-            _build_tree(project, RICH_TREE)
-            _build_tree(reference, RICH_TREE)
+        with two_trees(RICH_TREE, RICH_TREE) as (project, reference):
             result = parity_matrix(project, reference)
             self.assertTrue(result["aligned"])
+            self.assertTrue(result["accepted"])
             for entry in result["dimensions"].values():
-                self.assertIn(entry["verdict"], ("aligned", "both-empty"))
-                self.assertEqual(entry["action"], "none")
+                self.assertEqual(entry["verdict"], "ALIGNED")
                 self.assertEqual(entry["delta"], 0)
             self.assertNotIn("reference_staleness", result)
 
     def test_stale_reference_is_labelled(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            base = Path(temporary)
-            project = base / "project"
-            reference = base / "reference"
-            project.mkdir()
-            reference.mkdir()
-            _build_tree(project, RICH_TREE)
-            _build_tree(reference, RICH_TREE)
+        with two_trees(RICH_TREE, RICH_TREE) as (project, reference):
             behind = 60 * 86400
             for current, _dirs, files in os.walk(reference):
                 for name in files:
@@ -139,6 +136,8 @@ class ParityMatrixTests(unittest.TestCase):
             self.assertIn("reference_staleness", result)
             self.assertTrue(result["reference_staleness"].startswith("stale ("))
             self.assertIn("days behind", result["reference_staleness"])
+            freshness = result["dimensions"]["identity-freshness"]
+            self.assertEqual(freshness["verdict"], "DIVERGE-DELIBERATELY")
 
     def test_network_reference_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -151,6 +150,116 @@ class ParityMatrixTests(unittest.TestCase):
             project = Path(temporary)
             with self.assertRaises(IdentityError):
                 parity_matrix(project, project / "does-not-exist")
+
+
+class CapabilityDimensionTests(unittest.TestCase):
+    def test_reference_extra_symbol_is_named_adopt_candidate(self) -> None:
+        with two_trees(
+            {"pkg/mod.py": "def alpha():\n    return 1\n"},
+            {"pkg/mod.py": "def alpha():\n    return 1\n\ndef beta():\n    return 2\n"},
+        ) as (project, reference):
+            result = parity_matrix(project, reference)
+            capability = result["dimensions"]["capability"]
+            self.assertEqual(capability["verdict"], "ADOPT")
+            self.assertEqual(capability["adopt_candidates"], ["beta"])
+            self.assertIn("beta", capability["reason"])
+            # An open ADOPT recommendation blocks acceptance until it is waived.
+            self.assertFalse(result["accepted"])
+
+    def test_project_only_symbol_is_extend_never_ignore(self) -> None:
+        with two_trees(
+            {"pkg/mod.py": "def alpha():\n    return 1\n\ndef gamma():\n    return 3\n"},
+            {"pkg/mod.py": "def alpha():\n    return 1\n"},
+        ) as (project, reference):
+            result = parity_matrix(project, reference)
+            capability = result["dimensions"]["capability"]
+            self.assertEqual(capability["verdict"], "EXTEND")
+            self.assertEqual(capability["local_extensions"], ["gamma"])
+            self.assertIn("gamma", capability["reason"])
+
+
+class AcceptanceGatingTests(unittest.TestCase):
+    def test_waive_records_reason_and_flips_accepted(self) -> None:
+        with two_trees(
+            {"pkg/mod.py": "def alpha():\n    return 1\n"},
+            {"pkg/mod.py": "def alpha():\n    return 1\n\ndef beta():\n    return 2\n"},
+        ) as (project, reference):
+            result = parity_matrix(project, reference)
+            self.assertFalse(result["accepted"])
+            waive(result, "capability", "beta arrives with the next milestone")
+            self.assertEqual(
+                result["dimensions"]["capability"]["waived"]["reason"],
+                "beta arrives with the next milestone",
+            )
+            self.assertTrue(result["accepted"])
+
+    def test_waive_requires_reason_and_known_dimension(self) -> None:
+        with two_trees(
+            {"pkg/mod.py": "def alpha():\n    return 1\n"},
+            {"pkg/mod.py": "def alpha():\n    return 1\n\ndef beta():\n    return 2\n"},
+        ) as (project, reference):
+            result = parity_matrix(project, reference)
+            with self.assertRaises(ArchiveError):
+                waive(result, "capability", "   ")
+            with self.assertRaises(ArchiveError):
+                waive(result, "no-such-dimension", "reason")
+
+
+class AdoptionFloorTests(unittest.TestCase):
+    def test_invariant_record_flips_adopt_to_reject(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _build_tree(project, {
+                "settings.toml": "[local]\nfix = true\n",
+                "patches/fix.py": "# protected local fix, no symbols\n",
+            })
+            reference = project.parent / "reference"
+            reference.mkdir()
+            _build_tree(reference, {
+                "settings.toml": "[local]\nfix = false\n",
+                "extra.toml": "[extra]\n",
+                "docs/guide.md": "# guide\n",
+            })
+            archive.append(
+                "invariant", "local settings fix must persist",
+                {"status": "active"}, evidence=["file:settings.toml"],
+            )
+            archive.append(
+                "invariant", "local patch is deliberate",
+                {"status": "active"}, evidence=["file:patches/fix.py"],
+            )
+            result = parity_matrix(project, reference, archive=archive)
+            configuration = result["dimensions"]["configuration"]
+            self.assertEqual(configuration["verdict"], "REJECT")
+            self.assertEqual(
+                configuration["reason"],
+                "protected local fix; parity is a floor, not a ceiling",
+            )
+            self.assertEqual(result["floor"]["flipped"]["configuration"], ["settings.toml"])
+            # An ADOPT with no protected overlap keeps its recommendation.
+            self.assertEqual(result["dimensions"]["documentation"]["verdict"], "ADOPT")
+            self.assertNotIn("documentation", result["floor"]["flipped"])
+            # The invariant citing a project-only path surfaces as the E-14 floor.
+            invariants = result["dimensions"]["project-invariants"]
+            self.assertEqual(invariants["verdict"], "DIVERGE-DELIBERATELY")
+            self.assertEqual(invariants["protected_paths"], ["patches/fix.py"])
+
+    def test_floor_without_overlap_changes_nothing(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _build_tree(project, {"settings.toml": "[local]\n"})
+            reference = project.parent / "reference"
+            reference.mkdir()
+            _build_tree(reference, {"settings.toml": "[local]\n", "extra.toml": "[extra]\n"})
+            archive.append(
+                "invariant", "unrelated invariant",
+                {"status": "active"}, evidence=["file:elsewhere/thing.py"],
+            )
+            matrix = parity_matrix(project, reference)
+            self.assertEqual(matrix["dimensions"]["configuration"]["verdict"], "ADOPT")
+            report = adoption_floor(archive, matrix)
+            self.assertEqual(report["flipped"], {})
+            self.assertEqual(matrix["dimensions"]["configuration"]["verdict"], "ADOPT")
 
 
 class AbsorptionTests(unittest.TestCase):

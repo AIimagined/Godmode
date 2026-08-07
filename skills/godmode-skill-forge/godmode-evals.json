@@ -12,7 +12,14 @@
     ]
   },
   "behavior_assertions": [
-    "The proposal includes gap evidence, routing positives, near-negatives, and observable assertions.",
+    {
+      "assert": "The proposal includes gap evidence, routing positives, near-negatives, and observable assertions.",
+      "check": {
+        "command": "python scripts/godmode.py --project . skill validate --path skills/godmode-skill-forge",
+        "expect_exit": 0,
+        "expect_contains": "\"valid\": true"
+      }
+    },
     "Overlapping proposals collapse into one original bounded responsibility."
   ],
   "baseline_required": true,

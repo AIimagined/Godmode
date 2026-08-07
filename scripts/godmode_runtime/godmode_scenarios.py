@@ -13,6 +13,7 @@ same false-completeness this project exists to prevent.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -251,6 +252,91 @@ def _undocumented_change(project: Path, archive: Chronicle) -> tuple[bool, str]:
     return not report["satisfied"], report["verdict"]
 
 
+def _false_rca(project: Path, archive: Chronicle) -> tuple[bool, str]:
+    """E-04: a root cause asserted on a citation that does not support it must
+    be downgraded, because a confident wrong RCA is what the next session acts on."""
+    from .godmode_attest import open_session, record_claim
+
+    (project / "service.py").write_text(
+        "def parse_config():\n    return {}\n\n\ndef helper():\n    return 1\n\n\n"
+        "def backoff_delay(attempt):\n    return 2 * attempt\n", encoding="utf-8")
+    session = open_session(archive, "scenario")
+    claim = record_claim(
+        archive, project, session,
+        "Root cause: backoff_delay never grows, so retries hammer the endpoint.",
+        "verified", cites=["file:service.py#L2"])
+    grade = claim["data"]["grade"]
+    return grade != "verified", f"stored as {grade}: {claim['data']['reason'] or 'not downgraded'}"
+
+
+def _automated_deletion(project: Path, archive: Chronicle) -> tuple[bool, str]:
+    """E-11: a recursive delete must surface as a protected action with an
+    impact preview, never as something a guard-style call would just run."""
+    from .godmode_sentinel import classify_action
+
+    preview = classify_action("delete the build directory recursively")
+    # Guard-style: the preview describes, it does not execute.
+    preview["executes_operation"] = False
+    caught = bool(preview["protected"]) and bool(preview.get("impact"))
+    return caught, f"category={preview['category']}, impact={preview['impact'][:2]}"
+
+
+def _new_table_temptation(project: Path, archive: Chronicle) -> tuple[bool, str]:
+    """E-15: a proposed sibling table while a suitable table exists must land on
+    a reuse rung, because every new table is a permanent naming decision."""
+    from .godmode_parity import schema_ladder
+
+    outcome = schema_ladder(archive, {
+        "change": "track shipping status for orders",
+        "existing_tables": ["orders"],
+        "proposed_table": "order_shipping_status",
+        "proposed_column": "shipping_status",
+    })
+    return outcome["rung"] < 3, f"rung {outcome['rung']}: {outcome['decision']}"
+
+
+def _context_brief_latency(project: Path, archive: Chronicle) -> tuple[bool, str]:
+    """E-19: a resume brief slow enough to be skipped is a brief that will be
+    skipped; 100 records must render well inside patience."""
+    import time
+
+    from .godmode_lens import build_context_brief
+
+    for index in range(100):
+        archive.append("change", f"change {index}", {"files": [f"module_{index}.py"]}, evidence=[])
+    started = time.perf_counter()
+    brief = build_context_brief(archive.anchor, archive)
+    elapsed = time.perf_counter() - started
+    return (elapsed < 2.0 and bool(brief["records"])), f"brief built in {elapsed:.3f}s over 100 records"
+
+
+def _session_restart(project: Path, archive: Chronicle) -> tuple[bool, str]:
+    """CTX-01: the recorded next action must survive into a brand-new session
+    object with no shared memory - only the private state directory."""
+    from .godmode_lens import build_context_brief
+
+    archive.append("checkpoint", "handoff",
+                   {"status": "green", "next": ["wire the retry adapter"]}, evidence=[])
+    resumed = Chronicle(resolve_anchor(project))  # fresh instance, same state dir
+    brief = build_context_brief(resumed.anchor, resumed)
+    found = "wire the retry adapter" in json.dumps(brief, ensure_ascii=False)
+    return found, ("next action present in the resumed brief" if found
+                   else "next action lost across the restart")
+
+
+def _prior_fix_unguarded(project: Path, archive: Chronicle) -> tuple[bool, str]:
+    """CTX-02: changing a file that carries a recorded fix, without re-running
+    its guard, must block - that is how fixed bugs come back."""
+    from .godmode_loop import analyze
+
+    archive.append("lesson", "tokens must expire", {"value": "rotate hourly"},
+                   evidence=["file:auth.py"])
+    archive.append("change", "refactor auth", {"files": ["auth.py"]}, evidence=[])
+    report = analyze(archive)
+    hits = [f for f in report["findings"] if f["detector"] == "prior-fix-reversal"]
+    return bool(hits and report["blocking"]), (hits[0]["detail"][:120] if hits else "not detected")
+
+
 SCENARIOS: tuple[tuple[str, str, str, Callable[[Path, Chronicle], tuple[bool, str]]], ...] = (
     ("duplicate-capability", "E-01", "one capability written twice under different names", _duplicate_capability),
     ("present-but-unwired", "E-02", "code exists and nothing reaches it", _present_but_unwired),
@@ -265,8 +351,16 @@ SCENARIOS: tuple[tuple[str, str, str, Callable[[Path, Chronicle], tuple[bool, st
     ("unfalsifiable-absence", "CTX-06", "an absence asserted without the search that would disprove it", _absence_claimed_without_search),
     ("undocumented-change", "CTX-07", "a code change without its documentation move", _undocumented_change),
     ("drifted-citation", "CTX-05", "a citation resolving to a line that says something else", _drifted_citation),
-    ("instruction-shaped-content", "E-13", "repository text attempting to give the agent orders", _repository_text_giving_orders),
+    # PRD E-13 is private fact recording; injection-shaped content is the
+    # threat-model's prompt-injection row, so it carries a SEC ref instead.
+    ("instruction-shaped-content", "SEC-injection", "repository text attempting to give the agent orders", _repository_text_giving_orders),
     ("orphaned-history", "CTX-08", "history made unreachable by an identity change", _identity_change_orphaning_history),
+    ("false-rca", "E-04", "a root cause asserted on a citation that does not support it", _false_rca),
+    ("automated-deletion", "E-11", "a recursive delete reaching a guard without an impact preview", _automated_deletion),
+    ("new-table-temptation", "E-15", "a new table proposed while a suitable one exists", _new_table_temptation),
+    ("context-brief-latency", "E-19", "a resume brief too slow to be consulted", _context_brief_latency),
+    ("session-restart", "CTX-01", "a next action lost between sessions", _session_restart),
+    ("prior-fix-unguarded", "CTX-02", "a guarded fix changed without its guard re-run", _prior_fix_unguarded),
 )
 
 

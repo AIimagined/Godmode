@@ -73,6 +73,7 @@ class Chronicle:
         self.events = self.root / "godmode-events"
         self.config = self.root / "godmode-archive.json"
         self.lock_path = self.root / "godmode-write.lock"
+        self.head = self.root / "godmode-head.json"
 
     def initialized(self) -> bool:
         return self.config.is_file() and self.events.is_dir()
@@ -164,24 +165,33 @@ class Chronicle:
         return {"adopted": copied, "source": str(source), "chain": verified}
 
     def initialize(self) -> None:
-        self.root.mkdir(parents=True, exist_ok=True)
-        self.events.mkdir(parents=True, exist_ok=True)
-        try:
-            os.chmod(self.root, 0o700)
-            os.chmod(self.events, 0o700)
-        except OSError:
-            pass
+        # initialize() runs on every append, but creating and re-permissioning
+        # directories only matters the first time; four syscalls per write for
+        # directories that already exist was pure append overhead.
+        if not self.initialized():
+            self.root.mkdir(parents=True, exist_ok=True)
+            self.events.mkdir(parents=True, exist_ok=True)
+            try:
+                os.chmod(self.root, 0o700)
+                os.chmod(self.events, 0o700)
+            except OSError:
+                pass
         if self.config.exists():
             existing = self._read_json(self.config)
             if existing.get("project_key") != self.anchor.project_key:
                 raise ArchiveError("Archive identity does not match this project")
             if existing.get("schema_version") != SCHEMA_VERSION:
                 raise ArchiveError("Archive schema requires an explicit migration")
-            existing["last_anchor"] = asdict(self.anchor)
-            existing["last_anchor_fingerprint"] = anchor_fingerprint(self.anchor)
-            existing["runtime_version"] = RUNTIME_VERSION
-            existing.pop("author", None)
-            _atomic_json(self.config, existing)
+            refreshed = dict(existing)
+            refreshed["last_anchor"] = asdict(self.anchor)
+            refreshed["last_anchor_fingerprint"] = anchor_fingerprint(self.anchor)
+            refreshed["runtime_version"] = RUNTIME_VERSION
+            refreshed.pop("author", None)
+            # initialize() runs on every append; rewriting an identical config
+            # each time costs an fsync per write for zero information. Only
+            # touch the file when the anchor or runtime actually moved.
+            if refreshed != existing:
+                _atomic_json(self.config, refreshed)
             return
         payload = {
             "schema_version": SCHEMA_VERSION,
@@ -214,8 +224,11 @@ class Chronicle:
                 descriptor = os.open(
                     self.lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
                 )
+                # No fsync: mutual exclusion comes from O_EXCL creation, which
+                # is durable enough for a lock that a crash releases by age-out;
+                # the pid/time content is diagnostic only. The flush cost was
+                # measurable on every single append.
                 os.write(descriptor, f"{os.getpid()}\n{time.time()}\n".encode())
-                os.fsync(descriptor)
             except FileExistsError:
                 try:
                     age = time.time() - self.lock_path.stat().st_mtime
@@ -268,6 +281,142 @@ class Chronicle:
             "head_hash": previous,
         }
 
+    def _read_head(self) -> dict[str, Any] | None:
+        """Best-effort read of the head cache; anything doubtful reads as absent.
+
+        The head cache is an optimisation, never an authority: a corrupt or
+        implausible head must degrade to the full-chain scan rather than fail an
+        append or, worse, be trusted.
+        """
+        try:
+            value = json.loads(self.head.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(value, dict):
+            return None
+        sequence = value.get("sequence")
+        record_hash = value.get("record_hash")
+        if not isinstance(sequence, int) or sequence < 0:
+            return None
+        if sequence == 0 and record_hash is None:
+            return {"sequence": 0, "record_hash": None}
+        if not isinstance(record_hash, str):
+            return None
+        return {"sequence": sequence, "record_hash": record_hash}
+
+    def _write_head(self, sequence: int, record_hash: str | None) -> None:
+        # A plain overwrite, not _atomic_json: the head is a disposable hint,
+        # every reader and writer of it holds the write lock, and a torn write
+        # merely fails _read_head's parse and triggers the full-scan rebuild.
+        # The temp-file/replace/fsync dance would cost several syscalls per
+        # append to protect a file whose loss costs nothing.
+        try:
+            self.head.write_text(
+                json.dumps(
+                    {"sequence": sequence, "record_hash": record_hash},
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            self.head.unlink(missing_ok=True)
+
+    def _tail_entry(self) -> tuple[int, Path | None]:
+        """Count record files and find the newest without glob's pattern machinery.
+
+        Profiling showed glob dominating the append fast path. Record names start
+        with a zero-padded 12-digit sequence, so the lexicographic maximum IS the
+        newest record -- the same ordering event_paths() relies on -- and one
+        name listing gives both the count and the tail. The count matters: a head
+        that undercounts the files (crash between record and head writes) must be
+        refused, or the next append would fork the chain.
+        """
+        count = 0
+        last_name: str | None = None
+        try:
+            names = os.listdir(self.events)
+        except OSError:
+            return 0, None
+        for name in names:
+            if not name.endswith(".godmode.json"):
+                continue
+            count += 1
+            if last_name is None or name > last_name:
+                last_name = name
+        return count, (self.events / last_name) if last_name else None
+
+    def _chain_tail(self) -> tuple[int, str | None]:
+        """Locate the chain tail without re-reading history. Caller holds the lock.
+
+        Re-verifying the whole chain on every append made writes O(history), so a
+        long-lived archive punished the very habit -- frequent recording -- the
+        product exists to encourage. The head cache is validated against the last
+        record file only (count, sequence, stored hash, and that record's own
+        hash); any mismatch falls back to the full verified scan and rebuilds the
+        cache. Tamper detection is not weakened: verify()/doctor still walk the
+        entire chain.
+        """
+        count, last_path = self._tail_entry()
+        head = self._read_head()
+        if head is not None and head["sequence"] == count:
+            if last_path is None:
+                return 0, None
+            try:
+                last = self._read_json(last_path)
+            except ArchiveError:
+                last = None
+            if (
+                last is not None
+                and last.get("sequence") == head["sequence"]
+                and last.get("record_hash") == head["record_hash"]
+                and _record_hash(last) == head["record_hash"]
+            ):
+                return head["sequence"], head["record_hash"]
+        records = self.read_events(verify=True)
+        tail_hash = records[-1]["record_hash"] if records else None
+        self._write_head(len(records), tail_hash)
+        return len(records), tail_hash
+
+    def _write_record(
+        self,
+        kind: str,
+        subject: str,
+        data: dict[str, Any],
+        evidence: list[str],
+        *,
+        sequence: int,
+        previous_hash: str | None,
+    ) -> dict[str, Any]:
+        """Seal and persist one record. Caller holds the lock and has scanned the payload.
+
+        The record file lands before the head cache on purpose: a crash between
+        the two leaves a head that undercounts, which _chain_tail detects and
+        repairs from the files -- the files are the truth, the head is a hint.
+        """
+        identifier = uuid.uuid4().hex
+        record: dict[str, Any] = {
+            "schema_version": SCHEMA_VERSION,
+            "project_key": self.anchor.project_key,
+            "sequence": sequence,
+            "record_id": identifier,
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "anchor_fingerprint": anchor_fingerprint(self.anchor),
+            # Every record attributes its author, so drift between models is
+            # traceable on any kind, not only attestations.
+            "agent": writer_fingerprint(),
+            "kind": kind,
+            "subject": subject,
+            "data": data,
+            "evidence": evidence,
+            "previous_hash": previous_hash,
+        }
+        record["record_hash"] = _record_hash(record)
+        destination = self.events / f"{sequence:012d}-{identifier}.godmode.json"
+        _atomic_json(destination, record)
+        self._write_head(sequence, record["record_hash"])
+        return record
+
     def append(
         self,
         kind: str,
@@ -275,6 +424,7 @@ class Chronicle:
         data: dict[str, Any],
         *,
         evidence: list[str] | None = None,
+        dedupe: bool = False,
     ) -> dict[str, Any]:
         if kind not in EVENT_KINDS:
             raise ArchiveError(f"Unsupported Godmode record kind: {kind}")
@@ -286,29 +436,80 @@ class Chronicle:
         enforce_private_payload(payload_for_scan)
         self.initialize()
         with self.write_lock():
+            if dedupe:
+                # Re-recording an unchanged fact adds no information but grows the
+                # chain forever; opt-in dedupe returns the existing record instead.
+                # Only the most recent record of the same kind AND subject counts:
+                # deduping across subjects would silently merge distinct facts,
+                # and matching anything older would hide a real state change.
+                for existing in reversed(self.read_events(verify=False)):
+                    if existing.get("kind") != kind or existing.get("subject") != subject:
+                        continue
+                    if _canonical_json(existing.get("data")) == _canonical_json(data):
+                        duplicate = dict(existing)
+                        # Presentation-only marker: never persisted, so the
+                        # stored record's hash is untouched.
+                        duplicate["deduplicated"] = True
+                        return duplicate
+                    break
+            count, tail_hash = self._chain_tail()
+            return self._write_record(
+                kind, subject, data, evidence,
+                sequence=count + 1, previous_hash=tail_hash,
+            )
+
+    def expunge(self, sequence: int, reason: str) -> dict[str, Any]:
+        """Erase a record's payload after a secret slipped past the scanner.
+
+        The sentinel matches secret *shapes*, so a real credential in an
+        unfamiliar format can reach disk. Deleting the file would break the hash
+        chain and hide that history changed; leaving it keeps leaking. This is
+        the middle path: the record's data and evidence are replaced with an
+        expunge marker, that record and every subsequent one are re-sealed so
+        verify() still passes, and an `incident` tombstone records the sequence,
+        reason, and the old record_hash -- the rewrite is visible and auditable,
+        never silent. The one deliberate integrity trade: payload bytes are
+        unrecoverable, which is the point.
+        """
+        reason = reason.strip()
+        if not reason:
+            raise ArchiveError("Expunge requires a non-empty reason")
+        self.initialize()
+        with self.write_lock():
             records = self.read_events(verify=True)
-            sequence = len(records) + 1
-            identifier = uuid.uuid4().hex
-            record: dict[str, Any] = {
-                "schema_version": SCHEMA_VERSION,
-                "project_key": self.anchor.project_key,
-                "sequence": sequence,
-                "record_id": identifier,
-                "recorded_at": datetime.now(timezone.utc).isoformat(),
-                "anchor_fingerprint": anchor_fingerprint(self.anchor),
-                # Every record attributes its author, so drift between models is
-                # traceable on any kind, not only attestations.
-                "agent": writer_fingerprint(),
-                "kind": kind,
-                "subject": subject,
-                "data": data,
-                "evidence": evidence,
-                "previous_hash": records[-1]["record_hash"] if records else None,
+            if not 1 <= sequence <= len(records):
+                raise ArchiveError(f"No record with sequence {sequence} to expunge")
+            target = records[sequence - 1]
+            old_hash = target["record_hash"]
+            tombstone_data = {
+                "expunged_sequence": sequence,
+                "reason": reason,
+                "expunged_record_hash": old_hash,
             }
-            record["record_hash"] = _record_hash(record)
-            destination = self.events / f"{sequence:012d}-{identifier}.godmode.json"
-            _atomic_json(destination, record)
-            return record
+            # Scan the tombstone before touching any file: failing after the
+            # re-seal would leave a rewritten chain with no tombstone -- exactly
+            # the silent rewrite this method exists to avoid.
+            enforce_private_payload(
+                {"subject": "expunge", "data": tombstone_data, "evidence": []}
+            )
+            marker = {"expunged": True, "reason": reason}
+            target["data"] = dict(marker)
+            target["evidence"] = dict(marker)
+            paths = self.event_paths()
+            previous = records[sequence - 2]["record_hash"] if sequence > 1 else None
+            for index in range(sequence - 1, len(records)):
+                record = records[index]
+                record["previous_hash"] = previous
+                record["record_hash"] = _record_hash(record)
+                _atomic_json(paths[index], record)
+                previous = record["record_hash"]
+            self._write_head(len(records), previous)
+            tombstone = self._write_record(
+                "incident", "expunge", tombstone_data,
+                [f"expunged-sequence:{sequence}"],
+                sequence=len(records) + 1, previous_hash=previous,
+            )
+        return {"expunged": sequence, "old_record_hash": old_hash, "tombstone": tombstone}
 
     def latest(self, kind: str | None = None) -> dict[str, Any] | None:
         records = self.read_events()

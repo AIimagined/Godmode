@@ -113,6 +113,79 @@ def collect_inventory(project: str | Path) -> dict[str, Any]:
     }
 
 
+def _resolve_git_dir(project: Path) -> Path | None:
+    """The directory git actually keeps this checkout's state in.
+
+    `.git` is usually a directory, but in a linked worktree it is a FILE whose
+    single line points at the real per-worktree git dir. Reading the wrong one
+    would miss every in-progress-operation marker, which is exactly the state
+    this resolution exists to expose.
+    """
+    pointer = Path(project) / ".git"
+    if pointer.is_dir():
+        return pointer
+    if pointer.is_file():
+        try:
+            text = pointer.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        for line in text.splitlines():
+            if line.startswith("gitdir:"):
+                candidate = Path(line[len("gitdir:"):].strip())
+                if not candidate.is_absolute():
+                    candidate = (pointer.parent / candidate).resolve()
+                return candidate if candidate.is_dir() else None
+    return None
+
+
+# Marker files git leaves in its state dir while an operation is unfinished.
+# Presence, not content, is the signal: each exists only between the start of
+# the operation and its --continue or --abort.
+_OPERATION_MARKERS: tuple[tuple[str, str, bool], ...] = (
+    ("MERGE_HEAD", "merging", False),
+    ("rebase-merge", "rebasing", True),
+    ("rebase-apply", "rebasing", True),
+    ("CHERRY_PICK_HEAD", "cherry-picking", False),
+    ("BISECT_LOG", "bisecting", False),
+    ("REVERT_HEAD", "reverting", False),
+)
+
+
+def repo_state(project: Path) -> dict[str, Any]:
+    """Whether the repository is mid-operation, because "dirty" hides a crisis.
+
+    A mid-rebase or mid-merge tree shows up in porcelain status as ordinary
+    dirty files, so a resuming agent would happily start substantive work on
+    top of an unfinished operation and turn a recoverable state into a mess.
+    The markers are read from git's own metadata rather than parsed from
+    status output: the files either exist or they do not, and no localization
+    or porcelain-format drift can change that.
+    """
+    in_progress: list[str] = []
+    detached = False
+    git_dir = _resolve_git_dir(Path(project))
+    if git_dir is not None:
+        for name, operation, wants_dir in _OPERATION_MARKERS:
+            marker = git_dir / name
+            present = marker.is_dir() if wants_dir else marker.is_file()
+            if present and operation not in in_progress:
+                in_progress.append(operation)
+        try:
+            head = (git_dir / "HEAD").read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            head = ""
+        # A symbolic HEAD starts "ref: "; raw bytes mean a detached checkout.
+        detached = bool(head) and not head.startswith("ref:")
+    stash_raw = run_git(Path(project), "stash", "list")
+    stash_depth = len(stash_raw.splitlines()) if stash_raw else 0
+    return {
+        "in_progress": in_progress,
+        "detached": detached,
+        "stash_depth": stash_depth,
+        "crisis": bool(in_progress) or detached,
+    }
+
+
 def observe_git(anchor: ProjectAnchor) -> dict[str, Any]:
     if not anchor.is_git:
         return {"is_git": False, "branches": [], "worktrees": [], "changes": []}
@@ -156,6 +229,7 @@ def observe_git(anchor: ProjectAnchor) -> dict[str, Any]:
         "branches": branches,
         "worktrees": worktrees,
         "changes": changes,
+        "state": repo_state(root),
     }
 
 
@@ -207,6 +281,20 @@ def detect_context_issues(
     archive: Chronicle | None = None,
 ) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
+    if anchor.is_git:
+        # An unfinished git operation masquerades as ordinary dirty files, so
+        # it is surfaced by name before any freshness reasoning is attempted.
+        state = repo_state(Path(anchor.project_root))
+        if state["crisis"]:
+            operations = state["in_progress"] or ["detached-head"]
+            issues.append(
+                {
+                    "code": "repo-in-progress-operation",
+                    "severity": "warning",
+                    "detail": f"Repository is {', '.join(operations)}; finish or abort "
+                              "the operation before substantive work.",
+                }
+            )
     if archive is not None and archive.root.is_dir():
         now = time.time()
         for lock_path in sorted(archive.root.glob("*.lock")):

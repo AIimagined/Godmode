@@ -21,12 +21,36 @@ from .godmode_errors import ArchiveError
 STATES = ("proposed", "ready", "active", "blocked", "review", "verified", "closed")
 TERMINAL = ("verified", "closed")
 
+# The §19 work-item vocabulary. A closed set, because a free-text type cannot be
+# gated: "bug" carries a root-cause obligation only if the writer cannot rename
+# it to "bugfix" and slip past.
+ITEM_TYPES = ("epic", "story", "bug", "spike", "chore", "security", "debt")
+# Fibonacci-ish scale. Off-scale numbers are refused rather than rounded, so an
+# estimate of 4 becomes a conversation about 3 vs 5 instead of silent precision.
+POINT_SCALE = (1, 2, 3, 5, 8, 13, 21)
+
 _AUTHORITY = re.compile(
     r"single source of truth|source of truth|\bSSOT\b|authoritative (?:list|record|doc)",
     re.IGNORECASE,
 )
 _SKIP_DIRS = {".git", "node_modules", "dist", "build", "__pycache__", ".venv", "venv", "coverage"}
 _TEXT_SUFFIXES = {".md", ".mdx", ".rst", ".txt", ".adoc"}
+
+
+def _evidence_cites_incident(archive: Chronicle, evidence: list[str]) -> bool:
+    """True when the evidence list points at an incident record.
+
+    Either form counts: an explicit `incident:` reference, or a `seq:N` entry
+    whose sequence resolves to a record of kind incident in this archive.
+    """
+    if any(entry.startswith("incident:") for entry in evidence):
+        return True
+    cited = {int(entry[4:]) for entry in evidence
+             if entry.startswith("seq:") and entry[4:].isdigit()}
+    if not cited:
+        return False
+    return any(record["sequence"] in cited
+               for record in archive.select(kind="incident", limit=500))
 
 
 def record_item(
@@ -37,25 +61,98 @@ def record_item(
     evidence: list[str] | None = None,
     proof: str = "",
     extra: dict[str, Any] | None = None,
+    *,
+    item_type: str | None = None,
+    points: int | None = None,
+    acceptance: str | None = None,
+    depends_on: list[str] | None = None,
+    branch: str | None = None,
+    severity: str | None = None,
+    root_cause: str | None = None,
+    blocked_on: str | None = None,
 ) -> dict[str, Any]:
     """Write one status transition. Reopening finished work needs proof.
 
     Every writer routes through here - a second writer with its own validation
     is how two truths start.
+
+    The §19 fields (item_type, points, acceptance, root_cause) persist across
+    transitions: once declared they are inherited by later records for the same
+    item, so a bug cannot shed its root-cause obligation by omitting its type on
+    the closing write. Oversized stories are flagged, never blocked - sizing is
+    advice; the gates below are contracts.
     """
     if state not in STATES:
         raise ArchiveError(f"Unknown state '{state}'; expected one of {', '.join(STATES)}")
+    if item_type is not None and item_type not in ITEM_TYPES:
+        raise ArchiveError(
+            f"Unknown item type '{item_type}'; expected one of {', '.join(ITEM_TYPES)}"
+        )
+    if points is not None and (isinstance(points, bool) or points not in POINT_SCALE):
+        raise ArchiveError(
+            f"Points must be one of {', '.join(map(str, POINT_SCALE))}; got {points!r}. "
+            "Off-scale estimates are re-estimated, not rounded."
+        )
+
+    evidence = evidence or []
     current = items(archive).get(item)
+    prior = current or {}
     if current and current["state"] in TERMINAL and state not in TERMINAL:
         if not proof.strip():
             raise ArchiveError(
                 f"'{item}' is {current['state']}; reopening requires --proof naming the code "
                 "evidence of regression or an explicit user instruction"
             )
+
+    # Effective values: this call's kwargs win; otherwise the item's history.
+    effective_type = item_type if item_type is not None else prior.get("item_type")
+    effective_points = points if points is not None else prior.get("points")
+    effective_acceptance = acceptance if acceptance is not None else prior.get("acceptance")
+    effective_root_cause = root_cause if root_cause is not None else prior.get("root_cause")
+
+    if state == "blocked" and not (blocked_on or "").strip():
+        raise ArchiveError(
+            f"Moving '{item}' to blocked requires blocked_on naming the exact missing "
+            "dependency; a blocked item that names no blocker is unactionable"
+        )
+    if state == "verified" and (effective_acceptance or "").strip() and not evidence:
+        raise ArchiveError(
+            f"'{item}' declares acceptance criteria; moving to verified requires evidence "
+            "showing they were met - a criterion nobody checked is decoration"
+        )
+    if effective_type == "bug" and state in TERMINAL:
+        if not (effective_root_cause or "").strip() and not _evidence_cites_incident(archive, evidence):
+            raise ArchiveError(
+                f"Closing bug '{item}' requires root_cause naming what actually broke, "
+                "or evidence citing an incident record - a bug closed without a cause "
+                "is a bug scheduled to reopen"
+            )
+
+    findings: list[str] = []
+    if effective_type == "story" and isinstance(effective_points, int):
+        if effective_points >= 8:
+            findings.append("split-recommended")
+        if effective_points >= 13:
+            findings.append("spike-first-recommended")
+
     data: dict[str, Any] = {"title": title, "state": state, "proof": proof}
+    for key, value in (
+        ("item_type", effective_type),
+        ("points", effective_points),
+        ("acceptance", effective_acceptance),
+        ("root_cause", effective_root_cause),
+        ("depends_on", depends_on),
+        ("branch", branch),
+        ("severity", severity),
+        ("blocked_on", blocked_on),
+    ):
+        if value is not None:
+            data[key] = value
+    if findings:
+        data["findings"] = findings
     if extra:
         data.update({k: v for k, v in extra.items() if k not in data})
-    return archive.append("sprint", item, data, evidence=evidence or [])
+    return archive.append("sprint", item, data, evidence=evidence)
 
 
 def items(archive: Chronicle) -> dict[str, dict[str, Any]]:
@@ -66,13 +163,19 @@ def items(archive: Chronicle) -> dict[str, dict[str, Any]]:
         data = record["data"]
         if "state" not in data:
             continue
-        latest[record["subject"]] = {
+        entry = {
             "title": data.get("title", ""),
             "state": data["state"],
             "proof": data.get("proof", ""),
             "sequence": record["sequence"],
             "evidence": record.get("evidence", []),
         }
+        # §19 fields ride along when declared, so gates and point sums read the
+        # same view every other consumer does instead of re-parsing records.
+        for key in ("item_type", "points", "acceptance", "root_cause", "blocked_on"):
+            if key in data:
+                entry[key] = data[key]
+        latest[record["subject"]] = entry
     return latest
 
 
@@ -99,6 +202,10 @@ def verify_pending(archive: Chronicle, project: Path) -> dict[str, Any]:
                 archive, name, entry["title"], "closed",
                 evidence=[f"file:{path}" for path in missing],
                 extra={"closed_because": "every cited artefact is absent from the tree"},
+                # A phantom close is not a fix: the stated cause is the vanished
+                # evidence, so a bug-typed phantom passes the root-cause gate
+                # without pretending the underlying defect was diagnosed.
+                root_cause="phantom-closed: every cited artefact is absent from the tree",
             )
             closed.append(name)
             checked.append({"item": name, "verdict": "phantom-closed", "missing": missing})
@@ -130,10 +237,19 @@ def handover(
     project: Path,
     session: str | None = None,
     charter: dict[str, Any] | None = None,
+    anchor: Any = None,
 ) -> dict[str, Any]:
     """One rolling handover view derived from the store, superseding
     the file-per-session pattern. Latest state is unambiguous; history stays
-    queryable through the archive itself."""
+    queryable through the archive itself.
+
+    The §20.1 contract adds what the next session cannot reconstruct from
+    memory: where the repository stands (public anchor fields only - private
+    paths never enter a handover), what the approved objective was, which items
+    are actually verified versus merely believed done, the invariants that must
+    survive the switch, the files this session touched, and the story points
+    still open. Every field is derived from records, none is recalled.
+    """
     latest_checkpoint = None
     for record in reversed(archive.select(kind="checkpoint", limit=50)):
         latest_checkpoint = {
@@ -144,15 +260,58 @@ def handover(
         }
         break
     left = remaining(archive, project, session=session, charter=charter)
+    current = items(archive)
+
+    repository = None
+    if anchor is not None:
+        public = anchor.public_view()
+        repository = {
+            "branch": public.get("branch"),
+            "head": public.get("head"),
+            "worktree": public.get("worktree_root"),
+        }
+
+    objective = None
+    for record in reversed(archive.select(kind="plan", limit=500)):
+        if record["data"].get("state") == "approved":
+            objective = record["subject"]
+            break
+
+    changed_files = sorted({
+        path
+        for record in archive.select(kind="change", limit=500)
+        if session is None or record["data"].get("session") == session
+        for path in record["data"].get("files", [])
+    })
+
     return {
         "checkpoint": latest_checkpoint,
+        "repository": repository,
+        "objective": objective,
         "remaining": left["remaining"],
         "remaining_count": left["count"],
         "complete_over": left["complete_over"],
         "items": {
             name: {"state": entry["state"], "title": entry["title"]}
-            for name, entry in sorted(items(archive).items())
+            for name, entry in sorted(current.items())
         },
+        "verified_completed": sorted(
+            name for name, entry in current.items() if entry["state"] == "verified"
+        ),
+        "unverified": sorted(
+            name for name, entry in current.items() if entry["state"] not in TERMINAL
+        ),
+        "protected_invariants": [
+            {"subject": record["subject"],
+             "recorded_at": record["recorded_at"],
+             "evidence": record.get("evidence", [])}
+            for record in archive.select(kind="invariant", limit=500)
+        ],
+        "changed_files": changed_files,
+        "remaining_story_points": sum(
+            entry["points"] for entry in current.values()
+            if entry["state"] not in TERMINAL and isinstance(entry.get("points"), int)
+        ),
         "verdict": left["verdict"],
     }
 

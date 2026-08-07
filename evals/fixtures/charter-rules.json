@@ -1,0 +1,61 @@
+{
+  "rules": {
+    "R-17950a69a7": {
+      "enforcement": "ADVISORY",
+      "text_hash": "ab9d888f819b60e5",
+      "trigger": "always",
+      "verify": "none"
+    },
+    "R-2259c5b00c": {
+      "enforcement": "HARD",
+      "text_hash": "a6d2ad57a9c431e3",
+      "trigger": "before_completion",
+      "verify": "citation_resolves"
+    },
+    "R-4783f0d508": {
+      "enforcement": "HARD",
+      "text_hash": "4a4d32c8e4fa96f5",
+      "trigger": "before_mutation",
+      "verify": "attestation_present"
+    },
+    "R-56305a9e8f": {
+      "enforcement": "HARD",
+      "text_hash": "9e9404b494b372e4",
+      "trigger": "before_mutation",
+      "verify": "attestation_present"
+    },
+    "R-720cc85a48": {
+      "enforcement": "HARD",
+      "text_hash": "782cc9812b18fc2d",
+      "trigger": "before_mutation",
+      "verify": "attestation_present"
+    },
+    "R-7b54303e37": {
+      "enforcement": "ADVISORY",
+      "text_hash": "a463432c75ec2511",
+      "trigger": "always",
+      "verify": "none"
+    },
+    "R-86132a0d27": {
+      "enforcement": "ADVISORY",
+      "text_hash": "87a2d87a914b849c",
+      "trigger": "always",
+      "verify": "none"
+    },
+    "R-b9dbf85864": {
+      "enforcement": "HARD",
+      "text_hash": "69c6ca3b9ea47c55",
+      "trigger": "before_completion",
+      "verify": "guard_observed_failing"
+    }
+  },
+  "schema": "godmode-charter-snapshot-v1",
+  "summary": {
+    "enforcement": {
+      "ADVISORY": 3,
+      "HARD": 5,
+      "SOFT": 0
+    },
+    "rules": 8
+  }
+}

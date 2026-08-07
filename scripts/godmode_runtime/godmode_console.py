@@ -40,7 +40,14 @@ from .godmode_charter import TRIGGERS, applicable_rules, bootstrap_rules, compil
 from .godmode_drift import capabilities as host_capabilities
 from .godmode_changelog import check_fragments, merge_fragments
 from .godmode_integrity import analyze as analyze_integrity
-from .godmode_evals import adversarial_grid, check_snapshots, run_routing_evals
+from .godmode_evals import (
+    adversarial_grid,
+    charter_snapshot,
+    check_snapshots,
+    ranking_snapshot,
+    run_behavior_assertions,
+    run_routing_evals,
+)
 from .godmode_guardrails import arbitrate, check_ceilings, rewind_preview, watchdog
 from .godmode_locale import check_locales
 from .godmode_loop import analyze as analyze_loops
@@ -49,8 +56,16 @@ from .godmode_mistakes import analyze as analyze_mistakes
 from .godmode_mistakes import stale_runtime
 from .godmode_netgate import differential as netgate_differential
 from .godmode_parity import absorption_check, parity_matrix, schema_ladder
-from .godmode_reconcile import classify_environment, reconcile_docs, reconcile_versions
+from .godmode_reconcile import classify_environment, reconcile_docs, reconcile_versions, record_triggers
 from .godmode_removal import REQUIRED_FIELDS as REMOVAL_FIELDS
+from .godmode_report import completion_report, render_markdown
+from .godmode_stages import advance as stage_advance
+from .godmode_stages import skip_stage, sop_attest, sop_status, stage_gate
+from .godmode_index import IndexStale
+from .godmode_index import fresh as index_fresh
+from .godmode_index import query as index_query
+from .godmode_index import rebuild as index_rebuild
+from .godmode_dbmgr import migration_review, schema_inventory, schema_review
 from .godmode_removal import record_removal, removal_answer
 from .godmode_drift import compare as compare_sessions
 from .godmode_method import METHODS as METHOD_NAMES
@@ -66,7 +81,7 @@ from .godmode_plan import specify as plan_specify
 from .godmode_plan import start as plan_start
 from .godmode_scenarios import run as run_scenarios
 from .godmode_scope import scope as scope_change
-from .godmode_status import STATES, handover, record_item, remaining, render_view, survey
+from .godmode_status import ITEM_TYPES, STATES, handover, record_item, remaining, render_view, survey
 from .godmode_corpus import build_brief, resolve_roles
 from .godmode_egress import notice as egress_notice
 from .godmode_egress import scan_project as scan_untrusted
@@ -307,6 +322,8 @@ _CONFIG_CONTRACTS: dict[str, dict[str, tuple[type, bool]]] = {
                                "seconds": (int, False)},
     ".godmode-dependency-policy.json": {"max_dependencies": (int, False),
                                         "banned_licenses": (list, False)},
+    ".godmode-privacy.json": {"sensitive_paths": (list, False), "never_leave": (list, False)},
+    ".godmode-loop.json": {"repeat_threshold": (int, False)},
     ".godmode-operator.json": {"persona": (str, True), "hard_gates": (list, True),
                                "communication": (str, True), "decision_authority": (str, True)},
     ".godmode-experiment.json": {"hypothesis": (str, True), "command": (str, True),
@@ -547,6 +564,9 @@ def cmd_status_set(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     record = record_item(
         runtime.archive, args.item, args.title, args.state,
         evidence=args.evidence, proof=args.proof,
+        item_type=args.type, points=args.points, acceptance=args.acceptance,
+        blocked_on=args.blocked_on, root_cause=args.root_cause,
+        depends_on=args.depends_on or None, branch=args.branch, severity=args.severity,
     )
     return CommandResult({"record": _event_view(record)})
 
@@ -815,7 +835,8 @@ def cmd_egress(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     if args.action is None:
         raise ArchiveError("egress requires an action or --staged")
     disclosure = egress_notice(args.action, args.purpose,
-                               Path(runtime.anchor.project_root), args.path)
+                               Path(runtime.anchor.project_root), args.path,
+                               destination=args.destination, redact=args.redact)
     # A secret inside the requested scope blocks the disclosure rather than
     # redacting quietly: the user decides, having been told.
     return CommandResult(disclosure, exit_code=1 if disclosure["blocked"] else 0)
@@ -905,7 +926,13 @@ def cmd_atlas(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 
 def cmd_slice(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
-    window = slice_file(Path(runtime.anchor.project_root) / args.path, args.start, args.end)
+    root = Path(runtime.anchor.project_root).resolve()
+    target = (root / args.path).resolve()
+    # Containment before reading: a `../` or absolute path must not let a
+    # bounded read escape the project it claims to be bounded to.
+    if not target.is_relative_to(root):
+        raise ArchiveError(f"Path escapes the project root and was not read: {args.path}")
+    window = slice_file(target, args.start, args.end)
     return CommandResult(window)
 
 
@@ -1278,7 +1305,79 @@ def cmd_environment(args: argparse.Namespace, runtime: Runtime) -> CommandResult
     )
 
 
+def cmd_expunge(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    return CommandResult(runtime.archive.expunge(args.sequence, args.reason))
+
+
+def cmd_stage(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    project = Path(runtime.anchor.project_root)
+    session = _session(runtime, args.session)
+    if args.skip:
+        if not args.reason:
+            raise ArchiveError("Skipping a stage requires --reason stating why")
+        return CommandResult(skip_stage(runtime.archive, session, args.to, args.reason))
+    if args.advance:
+        outcome = stage_advance(runtime.archive, project, args.to, session)
+        return CommandResult(outcome, exit_code=0 if outcome.get("advanced") else 1)
+    verdict = stage_gate(runtime.archive, project, args.to, session=session)
+    return CommandResult(verdict, exit_code=0 if verdict["allowed"] else 1)
+
+
+def cmd_sop(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    session = _session(runtime, args.session)
+    if args.attest:
+        record = sop_attest(runtime.archive, session, args.attest,
+                            result=args.result or "", evidence=args.evidence)
+        return CommandResult({"record": _event_view(record)})
+    return CommandResult(sop_status(runtime.archive, session))
+
+
+def cmd_index(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    project = Path(runtime.anchor.project_root)
+    if args.index_command == "rebuild":
+        return CommandResult(index_rebuild(runtime.archive, project))
+    if args.index_command == "status":
+        state = index_fresh(runtime.archive, project)
+        return CommandResult(state, exit_code=0 if state["fresh"] else 1)
+    try:
+        return CommandResult(index_query(
+            runtime.archive, project, args.task, limit=args.limit,
+            allow_stale=args.allow_stale,
+        ))
+    except IndexStale as exc:
+        return CommandResult(
+            {"error": "IndexStale", "message": str(exc),
+             "next": "run `index rebuild`, or pass --allow-stale to read anyway"},
+            exit_code=1,
+        )
+
+
 def cmd_database(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if getattr(args, "inventory", False):
+        inventory = schema_inventory(Path(runtime.anchor.project_root))
+        if getattr(args, "propose", False):
+            _require_archive(runtime)
+            columns: dict[str, list[str]] = {}
+            for pair in args.existing_column:
+                table, _, column = pair.partition(":")
+                columns.setdefault(table, []).append(column)
+            review = schema_review(inventory, {
+                "change": args.change, "existing_tables": args.existing_table,
+                "existing_columns": columns, "proposed_table": args.proposed_table,
+                "proposed_column": args.proposed_column, "review": args.review,
+                "rollback": args.rollback or "",
+            })
+            return CommandResult({"inventory": inventory, "review": review},
+                                 exit_code=0 if review["verdict"] == "approved" else 1)
+        return CommandResult(inventory)
+    if getattr(args, "review_migration", None):
+        text = Path(args.review_migration).read_text(encoding="utf-8")
+        verdict = migration_review(text)
+        return CommandResult(verdict, exit_code=1 if verdict["blocking"] else 0)
     if getattr(args, "propose", False):
         _require_archive(runtime)
         columns: dict[str, list[str]] = {}
@@ -1330,6 +1429,7 @@ def cmd_status_handover(args: argparse.Namespace, runtime: Runtime) -> CommandRe
         runtime.archive, Path(runtime.anchor.project_root),
         session=_session(runtime, args.session) if args.session else None,
         charter=_charter(runtime) if args.session else None,
+        anchor=runtime.anchor,
     )
     return CommandResult(view)
 
@@ -1340,6 +1440,10 @@ def cmd_docs_reconcile(args: argparse.Namespace, runtime: Runtime) -> CommandRes
 
 
 def cmd_docs(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if getattr(args, "records", False):
+        _require_archive(runtime)
+        report = record_triggers(runtime.archive, base_sequence=args.base_sequence)
+        return CommandResult(report, exit_code=0 if report["verdict"] == "reconciled" else 1)
     if getattr(args, "reconcile", False):
         return cmd_docs_reconcile(args, runtime)
     # Name the missing flag, not the internal record constraint it would trip.
@@ -1360,11 +1464,20 @@ def cmd_docs(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 def cmd_report(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
-    return CommandResult(
-        build_context_brief(
-            runtime.anchor, runtime.archive, token_budget=args.token_budget
+    if getattr(args, "context", False):
+        return CommandResult(
+            build_context_brief(
+                runtime.anchor, runtime.archive, token_budget=args.token_budget
+            )
         )
+    report = completion_report(
+        runtime.archive, runtime.anchor, Path(runtime.anchor.project_root),
+        session=getattr(args, "session", None) or None,
     )
+    exit_code = 1 if report["fields"]["status"]["value"] == "blocked" else 0
+    if getattr(args, "markdown", False):
+        return CommandResult({"markdown": render_markdown(report)}, exit_code=exit_code)
+    return CommandResult(report, exit_code=exit_code)
 
 
 def cmd_export(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -1388,12 +1501,24 @@ def cmd_export(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 def cmd_evals(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     project = Path(runtime.anchor.project_root)
     if args.write_snapshots:
-        return CommandResult(check_snapshots(project, write=True))
+        return CommandResult({
+            "routing": check_snapshots(project, write=True),
+            "charter": charter_snapshot(project, write=True),
+            "ranking": ranking_snapshot(project, write=True),
+            "verdict": "snapshots-written",
+        })
     routing = run_routing_evals(project)
     snapshots = check_snapshots(project)
-    payload = {**routing, "snapshots": snapshots}
+    assertions = run_behavior_assertions(project)
+    charter = charter_snapshot(project)
+    ranking = ranking_snapshot(project)
+    payload = {**routing, "snapshots": snapshots, "assertions": assertions,
+               "charter": charter, "ranking": ranking}
     sound = (routing["verdict"] == "routing-sound"
-             and snapshots["verdict"] == "behaviour-stable")
+             and snapshots["verdict"] == "behaviour-stable"
+             and assertions["verdict"] == "assertions-held"
+             and charter["verdict"] == "charter-stable"
+             and ranking["verdict"] == "ranking-stable")
     return CommandResult(payload, exit_code=0 if sound else 1)
 
 
@@ -1416,7 +1541,10 @@ def cmd_absorb(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 def cmd_parity(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     if getattr(args, "matrix", False):
-        result = parity_matrix(runtime.anchor.project_root, args.reference)
+        result = parity_matrix(
+            runtime.anchor.project_root, args.reference,
+            archive=runtime.archive if getattr(args, "archive", False) else None,
+        )
         runtime.archive.append(
             "decision", "parity-matrix-observation",
             {"aligned": result["aligned"],
@@ -1641,6 +1769,14 @@ def _build_parser() -> argparse.ArgumentParser:
     status_set.add_argument("--title", default="")
     status_set.add_argument("--state", choices=list(STATES), required=True)
     status_set.add_argument("--proof", default="", help="Required to reopen verified or closed work")
+    status_set.add_argument("--type", choices=list(ITEM_TYPES), default=None)
+    status_set.add_argument("--points", type=int, default=None)
+    status_set.add_argument("--acceptance", default=None)
+    status_set.add_argument("--blocked-on", default=None)
+    status_set.add_argument("--root-cause", default=None)
+    status_set.add_argument("--depends-on", action="append", default=[])
+    status_set.add_argument("--branch", default=None)
+    status_set.add_argument("--severity", default=None)
     _evidence(status_set)
     status_set.set_defaults(handler=cmd_status_set)
     status_sub.add_parser("survey").set_defaults(handler=cmd_status_survey)
@@ -1722,6 +1858,10 @@ def _build_parser() -> argparse.ArgumentParser:
     egress.add_argument("action", nargs="?", default=None)
     egress.add_argument("--staged", action="store_true",
                         help="Scan staged and untracked-but-addable content for secret shapes")
+    egress.add_argument("--destination", default=None,
+                        help="Named receiving party (provider/remote/server) when known")
+    egress.add_argument("--redact", action="store_true",
+                        help="Replace blocking items with bare 'redacted' entries instead of blocking")
     egress.add_argument("--purpose", default="unstated")
     egress.add_argument("--path", action="append", default=[], help="Artefact proposed for inclusion; repeatable")
     egress.set_defaults(handler=cmd_egress)
@@ -1960,7 +2100,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     granting = authorize_sub.add_parser("grant", help="Approve a recorded request")
     granting.add_argument("--request", required=True)
-    granting.add_argument("--ttl", type=int, default=180)
+    granting.add_argument("--ttl", type=int, default=None)
     granting.add_argument("--password-stdin", action="store_true")
     granting.set_defaults(handler=cmd_authorize_grant)
 
@@ -1976,7 +2116,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Read the password from standard input instead of prompting",
     )
     issue.add_argument("--operation", required=True)
-    issue.add_argument("--ttl", type=int, default=180)
+    issue.add_argument("--ttl", type=int, default=None)
     issue.set_defaults(handler=cmd_authorize_issue)
     actions = sub.add_parser("actions", help="Read capability audit events")
     actions.add_argument("--limit", type=int, default=50)
@@ -2010,8 +2150,45 @@ def _build_parser() -> argparse.ArgumentParser:
     database.add_argument("--existing-table", action="append", default=[])
     database.add_argument("--existing-column", action="append", default=[], metavar="TABLE:COLUMN")
     database.add_argument("--review", default="")
+    database.add_argument("--inventory", action="store_true",
+                          help="Read-only sqlite schema inventory over the tree")
+    database.add_argument("--review-migration", metavar="FILE",
+                          help="Static review of a migration SQL file")
     _evidence(database)
     database.set_defaults(handler=cmd_database)
+
+    expunge_parser = sub.add_parser(
+        "expunge",
+        help="Erase a leaked secret from a record, re-sealing the chain with an auditable tombstone",
+    )
+    expunge_parser.add_argument("--sequence", type=int, required=True)
+    expunge_parser.add_argument("--reason", required=True)
+    expunge_parser.set_defaults(handler=cmd_expunge)
+
+    stage = sub.add_parser("stage", help="Lifecycle stage gate: check, advance, or skip with reason")
+    stage.add_argument("--to", required=True)
+    stage.add_argument("--advance", action="store_true")
+    stage.add_argument("--skip", action="store_true")
+    stage.add_argument("--reason", default="")
+    stage.add_argument("--session")
+    stage.set_defaults(handler=cmd_stage)
+
+    sop = sub.add_parser("sop", help="T0-T14 troubleshooting SOP status and attestation")
+    sop.add_argument("--attest", metavar="Tn")
+    sop.add_argument("--result", default="")
+    sop.add_argument("--session")
+    _evidence(sop)
+    sop.set_defaults(handler=cmd_sop)
+
+    index_parser = sub.add_parser("index", help="Derived SQLite index over corpus, charter, and archive")
+    index_sub = index_parser.add_subparsers(dest="index_command", required=True)
+    index_sub.add_parser("rebuild").set_defaults(handler=cmd_index)
+    index_sub.add_parser("status").set_defaults(handler=cmd_index)
+    index_q = index_sub.add_parser("query")
+    index_q.add_argument("--task", required=True)
+    index_q.add_argument("--limit", type=int, default=10)
+    index_q.add_argument("--allow-stale", action="store_true")
+    index_q.set_defaults(handler=cmd_index)
 
     sprint = sub.add_parser("sprint", help="Record private sprint state")
     sprint.add_argument("--name", required=True)
@@ -2025,13 +2202,21 @@ def _build_parser() -> argparse.ArgumentParser:
     docs.add_argument("--reconcile", action="store_true",
                       help="Fail when a change mandates a documentation move that did not happen")
     docs.add_argument("--base", default="HEAD")
+    docs.add_argument("--records", action="store_true",
+                      help="Check the record-based trigger table (change->checkpoint, bug->lesson, ...)")
+    docs.add_argument("--base-sequence", type=int, default=0)
     docs.add_argument("--document", default="")
     docs.add_argument("--status", default="")
     docs.add_argument("--note")
     _evidence(docs)
     docs.set_defaults(handler=cmd_docs)
 
-    report = sub.add_parser("report", help="Emit a sanitized bounded report")
+    report = sub.add_parser("report", help="Mandatory task-completion report (12 labelled fields)")
+    report.add_argument("--context", action="store_true",
+                        help="Emit the sanitized bounded context brief (previous behavior) instead")
+    report.add_argument("--markdown", action="store_true",
+                        help="Render the TASK COMPLETION REPORT markdown table")
+    report.add_argument("--session", default=None, help="Session id; defaults to the latest session")
     report.add_argument("--token-budget", type=int, default=700)
     report.set_defaults(handler=cmd_report)
     export = sub.add_parser("export", help="Write a sanitized context report")
@@ -2045,6 +2230,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parity.add_argument("--reference", required=True)
     parity.add_argument("--matrix", action="store_true",
                         help="Full eleven-dimension decision matrix instead of category gaps")
+    parity.add_argument("--archive", action="store_true",
+                        help="Apply the recorded-invariant adoption floor (E-14) to the matrix")
     parity.set_defaults(handler=cmd_parity)
 
     netgate = sub.add_parser("netgate", help="Prove the CLI surfaces make zero network connections")
