@@ -145,6 +145,17 @@ The format follows Keep a Changelog principles, and releases use semantic versio
   The seeded fuzz harness caught the first version of that change accepting a
   citation of control characters and encoded traversal, which a declared source
   reference must now not look like.
+- Merging a version twice no longer produces that version twice. A release is
+  rarely cut in one pass — a fragment arrives after the first merge, usually
+  because a gate caught something, which is the system working — and the second
+  merge inserted a second heading for the same version above the first rather
+  than folding into it. Entries already recorded are kept verbatim, so a re-merge
+  never reformats prose that has already been published.
+
+  One such duplicate shipped in a tagged release while 464 tests, thirteen gates,
+  the changelog check and the document linter all reported green, because nothing
+  had ever asked whether a version appears once. The repository's own changelog
+  is now asserted to carry each version exactly once.
 
 ## [0.2.2] - 2026-08-08
 
