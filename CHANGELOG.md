@@ -19,6 +19,58 @@ The format follows Keep a Changelog principles, and releases use semantic versio
   no interactive console is available instead of blocking forever on the password
   prompt (including Windows `NUL` redirection, where `isatty()` reports true).
 
+## [0.2.5] - 2026-08-08
+
+### Fixed
+
+- The gate judges what a command runs rather than what it mentions, and stops
+  interrupting work that never leaves the machine.
+
+  A command named is not a command run. The classifier searched the whole line,
+  so `grep "git push" notes.md` was refused because the words appeared in an
+  argument — and a session working on protected operations trips that constantly.
+  Quoted text is data now: it is blanked before the mutation patterns are
+  applied. That is safe only because the safe listings are a whitelist matched on
+  the original, so a shell invoked on a quoted script is still unrecognised and
+  still fails closed.
+
+  Staging and committing are no longer protected. A commit is local and
+  reversible and loses nothing, and gating it made committing impossible in a
+  session, because no host tool call carries a field a capability could travel
+  in — there was no approval to give. They are recorded at the same tier as a
+  file edit. `git commit --amend`, `reset`, `clean`, `rebase`, `checkout`, branch
+  deletion and every form of `push` stay protected: those either leave the
+  machine or destroy work.
+
+  Release notes moved from the repository root into `docs/releases/`. Five files
+  restating what the changelog and the release pages already carry made the first
+  thing a reader sees a wall of near-duplicates.
+- Four more refusals of ordinary shell work, all found by using the released
+  build rather than by testing it.
+
+  An input redirect was classified as a write. `wc -l < README.md` reads a file
+  and writes nothing; the two characters were grouped only because they look
+  symmetrical. Reading from a file is a read.
+
+  `2>&1` was split at the ampersand. Making a bare `&` a separator so that
+  `ls & rm` could not launder was correct, but in `2>&1` the ampersand
+  duplicates a file descriptor and is part of one token — the split left a bare
+  `1` behind, which classified as an unknown mutation and refused the whole
+  command. The separator now ignores an ampersand that follows a redirect.
+
+  Every command substitution was refused on sight. That held the line against
+  `ls $(curl …)`, and denied `echo $(ls)` along with it, which runs nothing the
+  classifier could not already see. What a substitution runs is now extracted and
+  classified alongside the line containing it, so the laundering is stopped just
+  as firmly and nothing legitimate is lost. `${VAR}` is expansion rather than
+  execution and was never this.
+
+  An output redirect inside the working tree was refused while the declared
+  `Edit` of the same path was permitted. That gated the honest form and not the
+  other, which is all cost and no cover. A redirect is now judged by where it
+  lands, exactly as an edit is: inside the tree it is ordinary work, and outside
+  it, or into `.git/`, `.env` or a key, it is protected.
+
 ## [0.2.4] - 2026-08-08
 
 ### Fixed

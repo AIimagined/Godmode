@@ -71,11 +71,31 @@ _GIT_BRANCH_MUTATION = re.compile(
     r"--set-upstream-to(?:=\S+)?|--unset-upstream|--edit-description)\b"
 )
 
+# Staging and committing are the work: local, reversible, and losing nothing.
+# Gating them made committing impossible in a session, because no host tool
+# call carries a field a capability could travel in. What earns an
+# interruption is the operation that leaves the machine or destroys work, so
+# `--amend` is excluded here and stays protected.
+_GIT_LOCAL_CHANGE = re.compile(r"(?i)^\s*git\s+(?:add|commit)\b(?!.*\s--amend\b)")
+
+# Quoted text is data. The classifier searched the whole line, so
+# `grep "git push" notes.md` was refused for containing the words. Blanking
+# quoted spans before the mutation patterns is safe only because the safe
+# listings are a whitelist matched on the original: a shell invoked on a
+# quoted script is not on that list and still fails closed.
+_QUOTED_SPAN = re.compile(r"'[^']*'|\"[^\"]*\"")
+
+
+def _executable_text(command: str) -> str:
+    """The command with its quoted arguments blanked out."""
+    return _QUOTED_SPAN.sub(" ", command)
+
+
 _ACTION_PATTERNS: tuple[tuple[str, re.Pattern[str], tuple[str, ...]], ...] = (
     (
         "git-history-or-remote",
         re.compile(
-            r"(?i)\bgit\s+(?:push|commit|merge|rebase|reset|clean|tag|checkout|switch|"
+            r"(?i)\bgit\s+(?:push|merge|rebase|reset|clean|tag|checkout|switch|"
             r"branch\s+(?:-[dDmM]|--delete)|worktree\s+(?:remove|prune|move)|"
             r"stash\s+(?:drop|pop|clear|apply|push|save|branch|create|store)|"
             r"remote\s+(?:add|remove|rm|rename|set-url|set-head|set-branches|prune|update))\b"
@@ -336,6 +356,9 @@ _TIER_BY_CATEGORY = {
     "read-only-inspection": "R0",
     "local-compute-or-state": "R1",
     "worktree-file-mutation": "R2",
+    # Recorded at the same tier as a file edit: it changes local state and
+    # nothing leaves the machine.
+    "local-repository-change": "R2",
     "git-branch-mutation": "R3",
     "git-history-or-remote": "R3",
     "database-mutation": "R3",
@@ -438,7 +461,11 @@ def _categorize(normalized: str, project_root: Path | None = None) -> tuple[str,
     if _LOOP_HEADER.match(normalized):
         return "read-only-inspection", False, ["a loop header; its body is judged separately"]
 
-    if _GIT_BRANCH_MUTATION.search(normalized):
+    # Mutation patterns read the command with quoted arguments blanked, so
+    # naming a protected operation is not performing one.
+    executable = _executable_text(normalized)
+
+    if _GIT_BRANCH_MUTATION.search(executable):
         return (
             "git-branch-mutation",
             True,
@@ -446,8 +473,13 @@ def _categorize(normalized: str, project_root: Path | None = None) -> tuple[str,
         )
     if any(pattern.search(normalized) for pattern in _SAFE_INSPECTION_PATTERNS):
         return "read-only-inspection", False, ["local read-only state"]
+    # Checked after the branch mutation and before the protected patterns, so
+    # a commit is ordinary while `--amend` still falls through to them.
+    if _GIT_LOCAL_CHANGE.match(executable):
+        return ("local-repository-change", False,
+                ["the index or a new local commit; nothing leaves the machine"])
     for category, pattern, impact in _ACTION_PATTERNS:
-        if pattern.search(normalized):
+        if pattern.search(executable):
             return category, True, list(impact)
     # A redirect writes a file whatever the verb says, so it is checked after
     # the named mutations but before the read allowances.

@@ -151,9 +151,15 @@ class TagStashRemoteClassificationTests(unittest.TestCase):
 
 class RiskTierTests(unittest.TestCase):
     def test_tiers_cover_the_ladder(self) -> None:
+        # A commit sits at R2 with a file edit, not at R3 with history
+        # rewriting: it is local, reversible, and loses nothing. It was gated
+        # until a live session showed that made committing impossible, because
+        # no host tool call carries a field a capability could travel in.
+        # `--amend`, `reset` and `push` are the operations that earn R3+.
         expectations = {
             "git status": "R0",
-            "git commit -m 'save'": "R3",
+            "git commit -m 'save'": "R2",
+            "git commit --amend": "R3",
             "delete from users where id = 4": "R3",
             "change an unspecified production setting": "R3",
             "git push origin main": "R4",

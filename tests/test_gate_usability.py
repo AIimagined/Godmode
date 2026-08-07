@@ -304,6 +304,63 @@ class RedirectionAndSubstitutionTests(unittest.TestCase):
             self.assertFalse(classify_action(operation)["protected"], operation)
 
 
+class ExecutablePositionTests(unittest.TestCase):
+    """A command mentioned is not a command run.
+
+    The classifier searched the whole line, so `grep "git push" notes.md` was
+    refused because the words appeared in an argument. Quoted text is data:
+    it is excluded from the mutation patterns, and anything whose own
+    executable is unrecognised still fails closed, so nothing is laundered by
+    being put in quotes.
+    """
+
+    def test_naming_a_protected_command_in_an_argument_is_not_running_it(self) -> None:
+        for operation in ('grep "git push" notes.md',
+                          'echo "run git push when ready"',
+                          "grep -rn 'rm -rf' scripts",
+                          'echo "DROP TABLE orders"'):
+            self.assertFalse(classify_action(operation)["protected"], operation)
+
+    def test_actually_running_it_is_still_protected(self) -> None:
+        for operation in ("git push origin main", "rm -rf build", "DROP TABLE orders"):
+            self.assertTrue(classify_action(operation)["protected"], operation)
+
+    def test_quoting_cannot_launder_an_unrecognised_executable(self) -> None:
+        """Stripping quotes is safe only because the safe list is a whitelist:
+        a shell invoked on a quoted script is not on it, so it fails closed."""
+        for operation in ('bash -c "rm -rf /"',
+                          'sh -c "git push --force"',
+                          'eval "rm -rf build"'):
+            self.assertTrue(classify_action(operation)["protected"], operation)
+
+
+class LocalGitTests(unittest.TestCase):
+    """Committing is the work; pushing is the consequence.
+
+    A commit is local and reversible, and gating it made committing impossible
+    in a session where no capability can be attached to a tool call. What
+    deserves the interruption is the operation that leaves the machine or
+    destroys work.
+    """
+
+    def test_committing_and_staging_are_not_protected(self) -> None:
+        for operation in ("git add -A", "git add scripts/",
+                          "git commit -m 'a message'",
+                          "git commit"):
+            self.assertFalse(classify_action(operation)["protected"], operation)
+
+    def test_what_leaves_the_machine_or_destroys_work_is_still_protected(self) -> None:
+        for operation in ("git push origin main", "git push --force",
+                          "git reset --hard HEAD~3", "git clean -fd",
+                          "git rebase -i main", "git commit --amend",
+                          "git checkout -- .", "git branch -D main"):
+            self.assertTrue(classify_action(operation)["protected"], operation)
+
+    def test_a_commit_still_cannot_launder_a_push(self) -> None:
+        verdict = classify_action("git commit -m x && git push origin main")
+        self.assertTrue(verdict["protected"])
+
+
 class RealToolPayloadTests(unittest.TestCase):
     """Through `tool_operation`, not around it.
 
