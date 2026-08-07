@@ -63,6 +63,14 @@ class UnverifiableClaimTests(unittest.TestCase):
         findings = lint_text("README.md", "Godmode prevented 12 production incidents.")
         self.assertEqual(findings[0]["check"], "counterfactual-claim")
 
+    def test_a_negated_counterfactual_is_the_disclaimer_not_the_claim(self) -> None:
+        for line in (
+            "It reports activity and never averted disaster.",
+            "Refusals recorded, not disasters averted.",
+            "This counts refusals rather than prevented incidents.",
+        ):
+            self.assertEqual(lint_text("README.md", line), [], line)
+
 
 class InternalLeakTests(unittest.TestCase):
     def test_internal_deliberation_markers_are_flagged(self) -> None:

@@ -69,6 +69,13 @@ CHECKS: dict[str, dict[str, Any]] = {
         "pattern": re.compile(
             r"(?i)\b(?:prevented|averted|would\s+have\s+(?:caused|broken|failed|cost)|"
             r"saved\s+you|stopped\s+\d+\s+(?:bugs|errors|incidents|defects))\b"),
+        # Negation exempts the line: "refusals recorded, not disasters averted"
+        # is the disclaimer, not the boast. Flagging the sentence that refuses
+        # the claim would teach a writer to delete the honesty and keep the
+        # claim - the precise inversion of the point.
+        "unless": re.compile(
+            r"(?i)\b(?:never|not|rather\s+than|instead\s+of|cannot|can(?:no|')t|"
+            r"unmeasurable|unknowable)\b"),
         "why": "asserts what would have happened, which nothing here can measure",
         "remedy": "report what was recorded instead of what it might have prevented",
         "severity": "high",
@@ -131,6 +138,9 @@ def lint_text(path: str, text: str, ignore: tuple[str, ...] = ()) -> list[dict[s
             continue
         for name, check in CHECKS.items():
             if name in ignore:
+                continue
+            exemption = check.get("unless")
+            if exemption is not None and exemption.search(line):
                 continue
             match = check["pattern"].search(line)
             if match:

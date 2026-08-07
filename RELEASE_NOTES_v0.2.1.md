@@ -1,13 +1,13 @@
-# Godmode v0.2.0 — release notes
+# Godmode v0.2.1 — release notes
 
-Status: RELEASED 2026-08-06 (tag v0.2.0), on explicit owner instruction.
+Status: RELEASED 2026-08-07 (tag v0.2.1), on explicit owner instruction.
 Every claim below is enforced by the acceptance suite
 (`python -m unittest discover -s tests`), the staged-failure catalogue
 (`godmode scenarios`), and the runtime's own gates — not asserted.
 
-## What v0.2.0 is
+## What v0.2.1 is
 
-The first tagged public preview of a local-first continuity and evidence-governance
+The second tagged preview of a local-first continuity and evidence-governance
 runtime for coding agents, shipping as a plugin for Claude Code, Codex, and
 Grok, plus a composite GitHub Action.
 
@@ -22,6 +22,25 @@ Grok, plus a composite GitHub Action.
 - **Protected actions stay mediated** — scoped, expiring, single-use local
   capabilities the model cannot mint (sentinel suite; forged-capability
   scenario).
+
+## What changed since v0.2.0
+
+- **Enforcement became real on Claude Code.** A `PreToolUse` gate decides
+  mutating tool calls in the host's own contract; `tool_call_interception`
+  reports HARD only where that gate is installed.
+- **Measurement replaced assertion.** `metrics` computes the twelve product
+  measures locally, reporting insufficient-data rather than a flattering zero;
+  `fuzz` feeds seeded garbage to every classifier and config reader.
+- **Two real defects found by the new tools and fixed**: four config readers
+  crashed on a file containing `null`, and duplicate detection was counting
+  naming conventions (499 pairs down to 33).
+- **The session now reports what the gates did** — refusals counted with their
+  record sequences, silent when nothing fired, switched off with
+  `.godmode-report.json`.
+- **`docs --lint`** holds public prose to the standard claims are held to.
+- Chronicle appends are O(1) with an auditable `expunge` for leaked secrets;
+  the task-completion report, derived SQLite index, database manager, stage
+  machine, RCA SOP, and semantic parity dimensions all shipped.
 
 ## Highlights
 
@@ -48,8 +67,8 @@ Grok, plus a composite GitHub Action.
 
 ## How this release was cut
 
-1. `changelog merge --set-version 0.2.0` folded 35 fragments into CHANGELOG.md
-2. Full suite (195 tests) plus every gate green at tag time
-3. Annotated tag `v0.2.0` with the checksum manifest recorded; GPG signing
+1. `changelog merge --set-version 0.2.1` folded 17 fragments into CHANGELOG.md
+2. Full suite (387 tests) plus every gate green at tag time
+3. Annotated tag `v0.2.1` with the checksum manifest recorded; GPG signing
    remains an owner step (SEC-008) — sign the tag when a key is configured:
-   `git tag -s v0.2.0-signed v0.2.0`
+   `git tag -s v0.2.1-signed v0.2.1`
