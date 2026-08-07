@@ -154,8 +154,35 @@ _SAFE_SHELL_READS = re.compile(
     r"(?i)^\s*(?:ls|dir|pwd|cat|bat|head|tail|wc|nl|file|stat|du|df|tree|echo|"
     r"printf|which|type|whoami|date|env|printenv|basename|dirname|realpath|"
     r"readlink|sort|uniq|cut|awk|sed\s+-n|grep|egrep|fgrep|rg|ag|diff|cmp|"
-    r"md5sum|sha256sum|cd|pushd|popd)\b"
+    r"md5sum|sha256sum|cd|pushd|popd|find|fd|findstr|where|more|fc)\b"
 )
+
+# PowerShell classifies itself. Its approved-verb convention is a documented
+# contract on cmdlet authors, so `Get-` is read-only by construction and
+# matching the verb set stays correct for cmdlets nobody enumerated. Naming the
+# read verbs is the safe direction: an unlisted verb - Set, New, Remove, Clear,
+# Rename, Move, Stop, Invoke - falls through and fails closed. Listing the
+# write verbs instead would let everything unlisted through.
+#
+# Without this the hook fired on PowerShell calls but the classifier knew only
+# POSIX vocabulary, so on Windows every cmdlet was an unclassified mutation and
+# the gate denied the whole session.
+_PS_READ_VERBS = (
+    r"Get|Test|Measure|Select|Where|Sort|Group|Compare|Resolve|Split|Join|"
+    r"Format|ConvertTo|ConvertFrom|Show|Read|Find|Search"
+)
+# `Out-` cannot join them: Out-String reads and Out-File writes, so the split
+# runs through the verb rather than around it and only the readers are named.
+_POWERSHELL_READS = re.compile(
+    rf"(?i)^\s*(?:(?:{_PS_READ_VERBS})-[A-Za-z]+|"
+    r"Out-(?:String|Host|GridView)|Write-(?:Output|Host|Verbose|Debug)|"
+    r"gci|gc|gi|gl|gp|gm|gcm|gu|sls|ls|dir|cls|ft|fl|man|help)\b"
+)
+
+# `find` reads until it is told to act. `-delete` and `-exec` run a mutation
+# inside a single segment, so no separator splits them out and the read
+# allowance would otherwise cover them.
+_FIND_MUTATION = re.compile(r"(?i)\bfind\b[^|;&]*?\s-(?:delete|exec|execdir|ok|okdir)\b")
 
 # Interpreters and task runners. Recorded as local compute rather than
 # protected: gating every `python -m unittest` would duplicate the host's own
@@ -182,7 +209,19 @@ _SENSITIVE_EDIT = re.compile(
 # `VAR=value` alone changes nothing; `VAR=value cmd` is classified on cmd.
 _ASSIGNMENT_PREFIX = re.compile(r"^\s*[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\S*)\s*")
 
-_SEPARATORS = re.compile(r"\s*(?:\|\||&&|[;|])\s*")
+# Every way to start a second command has to end a segment, or the rest of the
+# line inherits the tier of its first word. A newline and a bare `&` were both
+# missed while `ls` still failed closed and there was no safe prefix worth
+# hiding behind; the read allowance made that omission exploitable. `&&` and
+# `||` are listed first so the alternation cannot take a single character of
+# them and leave the other behind.
+_SEPARATORS = re.compile(r"[ \t]*(?:\|\||&&|[;|&\r\n])[ \t\r\n]*")
+
+# A substitution runs a command that never appears as a segment, so there is
+# nothing for the classifier to see. It is denied rather than read through:
+# `ls $(curl …)` is not a listing. A plain `$VAR` or PowerShell's `$env:` and
+# `$_` expand to a value and are not this.
+_SUBSTITUTION = re.compile(r"\$\(|\$\{|`")
 
 
 def shell_segments(command: str) -> list[str]:
@@ -337,7 +376,12 @@ def _categorize(normalized: str) -> tuple[str, bool, list[str]]:
     # the named mutations but before the read allowances.
     if _REDIRECT.search(normalized):
         return "worktree-file-mutation", True, ["a redirected write to the filesystem"]
-    if _SAFE_SHELL_READS.match(normalized):
+    if _FIND_MUTATION.search(normalized):
+        return "filesystem-mutation", True, ["local files", "recoverability"]
+    if _SUBSTITUTION.search(normalized):
+        return ("unclassified-mutation", True,
+                ["a substituted command the classifier never saw"])
+    if _SAFE_SHELL_READS.match(normalized) or _POWERSHELL_READS.match(normalized):
         return "read-only-inspection", False, ["local read-only state"]
     if _LOCAL_COMPUTE.match(normalized):
         return "local-compute-or-state", False, ["local computation; no protected surface named"]
