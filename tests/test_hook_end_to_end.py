@@ -122,11 +122,26 @@ class RefusalMessageTests(unittest.TestCase):
     def test_the_refusal_names_what_actually_unblocks_it(self) -> None:
         _decision, reason = _decide("Bash", {"command": "rm -rf build"})
         self.assertTrue(reason, "a denial with no reason is not actionable")
-        self.assertRegex(reason, r"(?i)yourself|narrower|disable")
+        self.assertRegex(reason, r"(?i)yourself|narrower|authorize stage")
 
     def test_the_refusal_names_the_category_that_triggered_it(self) -> None:
         _decision, reason = _decide("Bash", {"command": "git push --force origin main"})
         self.assertIn("git-history-or-remote", reason)
+
+    def test_the_refusal_names_the_remedy_the_hook_actually_honours(self) -> None:
+        """Twenty lines above the message, a staged capability is consumed and
+        the call proceeds. The message was written before that shipped and
+        still said no in-session approval existed - denying its own remedy."""
+        _decision, reason = _decide("Bash", {"command": "git push origin main"})
+        self.assertIn("authorize stage", reason)
+        self.assertIn("git push origin main", reason,
+                      "the operator has to retype the command exactly")
+
+    def test_the_refusal_does_not_recommend_removing_the_guard(self) -> None:
+        """Offering that as a remedy is the likeliest advice to be taken and
+        the worst, and it was offered because the real remedy went unmentioned."""
+        _decision, reason = _decide("Bash", {"command": "rm -rf build"})
+        self.assertNotIn("disable the plugin", reason)
 
 
 if __name__ == "__main__":

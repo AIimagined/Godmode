@@ -277,18 +277,21 @@ def main(argv: list[str] | None = None) -> int:
             preview["capability_consumed"] = True
         else:
             preview["allow"] = False
-            # Name a remedy the reader can actually perform. A host tool call
-            # carries no field a capability could travel in, so the broker -
-            # the answer this message used to give - is unreachable from here,
-            # and pointing at it sent the operator hunting for a token they
-            # had no way to supply. Every refusal is therefore total, which is
-            # also why this gate must be conservative about what it stops.
+            # Name a remedy the reader can actually perform - and name the one
+            # that exists. This message was written when the broker really was
+            # unreachable from a host tool call, and it was never revisited
+            # when staging shipped to answer exactly that: twenty lines above,
+            # a staged capability is consumed and the call proceeds. So the
+            # refusal denied the existence of its own remedy and offered
+            # disabling the guard instead, which is the worst advice this
+            # sentence could give and the likeliest to be taken.
             preview["reason"] = (
                 f"refused: this names a protected operation ({preview['category']}, "
-                f"{preview.get('tier', 'R?')}). No capability can be attached to a host "
-                "tool call, so there is no in-session approval: run it yourself, "
-                "rephrase it as something narrower, or disable the plugin for this "
-                "session if the refusal is wrong."
+                f"{preview.get('tier', 'R?')}). Run it yourself, rephrase it as "
+                "something narrower, or stage a capability for this exact "
+                "command: `godmode authorize stage --operation "
+                f"{json.dumps(operation[:200])}` - it needs the password from "
+                "`godmode authorize setup`, is spent once, and expires."
             )
 
         if pretool:
