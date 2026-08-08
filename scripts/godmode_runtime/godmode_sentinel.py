@@ -238,7 +238,7 @@ _SENSITIVE_EDIT = re.compile(
 )
 
 
-def _is_scratch(target: Path) -> bool:
+def _is_scratch(target: Path, project_root: Path | None = None) -> bool:
     """Whether a path lands in the operating system's temporary directory.
 
     Containment correctly refuses writes outside the working tree, and the
@@ -256,6 +256,20 @@ def _is_scratch(target: Path) -> bool:
         candidate = Path(os.path.normcase(os.path.normpath(str(target))))
     except (OSError, ValueError):
         return False
+
+    # A project checked out under the temporary directory - a CI workspace, a
+    # sandbox, a build in /tmp - would otherwise have this allowance swallow
+    # containment whole, because every path near it is also under temp and so
+    # every write outside the tree would be permitted. Where the two rules
+    # would overlap, containment governs alone.
+    if project_root is not None:
+        try:
+            root = Path(os.path.normcase(os.path.normpath(str(project_root))))
+        except (OSError, ValueError):
+            return False
+        if scratch == root or scratch in root.parents:
+            return False
+
     return scratch in candidate.parents
 
 
@@ -457,7 +471,7 @@ def _categorize(normalized: str, project_root: Path | None = None) -> tuple[str,
         if _SENSITIVE_EDIT.search(path):
             return ("worktree-file-mutation", True,
                     [f"not an ordinary working file: {path[:80]}"])
-        if not _contained(path, project_root) and not _is_scratch(Path(path)):
+        if not _contained(path, project_root) and not _is_scratch(Path(path), project_root):
             return ("worktree-file-mutation", True,
                     [f"outside the working tree: {path[:80]}"])
         return "worktree-file-mutation", False, ["a file in the working tree"]
