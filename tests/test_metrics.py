@@ -89,14 +89,19 @@ class MeasuredTests(unittest.TestCase):
             self.assertFalse(entry["meets_target"])
 
     def test_a_downgraded_root_cause_claim_lowers_rca_precision(self) -> None:
-        from godmode_runtime.godmode_attest import open_session, record_claim
+        from godmode_runtime.godmode_attest import open_session, record_claim, record_step
 
         with isolated_project() as (project, archive):
             session = open_session(archive, "rca")
             (project / "real.py").write_text("x = 1\n", encoding="utf-8")
+            # A root cause now needs the differential that confirmed it, so the
+            # claim that should hold cites the comparison that was run. The
+            # attestation is what makes a `cmd:` citation resolve.
+            record_step(archive, session, "differential", "ran",
+                        result="compared", evidence=["cmd:diff old new"])
             record_claim(archive, project, session,
                          "root cause is the rotation reuse", "verified",
-                         cites=["file:real.py"])
+                         cites=["file:real.py", "cmd:diff old new"])
             record_claim(archive, project, session,
                          "root cause is the cache", "verified",
                          cites=["file:ghost.py"])

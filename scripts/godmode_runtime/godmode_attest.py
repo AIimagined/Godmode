@@ -565,6 +565,39 @@ def looks_external(text: str) -> tuple[bool, str]:
     return False, ""
 
 
+
+# A root cause asserted without the differential that confirmed it.
+#
+# A live project's ledger names this as its highest-frequency error: explaining
+# a symptom with the nearest salient anomaly, three times in one day, when the
+# decisive evidence was a comparison already in hand. Its own rule - never
+# design a remedy on a root the differential has not confirmed - was written
+# down and not followed, because a rule an agent must remember is a rule an
+# agent in a hurry skips.
+#
+# So the claim carries the burden instead. A root cause recorded without a
+# citation of what was run to confirm it is stored as a hypothesis, whatever
+# the author believed when writing it.
+_ROOT_CAUSE = re.compile(
+    r"(?i)\broot cause\b|\bcaused by\b|\bbecause\b|\bthe reason\b|\bdue to\b"
+    r"|\bwhat (?:broke|caused) it\b")
+
+# What a differential looks like in the record: a command that was run, or a
+# comparison named as one. A file citation is not enough - pointing at one side
+# of a comparison is what the ledger calls reading the artefact, not diffing it.
+_DIFFERENTIAL = re.compile(r"(?i)^(?:cmd:|diff:)")
+
+
+def looks_like_root_cause(text: str) -> tuple[bool, str]:
+    """Whether a claim asserts why something happened."""
+    match = _ROOT_CAUSE.search(text)
+    return (True, f"asserts a cause: {match.group(0)}") if match else (False, "")
+
+
+def cites_a_differential(citations: list[str]) -> bool:
+    return any(_DIFFERENTIAL.match(str(citation)) for citation in citations)
+
+
 def record_claim(
     archive: Chronicle,
     project: Path,
@@ -590,6 +623,23 @@ def record_claim(
     # pass the flag, which is not the person who needs it.
     if not external and grade == "verified":
         external, _reason = looks_external(text)
+    # A cause is a claim about a mechanism, and the ledger this rule comes from
+    # is a record of mechanisms asserted from the nearest anomaly. Checked
+    # before the external gate so a root cause about a third-party system is
+    # held to both.
+    if grade == "verified":
+        asserted, why = looks_like_root_cause(text)
+        if asserted and not cites_a_differential(citations):
+            return archive.append(
+                "claim", text[:120],
+                {"text": text, "grade": "hypothesis", "requested": grade,
+                 "session": session, "downgraded": True, "unresolved": [],
+                 "operator_asserted": [],
+                 "reason": "a root cause needs the differential that confirmed it; "
+                           f"{why}, and nothing cited was run to check it - cite "
+                           "cmd:<the comparison you ran> or diff:<what you compared>"},
+                evidence=citations,
+            )
     if external and grade == "verified":
         primary = [c for c in citations if c.startswith(("doc:", "url:"))]
         if not primary:

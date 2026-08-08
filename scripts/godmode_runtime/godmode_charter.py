@@ -63,6 +63,24 @@ _SHAPES: tuple[tuple[str, str, str, str], ...] = (
      "attestation_present", "before_completion", HARD),
     (r"\bre-?run\b|\bmust pass\b|\bexit(?:s)? (?:zero|non-zero)\b",
      "command_exit_zero", "before_completion", SOFT),
+    # Evidence discipline. A live project's mistake ledger records the same
+    # failure in every variant - the nearest available evidence accepted as
+    # sufficient - and its own rules against it compiled as ADVISORY here,
+    # because they matched no shape and the fallback blocks nothing. These
+    # name the family: a conclusion that must cite what confirmed it.
+    (r"\bdiff(?:ed|ing)?\b|\bdifferential\b|\bbefore and after\b|\bcompare\b.*\bfirst\b"
+     r"|\bpre/?post\b",
+     "differential_cited", "before_completion", HARD),
+    (r"\babsence\b|\bsearch miss\b|\bnot found\b.*\bconclude\b|\bconclude\b.*\bmissing\b"
+     r"|\bnever (?:conclude|assume)\b",
+     "second_probe_cited", "before_completion", HARD),
+    (r"\bfrom the code alone\b|\balone\b.*\b(?:design|intent|rule)\b"
+     r"|\b(?:design|intent)\b.*\bdocument\b|\bauthoritative source\b",
+     "authority_cited", "before_approach", HARD),
+    (r"\bhave not (?:observed|measured|confirmed|verified)\b"
+     r"|\bnot (?:observed|measured|confirmed)\b|\bcheapest observation\b"
+     r"|\bstate a cause\b|\bunconfirmed\b",
+     "observation_cited", "before_completion", HARD),
     (r"\benumerate\b|\blist every\b|\breport (?:what|every|all)\b",
      "record_field_set", "before_completion", SOFT),
 )

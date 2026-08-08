@@ -63,6 +63,8 @@ from .godmode_docslint import lint_docs
 from .godmode_trust import scan_agent_configuration
 from .godmode_obligations import review_obligations
 from .godmode_census import census, render as render_census
+from .godmode_release import compare_releases, render as render_release
+from .godmode_loop import _git as _git_tags_raw
 from .godmode_report import claims_from_report
 from .godmode_contribution import contribution
 from .godmode_contribution import render_line as render_contribution
@@ -772,6 +774,35 @@ def cmd_integrity(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     report = analyze_integrity(runtime.archive, Path(runtime.anchor.project_root), base=args.base)
     # E-05: a change that weakens the suite cannot be attested into completion.
     return CommandResult(report, exit_code=1 if report["blocking"] else 0)
+
+
+def _git_tags(project: Path) -> str:
+    return _git_tags_raw(project, "tag", "--list")
+
+
+def cmd_release(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """Which tags have no release, computed rather than remembered.
+
+    The published list is supplied by the caller, never fetched: this runtime
+    does not reach the network, and the half that decides is the comparison.
+    Absent input reports insufficient data rather than an empty answer, because
+    "nothing is published" and "nobody could tell" are different facts.
+    """
+    project = Path(runtime.anchor.project_root)
+    tags = [tag for tag in (_git_tags(project) or "").split() if tag]
+    published = list(args.published) if args.published else None
+    if args.published_from:
+        source = Path(args.published_from)
+        try:
+            published = [line.strip() for line in
+                         source.read_text(encoding="utf-8").split() if line.strip()]
+        except OSError:
+            published = None
+    report = compare_releases(tags, published)
+    report["summary"] = render_release(report)
+    # Reported, not failed: an unpublished tag is a state to see, and a release
+    # is a human act this never performs.
+    return CommandResult(report, exit_code=0)
 
 
 def cmd_capabilities(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -2051,6 +2082,13 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("drift", help="Compare step sets across sessions and agents").set_defaults(
         handler=cmd_drift
     )
+    release_parser = sub.add_parser(
+        "release", help="Compare local tags against the releases a caller supplies")
+    release_parser.add_argument("--published", action="append", default=[],
+                                help="A published release tag; repeatable")
+    release_parser.add_argument("--published-from",
+                                help="File listing published tags, one per line")
+    release_parser.set_defaults(handler=cmd_release)
     capabilities_parser = sub.add_parser(
         "capabilities", help="Report what this host can actually enforce")
     capabilities_parser.add_argument(
