@@ -126,10 +126,22 @@ class ThisRepositoryTests(unittest.TestCase):
     """
 
     def _has_history(self) -> bool:
-        found = subprocess.run(
-            ["git", "tag", "--list"], cwd=PLUGIN_ROOT, capture_output=True,
-            text=True, encoding="utf-8", errors="replace")
-        return bool(found.stdout.split())
+        """Tags are not enough; the detector must be able to walk between them.
+
+        The first guard here asked whether any tag existed, and CI answered
+        yes: a run triggered by a tag push fetches that one ref even under
+        `--depth=1 --no-tags`. One tag and no history is precisely the case
+        where the detector correctly finds nothing, so the guard has to test
+        what the detector actually needs rather than what is adjacent to it.
+        """
+        def git(*args: str) -> str:
+            return subprocess.run(
+                ["git", *args], cwd=PLUGIN_ROOT, capture_output=True,
+                text=True, encoding="utf-8", errors="replace").stdout.strip()
+
+        if git("rev-parse", "--is-shallow-repository") == "true":
+            return False
+        return len(git("tag", "--list").split()) >= 2
 
     def test_the_detector_matches_the_history_available_to_it(self) -> None:
         findings = repeated_repairs(PLUGIN_ROOT)
