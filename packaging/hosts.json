@@ -3,7 +3,7 @@
   "identity": {
     "name": "godmode",
     "displayName": "Godmode",
-    "version": "0.2.6",
+    "version": "0.2.7",
     "description": "Local-first context continuity and evidence governance for coding agents.",
     "author": {
       "name": "AIimagined",
