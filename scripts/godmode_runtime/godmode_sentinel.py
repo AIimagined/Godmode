@@ -76,7 +76,27 @@ _GIT_BRANCH_MUTATION = re.compile(
 # call carries a field a capability could travel in. What earns an
 # interruption is the operation that leaves the machine or destroys work, so
 # `--amend` is excluded here and stays protected.
-_GIT_LOCAL_CHANGE = re.compile(r"(?i)^\s*git\s+(?:add|commit)\b(?!.*\s--amend\b)")
+# `commit-tree` writes an object into the store and is not `commit`. The word
+# boundary after `commit` falls inside the hyphen, so plumbing that writes was
+# admitted by the allowance for ordinary committing - the same defect as
+# `merge-base` being read as `merge`, in the direction that matters.
+_GIT_LOCAL_CHANGE = re.compile(r"(?i)^\s*git\s+(?:add|commit)(?![-\w])(?!.*\s--amend\b)")
+
+# `git -C <path> log` is a log. Every git rule here reads the subcommand at a
+# fixed position, so a global option in front of it meant no rule matched and
+# the read fell through to unclassified-mutation. Stripping the options and
+# judging what remains keeps one rule per operation instead of a copy of the
+# skip in each: `git -C other push` becomes `git push` and is protected as one,
+# where before it was refused as an unknown, which is the right answer given
+# for the wrong reason and stops being right the moment the fallback changes.
+#
+# `--exec-path=` is deliberately absent: it points git at a different set of
+# binaries, so it changes what runs rather than only where.
+_GIT_GLOBAL_OPTION = re.compile(
+    r"(?i)^([ \t]*git)[ \t]+(?:-C[ \t]+(?:\"[^\"]*\"|'[^']*'|[^\s;&|<>]+)|"
+    r"-c[ \t]+\S+|--no-pager|--paginate|--no-replace-objects|--literal-pathspecs|"
+    r"--(?:git-dir|work-tree|namespace)[= \t][^\s;&|<>]+)(?=[ \t])"
+)
 
 # Quoted text is data. The classifier searched the whole line, so
 # `grep "git push" notes.md` was refused for containing the words. Blanking
@@ -99,7 +119,12 @@ _ACTION_PATTERNS: tuple[tuple[str, re.Pattern[str], tuple[str, ...]], ...] = (
             # it was protected either way, but the refusal called it an
             # unclassified mutation, which tells the reader nothing about why.
             r"(?i)\bgit\s+commit\b[^;|&]*\s--amend\b|"
-            r"\bgit\s+(?:push|merge|rebase|reset|clean|tag|checkout|switch|"
+            # `merge-base` reports the common ancestor of two commits and
+            # merges nothing. The boundary after `merge` falls inside the
+            # hyphen, so the word matched and a read was reported as history
+            # mutation - the same shape as `Out-String` reading while
+            # `Out-File` writes, which is why neither is matched by prefix.
+            r"\bgit\s+(?:push|merge(?!-base)|rebase|reset|clean|tag|checkout|switch|"
             r"branch\s+(?:-[dDmM]|--delete)|worktree\s+(?:remove|prune|move)|"
             r"stash\s+(?:drop|pop|clear|apply|push|save|branch|create|store)|"
             r"remote\s+(?:add|remove|rm|rename|set-url|set-head|set-branches|prune|update))\b"
@@ -165,9 +190,57 @@ _SAFE_GIT_REMOTE = re.compile(
     rf"(?:[ \t]+(?:show|get-url)(?:[ \t]+(?:-n|--push|--all|{_ARG}))*)?"
     r"[ \t]*$"
 )
+# Git has no verb convention to classify itself with, so its read subcommands
+# have to be named. This list was written from memory and was missing most of
+# what real work uses: `rev-list`, `ls-files`, `describe`, `blame` and six more
+# were all refused as unknown mutations. The replacements were not imagined
+# either - they are the git commands this project actually issued, recovered
+# from its own transcripts, which is the only way a list like this stops being
+# a guess. Plumbing that writes (`update-ref`, `commit-tree`, `hash-object`,
+# `symbolic-ref NAME REF`) is absent on purpose and still fails closed.
 _SAFE_PREFIXES = re.compile(
-    r"(?i)^\s*(?:git\s+(?:status|diff|log|show|rev-parse|worktree\s+list|"
+    r"(?i)^\s*(?:git\s+(?:status|diff|log|show|rev-parse|rev-list|describe|blame|"
+    r"annotate|shortlog|whatchanged|name-rev|merge-base|for-each-ref|show-ref|"
+    r"count-objects|check-ignore|check-attr|cat-file|ls-files|ls-tree|ls-remote|"
+    r"diff-tree|diff-index|grep|version|worktree\s+list|"
     r"stash\s+(?:list|show))|inspect|read|list|show|explain|doctor|privacy)\b"
+)
+
+# `gh` reads the same forge the gate protects writes to, and every one of them
+# was an unclassified mutation - including `gh auth status`, which prints who
+# you are. The nouns are open-ended because new ones keep arriving; the verbs
+# are closed, so `gh release view` reads and `gh release create` is still a
+# release. `gh api` is the exception that needs its own guard: the default is
+# GET, and it becomes a write through a flag rather than through a word.
+_SAFE_GH = re.compile(
+    r"(?i)^[ \t]*gh[ \t]+(?:"
+    r"auth[ \t]+status|"
+    r"[a-z-]+[ \t]+(?:view|list|status|diff|checks)\b|"
+    r"api\b(?![^\n]*(?:-X[ \t]+(?!GET\b)|--method[ \t]+(?!GET\b)|"
+    r"[ \t]-[fF][ \t]|--field[ \t]|--raw-field[ \t]|--input[ \t]))"
+    r")"
+)
+
+# A help or version banner is not the operation it describes. `release --help`
+# was classified as a release and refused at R4, which is the gate at its least
+# credible: it blocked the one call whose entire purpose is to explain itself.
+# Every CLI short-circuits on these before acting, so the flag decides.
+#
+# `-h` and `-V` are deliberately absent. `sort -h` sorts and `du -h` formats;
+# a single letter means whatever each tool decided, and the long forms carry
+# the whole benefit without inheriting that ambiguity.
+_HELP_FLAG = re.compile(r"(?i)(?:^|\s)--(?:help|version|usage)(?=\s|$)")
+
+# `godmode release --published v0.2.5` compares local tags against a list of
+# releases the caller supplies and contacts nothing. It was refused at R4 for
+# containing the word `release` - the tool built so that release state would be
+# read instead of remembered, blocked by the gate shipped beside it.
+#
+# Named narrowly rather than by exempting the interpreter: `python manage.py
+# migrate` must keep failing on the word `migrate`, so what is allowed here is
+# this command with this reading flag, and nothing else about it generalises.
+_SAFE_GODMODE_READ = re.compile(
+    r"(?i)^[^;&|]*\bgodmode(?:\.py)?\b[^;&|]*\brelease\s+--published\b[^;&|]*$"
 )
 
 # Ordinary inspection. Absent these, every `ls` fell through to
@@ -212,6 +285,22 @@ _FIND_MUTATION = re.compile(r"(?i)\bfind\b[^|;&]*?\s-(?:delete|exec|execdir|ok|o
 # protected: gating every `python -m unittest` would duplicate the host's own
 # execution consent and stop the gate being usable at all. The boundary is
 # stated in classify_action's docstring rather than left implied.
+# Naming a value for the commands that follow. `export GODMODE_STATE_HOME=…`
+# and `unset` were unknown mutations, so pointing a test at its own state
+# directory was a protected operation.
+#
+# The exclusions are the point: `PATH` decides which binary a later `git` is,
+# and `LD_PRELOAD`, `PYTHONPATH` and `BASH_ENV` each load code into a process
+# that has not asked for it. Those keep failing closed, because an environment
+# variable that changes what runs is not bookkeeping.
+_ENV_BINDING = re.compile(
+    r"(?i)^\s*(?:export|unset)\s+"
+    r"(?!(?:PATH|LD_[A-Z_]+|DYLD_[A-Z_]+|PYTHON(?:PATH|STARTUP|HOME)|NODE_OPTIONS|"
+    r"GIT_(?:SSH|EXEC_PATH|CONFIG[A-Z_]*|ALTERNATE[A-Z_]*)[A-Z_]*|BASH_ENV|ENV|"
+    r"PERL5(?:LIB|OPT)|RUBYOPT|CLASSPATH)\b)"
+    r"(?:[A-Za-z_][A-Za-z0-9_]*(?:=(?:\"[^\"]*\"|'[^']*'|[^\s;&|<>]*))?\s*)+$"
+)
+
 _LOCAL_COMPUTE = re.compile(
     r"(?i)^\s*(?:python[\d.]*|py|node|deno|bun|ruby|perl|go|cargo|dotnet|java|"
     r"pytest|unittest|npm\s+(?:test|run\s+\w+)|pnpm|yarn|make|tox|nox|uv|pip)\b"
@@ -236,6 +325,24 @@ _SENSITIVE_EDIT = re.compile(
     r"(?i)(?:^|[/\\])\.git[/\\]|(?:^|[/\\])\.env\b|credential|\bid_rsa\b|"
     r"\.pem$|\.key$"
 )
+
+# A path the shell will expand and this process will not. `~/.bashrc` has no
+# leading slash and no drive letter, so it was joined to the project root,
+# passed containment, and `echo pwned > ~/.bashrc` was permitted as an ordinary
+# working-tree write - the gate approving a write to the user's shell profile
+# because it had already decided the path was inside the tree.
+#
+# It cannot be resolved here without reproducing the host's environment, and
+# guessing is what produced the hole, so an unexpanded path is simply not
+# contained. The cost is that a legitimate `> "$OUT/report.txt"` now needs the
+# literal path; the alternative is an allowance that means nothing, because the
+# one thing the target definitely is not is the text we are looking at.
+_UNRESOLVED_EXPANSION = re.compile(r"[~$`]|%[A-Za-z_][A-Za-z0-9_]*%")
+
+# Writing to the null device discards the bytes: `integrity > /dev/null` runs a
+# check and keeps nothing. It was refused as a write outside the working tree,
+# which made silencing a command's output a protected operation.
+_NULL_DEVICE = re.compile(r"(?i)^(?:/dev/null|nul|/dev/std(?:out|err))$")
 
 
 def _is_scratch(target: Path, project_root: Path | None = None) -> bool:
@@ -288,8 +395,13 @@ def _contained(target: str, root: Path | None) -> bool:
     # The hook always passes the real project root, so the security-relevant
     # path never depends on this default.
     root = Path.cwd() if root is None else root
+    cleaned = target.strip().strip("\"'")
+    # Checked before anything is joined: an unexpanded path is not a path yet,
+    # and treating it as relative is what let one out of the tree.
+    if _UNRESOLVED_EXPANSION.search(cleaned):
+        return False
     try:
-        candidate = Path(target.strip().strip("\"'"))
+        candidate = Path(cleaned)
         if not candidate.is_absolute():
             candidate = Path(root) / candidate
         normalised = Path(os.path.normcase(os.path.normpath(str(candidate))))
@@ -311,6 +423,15 @@ _TEST_BUILTIN = re.compile(r"(?i)^\s*(?:\[\[?|test)\s")
 
 # `VAR=value` alone changes nothing; `VAR=value cmd` is classified on cmd.
 _ASSIGNMENT_PREFIX = re.compile(r"^\s*[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\S*)\s*")
+
+# The PowerShell form, and only when the whole segment is one. A prefix rule
+# would strip the `$d =` from `$d = Get-Content secrets` and judge the rest,
+# which is how a laundering path gets built by accident; requiring the segment
+# to end at the value means there is never a remainder to launder.
+_PS_ASSIGNMENT_ONLY = re.compile(
+    r"(?i)^\s*\$(?:env:|script:|global:|local:)?[A-Za-z_]\w*\s*=\s*"
+    r"(?:\"[^\"]*\"|'[^']*'|[^\s;&|<>`$]+)\s*$"
+)
 
 # Every way to start a second command has to end a segment, or the rest of the
 # line inherits the tier of its first word. A newline and a bare `&` were both
@@ -359,6 +480,22 @@ def shell_segments(command: str) -> list[str]:
     index = 0
     while index < len(command):
         character = command[index]
+        # A backslash escapes the next character, so neither of them can end a
+        # quote or start a command. Without this, `grep -nE "a|\"b\":|c" file`
+        # ended its string at the escaped quote and split on the pipes inside
+        # the pattern, leaving `c" file` to be refused as an unknown mutation -
+        # a search reported as a mutation because its regex contained a quote.
+        #
+        # It is also the shell's own rule, which is what makes it safe: `ls \;
+        # rm -rf /` passes a literal semicolon to `ls` and starts no second
+        # command, so declining to split there matches what would actually run.
+        # Single quotes are left alone, where a backslash is an ordinary
+        # character and escapes nothing.
+        if character == "\\" and quote != "'" and index + 1 < len(command):
+            current.append(character)
+            current.append(command[index + 1])
+            index += 2
+            continue
         if quote:
             current.append(character)
             if character == quote:
@@ -385,6 +522,8 @@ _SAFE_INSPECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     _SAFE_GIT_BRANCH,
     _SAFE_GIT_TAG,
     _SAFE_GIT_REMOTE,
+    _SAFE_GH,
+    _SAFE_GODMODE_READ,
 )
 
 # §9.2 risk tiers. R1 (local compute/archive state) and R2 (worktree file
@@ -489,6 +628,20 @@ def _categorize(normalized: str, project_root: Path | None = None) -> tuple[str,
     if stripped != normalized:
         return _categorize(stripped, project_root)
 
+    # The same statement in the other shell. `$d = "C:\docs"` on its own line
+    # is a value, and the POSIX form was the only one recognised, so every
+    # PowerShell script that opened by naming a path was an unknown mutation
+    # from its first line. Only a literal value qualifies: `$d = Get-Content x`
+    # keeps its command and is judged on it rather than being trimmed away.
+    if _PS_ASSIGNMENT_ONLY.match(normalized):
+        return "read-only-inspection", False, ["a PowerShell variable assignment"]
+
+    # Global options move git's target, not its verb. Stripped before any git
+    # rule looks for a subcommand, so each rule keeps one form to match.
+    without_options = _without_git_global_options(normalized)
+    if without_options != normalized:
+        return _categorize(without_options, project_root)
+
     # Control flow carries no action of its own. A keyword is stripped and the
     # remainder judged, exactly as an assignment prefix is, so the structure
     # never becomes a prefix that launders what follows it.
@@ -517,12 +670,23 @@ def _categorize(normalized: str, project_root: Path | None = None) -> tuple[str,
     if _GIT_LOCAL_CHANGE.match(executable):
         return ("local-repository-change", False,
                 ["the index or a new local commit; nothing leaves the machine"])
-    for category, pattern, impact in _ACTION_PATTERNS:
-        if pattern.search(executable):
-            return category, True, list(impact)
+    # A help banner describes the operation instead of performing it, so the
+    # named mutations are skipped - but only those. The redirect check below
+    # still applies, because `curl --help > ~/.bashrc` prints help and writes
+    # a file, and the flag excuses the first half only.
+    asks_for_help = bool(_HELP_FLAG.search(executable))
+    if not asks_for_help:
+        for category, pattern, impact in _ACTION_PATTERNS:
+            if pattern.search(executable):
+                return category, True, list(impact)
     # A redirect writes a file whatever the verb says, so it is checked after
     # the named mutations but before the read allowances.
     redirect = _REDIRECT.search(normalized)
+    if redirect and _NULL_DEVICE.match(redirect.group("target").strip().strip("\"'")):
+        # Discarding output is not writing a file. Checked before containment,
+        # because the null device is outside every working tree and so was
+        # refused as a write to somewhere it does not belong.
+        redirect = None
     if redirect:
         # The same act as an `Edit`, judged the same way. Refusing every
         # redirect while permitting the declared edit of the same path gated
@@ -534,9 +698,15 @@ def _categorize(normalized: str, project_root: Path | None = None) -> tuple[str,
         return "worktree-file-mutation", False, ["a redirected write inside the working tree"]
     if _FIND_MUTATION.search(normalized):
         return "filesystem-mutation", True, ["local files", "recoverability"]
+    # Last, so a help flag never excuses a redirect or a delete beside it.
+    if asks_for_help:
+        return "read-only-inspection", False, ["a help or version banner"]
     if (_SAFE_SHELL_READS.match(normalized) or _POWERSHELL_READS.match(normalized)
             or _TEST_BUILTIN.match(normalized)):
         return "read-only-inspection", False, ["local read-only state"]
+    if _ENV_BINDING.match(normalized):
+        return ("local-compute-or-state", False,
+                ["a value for later commands in this shell"])
     if _LOCAL_COMPUTE.match(normalized):
         return "local-compute-or-state", False, ["local computation; no protected surface named"]
     return (
@@ -546,16 +716,36 @@ def _categorize(normalized: str, project_root: Path | None = None) -> tuple[str,
     )
 
 
+def _without_git_global_options(command: str) -> str:
+    """`git -C path push --force` reduced to `git push --force`.
+
+    Shared by classification and tiering. Keeping a private copy in each was
+    the first version, and it put the category and the tier on different texts:
+    the category recursed on the stripped form and came out correctly as a
+    remote write, while the R5 escalation still searched the original, found no
+    `git push` at position one, and returned a forced push at R3.
+    """
+    reduced = command
+    while True:
+        trimmed = _GIT_GLOBAL_OPTION.sub(r"\1", reduced, count=1)
+        if trimmed == reduced:
+            return reduced.strip()
+        reduced = trimmed
+
+
 def _risk_tier(category: str, normalized: str) -> tuple[str, bool]:
     """§9.2 tier for a classified operation, and whether it is destructive
     enough (R5) to demand a second confirmation before any capability is
     spent. Escalations run first so a force form cannot keep its base tier."""
     if category == "read-only-inspection":
         return "R0", False
+    # The same text the category was decided on, or a global option demotes a
+    # forced push to an ordinary one by moving the word it is anchored to.
+    canonical = _without_git_global_options(normalized)
     for scoped_category, pattern in _R5_ESCALATIONS:
-        if scoped_category == category and pattern.search(normalized):
+        if scoped_category == category and pattern.search(canonical):
             return "R5", True
-    if category == "git-history-or-remote" and _GIT_PUSH.search(normalized):
+    if category == "git-history-or-remote" and _GIT_PUSH.search(canonical):
         return "R4", False
     return _TIER_BY_CATEGORY.get(category, "R3"), False
 
@@ -1109,6 +1299,11 @@ def _self_check() -> None:
         "cat README.md", "grep -rn TODO scripts | wc -l",
         "Get-ChildItem -Recurse", "Get-Content README.md | Measure-Object -Line",
         "python -m unittest discover -s tests", "write file README.md",
+        # Reads the corpus of this project's own commands found refused.
+        "git -C /repo log --oneline -1", "git rev-list --count v1..HEAD",
+        "git merge-base main HEAD", "gh auth status", "gh --help",
+        "python scripts/godmode.py integrity > /dev/null",
+        'export GODMODE_STATE_HOME="/tmp/state"', '$d = "C:\\temp"',
     )
     for operation in allowed:
         verdict = classify_action(operation)
@@ -1121,6 +1316,10 @@ def _self_check() -> None:
         "DROP TABLE orders", "git status && git push origin main",
         "ls | xargs rm", "Remove-Item -Recurse -Force build",
         "write file .git/config", "frobnicate --all",
+        # Permitted once, on the grounds that an unexpanded `~` made the
+        # target look like an ordinary file inside the working tree.
+        "echo pwned > ~/.bashrc", "write file $HOME/.ssh/authorized_keys",
+        "git commit-tree -m x HEAD", "export PATH=/evil:$PATH",
         f"ls\nInvoke-WebRequest {remote}", f"ls $(curl -s {remote})",
     )
     for operation in protected:
