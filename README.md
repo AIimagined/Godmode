@@ -13,7 +13,7 @@
   <a href="./LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
   <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-blue">
   <img alt="Runtime dependencies: zero" src="https://img.shields.io/badge/runtime%20dependencies-0-brightgreen">
-  <img alt="Tests: 359" src="https://img.shields.io/badge/tests-359%20passing-brightgreen">
+  <img alt="Tests: passing" src="https://img.shields.io/badge/tests-passing-brightgreen">
   <img alt="Hosts: Claude Code, Codex, Grok, +3 adapters" src="https://img.shields.io/badge/hosts-6-blue">
 </p>
 

@@ -266,6 +266,103 @@ def _declared_contracts(config: dict[str, Any]) -> tuple[dict[str, Any], list[di
     return usable, problems
 
 
+
+# A number in public prose that the runtime can count for itself.
+#
+# The README badge read 359 tests while the suite ran 527, and
+# `documentation_parity` reported every trigger satisfied, because a badge is
+# not a tracked trigger. A stale public numeric claim passed every gate this
+# product has.
+#
+# Only countables with an exact local answer are listed. A figure the runtime
+# cannot compute is left alone rather than guessed at: a checker that invents an
+# expected value teaches the reader to ignore it.
+_TEST_FUNCTION = re.compile(r"^\s*(?:async\s+)?def\s+test_", re.MULTILINE)
+
+
+def _count_tests(project: Path) -> int | None:
+    tests = project / "tests"
+    if not tests.is_dir():
+        return None
+    total = 0
+    for path in sorted(tests.rglob("test_*.py")):
+        try:
+            total += len(_TEST_FUNCTION.findall(path.read_text(encoding="utf-8", errors="replace")))
+        except OSError:
+            continue
+    return total or None
+
+
+def _count_hosts(project: Path) -> int | None:
+    manifest = project / "packaging" / "hosts.json"
+    if not manifest.is_file():
+        return None
+    try:
+        hosts = json.loads(manifest.read_text(encoding="utf-8")).get("hosts")
+    except (OSError, json.JSONDecodeError):
+        return None
+    return len(hosts) if isinstance(hosts, dict) and hosts else None
+
+
+COUNTABLES: dict[str, Any] = {
+    "tests": _count_tests,
+    # `hosts` is deliberately absent. The manifest lists three plugin hosts and
+    # the project also ships three adapters, so no single number in the tree is
+    # the answer and the checker would have reported a true badge as stale.
+    # A figure without an exact local answer is left alone.
+}
+
+# A changelog entry or a shipped release note states what was true when it was
+# written. Comparing a historical record against today's count reports every
+# past release as wrong, which is the fastest way to teach a reader to ignore
+# the check.
+_HISTORICAL = re.compile(r"(?i)(?:^|/)(?:CHANGELOG|HISTORY|RELEASE_NOTES_)")
+
+# Both shapes a figure appears in: a shields.io style badge segment, and an
+# ordinary sentence.
+_BADGE_FIGURE = re.compile(r"/badge/(?P<name>[a-z]+)-(?P<value>\d+)")
+_PROSE_FIGURE = re.compile(r"(?<![\w.])(?P<value>\d+)\s+(?P<name>[a-z]+)\b")
+
+
+def _figure_findings(relative: str, text: str, project: Path) -> list[dict[str, Any]]:
+    """Numeric claims the runtime can check, compared against the real count."""
+    if _HISTORICAL.search(relative):
+        return []
+    actual: dict[str, int] = {}
+    for name, counter in COUNTABLES.items():
+        value = counter(project)
+        if isinstance(value, int):
+            actual[name] = value
+    if not actual:
+        return []
+
+    findings: list[dict[str, Any]] = []
+    fenced = False
+    for number, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        for pattern in (_BADGE_FIGURE, _PROSE_FIGURE):
+            for match in pattern.finditer(line):
+                name = match.group("name").lower()
+                if name not in actual:
+                    continue
+                claimed = int(match.group("value"))
+                if claimed == actual[name]:
+                    continue
+                findings.append({
+                    "path": relative, "line": number, "check": "stale-figure",
+                    "severity": "medium",
+                    "why": f"claims {claimed} {name}; this project counts {actual[name]}",
+                    "remedy": f"update the figure to {actual[name]}, or stop stating a "
+                              "number that changes on every commit",
+                    "excerpt": line.strip()[:160],
+                })
+    return findings
+
+
 def lint_docs(project: Path) -> dict[str, Any]:
     """Lint every public document in the project.
 
@@ -291,6 +388,7 @@ def lint_docs(project: Path) -> dict[str, Any]:
         findings.extend(lint_text(relative, text, ignore=ignore))
         if contracts:
             findings.extend(_contract_findings(relative, text, contracts))
+        findings.extend(_figure_findings(relative, text, project))
     high = [f for f in findings if f["severity"] == "high"]
     return {
         "documents_scanned": scanned,

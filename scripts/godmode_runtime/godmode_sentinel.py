@@ -238,6 +238,27 @@ _SENSITIVE_EDIT = re.compile(
 )
 
 
+def _is_scratch(target: Path) -> bool:
+    """Whether a path lands in the operating system's temporary directory.
+
+    Containment correctly refuses writes outside the working tree, and the
+    agent's own scratch directory sits outside it, so both rules were right and
+    together made the intended temporary location unusable.
+
+    Deliberately *not* a declared path in a project file. A repository that
+    could nominate its own writable location could nominate anything, which is
+    the disarming this gate exists to notice. The system temporary directory is
+    a property of the machine, not of the repository, so nothing a clone ships
+    can widen it.
+    """
+    try:
+        scratch = Path(os.path.normcase(os.path.normpath(tempfile.gettempdir())))
+        candidate = Path(os.path.normcase(os.path.normpath(str(target))))
+    except (OSError, ValueError):
+        return False
+    return scratch in candidate.parents
+
+
 def _contained(target: str, root: Path | None) -> bool:
     """Whether an edit lands inside the working tree.
 
@@ -436,7 +457,7 @@ def _categorize(normalized: str, project_root: Path | None = None) -> tuple[str,
         if _SENSITIVE_EDIT.search(path):
             return ("worktree-file-mutation", True,
                     [f"not an ordinary working file: {path[:80]}"])
-        if not _contained(path, project_root):
+        if not _contained(path, project_root) and not _is_scratch(Path(path)):
             return ("worktree-file-mutation", True,
                     [f"outside the working tree: {path[:80]}"])
         return "worktree-file-mutation", False, ["a file in the working tree"]
@@ -806,6 +827,81 @@ class CapabilityBroker:
             evidence=[],
         )
         return token
+
+
+    def _store(self, data: dict[str, Any]) -> None:
+        _atomic_json(self.path, data)
+
+    def stage(
+        self, operation: str, password: str, ttl_seconds: int | None = None
+    ) -> str:
+        """Authorise one exact operation and leave it where the hook can find it.
+
+        The refusal at a host tool boundary named a remedy that did not exist:
+        no tool call carries a field a capability could travel in, so the broker
+        was unreachable and the only answer to a false positive was to switch
+        the guard off entirely.
+
+        Nothing about the token changes. It is still password-issued, still
+        bound to one operation digest, still expiring, still spent once. What
+        changes is that it is written to this store - which lives under the git
+        metadata directory rather than in the working tree, so a cloned
+        repository cannot carry one.
+        """
+        token = self.issue(operation, password, ttl_seconds)
+        body = json.loads(_decode(token.split(".")[1]))
+        data = self._load()
+        staged = [
+            entry for entry in data.get("staged", [])
+            if entry.get("operation_digest") != body["operation_digest"]
+        ]
+        staged.append({
+            "operation_digest": body["operation_digest"],
+            "category": body["category"],
+            "expires_at": body["expires_at"],
+            "token": token,
+        })
+        # Bounded, so a store cannot grow without limit from repeated staging.
+        data["staged"] = staged[-64:]
+        self._store(data)
+        return token
+
+    def consume_staged(self, operation: str) -> dict[str, Any] | None:
+        """The hook's side: a capability already authorised for this operation.
+
+        Returns the classification when one was found and spent, and None when
+        there is nothing staged - which is the ordinary case and must stay
+        silent rather than raising, because the caller is deciding a tool call
+        rather than asking a question.
+        """
+        if not self.configured():
+            return None
+        try:
+            data = self._load()
+        except AuthorizationError:
+            return None
+        classification = self._classify(operation)
+        if not classification["protected"]:
+            return classification
+
+        digest = classification["operation_digest"]
+        now = int(time.time())
+        for entry in list(data.get("staged", [])):
+            if entry.get("operation_digest") != digest:
+                continue
+            # Removed before the token is spent, so a store that fails to write
+            # cannot leave a capability that is both staged and consumed.
+            data["staged"] = [
+                other for other in data.get("staged", []) if other is not entry
+            ]
+            self._store(data)
+            if int(entry.get("expires_at", 0)) < now:
+                return None
+            try:
+                return self.consume(operation, str(entry.get("token", "")))
+            except AuthorizationError:
+                return None
+        return None
 
     def issue_interactive(self, operation: str, ttl_seconds: int | None = None) -> str:
         _require_tty()
