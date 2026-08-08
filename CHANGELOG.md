@@ -6,18 +6,148 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-08-08
+
 ### Added
 
-- `authorize setup --password-stdin` and `authorize issue --password-stdin` for
-  non-interactive hosts that pipe the password on standard input.
+- Ground rules about evidence are enforceable now, in two places.
+
+  The charter grades them. Fed six real troubleshooting rules from a live
+  project — never design a remedy on a root the differential has not confirmed,
+  never conclude absence from a search miss, never answer why the product behaves
+  this way from the code alone — the compiler graded four of them advisory,
+  because they matched no known shape and the fallback blocks nothing. The gate
+  that already existed would have passed a session that broke every one. They
+  compile HARD now, each with a check that something can satisfy, while an
+  ordinary preference stays advisory: a rule that blocks everything is switched
+  off within a day.
+
+  A root cause must cite what confirmed it. A claim asserting why something
+  happened, recorded without a citation of a comparison that was actually run, is
+  stored as a hypothesis whatever the author believed — and the refusal names the
+  missing step rather than only refusing. A command citation still resolves only
+  when an attestation records having run it, so writing the words is not enough.
+
+  This comes from a mistake ledger that had already written the rules down and
+  recorded breaking them anyway: *"the rule existed; the habit didn't"*. A rule an
+  agent must remember is a rule an agent in a hurry skips, so the burden moved to
+  the claim, which cannot be recorded as verified without its evidence.
+
+  The new shapes sit below the specific development disciplines rather than above
+  them. Placed first they captured a rule whose subject was citations, because a
+  subordinate clause mentioned absence, and that rule lost its citation check —
+  the table's own ordering contract, broken by the change meant to extend it.
+
+  Four more shapes cover agent-behaviour rules that were falling through: a gate
+  that failed without reaching its target, attribution without a positive
+  identifier, a repair that is not idempotent, and a mechanism named by the event
+  that preceded it rather than the one that performed the mutation. Compiled
+  against a real 2,700-line operating constitution these move eleven directives
+  out of advisory; the rest that stay advisory are project engineering knowledge -
+  viewport sizing, poster states, a specific polling contract - which this runtime
+  should not pretend to check.
+
+  Evidence has a session now. A command citation resolved against a run from any
+  session, at any distance in the past, so a claim made today could rest on a
+  command executed a fortnight ago against a tree that has since changed. It must
+  come from the session making the claim, and the refusal says the command ran in
+  another one rather than reporting it as unresolvable - which would send a reader
+  hunting for a typo that is not there.
+
+  An absence claim resting on a single probe that found nothing is a hypothesis.
+  A search miss is evidence about where it looked; a second, different probe is
+  what turns it into a fact about what exists. Proportionate on purpose: a probe
+  that positively enumerated something is a different act, and demanding two for
+  every absence claim would be the over-gating that gets a check switched off.
+- `integrity` now checks that a change arrived intact before asking what it means.
+
+  The nine existing monitors watch what a diff does to the meaning of the tests.
+  These watch something earlier and dumber: whether the write landed as written. A
+  file this change touched must still parse, and must not carry control bytes no
+  editor produces.
+
+  Both come from real damage. A scripted edit reported success while the shell
+  halved its backslashes, turning a word boundary into a literal backspace byte —
+  so every pattern in that file silently matched nothing, and the fault was found
+  by a test failing later rather than by the write. The same shell mangled two
+  more edits in the same session, the same way, each time reporting success.
+
+  Only files the diff touched are examined, because a pre-existing oddity
+  elsewhere is not this pass's finding and reporting it trains the reader to skip
+  the whole report. Both findings block: a file that no longer parses cannot be
+  reasoned about by any monitor above it, and a corrupted write has already failed
+  whether or not anyone has noticed yet.
+- The last five tooling failures, each in the form that is actually checkable.
+
+  A taxonomy of real coding-agent incidents gives the agent's own tooling its own
+  section, and five of its entries describe a discipline rather than an artefact.
+  Each has a narrower form a runtime can see, and the narrow form is worth more
+  than a rule nothing checks.
+
+  An anchored edit that matched nothing reports success and leaves the file as it
+  was, so a file that appears in a change but differs only in whitespace is
+  reported. A dependency or lockfile change means any process started before it is
+  serving the old tree, so a later run is evidence about that tree rather than
+  this one — reported and not blocked, because editing a lockfile is ordinary and
+  a gate that stops it is a gate that gets switched off.
+
+  A status about a system this runtime cannot see — a build that passed, a release
+  that is published, a branch that was merged — is now recognised as an external
+  claim, and needs a source read this session rather than a memory of one. That
+  came from stating release state here from seventeen-hour-old recall while the
+  API sat one call away, already used minutes earlier for something else.
+
+  `capabilities --usage` reports corrections the runtime made that nobody wrote
+  down. A downgraded claim is the one correction this runtime can see for itself:
+  the author asserted something and the record refused it. If that happened and no
+  lesson exists, the correction survives only in whatever was said at the time,
+  which is exactly how the same mistake returns.
+
+  Three more verifications that pass while proving less than a reader will assume.
+
+  A check that changed the working tree while running reports on a tree that no
+  longer exists — the run is real, the subject moved underneath it. That is
+  recorded on the attestation rather than refused, because a check that writes is
+  sometimes legitimate and refusing every one is how a gate gets switched off;
+  what must not happen is the result being read later as a statement about the
+  tree that produced it.
+
+  A guard whose name promises a universal and whose body asserts one case is
+  reported. The name is what a later reader trusts and the assertion is what
+  holds, so either the set gets covered or the name gets narrowed. A body that
+  compares a whole collection satisfies it without a loop, since demanding an
+  explicit loop would report the strongest form of an assertion as the weakest.
+  The quantifier is only recognised at the front of the name, where it binds the
+  subject: matched anywhere it flagged four of this project's own tests for
+  ordinary mid-sentence English, which is the rate at which a monitor starts
+  being skipped.
+
+  A test that writes to a path which is not temporary is reported. A mistake
+  ledger records a write-endpoint smoke test aimed at a live project id, which
+  returned success and destroyed the draft it was verifying.
 
 ### Fixed
 
-- Removed the duplicate `hooks` manifest reference that made Claude Code fail to
-  load the plugin's hooks.
-- `authorize setup` and `authorize issue` now fail immediately with guidance when
-  no interactive console is available instead of blocking forever on the password
-  prompt (including Windows `NUL` redirection, where `isatty()` reports true).
+- The action gate, corrected against the commands this project actually ran.
+
+  Its allowances were written from memory, and classifying 1,419 real commands
+  recovered from the project's own transcripts showed 506 refused - 74 of them
+  naming no mutation at all. Twelve defects were behind that, and one ran the
+  other way: `echo pwned > ~/.bashrc` was **permitted**, because `~` is not
+  expanded here, so the target was joined to the project root and passed
+  containment. An unexpanded path is no longer treated as a path.
+
+  Also corrected: `git -C path <read>` and the other global options; the git read
+  subcommands (`rev-list`, `ls-files`, `describe`, `blame`, `cat-file` and nine
+  more); `merge-base` read as `merge` and `commit-tree` read as `commit`, the
+  second of which admitted plumbing that writes; `> /dev/null` treated as a file
+  write; `--help` and `--version` classified by the operation they describe;
+  `gh` read subcommands, with `gh api` judged on its flags rather than its noun;
+  PowerShell literal assignments; `export`/`unset` of names that do not decide
+  what runs; and a segmenter that split inside an escaped quote, reporting a
+  `grep` as a mutation because its pattern contained one.
+
+  Each widened allowance ships with the mutation it must still refuse.
 
 ## [0.2.6] - 2026-08-08
 
@@ -804,6 +934,16 @@ The format follows Keep a Changelog principles, and releases use semantic versio
   acceptance tests, and release checks.
 - Codex and Claude Code manifests plus a Claude plugin marketplace catalog.
 - Godmode logo, social-preview artwork, and passive AIimagined project identity metadata.
+- `authorize setup --password-stdin` and `authorize issue --password-stdin` for
+  non-interactive hosts that pipe the password on standard input.
+
+### Fixed
+
+- Removed the duplicate `hooks` manifest reference that made Claude Code fail to
+  load the plugin's hooks.
+- `authorize setup` and `authorize issue` now fail immediately with guidance when
+  no interactive console is available instead of blocking forever on the password
+  prompt (including Windows `NUL` redirection, where `isatty()` reports true).
 
 [Unreleased]: https://github.com/AIimagined/Godmode/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/AIimagined/Godmode/releases/tag/v0.1.0
