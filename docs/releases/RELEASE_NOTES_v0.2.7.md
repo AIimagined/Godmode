@@ -104,6 +104,24 @@ plumbing that writes are asserted as deliberate refusals rather than left
 unmentioned. A later widening now has to argue with a test instead of with
 somebody's memory.
 
+## The refusal that denied its own remedy
+
+Every refusal ended with the same sentence: no capability can be attached to a
+host tool call, so there is no in-session approval — run it yourself, rephrase
+it, **or disable the plugin for this session**.
+
+Twenty lines above that sentence, in the same function, a staged capability is
+consumed and the call proceeds. `authorize stage` shipped in v0.2.6 to answer
+exactly this refusal. The message was written when the broker really was
+unreachable and was never revisited when the answer arrived.
+
+So the guard's own error text denied the existence of its remedy, and the
+advice most likely to be taken was the one that removes the guard. It now names
+the staged-capability path and quotes the exact operation to authorise.
+
+Found by hitting it: a push was refused, and checking whether the hook honours
+staging — rather than trusting the message — showed that it does.
+
 ## Scope, restated
 
 This gate answers "does this name a protected operation" and fails closed on
