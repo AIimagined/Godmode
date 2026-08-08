@@ -47,6 +47,24 @@ def classify_environment(target: str) -> dict[str, Any]:
     }
 
 
+def _version_at(project: Path, ref: str) -> str | None:
+    """The version `plugin.json` states in the tree a ref points at.
+
+    `None` when the object is not there to read - a shallow clone has the tag
+    but not always its tree, and reporting that as drift would turn a fetch
+    depth into a release defect. The report says whether this ran, so an
+    unreadable tree is a stated gap rather than a silent pass.
+    """
+    blob = run_git(project, "show", f"{ref}:plugin.json")
+    if not blob:
+        return None
+    try:
+        loaded = json.loads(blob)
+    except json.JSONDecodeError:
+        return "(unreadable)"
+    return str(loaded.get("version", "(absent)")) if isinstance(loaded, dict) else "(unreadable)"
+
+
 def version_surfaces(project: Path) -> list[dict[str, str]]:
     surfaces: list[dict[str, str]] = []
 
@@ -94,6 +112,17 @@ def version_surfaces(project: Path) -> list[dict[str, str]]:
     tag = run_git(project, "describe", "--tags", "--abbrev=0")
     if tag:
         surfaces.append({"surface": "latest git tag", "version": tag.lstrip("v")})
+        # What the tagged tree says about itself, which is not the same
+        # question as what the tag is called.
+        #
+        # v0.2.7 was published against the commit before the version bump. Every
+        # surface here agreed - the tag was named v0.2.7 and the working tree
+        # said 0.2.7 - and CI passed, while `git checkout v0.2.7` produced a
+        # plugin identifying as 0.2.6. Comparing the name to the sources cannot
+        # see that, because the name was never wrong.
+        tagged = _version_at(project, tag)
+        if tagged is not None:
+            surfaces.append({"surface": f"plugin.json at tag {tag}", "version": tagged})
 
     deduped: list[dict[str, str]] = []
     for surface in surfaces:
@@ -112,6 +141,11 @@ def reconcile_versions(project: Path) -> dict[str, Any]:
         "surfaces": surfaces,
         "distinct_versions": sorted(values),
         "drift": drifted,
+        # Stated, because the tagged tree is the one surface that can be
+        # missing for a reason unrelated to the release, and an agreement
+        # reached without it is a weaker claim than one reached with it.
+        "tagged_tree_checked": any(
+            s["surface"].startswith("plugin.json at tag") for s in surfaces),
         "verdict": "agreed" if not drifted else "version-drift",
     }
 
