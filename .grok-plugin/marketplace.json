@@ -9,7 +9,7 @@
     {
       "name": "godmode",
       "description": "Local-first context continuity and evidence governance for coding agents.",
-      "version": "0.2.7",
+      "version": "0.2.8",
       "category": "productivity",
       "source": {
         "source": "url",

@@ -6,6 +6,92 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-08-09
+
+### Added
+
+- A ledger of what the operator actually asked for.
+
+  Everything else this runtime governs leaves an artefact: a command leaves a
+  run, a fix leaves a commit, a conclusion leaves a claim that must cite one. A
+  request leaves the agent's recollection and nothing else, which is the one
+  substrate this product exists to distrust — so an ask made while the agent was
+  already working is the thing that goes missing, and afterwards nobody can point
+  at what was dropped because there was never a list.
+
+  Recorded live, because it cannot be reconstructed. Both signals that would have
+  allowed reconstruction were tested against a real 9,777-event transcript and
+  both are absent: the host's "sent a new message while you were working" notice
+  appears twice in the whole file, once because the agent quoted it, and zero of
+  113 human inputs carry a timestamp inside a tool call's span, because the
+  stored time is delivery rather than typing. After the fact an interruption is
+  indistinguishable from an ordinary turn.
+
+  So a `UserPromptSubmit` hook writes each prompt as a `request` record as it
+  arrives, with whether tool calls were already in flight. `checkpoint --review`
+  reports the ones nothing visibly answered, interruptions first, and closure is
+  the same explicit act obligations use — findings, never closures, because an
+  agent that could close its own requests would close them the way it currently
+  forgets them.
+
+  The prompt goes through the ordinary append, so the secret scan every record
+  gets applies: a pasted token is refused, and the hook swallows the refusal so
+  the operator's turn continues. The subject is truncated rather than stored
+  whole; the host already keeps a transcript and a second copy is a second thing
+  to leak.
+- `version --reconcile` now reads the version out of the tree the tag points at.
+
+  v0.2.7 was published against the commit before the version bump. Every surface
+  agreed — the tag was named `v0.2.7` and every file said `0.2.7` — so the
+  reconciler returned `agreed` and CI passed, while `git checkout v0.2.7` gave a
+  plugin manifest reading `0.2.6`. Anyone installing the release would have got a
+  plugin identifying as the previous version.
+
+  Nothing was broken in the check. It compared the tag's name to the sources, and
+  the name was never wrong; it never asked what the tagged commit says about
+  itself. `plugin.json at tag <name>` is now a surface like any other, and the
+  report states whether it could be read, because a shallow clone can have the
+  tag without its tree and a fetch depth is not a release defect.
+
+### Fixed
+
+- Quick start described a CLI; the product is three hooks and five skills.
+
+  A reader's first experience is a continuity brief loaded at session start, a
+  refusal at the pre-tool boundary, and skills routing by the shape of the work.
+  The section that introduces the product opened with three interpreter
+  invocations and a command count, which reads as a large manual CLI and is the
+  opposite of what installing it feels like. It now leads with what happens
+  without being asked, and names the three ways to answer a refusal — including
+  staging a capability, which is the one that had gone unmentioned everywhere.
+
+  Two stale figures went with it, and both were inside fenced code blocks:
+  `80 commands` when there are 82, and a CI snippet pinning
+  `AIimagined/Godmode@v0.2.0` through seven releases.
+
+  The count is now gone rather than corrected. Only 82 of 120 `add_parser` calls
+  are top-level commands, so there is no exact local answer, and the linter's own
+  guidance is to stop stating a number that changes rather than to police it —
+  the same reason `hosts` has never been checked.
+
+  The pin is checkable, because the running version is an exact answer, so
+  `stale-self-pin` now reports any snippet pinning a version of this project that
+  is no longer current. It reads inside fenced blocks deliberately: the figure
+  check skips them, since a number in a code sample is usually an argument, which
+  left every install snippet — the one thing a reader copies verbatim — in the
+  only place no check looked. Release notes are exempt, because a document about
+  v0.2.4 should say v0.2.4.
+- The README header said "Godmode" twice and carried a blank half-screen.
+
+  The logo image contains the wordmark, and an `<h1>Godmode</h1>` sat directly
+  under it, so the name appeared twice with a gap between. The heading now wraps
+  the logo, which keeps the document's one top-level heading and its accessible
+  name while showing the name once.
+
+  The gap was measurable rather than a matter of taste: 46% of the logo's height
+  was transparent padding, on a 1,254-square canvas. Cropped to its content with
+  a small margin — 795x727, and 1.9MB down to 818KB.
+
 ## [0.2.7] - 2026-08-09
 
 ### Added
