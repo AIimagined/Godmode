@@ -63,6 +63,7 @@ from .godmode_docslint import lint_docs
 from .godmode_trust import scan_agent_configuration
 from .godmode_obligations import review_obligations
 from .godmode_census import census, render as render_census
+from .godmode_census import uncaptured_corrections
 from .godmode_release import compare_releases, render as render_release
 from .godmode_loop import _git as _git_tags_raw
 from .godmode_report import claims_from_report
@@ -812,6 +813,9 @@ def cmd_capabilities(args: argparse.Namespace, runtime: Runtime) -> CommandResul
         _require_archive(runtime)
         report = census(runtime.archive)
         report["summary"] = render_census(report)
+        # A correction the runtime made and nobody wrote down is the surface
+        # least likely to be noticed, because the claim was already refused.
+        report["corrections"] = uncaptured_corrections(runtime.archive)
         return CommandResult(report, exit_code=0)
     if args.host:
         source = Path(runtime.anchor.project_root) / "packaging" / "hosts.json"
@@ -1137,8 +1141,11 @@ def cmd_checkpoint(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     """
     if getattr(args, "review", False):
         _require_archive(runtime)
-        report = review_obligations(
-            list(reversed(runtime.archive.select(kind="checkpoint", limit=200))))
+        # Every record, not only checkpoints: retirement is recorded as an
+        # `obligation` with a closed status, and filtering to checkpoints meant
+        # the closure never reached the reviewer. The mechanism was right and
+        # the wiring starved it, so closing something changed nothing.
+        report = review_obligations(runtime.archive.read_events())
         # Reported, never failed: a standing obligation that looks stale is a
         # question for the operator, not a verdict the runtime is entitled to.
         return CommandResult(report, exit_code=0)

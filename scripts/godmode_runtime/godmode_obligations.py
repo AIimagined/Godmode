@@ -112,10 +112,26 @@ def review_obligations(records: list[dict[str, Any]]) -> dict[str, Any]:
     # Greedy clustering by overlap, first match wins. Enough for a few dozen
     # obligations, and it keeps the grouping explainable: every member of a
     # cluster shares most of its words with the one that opened it.
+    # An obligation somebody closed. Reporting without a closure is not
+    # restraint: the same superseded items came back every review and a fresh
+    # handover added one more rather than retiring any, so the list only grew
+    # and the signal decayed until nobody would read it. Retiring stays a human
+    # act - this honours the record of one, it does not make the decision.
+    retired = {
+        _tokens(normalise_obligation(str(record.get("subject", ""))))
+        for record in records
+        if record.get("kind") == "obligation"
+        and str((record.get("data") or {}).get("status", "")).lower()
+        in {"closed", "done", "retired", "superseded"}
+    }
+    retired = {tokens for tokens in retired if tokens}
+
     clusters: list[tuple[frozenset[str], list[tuple[int, str]]]] = []
     handovers = 0
     total = 0
     for record in records:
+        if record.get("kind") != "checkpoint" and "next" not in (record.get("data") or {}):
+            continue
         obligations = (record.get("data") or {}).get("next") or []
         if not isinstance(obligations, list):
             continue
@@ -136,6 +152,8 @@ def review_obligations(records: list[dict[str, Any]]) -> dict[str, Any]:
 
     findings: list[dict[str, Any]] = []
     for _tokenset, occurrences in clusters:
+        if any(_overlap(_tokenset, closed) >= SIMILARITY for closed in retired):
+            continue
         sequences = [sequence for sequence, _ in occurrences]
 
         if len(occurrences) >= CARRIED_THRESHOLD:
