@@ -195,6 +195,16 @@ def run_check(
     """
     import subprocess
 
+    from .godmode_anchor import run_git
+
+    def _tree_state() -> str:
+        return run_git(project, "status", "--porcelain=v1") or ""
+
+    # A check that rewrites the tree reports on a tree that no longer exists.
+    # The run is real; the subject moved underneath it, and every later reading
+    # of that attestation is about something else.
+    before = _tree_state()
+
     try:
         completed = subprocess.run(
             command, cwd=str(project), capture_output=True, text=True,
@@ -209,13 +219,20 @@ def run_check(
         code, detail = 124, f"timed out after {timeout}s"
 
     passed = code == 0
+    # Recorded on the attestation rather than raised: a check that writes is
+    # sometimes legitimate, and refusing every one of them is how a gate gets
+    # switched off. What must not happen is the result being read later as a
+    # statement about the tree that produced it.
+    mutated = _tree_state() != before
     citation = f"cmd:{' '.join(command)[:160]}"
     record = record_step(
         archive,
         session,
         f"check:{name}",
         "ran" if passed else "blocked",
-        result=f"exit {code}: {detail}",
+        result=(f"exit {code}: {detail}"
+                + ("; this check changed the working tree while running, so its "
+                   "result describes a tree that no longer exists" if mutated else "")),
         evidence=[citation],
         rule_ids=rule_ids,
         reason="" if passed else f"check failed with exit {code}",
@@ -227,6 +244,7 @@ def run_check(
         "passed": passed,
         "detail": detail,
         "attested": "ran" if passed else "blocked",
+        "mutated_tree": mutated,
         "sequence": record["sequence"],
         # Returned so a caller cites what was stored instead of rebuilding it. A
         # citation reconstructed by hand has to guess the normalisation, and a near
@@ -434,12 +452,19 @@ def _position_support(project: Path, citation: str, claim: str) -> str | None:
     return "corroborated" if terms & window else "unsupported"
 
 
-def _citation_resolves(project: Path, archive: Chronicle, citation: str) -> bool:
+def _citation_resolves(project: Path, archive: Chronicle, citation: str,
+                       session: str | None = None) -> bool:
     if citation.startswith("cmd:"):
         # A command citation resolves when some attestation records having run it.
         # Anyone can write the words; only a run leaves the record.
+        #
+        # `session` narrows that to a run from the session making the claim.
+        # Without it the record proves the command ran once, at any distance in
+        # the past, against a tree that has since changed - which is a memory of
+        # having looked, presented as an observation.
         return any(
             citation in record.get("evidence", [])
+            and (session is None or record["data"].get("session") == session)
             for record in archive.select(kind="attestation", limit=500)
         )
     match = _RECORD_CITE.match(citation)
@@ -540,6 +565,17 @@ _THIRD_PARTY_PIN = re.compile(
     r"(?i)\b[\w.-]+/[\w.-]+@v?\d"        # org/repo@v7 - an action or package pin
     r"|\b[\w.-]{2,}@\d+(?:\.\d+)*\b"     # react@19
 )
+# A status about a system this runtime cannot see. Reading it costs one call;
+# stating it from memory costs the reader their trust in every other line. The
+# case that produced this: release state asserted from seventeen-hour-old recall
+# while the API sat one call away, already used minutes earlier.
+_EXTERNAL_STATUS = re.compile(
+    r"(?i)\b(?:ci|the build|the pipeline|the run|the job)\b[^.]{0,30}"
+    r"\b(?:is|was|are|passed|failed|green|red|succeeded)\b"
+    r"|\b(?:release|tag|package|pull request|branch)\b[^.]{0,30}"
+    r"\b(?:is |was |been )?(?:published|merged|released|deployed|live)\b"
+    r"|\bpassed on the (?:runner|server|host)\b")
+
 _VERSION_BEHAVIOUR = re.compile(
     r"(?i)\b(?:latest|newest|current)\s+(?:stable\s+)?version\s+of\b"
     r"|\b[A-Z][\w.+-]*\s+\d+(?:\.\d+)*\s+(?:supports?|introduced|added|"
@@ -562,6 +598,9 @@ def looks_external(text: str) -> tuple[bool, str]:
     match = _VERSION_BEHAVIOUR.search(text)
     if match:
         return True, f"asserts what a released version does: {match.group(0)}"
+    match = _EXTERNAL_STATUS.search(text)
+    if match:
+        return True, f"states the status of a system this runtime cannot see: {match.group(0)}"
     return False, ""
 
 
@@ -653,7 +692,8 @@ def record_claim(
             )
             return record
     unresolved = [
-        citation for citation in citations if not _citation_resolves(project, archive, citation)
+        citation for citation in citations
+        if not _citation_resolves(project, archive, citation, session)
     ]
     # A citation can resolve and still point at the wrong place. Existence and
     # support are separate claims, so they are checked separately.
@@ -670,10 +710,32 @@ def record_claim(
         if not citations:
             effective, reason = "hypothesis", "no citation"
         elif unresolved:
-            effective, reason = "hypothesis", "citation does not resolve"
-            suggestion = near_miss(unresolved[0], known_citations(archive))
-            if suggestion:
-                reason += f"; did you mean {suggestion!r}"
+            # A command that ran in an earlier session is a different failure
+            # from one that never ran, and saying so is the difference between
+            # a remedy the reader can perform and a puzzle.
+            stale = _ran_in_another_session(archive, unresolved, session)
+            if stale:
+                effective, reason = (
+                    "hypothesis",
+                    f"{stale} ran in another session, not this one; the record "
+                    "proves it ran once, not that it still holds - run it again "
+                    "and cite this session's attestation",
+                )
+            else:
+                effective, reason = "hypothesis", "citation does not resolve"
+                suggestion = near_miss(unresolved[0], known_citations(archive))
+                if suggestion:
+                    reason += f"; did you mean {suggestion!r}"
+        elif absence and not _probed_twice(archive, citations):
+            # One probe that found nothing is evidence about where it looked.
+            # A second, different probe is what turns that into a fact about
+            # what exists - a search miss promoted to absence is one of the
+            # commonest ways a confident wrong finding gets published.
+            effective, reason = (
+                "hypothesis",
+                "an absence claim rests on one probe; prove it a second, "
+                "different way and cite both",
+            )
         elif absence and not _cites_a_search(archive, citations):
             # "No X exists" cannot be shown by pointing at somewhere X is not. Without
             # the search that would have found X, the claim cannot be wrong - and a
@@ -1295,3 +1357,83 @@ def _self_check() -> None:
 
 if __name__ == "__main__":
     _self_check()
+
+
+def _ran_in_another_session(
+    archive: Chronicle, unresolved: list[str], session: str
+) -> str | None:
+    """The first unresolved command that did run, just not in this session.
+
+    Naming that case separately is the whole value: "does not resolve" sends a
+    reader looking for a typo, when the command ran perfectly well a fortnight
+    ago against a tree that has since moved.
+    """
+    attestations = archive.select(kind="attestation", limit=500)
+    for citation in unresolved:
+        if not str(citation).startswith("cmd:"):
+            continue
+        for record in attestations:
+            if citation in record.get("evidence", []) and record["data"].get("session") != session:
+                return str(citation)
+    return None
+
+
+def _probed_twice(archive: Chronicle, citations: list[str]) -> bool:
+    """Whether an absence claim needs a second probe, and has one.
+
+    Proportionate on purpose. The failure this guards is concluding absence
+    from a search that came back empty - a miss is evidence about where you
+    looked, not about what exists. A probe that positively enumerated something
+    is a different act, and demanding a second one for every absence claim
+    would be the over-gating that gets a check switched off.
+
+    So: if every cited command came back empty, a second distinct probe is
+    required. If any of them actually found and listed something, one is enough.
+    """
+    commands = {str(c) for c in citations if str(c).startswith("cmd:")}
+    if len(commands) >= 2:
+        return True
+    if not commands:
+        return False
+    empties = 0
+    for record in archive.select(kind="attestation", limit=500):
+        if commands & set(record.get("evidence", [])):
+            if record["data"].get("status") == "empty":
+                empties += 1
+            else:
+                # A probe that enumerated rather than missed.
+                return True
+    return empties == 0
+
+
+def evidence_from_elsewhere(
+    archive: Chronicle, citations: list[str]
+) -> list[dict[str, Any]]:
+    """Cited runs that happened under a different platform or interpreter.
+
+    Reported, never refused. Cross-platform work is ordinary and blocking it
+    would be absurd; what must not happen is a result being read as a statement
+    about this environment when it was produced in another one. This project
+    learned that twice in a day - a detector called broken by a test written
+    where history existed, and a suite green here and red on six CI jobs.
+    """
+    here = agent_fingerprint()
+    found: list[dict[str, Any]] = []
+    for record in archive.select(kind="attestation", limit=500):
+        agent = (record["data"] or {}).get("agent") or {}
+        if not agent.get("platform"):
+            continue
+        same = (agent.get("platform") == here.get("platform")
+                and agent.get("python") == here.get("python"))
+        if same:
+            continue
+        for citation in citations:
+            if citation in record.get("evidence", []):
+                found.append({
+                    "citation": citation,
+                    "ran_on": f"{agent.get('platform')} / python {agent.get('python')}",
+                    "reading_on": f"{here.get('platform')} / python {here.get('python')}",
+                    "note": "this ran somewhere else; reproduce here before "
+                            "reading it as evidence about this environment",
+                })
+    return found

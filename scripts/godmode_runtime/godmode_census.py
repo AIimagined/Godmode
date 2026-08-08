@@ -28,12 +28,60 @@ TRACKED_SURFACES: dict[str, str] = {
     "action": "gate / authorize - protected actions previewed before running",
     "experiment": "experiment - bounded one-variable investigations",
     "lesson": "lessons - generalisations recorded after a mechanism is understood",
-    "mistake": "mistakes - recurring-failure detectors fed by recorded failures",
+    # `mistakes` is a detector over existing records, not a recorder, so it
+    # has no kind of its own. Listing one here declared a surface the archive
+    # can never hold, which would have read as permanently unused rather than
+    # as impossible - a census reporting a shortfall nothing could ever close.
+    "incident": "incident - a failure recorded so its shape can be compared later",
     "checkpoint": "checkpoint - handoffs that survive a lost session",
     "decision": "decision - choices recorded with their rationale",
     "sprint": "sprint - units of work and their proof",
     "inventory": "inventory - the baseline a resume is measured against",
 }
+
+
+def uncaptured_corrections(archive: Chronicle) -> dict[str, Any]:
+    """Times the runtime corrected a claim, against lessons actually recorded.
+
+    A miss acknowledged in conversation dies with the session; a miss written
+    down cannot repeat. The ledger this comes from makes that a standing
+    directive and still records recurrences, because the acknowledgement is the
+    easy half.
+
+    A downgraded claim is the one correction this runtime can see for itself:
+    the author asserted something and the record refused it. If that happened
+    and no lesson was written, the correction exists only in whatever the agent
+    said at the time.
+    """
+    records = archive.read_events()
+    downgraded = [
+        record for record in records
+        if record.get("kind") == "claim" and (record.get("data") or {}).get("downgraded")
+    ]
+    lessons = [record for record in records if record.get("kind") == "lesson"]
+
+    if not downgraded:
+        verdict = "nothing-to-record"
+    elif lessons:
+        verdict = "corrections-recorded"
+    else:
+        verdict = "corrections-unrecorded"
+
+    return {
+        "downgraded": len(downgraded),
+        "lessons": len(lessons),
+        "examples": [record["subject"][:100] for record in downgraded[-3:]],
+        "verdict": verdict,
+        "question": "a correction only recorded in conversation cannot stop the "
+                    "next one; record it with `remember --kind lesson`",
+    }
+
+
+# A surface that records itself under another kind. The experiment loop writes
+# an `action` record with an `experiment:` subject, so a census keyed on kind
+# alone reported the surface as never used minutes after it ran — a false
+# negative in the very tool built to find dead surfaces.
+_SUBJECT_PREFIXES: dict[str, str] = {"experiment": "experiment:"}
 
 
 def census(archive: Chronicle) -> dict[str, Any]:
@@ -43,6 +91,10 @@ def census(archive: Chronicle) -> dict[str, Any]:
     for record in records:
         kind = str(record.get("kind", ""))
         seen[kind] = seen.get(kind, 0) + 1
+        subject = str(record.get("subject", ""))
+        for surface, prefix in _SUBJECT_PREFIXES.items():
+            if subject.startswith(prefix):
+                seen[surface] = seen.get(surface, 0) + 1
 
     used: list[dict[str, Any]] = []
     unused: list[dict[str, Any]] = []

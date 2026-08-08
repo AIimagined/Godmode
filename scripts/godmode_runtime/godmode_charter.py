@@ -63,6 +63,33 @@ _SHAPES: tuple[tuple[str, str, str, str], ...] = (
      "attestation_present", "before_completion", HARD),
     (r"\bre-?run\b|\bmust pass\b|\bexit(?:s)? (?:zero|non-zero)\b",
      "command_exit_zero", "before_completion", SOFT),
+    # A gate that failed without reaching its target. The verdict is then about
+    # the harness - an argv slip, a missing fixture, a shallow checkout - and
+    # reads as a fault in the thing under test. Recorded here because a check
+    # written for this project called a correct detector broken when a runner
+    # gave it no history to walk.
+    (r"\bgate\b.*\breach(?:ed)?\b|\bharness\b|\bargv\b"
+     r"|\b(?:verify|confirm)\b.*\bgate\b.*\b(?:ran|target)\b"
+     r"|\bexercis(?:e|ed|ing)\b.*\btarget\b",
+     "target_exercised", "before_completion", HARD),
+    # Attribution by a positive identifier rather than resemblance. Naming the
+    # wrong vendor in an operational instruction sends a person to spend money
+    # on a healthy system.
+    (r"\bpositive identifier\b|\bkey prefix\b|\bendpoint\b.*\bidentif\b"
+     r"|\battribut(?:e|ion)\b.*\b(?:provider|vendor)\b",
+     "identifier_cited", "before_completion", HARD),
+    # A repair that is not idempotent, or that detects a symptom rather than
+    # the fixed state, turns an upstream fix into a regression the second time
+    # it runs.
+    (r"\bidempoten\w+\b|\bdetect\b.*\bfixed state\b|\brun twice\b"
+     r"|\btwice\b.*\b(?:same|identical|stable)\b|\bconverg\w+\b",
+     "idempotence_shown", "before_completion", HARD),
+    # The mechanism that performed the mutation, not the event that preceded
+    # it. A trigger presented as a cause survives review because the timeline
+    # is true.
+    (r"\bmechanism\b.*\b(?:not|rather than)\b.*\bevent\b"
+     r"|\btrigger\b.*\bcause\b|\bname the mechanism\b",
+     "mechanism_named", "before_completion", HARD),
     # Evidence discipline. A live project's mistake ledger records the same
     # failure in every variant - the nearest available evidence accepted as
     # sufficient - and its own rules against it compiled as ADVISORY here,

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+import sys
 from pathlib import Path
 import tempfile
 import time
@@ -26,6 +27,12 @@ def writer_fingerprint() -> dict[str, str]:
         "model": os.environ.get("GODMODE_MODEL", "unknown"),
         "effort": os.environ.get("GODMODE_EFFORT", "unknown"),
         "enforcement": os.environ.get("GODMODE_ENFORCEMENT", "SOFT"),
+        # Where it ran, because a result produced under another runtime is not
+        # evidence about this one. Deliberately coarse: the platform family and
+        # the interpreter's minor version, never a hostname or a home directory,
+        # since this record travels.
+        "platform": os.environ.get("GODMODE_PLATFORM_OVERRIDE") or sys.platform,
+        "python": f"{sys.version_info.major}.{sys.version_info.minor}",
     }
 from .godmode_constants import EVENT_KINDS, RUNTIME_VERSION, SCHEMA_VERSION
 from .godmode_errors import ArchiveError

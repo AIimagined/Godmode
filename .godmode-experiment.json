@@ -1,0 +1,6 @@
+{
+  "hypothesis": "The bounded brief answers every fact a resume needs, for fewer tokens than deriving those facts by hand — measured, not asserted, and reported as dominance rather than a ratio because the arms recover different numbers of facts.",
+  "command": "python benchmarks/ab_resume.py",
+  "success_exit": 0,
+  "max_runs": 3
+}

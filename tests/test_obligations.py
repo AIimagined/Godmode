@@ -200,3 +200,51 @@ class ContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RetirementTests(unittest.TestCase):
+    """A detector with no way to act on it produces a list that only grows.
+
+    Reviewing reported the same superseded items every time, and recording a
+    fresh handover added one more rather than closing any. Flagging without a
+    closure is not restraint, it is a signal that decays until nobody reads it.
+    """
+
+    def test_a_retired_obligation_stops_being_reported(self) -> None:
+        records = _records(
+            Handover(1, "publish the v0.2.2 release page"),
+            Handover(2, "publish the v0.2.2 release page"),
+            Handover(3, "publish the v0.2.2 release page"),
+        )
+        before = review_obligations(records)
+        self.assertTrue(before["findings"])
+
+        retired = [{"sequence": 4, "kind": "obligation",
+                    "subject": "publish the v0.2.2 release page",
+                    "data": {"status": "closed"}}]
+        after = review_obligations(records + retired)
+        self.assertEqual(after["findings"], [],
+                         "a closed obligation was still reported")
+
+    def test_closing_one_leaves_the_others(self) -> None:
+        records = _records(
+            Handover(1, "publish the v0.2.2 release page", "rewrite the author identity"),
+            Handover(2, "publish the v0.2.2 release page", "rewrite the author identity"),
+            Handover(3, "publish the v0.2.2 release page", "rewrite the author identity"),
+        )
+        retired = [{"sequence": 4, "kind": "obligation",
+                    "subject": "publish the v0.2.2 release page",
+                    "data": {"status": "closed"}}]
+        findings = review_obligations(records + retired)["findings"]
+        text = " ".join(f["obligation"] for f in findings)
+        self.assertIn("author identity", text)
+        self.assertNotIn("release page", text)
+
+    def test_an_open_obligation_record_does_not_retire_anything(self) -> None:
+        records = _records(
+            Handover(1, "publish the page"), Handover(2, "publish the page"),
+            Handover(3, "publish the page"),
+        )
+        still_open = [{"sequence": 4, "kind": "obligation",
+                       "subject": "publish the page", "data": {"status": "open"}}]
+        self.assertTrue(review_obligations(records + still_open)["findings"])
