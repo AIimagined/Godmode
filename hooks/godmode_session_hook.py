@@ -18,6 +18,7 @@ from godmode_runtime.godmode_errors import GodmodeError  # noqa: E402
 from godmode_runtime.godmode_attest import attested_rule_ids, latest_session  # noqa: E402
 from godmode_runtime.godmode_charter import compile_charter  # noqa: E402
 from godmode_runtime.godmode_corpus import resolve_roles  # noqa: E402
+from godmode_runtime.godmode_requests import record_request  # noqa: E402
 from godmode_runtime.godmode_drift import capabilities as host_capabilities  # noqa: E402
 from godmode_runtime.godmode_drift import compare as compare_sessions  # noqa: E402
 from godmode_runtime.godmode_lens import build_context_brief  # noqa: E402
@@ -141,7 +142,8 @@ def _session_obligations(anchor: Any, archive: Chronicle) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="godmode-session-hook")
-    parser.add_argument("event", choices=["session-start", "pre-compact", "session-end", "pre-action"])
+    parser.add_argument("event", choices=["session-start", "pre-compact", "session-end",
+                                          "pre-action", "user-prompt"])
     parser.add_argument("--project")
     args = parser.parse_args(argv)
     submitted = _input()
@@ -185,6 +187,30 @@ def main(argv: list[str] | None = None) -> int:
                 _emit_claude_context(brief)
             else:
                 print(json.dumps({"godmode": "context", "brief": brief}))
+            return 0
+
+        if args.event == "user-prompt":
+            # Recorded here because it cannot be recovered anywhere else. The
+            # host's transcript stores an input at the moment it is delivered,
+            # not the moment it was typed, so an ask that arrived mid-task is
+            # indistinguishable afterwards from one that waited its turn - and
+            # the mid-task ones are exactly the ones that get lost.
+            #
+            # Silent by contract: this hook adds no context and blocks nothing.
+            # A ledger of asks that interrupts to announce itself would be one
+            # more thing to answer beside the work already running.
+            prompt = str(submitted.get("prompt", ""))
+            try:
+                record_request(
+                    archive, prompt,
+                    session=str(submitted.get("session_id") or "") or None,
+                    tools_in_flight=int(submitted.get("tools_in_flight") or 0),
+                )
+            except Exception:  # noqa: BLE001
+                # A prompt that cannot be stored - a secret-shaped paste the
+                # archive refuses, a locked store - must not stop the turn the
+                # operator is trying to have.
+                pass
             return 0
 
         if args.event in {"pre-compact", "session-end"}:
