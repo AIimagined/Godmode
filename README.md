@@ -1,8 +1,6 @@
-<p align="center">
-  <img src="./assets/godmode-logo.png" alt="Godmode logo" width="280">
-</p>
-
-<h1 align="center">Godmode</h1>
+<h1 align="center">
+  <img src="./assets/godmode-logo.png" alt="Godmode" width="260">
+</h1>
 
 <p align="center">
   <b>Local-first context continuity and evidence governance for coding agents.</b><br>
