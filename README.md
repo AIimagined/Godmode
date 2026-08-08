@@ -144,7 +144,7 @@ the same CLI over shell, JSON, and exit codes. See
 ```yaml
 - uses: actions/checkout@v4
   with: { fetch-depth: 0 }
-- uses: AIimagined/Godmode@v0.2.0
+- uses: AIimagined/Godmode@v0.2.7
   with:
     base: origin/${{ github.base_ref }}...
     gates: integrity,changelog,grid,config,locale
@@ -153,11 +153,40 @@ the same CLI over shell, JSON, and exit codes. See
 
 ## Quick start
 
+**Mostly you type nothing.** Once installed, three hooks carry the product:
+
+| Hook | What it does |
+| --- | --- |
+| Session start | Loads a bounded continuity brief — branch, obligations, open checks, decisions — reconstructed from records rather than remembered. |
+| Pre-tool | Decides mutating tool calls. A protected operation is refused with its category and tier before it runs. |
+| User prompt | Records what was asked, so a request made while the agent was already working cannot quietly vanish. |
+
+Five skills route by the shape of the work — continuity, governance,
+investigation, skill forging — so the agent reaches for the right one without
+being told which.
+
+The first thing you will notice is a refusal. Three ways to answer one:
+
 ```powershell
-python scripts/godmode.py --project . init      # one-time, zero config
-python scripts/godmode.py --project . resume    # what is true here right now
-python scripts/godmode.py --project . --help    # 80 commands
+godmode authorize setup                        # once, sets a password
+godmode authorize stage --operation "<exact command>"   # spent once, expires
 ```
+
+…or run the command yourself, or narrow it. Godmode never executes the
+operation on your behalf.
+
+When you do drive it directly, it is usually one of these:
+
+```powershell
+godmode init                  # one-time, zero config
+godmode resume                # what is true here right now
+godmode checkpoint --review   # obligations, and asks nothing answered
+godmode verify --check "..."  # run a check, and record that it ran
+godmode integrity             # what a change did to the tests
+```
+
+The command surface is large and you are not meant to learn it; the skills
+surface what a task needs. `godmode --help` lists everything.
 
 Three flags apply everywhere: `--brief` for one line, `--json` for machines, and
 `GODMODE_MODE=guided|standard|expert` to change how much is explained — exposure

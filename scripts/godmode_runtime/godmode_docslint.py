@@ -28,6 +28,8 @@ import fnmatch
 import json
 import re
 from pathlib import Path
+
+from .godmode_constants import RUNTIME_VERSION
 from typing import Any
 
 CONFIG_FILENAME = ".godmode-docslint.json"
@@ -324,6 +326,39 @@ _BADGE_FIGURE = re.compile(r"/badge/(?P<name>[a-z]+)-(?P<value>\d+)")
 _PROSE_FIGURE = re.compile(r"(?<![\w.])(?P<value>\d+)\s+(?P<name>[a-z]+)\b")
 
 
+# This project pinning a version of itself. An install snippet is the one place
+# a reader copies verbatim, so a stale pin here hands them an old build - and
+# the figure check above deliberately skips fenced blocks, which is exactly
+# where every install snippet lives. The README pinned `@v0.2.0` through seven
+# releases and nothing said so.
+#
+# Unlike a count, this has one exact local answer, which is why it is checkable
+# at all: `hosts` and the command total were both left out for want of one.
+_SELF_PIN = re.compile(r"AIimagined/Godmode@v(?P<value>\d+\.\d+\.\d+)")
+
+
+def _self_pin_findings(relative: str, text: str, current: str) -> list[dict[str, Any]]:
+    """Snippets pinning a version of this project that is no longer current."""
+    if _HISTORICAL.search(relative):
+        return []
+    findings: list[dict[str, Any]] = []
+    for number, line in enumerate(text.splitlines(), 1):
+        for match in _SELF_PIN.finditer(line):
+            pinned = match.group("value")
+            if pinned == current:
+                continue
+            findings.append({
+                "path": relative, "line": number, "check": "stale-self-pin",
+                "severity": "medium",
+                "why": f"pins this project at v{pinned}; the current version is "
+                       f"v{current}",
+                "remedy": f"update the pin to v{current}, or say why this "
+                          "snippet documents an older release",
+                "excerpt": line.strip()[:160],
+            })
+    return findings
+
+
 def _figure_findings(relative: str, text: str, project: Path) -> list[dict[str, Any]]:
     """Numeric claims the runtime can check, compared against the real count."""
     if _HISTORICAL.search(relative):
@@ -389,6 +424,7 @@ def lint_docs(project: Path) -> dict[str, Any]:
         if contracts:
             findings.extend(_contract_findings(relative, text, contracts))
         findings.extend(_figure_findings(relative, text, project))
+        findings.extend(_self_pin_findings(relative, text, RUNTIME_VERSION))
     high = [f for f in findings if f["severity"] == "high"]
     return {
         "documents_scanned": scanned,
