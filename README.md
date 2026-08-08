@@ -144,7 +144,7 @@ the same CLI over shell, JSON, and exit codes. See
 ```yaml
 - uses: actions/checkout@v4
   with: { fetch-depth: 0 }
-- uses: AIimagined/Godmode@v0.2.7
+- uses: AIimagined/Godmode@v0.2.8
   with:
     base: origin/${{ github.base_ref }}...
     gates: integrity,changelog,grid,config,locale
