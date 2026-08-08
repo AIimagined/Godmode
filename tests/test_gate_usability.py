@@ -422,6 +422,24 @@ class RealToolPayloadTests(unittest.TestCase):
         self.assertFalse(classify_action(operation, project_root=PLUGIN_ROOT)["protected"],
                          operation)
 
+    def test_a_project_under_temp_does_not_lose_containment(self) -> None:
+        """Found by accident, and it would have been found nowhere else.
+
+        A checkout under the temporary directory — a CI workspace, a sandbox, a
+        build in `/tmp` — made every path near it also under temp, so the
+        scratch allowance swallowed containment whole and every out-of-tree
+        write was permitted. Where the two rules overlap, containment governs
+        alone.
+        """
+        import tempfile
+
+        root = Path(tempfile.gettempdir()) / "some-checkout"
+        outside = root.parent / "elsewhere" / "secrets.txt"
+        verdict = classify_action(self._operation("Write", file_path=str(outside)),
+                                  project_root=root)
+        self.assertTrue(verdict["protected"],
+                        "a project under temp lost its containment rule")
+
     def test_the_scratch_allowance_is_not_a_declared_path(self) -> None:
         """A repository that could nominate its own writable location could
         nominate anything, so the allowance is a property of the machine."""

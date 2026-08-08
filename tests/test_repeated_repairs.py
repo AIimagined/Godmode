@@ -112,13 +112,36 @@ class VersionChoreTests(unittest.TestCase):
 
 
 class ThisRepositoryTests(unittest.TestCase):
-    """The history that produced the detector, asserted so it cannot regress."""
+    """The history that produced the detector, asserted without assuming it.
 
-    def test_the_gate_is_named_as_repeatedly_repaired(self) -> None:
+    The first version of this asserted the gate is named, which passed here and
+    failed every CI job: a default checkout is shallow and carries no tags, so
+    the detector correctly reported nothing and the test called that a fault.
+    That is the fourth time in this project a check has been written to pass
+    only where it was written.
+
+    So both worlds are asserted, and neither is skipped. Where history exists
+    the finding must appear; where it does not, the detector must report
+    nothing rather than crash or invent.
+    """
+
+    def _has_history(self) -> bool:
+        found = subprocess.run(
+            ["git", "tag", "--list"], cwd=PLUGIN_ROOT, capture_output=True,
+            text=True, encoding="utf-8", errors="replace")
+        return bool(found.stdout.split())
+
+    def test_the_detector_matches_the_history_available_to_it(self) -> None:
         findings = repeated_repairs(PLUGIN_ROOT)
-        named = " ".join(f["detail"] for f in findings)
-        self.assertIn("godmode_sentinel.py", named,
-                      "the file repaired across four releases is not reported")
+        if self._has_history():
+            named = " ".join(f["detail"] for f in findings)
+            self.assertIn("godmode_sentinel.py", named,
+                          "the file repaired across four releases is not reported")
+        else:
+            self.assertEqual(
+                findings, [],
+                "a checkout with no tags cannot know what was repeated, and "
+                "must report nothing rather than guess")
 
     def test_nothing_below_the_threshold_is_reported(self) -> None:
         for finding in repeated_repairs(PLUGIN_ROOT):
