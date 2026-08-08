@@ -411,6 +411,24 @@ class RealToolPayloadTests(unittest.TestCase):
             "Write", file_path=str(PLUGIN_ROOT / ".." / "outside.txt"))
         self.assertTrue(classify_action(operation, project_root=PLUGIN_ROOT)["protected"])
 
+    def test_writing_to_the_system_scratch_directory_is_ordinary_work(self) -> None:
+        """Containment refuses writes outside the tree and the agent's scratch
+        directory sits outside it — both rules right, and together they made the
+        intended temporary location unusable."""
+        import tempfile
+
+        scratch = Path(tempfile.gettempdir()) / "godmode-probe" / "notes.txt"
+        operation = self._operation("Write", file_path=str(scratch))
+        self.assertFalse(classify_action(operation, project_root=PLUGIN_ROOT)["protected"],
+                         operation)
+
+    def test_the_scratch_allowance_is_not_a_declared_path(self) -> None:
+        """A repository that could nominate its own writable location could
+        nominate anything, so the allowance is a property of the machine."""
+        outside = PLUGIN_ROOT.parent / "not-temp" / "notes.txt"
+        operation = self._operation("Write", file_path=str(outside))
+        self.assertTrue(classify_action(operation, project_root=PLUGIN_ROOT)["protected"])
+
     def test_the_read_tools_are_read_only(self) -> None:
         for tool in ("Read", "Glob", "Grep"):
             operation = self._operation(tool, file_path=str(PLUGIN_ROOT / "README.md"))

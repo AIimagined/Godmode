@@ -1,0 +1,47 @@
+{
+  "arm_brief": {
+    "detail": {
+      "branch": true,
+      "drift_or_staleness": true,
+      "head_commit": true,
+      "last_handover_next_actions": true,
+      "recorded_decisions": true,
+      "working_tree_state": true
+    },
+    "facts_recovered": 6,
+    "tokens": 1188
+  },
+  "arm_derive": {
+    "commands": [
+      "git rev-parse --abbrev-ref HEAD",
+      "git rev-parse HEAD",
+      "git status --short",
+      "git log -12 --format=%s%n%b",
+      "git log -30 --format=%s",
+      "git log -1 --format=%ci"
+    ],
+    "detail": {
+      "branch": true,
+      "drift_or_staleness": true,
+      "head_commit": true,
+      "last_handover_next_actions": false,
+      "recorded_decisions": true,
+      "working_tree_state": true
+    },
+    "facts_recovered": 5,
+    "tokens": 3443
+  },
+  "comparable": false,
+  "facts_required": [
+    "branch",
+    "head_commit",
+    "working_tree_state",
+    "last_handover_next_actions",
+    "recorded_decisions",
+    "drift_or_staleness"
+  ],
+  "ratio": null,
+  "reason": "the brief answers 6 of 6 facts for 1188 tokens; the derivation answers 5 for 3443. Cheaper and more complete, so no ratio is needed and none is published - the arms answer different questions and a normalised figure would compare unlike things",
+  "task": "establish what is true about this project right now",
+  "verdict": "brief-dominates"
+}

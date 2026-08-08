@@ -62,6 +62,8 @@ from .godmode_report import completion_report, render_markdown
 from .godmode_docslint import lint_docs
 from .godmode_trust import scan_agent_configuration
 from .godmode_obligations import review_obligations
+from .godmode_census import census, render as render_census
+from .godmode_report import claims_from_report
 from .godmode_contribution import contribution
 from .godmode_contribution import render_line as render_contribution
 from .godmode_fuzz import fuzz as run_fuzz
@@ -773,6 +775,13 @@ def cmd_integrity(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 
 def cmd_capabilities(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if getattr(args, "usage", False):
+        # The product's own standard, applied to its own description of
+        # itself: which declared surfaces the record shows were used.
+        _require_archive(runtime)
+        report = census(runtime.archive)
+        report["summary"] = render_census(report)
+        return CommandResult(report, exit_code=0)
     if args.host:
         source = Path(runtime.anchor.project_root) / "packaging" / "hosts.json"
         adapters = json.loads(source.read_text(encoding="utf-8")).get("adapters", {})
@@ -1285,6 +1294,39 @@ def cmd_authorize_deny(args: argparse.Namespace, runtime: Runtime) -> CommandRes
     return CommandResult(CapabilityBroker(runtime.archive).deny(args.request, args.reason))
 
 
+def cmd_authorize_stage(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """Authorise one exact operation and leave it where the hook will find it.
+
+    The gate's refusal used to name a remedy nobody could perform: a host tool
+    call carries no field a capability could travel in, so the broker was
+    unreachable and the only answer to a false positive was switching the guard
+    off. Staging is that answer, with every property of the token kept - the
+    password, the exact operation, the expiry, the single use.
+    """
+    _require_archive(runtime)
+    broker = CapabilityBroker(runtime.archive)
+    password = read_password_stdin() if args.password_stdin else None
+    if password is None:
+        from .godmode_sentinel import _require_tty
+
+        _require_tty()
+        import getpass
+
+        password = getpass.getpass("Godmode authorization password: ")
+    broker.stage(args.operation, password, args.ttl)
+    preview = classify_action(args.operation)
+    return CommandResult({
+        "staged": True,
+        "operation": args.operation,
+        "category": preview["category"],
+        "tier": preview["tier"],
+        "spends_on": "the next attempt at this exact operation, once",
+        # The token is not printed. It is already where it needs to be, and a
+        # capability on a terminal is a capability in a scrollback buffer.
+        "note": "the next matching tool call is permitted; nothing else is",
+    })
+
+
 def cmd_authorize_issue(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     preview = classify_action(args.operation)
@@ -1548,6 +1590,22 @@ def cmd_report(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         session=getattr(args, "session", None) or None,
     )
     exit_code = 1 if report["fields"]["status"]["value"] == "blocked" else 0
+    if getattr(args, "record_claims", False):
+        # Finishing a task is what records the claim. `claim` was never used
+        # here because it is a command somebody has to decide to run; saying
+        # the work is done is the same assertion, made at the moment it is
+        # actually made, and it is graded like any other.
+        graded = []
+        for assertion in claims_from_report(report):
+            recorded = record_claim(
+                runtime.archive, Path(runtime.anchor.project_root),
+                report.get("session") or "unsessioned",
+                assertion["text"], assertion["grade"], cites=assertion["cites"])
+            graded.append({"text": assertion["text"],
+                           "grade": recorded["data"]["grade"],
+                           "downgraded": recorded["data"].get("downgraded", False),
+                           "reason": recorded["data"].get("reason", "")})
+        report["claims_recorded"] = graded
     if getattr(args, "markdown", False):
         return CommandResult({"markdown": render_markdown(report)}, exit_code=exit_code)
     return CommandResult(report, exit_code=exit_code)
@@ -1999,6 +2057,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--host", help="A declared adapter host (opencode, cursor, gemini) instead of the live one")
     capabilities_parser.add_argument(
         "--record", action="store_true", help="Record the negotiated table in the archive")
+    capabilities_parser.add_argument(
+        "--usage", action="store_true",
+        help="Report which declared surfaces this project has never used")
     capabilities_parser.set_defaults(handler=cmd_capabilities)
     inspect = sub.add_parser("inspect", help="Capture an on-demand repository snapshot")
     inspect.set_defaults(handler=cmd_inspect)
@@ -2174,6 +2235,13 @@ def _build_parser() -> argparse.ArgumentParser:
     request.add_argument("--purpose", default="")
     request.set_defaults(handler=cmd_authorize_request)
 
+    staging = authorize_sub.add_parser(
+        "stage", help="Authorize one exact operation for the next tool call")
+    staging.add_argument("--operation", required=True)
+    staging.add_argument("--ttl", type=int, default=None)
+    staging.add_argument("--password-stdin", action="store_true")
+    staging.set_defaults(handler=cmd_authorize_stage)
+
     listing = authorize_sub.add_parser("requests", help="Show recorded requests and outcomes")
     listing.add_argument("--state", choices=["requested", "granted", "denied"])
     listing.set_defaults(handler=cmd_authorize_list)
@@ -2311,6 +2379,8 @@ def _build_parser() -> argparse.ArgumentParser:
     report.add_argument("--markdown", action="store_true",
                         help="Render the TASK COMPLETION REPORT markdown table")
     report.add_argument("--session", default=None, help="Session id; defaults to the latest session")
+    report.add_argument("--record-claims", dest="record_claims", action="store_true",
+                        help="Record the report's own assertions as graded claims")
     report.add_argument("--token-budget", type=int, default=700)
     report.set_defaults(handler=cmd_report)
     export = sub.add_parser("export", help="Write a sanitized context report")

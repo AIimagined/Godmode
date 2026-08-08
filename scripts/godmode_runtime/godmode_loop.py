@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 from typing import Any
 
 from .godmode_chronicle import Chronicle
@@ -288,6 +289,9 @@ def analyze(archive: Chronicle) -> dict[str, Any]:
         + _prior_fix_reversal(records)
         + _silent_success(records)
         + hypothesis_reset_required(records, threshold)
+        # Read from history rather than from the records, because every
+        # detector above needs a failure somebody chose to write down.
+        + repeated_repairs(Path(archive.anchor.project_root))
     )
     blocking = [f for f in findings if f["blocking"]]
     return {
@@ -297,3 +301,89 @@ def analyze(archive: Chronicle) -> dict[str, Any]:
         "notice": _render_notice(findings),
         "verdict": "loop-detected" if blocking else "no-loop",
     }
+
+
+# A fix that keeps being needed is not a fix.
+#
+# Every other detector here reads checkpoint records, and recording a failure is
+# voluntary - so across this project's whole archive not one checkpoint carries a
+# non-green status and `hypothesis_reset_required` can never fire. Inferring the
+# failure from the records was tried and abandoned: subjects are outcome
+# summaries, not problem statements, and none of them cluster. The signal is not
+# in the record.
+#
+# It is in history. A file repaired by a `fix:` commit across three or more
+# releases is a file whose fixes are not holding, and history is written by the
+# act of committing rather than by anyone choosing to admit being stuck.
+REPAIR_THRESHOLD = 3
+
+
+def _git(project: Path, *args: str) -> str:
+    try:
+        done = subprocess.run(
+            ["git", *args], cwd=str(project), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return done.stdout if done.returncode == 0 else ""
+
+
+def _is_version_chore(project: Path, sha: str, path: str) -> bool:
+    """Whether a commit moved nothing but a version string in this file.
+
+    Without this every file carrying a version scores the maximum, because a
+    release touches all of them, and the real signal is buried under chores.
+    """
+    diff = _git(project, "show", sha, "--unified=0", "--", path)
+    # `startswith`, not `line[:1] in "+-"`: an empty string is a member of every
+    # string, so blank diff lines passed that test and broke the `all()` below,
+    # which read every version bump as a genuine repair.
+    body = [
+        line for line in diff.splitlines()
+        if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
+    ]
+    return bool(body) and all("version" in line.lower() for line in body)
+
+
+def repeated_repairs(project: Path, threshold: int = REPAIR_THRESHOLD) -> list[dict[str, Any]]:
+    """Source files repaired by `fix:` commits across `threshold` releases."""
+    project = Path(project)
+    tags = [tag for tag in _git(project, "tag", "--list", "--sort=v:refname").split() if tag]
+    if not tags:
+        return []
+
+    repaired: dict[str, set[str]] = {}
+    previous = ""
+    for tag in tags:
+        span = f"{previous}..{tag}" if previous else tag
+        previous = tag
+        for sha in _git(project, "log", span, "--format=%H", "--grep=^fix").split():
+            for path in _git(project, "show", sha, "--name-only", "--format=").split():
+                if not path.endswith(".py") or path.startswith("tests/") or "/test" in path:
+                    continue
+                if _is_version_chore(project, sha, path):
+                    continue
+                repaired.setdefault(path, set()).add(tag)
+
+    findings: list[dict[str, Any]] = []
+    for path, releases in sorted(repaired.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        if len(releases) < threshold:
+            continue
+        ordered = sorted(releases)
+        findings.append({
+            "detector": "repeated-repair",
+            "path": path,
+            "releases": len(ordered),
+            # Reported, not blocked: a file may be repaired often because it is
+            # where the work is. The reader judges; the record only says how
+            # many times the same place needed fixing.
+            "blocking": False,
+            "detail": (
+                f"{path} was repaired in {len(ordered)} releases "
+                f"({', '.join(ordered)}). Fixes that keep being needed in one "
+                "place are evidence the cause is structural, not the next "
+                "special case"
+            ),
+            "citations": [],
+        })
+    return findings

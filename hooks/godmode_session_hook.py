@@ -263,6 +263,14 @@ def main(argv: list[str] | None = None) -> int:
             preview["reason"] = blocked_reason
         elif not preview["protected"]:
             preview["allow"] = True
+        elif (staged := CapabilityBroker(archive).consume_staged(operation)) is not None:
+            # An operator authorised this exact command with the password, and
+            # left it where the hook can read it. Without this the refusal
+            # named a remedy nobody could perform, so the only answer to a
+            # false positive was to remove the guard entirely.
+            preview["allow"] = True
+            preview["capability_consumed"] = True
+            preview["authorized_by"] = "staged capability"
         elif submitted.get("capability"):
             CapabilityBroker(archive).consume(operation, str(submitted["capability"]))
             preview["allow"] = True

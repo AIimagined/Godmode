@@ -391,3 +391,36 @@ def render_markdown(report: dict[str, Any]) -> str:
         entry = fields[name]
         lines.append(f"| {name} | {_cell(entry['value'])} | {_cell(entry['label'])} |")
     return "\n".join(lines) + "\n"
+
+
+# Finishing a task is what records the claim.
+#
+# `claim` grades an assertion against citations that must resolve, and it is the
+# first thing this product demonstrates. Across the whole archive it has been
+# used zero times, because it is a command somebody has to decide to run and an
+# agent finishing a task is reaching for the finish, not for a subsystem.
+#
+# Reporting "this is done" is itself an assertion about project state, so it now
+# goes through the same grading as any other. Nothing new is asked of the agent,
+# and the honest outcome is the common one: a completion with no resolving
+# citation is stored as a hypothesis rather than a fact.
+def claims_from_report(report: dict[str, Any]) -> list[dict[str, Any]]:
+    """The assertions a completion report makes, ready for grading."""
+    fields = report.get("fields") or {}
+    status = (fields.get("status") or {}).get("value")
+    # Claiming to be blocked asserts nothing about the work being done.
+    if not status or str(status).lower() == "blocked":
+        return []
+
+    changed = (fields.get("what_changed") or {}).get("value") or "the task"
+    evidence = (fields.get("evidence") or {}).get("detail")
+    cites = [str(item) for item in evidence] if isinstance(evidence, list) else []
+
+    return [{
+        "field": "status",
+        "text": f"the task is {status}: {changed}",
+        "cites": cites,
+        # Recorded at the grade the agent is implicitly asserting, so the
+        # grader can do its work. It is the downgrade that carries the value.
+        "grade": "verified",
+    }]

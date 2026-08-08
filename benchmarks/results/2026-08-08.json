@@ -1,0 +1,21 @@
+{
+  "brief-cost": {
+    "brief_tokens": 1176,
+    "control_clean": null,
+    "ratio": 0.076,
+    "raw_tokens": 15476,
+    "records": 52
+  },
+  "planted-regression": {
+    "caught": true,
+    "control_clean": true
+  },
+  "seeded-drift": {
+    "caught": true,
+    "control_clean": true
+  },
+  "spent-hypothesis": {
+    "caught": true,
+    "control_clean": true
+  }
+}
