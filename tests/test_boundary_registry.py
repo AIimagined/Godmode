@@ -46,6 +46,10 @@ BOUNDARY_TESTS: dict[str, tuple[str, str]] = {
     "release gates": (
         "the workflow file's own gate list, with exit codes checked",
         "tests/test_ci_gates.py"),
+    "user-prompt hook": (
+        "the host's UserPromptSubmit payload, through the hook process and "
+        "into a real archive",
+        "tests/test_request_hook.py"),
 }
 
 # Surfaces with no boundary test, and why. Listed rather than omitted.
@@ -104,6 +108,7 @@ class NewSurfaceTests(unittest.TestCase):
         known = {
             "pretooluse": "pre-tool gate",
             "sessionstart": "session-start hook",
+            "userpromptsubmit": "user-prompt hook",
             "precompact": "pre-compact hook",
             "sessionend": "session-end hook",
             "stop": "session-end hook",

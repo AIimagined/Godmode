@@ -62,6 +62,7 @@ from .godmode_report import completion_report, render_markdown
 from .godmode_docslint import lint_docs
 from .godmode_trust import scan_agent_configuration
 from .godmode_obligations import review_obligations
+from .godmode_requests import review_requests
 from .godmode_census import census, render as render_census
 from .godmode_census import uncaptured_corrections
 from .godmode_release import compare_releases, render as render_release
@@ -1145,7 +1146,13 @@ def cmd_checkpoint(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         # `obligation` with a closed status, and filtering to checkpoints meant
         # the closure never reached the reviewer. The mechanism was right and
         # the wiring starved it, so closing something changed nothing.
-        report = review_obligations(runtime.archive.read_events())
+        records = runtime.archive.read_events()
+        report = review_obligations(records)
+        # The other direction of the same continuity question. An obligation is
+        # something the agent wrote down and kept carrying; a request is
+        # something the operator said once, which leaves no artefact at all and
+        # so is the half that goes missing without anyone able to name it.
+        report["requests"] = review_requests(records)
         # Reported, never failed: a standing obligation that looks stale is a
         # question for the operator, not a verdict the runtime is entitled to.
         return CommandResult(report, exit_code=0)
