@@ -206,7 +206,24 @@ class DedupeTests(unittest.TestCase):
 
 
 class ExpungeTests(unittest.TestCase):
-    SECRET = "slipped-plaintext-credential-XYZZY-99"  # godmode: allow-secret
+    # A string the scanner does not recognise, which is the premise: expunge
+    # exists for material that got past it. The earlier fixture contained the
+    # word `credential`, so once the scanner learned to read a credential named
+    # in prose it refused the write and these tests could no longer set up the
+    # situation they exist to test. The fixture had to be undetectable, not the
+    # scanner more forgiving.
+    SECRET = "zzyzx-plaintext-value-4471"  # godmode: allow-secret
+
+    def test_the_fixture_is_genuinely_undetected(self) -> None:
+        """Named rather than assumed. If the scanner learns to catch this
+        string, every test below stops testing expunge and starts testing the
+        scanner - and would say so by erroring on setup, which is a confusing
+        way to be told the fixture went stale."""
+        from godmode_runtime.godmode_sentinel import find_secret_shapes
+
+        self.assertEqual(find_secret_shapes(self.SECRET), [],
+                         "the planted secret is now detected; expunge can no "
+                         "longer be set up with it")
 
     def test_expunge_removes_secret_from_disk_and_keeps_chain_valid(self) -> None:
         with isolated_project() as (_project, _state, _anchor, archive):

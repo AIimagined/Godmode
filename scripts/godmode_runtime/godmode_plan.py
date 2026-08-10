@@ -28,7 +28,16 @@ CONTRACT_FIELDS = (
     "rollback",
     "verification",
     "points",
+    "editable",
 )
+
+# Fields a contract may leave empty. `scope` and `out_of_scope` are prose an
+# operator reads; `editable` is the machine-checkable form of the same claim,
+# and an edit outside it is refused rather than reported. It is optional
+# because making it mandatory would refuse every plan written before the fence
+# existed - and because a fence nobody wrote should fence nothing rather than
+# everything. The gap is reported by `fence_verdict`, not inferred.
+OPTIONAL_FIELDS = ("editable",)
 
 # The spec is the what/why; the plan is the how. A plan without a spec is a
 # solution to an unstated problem, so `start` refuses until one exists.
@@ -112,7 +121,9 @@ def start(archive: Chronicle, session: str, title: str, contract: dict[str, str]
 
 
 def gaps(contract: dict[str, str]) -> list[str]:
-    return [field for field in CONTRACT_FIELDS if not str(contract.get(field, "")).strip()]
+    return [field for field in CONTRACT_FIELDS
+            if field not in OPTIONAL_FIELDS
+            and not str(contract.get(field, "")).strip()]
 
 
 def approve(archive: Chronicle, session: str) -> dict[str, Any]:

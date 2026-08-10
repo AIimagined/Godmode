@@ -87,6 +87,32 @@ def _break_trust(project: Path) -> Path:
     return target
 
 
+def _break_config(project: Path) -> Path:
+    """A checked-in config file the runtime cannot parse.
+
+    `config check` validates every `.godmode-*.json`, and a file that no longer
+    parses is the failure it exists for: the config is still there, still
+    named, and silently governs nothing.
+    """
+    target = project / ".godmode-docslint.json"
+    target.write_text('{"ignore": [ "unterminated', encoding="utf-8")
+    return target
+
+
+def _break_atlas(project: Path) -> Path:
+    """A source file the symbol atlas cannot parse.
+
+    `atlas diagnose` reports whether the index can be trusted, and an unparsed
+    file means every question asked of the atlas is answered from a tree with a
+    hole in it. Control characters rather than deleted text, because that is
+    the damage this project has actually seen - a shell halving backslashes
+    mid-write, three times in one session.
+    """
+    target = project / "scripts" / "godmode_runtime" / "godmode_scope.py"
+    target.write_text("def broken(:\n    \x08return 1\n", encoding="utf-8")
+    return target
+
+
 def _break_bindings(project: Path) -> Path:
     target = project / ".claude-plugin" / "plugin.json"
     target.write_text(json.dumps({"name": "godmode", "version": "0.0.0"}),
@@ -111,6 +137,11 @@ FALSIFICATIONS: dict[str, tuple[str, object]] = {
     "trust":
         ("checked-in configuration neither executes nor disarms anything "
          "without saying so", _break_trust),
+    "config check --brief":
+        ("every checked-in `.godmode-*.json` still parses and means what it "
+         "says", _break_config),
+    "atlas diagnose --brief":
+        ("the symbol index covers the tree it claims to index", _break_atlas),
 }
 
 # Gates with no falsification proof, and why. Listed rather than omitted: a
@@ -122,8 +153,6 @@ NO_PROOF_YET: dict[str, str] = {
     "scenarios --brief": "staged failure scenarios are themselves the mutation, "
                          "and already assert their own red state",
     "grid --brief": "the adversarial grid enumerates its own negative cases",
-    "config check --brief": "no breaking mutation written yet",
-    "atlas diagnose --brief": "no breaking mutation written yet",
     "sbom --brief": "reports rather than gates; `sbom --gate` carries the assertion",
     "--json checksums": "asserts determinism across two runs; making it "
                         "nondeterministic is not expressible as a file mutation",

@@ -339,6 +339,150 @@ class Atlas:
         }
 
 
+def speculative_seams(atlas: "Atlas") -> dict[str, Any]:
+    """Modules that exist for exactly one consumer.
+
+    "One adapter means a hypothetical seam. Two adapters means a real one." An
+    interface with a single consumer may be right - a module can be young, or
+    genuinely deep - but it is the shape a speculative abstraction takes, and
+    nothing here looked for it.
+
+    Tests do not count as consumers. Every module has one importing it, so
+    counting them would make every speculative seam look justified and the
+    check would report nothing forever.
+
+    Zero consumers is not reported: that is what `orphans` answers, and a
+    finding two surfaces report is a finding neither gets fixed for.
+
+    The deletion test that accompanies this rule - delete the module and see
+    whether complexity vanishes or reappears across N callers - is not
+    computable from an import graph. It is asked, not pretended at.
+    """
+    consumers: dict[str, set[str]] = {}
+    modules: set[str] = set()
+    for edge in atlas.edges:
+        if edge.relation != IMPORTS or edge.evidence != EXTRACTED:
+            continue
+        target = module_key(edge.target)
+        source = str(edge.source).replace("\\", "/").split("::")[0]
+        modules.add(target)
+        if _looks_like_a_test(source):
+            continue
+        consumers.setdefault(target, set()).add(source)
+
+    by_key = {module_key(path): path for path in atlas.files}
+    findings: list[dict[str, Any]] = []
+    for target, users in sorted(consumers.items()):
+        if len(users) != 1:
+            continue
+        # Only modules this project owns. An import edge also names the
+        # standard library, and `import base64` used once is not a seam anybody
+        # can delete - reporting it buries the actionable findings under a list
+        # of Python's own modules.
+        module = by_key.get(target)
+        if module is None:
+            continue
+        consumer = sorted(users)[0]
+        findings.append({
+            "module": module,
+            "consumer": consumer,
+            "question": f"'{module}' is used only by '{consumer}'. Delete it in your head: "
+                        "does the complexity vanish, or reappear across its callers? If it "
+                        "vanishes, this seam is a guess about a second caller that has not "
+                        "arrived.",
+        })
+    return {
+        "modules_examined": len(modules),
+        "findings": findings,
+        "verdict": "speculative-seams" if findings else "no-single-consumer-modules",
+    }
+
+
+def _looks_like_a_test(path: str) -> bool:
+    name = path.rsplit("/", 1)[-1]
+    stem = name.rsplit(".", 1)[0]
+    return (stem.startswith("test_") or stem.endswith("_test")
+            or stem.endswith(".test") or stem.endswith(".spec")
+            or "tests/" in path or "/test/" in path or path.startswith("test/"))
+
+
+def unfollowed_dependents(atlas: "Atlas", changed: Iterable[str],
+                          depth: int = 1) -> dict[str, Any]:
+    """What depended on this change and was not itself touched.
+
+    `affected` already answers "what breaks if this changes". Nothing consumed
+    that answer, so it stayed a query somebody had to think to run - and the
+    moment worth running it is exactly the moment nobody is thinking about it.
+    This turns it around: given what actually changed, what else was in the
+    blast radius and left alone.
+
+    Findings, never closures - the contract requests and obligations keep. A
+    dependent reported here is not thereby wrong: it may need updating, or it
+    may be genuinely unaffected, and only a person can say which. What must not
+    happen is nobody saying either, because that is the case that ships broken.
+
+    Depth 1 by default. A second hop is real but weaker, and a report that
+    lists a third of the repository is one nobody reads.
+    """
+    changed_paths = [str(path).replace("\\", "/") for path in changed]
+    if not changed_paths:
+        return {"changed": [], "dependents_seen": 0, "findings": [],
+                "verdict": "nothing-changed"}
+
+    changed_keys = {module_key(path) for path in changed_paths}
+    findings: list[dict[str, Any]] = []
+    seen_pairs: set[tuple[str, str]] = set()
+    dependents_seen = 0
+
+    for path in changed_paths:
+        for entry in atlas.affected(path, depth=depth)["dependents"]:
+            dependents_seen += 1
+            # `affected` answers in symbol ids (`login.py::<module>`). The
+            # question here is which *file* was left alone, so the symbol is
+            # dropped - and dropping it is also what collapses six symbols in
+            # one untouched file into one finding rather than six.
+            dependent = str(entry["id"]).replace("\\", "/").split("::")[0]
+            # A file that was itself changed was dealt with; reporting it
+            # anyway trains the reader to skim the ones that were not.
+            if module_key(dependent) in changed_keys:
+                continue
+            if (dependent, path) in seen_pairs:
+                continue
+            seen_pairs.add((dependent, path))
+            # Bucketed, because a test covering the changed code and a module
+            # calling it need different things done to them, and one flat list
+            # hides which is which.
+            relations = [str(kind) for kind in entry.get("relations", ())]
+            bucket = next((_RELATION_BUCKET.get(kind, kind) for kind in relations),
+                          "callers")
+            # A test file that imports the changed module records an IMPORTS
+            # edge like any other caller, so the graph alone buckets it as one.
+            # The distinction matters to the reader - a stale test and a stale
+            # caller need different work - so the name is used to correct it.
+            # This is a heuristic in a *report*, never in a refusal: it can be
+            # wrong here at the cost of one mislabelled line, where the same
+            # guess inside a gate would be a scope that moves on its own.
+            if bucket == "callers" and _looks_like_a_test(dependent):
+                bucket = "tests"
+            findings.append({
+                "dependent": dependent,
+                "because_of": path,
+                "relation": bucket,
+                "distance": int(entry.get("distance", 1)),
+                "question": f"'{path}' changed and '{dependent}' depends on it - was it "
+                            "updated, or is there a reason it did not need to be?",
+            })
+
+    findings.sort(key=lambda f: (f["distance"], f["relation"], f["dependent"]))
+    return {
+        "changed": changed_paths,
+        # Stated so an empty report cannot be read as "nothing was examined".
+        "dependents_seen": dependents_seen,
+        "findings": findings,
+        "verdict": "unfollowed-dependents" if findings else "closure-complete",
+    }
+
+
 def module_key(node: str) -> str:
     """Reduce a file path or an import name to one comparable module key.
 

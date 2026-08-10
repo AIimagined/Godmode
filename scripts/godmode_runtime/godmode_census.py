@@ -33,6 +33,15 @@ TRACKED_SURFACES: dict[str, str] = {
     # can never hold, which would have read as permanently unused rather than
     # as impossible - a census reporting a shortfall nothing could ever close.
     "incident": "incident - a failure recorded so its shape can be compared later",
+    # Reported as `undeclared_kinds` by this module for weeks: three kinds the
+    # archive holds and the census never named. That field exists so the report
+    # cannot quietly describe a smaller product than the one running, and it
+    # did its job - nobody read it, which is a different failure and the more
+    # common one.
+    "obligation": "obligation - standing next-actions, and their retirement",
+    "request": "request - what the operator asked for, recorded as it arrives",
+    "session": "session - attested open and close of a working session",
+    "database": "database - schema or data changes previewed before running",
     "checkpoint": "checkpoint - handoffs that survive a lost session",
     "decision": "decision - choices recorded with their rationale",
     "sprint": "sprint - units of work and their proof",

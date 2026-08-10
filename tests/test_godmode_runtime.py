@@ -1781,6 +1781,56 @@ class DriftControlTests(unittest.TestCase):
                 self.assertIn("fix rotation", dumped)
 
 
+class EnforcingBuildTests(unittest.TestCase):
+    """Which build is guarding this session, as opposed to which one is being
+    written.
+
+    Every version check here reads the tree: eight surfaces, the latest tag,
+    and the tree a tag points at. None reads the copy that is actually
+    installed and actually refusing tool calls, so an agent guarded by an older
+    build has nothing to read that would say so.
+
+    The two are different facts and only the first had checks. An installed
+    plugin leaves no trace in the repository it guards, so a gap between them is
+    silent by construction — there is no warning to miss.
+    """
+
+    def test_the_brief_names_the_build_that_is_enforcing_it(self) -> None:
+        from godmode_runtime.godmode_constants import RUNTIME_VERSION
+        from godmode_runtime.godmode_lens import build_context_brief
+
+        with isolated_project() as (_project, _state, anchor, archive):
+            archive.initialize()
+            brief = build_context_brief(anchor, archive)
+        self.assertIn("enforcing", brief)
+        self.assertEqual(brief["enforcing"]["version"], RUNTIME_VERSION)
+
+    def test_the_brief_names_where_that_build_was_loaded_from(self) -> None:
+        """The version alone cannot distinguish two installs of the same
+        number, and the question being answered is `which copy is this`."""
+        from godmode_runtime.godmode_lens import build_context_brief
+
+        with isolated_project() as (_project, _state, anchor, archive):
+            archive.initialize()
+            brief = build_context_brief(anchor, archive)
+        self.assertTrue(brief["enforcing"]["root"].endswith("godmode_runtime"))
+
+    def test_the_enforcing_build_survives_a_squeezed_budget(self) -> None:
+        """It is one short line, and it is the line that explains why every
+        other line might be wrong — so it cannot be what the degradation
+        ladder drops first."""
+        from godmode_runtime.godmode_constants import RUNTIME_VERSION
+        from godmode_runtime.godmode_lens import build_context_brief
+
+        with isolated_project() as (_project, _state, anchor, archive):
+            archive.initialize()
+            for index in range(40):
+                archive.append("decision", f"decision {index}",
+                               {"value": "x" * 200, "status": "decided"})
+            brief = build_context_brief(anchor, archive, token_budget=400)
+        self.assertEqual(brief["enforcing"]["version"], RUNTIME_VERSION)
+
+
 class AntiLoopTests(unittest.TestCase):
     """S4-01/02/03/05/06/07 over archive records."""
 

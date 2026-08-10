@@ -33,8 +33,36 @@ import re
 from typing import Any
 
 # A closed request, in the words a person is likely to use for one.
+#
+# `already-built` and `refused` were added because `closed` covered two
+# opposite outcomes. A request closed because the thing already existed and one
+# closed because it was turned down left the same record, so a later session -
+# and the precheck that reads these records - could not tell "we built this"
+# from "we decided not to". The distinction is the part worth keeping; the
+# closure itself was never in doubt.
 CLOSED_STATUSES = frozenset({"closed", "done", "answered", "addressed",
-                             "declined", "withdrawn", "superseded"})
+                             "declined", "withdrawn", "superseded",
+                             "already-built", "refused"})
+
+# The two that carry a reason. Everything else closes without stating one,
+# which stays valid: a migration that reopened every closure written before
+# this shipped would be a worse defect than the ambiguity it corrected.
+_REASONED_CLOSURES = {"already-built": "already-built",
+                      "refused": "refused",
+                      "declined": "refused"}
+
+
+def closure_reason(status: str) -> str | None:
+    """Why a request closed, or `None` if it is still open.
+
+    `unspecified` is a real answer and not a gap to be filled in later. It says
+    the closure happened before anybody was asked to say why, which is a
+    different fact from nobody knowing.
+    """
+    normalised = str(status).strip().lower()
+    if normalised not in CLOSED_STATUSES:
+        return None
+    return _REASONED_CLOSURES.get(normalised, "unspecified")
 
 # How much of a prompt is kept. Enough to recognise which request it was,
 # short of keeping a transcript this runtime has no business duplicating -
@@ -76,11 +104,28 @@ def _keywords(text: str) -> frozenset[str]:
 
 
 def record_request(archive: Any, text: str, *, session: str | None = None,
-                   tools_in_flight: int = 0) -> dict[str, Any] | None:
-    """Write one operator request to the archive, once.
+                   tools_in_flight: int = 0,
+                   source: str = "stated") -> dict[str, Any] | None:
+    """Write one operator request to the archive.
 
-    Returns `None` for an input with nothing to track - an empty prompt, or one
-    already recorded - so a repeated prompt cannot inflate the ledger.
+    Returns `None` for an input with nothing to track - an empty prompt.
+
+    `source` separates an ask the operator typed from one the agent supplied on
+    their behalf. The hook path only ever writes `stated`; `inferred` is for an
+    agent recording its own reading of an ambiguous turn. Both are worth
+    keeping - an inference that shaped the work should be reviewable - but they
+    cannot carry the same standing, because waiting on a stated ask is correct
+    and waiting on an inferred one is the agent blocking itself. The detector
+    that tells them apart keys on this field, so it defaults to the truthful
+    value for the only caller that writes automatically.
+
+    **Deduplication happens at review, not here.** The first version scanned
+    every record in the archive on each prompt to reject a repeat, which put a
+    full archive read on the critical path of every turn: measured at 1.1s
+    against 65 events, growing linearly and forever, inside a hook the host
+    kills at its timeout. A repeated prompt now writes a second record with the
+    same digest, and `review_requests` collapses them - the same answer, paid
+    for once when somebody reads the report instead of on every keystroke.
 
     The prompt is stored through the archive's ordinary append, which runs the
     secret scan every other record runs. A prompt is exactly where a pasted
@@ -91,11 +136,6 @@ def record_request(archive: Any, text: str, *, session: str | None = None,
         return None
 
     identifier = digest(flattened)
-    for record in archive.read_events():
-        if record.get("kind") != "request":
-            continue
-        if (record.get("data") or {}).get("digest") == identifier:
-            return None
 
     return archive.append(
         "request",
@@ -108,6 +148,7 @@ def record_request(archive: Any, text: str, *, session: str | None = None,
             "interrupted_work": bool(tools_in_flight),
             "tools_in_flight": int(tools_in_flight),
             "session": session,
+            "source": "inferred" if str(source).lower() == "inferred" else "stated",
             "keywords": sorted(_keywords(flattened))[:24],
         },
         evidence=[],
@@ -115,15 +156,33 @@ def record_request(archive: Any, text: str, *, session: str | None = None,
 
 
 def _closed_digests(records: list[dict[str, Any]]) -> set[str]:
+    """Digests an operator has closed.
+
+    A closure written by the runtime carries the digest. A closure written by a
+    person does not: `remember --kind request --status closed --subject "..."`
+    has no field a digest could travel in, so matching on `data.digest` alone
+    made the closure path unreachable from the command line - the mechanism
+    existed, the report told the reader to use it, and using it changed
+    nothing. The same shape as obligation retirement being starved by a
+    filtered record list, one module along.
+
+    So the subject is digested as a fallback. It is the same normalisation the
+    request was recorded under, which is what makes retyping the line enough.
+    """
     closed: set[str] = set()
     for record in records:
         if record.get("kind") != "request":
             continue
         data = record.get("data") or {}
-        if str(data.get("status", "")).lower() in CLOSED_STATUSES:
-            identifier = data.get("digest")
-            if identifier:
-                closed.add(str(identifier))
+        if str(data.get("status", "")).lower() not in CLOSED_STATUSES:
+            continue
+        identifier = data.get("digest")
+        if identifier:
+            closed.add(str(identifier))
+            continue
+        subject = str(record.get("subject", "")).strip()
+        if subject:
+            closed.add(digest(subject))
     return closed
 
 
@@ -225,8 +284,10 @@ def _self_check() -> None:
     first = record_request(archive, "check the release page", tools_in_flight=2)
     assert first is not None
     assert first["data"]["interrupted_work"] is True
-    # The same ask retyped is the same ask.
-    assert record_request(archive, "Check the   release page") is None
+    # The same ask retyped is the same ask - collapsed when the report is read
+    # rather than refused at write, so no prompt pays for an archive scan.
+    assert record_request(archive, "Check the   release page") is not None
+    assert len(review_requests(archive.read_events())["findings"]) == 1
 
     record_request(archive, "rewrite the author identity")
     report = review_requests(archive.read_events())
