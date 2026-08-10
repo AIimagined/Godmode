@@ -29,6 +29,8 @@ continuity without placing operational memory in tracked project files.
   root-cause work, or repeated unsuccessful attempts.
 - Use `godmode-governance` before Git history changes, branch/worktree mutation,
   database changes, releases, deployments, destructive filesystem work, or external writes.
+- Use `godmode-repair` when the operator says an answer did not land, asks for clarity,
+  repeats a question, or asks what is being waited on.
 - Use `godmode-skill-forge` only after a repeated reusable capability gap is proven.
 
 Do not invoke every specialist. One specialist owns each overlapping capability; use a

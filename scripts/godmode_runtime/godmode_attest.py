@@ -890,11 +890,25 @@ def recurrences(archive: Chronicle, limit: int = 500) -> dict[str, Any]:
         for (step, cause), events in sorted(seen.items())
         if len(events) > 1
     ]
+    checked = sum(len(v) for v in seen.values())
+    # A green verdict from a scan that examined nothing is the failure this
+    # project keeps finding in itself: `no-recurrence` on `checked: 0` reads
+    # as "the same cause never repeated" when it means "no blocked step has
+    # ever been recorded". The reconciler and the census both learned to say
+    # which of the two they mean; this said the reassuring one.
+    if not checked:
+        verdict = "insufficient-data"
+    elif repeated:
+        verdict = "recurrence-detected"
+    else:
+        verdict = "no-recurrence"
     return {
-        "checked": sum(len(v) for v in seen.values()),
+        "checked": checked,
         "recurrences": repeated,
         "count": len(repeated),
-        "verdict": "recurrence-detected" if repeated else "no-recurrence",
+        "verdict": verdict,
+        "scope": ("blocked steps recorded by `attest`; a project that has "
+                  "never recorded one has nothing to compare"),
     }
 
 

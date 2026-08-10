@@ -62,7 +62,13 @@ from .godmode_report import completion_report, render_markdown
 from .godmode_docslint import lint_docs
 from .godmode_trust import scan_agent_configuration
 from .godmode_obligations import review_obligations
-from .godmode_requests import review_requests
+from .godmode_atlas import speculative_seams, unfollowed_dependents
+from .godmode_precheck import precheck as run_precheck
+from .godmode_fence import (
+    BOUNDARY_CONFIG, audit_changes, declared_design, propose_design,
+    unaccepted_completions,
+)
+from .godmode_requests import digest as request_digest, review_requests
 from .godmode_census import census, render as render_census
 from .godmode_census import uncaptured_corrections
 from .godmode_release import compare_releases, render as render_release
@@ -342,15 +348,33 @@ _CONFIG_CONTRACTS: dict[str, dict[str, tuple[type, bool]]] = {
                                "communication": (str, True), "decision_authority": (str, True)},
     ".godmode-experiment.json": {"hypothesis": (str, True), "command": (str, True),
                                  "success_exit": (int, False), "max_runs": (int, True)},
+    # The design boundary. `ui` is required because a boundaries file with no
+    # `ui` block declares nothing while looking configured, which is the
+    # failure mode this whole surface is built to avoid.
+    ".godmode-boundaries.json": {"ui": (dict, True)},
 }
 
 
 def cmd_config_check(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
-    """Every declared config file validates with a schema path, not a stack trace."""
+    """Every `.godmode-*.json` in the tree validates, not every one remembered.
+
+    The contracts below are a schema table, and iterating it meant the command
+    checked the files somebody had written a schema for rather than the files
+    the project actually ships. `.godmode-docslint.json` governs the docs
+    linter here and was absent from the table, so replacing it with unparseable
+    text left this command green - the config still named, still loaded by
+    whatever reads it, and silently governing nothing.
+
+    Discovery is by glob now, and a file with no contract is still required to
+    parse and to be an object. A schema nobody wrote is a weaker check than the
+    one below it; no check at all is not a check.
+    """
     project = Path(runtime.anchor.project_root)
     checked: list[dict[str, Any]] = []
     problems: list[str] = []
-    for filename, contract in sorted(_CONFIG_CONTRACTS.items()):
+    discovered = {path.name for path in project.glob(".godmode-*.json")}
+    for filename in sorted(discovered | set(_CONFIG_CONTRACTS)):
+        contract = _CONFIG_CONTRACTS.get(filename, {})
         path = project / filename
         if not path.is_file():
             continue
@@ -967,6 +991,24 @@ def cmd_scenarios(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult(report, exit_code=0 if report["verdict"] == "all-caught" else 1)
 
 
+def _working_tree_changes(project: Path) -> list[str]:
+    """Paths the working tree has changed, as git spells them.
+
+    Defaulting to this is what makes closure runnable at the moment it matters.
+    Requiring the caller to list what they just edited is how `affected` ended
+    up being a query nobody thought to run.
+    """
+    raw = _git_tags_raw(project, "status", "--porcelain")
+    paths: list[str] = []
+    for line in raw.splitlines():
+        entry = line[3:].strip() if len(line) > 3 else ""
+        if " -> " in entry:  # a rename reports both sides; the new one is what exists
+            entry = entry.split(" -> ", 1)[1]
+        if entry:
+            paths.append(entry.strip('"'))
+    return paths
+
+
 def cmd_atlas(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     if args.atlas_command == "load":
         # Load must not rebuild: the whole point is answering from the saved map
@@ -984,6 +1026,18 @@ def cmd_atlas(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             args.symbol, depth=args.depth,
             evidence=None if args.include_inferred else "extracted",
             relations=set(args.relations) if args.relations else None))
+    if args.atlas_command == "closure":
+        # Changed files come from the caller or from the working tree. Reading
+        # the tree by default is what makes this runnable at the moment it
+        # matters - nobody thinks to list what they just edited, which is the
+        # same reason `affected` stayed a query nobody ran.
+        changed = list(args.changed) if args.changed else _working_tree_changes(
+            Path(runtime.anchor.project_root))
+        report = unfollowed_dependents(atlas, changed, depth=args.depth)
+        return CommandResult(report, exit_code=1 if report["findings"] else 0)
+    if args.atlas_command == "seams":
+        report = speculative_seams(atlas)
+        return CommandResult(report, exit_code=1 if report["findings"] else 0)
     if args.atlas_command == "cycles":
         found = atlas.cycles()
         return CommandResult({"cycles": found}, exit_code=1 if found else 0)
@@ -1199,9 +1253,23 @@ def cmd_checklist_update(args: argparse.Namespace, runtime: Runtime) -> CommandR
 
 
 def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
-    data: dict[str, Any] = {"value": args.value, "status": args.status}
+    # `remember` defaulted every kind to `active`, and a request is read only
+    # when it says `open`: the review and the detector both filter on it. A
+    # hand-written request therefore landed in the archive and was read by
+    # nothing. The default is now per-kind; an explicit --status still wins,
+    # which is what keeps `--kind request --status closed` a closure.
+    status = args.status or ("open" if args.kind == "request" else "active")
+    data: dict[str, Any] = {"value": args.value, "status": status}
     if args.kind == "lesson":
         data["generalized_guard"] = args.guard
+    if args.kind == "request":
+        # The digest is what the closure path matches on, and a request written
+        # by hand had none - so `--kind request --status closed` closed nothing
+        # even once the parser accepted it. Computed from the subject under the
+        # same normalisation the hook uses, which is what makes retyping the
+        # line enough to close the prompt it came from.
+        data["digest"] = request_digest(args.subject)
+        data["source"] = getattr(args, "source", "stated")
     return CommandResult(
         {"record": _append(runtime, args.kind, args.subject, data, args.evidence)}
     )
@@ -1245,9 +1313,76 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             "deep_scan": args.deep,
             "network_used": False,
             "background_process": False,
+            # The design boundary fails open when undeclared, which is correct
+            # - no project that predates it may start refusing edits - but a
+            # gap nothing reports is a gap nobody notices, and a guard that
+            # governs nothing looks identical to one that governs everything.
+            "design_boundary": (
+                "declared" if declared_design(runtime.anchor.project_root) else "unconfigured"
+            ),
         },
         exit_code=0 if healthy else 1,
     )
+
+
+def cmd_fence_audit(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """Every changed file, against what the plan said it would touch.
+
+    The boundary gate covers tools that announce a `file_path`. This covers the
+    result - including work done by a shell command, before the plan was
+    approved, or in a session where the plugin was switched off.
+    """
+    _require_archive(runtime)
+    project = Path(runtime.anchor.project_root)
+    changed = list(args.changed) if args.changed else _working_tree_changes(project)
+    report = audit_changes(runtime.archive, project, changed)
+    return CommandResult(report, exit_code=1 if report["untraceable"] else 0)
+
+
+def cmd_fence_acceptance(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """Completions that never cited the acceptance their plan declared."""
+    _require_archive(runtime)
+    report = unaccepted_completions(runtime.archive)
+    return CommandResult(report, exit_code=1 if report["findings"] else 0)
+
+
+def cmd_precheck(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """Was this already built, and was it already refused.
+
+    Both answers were already in the archive and nothing read either. The one
+    moment they are worth having is before the work starts, which is the one
+    moment nobody thinks to ask.
+    """
+    _require_archive(runtime)
+    report = run_precheck(Path(runtime.anchor.project_root), runtime.archive, args.about)
+    # Non-zero on a hit so a script can stop, but the payload is a question and
+    # never a refusal: prior work is a reason to look, not grounds to decline.
+    return CommandResult(report, exit_code=1 if report["verdict"] == "prior-work-found" else 0)
+
+
+def cmd_boundaries_propose_ui(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """Candidate design globs for a human to accept, narrow, or throw away.
+
+    It prints and never writes. Enforcement reads declared globs only, and a
+    scope that installs itself is the auto-detection this boundary exists to
+    refuse: it would freeze server-side code that happens to be `.tsx`, miss a
+    UI change made in a plain route file, and move on its own the next time
+    somebody adds an import.
+    """
+    root = Path(runtime.anchor.project_root)
+    proposed = propose_design(root)
+    return CommandResult({
+        "proposed": proposed,
+        "declared": bool(declared_design(root)),
+        "config": BOUNDARY_CONFIG,
+        "written": False,
+        "next_action": (
+            f"write the globs you agree with into {BOUNDARY_CONFIG} as "
+            '{"ui": {"declared": [...], "except": [...]}}'
+            if proposed else
+            "no design surfaces found; leave the boundary undeclared"
+        ),
+    })
 
 
 def cmd_privacy(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -2080,6 +2215,15 @@ def _build_parser() -> argparse.ArgumentParser:
     atlas_load = atlas_sub.add_parser("load", help="Load a saved atlas and report hash-derived freshness")
     atlas_load.add_argument("--from", dest="source", required=True, help="Index JSON path, relative to the project root")
     atlas_load.set_defaults(handler=cmd_atlas)
+    atlas_closure = atlas_sub.add_parser(
+        "closure", help="Dependents of what changed that were not themselves changed")
+    atlas_closure.add_argument("--changed", nargs="+", default=None,
+                               help="Changed paths; defaults to the working tree")
+    atlas_closure.add_argument("--depth", type=int, default=1)
+    atlas_closure.set_defaults(handler=cmd_atlas)
+    atlas_sub.add_parser(
+        "seams", help="Modules that exist for exactly one consumer"
+    ).set_defaults(handler=cmd_atlas)
     atlas_sub.add_parser("cycles").set_defaults(handler=cmd_atlas)
     atlas_dupes = atlas_sub.add_parser("duplicates")
     atlas_dupes.add_argument("--threshold", type=float, default=0.72)
@@ -2179,18 +2323,45 @@ def _build_parser() -> argparse.ArgumentParser:
     _evidence(checklist_update)
     checklist_update.set_defaults(handler=cmd_checklist_update)
 
-    remember = sub.add_parser("remember", help="Record a decision, invariant, lesson, or obligation")
-    remember.add_argument("--kind", choices=["decision", "invariant", "lesson", "obligation"], required=True)
+    remember = sub.add_parser("remember", help="Record a decision, invariant, lesson, obligation, or request")
+    remember.add_argument("--kind", choices=["decision", "invariant", "lesson", "obligation", "request"], required=True)
     remember.add_argument("--subject", required=True, type=subject_text)
     remember.add_argument("--value", required=True)
-    remember.add_argument("--status", default="active")
+    remember.add_argument("--status", default=None,
+                          help="Default: active, or open for a request")
     remember.add_argument("--guard")
+    remember.add_argument("--source", choices=["stated", "inferred"], default="stated",
+                          help="Requests only: whether the operator stated this ask "
+                               "or the agent inferred it on their behalf")
     _evidence(remember)
     remember.set_defaults(handler=cmd_remember)
 
     doctor = sub.add_parser("doctor", help="Verify archive and continuity health")
     doctor.add_argument("--deep", action="store_true")
     doctor.set_defaults(handler=cmd_doctor)
+
+    fence = sub.add_parser("fence", help="The editable set this plan declared")
+    fence_sub = fence.add_subparsers(dest="fence_command", required=True)
+    fence_audit = fence_sub.add_parser(
+        "audit", help="Changed files that fall outside the declared editable set")
+    fence_audit.add_argument("--changed", nargs="+", default=None,
+                             help="Changed paths; defaults to the working tree")
+    fence_audit.set_defaults(handler=cmd_fence_audit)
+    fence_sub.add_parser(
+        "acceptance", help="Completions that cite no acceptance"
+    ).set_defaults(handler=cmd_fence_acceptance)
+
+    precheck_parser = sub.add_parser(
+        "precheck", help="Whether this was already built or already refused")
+    precheck_parser.add_argument("--about", required=True,
+                                 help="The task, in the words you would describe it")
+    precheck_parser.set_defaults(handler=cmd_precheck)
+
+    boundaries = sub.add_parser("boundaries", help="Design surfaces this project protects")
+    boundaries_sub = boundaries.add_subparsers(dest="boundaries_command", required=True)
+    propose_ui = boundaries_sub.add_parser(
+        "propose-ui", help="Propose design globs to declare; prints, never writes")
+    propose_ui.set_defaults(handler=cmd_boundaries_propose_ui)
     sub.add_parser("privacy", help="Audit the local privacy boundary").set_defaults(handler=cmd_privacy)
 
     changelog = sub.add_parser("changelog", help="Fragment-based release notes")

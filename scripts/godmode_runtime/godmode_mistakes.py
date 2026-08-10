@@ -15,6 +15,17 @@ from typing import Any
 from .godmode_chronicle import Chronicle
 from .godmode_constants import CODE_SUFFIXES, IGNORED_DIRECTORY_NAMES
 
+# Records that prove the session kept moving, named in the kinds the archive
+# actually holds. The first version listed the *commands* - build, verify,
+# attest - and only `plan` among them is a record kind, so the check matched
+# almost nothing while its tests passed against a fake ledger that did not
+# validate kinds. `godmode build` writes `change`; `verify` and `attest` write
+# `attestation`.
+#
+# A checkpoint is deliberately excluded: writing down that you are stuck is not
+# the same as continuing.
+_WORK_KINDS = frozenset({"action", "attestation", "change", "plan"})
+
 _CLAIM_SPLIT = re.compile(r";\s+|\b(?:and also|as well as)\b|\n\s*\d+[.)]\s")
 _VERBISH = re.compile(r"\b(?:is|are|was|were|works|passes|fixed|fails|blocks|returns)\b")
 
@@ -122,6 +133,51 @@ def claim_splitting(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return findings
 
 
+def inferred_ask_blocking(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """M14: the agent waiting on an instruction the operator never gave.
+
+    Every other detector here reads a claim about the repository. This one
+    reads a claim about the operator, which is the same failure pointed at a
+    different subject: an inference presented with the standing of a fact, and
+    then acted on. The acting is what makes it costly - an assumption that
+    shapes the work is ordinary and often right, while an assumption that
+    *stops* the work spends the operator's turn on a question they never
+    raised.
+
+    So the test is not whether the agent guessed, nor whether the guess was
+    wrong. It is whether anything happened afterwards. An inferred ask with
+    work recorded after it shaped the work; one with nothing after it stopped
+    the work.
+    """
+    from .godmode_requests import _closed_digests
+
+    closed = _closed_digests(records)
+    findings = []
+    for record in records:
+        if record["kind"] != "request":
+            continue
+        data = record.get("data") or {}
+        if str(data.get("source", "stated")).lower() != "inferred":
+            continue
+        if str(data.get("status", "")).lower() != "open":
+            continue
+        if str(data.get("digest", "")) in closed:
+            continue
+        sequence = int(record.get("sequence", 0))
+        # Only work *after* the guess proves the guess did not stop anything.
+        if any(later["kind"] in _WORK_KINDS
+               and int(later.get("sequence", 0)) > sequence for later in records):
+            continue
+        findings.append({
+            "detector": "inferred-ask-blocking", "blocking": False,
+            "detail": f"the session is waiting on '{record['subject'][:60]}', which the "
+                      "agent inferred rather than the operator stating; state the "
+                      "assumption and carry on under it, or ask without stopping",
+            "citations": [f"seq:{sequence}"],
+        })
+    return findings
+
+
 def analyze(archive: Chronicle) -> dict[str, Any]:
     records = archive.read_events()
     findings = (
@@ -129,6 +185,7 @@ def analyze(archive: Chronicle) -> dict[str, Any]:
         + ritual_without_reading(records)
         + invariant_vs_instance(records)
         + claim_splitting(records)
+        + inferred_ask_blocking(records)
     )
     blocking = [f for f in findings if f["blocking"]]
     return {

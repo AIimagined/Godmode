@@ -89,10 +89,14 @@ class RequestHookTests(unittest.TestCase):
         self.assertEqual(done.returncode, 0)
         self.assertEqual((done.stdout or "").strip(), "")
 
-    def test_a_repeated_prompt_records_once(self) -> None:
+    def test_a_repeated_prompt_collapses_at_review(self) -> None:
+        """Both writes land; the reviewer shows one. Rejecting the repeat here
+        cost a full archive read on every prompt."""
         self._submit("do the thing")
         self._submit("Do  the   thing")
-        self.assertEqual(len(self._requests()), 1)
+        self.assertEqual(len(self._requests()), 2)
+        archive = Chronicle(resolve_anchor(str(self.project)))
+        self.assertEqual(len(review_requests(archive.read_events())["findings"]), 1)
 
     def test_a_secret_shaped_prompt_does_not_break_the_turn(self) -> None:
         """The archive refuses it, and the operator's turn continues anyway."""

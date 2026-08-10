@@ -22,6 +22,7 @@ from .godmode_constants import (
     IGNORED_DIRECTORY_NAMES,
     MANIFEST_NAMES,
     MAX_HASH_BYTES,
+    RUNTIME_VERSION,
 )
 from .godmode_errors import IdentityError
 
@@ -496,6 +497,19 @@ def build_context_brief(
     selected = selected[-DEFAULT_RECORD_LIMIT:]
     brief = {
         "generated_at": _utc_now(),
+        # Which build is enforcing, as opposed to which one is being written.
+        # Every other version surface here reads the tree - eight of them, the
+        # latest tag, the tree a tag points at - and none reads the copy that
+        # is installed and actually refusing tool calls. Those are different
+        # facts, and only the first had checks: an installed plugin leaves no
+        # trace in the repository it guards, so a gap between them is silent by
+        # construction and there is no warning to miss. The root is included
+        # because a version cannot distinguish two installs of the same number,
+        # and the question is which copy this is.
+        "enforcing": {
+            "version": RUNTIME_VERSION,
+            "root": str(Path(__file__).resolve().parent),
+        },
         "identity": anchor.public_view(),
         "issues": detect_context_issues(anchor, records, current_inventory, archive=archive),
         "records": [_record_summary(record) for record in selected],

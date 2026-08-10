@@ -101,10 +101,38 @@ class WorkingSessionTests(unittest.TestCase):
 
 
 class ProtectedOperationTests(unittest.TestCase):
-    def test_protected_operations_are_still_refused(self) -> None:
-        allowed = [label for label, tool, payload in MUST_DENY
-                   if _decide(tool, payload)[0] != "deny"]
-        self.assertEqual(allowed, [], f"the gate would permit a mutation: {allowed}")
+    def test_protected_operations_never_proceed_silently(self) -> None:
+        """`deny` or `ask` — never `allow`.
+
+        The gate emitted only `deny`, for everything protected, on the
+        reasoning that a host tool call carries no field a capability could
+        travel in and so there is no in-session approval. The premise is true
+        and the conclusion is not: the host takes `ask`, and asking *is* an
+        in-session approval. What must hold is that a protected operation never
+        runs without somebody saying so — not that it always stops dead.
+        """
+        proceeded = [label for label, tool, payload in MUST_DENY
+                     if _decide(tool, payload)[0] not in {"deny", "ask"}]
+        self.assertEqual(proceeded, [],
+                         f"the gate would permit a mutation: {proceeded}")
+
+    def test_the_irreversible_ones_still_stop_dead(self) -> None:
+        """R5 is the tier for damage no later command undoes, and a one-key
+        confirmation is the wrong shape for it."""
+        for label, tool, payload in (
+            ("force push", "Bash", {"command": "git push --force origin main"}),
+            ("hard reset", "Bash", {"command": "git reset --hard HEAD~3"}),
+            ("drop a table", "Bash", {"command": "DROP TABLE orders"}),
+            # `psql -c 'DROP TABLE orders'` is deliberately absent: its SQL is
+            # quoted, quoted spans are blanked before the patterns run, and it
+            # classifies as an unknown mutation rather than a database one. It
+            # is still stopped — as a question rather than a refusal, with the
+            # whole command shown — which is the honest limit of reading a
+            # shell line without executing it.
+        ):
+            with self.subTest(label=label):
+                decision, _reason = _decide(tool, payload)
+                self.assertEqual(decision, "deny", label)
 
 
 class RefusalMessageTests(unittest.TestCase):
@@ -119,9 +147,20 @@ class RefusalMessageTests(unittest.TestCase):
         _decision, reason = _decide("Bash", {"command": "rm -rf build"})
         self.assertNotIn("requires an exact one-use", reason)
 
-    def test_the_refusal_names_what_actually_unblocks_it(self) -> None:
-        _decision, reason = _decide("Bash", {"command": "rm -rf build"})
-        self.assertTrue(reason, "a denial with no reason is not actionable")
+    def test_a_question_reads_as_a_question(self) -> None:
+        """`rm -rf build` is protected but recoverable, so it asks. The text
+        beside the command should say what is at stake, not what the tool has
+        decided on the operator's behalf."""
+        decision, reason = _decide("Bash", {"command": "rm -rf build"})
+        self.assertEqual(decision, "ask")
+        self.assertTrue(reason, "a prompt with no reason is not actionable")
+        self.assertIn("Approve to run it", reason)
+        self.assertIn("filesystem-mutation", reason)
+
+    def test_an_outright_refusal_still_names_what_unblocks_it(self) -> None:
+        decision, reason = _decide(
+            "Bash", {"command": "git push --force origin main"})
+        self.assertEqual(decision, "deny")
         self.assertRegex(reason, r"(?i)yourself|narrower|authorize stage")
 
     def test_the_refusal_names_the_category_that_triggered_it(self) -> None:
@@ -132,9 +171,10 @@ class RefusalMessageTests(unittest.TestCase):
         """Twenty lines above the message, a staged capability is consumed and
         the call proceeds. The message was written before that shipped and
         still said no in-session approval existed - denying its own remedy."""
-        _decision, reason = _decide("Bash", {"command": "git push origin main"})
+        _decision, reason = _decide(
+            "Bash", {"command": "git push --force origin main"})
         self.assertIn("authorize stage", reason)
-        self.assertIn("git push origin main", reason,
+        self.assertIn("git push --force origin main", reason,
                       "the operator has to retype the command exactly")
 
     def test_the_refusal_does_not_recommend_removing_the_guard(self) -> None:

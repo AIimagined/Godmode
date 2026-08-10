@@ -61,6 +61,29 @@ _SECRET_PATTERNS = (
     re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
     re.compile(r"(?i)\b(?:authorization\s*:\s*bearer|bearer)\s+[A-Za-z0-9._~-]{12,}"),
     re.compile(r"(?i)\b(?:password|passwd|api[_-]?key|secret|token)\s*[:=]\s*[^\s,;]{8,}"),
+    # A credential the way a person says one. The rule above needs a `:` or `=`
+    # and eight characters, which is right for a machine token and wrong for
+    # every human phrasing: `password: 555345`, `my password 555345` and
+    # `the db password is hunter2` all passed it, and were stored verbatim.
+    #
+    # The eight-character floor existed to stop `secret=x` matching noise. It
+    # also excluded the passwords people actually type, which are short - so
+    # length is replaced by the shape of the value. A digit, or quotes, is what
+    # separates `password 555345` from `password manager`, and four characters
+    # keeps `api key v2` out.
+    #
+    # This shipped in the request ledger's first release and the first real
+    # credential to arrive walked straight past it. The docstring claiming a
+    # ledger of asks is not worth a store of credentials was tested against
+    # `ghp_…` - the case that was imagined, not the case that happened.
+    re.compile(
+        # `api key` with a space is how it is written in a sentence; the older
+        # rule knew only `api_key` and `api-key`, which are how it is written
+        # in a config file.
+        r"(?i)\b(?:password|passwd|passphrase|passcode|pin|api[_\-\s]?key|secret|"
+        r"token|credential)s?\b\s*(?:is|was|=|:|->)?\s*"
+        r"(?:(?P<quoted>[\"'][^\"']{4,}[\"'])|(?P<value>(?=\S*\d)[^\s,;]{4,}))"
+    ),
 )
 
 # A mutating flag anywhere in a `git branch` invocation is checked before any
@@ -132,10 +155,42 @@ _ACTION_PATTERNS: tuple[tuple[str, re.Pattern[str], tuple[str, ...]], ...] = (
         ("repository history", "branches or worktrees", "possibly a remote"),
     ),
     (
+        # `git restore` discards working-tree changes, which is worth stopping
+        # - but it was stopped as a *database* mutation, because the word
+        # `restore` was matched anywhere it appeared. A refusal that names the
+        # wrong thing is worse than a slow one: the reader learns the tool does
+        # not understand the command, and starts routing around it.
+        "worktree-discard",
+        re.compile(r"(?i)\bgit\s+restore\b"),
+        ("uncommitted work in the working tree", "recoverability"),
+    ),
+    (
         "database-mutation",
+        # Anchored to a database, not to English. The previous rule matched
+        # `drop`, `migrate`, `rollback` and `restore` as bare words, so
+        # `cat docs/migrate-notes.md` and `grep -rn rollback src/` were both
+        # refused as database mutations - a read of a file and a search, called
+        # schema changes. Meanwhile the genuine article escaped: the SQL in
+        # `psql -c 'DROP TABLE orders'` is quoted, quoted spans are blanked
+        # before these patterns run, and the command fell through to
+        # unclassified. It refused prose and missed the statement.
         re.compile(
-            r"(?i)\b(?:drop|truncate|delete\s+from|alter\s+table|migrate|migration|"
-            r"rollback|restore|seed\s+(?:database|db))\b"
+            # SQL that names what it operates on.
+            r"(?i)\b(?:drop|truncate)\s+(?:table|database|schema|index|view|user)\b|"
+            r"\bdelete\s+from\b|\balter\s+table\b|"
+            # A migration tool doing a migration. The verb alone means nothing
+            # - `migrate` is also a word in a filename - so the tool has to be
+            # named too.
+            r"\b(?:psql|mysql|mysqldump|sqlite3|mongosh|mongo|redis-cli|"
+            r"prisma|alembic|flyway|liquibase|knex|sequelize|typeorm|dbmate|"
+            r"goose|atlas|sqlx|diesel)\b[^;|&]*\b(?:migrate|migration|rollback|"
+            # `upgrade` and `downgrade` are alembic's own verbs and were absent
+            # until a test case named a real invocation instead of a plausible
+            # one. `up`/`down` do not cover them: the boundary stops at the `g`.
+            r"reset|drop|seed|restore|upgrade|downgrade|up|down)\b|"
+            r"\b(?:manage\.py|rails|artisan|dotnet\s+ef|npm\s+run|yarn|pnpm\s+run)\b"
+            r"[^;|&]*\b(?:migrate|migration|rollback|db:migrate|db:rollback|"
+            r"db:reset|seed)\b"
         ),
         ("database schema or records", "rollback readiness"),
     ),
@@ -154,6 +209,28 @@ _ACTION_PATTERNS: tuple[tuple[str, re.Pattern[str], tuple[str, ...]], ...] = (
             r"\bshutil\.rmtree\b|\bos\.remove\b)"
         ),
         ("local files", "recoverability"),
+    ),
+    (
+        # Ending a process. Restarting a dev server the agent started is
+        # ordinary work, and it was an `unclassified-mutation` - the bucket for
+        # things the classifier does not recognise at all - so the refusal said
+        # nothing useful about what would happen. Named, it can be reasoned
+        # about; at R3 it asks rather than stops.
+        #
+        # `taskkill` and `Stop-Process` sit here too: the same act, spelled
+        # three ways by three platforms, and only one of them was ever going to
+        # be guessed by a POSIX-shaped rule.
+        "process-control",
+        # Anchored to command position. Written as "anywhere in the line" first,
+        # which made `grep -rn kill src/` a process termination - the identical
+        # bare-word defect fixed for the database category minutes earlier, and
+        # reintroduced by the person who fixed it. A verb is only a verb where
+        # a verb goes.
+        re.compile(
+            r"(?i)^\s*(?:sudo\s+)?(?:kill|killall|pkill|taskkill|stop-process|"
+            r"stop-service|systemctl\s+(?:stop|restart|kill))\b"
+        ),
+        ("a running process", "whatever it was serving"),
     ),
 )
 
@@ -302,8 +379,15 @@ _ENV_BINDING = re.compile(
 )
 
 _LOCAL_COMPUTE = re.compile(
+    # `npx` runs a package binary, which is what `node ./node_modules/.bin/...`
+    # does with more typing - and a field report shows exactly that workaround
+    # being reached for, which is the shape of a gate teaching people to
+    # rephrase rather than to stop. `npm ci` and `npm install` are here for the
+    # same reason `pip` already was: they fetch, and the network gate is what
+    # governs fetching, not this.
     r"(?i)^\s*(?:python[\d.]*|py|node|deno|bun|ruby|perl|go|cargo|dotnet|java|"
-    r"pytest|unittest|npm\s+(?:test|run\s+\w+)|pnpm|yarn|make|tox|nox|uv|pip)\b"
+    r"pytest|unittest|npx|npm\s+(?:test|ci|install|run\s+\S+)|pnpm|yarn|make|"
+    r"tox|nox|uv|pip)\b"
 )
 
 # An *output* redirect writes a file, whatever the verb in front of it says.
@@ -467,6 +551,46 @@ def substituted_commands(command: str) -> list[str]:
     return found
 
 
+# `cmd <<DELIM` feeds the following lines to stdin. They are data, and the
+# delimiter line ends them.
+_HEREDOC = re.compile(r"<<-?\s*(?P<quote>['\"]?)(?P<delim>[A-Za-z_][A-Za-z0-9_]*)(?P=quote)")
+
+
+def _without_heredoc_bodies(command: str) -> str:
+    """The command with every heredoc body removed.
+
+    A newline ends a segment, so each line of a heredoc body was classified as
+    if it were a command: `import json` inside a Python heredoc became an
+    unclassified mutation and refused the whole call. Two sessions worked
+    around this by rewriting scripts into files, which is the tell that a gate
+    is teaching people to rephrase rather than to stop.
+
+    The body is dropped before segmentation and nothing else changes, so a
+    substitution inside it - which the shell really does expand - is still seen
+    by the substitution scan, which runs on the whole line before this.
+    """
+    if "<<" not in command:
+        return command
+    lines = command.splitlines()
+    kept: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        kept.append(line)
+        match = _HEREDOC.search(line)
+        index += 1
+        if not match:
+            continue
+        delimiter = match.group("delim")
+        # Skip to the delimiter line, or to the end if it never arrives - an
+        # unterminated heredoc is malformed, and guessing at the rest of it
+        # would classify the operator's prose.
+        while index < len(lines) and lines[index].strip() != delimiter:
+            index += 1
+        index += 1  # the delimiter line itself
+    return "\n".join(kept)
+
+
 def shell_segments(command: str) -> list[str]:
     """Split a compound command into the parts that run, respecting quotes.
 
@@ -474,6 +598,7 @@ def shell_segments(command: str) -> list[str]:
     launder a dangerous tail: both facts need the parts separately, so the
     classifier stops reading a whole shell line as one opaque operation.
     """
+    command = _without_heredoc_bodies(command)
     segments: list[str] = []
     current: list[str] = []
     quote: str | None = None
@@ -539,6 +664,8 @@ _TIER_BY_CATEGORY = {
     "local-repository-change": "R2",
     "git-branch-mutation": "R3",
     "git-history-or-remote": "R3",
+    "worktree-discard": "R3",
+    "process-control": "R3",
     "database-mutation": "R3",
     "unclassified-mutation": "R3",
     "release-or-external-write": "R4",
@@ -572,6 +699,27 @@ _R5_ESCALATIONS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "database-mutation",
         re.compile(r"(?i)\bdrop\s+(?:table|database|schema|index|view|user)\b|\btruncate\b"),
+    ),
+    (
+        # A recursive delete aimed at a filesystem root or a home directory.
+        #
+        # Every delete scored R4 - a scratch file and `rm -rf /` alike - and
+        # that was invisible while every protected tier refused, because the
+        # outcome was identical either way. The moment R4 started asking, the
+        # difference became one keypress, and this escalation is what makes the
+        # looser default safe rather than merely more pleasant.
+        #
+        # Recursion is required: `rm /etc/hosts` is bad and stoppable at R4,
+        # while `rm -rf /` is not a thing to confirm in passing.
+        "filesystem-mutation",
+        re.compile(
+            r"(?i)\b(?:rm|rmdir|del|erase|remove-item)\b"
+            r"(?=[^;|&]*(?:\s-{1,2}[a-z]*r|\s--recursive\b|\s-[a-z]*[rR]))"
+            r"[^;|&]*?\s"
+            r"(?:/|~|\$\{?HOME\}?|\$\{?USERPROFILE\}?|%USERPROFILE%|%HOMEPATH%|"
+            r"[A-Za-z]:[\\/])"
+            r"(?:[\\/]?\*?\s*)(?:$|[\s;|&])"
+        ),
     ),
 )
 

@@ -1,0 +1,28 @@
+{
+  "schema": "godmode-skill-eval-v1",
+  "skill": "godmode-repair",
+  "routing": {
+    "positive": [
+      "The operator says the last answer did not land and asks for it re-pitched clearly.",
+      "The operator repeats a question already answered and asks what is pending from them."
+    ],
+    "near_negative": [
+      "Diagnose a reproducible regression whose root cause is unknown.",
+      "Recover session continuity after a branch change stranded the archive."
+    ]
+  },
+  "behavior_assertions": [
+    "The re-pitch leads with the answer in its first sentence, before any qualification.",
+    "Choices previously offered are decided and stated, not offered again.",
+    {
+      "assert": "The communication failure is recorded as a generalizable lesson rather than a note about one exchange.",
+      "check": {
+        "command": "python scripts/godmode.py --project . remember --help",
+        "expect_exit": 0,
+        "expect_contains": "lesson"
+      }
+    }
+  ],
+  "baseline_required": false,
+  "claims_require_evidence": true
+}

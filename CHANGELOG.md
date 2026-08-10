@@ -6,6 +6,461 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-08-10
+
+### Added
+
+- What depended on this change, and whether anybody dealt with it.
+
+  `atlas affected` already answered "what breaks if this changes". Nothing
+  consumed that answer, so it stayed a query somebody had to think to run — and
+  the moment worth running it is precisely the moment nobody is thinking about
+  it. The same shape as `affected` being a good tool nobody reaches for.
+
+  `godmode atlas closure` turns it around. Given what actually changed — read
+  from the working tree by default, because requiring the caller to list what
+  they just edited is how the first version ended up unused — it reports the
+  files in the blast radius that were *not* themselves touched.
+
+  Findings, never closures: the contract requests and obligations keep. A
+  dependent named here is not thereby wrong. It may need updating, or it may be
+  genuinely unaffected, and only a person can say which. What must not happen is
+  nobody saying either, which is the case that ships broken.
+
+  Answers are bucketed. A test covering the changed code and a module calling it
+  need different work done to them, and one flat list hides which is which. The
+  graph alone cannot draw that line — a test file imports what it tests like any
+  other caller — so the file name corrects the bucket. That is a heuristic in a
+  report and never in a refusal: wrong here it costs one mislabelled line, while
+  the same guess inside a gate would be a scope that moves on its own.
+
+  Depth 1 by default. A second hop is real but weaker, and a report naming a
+  third of the repository is one nobody reads. Symbol ids collapse to file paths,
+  which is both the granularity the question is asked at and what turns six
+  untouched symbols in one file into one finding rather than six.
+- The look of the product, which an agent may not redraw in passing.
+
+  The scope fence is task-scoped: this change may touch these files, and the
+  claim expires with the plan. A design boundary is the opposite shape. It
+  outlives every plan, nobody re-declares it per task, and what it protects is
+  not correctness but a decision somebody made on purpose. So it lives in
+  `.godmode-boundaries.json`, and it refuses rather than asks.
+
+  It refuses because a one-key confirmation in the middle of a long run is the
+  same keystroke as every other confirmation that session, and that is not
+  permission. A frozen surface moves by staged capability or not at all, and the
+  refusal quotes the exact `authorize stage` command that moves it.
+
+  **Declared globs enforce; a heuristic only proposes.** `godmode boundaries
+  propose-ui` reads the tree and prints candidates for a human to accept, narrow
+  or throw away — it never writes the config. Auto-detection as the enforcer
+  fails three ways that matter: it freezes a `.tsx` file that is pure server-side
+  data loading, it misses a UI change made in a plain route file, and its scope
+  moves on its own when somebody adds an import, so yesterday's allowed edit
+  becomes today's refusal with no diff to explain it. A gate whose scope moves by
+  itself cannot be audited.
+
+  Undeclared enforces nothing — every project that predates this keeps working
+  untouched — and `doctor` reports `design_boundary: unconfigured` so the gap
+  stays visible. Failing open is correct here; failing open *silently* is how a
+  guard that governs nothing goes unnoticed.
+
+  Known ceiling: the boundary is drawn at glob granularity, so a design change
+  made inside a file nobody declared — a copy string in a constants file, a route
+  table — is not caught. The alternative is semantic diff classification inside a
+  gate the host kills at ten seconds.
+- The brief names the build that is enforcing it.
+
+  Every version surface here reads the tree: eight of them, the latest tag, and
+  the tree a tag points at. None reads the copy that is installed and actually
+  refusing tool calls, so there was no answer anywhere to the question that
+  decides whether any of this work is running — which build is guarding me.
+
+  The version being developed and the version enforcing are different facts, and
+  only the first had checks. An installed plugin leaves no trace in the
+  repository it guards, so any gap between the two is silent by construction and
+  no warning exists to be missed.
+
+  So the context brief now opens with the version and the filesystem root of the
+  runtime that produced it. The root is there because a version cannot tell two
+  installs of the same number apart, and the question is which copy this is. It
+  sits outside `records`, so the degradation ladder cannot drop the one line that
+  explains why every other line might be describing a different build.
+
+  Reporting, not detection. Drift needs something to compare against, and what
+  that is depends on the project; naming the number is what was missing, and
+  naming it is enough to catch this.
+- An ask the agent supplied, told apart from one the operator made.
+
+  The request ledger was built for what a person typed, and quietly accepted what
+  the agent decided they meant. Both are worth keeping — an inference that shaped
+  the work should be reviewable — but they cannot carry the same standing, because
+  waiting on a stated ask is correct behaviour and waiting on an inferred one is
+  the agent blocking itself on a question nobody raised.
+
+  Requests now carry `source`: `stated` for everything the prompt hook writes,
+  `inferred` for an ask the agent records on the operator's behalf via
+  `remember --kind request --source inferred`. The hook path is unchanged and can
+  only ever write the truthful value.
+
+  A detector reads the difference. `inferred-ask-blocking` fires when an inferred
+  request is still open and nothing — no build, verify, plan, or attestation —
+  was recorded after it. That test is deliberately not about whether the guess was
+  wrong. An assumption that shapes the work is ordinary and often right; an
+  assumption that *stops* the work spends the operator's turn on a question they
+  never asked. So the check is whether anything happened afterwards. A checkpoint
+  does not count: writing down that you are stuck is not continuing.
+
+  It reports rather than blocks, which is the same contract the rest of the ledger
+  keeps — and it is the first detector here that reads a claim about the operator
+  rather than one about the repository. The failure is the same either way: an
+  inference given the standing of a fact, and then acted on.
+- Whether this was already built, and whether it was already refused.
+
+  Two questions asked at the only moment the answers are worth having: before
+  the work starts. Both were answered wrong in the session that added them. A
+  sentinel allowlist came one command from being rebuilt after two shipped
+  releases had already fixed it. A reinvention check designed in an earlier
+  session was rediscovered from scratch, because nothing read the record saying
+  it had been designed.
+
+  Neither answer was missing. `removal` records why something was deleted,
+  decisions record what was rejected and why, and the atlas records what exists.
+  The archive held both and nothing consulted either — the same shape as
+  `affected` being a good query nobody thought to run.
+
+  `godmode precheck --about "<the task>"` matches on term overlap rather than
+  wording, because a request is almost never phrased the way the thing it
+  duplicates was phrased. It is a weak test deliberately: a strong one that
+  reports nothing is the check that cannot fail, and the cost of over-reporting
+  is a line the reader dismisses.
+
+  It reports where it looked and how much it examined. An absence claim needs the
+  search that would have disproved it, and a `nothing found` produced by a check
+  that examined nothing is worse than no check, because it reads as clearance.
+
+  Findings, never closures. Prior work is a reason to look, not grounds to
+  decline: sometimes the earlier rejection was right, and sometimes the
+  constraint that drove it has since gone.
+
+  Closures now carry which of the two they were. `already-built` and `refused`
+  join the closed statuses, because a plain `closed` covered both outcomes and a
+  later precheck reading those records could not tell "we built this" from "we
+  decided not to". Existing closures stay closed and read as `unspecified` — a
+  migration that reopened old work would be a worse defect than the ambiguity.
+- A skill for the answer that did not land.
+
+  Every other surface here governs what the agent does to a repository. This one
+  governs what happens when the operator says they cannot follow it — a failure
+  this project had no name for, no procedure for, and no way to record.
+
+  `godmode-repair` triggers on the operator's signal rather than the agent's own
+  sense that things went well: "be clear", a question already answered asked
+  again, "what do you want from me", "what is pending". The last two are named
+  specifically, because they mean options were presented where a recommendation
+  was owed. An operator asking what is needed from them is reporting that the ask
+  was buried, not that they missed it.
+
+  The re-pitch leads with the answer, decides the choices that were offered
+  instead of re-offering them, names one next act, and drops the qualifications
+  the first version carried — since length is the usual cause, and an answer
+  needing a table of contents has already failed.
+
+  The failure is then recorded as a lesson, because what did not land is almost
+  never one sentence: it is a shape. Options where a decision was owed. A status
+  buried under evidence. The shape is recorded and the exchange is not — the host
+  already keeps the transcript, and a second copy is a second thing to leak.
+
+  Explicitly not an apology, and not a re-argument of whether the first answer
+  was right. It usually was right and unusable, which are different faults with
+  different fixes; restating the reasoning at greater length is the failure
+  repeating itself.
+- A plan may declare the files it is allowed to edit, and edits outside them stop.
+
+  Everything here answered the question afterwards. `atlas affected` reports a
+  blast radius once a symbol is chosen, `inventory diff` reports what moved once
+  it has moved, `integrity` reads a diff that already exists. All detection, and
+  detection arrives after the edit.
+
+  That is not the question an operator asks when they hand over one section of a
+  codebase. They ask that nothing else move, and a report that something else
+  moved is the wrong shape of answer.
+
+  So the plan contract takes an optional `editable` field — comma- or
+  newline-separated globs — and the pre-tool boundary refuses a `Write`, `Edit`
+  or `NotebookEdit` whose target falls outside it. The declaration belongs to the
+  change rather than the project, which is why it lives on the contract and
+  expires with the plan; a design boundary outlives every plan and belongs
+  elsewhere.
+
+  Three deliberate limits. **Undeclared fences nothing**: a fence nobody wrote
+  should fence nothing rather than everything, and every project predating this
+  must keep working untouched. **It asks rather than refuses outright**: finding
+  out that a change touches one more file than expected is ordinary, and a scope
+  that could only be widened by rewriting a plan would be abandoned the first
+  time it was wrong. **Only an approved plan fences**: an open plan is a
+  proposal, and enforcing a proposal would let an agent fence itself in, or out,
+  by writing a plan nobody agreed to.
+
+  `src/*.py` and `src/**` stay different claims. `fnmatch` cannot draw that line —
+  its `*` crosses separators, so every shallow pattern would quietly widen into
+  its whole subtree, and a fence that widens on its own is not a fence.
+  `PurePath.full_match` draws it but arrived in 3.13 while CI runs 3.11, so each
+  segment is translated instead. Paths are judged in their project-relative form,
+  so the same file cannot pass or fail depending on whether the host spelled it
+  absolute, relative, or with backslashes — and a path that escapes the project
+  is refused whatever the fence says, or `../` would be the way through it.
+
+  The refusal names the exact command that widens the fence, because a refusal
+  whose remedy is stale or absent teaches an agent a false model of what is
+  possible, and the agent then abandons work it could have completed.
+- Two questions asked of a finished change, not of a pending edit.
+
+  `godmode fence audit` checks every changed file against what the plan said it
+  would touch. The boundary gate already refuses an edit outside that set, but it
+  only sees tools that announce a `file_path` — a shell command that rewrites a
+  file in passing, an edit made before the plan was approved, and every change
+  made in a session where the plugin was switched off all land in the tree
+  unfenced. So the declaration is asked of the result too: "every changed line
+  should trace directly to the request", checked against the only
+  machine-readable statement of that request this project keeps.
+
+  `godmode fence acceptance` reports completions that cite no evidence, quoting
+  the acceptance the approved plan declared. A plan has always stated what done
+  looks like and nothing ever compared a completion against it, so `acceptance`
+  was a field that got filled in and read by nobody — the same shape as `removal`
+  preserving reasons no reader consulted.
+
+  Both are findings, never closures, and both fail quiet rather than loud: with
+  no approved plan they report `no-declared-scope` and `no-acceptance-declared`
+  rather than an empty result, because an empty result from a check with nothing
+  to check against reads as clearance.
+
+  Only completions are graded. Work in progress has not claimed anything yet, and
+  reporting it would train the reader to skim the claims that count.
+
+  `godmode atlas seams` adds the third: modules used by exactly one consumer.
+  "One adapter means a hypothetical seam. Two adapters means a real one" — a
+  single-consumer module may be right, but it is the shape a speculative
+  abstraction takes and nothing looked for it. Tests do not count as consumers,
+  or every module would look justified; zero consumers is left to `orphans`,
+  since a finding two surfaces report is one neither gets fixed for; and
+  standard-library imports are excluded, because `import base64` used once is not
+  a seam anybody can delete. The deletion test that accompanies the rule — delete
+  it and see whether complexity vanishes or reappears across N callers — is not
+  computable from an import graph, so it is asked rather than pretended at.
+
+### Fixed
+
+- The gate refused where it should have asked.
+
+  It emitted `deny` and only `deny`, for every protected operation, on the
+  reasoning written into its own refusal text: no capability can be attached to a
+  host tool call, so there is no in-session approval. The first clause is true.
+  The conclusion does not follow, and the documentation says so in one line:
+
+  > `"ask"`: show the permission prompt to the user as normal
+
+  A capability cannot ride along on a tool call. The host has its own
+  confirmation channel, and this gate never reached for it — through five
+  releases of tightening the refusal and twice rewriting its wording.
+
+  What that cost was reported rather than theorised. Another project running the
+  plugin hit `rm probe-tmp.mjs` on a scratch file it had just written,
+  `git checkout -- out/`, and `taskkill` on a dev server it had started; each was
+  a hard stop, each became a command typed by hand, and that session ended up
+  recommending its operator remove the guard entirely. A gate with one way to be
+  careful spends the operator's patience on every false positive, and a guard
+  nobody keeps switched on protects nothing.
+
+  Protected operations now ask. R5 still refuses: the tier exists for damage no
+  later command undoes — a forced push, a hard reset, a dropped table — and a
+  one-key confirmation is the wrong shape for those. `authorize stage` remains
+  the answer there, and a staged capability is still consumed before any of this
+  is reached.
+
+  Two decisions kept their refusal for a different reason. An exceeded ceiling
+  and a run of skipped mandated steps carry no risk tier, and the first version
+  of this turned both into confirmations — asking a session that has stopped
+  being trustworthy to approve itself, which is the failure those signals exist
+  to interrupt. They deny explicitly now, whatever the operation would otherwise
+  have scored.
+- Three checks that reported less than their names promised.
+
+  **`config check` validated a schema table, not the tree.** It iterated the
+  files somebody had written a contract for, so `.godmode-docslint.json` — which
+  governs the docs linter in this very repository — was never checked. Replacing
+  it with unparseable text left the command green: the config still named, still
+  loaded by whatever reads it, and silently governing nothing. Discovery is by
+  glob now, and a file with no contract must still parse and be an object.
+
+  **Two gates declared themselves unproven and stayed that way.** `config check`
+  and `atlas diagnose` both carried "no breaking mutation written yet" in the
+  falsification harness — an honest note that nobody was going to act on while it
+  read as a documented state rather than a debt. Both have mutations now: a
+  config that no longer parses, and a source file the symbol atlas cannot read.
+  Writing the second one is what surfaced the first defect above.
+
+  **The census declared a smaller product than ships.** `database`, `obligation`,
+  `session` and `request` were present in the archive and absent from the tracked
+  surfaces, and the census reported them as `undeclared_kinds` for weeks. That
+  field exists precisely so the report cannot quietly describe less than the
+  runtime holds. It did its job; nobody read it.
+- A word is not a database.
+
+  Reported from another project running the plugin: `git restore out/` refused as
+  a **database mutation**. The rule matched `drop`, `truncate`, `migrate`,
+  `migration`, `rollback` and `restore` as bare words, anywhere they appeared.
+
+  Reproducing it found worse. `cat docs/migrate-notes.md` and
+  `grep -rn rollback src/` were refused the same way — a file read and a search,
+  reported as schema changes. Meanwhile the genuine article escaped: the SQL in
+  `psql -c 'DROP TABLE orders'` is quoted, quoted spans are blanked before these
+  patterns run, and it fell through to unclassified. The rule refused prose and
+  missed the statement.
+
+  It is anchored to a database now: SQL that names what it operates on
+  (`DROP TABLE`, `DELETE FROM`, `ALTER TABLE`), or a named migration tool running
+  a migration. A verb on its own means nothing, because `migrate` is also a word
+  in a filename.
+
+  `git restore` discards uncommitted work and is still refused — under
+  `worktree-discard`, its own category, alongside `git checkout -- .`. A refusal
+  that names the wrong thing costs more than a slow one: the reader concludes the
+  tool does not understand the command and starts routing around it, which is
+  exactly what the reporting session proposed to its operator.
+- Refusals reported by people using the plugin, each now a test.
+
+  None was found by reading this code. The captured-corpus pass that fixed twelve
+  gate defects could only find what the corpus held, and it held no `npx`, no
+  heredoc script and no dev-server restart, because those are not commands this
+  project runs on itself.
+
+  **Deletes had no blast radius.** Every one scored R4 — a scratch file and
+  `rm -rf /` alike. That was invisible while every protected tier refused, since
+  the outcome was identical either way; the moment R4 began asking, the
+  difference became one keypress. A recursive delete aimed at a filesystem root
+  or a home directory now refuses outright, and an ordinary delete asks.
+
+  **Ending a process was an `unclassified-mutation`** — the bucket for things the
+  classifier does not recognise at all — so restarting a dev server the agent had
+  started produced a refusal that said nothing about what would happen. `kill`,
+  `pkill`, `taskkill`, `Stop-Process` and `systemctl stop` are `process-control`
+  now, anchored to command position: written as "anywhere in the line" first,
+  which turned `grep -rn kill src/` into a termination.
+
+  **`npx` and `npm ci` were unknown mutations,** so a session rewrote its
+  commands as `node ./node_modules/.bin/…` to get past the gate. A gate that
+  teaches people to rephrase has not stopped anything.
+
+  **Heredoc bodies were classified line by line.** A newline ends a segment, so
+  `import json` inside a Python heredoc became an unknown mutation and refused
+  the whole call — two sessions worked around it by writing scripts to files. The
+  body is data now. A command after the delimiter is still a command, and a
+  substitution inside a body is still classified, because the shell really does
+  expand it.
+- The request ledger put a full archive read on every prompt.
+
+  `record_request` scanned every record to reject a repeated prompt, which meant
+  each turn paid for the whole archive: measured at 1.1s against 65 events, and
+  growing linearly and forever, inside a hook the host kills at its timeout. A
+  neighbouring plugin's prompt hook was observed dying at 30s under archive
+  contention in the same week.
+
+  Deduplication moved to review, where `review_requests` already collapsed
+  repeats. A retyped prompt now writes a second record and the reviewer shows
+  one — the same answer, paid for once when somebody reads the report rather than
+  on every keystroke.
+
+  Measured attribution for the rest of that hook, which is not fixed and should
+  be known: a bare interpreter costs 299ms, the runtime imports another 440ms,
+  and resolving the project anchor costs 2.7s in git subprocesses. The anchor is
+  the dominant cost and the pre-tool gate pays it on every tool call too. On this
+  machine the cause is a virus scanner reading a large binary on each spawn, so
+  the largest available improvement is an exclusion for `git.exe` rather than
+  anything in this code.
+
+  The prompt hook's timeout is raised from 10s to 30s. Recording an ask is not
+  worth ending a turn over, and the hook already swallows its own failures.
+- The secret scan missed a credential said the way a person says one.
+
+  It required a `:` or `=` and eight characters — right for a machine token,
+  wrong for every human phrasing. `password: 555345`, `my password 555345` and
+  `the db password is hunter2` all returned no findings.
+
+  That combination had already shipped. The request ledger records every prompt
+  through this scan, so the first real credential to arrive in a conversation
+  would have been written to the archive verbatim — while the module's own
+  docstring said a ledger of asks is not worth a store of credentials. The claim
+  was tested against `ghp_…`: the case that was imagined, not the case that
+  happened.
+
+  The eight-character floor is replaced rather than removed, because a rule that
+  fires on `password manager` refuses ordinary prose, and the hook swallows a
+  refusal so the operator's turn continues — every false positive would be a
+  request silently not recorded, which is the failure the ledger exists to stop.
+  A digit in the value, or quotes around it, separates `password 555345` from
+  `password manager`, and a four-character minimum keeps `api key v2` out.
+
+  `api key` with a space is now matched too. The old rule knew `api_key` and
+  `api-key`, which is how it is written in a config file rather than a sentence.
+- Two reports that were true and useless.
+
+  **Closing a request was unreachable from the command line.** Closure matched
+  `data.digest`, which the runtime writes and a person cannot: `remember --kind
+  request --status closed --subject "..."` carries no field a digest could travel
+  in, so the mechanism existed, the report told the reader to use it, and using it
+  changed nothing. The subject is digested as a fallback now, under the same
+  normalisation the request was recorded with, so retyping the line is enough.
+  The same shape as obligation retirement being starved by a filtered record
+  list — one module along, three weeks later.
+
+  **`recurrences` returned a green verdict from a scan that examined nothing.**
+  `{"checked": 0, "verdict": "no-recurrence"}` reads as "the same cause never
+  repeated" and means "no blocked step has ever been recorded". It says
+  `insufficient-data` now, and states its scope, which is what the version
+  reconciler and the census each had to learn separately.
+- The closure the report told you to run, made runnable.
+
+  Every open request the ledger reported ended with the same instruction:
+  `godmode remember --kind request --status closed`. The parser rejected
+  `request` as an invalid choice, so the remedy the product named errored out.
+  This is the exact failure the module's own digest fallback exists to fix —
+  a mechanism that exists, a report that points at it, and using it changing
+  nothing — recurred one layer up in the command line.
+
+  Two more steps of the same path were dead behind it. A request written by hand
+  carried no digest, so even once the parser accepted it the closure matched
+  nothing by digest. And `remember` defaulted every kind to `active` while both
+  the review and the detectors read only `open`, so a hand-written request landed
+  in the archive and nothing ever looked at it.
+
+  So `--kind request` is accepted, the subject is digested under the same
+  normalisation the prompt hook uses — which is what makes retyping the line
+  enough to close the prompt it came from — and the status default is per-kind.
+  An explicit `--status` still wins, so closing stays an explicit act.
+- The detector that watched for work was watching for things the archive cannot hold.
+
+  `inferred-ask-blocking` decides whether a session stalled by asking what was
+  recorded after the guess. Its watched set named `build`, `verify`, `attest` and
+  `plan` — and only `plan` is a record kind. `godmode build` writes `change`;
+  `verify` and `attest` write `attestation`. The other three can never appear, so
+  in production the check matched almost nothing and the detector was close to
+  inert.
+
+  Every test passed throughout, because they ran against a fake ledger that
+  accepts any kind at all. The census learned this exact lesson once already: a
+  surface recorded under a kind the archive cannot hold is impossible, not merely
+  unused. The fake was the thing that hid it.
+
+  Fixed to the kinds that exist, and guarded two ways: one test asserts the
+  watched set is a subset of `EVENT_KINDS`, so the next name typed from memory
+  fails loudly, and one exercises the detector end to end through the real
+  archive that validates kinds rather than through the stand-in that does not.
+
+  The same mistake was caught in the acceptance check while it was being written,
+  which selected `kind="build"` for the same reason.
+
 ## [0.2.8] - 2026-08-09
 
 ### Added

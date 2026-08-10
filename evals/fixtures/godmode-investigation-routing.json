@@ -2,7 +2,7 @@
   "routes": {
     "near_negative": {
       "Brainstorm an uncommitted product feature without a failure to diagnose.": "godmode-investigation",
-      "Implement an already specified change with a known mechanism.": null
+      "Implement an already specified change with a known mechanism.": "godmode-repair"
     },
     "positive": {
       "Diagnose a reproducible regression whose root cause is unknown.": "godmode-investigation",

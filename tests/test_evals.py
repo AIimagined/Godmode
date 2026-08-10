@@ -35,6 +35,7 @@ ALL_SKILLS = [
     "godmode-continuity",
     "godmode-governance",
     "godmode-investigation",
+    "godmode-repair",
     "godmode-skill-forge",
 ]
 
@@ -81,7 +82,7 @@ def _synthetic_project(root: Path) -> None:
 
 
 class RoutingEvalTests(unittest.TestCase):
-    def test_finds_the_five_real_skills(self):
+    def test_finds_every_shipped_skill(self):
         report = run_routing_evals(PLUGIN_ROOT)
         self.assertEqual(sorted(report["skills"]), ALL_SKILLS)
 
@@ -90,8 +91,8 @@ class RoutingEvalTests(unittest.TestCase):
         # misrouted prompts were reworded. Observed reality, kept current.
         report = run_routing_evals(PLUGIN_ROOT)
         totals = report["totals"]
-        self.assertEqual(totals["positives_total"], 10)
-        self.assertEqual(totals["positives_routed_correctly"], 10)
+        self.assertEqual(totals["positives_total"], 12)
+        self.assertEqual(totals["positives_routed_correctly"], 12)
         self.assertEqual(report["verdict"], "routing-sound")
         failing = {entry["prompt"] for entry in report["failing_prompts"]}
         self.assertEqual(failing, KNOWN_MISROUTED_POSITIVES)
@@ -99,7 +100,7 @@ class RoutingEvalTests(unittest.TestCase):
     def test_near_negatives_reported_not_hidden(self):
         report = run_routing_evals(PLUGIN_ROOT)
         totals = report["totals"]
-        self.assertEqual(totals["near_negatives_total"], 10)
+        self.assertEqual(totals["near_negatives_total"], 12)
         # Captured near-negatives are reported per skill with details.
         for skill, entry in report["skills"].items():
             captured = [m for m in entry["misrouted"] if m["kind"] == "near_negative"]

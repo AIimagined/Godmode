@@ -1,0 +1,20 @@
+{
+  "routes": {
+    "near_negative": {
+      "Diagnose a reproducible regression whose root cause is unknown.": "godmode-investigation",
+      "Recover session continuity after a branch change stranded the archive.": "godmode"
+    },
+    "positive": {
+      "The operator repeats a question already answered and asks what is pending from them.": "godmode-repair",
+      "The operator says the last answer did not land and asks for it re-pitched clearly.": "godmode-repair"
+    }
+  },
+  "schema": "godmode-routing-snapshot-v1",
+  "skill": "godmode-repair",
+  "summary": {
+    "near_negatives_rejected": 2,
+    "near_negatives_total": 2,
+    "positives_routed_correctly": 2,
+    "positives_total": 2
+  }
+}
