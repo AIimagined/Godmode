@@ -47,13 +47,63 @@ def check_fragments(project: Path, base: str = "HEAD") -> dict[str, Any]:
     )
     for fragment in fragments:
         _fragment_category(Path(fragment))
-    satisfied = not needs_note or bool(fragments)
+
+    # A fragment is a staging area; the artifact it exists to produce is a
+    # CHANGELOG entry, and `changelog merge` consumes every fragment to write
+    # one. So a commit that merges fragments and ships code together has
+    # changed code, has recorded the note this gate protects, and carries no
+    # fragment - because it spent them. Reading that as an unnoted change is
+    # right about the fragments and wrong about the question.
+    #
+    # Splitting the release into two commits avoids it, and this repository has
+    # always done that by habit. Habit is not a check: a gate that passes only
+    # when somebody remembers the customary commit order refuses a correct
+    # release the first time somebody does it in one.
+    entry_added = _changelog_gained_an_entry(project, base)
+
+    satisfied = not needs_note or bool(fragments) or entry_added
     return {
         "changes_needing_note": needs_note,
         "fragments": fragments,
         "satisfied": satisfied,
+        # Named so a reader seeing `satisfied` with an empty fragment list does
+        # not have to guess which of the two answers let it through.
+        "satisfied_by": (
+            "no-change-needing-note" if not needs_note
+            else "fragment" if fragments
+            else "changelog-entry" if entry_added
+            else None
+        ),
         "verdict": "satisfied" if satisfied else "missing-fragment",
     }
+
+
+def _changelog_gained_an_entry(project: Path, base: str) -> bool:
+    """Whether this diff *adds* a bullet or a version heading to CHANGELOG.md.
+
+    Deliberately not "CHANGELOG.md was touched". Fixing a typo in a released
+    entry is not a note for today's code, and accepting any edit to the file
+    would turn this gate off for anybody who reflowed a paragraph.
+    """
+    diff = run_git(project, "diff", "-U0", base, "--", "CHANGELOG.md")
+    if not diff:
+        return False
+
+    # Net bullets, not added ones. An edited bullet appears in a diff as one
+    # addition and one deletion, so counting additions alone reads a corrected
+    # typo in a released entry as a note for today's code - which would leave
+    # the gate on in name and off in effect.
+    gained = 0
+    for line in diff.splitlines():
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("+"):
+            body = line[1:].lstrip()
+            gained += 1 if body.startswith("- ") or body.startswith("## [") else 0
+        elif line.startswith("-"):
+            body = line[1:].lstrip()
+            gained -= 1 if body.startswith("- ") or body.startswith("## [") else 0
+    return gained > 0
 
 
 def _existing_section(body: str, version: str) -> tuple[str | None, str, str]:
