@@ -30,6 +30,7 @@ import re
 from typing import Any
 
 from .godmode_chronicle import Chronicle
+from .godmode_constants import SETTLED_STATUSES
 from .godmode_requests import closure_reason
 
 # Kinds that can carry a "we decided against this" meaning. There is no
@@ -43,6 +44,23 @@ _REJECTION_KINDS = frozenset({"decision", "lesson"})
 _REFUSAL_WORDS = re.compile(
     r"(?i)\b(reject|rejected|refus|declin|dropped|removed|out of scope|wontfix|"
     r"will not|not adopt|incompatible|abandoned)\b")
+
+# Kinds that can carry "this is already known and nobody has closed it". The
+# third question, and the one that was missing: `already_built` reads the tree
+# and `already_rejected` reads what was turned down, so a thing FILED and still
+# open - an incident, a standing obligation, an ask nobody answered - matched
+# neither and stayed invisible. The case that produced it: an open item
+# describing the same symptom class as the report under investigation, listed
+# twice in the same session's own queue and never once connected to it.
+_OPEN_KINDS = frozenset({"obligation", "incident", "request"})
+
+# Statuses that mean the thing is done with, on top of the settled ones. A
+# record with no status at all counts as open, for the same reason a record
+# with no status counts as live in the contradiction check: records written
+# before status was recorded must keep being reported, or the exemption
+# retires the reader rather than the record.
+_DISCHARGED = frozenset({"closed", "done", "discharged", "resolved", "complete",
+                         "completed", "fixed", "refused"})
 
 _WORD = re.compile(r"[A-Za-z][A-Za-z0-9_]{2,}")
 _STOPWORDS = frozenset("""
@@ -129,11 +147,33 @@ def precheck(project_root: Path | str, archive: Chronicle, task: str) -> dict[st
                             "the refusal still hold?",
             })
 
-    findings = bool(already_built or already_rejected)
+    searched.append(f"open records ({', '.join(sorted(_OPEN_KINDS))})")
+    already_reported: list[dict[str, Any]] = []
+    for record in records:
+        if record.get("kind") not in _OPEN_KINDS:
+            continue
+        data = record.get("data") or {}
+        status = str(data.get("status", "")).lower()
+        if status in _DISCHARGED or status in SETTLED_STATUSES:
+            continue
+        if record.get("kind") == "request" and closure_reason(status) is not None:
+            continue
+        text = " ".join([str(record.get("subject", ""))]
+                        + [str(v) for v in data.values() if isinstance(v, str)])
+        if terms and _overlap(terms, text) >= 2:
+            already_reported.append({
+                "where": f"seq:{record.get('sequence')}",
+                "subject": str(record.get("subject", ""))[:120],
+                "question": "this is already filed and still open - is the task in hand the "
+                            "same thing, and does what is known there change the approach?",
+            })
+
+    findings = bool(already_built or already_rejected or already_reported)
     return {
         "task": task,
         "already_built": already_built,
         "already_rejected": already_rejected,
+        "already_reported": already_reported,
         # Stated so an empty answer cannot be read as clearance from a check
         # that examined nothing.
         "searched": searched,
@@ -150,9 +190,20 @@ def render(report: dict[str, Any]) -> str:
                 f"{report['symbols_examined']} symbols and "
                 f"{report['records_examined']} records.")
     lines = [f"Prior work touching '{report['task'][:60]}':"]
+    # Open first: a thing already filed and unclosed is the one a reader is most
+    # likely to be about to duplicate, and the one that carries what is already
+    # known about it.
+    for hit in report.get("already_reported", []):
+        lines.append(f"  [already filed, open] {hit['subject']} ({hit['where']})")
     for hit in report["already_rejected"]:
         lines.append(f"  [refused before] {hit['subject']} ({hit['where']})")
-    for hit in report["already_built"][:10]:
+    shown = report["already_built"][:10]
+    for hit in shown:
         lines.append(f"  [already exists] {hit['where']}")
-    lines.append("Neither is a refusal. Check whether the reason still holds.")
+    # A truncated list that does not say it was truncated is the defect this
+    # product reports elsewhere; it does not get to commit it here.
+    if len(report["already_built"]) > len(shown):
+        lines.append(f"  ... and {len(report['already_built']) - len(shown)} more existing "
+                     "symbols, not shown")
+    lines.append("None of these is a refusal. Check whether the reason still holds.")
     return "\n".join(lines)

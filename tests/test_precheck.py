@@ -85,6 +85,63 @@ class PriorRejectionTests(unittest.TestCase):
         self.assertEqual(report["already_rejected"], [])
 
 
+class AlreadyFiledTests(unittest.TestCase):
+    """The third question: not built, not refused, but already known and open.
+
+    The case: an item describing the same symptom class as the report under
+    investigation, filed the day before, listed twice in the session's own
+    queue, and never connected to the case in hand.
+    """
+
+    def test_an_open_obligation_on_the_same_subject_is_surfaced(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            archive.append("obligation", "trailing blank tail on render",
+                           {"value": "delivered 30.40s of an authored 37.75s composition; "
+                                     "the blank tail was trimmed",
+                            "status": "active"})
+            report = precheck(project, archive, "investigate blank tail after render")
+        self.assertTrue(report["already_reported"])
+        self.assertEqual(report["verdict"], "prior-work-found")
+
+    def test_a_discharged_item_is_not_re_reported(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            archive.append("obligation", "trailing blank tail on render",
+                           {"value": "blank tail trimmed on render", "status": "closed"})
+            archive.append("obligation", "blank tail on a second render",
+                           {"value": "blank tail trimmed on render", "status": "retired"})
+            report = precheck(project, archive, "investigate blank tail after render")
+        self.assertEqual(report["already_reported"], [])
+
+    def test_an_item_with_no_status_still_counts_as_open(self) -> None:
+        """Records written before status was recorded must keep being reported."""
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            archive.append("incident", "blank tail on render",
+                           {"value": "the delivered render lost its trailing scenes"})
+            report = precheck(project, archive, "investigate blank tail after render")
+        self.assertTrue(report["already_reported"])
+
+    def test_an_unrelated_open_item_is_not_matched(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            archive.append("obligation", "publish the release page",
+                           {"value": "publish the release page", "status": "active"})
+            report = precheck(project, archive, "investigate blank tail after render")
+        self.assertEqual(report["already_reported"], [])
+
+    def test_a_truncated_symbol_list_says_it_was_truncated(self) -> None:
+        """A list capped at ten that does not say so is the defect this reports."""
+        from godmode_runtime.godmode_precheck import render
+
+        report = {"task": "t", "already_reported": [], "already_rejected": [],
+                  "already_built": [{"where": f"f.py:{n} sym", "name": "sym",
+                                     "question": "?"} for n in range(14)],
+                  "verdict": "prior-work-found"}
+        self.assertIn("and 4 more existing symbols, not shown", render(report))
+
+
 class SearchDisclosureTests(unittest.TestCase):
     def test_the_report_names_where_it_looked(self) -> None:
         """An absence claim needs the search that would have disproved it.
