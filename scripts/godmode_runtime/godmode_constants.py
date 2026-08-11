@@ -19,6 +19,13 @@ EVENT_KINDS = frozenset(
     }
 )
 
+# Statuses that put a record out of force. Read by the contradiction check
+# (a value that no longer binds cannot contradict one that does) and by the
+# reversal check (an answer that was withdrawn is not a competing answer).
+# One owner, because two readers asking "is this still in force?" with two
+# different word lists is a disagreement waiting for a release to expose it.
+SETTLED_STATUSES = frozenset({"retired", "superseded", "withdrawn", "revoked"})
+
 IGNORED_DIRECTORY_NAMES = frozenset(
     {
         ".git", ".hg", ".svn", ".godmode", ".godmode-private",
