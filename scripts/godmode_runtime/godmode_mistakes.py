@@ -36,6 +36,34 @@ _QUOTED_TO_A_PERSON = frozenset({"claim", "lesson", "decision"})
 # The vocabulary of ATTRIBUTION, not of description. "the encode failed" reports
 # an observation and is not making this mistake; "the encode failed because the
 # probe timed out" indicts a mechanism, and a mechanism is answerable to a line.
+# Asserting that something is not there. `no <noun>` needs the noun: "no" alone
+# catches "no longer" and every other ordinary use of the word.
+_ABSENCE = re.compile(
+    r"\b(?:nothing (?:found|there|matched)|no (?:evidence|results?|matches?|hits?|rows?|"
+    r"records?|occurrences?|instances?|references?|callers?|usages?)|"
+    r"not (?:present|found|there|used|referenced|called)|"
+    r"never (?:used|called|referenced)|zero |none (?:found|of them)|"
+    r"does not (?:exist|appear)|is absent|are absent|no such)\b",
+    re.IGNORECASE,
+)
+
+# A count offered as a total. Deliberately requires a countable noun after the
+# number: a bare integer is a version, a port, a line number, a duration.
+_BARE_COUNT = re.compile(
+    r"\b\d+\s+(?:errors?|rows?|records?|files?|results?|matches?|hits?|items?|"
+    r"tests?|failures?|warnings?|events?|entries?|occurrences?|instances?|"
+    r"symbols?|modules?|documents?|projects?|users?|sessions?)\b",
+    re.IGNORECASE,
+)
+
+# What turns either shape into an honest statement: the extent it covers.
+_EXTENT = re.compile(
+    r"\b(?:of|out of|/\s*\d|across|among|within|scanned|searched|examined|inspected|"
+    r"all |every |entire|whole|total of|complete|capped|limited to|first \d+|"
+    r"top \d+|sample|subset|denominator|population)\b",
+    re.IGNORECASE,
+)
+
 _CAUSAL = re.compile(
     r"\b(?:root cause|the root is|caused by|causes|because|due to|owing to|"
     r"stems from|comes from|the culprit|responsible for|is why|which is why|"
@@ -114,10 +142,39 @@ def ritual_without_reading(records: list[dict[str, Any]]) -> list[dict[str, Any]
 
 
 def invariant_vs_instance(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """M6: a guard narrower than its ruling protects one surface of many."""
+    """M6: a guard narrower than its ruling protects one surface of many.
+
+    A lesson out of force is not reported, for the same reason a retired
+    invariant no longer contradicts a live one: correcting a record is the
+    documented lifecycle, and a check that keeps reading the superseded version
+    turns using that lifecycle into a permanent finding. The word list is
+    shared with the contradiction check rather than copied, which is the
+    defect that produced this paragraph - the same rule was fixed in one reader
+    and left standing in the other.
+    """
+    from .godmode_constants import SETTLED_STATUSES
+
+    # The archive is append-only, so a record cannot go back and mark itself
+    # superseded: retiring a ruling means writing a LATER record on the same
+    # subject that says so. Reading each record's own status therefore settles
+    # nothing - the correction carries the status and the record being corrected
+    # never does, which is why the first version of this fix left the original
+    # firing forever and made using the lifecycle look like a defect.
+    settled_at: dict[str, int] = {}
+    for record in records:
+        if str((record.get("data") or {}).get("status", "")).lower() in SETTLED_STATUSES:
+            subject = record.get("subject", "")
+            settled_at[subject] = max(settled_at.get(subject, 0), int(record.get("sequence", 0)))
+
     findings = []
     for record in records:
         if record["kind"] != "lesson" or not record["data"].get("generalized_guard"):
+            continue
+        if str(record["data"].get("status", "")).lower() in SETTLED_STATUSES:
+            continue
+        # Only a LATER settlement retires it. An earlier one settled an earlier
+        # ruling, and this is a new statement that has to answer for itself.
+        if int(record.get("sequence", 0)) < settled_at.get(record.get("subject", ""), 0):
             continue
         files = [e for e in record.get("evidence", []) if e.startswith("file:")]
         if len(files) == 1:
@@ -361,6 +418,64 @@ def unretracted_reversal(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return findings
 
 
+def claim_from_a_sample(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """M18: a statement about a population, made from a sample, that omits the sample.
+
+    Third member of the same family as M15 and M16 - a value correct in its own
+    frame and wrong in the reader's - and the one with the widest blast radius,
+    because it does not need a second system to go wrong in. One query with a
+    filter and a limit is enough.
+
+    Two shapes, one remedy.
+
+    An ABSENCE. "Nothing found", "no evidence", "it does not exist" - true of
+    the search that was run, and asserted about the world. Two greps that miss
+    inside a document containing the answer produce exactly this sentence, and
+    it reads as a conclusion rather than as the description of a search. An
+    absence claim needs the search that would have disproved it, which is the
+    standard `precheck` already holds itself to when it reports where it looked.
+
+    A COUNT. A bare total carries its query's filter and cap invisibly: "29
+    errors today" from a call with a category filter and a silent limit is not
+    the error log, it is a slice of one, and nothing about the number says so.
+    The reader has no way to tell a complete count from a truncated one.
+
+    Both are cleared the same way - state the extent - so both are one check.
+    Evidence naming what was examined satisfies it, as does saying so in the
+    text: `of`, `out of`, `scanned`, `all`, a denominator. What does not satisfy
+    it is the number or the absence alone.
+    """
+    findings = []
+    for record in records:
+        if record["kind"] != "claim":
+            continue
+        data = record.get("data") or {}
+        text = str(data.get("text") or record["subject"])
+        absence = _ABSENCE.search(text)
+        count = _BARE_COUNT.search(text)
+        if not absence and not count:
+            continue
+        if _EXTENT.search(text):
+            continue
+        # Evidence that names what was examined is the extent, stated properly.
+        if any(e.startswith(("searched:", "scanned:", "population:")) for e in
+               record.get("evidence", [])):
+            continue
+        shape = "an absence" if absence else "a count"
+        remedy = ("name the search that would have disproved it - which filters, which "
+                  "paths, and whether it was capped"
+                  if absence else
+                  "state the denominator and any cap; a bare total carries its query's "
+                  "filter and limit invisibly")
+        findings.append({
+            "detector": "claim-from-a-sample", "blocking": True,
+            "detail": f"'{text[:70]}' asserts {shape} about a population without saying what "
+                      f"was examined; {remedy}",
+            "citations": [f"seq:{record['sequence']}"],
+        })
+    return findings
+
+
 def analyze(archive: Chronicle) -> dict[str, Any]:
     records = archive.read_events()
     findings = (
@@ -372,6 +487,7 @@ def analyze(archive: Chronicle) -> dict[str, Any]:
         + unframed_clock(records)
         + root_without_code(records)
         + unretracted_reversal(records)
+        + claim_from_a_sample(records)
     )
     blocking = [f for f in findings if f["blocking"]]
     return {

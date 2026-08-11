@@ -1975,6 +1975,60 @@ class MistakeClassTests(unittest.TestCase):
                     "data": {"text": "scheduled 09:30"}}]
         self.assertEqual(unframed_clock(records), [])
 
+    def test_a_superseded_lesson_stops_being_reported(self) -> None:
+        """Correcting a record is the lifecycle; it must not become a permanent finding."""
+        from godmode_runtime.godmode_mistakes import invariant_vs_instance
+
+        def lesson(seq, status=None):
+            data = {"value": "v", "generalized_guard": "every caller"}
+            if status:
+                data["status"] = status
+            return {"kind": "lesson", "sequence": seq, "subject": "escape shell args",
+                    "data": data, "evidence": ["file:run.py"]}
+
+        self.assertEqual(len(invariant_vs_instance([lesson(1)])), 1)
+        self.assertEqual(invariant_vs_instance([lesson(1, "superseded")]), [])
+        self.assertEqual(invariant_vs_instance([lesson(1, "retired")]), [])
+        # No status at all still counts as live.
+        self.assertEqual(len(invariant_vs_instance([lesson(1, "active")])), 1)
+
+        # The archive is append-only: the correction carries the status, and the
+        # record being corrected never can. A LATER settlement on the same
+        # subject retires the original.
+        original, correction = lesson(1), lesson(2, "superseded")
+        self.assertEqual(invariant_vs_instance([original, correction]), [])
+        # An EARLIER settlement does not pre-clear a new ruling written after it.
+        self.assertEqual(len(invariant_vs_instance([lesson(1, "superseded"), lesson(2)])), 1)
+        # And a settlement on a different subject settles nothing here.
+        other = {"kind": "lesson", "sequence": 2, "subject": "something else",
+                 "data": {"value": "v", "status": "superseded"}, "evidence": []}
+        self.assertEqual(len(invariant_vs_instance([lesson(1), other])), 1)
+
+    def test_an_absence_or_a_count_without_its_extent_blocks(self) -> None:
+        from godmode_runtime.godmode_mistakes import claim_from_a_sample
+
+        def claim(seq, text, evidence=()):
+            return {"kind": "claim", "sequence": seq, "subject": "s",
+                    "data": {"text": text}, "evidence": list(evidence)}
+
+        flagged = [
+            claim(1, "no evidence the timeline registers"),          # two greps missed
+            claim(2, "29 errors today"),                             # a capped query
+            claim(3, "the helper is not referenced"),
+        ]
+        for record in flagged:
+            self.assertEqual(len(claim_from_a_sample([record])), 1, record["data"]["text"])
+            self.assertTrue(claim_from_a_sample([record])[0]["blocking"])
+
+        cleared = [
+            claim(4, "no evidence of it across all 47 scanned documents"),
+            claim(5, "29 errors out of 150 rows"),
+            claim(6, "no matches", evidence=["searched:*.py under scripts/, uncapped"]),
+            claim(7, "the render took 12 seconds"),        # a number, not a count
+            claim(8, "the encode no longer stalls"),       # 'no longer' is not an absence
+        ]
+        self.assertEqual(claim_from_a_sample(cleared), [])
+
     def test_a_named_root_cause_without_a_file_citation_blocks(self) -> None:
         from godmode_runtime.godmode_mistakes import root_without_code
 

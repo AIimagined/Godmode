@@ -6,6 +6,192 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-08-11
+
+### Added
+
+- A statement about a population, made from a sample, that omits the sample.
+
+  Third member of the family the previous two entries belong to — a value correct
+  in its own frame and wrong in the reader's — and the one with the widest reach,
+  because it needs no second system to go wrong in. One query with a filter and a
+  limit is enough.
+
+  Two shapes, one remedy, so one check.
+
+  An absence. "Nothing found", "no evidence", "it is not referenced" — true of the
+  search that ran, asserted about the world. Two searches that miss inside a
+  document holding the answer produce exactly that sentence, and it reads as a
+  conclusion rather than as the description of a search. An absence claim needs
+  the search that would have disproved it, which is the standard `precheck`
+  already holds itself to when it reports where it looked; nothing held the agent
+  to it.
+
+  A count. A bare total carries its query's filter and cap invisibly. A number
+  from a call with a category filter and a silent limit is not the log, it is a
+  slice of one, and nothing about the number says so — the reader cannot tell a
+  complete count from a truncated one. Stating the denominator clears it, and so
+  does naming what was examined in evidence.
+
+  `precheck` gained the third question. It answered "was this already built" from
+  the tree and "was this already refused" from decisions and removals, and had
+  nothing for the case in between: a thing already FILED and still open. An
+  incident, a standing obligation, an ask nobody closed — matched neither reader
+  and stayed invisible, so an open item describing the same symptom as the case
+  in hand could be listed twice in one session and never connected to it. Open
+  items are now reported first, because they carry what is already known.
+
+  Its own truncated list now says it is truncated. The symbol list was capped at
+  ten and silent about it, which is the defect this release reports twice
+  elsewhere; it does not get to commit it.
+
+  And the guard-breadth check no longer reports a ruling that was later corrected.
+  The archive is append-only, so a record cannot go back and mark itself
+  superseded — the correction carries the status and the record being corrected
+  never does. Reading each record's own status settled nothing, so using the
+  documented lifecycle produced a permanent finding. A later settlement on the
+  same subject now retires the earlier ruling; an earlier one does not pre-clear
+  a ruling written after it. Found by writing a lesson, correcting it, and
+  watching the original keep firing.
+- An analysis that reverses every pass, and the sentence that carries it.
+
+  The failure this answers is not being wrong once. It is being wrong
+  *unstably*: a root cause is published as soon as a story fits, the next pass
+  reads one more file and overturns both the root and the fix, and the reader is
+  left holding a moving target with no pass safe to act on. Every reversal was
+  purchasable in advance by reading code that was already there.
+
+  Two checks, neither needing anything the agent is not already doing.
+
+  A named root cause must cite a line of the program it indicts. A mechanism that
+  explains the symptom is a hypothesis; it becomes a finding when a file says so.
+  The check reads the vocabulary of attribution rather than description, because
+  a claim that reports an observation is not making this mistake. Citing another
+  record does not satisfy it — pointing at a prior claim is how an unexamined
+  theory travels between passes, gaining standing at every hop without ever
+  touching the program. Grading the claim `hypothesis` clears it, which is the
+  honest alternative and the point.
+
+  The same question answered twice, differently, with neither answer withdrawn.
+  Revising an answer is ordinary; revising it silently leaves two live roots for
+  one subject and no record of which was abandoned. Two live answers are
+  reported, three block — one revision can be an honest correction mid-
+  investigation, while a subject on its third live root is not converging, and
+  another pass at the same depth will produce a fourth. The remedy is to mark the
+  superseded claim, using the lifecycle the contradiction check already reads.
+
+  That word list now has one owner rather than two. Two readers asking whether a
+  record is still in force, from two copies of the same four words, is a
+  disagreement waiting for a release to expose it.
+
+  What is deliberately not built: nothing counts how many times an answer changed
+  inside a single pass. That would need the agent to volunteer its own reversals,
+  and an agent that reliably reported them would not be the one this exists for.
+- A time quoted to a person without saying which clock it came from.
+
+  Every store this project writes is UTC. Every surface a person reads renders in
+  their own zone. Both are internally correct, which is the whole difficulty — a
+  bare number copied from one into a sentence about the other is wrong by the
+  reader's offset, uniformly, so it survives every consistency check the archive
+  already runs and reads as plausible.
+
+  Nothing here could catch it before. Claim binding asks whether a citation
+  resolves; the citation resolved, the cited record held the right instant, and
+  what went missing was the frame, dropped in transcription. The archive checked
+  that a claim was supported and never that it was commensurable with the
+  sentence carrying it.
+
+  The check reads records written to be read by a person and reports a wall clock
+  with no frame after it — no `UTC`, no `IST`, no offset, and not a duration.
+  Blocking on a claim, which is the kind that gets published; reported without
+  blocking on a lesson or a decision, because those may legitimately mention a
+  schedule and a release refused over a cron expression teaches an operator to
+  route around the check.
+
+  Two things it deliberately does not do. It does not convert, because it cannot
+  know the reader's zone. And it does not read code, so a bucket keyed on the
+  first ten characters of a UTC timestamp is still a UTC day whatever the label
+  above it says.
+
+### Fixed
+
+- The changelog gate refused a release for spending its own fragments.
+
+  A fragment is a staging area. The artifact it exists to produce is a CHANGELOG
+  entry, and `changelog merge` consumes every fragment to write one. So a commit
+  that merges fragments and ships code in the same breath has changed code, has
+  recorded the note the gate protects, and carries no fragment — because it spent
+  them. The gate read that as an unnoted change and failed the release.
+
+  It was right about the fragments and wrong about the question. What it exists to
+  guarantee is that a change is written down, not that a particular staging file
+  survives to be counted.
+
+  Splitting a release into two commits avoids this, and this repository had always
+  done that by habit. Habit is not a check: a gate that passes only when somebody
+  remembers the customary commit order refuses a correct release the first time
+  somebody does it in one, and does so in CI, after the push.
+
+  A diff that adds entries to CHANGELOG.md now satisfies the gate. The count is of
+  *net* bullets and version headings, not added ones — an edited bullet appears in
+  a diff as one addition and one deletion, so counting additions alone would read a
+  corrected typo in a released entry as a note for today's code, leaving the gate
+  on in name and off in effect. A code change with no note anywhere is refused
+  exactly as before.
+
+  The report now names which of the two answers let it through, so a reader seeing
+  `satisfied` beside an empty fragment list does not have to guess why.
+- A timestamp that had lost its offset was read on two different clocks.
+
+  Every instant this project writes carries `+00:00`. The ones that do not are
+  the interesting ones: a record written by hand, or one carried over from a
+  schema that stored a bare clock. Two readers disagreed about what such a value
+  meant, and neither disagreed loudly.
+
+  The health check crashed on it. `_parse_time` caught `ValueError`, so a
+  malformed string returned nothing and the check carried on — but a well-formed
+  string with no offset parsed cleanly into a naive instant, and subtracting that
+  from an aware one raises `TypeError`, which nothing caught. One unlabelled
+  timestamp anywhere in the archive took down the whole context report rather
+  than ageing a single baseline wrongly.
+
+  The staleness guard answered wrongly instead, which is worse for being quiet.
+  It read the file's modification time on whatever clock the start time carried,
+  so an unlabelled start time meant `tz=None` — the host's local clock — while
+  the start time itself was meant as UTC. The comparison then ran between two
+  different clocks and was wrong by the host's offset. Measured on a `+05:30`
+  host: a process started two hours after the newest source reported `stale`, and
+  the guard blocked a diagnosis that should have proceeded. West of UTC it fails
+  the other way and clears a process that really is dead.
+
+  Neither timestamp was wrong in its own frame, which is exactly why it read as
+  plausible and why no self-consistency check could have found it. Both readers
+  now pin to UTC, an unlabelled value is documented as UTC where it is parsed
+  rather than assumed separately at each call site, and the reported modification
+  time states its offset so the next reader cannot repeat the mistake by eye.
+- Retiring an invariant was reported as contradicting it.
+
+  The contradiction detector collected every invariant record ever written for a
+  subject and called two values a conflict. Retiring an invariant means writing a
+  new record, with a new value, carrying a retired status — so using the
+  documented lifecycle produced an error by construction, and `doctor` reported
+  the archive unhealthy for doing the right thing.
+
+  Found by retiring a real invariant once a release closed the condition it
+  described. The record was correct, the retirement was correct, and the health
+  check called the pair a defect.
+
+  Records whose status puts them out of force — retired, superseded, withdrawn,
+  revoked — no longer take part in the comparison. A value that no longer binds
+  cannot contradict one that does.
+
+  Three things deliberately unchanged. Two live invariants that disagree are still
+  an error, which is the case the check exists for. A retired record sitting
+  beside a live pair does not excuse that pair. And an invariant with no status at
+  all still counts as live, because records written before status was recorded
+  must keep being checked — exempting them would retire the detector rather than
+  the record.
+
 ## [0.2.9] - 2026-08-10
 
 ### Added
