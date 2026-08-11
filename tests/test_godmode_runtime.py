@@ -1930,6 +1930,140 @@ class MistakeClassTests(unittest.TestCase):
             report = analyze(archive)
             self.assertTrue([f for f in report["findings"] if f["detector"] == "claim-splitting"])
 
+    def test_a_bare_wall_clock_in_a_claim_blocks(self) -> None:
+        from godmode_runtime.godmode_mistakes import analyze
+
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            archive.append("claim", "the render finished",
+                           {"text": "the render click landed at 12:37 and feedback at 12:54"})
+            report = analyze(archive)
+            hits = [f for f in report["findings"] if f["detector"] == "unframed-clock"]
+            self.assertTrue(hits)
+            self.assertTrue(hits[0]["blocking"])
+            self.assertTrue(report["blocking"])
+
+    def test_a_framed_or_iso_time_is_not_a_finding(self) -> None:
+        from godmode_runtime.godmode_mistakes import unframed_clock
+
+        records = [
+            {"kind": "claim", "sequence": 1, "subject": "s",
+             "data": {"text": "filed 18:24:57 IST, generated 12:24 UTC"}},
+            {"kind": "claim", "sequence": 2, "subject": "s",
+             "data": {"text": "recorded at 2026-08-11T12:54:57+00:00 by the ledger"}},
+            {"kind": "claim", "sequence": 3, "subject": "s",
+             "data": {"text": "the encode ran 1:30 elapsed, well under budget"}},
+            {"kind": "claim", "sequence": 4, "subject": "s",
+             "data": {"text": "the window opened at 09:15 +05:30 as configured"}},
+        ]
+        self.assertEqual(unframed_clock(records), [])
+
+    def test_a_bare_clock_in_a_lesson_reports_without_blocking(self) -> None:
+        from godmode_runtime.godmode_mistakes import unframed_clock
+
+        records = [{"kind": "lesson", "sequence": 7, "subject": "the sweep runs at 03:00",
+                    "data": {"value": "the sweep runs at 03:00"}}]
+        findings = unframed_clock(records)
+        self.assertEqual(len(findings), 1)
+        self.assertFalse(findings[0]["blocking"])
+        self.assertEqual(findings[0]["citations"], ["seq:7"])
+
+    def test_a_record_not_written_for_a_person_is_left_alone(self) -> None:
+        from godmode_runtime.godmode_mistakes import unframed_clock
+
+        records = [{"kind": "action", "sequence": 3, "subject": "cron 09:30",
+                    "data": {"text": "scheduled 09:30"}}]
+        self.assertEqual(unframed_clock(records), [])
+
+    def test_a_named_root_cause_without_a_file_citation_blocks(self) -> None:
+        from godmode_runtime.godmode_mistakes import root_without_code
+
+        cited = {"kind": "claim", "sequence": 2, "subject": "s",
+                 "data": {"text": "the bar rewinds because the executor assigns a lower value"},
+                 "evidence": ["file:renderExecutor.ts#L547"]}
+        graded = {"kind": "claim", "sequence": 3, "subject": "s",
+                  "data": {"text": "the bar rewinds because the preflight restarts",
+                           "grade": "hypothesis"}, "evidence": []}
+        observed = {"kind": "claim", "sequence": 4, "subject": "s",
+                    "data": {"text": "the bar reached 100% and restarted"}, "evidence": []}
+        by_record = {"kind": "claim", "sequence": 5, "subject": "s",
+                     "data": {"text": "the bar rewinds because of the retry path"},
+                     "evidence": ["rec:abc123"]}
+
+        findings = root_without_code([cited, graded, observed, by_record])
+        # Only the one that indicts a mechanism while citing another record.
+        self.assertEqual([f["citations"] for f in findings], [["seq:5"]])
+        self.assertTrue(findings[0]["blocking"])
+
+    def test_two_live_answers_report_and_three_block(self) -> None:
+        from godmode_runtime.godmode_mistakes import unretracted_reversal
+
+        def claim(seq, text, status=None):
+            data = {"text": text}
+            if status:
+                data["status"] = status
+            return {"kind": "claim", "sequence": seq, "subject": "why the bar rewinds",
+                    "data": data, "evidence": []}
+
+        one = [claim(1, "the preflight restarts it")]
+        self.assertEqual(unretracted_reversal(one), [])
+
+        two = one + [claim(2, "the executor assigns a lower value")]
+        findings = unretracted_reversal(two)
+        self.assertEqual(len(findings), 1)
+        self.assertFalse(findings[0]["blocking"])
+        self.assertEqual(findings[0]["citations"], ["seq:1", "seq:2"])
+
+        three = two + [claim(3, "the retry path re-enters the job")]
+        self.assertTrue(unretracted_reversal(three)[0]["blocking"])
+
+        # Withdrawing the abandoned answers settles it - the documented remedy.
+        settled = [claim(1, "the preflight restarts it", status="superseded"),
+                   claim(2, "the executor assigns a lower value", status="withdrawn"),
+                   claim(3, "the retry path re-enters the job")]
+        self.assertEqual(unretracted_reversal(settled), [])
+
+    def test_repeating_one_answer_is_not_a_reversal(self) -> None:
+        from godmode_runtime.godmode_mistakes import unretracted_reversal
+
+        same = [{"kind": "claim", "sequence": n, "subject": "why the bar rewinds",
+                 "data": {"text": "the executor assigns a lower value"}, "evidence": []}
+                for n in (1, 2, 3)]
+        self.assertEqual(unretracted_reversal(same), [])
+
+    def test_an_unlabelled_start_time_does_not_flip_the_stale_verdict(self) -> None:
+        """The same instant must not answer differently for having dropped its offset."""
+        from godmode_runtime.godmode_mistakes import stale_runtime
+        from datetime import datetime, timedelta, timezone
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / "app.py").write_text("x = 1\n", encoding="utf-8")
+            newest = datetime.fromtimestamp(
+                (project / "app.py").stat().st_mtime, tz=timezone.utc)
+            started = (newest + timedelta(hours=2)).replace(microsecond=0)
+            aware = stale_runtime(project, started.isoformat())
+            naive = stale_runtime(project, started.replace(tzinfo=None).isoformat())
+            # Started after the newest source: not stale, whichever way it is written.
+            self.assertFalse(aware["stale"])
+            self.assertEqual(aware["stale"], naive["stale"])
+            # The reported mtime always states its frame.
+            self.assertTrue(naive["newest_mtime"].endswith("+00:00"))
+
+    def test_a_stored_instant_without_an_offset_is_read_as_utc(self) -> None:
+        """A naive timestamp used to raise TypeError past `except ValueError`."""
+        from godmode_runtime.godmode_lens import _parse_time
+        from datetime import datetime, timezone
+
+        naive = _parse_time("2026-08-11T12:00:00")
+        self.assertEqual(naive.tzinfo, timezone.utc)
+        # The subtraction the health check performs must not raise.
+        self.assertGreater((datetime.now(timezone.utc) - naive).total_seconds(), 0)
+        aware = _parse_time("2026-08-11T12:00:00+05:30")
+        self.assertEqual(aware.utcoffset().total_seconds(), 19_800)
+        self.assertIsNone(_parse_time("not a time"))
+        self.assertIsNone(_parse_time(None))
+
     def test_stale_runtime_blocks_rca_against_a_dead_program(self) -> None:
         from godmode_runtime.godmode_mistakes import stale_runtime
 

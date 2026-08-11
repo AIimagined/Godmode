@@ -7,7 +7,7 @@ the tree; none needs a model's cooperation to fire.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import re
 from typing import Any
@@ -28,6 +28,48 @@ _WORK_KINDS = frozenset({"action", "attestation", "change", "plan"})
 
 _CLAIM_SPLIT = re.compile(r";\s+|\b(?:and also|as well as)\b|\n\s*\d+[.)]\s")
 _VERBISH = re.compile(r"\b(?:is|are|was|were|works|passes|fixed|fails|blocks|returns)\b")
+
+# Kinds whose text is written to be read by a person, which is the only place a
+# dropped frame can mislead one. A `change` or an `action` records what ran.
+_QUOTED_TO_A_PERSON = frozenset({"claim", "lesson", "decision"})
+
+# The vocabulary of ATTRIBUTION, not of description. "the encode failed" reports
+# an observation and is not making this mistake; "the encode failed because the
+# probe timed out" indicts a mechanism, and a mechanism is answerable to a line.
+_CAUSAL = re.compile(
+    r"\b(?:root cause|the root is|caused by|causes|because|due to|owing to|"
+    r"stems from|comes from|the culprit|responsible for|is why|which is why|"
+    r"triggered by|introduced by|broken by|regressed by)\b",
+    re.IGNORECASE,
+)
+
+# A time that already carries a numeric offset is deleted before the scan
+# rather than exempted inside it. Both halves are needed and neither is
+# sufficient: the offset must be removed WITH the clock it frames, because
+# removing it alone strips the very evidence that made the clock legitimate,
+# and leaving it alone lets its own `05:30` be read as a second bare time.
+_NUMERICALLY_FRAMED = re.compile(
+    r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?"
+    r"|\b\d{1,2}:\d{2}(?::\d{2})?\s*[+-]\d{2}:?\d{2}"
+)
+
+# A wall clock with nothing after it saying which clock. The trailing
+# alternatives are the two honest endings: a named frame (`UTC`, `IST`) or a
+# unit that makes the number a duration rather than a time of day - `1:30
+# elapsed` is not a claim about when anything happened.
+#
+# `(?!:)` after the seconds group is what makes the exemption hold. Without it
+# the engine matches `18:24:57`, finds ` IST` and rejects the match, then
+# BACKTRACKS to `18:24`, whose next character is a colon rather than a frame -
+# so a correctly labelled time reported itself as an unlabelled one.
+_UNFRAMED_CLOCK = re.compile(
+    r"\b\d{1,2}:\d{2}(?::\d{2})?(?!:)\b"
+    r"(?!\s*(?:UTC|GMT|UT|Z\b|IST|BST|CET|CEST|EST|EDT|CST|CDT|MST|MDT|PST|PDT|JST|AEST"
+    r"|local|localtime"
+    r"|h\b|hrs?\b|hours?\b|m\b|min\b|minutes?\b|s\b|secs?\b|seconds?\b"
+    r"|elapsed|remaining|long|of\b|into\b))",
+    re.IGNORECASE,
+)
 
 
 def label_as_fact(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -90,8 +132,23 @@ def invariant_vs_instance(records: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 
 def stale_runtime(project: Path, process_started: str) -> dict[str, Any]:
-    """M8: diagnosing against a process older than the code it runs is blocked."""
+    """M8: diagnosing against a process older than the code it runs is blocked.
+
+    Both sides of the comparison are pinned to UTC, because they used not to be.
+    An unlabelled `process_started` is naive, and the file mtime was read with
+    `tz=started.tzinfo` - so a naive input made that `tz=None`, which is LOCAL.
+    The verdict then compared a local wall clock against one meant as UTC and
+    was wrong by the host's offset: on a +05:30 host, a process started two
+    hours AFTER the newest source reported `stale`, blocking an RCA that should
+    have run, and on a negative offset it clears a genuinely dead process.
+
+    Neither timestamp was wrong in its own frame, which is why it read as
+    plausible - the same shape this module's `unframed_clock` detector reports
+    in prose, here in a comparison.
+    """
     started = datetime.fromisoformat(process_started)
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
     newest_path, newest_ns = None, 0
     for path in project.rglob("*"):
         if not path.is_file() or path.suffix not in CODE_SUFFIXES:
@@ -101,7 +158,7 @@ def stale_runtime(project: Path, process_started: str) -> dict[str, Any]:
         stat_ns = path.stat().st_mtime_ns
         if stat_ns > newest_ns:
             newest_path, newest_ns = path, stat_ns
-    newest_at = datetime.fromtimestamp(newest_ns / 1e9, tz=started.tzinfo)
+    newest_at = datetime.fromtimestamp(newest_ns / 1e9, tz=timezone.utc)
     stale = newest_at > started
     return {
         "process_started": process_started,
@@ -178,6 +235,132 @@ def inferred_ask_blocking(records: list[dict[str, Any]]) -> list[dict[str, Any]]
     return findings
 
 
+def unframed_clock(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """M15: a wall-clock time quoted to a person without the clock it came from.
+
+    Distinct from every other detector here, which asks whether a claim is
+    *supported*. This one asks whether a supported claim is *commensurable*
+    with the sentence carrying it. Stores write UTC; operator surfaces render
+    the viewer's zone; both are internally correct, and a bare number copied
+    from one into a sentence about the other is wrong by the viewer's offset.
+
+    Nothing upstream can catch it. Citation binding resolves the citation, the
+    cited record holds the right instant, and the frame is what was dropped in
+    transcription - so the error is uniform, which is exactly what lets it pass
+    every self-consistency check and read as plausible.
+
+    Blocking only on a `claim`, which is the record kind that gets published.
+    A lesson or a decision may legitimately mention a schedule, and blocking a
+    release on a cron expression written into a lesson would teach the operator
+    to route around the detector.
+    """
+    findings = []
+    for record in records:
+        if record["kind"] not in _QUOTED_TO_A_PERSON:
+            continue
+        data = record.get("data") or {}
+        text = str(data.get("text") or data.get("value") or record["subject"])
+        bare = _UNFRAMED_CLOCK.findall(_NUMERICALLY_FRAMED.sub("", text))
+        if not bare:
+            continue
+        findings.append({
+            "detector": "unframed-clock", "blocking": record["kind"] == "claim",
+            "detail": f"'{bare[0]}' is quoted without its clock; the archive stores UTC and "
+                      "operator surfaces render the viewer's zone, so a bare time is wrong by "
+                      "their offset - suffix it (`12:54 UTC` / `18:24 IST`) or convert",
+            "citations": [f"seq:{record['sequence']}"],
+        })
+    return findings
+
+
+def root_without_code(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """M16: a named root cause that cites no line of the program it indicts.
+
+    A mechanism that explains the symptom is a hypothesis. It becomes a finding
+    when a line of code says so, and until then the sentence is doing the work
+    the evidence should - which is why the wrong ones are so consistently
+    plausible. Nothing else here reaches this: the claim may be perfectly
+    supported by records, cite its sequence, and still never have opened the
+    file it accuses.
+
+    The check is deliberately narrow. It fires only on a claim that NAMES a
+    cause - the vocabulary of attribution, not of description - because a claim
+    that reports an observation is not making this mistake. A `rec:` citation
+    does not satisfy it: pointing at another record is how an unexamined theory
+    travels between passes, gaining standing at each hop without ever touching
+    the program.
+    """
+    findings = []
+    for record in records:
+        if record["kind"] != "claim":
+            continue
+        data = record.get("data") or {}
+        text = str(data.get("text") or record["subject"])
+        if not _CAUSAL.search(text):
+            continue
+        if str(data.get("grade", "")).lower() in {"hypothesis", "unknown"}:
+            continue  # Graded as unproven, which is the honest alternative.
+        if any(e.startswith("file:") for e in record.get("evidence", [])):
+            continue
+        findings.append({
+            "detector": "root-without-code", "blocking": True,
+            "detail": f"'{text[:70]}' names a cause with no file: citation; read the path and "
+                      "cite the line, or grade it `hypothesis` and say what would refute it",
+            "citations": [f"seq:{record['sequence']}"],
+        })
+    return findings
+
+
+def unretracted_reversal(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """M17: the same question answered twice, differently, with neither withdrawn.
+
+    An analysis that reverses is not merely wrong once - it is unstable, and the
+    reader cannot tell which pass to act on because both answers are still
+    standing. Revising an answer is ordinary and often right; what is reported
+    here is revising it SILENTLY, so the archive holds two live roots for one
+    subject and no record of which was abandoned.
+
+    This needs nothing from the agent that it is not already doing. Claims are
+    written as a matter of course, and two of them on one subject with different
+    text is the reversal, whether or not anyone chose to describe it as one. The
+    remedy is equally cheap: mark the superseded claim, which is the same
+    lifecycle the invariant contradiction check already reads, from the same
+    word list.
+
+    Two live answers is a finding; three is blocking. A single revision can be
+    an honest correction mid-investigation, while a subject on its third live
+    root is not converging, and another pass at the same depth will produce a
+    fourth.
+    """
+    from .godmode_constants import SETTLED_STATUSES
+
+    live: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        if record["kind"] != "claim":
+            continue
+        data = record.get("data") or {}
+        if str(data.get("status", "")).lower() in SETTLED_STATUSES:
+            continue
+        text = str(data.get("text") or record["subject"]).strip()
+        answers = live.setdefault(record["subject"], [])
+        if all(a["text"] != text for a in answers):
+            answers.append({"text": text, "sequence": record["sequence"]})
+
+    findings = []
+    for subject, answers in sorted(live.items()):
+        if len(answers) < 2:
+            continue
+        findings.append({
+            "detector": "unretracted-reversal", "blocking": len(answers) >= 3,
+            "detail": f"'{subject[:60]}' carries {len(answers)} live answers and none is marked "
+                      "superseded; withdraw the ones no longer held and say what read changed "
+                      "them" + (" - a third root means the read set is still open, so stop "
+                                "analysing and go read" if len(answers) >= 3 else ""),
+            "citations": [f"seq:{a['sequence']}" for a in answers],
+        })
+    return findings
+
+
 def analyze(archive: Chronicle) -> dict[str, Any]:
     records = archive.read_events()
     findings = (
@@ -186,6 +369,9 @@ def analyze(archive: Chronicle) -> dict[str, Any]:
         + invariant_vs_instance(records)
         + claim_splitting(records)
         + inferred_ask_blocking(records)
+        + unframed_clock(records)
+        + root_without_code(records)
+        + unretracted_reversal(records)
     )
     blocking = [f for f in findings if f["blocking"]]
     return {
