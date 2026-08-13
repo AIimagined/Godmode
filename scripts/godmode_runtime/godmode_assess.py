@@ -111,7 +111,15 @@ def assess(project: Path, budget: int = TYPICAL_COLD_START_TOKENS,
         "segments": len(segments),
         "tokens_to_read_everything": required_tokens,
         "times_over_budget": ratio,
-        "missing_roles": sorted({role for role, _ in resolution.missing}),
+        # A role's `missing` entries are its unmatched CANDIDATE PATTERNS, not
+        # a verdict on the role - operating-guide binds fine through GODMODE.md
+        # while OPERATING-GUIDE.md/AGENTS.md/CLAUDE.md all miss, and a role
+        # already satisfied by one pattern must never read as missing because
+        # its OTHER candidates didn't also happen to exist.
+        "missing_roles": sorted(
+            {role for role, _ in resolution.missing}
+            - {b.role for b in resolution.bindings}
+        ),
         "collisions": [{"path": p, "roles": list(r)} for p, r in resolution.collisions],
     }
 
