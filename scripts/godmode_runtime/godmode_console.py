@@ -2562,7 +2562,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     authorize = sub.add_parser("authorize", help="Configure or issue local capabilities")
     authorize_sub = authorize.add_subparsers(dest="authorize_command", required=True)
-    setup = authorize_sub.add_parser("setup")
+    _setup_help = ("One-time: set the local password that mints capabilities for "
+                   "irreversible operations")
+    setup = authorize_sub.add_parser("setup", help=_setup_help, description=_setup_help)
     setup.add_argument(
         "--password-stdin",
         action="store_true",
@@ -2597,7 +2599,9 @@ def _build_parser() -> argparse.ArgumentParser:
     denial.add_argument("--reason", required=True)
     denial.set_defaults(handler=cmd_authorize_deny)
 
-    issue = authorize_sub.add_parser("issue")
+    _issue_help = ("Mint a capability token for one exact operation (prefer stage, which "
+                   "parks it for the hook)")
+    issue = authorize_sub.add_parser("issue", help=_issue_help, description=_issue_help)
     issue.add_argument(
         "--password-stdin",
         action="store_true",

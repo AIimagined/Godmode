@@ -261,9 +261,14 @@ class AuthorizationPolicyTests(unittest.TestCase):
                 self.assertEqual(self.issued_lifetime(archive), expected)
 
     def test_without_a_policy_the_default_ttl_stays_current(self) -> None:
+        from godmode_runtime.godmode_sentinel import _DEFAULT_TTL_SECONDS
         with isolated_project() as (_project, _state, _anchor, archive):
             archive.initialize()
-            self.assertEqual(self.issued_lifetime(archive), 180)
+            # Asserted against the constant, not a bare literal, so a
+            # deliberate TTL tune (like this one: 180 -> 300, 180s measured
+            # expiring under ordinary agent retry latency) cannot silently
+            # desync this test from what the module actually ships.
+            self.assertEqual(self.issued_lifetime(archive), _DEFAULT_TTL_SECONDS)
 
     def test_password_required_extends_but_never_shrinks_protection(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):

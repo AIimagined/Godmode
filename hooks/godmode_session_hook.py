@@ -407,7 +407,9 @@ def main(argv: list[str] | None = None) -> int:
                     "stage a capability for this exact command: `godmode "
                     "authorize stage --operation "
                     f"{json.dumps(operation[:200])}` - it needs the password "
-                    "from `godmode authorize setup`, is spent once, and expires."
+                    "from `godmode authorize setup`, is spent once, and expires. "
+                    "In a hosted session, type it with a leading '!' to run it "
+                    "from the prompt without leaving the conversation."
                 )
 
         # The fence, applied last and only to what would otherwise proceed. It
