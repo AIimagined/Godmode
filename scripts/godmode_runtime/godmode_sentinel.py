@@ -689,7 +689,11 @@ _VERDICT_RUNNER = re.compile(
     r"(?i)\b(?:pytest|py\.test|unittest|vitest|jest|mocha|rspec|phpunit|"
     r"cargo\s+test|go\s+test|dotnet\s+test|tsc\b|mypy|pyright|"
     r"npm\s+(?:test|run\s+test\S*)|yarn\s+test|pnpm\s+test|"
-    r"godmode\s+(?:verify|gates|attest|precheck))"
+    # godmode's own verdict-bearing subcommands - found missing selftest/
+    # scenarios/mistakes/assess in an adversarial pass; each produces a
+    # pass/fail-shaped verdict exactly as truncatable as verify/gates.
+    r"godmode\s+(?:verify|gates|attest|precheck|selftest|scenarios|"
+    r"mistakes|assess))"
 )
 _EVIDENCE_TRUNCATOR = re.compile(
     r"(?i)\|\s*(?:tail|head|grep|findstr|select-string|"
