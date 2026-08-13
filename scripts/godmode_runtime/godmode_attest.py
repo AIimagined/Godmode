@@ -500,6 +500,16 @@ def _citation_resolves(project: Path, archive: Chronicle, citation: str,
     # author had actually read.
     if citation.startswith(("doc:", "url:")):
         return _is_plausible_source_reference(citation.split(":", 1)[1])
+    # Same reasoning as doc:/url: - nothing local can mechanically confirm a
+    # search was exhaustive, a population was fully scanned, or a control
+    # probe actually ran; these resolve as the operator's declaration, same
+    # plausibility floor. Without this, the mistake-class detectors that
+    # read this exact vocabulary (M18 claim-from-a-sample, M21
+    # absence-without-control) would teach an operator to cite it, then
+    # silently downgrade every claim that did - punishing the evidence
+    # discipline the detectors exist to reward.
+    if citation.startswith(("searched:", "scanned:", "population:", "control:", "second:")):
+        return _is_plausible_source_reference(citation.split(":", 1)[1])
     return False
 
 
