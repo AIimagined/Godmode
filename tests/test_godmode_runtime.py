@@ -2228,6 +2228,25 @@ class GuardrailTests(unittest.TestCase):
             self.assertEqual(verdict["verdict"], "interrupt")
             self.assertEqual(len(verdict["skipped"]), 3)
 
+    def test_watchdog_windows_to_the_current_session_only(self) -> None:
+        # A prior session's skips must not count toward this session's
+        # pattern - the archive before this session opened is history, not
+        # behaviour to police now. Two skips in a PRIOR session plus two in
+        # THIS one must read as 2, not 4, and stay under the threshold.
+        from godmode_runtime.godmode_attest import open_session, record_step
+        from godmode_runtime.godmode_guardrails import watchdog
+
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            old_session = open_session(archive, "prior")
+            for step in ("read sources", "run parity"):
+                record_step(archive, old_session, step, "skipped", reason="old run")
+            session = open_session(archive, "watch")
+            record_step(archive, session, "check invariants", "skipped", reason="new run")
+            verdict = watchdog(archive, session)
+            self.assertEqual(verdict["verdict"], "nominal")
+            self.assertEqual(len(verdict["skipped"]), 1)
+
     def test_rewind_previews_only_verified_checkpoints(self) -> None:
         from godmode_runtime.godmode_guardrails import rewind_preview
 
