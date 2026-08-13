@@ -2053,7 +2053,41 @@ def _build_parser() -> argparse.ArgumentParser:
     gate_parser.add_argument("--session")
     gate_parser.set_defaults(handler=cmd_gate)
 
-    claim = sub.add_parser("claim", help="Record a claim; unsupported claims are downgraded, not warned about")
+    claim = sub.add_parser(
+        "claim",
+        help="Record a claim; unsupported claims are downgraded, not warned about",
+        epilog=(
+            "Citation prefixes --cite accepts (repeatable):\n"
+            "  rec:<hash>            an archive record, cited by its hash prefix\n"
+            "  file:<path>#L<n>      a line this session actually read\n"
+            "  cmd:<command>         a command an attestation on THIS session ran\n"
+            "  doc:<ref> / url:<ref> a source outside the worktree (declared, not\n"
+            "                        locally verifiable - required for --external)\n"
+            "  searched:<query>      the sweep behind an absence or a count claim\n"
+            "  scanned:<extent>      what a population statement covered\n"
+            "  population:<n>       the denominator behind a rate\n"
+            "  control:<probe>      the same instrument finding a known-present\n"
+            "                        target - proves the search mechanism can find,\n"
+            "                        not just that it found nothing this time\n"
+            "  second:<method>      an independent second proof of an absence\n"
+            "\n"
+            "searched:/scanned:/population:/control:/second: resolve as a declared\n"
+            "citation (same as doc:/url: - nothing local can mechanically confirm a\n"
+            "search was exhaustive) and satisfy `godmode mistakes`' M18/M19/M21\n"
+            "detectors. They are a SEPARATE, lighter check from the grading pipeline's\n"
+            "own absence-claim gate below: a --grade verified absence claim still\n"
+            "needs TWO DISTINCT cmd: citations (or one that positively enumerated\n"
+            "something) to avoid being downgraded to hypothesis - a single miss is\n"
+            "evidence about where you looked, not about what exists.\n"
+            "\n"
+            "Example:\n"
+            "  godmode claim \"no dead refs in lib/\" --grade verified \\\n"
+            "    --cite file:lib/gate.py#L40 \\\n"
+            "    --cite \"searched:rg dead_ref lib/ -> 0 hits\" \\\n"
+            "    --cite \"control:rg live_ref lib/ -> 14 hits\""
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     claim.add_argument("text")
     claim.add_argument("--grade", choices=list(GRADES), default="observed")
     claim.add_argument("--cite", action="append", default=[], help="rec:<hash> or file:<path>#L<n>; repeatable")
