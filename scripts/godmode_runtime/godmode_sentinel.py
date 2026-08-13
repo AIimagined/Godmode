@@ -1111,7 +1111,10 @@ def _decode(data: str) -> bytes:
 
 POLICY_FILENAME = ".godmode-authorization-policy.json"
 
-_DEFAULT_TTL_SECONDS = 180
+# 180 expired under an agent's ordinary retry latency (a slow tool round-trip
+# plus one retry could outlast it); 300 measured comfortable while staying
+# one short conversation, not an open-ended window.
+_DEFAULT_TTL_SECONDS = 300
 
 
 class CapabilityBroker:
