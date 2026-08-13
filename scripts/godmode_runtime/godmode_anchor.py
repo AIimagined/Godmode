@@ -83,6 +83,103 @@ def _device_salt(home: Path) -> bytes:
     return value
 
 
+def _head_identity(requested: Path) -> tuple[int, int] | None:
+    """(mtime_ns, size) of the file whose change means "re-resolve the anchor".
+
+    Not `.git/HEAD` itself: measured empirically, a commit on the current
+    branch does NOT touch `.git/HEAD` (it stays `ref: refs/heads/main`
+    byte-for-byte; the SHA it resolves to lives in `refs/heads/main`, updated
+    separately) - only a checkout does, by rewriting which ref HEAD names.
+    `.git/logs/HEAD` (the reflog) is the file that actually appends on both:
+    git writes a new line to it on every commit AND every checkout, which is
+    exactly the two operations resolve_anchor's cached fields (branch, head)
+    can change under. Falls back to `.git/HEAD` when no reflog exists (fresh
+    repo before its first commit, or `core.logAllRefUpdates=false`) - staler,
+    but still correct for its one case (an as-yet-unrepeatable identity).
+
+    Ceiling named, not hidden: `_remote_hashes` can go stale between calls
+    (a `git remote add` does not touch HEAD or its reflog), so a cached
+    anchor's `remote_hashes` may lag until the next commit or checkout
+    invalidates the whole entry. Narrower and rarer than the branch/head
+    class this cache exists for; upgrade path if it ever matters is watching
+    `.git/config`'s identity too.
+
+    Subprocess-free by construction (stat only) - a cache whose staleness
+    check itself spawns git would defeat the point.
+    """
+    current = requested
+    for _ in range(64):  # bounded: a runaway upward walk is a bug, not a feature
+        marker = current / ".git"
+        if marker.exists():
+            git_dir = marker
+            if marker.is_file():
+                # Worktree indirection: the file's one line is
+                # "gitdir: /path/to/main/.git/worktrees/<name>".
+                try:
+                    content = marker.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    return None
+                prefix = "gitdir:"
+                line = next((l for l in content.splitlines()
+                            if l.strip().startswith(prefix)), "")
+                pointed = line.strip()[len(prefix):].strip()
+                if not pointed:
+                    return None
+                git_dir = Path(pointed)
+                if not git_dir.is_absolute():
+                    git_dir = current / git_dir
+            reflog = git_dir / "logs" / "HEAD"
+            target = reflog if reflog.exists() else (
+                git_dir / "HEAD" if git_dir.is_dir() else git_dir)
+            try:
+                stat = target.stat()
+                return (stat.st_mtime_ns, stat.st_size)
+            except OSError:
+                return None
+        if current.parent == current:
+            break
+        current = current.parent
+    return None
+
+
+def _anchor_cache_path(requested: Path) -> Path:
+    # Cache-only content, safe to delete at any time: lives beside the
+    # per-device salt, keyed by a hash of the resolved path so two projects
+    # never collide.
+    home = application_home()
+    key = hashlib.sha256(str(requested).encode("utf-8")).hexdigest()[:24]
+    return home / "anchor-cache" / f"{key}.json"
+
+
+def _load_cached_anchor(requested: Path, identity: tuple[int, int]) -> ProjectAnchor | None:
+    path = _anchor_cache_path(requested)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(raw, dict) or list(raw.get("_head_identity", [])) != list(identity):
+        return None
+    fields = {k: v for k, v in raw.items() if k != "_head_identity"}
+    try:
+        return ProjectAnchor(**fields)
+    except TypeError:
+        return None  # schema drifted since the entry was written; re-resolve
+
+
+def _store_cached_anchor(requested: Path, identity: tuple[int, int],
+                         anchor: ProjectAnchor) -> None:
+    path = _anchor_cache_path(requested)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = asdict(anchor)
+        payload["_head_identity"] = list(identity)
+        tmp = path.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        pass  # a cache write failure costs one extra resolve next call, not correctness
+
+
 def _remote_hashes(project: Path) -> list[str]:
     remotes = run_git(project, "remote")
     if not remotes:
@@ -122,6 +219,16 @@ def resolve_anchor(project: str | Path) -> ProjectAnchor:
     if not requested.exists() or not requested.is_dir():
         raise IdentityError(f"Project directory does not exist: {requested}")
 
+    # A cache hit answers without spawning git at all. `identity` is None for
+    # a non-git directory (no `.git` found in the walk), which routes
+    # straight past the cache into the existing non-git branch below - there
+    # is nothing to cache there; that branch never shells to git.
+    identity = _head_identity(requested)
+    if identity is not None:
+        cached = _load_cached_anchor(requested, identity)
+        if cached is not None:
+            return cached
+
     top = run_git(requested, "rev-parse", "--show-toplevel")
     common = run_git(requested, "rev-parse", "--git-common-dir")
     if top and common:
@@ -133,7 +240,7 @@ def resolve_anchor(project: str | Path) -> ProjectAnchor:
         project_key = hashlib.sha256(
             f"git\0{common_path}".encode("utf-8")
         ).hexdigest()[:24]
-        return ProjectAnchor(
+        anchor = ProjectAnchor(
             schema_version=SCHEMA_VERSION,
             project_root=str(project_root),
             project_key=project_key,
@@ -145,6 +252,9 @@ def resolve_anchor(project: str | Path) -> ProjectAnchor:
             remote_hashes=_remote_hashes(project_root),
             archive_root=str(canonical_path(common_path / ARCHIVE_DIRNAME)),
         )
+        if identity is not None:
+            _store_cached_anchor(requested, identity, anchor)
+        return anchor
 
     home = application_home()
     salt = _device_salt(home)
