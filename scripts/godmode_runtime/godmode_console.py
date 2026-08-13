@@ -338,6 +338,14 @@ def cmd_init(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         )
     if args.roles:
         payload["roles_scaffolded"] = _scaffold_roles(Path(runtime.anchor.project_root))
+    if not orphaned:
+        # The orphaned case already carries next_action with a stronger claim
+        # on attention; an ordinary init adds its own, less urgent list.
+        payload["next"] = [
+            "godmode inspect - see what godmode recorded about this project",
+            "godmode resume - start working with continuity",
+            "godmode guide - one-page orientation (password, tiers, day-one commands)",
+        ]
     return CommandResult(payload)
 
 
@@ -2034,10 +2042,43 @@ def _evidence(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--evidence", action="append", default=[], help="Evidence reference or digest; repeatable")
 
 
+# Printed directly by main(), never routed through CommandResult/JSON: a
+# static orientation page is prose for a terminal, not data for a caller,
+# and JSON-wrapping a multi-line string turns every newline into an
+# escaped \n that no one reads comfortably. No runtime/archive needed
+# either - unlike every other command here, this one names nothing about
+# THIS project.
+GUIDE_TEXT = """\
+GODMODE IN FIVE COMMANDS
+
+  godmode init             start the private local archive for this project
+  godmode resume           rebuild what is true now from recorded evidence
+  godmode status           the single writable status store
+  godmode doctor           health-check the installation and archive
+  godmode authorize setup  one-time password for IRREVERSIBLE operations
+
+WHAT RUNS WITHOUT ASKING     reads, edits, commits - tier R0-R2
+WHAT ASKS FIRST              push, deploy, db migrations - your host shows a dialog
+WHAT NEEDS THE PASSWORD      irreversible forms only (force-push, rm -rf on a
+                             root, DROP TABLE): the refusal names the exact
+                             staging command; in a hosted session run it with a
+                             leading '!' from the prompt.
+
+WHERE THINGS LIVE            state under the git metadata dir - never in your
+                             tracked files; nothing leaves the machine.
+
+MORE                         README.md (concepts) - godmode <cmd> --help (any
+                             command) - godmode capabilities (what is enforced
+                             on this host)
+"""
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="godmode",
         description="Local-first context continuity and guarded coding workflows.",
+        epilog="Start here: godmode guide  |  day one: init, resume, status, doctor",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--project", default=".", help="Project directory (default: current directory)")
     parser.add_argument("--json", action="store_true", help="Emit compact JSON")
@@ -2045,6 +2086,11 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Emit one human-readable line instead of JSON")
     parser.add_argument("--version", action="version", version=f"Godmode {RUNTIME_VERSION}")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser(
+        "guide",
+        help="One-page orientation: what godmode does, the five day-one commands, "
+             "and when the password matters")
 
     init_parser = sub.add_parser("init", help="Initialize the private local archive")
     init_parser.add_argument("--roles", action="store_true",
@@ -2803,6 +2849,9 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = _build_parser()
     args = parser.parse_args(lifted + raw)
+    if args.command == "guide":
+        print(GUIDE_TEXT, end="")
+        return 0
     if hasattr(args, "token_budget") and not 200 <= args.token_budget <= 10_000:
         parser.error("--token-budget must be between 200 and 10000")
     # S21-01: mode changes exposure, never enforcement. `guided` explains a
