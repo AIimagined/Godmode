@@ -43,7 +43,12 @@ _ABSENCE = re.compile(
     r"records?|occurrences?|instances?|references?|callers?|usages?)|"
     r"not (?:present|found|there|used|referenced|called)|"
     r"never (?:used|called|referenced)|zero |none (?:found|of them)|"
-    r"does not (?:exist|appear)|is absent|are absent|no such)\b",
+    r"does not (?:exist|appear)|is absent|are absent|no such|"
+    # Reversed word order and common idioms for the same claim shape - found
+    # missing by an adversarial pass: "the search turned up nothing" passed
+    # through this detector undetected because only "nothing found" (not
+    # "found nothing") was covered.
+    r"(?:found|turned up|came back|returned|yielded|showed) (?:nothing|empty))\b",
     re.IGNORECASE,
 )
 

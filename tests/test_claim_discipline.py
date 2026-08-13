@@ -111,6 +111,19 @@ class AbsenceWithoutControlTests(unittest.TestCase):
             _claim(1, "no references found across the whole tree",
                    evidence=["searched:rg calls_x src/ tests/"])])
         self.assertEqual(len(findings), 1)
+
+    def test_reversed_word_order_absence_idioms_are_caught(self) -> None:
+        # Found by an adversarial pass: only "nothing found" (not "found
+        # nothing") was covered, so "the search turned up nothing" and its
+        # siblings passed through both M18 and M21 completely undetected.
+        for text in (
+            "the search turned up nothing across every module",
+            "the query came back empty after checking all rows",
+            "the scan yielded nothing across the whole repo",
+        ):
+            findings = absence_without_control([
+                _claim(1, text, evidence=["searched:rg pattern ."])])
+            self.assertEqual(len(findings), 1, text)
         self.assertFalse(findings[0]["blocking"])
 
     def test_a_controlled_absence_is_clean(self) -> None:

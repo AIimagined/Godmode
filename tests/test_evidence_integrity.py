@@ -72,6 +72,24 @@ class EvidencePipeTests(unittest.TestCase):
         self.assertIsNone(evidence_pipe_advisory(
             "grep -l TODO src/*.py | xargs pytest"))
 
+    def test_godmodes_own_verdict_subcommands_are_covered(self):
+        # Found by an adversarial pass: the runner regex covered
+        # verify/gates/attest/precheck but missed selftest/scenarios/
+        # mistakes/assess - every one of them equally verdict-bearing and
+        # equally truncatable by the same pipe pattern.
+        for sub in ("selftest", "scenarios", "mistakes", "assess"):
+            self.assertIsNotNone(
+                evidence_pipe_advisory(f"godmode {sub} | Select-Object -Last 5"),
+                f"godmode {sub} should be a covered verdict runner")
+
+    def test_godmodes_non_verdict_subcommands_stay_clean(self):
+        # capabilities/inspect print data, not a pass/fail verdict; piping
+        # them is ordinary work and must not be flagged.
+        for sub in ("capabilities", "inspect"):
+            self.assertIsNone(
+                evidence_pipe_advisory(f"godmode {sub} | tail -5"),
+                f"godmode {sub} should not be treated as a verdict runner")
+
 
 class ScriptedSourceEditTests(unittest.TestCase):
     """In-place streamed regex edits are named, asked about, and explained."""
