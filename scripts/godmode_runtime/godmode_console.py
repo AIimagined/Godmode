@@ -9,6 +9,7 @@ import shlex
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any, Callable
 
@@ -260,6 +261,62 @@ def _append(
     )
 
 
+# One purpose line per role, so a scaffolded stub explains itself rather than
+# arriving as a blank file with a cryptic name.
+_ROLE_PURPOSE = {
+    "checklist": "Standing verification rows this project re-runs before it ships.",
+    "decisions": "Rulings with their reasons, so a later session inherits WHY.",
+    "invariants": "Behaviours that must stay true, each owning a guard.",
+    "inventory": "What exists and where, so nothing is rebuilt blind.",
+    "lessons": "What failed and the rule that prevents its recurrence.",
+    "operating-guide": "How to run, test, and release this project.",
+    "operator-profile": "Who operates this project and what they authorize.",
+    "sprint-truth": "What is actually in flight now, superseding stale plans.",
+    "state": "Current reality snapshot: versions, environments, live issues.",
+}
+_GLOB_CHARS = re.compile(r"[*?\[]")
+
+
+def _scaffold_roles(project: Path) -> dict[str, Any]:
+    """Write one stub per genuinely unbound role; never touch an existing file.
+
+    'Genuinely unbound' matches assess's own corrected reading: a role with
+    at least one matched candidate is satisfied, even if its OTHER
+    candidates don't exist - scaffolding those too would create redundant
+    files nobody asked for. Takes the first candidate pattern per missing
+    role, in the order resolve_roles reports it (which mirrors the
+    project's declared or default pattern list). A glob-shaped pattern
+    (contains */?/[) names a search, not a file to create, and is skipped.
+    """
+    resolution = resolve_roles(project)
+    bound = {b.role for b in resolution.bindings}
+    first_pattern: dict[str, str] = {}
+    for role, pattern in resolution.missing:
+        if role in bound or role in first_pattern:
+            continue
+        first_pattern[role] = pattern
+
+    written: list[str] = []
+    skipped: list[dict[str, str]] = []
+    for role in sorted(first_pattern):
+        pattern = first_pattern[role]
+        if _GLOB_CHARS.search(pattern):
+            skipped.append({"role": role, "pattern": pattern, "reason": "glob pattern, not a path"})
+            continue
+        target = project / pattern
+        if target.exists():
+            # Resolved as missing but something is there (a directory, or a
+            # dangling symlink _expand didn't count as a match) - never
+            # overwrite what we did not create.
+            skipped.append({"role": role, "pattern": pattern, "reason": "path already exists"})
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        purpose = _ROLE_PURPOSE.get(role, "Authority document for this role.")
+        target.write_text(f"# {role.replace('-', ' ').title()}\n\n{purpose}\n", encoding="utf-8")
+        written.append(pattern)
+    return {"written": written, "skipped": skipped}
+
+
 def cmd_init(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     already = runtime.archive.initialized()
     # Checked before initialize(), because initialize() creates the events directory
@@ -279,6 +336,8 @@ def cmd_init(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             "Records exist under this project's previous identity. Run `adopt` to relink "
             "them, or continue and they stay unreachable."
         )
+    if args.roles:
+        payload["roles_scaffolded"] = _scaffold_roles(Path(runtime.anchor.project_root))
     return CommandResult(payload)
 
 
@@ -1987,7 +2046,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"Godmode {RUNTIME_VERSION}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("init", help="Initialize the private local archive").set_defaults(handler=cmd_init)
+    init_parser = sub.add_parser("init", help="Initialize the private local archive")
+    init_parser.add_argument("--roles", action="store_true",
+                             help="Also scaffold a stub for every genuinely unbound "
+                                  "authority role (never overwrites an existing file)")
+    init_parser.set_defaults(handler=cmd_init)
     adopt = sub.add_parser("adopt", help="Relink records stranded by an identity change (e.g. git init)")
     adopt.add_argument("--source", help="Archive root to adopt; defaults to the detected one")
     adopt.add_argument("--confirm", action="store_true", help="Perform the relink, not just preview it")
