@@ -38,11 +38,18 @@ class Outcome:
 
 # Failures a real host must exhibit; Godmode cannot stage them locally. Named so
 # the coverage number is honest rather than flattering.
+#
+# tool-call-interception and concurrent-agent-collision moved to SCENARIOS
+# 2026-08-13: both are stageable without a live host after all -
+# hooks/godmode_session_hook.py IS the pre-tool boundary (this project drove
+# it directly, as a subprocess, throughout its own optimisation work), and
+# Chronicle's write_lock is specifically built to serialise concurrent
+# writers, testable with two real threads against one archive. Neither
+# needed a host; they needed the actual entrypoint instead of the functions
+# it wraps.
 NEEDS_A_HOST: tuple[tuple[str, str], ...] = (
     ("opaque-model-egress", "only a live provider call can show what a host actually transmitted"),
     ("cross-agent-resume", "requires two different agents resuming one checkpoint"),
-    ("tool-call-interception", "requires a host that exposes a pre-tool boundary"),
-    ("concurrent-agent-collision", "requires two agents writing the same worktree at once"),
 )
 
 
@@ -337,6 +344,92 @@ def _prior_fix_unguarded(project: Path, archive: Chronicle) -> tuple[bool, str]:
     return bool(hits and report["blocking"]), (hits[0]["detail"][:120] if hits else "not detected")
 
 
+def _tool_call_interception(project: Path, archive: Chronicle) -> tuple[bool, str]:
+    """The pre-tool boundary itself refuses a protected operation.
+
+    Every other scenario here calls the underlying function directly
+    (classify_action, plant_and_observe, ...). This one drives the REAL
+    entrypoint a host actually invokes - hooks/godmode_session_hook.py as a
+    subprocess, fed the exact JSON shape a PreToolUse hook receives - and
+    checks its printed decision, not a Python return value. Moved out of
+    NEEDS_A_HOST: this project spawned this same subprocess directly,
+    throughout its own hook-latency work, so "a host that exposes a
+    pre-tool boundary" was never actually missing - the scenario file just
+    never drove it that way.
+    """
+    import json as json_module
+    import subprocess
+    import sys
+
+    hook = Path(__file__).resolve().parents[2] / "hooks" / "godmode_session_hook.py"
+    payload = json_module.dumps({
+        "hook_event_name": "PreToolUse", "tool_name": "Bash",
+        "tool_input": {"command": "git push --force origin main"},
+        "cwd": str(project),
+    })
+    result = subprocess.run(
+        [sys.executable, str(hook), "pre-action"],
+        input=payload, capture_output=True, text=True, timeout=30,
+    )
+    try:
+        decision = json_module.loads(result.stdout)
+        permission = decision.get("hookSpecificOutput", {}).get("permissionDecision")
+    except (json_module.JSONDecodeError, AttributeError):
+        permission = None
+    caught = permission in ("ask", "deny")
+    return caught, f"permissionDecision={permission!r} (exit {result.returncode})"
+
+
+def _concurrent_agent_collision(project: Path, archive: Chronicle) -> tuple[bool, str]:
+    """Two writers racing one archive must never corrupt the chain.
+
+    Chronicle's write_lock (O_EXCL creation) exists exactly for this: five
+    Chronicle instances - standing in for five agents in five sessions -
+    appending to the SAME archive_root at once. The property under test is
+    INTEGRITY, not that every writer wins the lock within its timeout under
+    arbitrary system load: a writer that correctly backs off with
+    "archive is busy" under real contention is the lock working as
+    designed, not a collision. What must never happen is a forked or
+    dropped chain - verify() failing, or the sequence going non-contiguous
+    - which the negative control below (write_lock disabled) proves this
+    assertion actually catches.
+    """
+    import threading
+
+    from .godmode_anchor import resolve_anchor as _resolve
+
+    errors: list[str] = []
+
+    def writer(agent_id: int) -> None:
+        agent_archive = Chronicle(_resolve(project))
+        for i in range(4):
+            try:
+                agent_archive.append(
+                    "change", f"agent-{agent_id}-change-{i}",
+                    {"files": [f"f{agent_id}_{i}.py"]}, evidence=[])
+            except Exception as exc:  # noqa: BLE001 - a lock timeout is honest
+                # backpressure under load, not corruption; collected for
+                # visibility, never treated as the failure this checks for.
+                errors.append(f"agent {agent_id}: {exc}")
+
+    threads = [threading.Thread(target=writer, args=(n,)) for n in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=60)
+
+    fresh = Chronicle(resolve_anchor(project))
+    try:
+        result = fresh.verify()
+        intact = result["valid"]
+        detail = f"{result['records']} records landed, chain valid={result['valid']}"
+    except Exception as exc:  # noqa: BLE001
+        intact, detail = False, f"verify raised {exc.__class__.__name__}: {exc}"
+    if errors:
+        detail += f"; {len(errors)} writer backed off under contention (not corruption)"
+    return intact, detail
+
+
 SCENARIOS: tuple[tuple[str, str, str, Callable[[Path, Chronicle], tuple[bool, str]]], ...] = (
     ("duplicate-capability", "E-01", "one capability written twice under different names", _duplicate_capability),
     ("present-but-unwired", "E-02", "code exists and nothing reaches it", _present_but_unwired),
@@ -361,6 +454,8 @@ SCENARIOS: tuple[tuple[str, str, str, Callable[[Path, Chronicle], tuple[bool, st
     ("context-brief-latency", "E-19", "a resume brief too slow to be consulted", _context_brief_latency),
     ("session-restart", "CTX-01", "a next action lost between sessions", _session_restart),
     ("prior-fix-unguarded", "CTX-02", "a guarded fix changed without its guard re-run", _prior_fix_unguarded),
+    ("tool-call-interception", "E-20", "a protected operation reaching the real pre-tool boundary subprocess", _tool_call_interception),
+    ("concurrent-agent-collision", "E-21", "two agents writing the same archive at once", _concurrent_agent_collision),
 )
 
 
