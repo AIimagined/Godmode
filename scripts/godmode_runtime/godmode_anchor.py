@@ -7,7 +7,6 @@ import json
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
-import secrets
 import subprocess
 from typing import Any
 
@@ -65,9 +64,13 @@ def application_home() -> Path:
 
 
 def _device_salt(home: Path) -> bytes:
+    # Deferred: only the once-per-device salt-creation path needs it, and
+    # `secrets` transitively imports `hmac` - both paid on every hot-path
+    # call (resolve_anchor, on every tool call) until this moved.
     salt_path = home / "godmode-device.salt"
     if not salt_path.exists():
         try:
+            import secrets
             _secure_create(salt_path, secrets.token_bytes(32))
         except FileExistsError:
             pass

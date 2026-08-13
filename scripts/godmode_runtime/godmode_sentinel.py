@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+# getpass/hmac/secrets are deferred into the five CapabilityBroker methods
+# that use them (configure, configure_interactive, _password_matches, issue,
+# consume) rather than imported here: classify_action - the function every
+# hook call makes, whether or not it ever touches a capability - lives in
+# this same module, so a module-top import of these three paid their cost
+# on every tool call, not just the ones that mint or spend a capability.
 import base64
-import getpass
 import hashlib
-import hmac
 import json
 import os
 from pathlib import Path
 import re
-import secrets
 import sys
 import tempfile
 import time
@@ -1186,6 +1189,7 @@ class CapabilityBroker:
         return self.path.exists()
 
     def configure(self, password: str) -> None:
+        import secrets
         if self.configured():
             raise AuthorizationError("Authorization is already configured")
         if len(password) < 12:
@@ -1204,6 +1208,7 @@ class CapabilityBroker:
         _atomic_json(self.path, payload)
 
     def configure_interactive(self) -> None:
+        import getpass
         _require_tty()
         first = getpass.getpass("Create Godmode local authorization password: ")
         second = getpass.getpass("Confirm password: ")
@@ -1225,6 +1230,7 @@ class CapabilityBroker:
 
     @staticmethod
     def _password_matches(password: str, data: dict[str, Any]) -> bool:
+        import hmac
         candidate = hashlib.scrypt(
             password.encode("utf-8"),
             salt=_decode(data["salt"]),
@@ -1242,6 +1248,8 @@ class CapabilityBroker:
         ttl_seconds: int | None = None,
         context: dict[str, str] | None = None,
     ) -> str:
+        import hmac
+        import secrets
         policy = self._policy()
         classification = classify_action(
             operation, extra_protected=policy.get("password_required", ())
@@ -1363,6 +1371,7 @@ class CapabilityBroker:
         return None
 
     def issue_interactive(self, operation: str, ttl_seconds: int | None = None) -> str:
+        import getpass
         _require_tty()
         password = getpass.getpass("Godmode authorization password: ")
         return self.issue(operation, password, ttl_seconds)
@@ -1481,6 +1490,7 @@ class CapabilityBroker:
     def consume(
         self, operation: str, token: str, context: dict[str, str] | None = None
     ) -> dict[str, Any]:
+        import hmac
         classification = self._classify(operation)
         if not classification["protected"]:
             return classification
