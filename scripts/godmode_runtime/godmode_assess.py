@@ -31,7 +31,38 @@ def _finding(severity: str, code: str, detail: str, remedy: str) -> dict[str, st
     return {"severity": severity, "code": code, "detail": detail, "remedy": remedy}
 
 
-def assess(project: Path, budget: int = TYPICAL_COLD_START_TOKENS) -> dict[str, Any]:
+def _reviewed_advisory_reasons(archive: Any) -> dict[str, str]:
+    """rule_id -> the reason a human recorded for why it stays unenforced.
+
+    A rule with no enforcement is a wish; a rule with no enforcement AND no
+    stated reason is a wish nobody has examined. `charter --review-advisory`
+    writes the `decision` record this reads (subject
+    `charter-advisory-reviewed:<rule-id>`, data.reason). Best-effort: a
+    missing or unreadable archive means no rule has been reviewed yet, not
+    an error worth failing assess over.
+    """
+    if archive is None:
+        return {}
+    reasons: dict[str, str] = {}
+    try:
+        records = archive.read_events()
+    except Exception:  # noqa: BLE001 - assess degrades, never fails, on this
+        return {}
+    for record in records:
+        if record.get("kind") != "decision":
+            continue
+        subject = str(record.get("subject", ""))
+        if not subject.startswith("charter-advisory-reviewed:"):
+            continue
+        rule_id = subject[len("charter-advisory-reviewed:"):]
+        reason = str((record.get("data") or {}).get("reason", "")).strip()
+        if rule_id and reason:
+            reasons[rule_id] = reason
+    return reasons
+
+
+def assess(project: Path, budget: int = TYPICAL_COLD_START_TOKENS,
+          archive: Any = None) -> dict[str, Any]:
     """Measure whether this project's own guidance can be complied with."""
     findings: list[dict[str, str]] = []
     report: dict[str, Any] = {"project": project.name, "budget": budget}
@@ -90,12 +121,16 @@ def assess(project: Path, budget: int = TYPICAL_COLD_START_TOKENS) -> dict[str, 
         charter = compile_charter(project)
         enforceable = charter["enforcement"][HARD] + charter["enforcement"][SOFT]
         share = round(enforceable / charter["rules"], 3) if charter["rules"] else 0.0
+        reviewed = _reviewed_advisory_reasons(archive)
+        advisory_rules = [r for r in charter["compiled"] if r["enforcement"] == ADVISORY]
+        unexplained = [r["id"] for r in advisory_rules if r["id"] not in reviewed]
         report["charter"] = {
             "rules": charter["rules"],
             "hard": charter["enforcement"][HARD],
             "soft": charter["enforcement"][SOFT],
             "advisory": charter["enforcement"][ADVISORY],
             "checkable_share": share,
+            "advisory_unexplained": unexplained,
         }
         if charter["rules"] and share < 0.25:
             findings.append(_finding(

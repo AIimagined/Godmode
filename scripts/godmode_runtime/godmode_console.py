@@ -36,7 +36,7 @@ from .godmode_bindings import check as bindings_check
 from .godmode_bindings import dependency_gate, release_checksums, sbom_cyclonedx, sbom_spdx
 from .godmode_bindings import sbom as build_sbom
 from .godmode_bindings import write as bindings_write
-from .godmode_charter import TRIGGERS, applicable_rules, bootstrap_rules, compile_charter, traits_of
+from .godmode_charter import ADVISORY, TRIGGERS, applicable_rules, bootstrap_rules, compile_charter, traits_of
 from .godmode_drift import capabilities as host_capabilities
 from .godmode_changelog import check_fragments, merge_fragments
 from .godmode_integrity import analyze as analyze_integrity
@@ -448,6 +448,22 @@ def cmd_operator(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 def cmd_charter(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     if args.bootstrap:
         return CommandResult(bootstrap_rules(Path(runtime.anchor.project_root)))
+    if args.review_advisory:
+        _require_archive(runtime)
+        if not args.reason or not args.reason.strip():
+            raise ArchiveError("--review-advisory needs --reason: why can no mechanical "
+                              "check decide this rule?")
+        charter = _charter(runtime)
+        ids = {r["id"] for r in charter["compiled"] if r["enforcement"] == ADVISORY}
+        if args.review_advisory not in ids:
+            raise ArchiveError(f"'{args.review_advisory}' is not a currently-compiled "
+                              f"ADVISORY rule id; run `charter --full` to list them")
+        record = runtime.archive.append(
+            "decision", f"charter-advisory-reviewed:{args.review_advisory}",
+            {"reason": args.reason.strip()[:400]}, evidence=[])
+        return CommandResult({"reviewed": args.review_advisory,
+                              "reason": record["data"]["reason"],
+                              "sequence": record["sequence"]})
     charter = _charter(runtime)
     if not charter.get("compiled"):
         # Zero rules means every gate passes vacuously - say so instead of
@@ -874,7 +890,8 @@ def cmd_capabilities(args: argparse.Namespace, runtime: Runtime) -> CommandResul
 
 
 def cmd_assess(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
-    report = assess_project(Path(runtime.anchor.project_root), budget=args.token_budget)
+    report = assess_project(Path(runtime.anchor.project_root), budget=args.token_budget,
+                            archive=runtime.archive)
     if not args.full:
         report["authority_claims"].pop("top", None)
     return CommandResult(report, exit_code=1 if report["verdict"] == "at-risk" else 0)
@@ -1992,6 +2009,9 @@ def _build_parser() -> argparse.ArgumentParser:
                          help="Surface rules no attestation touched in the last N sessions")
     charter.add_argument("--bootstrap", action="store_true",
                          help="Mine candidate invariants from the project's commit history")
+    charter.add_argument("--review-advisory", metavar="RULE_ID",
+                         help="Record why an ADVISORY rule stays unenforced (requires --reason)")
+    charter.add_argument("--reason", help="The reason text for --review-advisory")
 
     operator = sub.add_parser("operator", help="Validate the typed operator profile")
     operator.set_defaults(handler=cmd_operator)
