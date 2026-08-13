@@ -281,3 +281,55 @@ def record_triggers(archive: Any, base_sequence: int = 0) -> dict[str, Any]:
         "missing": missing,
         "verdict": "reconciled" if not missing else "documentation-missing",
     }
+
+
+def guard_citations_resolve(archive: Any, project: Path) -> dict[str, Any]:
+    """Every guard-bearing record's file citations must resolve on disk.
+
+    A registry Guard column that names no runnable test is not a guard, and a
+    guard citing a path that no longer exists is a fix that can silently
+    revert - the mandatory scan was once found reading an index missing 43
+    shipped fixes, which is how two of them were extended blind. Both
+    directions are drift: a citation to a deleted file says the guard is
+    gone; a guard-bearing record with no file citation at all says it never
+    had one.
+
+    Report-only. Renames are ordinary work, and the remedy - re-point the
+    citation, never loosen the guard - belongs to the operator.
+    """
+    project = Path(project)
+    dead: list[dict[str, Any]] = []
+    unanchored: list[dict[str, Any]] = []
+    checked = 0
+    for record in archive.read_events():
+        if record["kind"] not in {"lesson", "invariant"}:
+            continue
+        data = record.get("data") or {}
+        if record["kind"] == "lesson" and not data.get("generalized_guard"):
+            continue
+        checked += 1
+        cited = [e[len("file:"):] for e in record.get("evidence", [])
+                 if e.startswith("file:")]
+        if not cited:
+            unanchored.append({
+                "sequence": record["sequence"], "subject": record["subject"][:60],
+                "detail": "declares a guard and cites no file; a guard nothing "
+                          "points at cannot be re-run or re-pointed",
+            })
+            continue
+        for relative in cited:
+            if not (project / relative).is_file():
+                dead.append({
+                    "sequence": record["sequence"],
+                    "subject": record["subject"][:60],
+                    "path": relative,
+                    "detail": "cites a file that no longer exists; re-point the "
+                              "citation to where the guard lives now, or the fix "
+                              "it protects can silently revert",
+                })
+    return {
+        "checked": checked,
+        "dead_citations": dead,
+        "unanchored_guards": unanchored,
+        "verdict": "resolved" if not dead and not unanchored else "guard-drift",
+    }
