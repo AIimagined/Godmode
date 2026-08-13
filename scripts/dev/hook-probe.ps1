@@ -4,10 +4,10 @@
 $payload = '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git status"}}'
 $times = @()
 # one unmeasured warm-up spawn so the OS file cache is comparable across runs
-$payload | python hooks/godmode_session_hook.py *> $null
+$payload | python hooks/godmode_session_hook.py pre-action *> $null
 for ($i = 0; $i -lt 7; $i++) {
     $t0 = [Diagnostics.Stopwatch]::StartNew()
-    $payload | python hooks/godmode_session_hook.py *> $null
+    $payload | python hooks/godmode_session_hook.py pre-action *> $null
     $t0.Stop()
     $times += $t0.Elapsed.TotalMilliseconds
 }

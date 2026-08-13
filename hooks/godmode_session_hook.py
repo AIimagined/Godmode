@@ -12,23 +12,21 @@ from typing import Any
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
+# Only names every `pre-action` call pays for. `pre-action` fires once per
+# tool call - the hot path - while session-start/user-prompt/pre-compact/
+# session-end fire once or a few times per session; their modules
+# (charter, corpus, drift's compare, lens, requests, contribution, and the
+# capability broker's secrets/getpass/hmac chain) are imported inside the
+# branch that actually uses them, below, instead of paying for six modules
+# a mutating tool call never touches.
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_runtime.godmode_errors import GodmodeError  # noqa: E402
 from godmode_runtime.godmode_attest import attested_rule_ids, latest_session  # noqa: E402
-from godmode_runtime.godmode_charter import compile_charter  # noqa: E402
-from godmode_runtime.godmode_corpus import resolve_roles  # noqa: E402
-from godmode_runtime.godmode_requests import record_request  # noqa: E402
-from godmode_runtime.godmode_drift import capabilities as host_capabilities  # noqa: E402
-from godmode_runtime.godmode_drift import compare as compare_sessions  # noqa: E402
-from godmode_runtime.godmode_fence import design_verdict, fence_verdict  # noqa: E402
-from godmode_runtime.godmode_lens import build_context_brief  # noqa: E402
-from godmode_runtime.godmode_contribution import contribution  # noqa: E402
-from godmode_runtime.godmode_contribution import render_line as render_contribution  # noqa: E402
 from godmode_runtime.godmode_guardrails import check_ceilings  # noqa: E402
 from godmode_runtime.godmode_guardrails import meter_tool_call, tool_operation, watchdog  # noqa: E402
 from godmode_runtime.godmode_sentinel import (  # noqa: E402
-    CapabilityBroker, classify_action, evidence_pipe_advisory)
+    classify_action, evidence_pipe_advisory)
 
 
 CLAUDE_CONTEXT_LIMIT = 9_000
@@ -99,6 +97,13 @@ def _session_obligations(anchor: Any, archive: Chronicle) -> dict[str, Any]:
     adapter is worse than none. Any failure here degrades to a stated limitation
     instead of taking the session down.
     """
+    # Deferred: this function runs once per session, on session-start only,
+    # so paying import cost here never touches the per-tool-call hot path.
+    from godmode_runtime.godmode_charter import compile_charter
+    from godmode_runtime.godmode_corpus import resolve_roles
+    from godmode_runtime.godmode_drift import capabilities as host_capabilities
+    from godmode_runtime.godmode_drift import compare as compare_sessions
+
     project = Path(anchor.project_root)
     obligations: dict[str, Any] = {}
     try:
@@ -173,6 +178,15 @@ def _session_obligations(anchor: Any, archive: Chronicle) -> dict[str, Any]:
 _REFUSE_OUTRIGHT = frozenset({"R5"})
 
 
+def _broker(archive: Chronicle) -> Any:
+    # Deferred: CapabilityBroker drags secrets/hmac/getpass into the import
+    # graph, which only the two consume branches below ever need - the
+    # ordinary allow path (the overwhelming majority of tool calls) never
+    # pays for them.
+    from godmode_runtime.godmode_sentinel import CapabilityBroker
+    return CapabilityBroker(archive)
+
+
 def _decision_for(preview: dict[str, Any]) -> str:
     """`ask` or `deny`, from the tier the classifier already computed.
 
@@ -234,6 +248,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.event == "session-start":
+            from godmode_runtime.godmode_lens import build_context_brief
             brief = build_context_brief(anchor, archive)
             brief["obligations"] = _session_obligations(anchor, archive)
             if claude_session:
@@ -254,6 +269,7 @@ def main(argv: list[str] | None = None) -> int:
             # more thing to answer beside the work already running.
             prompt = str(submitted.get("prompt", ""))
             try:
+                from godmode_runtime.godmode_requests import record_request
                 record_request(
                     archive, prompt,
                     session=str(submitted.get("session_id") or "") or None,
@@ -289,6 +305,8 @@ def main(argv: list[str] | None = None) -> int:
             # when nothing fired, and switched off by .godmode-report.json.
             session = latest_session(archive)
             if session:
+                from godmode_runtime.godmode_contribution import contribution
+                from godmode_runtime.godmode_contribution import render_line as render_contribution
                 summary = render_contribution(
                     contribution(archive, Path(anchor.project_root), session))
                 if summary:
@@ -348,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
             preview["governance_block"] = True
         elif not preview["protected"]:
             preview["allow"] = True
-        elif (staged := CapabilityBroker(archive).consume_staged(operation)) is not None:
+        elif (staged := _broker(archive).consume_staged(operation)) is not None:
             # An operator authorised this exact command with the password, and
             # left it where the hook can read it. Without this the refusal
             # named a remedy nobody could perform, so the only answer to a
@@ -357,7 +375,7 @@ def main(argv: list[str] | None = None) -> int:
             preview["capability_consumed"] = True
             preview["authorized_by"] = "staged capability"
         elif submitted.get("capability"):
-            CapabilityBroker(archive).consume(operation, str(submitted["capability"]))
+            _broker(archive).consume(operation, str(submitted["capability"]))
             preview["allow"] = True
             preview["capability_consumed"] = True
         else:
@@ -407,6 +425,10 @@ def main(argv: list[str] | None = None) -> int:
         if preview.get("allow") and tool in _FENCED_TOOLS:
             target = str((submitted.get("tool_input") or {}).get("file_path", "")).strip()
             if target:
+                # Deferred: only Edit/Write-class tools pay for the fence
+                # module - the far more common read-only and R0-R2 tool
+                # calls never reach this branch.
+                from godmode_runtime.godmode_fence import design_verdict, fence_verdict
                 # The design boundary is checked first and denies outright. It
                 # is project state rather than task state, and the operator
                 # said this one needs their permission - a one-key `ask` in the
