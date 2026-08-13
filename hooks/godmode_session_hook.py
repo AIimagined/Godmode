@@ -27,7 +27,8 @@ from godmode_runtime.godmode_contribution import contribution  # noqa: E402
 from godmode_runtime.godmode_contribution import render_line as render_contribution  # noqa: E402
 from godmode_runtime.godmode_guardrails import check_ceilings  # noqa: E402
 from godmode_runtime.godmode_guardrails import meter_tool_call, tool_operation, watchdog  # noqa: E402
-from godmode_runtime.godmode_sentinel import CapabilityBroker, classify_action  # noqa: E402
+from godmode_runtime.godmode_sentinel import (  # noqa: E402
+    CapabilityBroker, classify_action, evidence_pipe_advisory)
 
 
 CLAUDE_CONTEXT_LIMIT = 9_000
@@ -428,6 +429,16 @@ def main(argv: list[str] | None = None) -> int:
         if pretool:
             # Silence is the allow signal in this contract; only a refusal speaks,
             # so an allowed tool call costs the host nothing but the exit code.
+            if preview["allow"] and operation:
+                # An allowed call may still deserve one sentence: a test run
+                # piped through a truncating filter destroys the evidence the
+                # run exists to produce. Advisory, never a refusal - the
+                # classifier cannot know which run is the deciding one.
+                advisory = evidence_pipe_advisory(operation)
+                if advisory:
+                    print(json.dumps({"systemMessage": advisory},
+                                     ensure_ascii=False))
+                return 0
             if not preview["allow"]:
                 print(json.dumps({
                     "hookSpecificOutput": {

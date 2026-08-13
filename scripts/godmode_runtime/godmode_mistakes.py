@@ -100,6 +100,28 @@ _UNFRAMED_CLOCK = re.compile(
 )
 
 
+# Markdown emphasis stripped before any keyword matcher runs. Models bold
+# exactly the words a matcher anchors on - "**no evidence** of X" carries
+# asterisks through `\b`, and a matcher that has never seen its needle
+# formatted is a matcher that fires on plain text only. Links keep their
+# text and lose their target; emphasis marks vanish; code spans keep their
+# content because a claim quoted in backticks is still the claim.
+_MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_MD_EMPHASIS = re.compile(r"(\*{1,3}|_{1,3}|`)(?=\S)(.+?)(?<=\S)\1")
+
+
+def _prose(text: str) -> str:
+    """Markdown-normalised text for keyword matchers."""
+    text = _MD_LINK.sub(r"\1", text)
+    # Nested emphasis (***x***, **`y`**) unwraps one layer per pass.
+    for _ in range(3):
+        stripped = _MD_EMPHASIS.sub(r"\2", text)
+        if stripped == text:
+            break
+        text = stripped
+    return text
+
+
 def label_as_fact(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """M1: a status label used as evidence must trace to the record that assigned it."""
     findings = []
@@ -235,7 +257,7 @@ def claim_splitting(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for record in records:
         if record["kind"] != "claim":
             continue
-        text = str(record["data"].get("text", record["subject"]))
+        text = _prose(str(record["data"].get("text", record["subject"])))
         parts = [p for p in _CLAIM_SPLIT.split(text) if _VERBISH.search(p or "")]
         if len(parts) >= 2:
             findings.append({
@@ -352,7 +374,7 @@ def root_without_code(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if record["kind"] != "claim":
             continue
         data = record.get("data") or {}
-        text = str(data.get("text") or record["subject"])
+        text = _prose(str(data.get("text") or record["subject"]))
         if not _CAUSAL.search(text):
             continue
         if str(data.get("grade", "")).lower() in {"hypothesis", "unknown"}:
@@ -450,7 +472,7 @@ def claim_from_a_sample(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if record["kind"] != "claim":
             continue
         data = record.get("data") or {}
-        text = str(data.get("text") or record["subject"])
+        text = _prose(str(data.get("text") or record["subject"]))
         absence = _ABSENCE.search(text)
         count = _BARE_COUNT.search(text)
         if not absence and not count:
@@ -476,6 +498,180 @@ def claim_from_a_sample(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return findings
 
 
+# Status vocabulary that says an item is being CARRIED - re-presented from a
+# ledger, a handover, a checklist row - rather than freshly established. A
+# carried label was measured drifting from code twice in one recorded night:
+# a "pending sweep" listed six items already shipped, and a month-old OPEN
+# marker put fixed work back on the critical path.
+_CARRIED_STATUS = re.compile(
+    r"\b(?:still (?:open|broken|pending|failing)|remains? (?:open|broken|unfixed)|"
+    r"carried (?:forward|over)|not yet (?:fixed|done|shipped)|"
+    r"pending (?:items?|list|sweep)|open items?)\b",
+    re.IGNORECASE,
+)
+
+
+def carried_status_unverified(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """M19: a carried status re-presented without fresh per-item evidence.
+
+    A pending list is not evidence; each item it re-emits needs one cheap
+    existence check against the code, or the list is a label describing a
+    label. The claim clears by citing what was checked - a `file:` for the
+    surface examined, or `searched:`/`scanned:` naming the sweep - in the
+    same record that carries the status.
+    """
+    findings = []
+    for record in records:
+        if record["kind"] != "claim":
+            continue
+        data = record.get("data") or {}
+        text = _prose(str(data.get("text") or record["subject"]))
+        if not _CARRIED_STATUS.search(text):
+            continue
+        evidence = record.get("evidence", [])
+        if any(e.startswith(("file:", "searched:", "scanned:")) for e in evidence):
+            continue
+        findings.append({
+            "detector": "carried-status-unverified", "blocking": True,
+            "detail": f"'{text[:70]}' re-presents a carried status with no fresh "
+                      "check behind it; a pending list is not evidence - verify "
+                      "each item against the code and cite what was examined",
+            "citations": [f"seq:{record['sequence']}"],
+        })
+    return findings
+
+
+def remedy_on_hypothesis(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """M20: a plan or change built on a root still graded as a hypothesis.
+
+    Designing the remedy is how an unconfirmed root hardens into a fact
+    nobody re-examines - the fix's existence becomes the evidence. A plan may
+    cite a hypothesis to TEST it; what fires here is a plan citing one as its
+    foundation while no confirmed claim on the same subject exists.
+    """
+    grade_by_seq: dict[int, str] = {}
+    confirmed_subjects: set[str] = set()
+    for record in records:
+        if record["kind"] != "claim":
+            continue
+        data = record.get("data") or {}
+        grade = str(data.get("grade", "")).lower()
+        grade_by_seq[int(record.get("sequence", 0))] = grade
+        if grade not in {"hypothesis", "unknown", ""} and any(
+                e.startswith("file:") for e in record.get("evidence", [])):
+            confirmed_subjects.add(record.get("subject", ""))
+
+    findings = []
+    for record in records:
+        if record["kind"] not in {"plan", "change"}:
+            continue
+        cited_hypotheses = [
+            e for e in record.get("evidence", [])
+            if e.startswith("seq:")
+            and grade_by_seq.get(int(e.split(":", 1)[1] or 0), None)
+            in {"hypothesis", "unknown"}
+        ]
+        if not cited_hypotheses:
+            continue
+        if record.get("subject", "") in confirmed_subjects:
+            continue
+        findings.append({
+            "detector": "remedy-on-hypothesis", "blocking": False,
+            "detail": f"{record['kind']} '{record['subject'][:60]}' cites "
+                      f"{cited_hypotheses[0]} which is graded hypothesis, and no "
+                      "confirmed claim on this subject exists; confirm the root "
+                      "with a differential before building the remedy, or name "
+                      "the plan as the experiment that will grade it",
+            "citations": [f"seq:{record['sequence']}"] + cited_hypotheses[:2],
+        })
+    return findings
+
+
+def absence_without_control(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """M21: an absence claim whose search was never proven able to find.
+
+    M18 demands the extent; this demands the instrument. A search that has
+    never found anything is indistinguishable from a search that cannot -
+    a malformed pattern, a wrong root, a harness whose failure shares a
+    return value with 'no results'. The claim clears by citing a control:
+    a probe of a known-present target through the same instrument
+    (`control:` evidence), or a second independent method (`second:`).
+    Advisory, because M18 already blocks the extent-free form.
+    """
+    findings = []
+    for record in records:
+        if record["kind"] != "claim":
+            continue
+        data = record.get("data") or {}
+        text = _prose(str(data.get("text") or record["subject"]))
+        if not _ABSENCE.search(text):
+            continue
+        evidence = record.get("evidence", [])
+        stated_extent = any(e.startswith(("searched:", "scanned:", "population:"))
+                            for e in evidence) or _EXTENT.search(text)
+        if not stated_extent:
+            continue  # M18's finding; one defect, one detector.
+        if any(e.startswith(("control:", "second:")) for e in evidence):
+            continue
+        findings.append({
+            "detector": "absence-without-control", "blocking": False,
+            "detail": f"'{text[:70]}' asserts an absence from a search never "
+                      "proven able to find - run the same instrument against a "
+                      "known-present target (`control:`) or prove the absence a "
+                      "second independent way (`second:`); an empty result from "
+                      "a broken probe reads identically to a true negative",
+            "citations": [f"seq:{record['sequence']}"],
+        })
+    return findings
+
+
+# A change whose own description quantifies over a class. "Every caller",
+# "all sites", "never again" - each is a promise to enumerate, and a
+# one-file diff under it means the promise was kept at one member. Recorded
+# five times in one session as the same shape: the fix landed on the
+# reported instance and the user found the sibling.
+_CLASS_CLAIM = re.compile(
+    r"\b(?:every|all|each|any)\s+(?:caller|site|path|lane|surface|consumer|"
+    r"reader|writer|branch|route|usage|instance|occurrence)s?\b|"
+    r"\bnever\s+(?:again|recurs?)\b|\bwhole\s+class\b|\bclass[- ]wide\b",
+    re.IGNORECASE,
+)
+
+
+def class_claim_single_file(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """M22: a change quantifying over a class while touching one file.
+
+    'Scoped fix' means don't change unrelated surfaces, not don't check the
+    identical sibling. A change that says 'every caller' and diffs one file
+    either swept and found nothing - in which case the sweep is citable
+    (`searched:`) - or never swept, in which case the user becomes the sweep.
+    """
+    findings = []
+    for record in records:
+        if record["kind"] != "change":
+            continue
+        data = record.get("data") or {}
+        text = _prose(" ".join(str(part) for part in (
+            record.get("subject", ""), data.get("plan", ""))))
+        if not _CLASS_CLAIM.search(text):
+            continue
+        files = data.get("files") or []
+        if len(files) != 1:
+            continue
+        evidence = record.get("evidence", [])
+        if any(e.startswith(("searched:", "scanned:")) for e in evidence):
+            continue
+        findings.append({
+            "detector": "class-claim-single-file", "blocking": False,
+            "detail": f"change '{record['subject'][:60]}' quantifies over a class "
+                      f"and touches one file ({files[0]}); cite the sweep that "
+                      "cleared the siblings (`searched:`) or narrow the claim to "
+                      "the instance it fixed",
+            "citations": [f"seq:{record['sequence']}"],
+        })
+    return findings
+
+
 def analyze(archive: Chronicle) -> dict[str, Any]:
     records = archive.read_events()
     findings = (
@@ -488,6 +684,10 @@ def analyze(archive: Chronicle) -> dict[str, Any]:
         + root_without_code(records)
         + unretracted_reversal(records)
         + claim_from_a_sample(records)
+        + carried_status_unverified(records)
+        + remedy_on_hypothesis(records)
+        + absence_without_control(records)
+        + class_claim_single_file(records)
     )
     blocking = [f for f in findings if f["blocking"]]
     return {

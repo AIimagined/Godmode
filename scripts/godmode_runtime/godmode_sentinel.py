@@ -211,6 +211,24 @@ _ACTION_PATTERNS: tuple[tuple[str, re.Pattern[str], tuple[str, ...]], ...] = (
         ("local files", "recoverability"),
     ),
     (
+        # A streamed regex edit of a file in place. Multi-layer escaping and
+        # pattern-located boundaries silently corrupt source (four escaping
+        # failures in one recorded session); the honest tools are the host's
+        # Edit/Write, which match exact text and fail loudly. This was already
+        # protected as `unclassified-mutation` - the point of naming it is the
+        # refusal message: "use the editor tools" beats "unknown state".
+        # Scripts remain the right tool for DATA files; the ask-tier leaves
+        # that judgement with the operator instead of refusing outright.
+        "scripted-source-edit",
+        re.compile(
+            r"(?i)\bsed\b[^;|&]*\s(?:-i|--in-place)\b|"
+            r"\bperl\b[^;|&]*\s-[a-z]*i[a-z]*\b|"
+            r"\bawk\b[^;|&]*\s-i\s*inplace\b"
+        ),
+        ("file contents via a streamed regex; exact-text editor tools are the "
+         "safe form for source", "silent mid-line corruption"),
+    ),
+    (
         # Ending a process. Restarting a dev server the agent started is
         # ordinary work, and it was an `unclassified-mutation` - the bucket for
         # things the classifier does not recognise at all - so the refusal said
@@ -652,6 +670,78 @@ _SAFE_INSPECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 # §9.2 risk tiers. R1 (local compute/archive state) and R2 (worktree file
+# A command whose output IS the verdict - a test runner, a type check, a
+# gate - piped into a filter that discards part of that output before anyone
+# has read it. The exit code that survives the pipe is the filter's, not the
+# gate's, and the truncated lines are exactly where the one failing test's
+# name lived. Recorded live more than once: an 865-test run tailed to 30
+# lines lost its own summary, and a red suite could never be named because
+# the command that ran it had thrown the evidence away.
+#
+# An advisory, not a refusal. Piping a LOG through grep is ordinary work,
+# and the classifier cannot know which run is the deciding one - so it warns
+# on the shape and lets the operator's judgement stand. The honest form is
+# named in the message: capture full output to a file, filter afterwards.
+_VERDICT_RUNNER = re.compile(
+    r"(?i)\b(?:pytest|py\.test|unittest|vitest|jest|mocha|rspec|phpunit|"
+    r"cargo\s+test|go\s+test|dotnet\s+test|tsc\b|mypy|pyright|"
+    r"npm\s+(?:test|run\s+test\S*)|yarn\s+test|pnpm\s+test|"
+    r"godmode\s+(?:verify|gates|attest|precheck))"
+)
+_EVIDENCE_TRUNCATOR = re.compile(
+    r"(?i)\|\s*(?:tail|head|grep|findstr|select-string|"
+    r"select-object\s+(?:-first|-last|-skip)|sed\s+-n|awk\s+'?NR)"
+)
+
+
+def _push_triggered_workflows(project_root: Path | None) -> list[str]:
+    """Workflow files that fire on push - the automation a push engages.
+
+    A push to a deploy-wired branch IS a deploy action, and authorization to
+    push is not authorization for the automation unless the automation was
+    named. The scan is textual on purpose: a YAML parse would be a dependency
+    for what one substring answers, and a false positive here costs one
+    sentence of disclosure.
+    """
+    if project_root is None:
+        return []
+    names: list[str] = []
+    workflows = Path(project_root) / ".github" / "workflows"
+    try:
+        candidates = sorted(workflows.iterdir())
+    except OSError:
+        return []
+    for path in candidates:
+        if path.suffix.lower() not in (".yml", ".yaml") or not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        # `on: push`, `on: [push, ...]`, or a `push:` key under `on:`.
+        if re.search(r"(?m)^on:\s*(?:\[?[^\n]*\bpush\b|$)", text) and "push" in text:
+            if re.search(r"(?m)^on:\s*\[?[^\n]*\bpush\b", text) or \
+                    re.search(r"(?m)^\s{2,}push\s*:", text):
+                names.append(path.name)
+    return names
+
+
+def evidence_pipe_advisory(command: str) -> str | None:
+    """A verdict-bearing run piped through a truncating filter, or None."""
+    runner = _VERDICT_RUNNER.search(command)
+    if not runner:
+        return None
+    truncator = _EVIDENCE_TRUNCATOR.search(command, runner.end())
+    if not truncator:
+        return None
+    return (
+        "evidence-pipe: a verdict-bearing command is piped through a filter "
+        "before its outcome is known - the exit code becomes the filter's and "
+        "the dropped lines are where the failure's name lives. If this run "
+        "decides a claim, capture full output to a file and filter afterwards."
+    )
+
+
 # mutation) are reserved for categories the classifier does not yet emit;
 # every unmapped category resolves to R3 so an unknown can never rank below
 # history mutation.
@@ -665,6 +755,7 @@ _TIER_BY_CATEGORY = {
     "git-branch-mutation": "R3",
     "git-history-or-remote": "R3",
     "worktree-discard": "R3",
+    "scripted-source-edit": "R3",
     "process-control": "R3",
     "database-mutation": "R3",
     "unclassified-mutation": "R3",
@@ -761,6 +852,14 @@ def _categorize(normalized: str, project_root: Path | None = None) -> tuple[str,
         if not _contained(path, project_root) and not _is_scratch(Path(path), project_root):
             return ("worktree-file-mutation", True,
                     [f"outside the working tree: {path[:80]}"])
+        # Writing a "new" file onto an existing filename is an overwrite bet.
+        # The host's own editor refuses an unread overwrite interactively, but
+        # an operation arriving here as a declared write has no such net - so
+        # the impact names what is at stake instead of implying a blank slate.
+        if normalized.lower().startswith("write") and Path(path).is_file():
+            return ("worktree-file-mutation", False,
+                    [f"OVERWRITES an existing file: {Path(path).name[:60]}; "
+                     "read and extend it unless replacement is the intent"])
         return "worktree-file-mutation", False, ["a file in the working tree"]
 
     # Strip leading assignments so `VAR=x cmd` is judged on cmd; an assignment
@@ -959,6 +1058,14 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     if not protected and category in tuple(extra_protected):
         protected = True
         impact = list(impact) + ["protection extended by local authorization policy"]
+    # A push names the automation it engages. The approver reading "touches a
+    # remote" and the approver reading "touches a remote AND fires deploy.yml"
+    # are approving two different operations; only one of them knows it.
+    if category == "git-history-or-remote" and _GIT_PUSH.search(normalized):
+        wired = _push_triggered_workflows(project_root)
+        if wired:
+            impact = list(impact) + [
+                "push-triggered automation: " + ", ".join(wired[:4])]
     tier, second_confirmation = _risk_tier(category, normalized)
     return {
         "protected": protected,

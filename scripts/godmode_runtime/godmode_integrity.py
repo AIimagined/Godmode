@@ -420,6 +420,25 @@ _WRITE_CALL = re.compile(
 _TEMPORARY = re.compile(
     r"tmp_path|tmpdir|TemporaryDirectory|mkdtemp|gettempdir|NamedTemporaryFile"
     r"|isolated_project|_project\(|holder\.|self\.project|/tmp/")
+# Anything that can make a test red. A body with none of these is a guard
+# whose planted violation could never reach an assertion - it passes because
+# nothing in it can fail, which reads identically to passing because the code
+# is right. Helpers that assert internally are accepted by the call heuristic:
+# a body that only calls things cannot be told apart cheaply, so the finding
+# stays non-blocking.
+_ASSERTISH = re.compile(
+    r"\bassert\b|\.assert[A-Z]|assertRaises|pytest\.raises|\braise\b"
+    r"|\bself\.fail\b|\bunittest\.skip")
+# An except arm that swallows without reporting. Inside a test this deletes
+# the only path by which the failure it guards could surface; the suite stays
+# green while the covered defect is live.
+_SILENT_CATCH = re.compile(
+    r"except[^:\n]*:\s*(?:#[^\n]*)?\n\s*pass\b")
+# A source file read through a fixed numeric slice. The guard covers the
+# first N characters of a file that grows, so it silently stops covering the
+# code it was written for - the anchor must be syntactic, not positional.
+_FIXED_SLICE = re.compile(
+    r"\.read(?:_text|_bytes)?\([^)]*\)[^\n]*\[\s*:\s*\d{3,}\s*\]")
 
 
 def guard_quality(project: Path, base: str = "HEAD") -> list[dict[str, Any]]:
@@ -455,6 +474,29 @@ def guard_quality(project: Path, base: str = "HEAD") -> list[dict[str, Any]]:
                     f"`{name}` writes to a path that is not temporary: "
                     f"{writes[0].strip()[:70]} - a write-endpoint test aimed at "
                     "real data destroys what it was verifying",
+                    False))
+            if not _ASSERTISH.search(body):
+                findings.append(_finding(
+                    "assertion-free-test", relative,
+                    f"`{name}` contains nothing that can fail - no assert, no "
+                    "raise, no expected exception; a guard whose planted "
+                    "violation cannot reach an assertion passes for the wrong "
+                    "reason",
+                    False))
+            if _SILENT_CATCH.search(body):
+                findings.append(_finding(
+                    "silent-catch-in-test", relative,
+                    f"`{name}` swallows an exception with a bare pass; the one "
+                    "path by which its failure could surface is deleted, so "
+                    "the suite stays green while the covered defect is live",
+                    False))
+            if _FIXED_SLICE.search(body):
+                findings.append(_finding(
+                    "fixed-slice-anchor", relative,
+                    f"`{name}` reads a file through a fixed numeric slice; the "
+                    "guard covers the first N characters of a file that grows "
+                    "and silently stops covering the code it was written for - "
+                    "anchor on syntax, not position",
                     False))
     return findings
 
