@@ -153,6 +153,27 @@ def check_ceilings(project: Path, spent: dict[str, int]) -> dict[str, Any]:
     }
 
 
+def _session_start_sequence(archive: Chronicle, session: str) -> int:
+    """The sequence of the `session` record this session id was derived from.
+
+    `open_session` builds the id as `f"S-{record_hash[:12]}"` from a
+    kind="session" record; reversing that mapping locates the record whose
+    hash produced it, so the watchdog can window to records written after
+    it instead of scanning every attestation this archive has ever held -
+    only this session's records can carry this session's skips, and the
+    archive before it opened is history, not behaviour to police now.
+    Falls back to 0 (the whole archive) for an id that cannot be matched -
+    a foreign or synthetic session id must not silently exclude everything.
+    """
+    if not session.startswith("S-"):
+        return 0
+    prefix = session[len("S-"):]
+    for record in archive.read_events():
+        if record["kind"] == "session" and record["record_hash"].startswith(prefix):
+            return int(record["sequence"])
+    return 0
+
+
 def watchdog(archive: Chronicle, session: str, skip_threshold: int = 3) -> dict[str, Any]:
     """Anomaly scan for the current session, cheap enough for every boundary.
 
@@ -162,7 +183,15 @@ def watchdog(archive: Chronicle, session: str, skip_threshold: int = 3) -> dict[
     """
     skipped: list[dict[str, str]] = []
     blocked: list[str] = []
-    for record in archive.select(kind="attestation", limit=1000):
+    start = _session_start_sequence(archive, session)
+    # read_events() over select(): the read is cache-backed within this
+    # process (godmode_chronicle's _events_identity cache), so this costs
+    # nothing extra when another call already warmed it this invocation,
+    # and the session-sequence window bounds the WORK done regardless of
+    # how many attestations prior sessions left behind.
+    for record in archive.read_events():
+        if record["sequence"] <= start or record["kind"] != "attestation":
+            continue
         data = record["data"]
         if data.get("session") != session:
             continue
