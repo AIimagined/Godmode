@@ -61,6 +61,34 @@ def _reviewed_advisory_reasons(archive: Any) -> dict[str, str]:
     return reasons
 
 
+def _planted_rule_ids(archive: Any) -> set[str]:
+    """HARD rule ids that have EVER been observed failing under a planted violation.
+
+    Archive-wide, not session-scoped - `plant_and_observe`'s green-red-green
+    sequence is a lifetime fact about whether the guard mechanism itself can
+    catch a violation, unlike `gate()`'s attested_rule_ids (which requires
+    fresh per-session attestation for a different purpose: whether THIS
+    session did its mandated steps). Only status "ran" counts - "blocked"
+    means the sequence did not prove out (stayed green under the plant, or
+    never returned to green after restoring), and a plant that could not
+    prove itself is not evidence the guard works.
+    """
+    if archive is None:
+        return set()
+    covered: set[str] = set()
+    try:
+        records = archive.read_events()
+    except Exception:  # noqa: BLE001 - assess degrades, never fails, on this
+        return set()
+    for record in records:
+        if record.get("kind") != "attestation":
+            continue
+        data = record.get("data") or {}
+        if data.get("status") == "ran" and str(record.get("subject", "")).startswith("guard:"):
+            covered.update(data.get("rule_ids", []))
+    return covered
+
+
 def assess(project: Path, budget: int = TYPICAL_COLD_START_TOKENS,
           archive: Any = None) -> dict[str, Any]:
     """Measure whether this project's own guidance can be complied with."""
@@ -124,6 +152,9 @@ def assess(project: Path, budget: int = TYPICAL_COLD_START_TOKENS,
         reviewed = _reviewed_advisory_reasons(archive)
         advisory_rules = [r for r in charter["compiled"] if r["enforcement"] == ADVISORY]
         unexplained = [r["id"] for r in advisory_rules if r["id"] not in reviewed]
+        planted = _planted_rule_ids(archive)
+        hard_rules = [r for r in charter["compiled"] if r["enforcement"] == HARD]
+        unplanted = [r["id"] for r in hard_rules if r["id"] not in planted]
         report["charter"] = {
             "rules": charter["rules"],
             "hard": charter["enforcement"][HARD],
@@ -131,6 +162,7 @@ def assess(project: Path, budget: int = TYPICAL_COLD_START_TOKENS,
             "advisory": charter["enforcement"][ADVISORY],
             "checkable_share": share,
             "advisory_unexplained": unexplained,
+            "hard_unplanted": unplanted,
         }
         if charter["rules"] and share < 0.25:
             findings.append(_finding(
