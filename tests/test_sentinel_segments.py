@@ -104,5 +104,94 @@ class QuotedOperatorsNeverReadAsRedirects(unittest.TestCase):
         self.assertTrue(verdict["protected"])
 
 
+# ---------------------------------------------------------------------------
+# Review round 1 - three findings, all fixed through the Segment interface
+# itself, not just through classify_action, so a Task 3/4 consumer building a
+# new check on Segment gets the fix for free rather than having to rediscover
+# it.
+# ---------------------------------------------------------------------------
+
+
+class VocabTokensExcludePathArguments(unittest.TestCase):
+    """Finding 1: `Segment.tokens` alone does not carry the command-position
+    guarantee - `Segment.vocab_tokens` is the field a new bare-word check
+    must use. Exercised through the Segment interface directly, not only
+    through classify_action, so the trap (a future check built on `tokens`)
+    can't reopen unnoticed."""
+
+    def test_tokens_keeps_the_path_argument_vocab_tokens_does_not(self) -> None:
+        # The review's own reproduction: `tokens` is the complete,
+        # unfiltered word list (a consumer that needs the real argument -
+        # protected-path-read, for one - still has it); `vocab_tokens` is
+        # the narrower, purpose-built list a bare-word pattern may trust.
+        segment = split_segments("grep -n release docs/RELEASE-CHECKLIST.md")[0]
+        self.assertIn("docs/RELEASE-CHECKLIST.md", segment.tokens)
+        self.assertNotIn("docs/RELEASE-CHECKLIST.md", segment.vocab_tokens)
+
+    def test_a_bare_word_matched_only_inside_a_path_is_absent_from_vocab_tokens(self) -> None:
+        # Unlike the case above, "release" here never appears as its own
+        # word - only embedded in the filename - so a check built against
+        # `vocab_tokens` joined back into text can never find it.
+        segment = split_segments("tail docs/RELEASE-CHECKLIST.md")[0]
+        joined = " ".join(segment.vocab_tokens)
+        self.assertNotRegex(joined, r"\brelease\b")
+
+    def test_a_genuine_bare_word_argument_stays_in_vocab_tokens(self) -> None:
+        # `vocab_tokens` excludes path-SHAPED arguments, not every argument -
+        # a real unquoted word (here, grep's own search pattern) is not
+        # itself a path and is not excluded.
+        segment = split_segments("grep -n release notes.md")[0]
+        self.assertIn("release", segment.vocab_tokens)
+
+
+class EscapedQuotesNeverEndAQuotedSpanEarly(unittest.TestCase):
+    """Finding 2 (pre-existing, not introduced by Task 2, but shipped as
+    part of this task's own interface): `_executable_text`'s quote-blanking
+    now shares `_raw_segments`'s escape rule, so an escaped quote inside a
+    double-quoted string can't prematurely end the quoted span and leak a
+    vocabulary word into matching."""
+
+    def test_an_escaped_quote_inside_a_quoted_argument_is_r0(self) -> None:
+        verdict = classify_action('grep "he said \\"drop table users\\"" file.txt')
+        self.assertEqual(verdict["tier"], "R0")
+        self.assertFalse(verdict["protected"])
+
+    def test_a_real_quoted_sql_statement_still_stays_protected(self) -> None:
+        # Green control: the escape fix must not make a genuine dangerous
+        # statement invisible just because it is quoted. Tier is R3, not
+        # R5 - the quoted verb is blanked before the SQL-specific pattern
+        # runs (a pre-existing, separately-tracked limitation, not this
+        # finding's concern) - but it must still be protected.
+        verdict = classify_action('psql -c "drop table users"')
+        self.assertTrue(verdict["protected"])
+
+
+class RedirectTargetIsReadFromTheConfirmedOperatorPosition(unittest.TestCase):
+    """Finding 3 (pre-existing, not introduced by Task 2, but shipped as
+    part of this task's own interface): the redirect target is read from
+    `Segment.redirect_target`, located at the position the quote-aware scan
+    confirmed as the real operator - never by re-searching the raw text from
+    its start, where an earlier quoted `>` would be found first."""
+
+    def test_a_quoted_arrow_before_a_real_redirect_still_finds_the_real_target(self) -> None:
+        segment = split_segments('echo "a > b" > /etc/hosts')[0]
+        self.assertTrue(segment.has_redirect)
+        self.assertEqual(segment.redirect_target, "/etc/hosts")
+
+    def test_the_demonstrated_write_is_classified_as_a_write_outside_the_tree(self) -> None:
+        verdict = classify_action('echo "a > b" > /etc/hosts')
+        self.assertEqual(verdict["category"], "worktree-file-mutation")
+        self.assertTrue(verdict["protected"])
+
+    def test_no_real_redirect_means_no_redirect_target_at_all(self) -> None:
+        # Green control: a `>` that only ever appears inside quotes must
+        # not be flagged, let alone yield a target.
+        segment = split_segments('echo "a > b"')[0]
+        self.assertFalse(segment.has_redirect)
+        self.assertIsNone(segment.redirect_target)
+        verdict = classify_action('echo "a > b"')
+        self.assertFalse(verdict["protected"])
+
+
 if __name__ == "__main__":
     unittest.main()
