@@ -31,6 +31,7 @@ if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 
 from godmode_runtime.godmode_precheck import precheck  # noqa: E402
+from godmode_runtime.godmode_register import set_state  # noqa: E402
 from test_godmode_runtime import isolated_project  # noqa: E402
 
 
@@ -83,6 +84,58 @@ class PriorRejectionTests(unittest.TestCase):
                            {"value": "rank fusion rejected", "status": "decided"})
             report = precheck(project, archive, "invoice rounding for VAT")
         self.assertEqual(report["already_rejected"], [])
+
+
+class RegisterPrecedentTests(unittest.TestCase):
+    """U-V2: the register's `rejected-precedent` entries are a sharper,
+    closed-enumeration counterpart to the free-text `already_rejected`
+    match above - the archive itself adjudicated this refusal, and the
+    finding names the way through instead of only a warning.
+    """
+
+    def test_a_rejected_precedent_is_surfaced_with_its_sequence_and_the_way_through(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            rejected = set_state(archive, "retrieval", "vector-search",
+                                 "rejected-precedent", ["file:notes.md"])
+            report = precheck(project, archive, "bring back vector search over the corpus")
+        self.assertTrue(report["rejected_precedents"], report)
+        hit = report["rejected_precedents"][0]
+        self.assertEqual(hit["sequence"], rejected["sequence"])
+        self.assertEqual(hit["where"], f"seq:{rejected['sequence']}")
+        self.assertIn("cite and supersede it, or drop the work", hit["message"])
+        self.assertEqual(report["verdict"], "prior-work-found")
+
+    def test_an_unrelated_task_does_not_match_a_rejected_precedent(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            set_state(archive, "retrieval", "vector-search", "rejected-precedent",
+                     ["file:notes.md"])
+            report = precheck(project, archive, "invoice rounding for VAT")
+        self.assertEqual(report["rejected_precedents"], [])
+
+    def test_a_reopened_precedent_is_not_surfaced_again(self) -> None:
+        """Supersede-and-reestablish is the way through the precedent, and
+        once taken, precheck must stop reporting the old refusal as live."""
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            rejected = set_state(archive, "retrieval", "vector-search",
+                                 "rejected-precedent", ["file:notes.md"])
+            set_state(archive, "retrieval", "vector-search", "established",
+                     ["file:notes.md"], supersedes=rejected["sequence"])
+            report = precheck(project, archive, "bring back vector search over the corpus")
+        self.assertEqual(report["rejected_precedents"], [])
+
+    def test_the_rendered_report_names_the_precedent(self) -> None:
+        from godmode_runtime.godmode_precheck import render
+
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            set_state(archive, "retrieval", "vector-search", "rejected-precedent",
+                     ["file:notes.md"])
+            report = precheck(project, archive, "bring back vector search over the corpus")
+        self.assertIn("rejected-precedent", render(report))
+        self.assertIn("retrieval:vector-search", render(report))
 
 
 class AlreadyFiledTests(unittest.TestCase):
