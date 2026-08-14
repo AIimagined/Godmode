@@ -2418,13 +2418,15 @@ def _build_parser() -> argparse.ArgumentParser:
     verdict_sub = verdict.add_subparsers(dest="verdict_command", required=True)
     verdict_record = verdict_sub.add_parser(
         "record",
-        help="Run the checker and store confirmed/refuted/witness-malformed",
+        help="Run the checker panel and store confirmed/refuted/contested/witness-malformed",
     )
     verdict_record.add_argument("--claim", required=True)
     verdict_record.add_argument("--value", required=True, help="The claimed value the checker verifies")
     verdict_record.add_argument("--witness", required=True, help="file:<path> or seq:<n>")
-    verdict_record.add_argument("--checker", required=True,
-                                help="Checker command, as one quoted string; runs against the witness alone")
+    verdict_record.add_argument("--checker", required=True, action="append",
+                                help="Checker command, as one quoted string; runs against the witness "
+                                     "alone. Repeatable - each --checker is one independent panel "
+                                     "member; N checkers fold to one disposition (U-E4).")
     verdict_record.add_argument("--run-state", choices=list(("terminated", "truncated")), default="terminated")
     verdict_record.add_argument("--acquitted-by", choices=list(("independent", "self")), default="independent")
     verdict_record.add_argument("--timeout", type=int, default=300)
