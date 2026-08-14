@@ -104,6 +104,7 @@ from .godmode_scenarios import run as run_scenarios
 from .godmode_scope import scope as scope_change
 from .godmode_status import ITEM_TYPES, STATES, handover, record_item, remaining, render_view, survey
 from .godmode_corpus import build_brief, resolve_roles
+from .godmode_detect import bootstrap_charter
 from .godmode_egress import notice as egress_notice
 from .godmode_egress import scan_project as scan_untrusted
 from .godmode_egress import scan_staged
@@ -338,6 +339,8 @@ def cmd_init(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         )
     if args.roles:
         payload["roles_scaffolded"] = _scaffold_roles(Path(runtime.anchor.project_root))
+    if getattr(args, "detect", False):
+        payload["detect"] = bootstrap_charter(Path(runtime.anchor.project_root))
     if not orphaned:
         # The orphaned case already carries next_action with a stronger claim
         # on attention; an ordinary init adds its own, less urgent list.
@@ -2096,6 +2099,8 @@ def _build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--roles", action="store_true",
                              help="Also scaffold a stub for every genuinely unbound "
                                   "authority role (never overwrites an existing file)")
+    init_parser.add_argument("--detect", action="store_true",
+                             help="Propose a starter charter from repo evidence (SOFT only, never overwrites)")
     init_parser.set_defaults(handler=cmd_init)
     adopt = sub.add_parser("adopt", help="Relink records stranded by an identity change (e.g. git init)")
     adopt.add_argument("--source", help="Archive root to adopt; defaults to the detected one")

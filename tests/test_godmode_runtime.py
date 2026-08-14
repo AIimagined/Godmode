@@ -213,11 +213,19 @@ class ChronicleTests(unittest.TestCase):
 
 
 class CapabilityTests(unittest.TestCase):
-    def test_unknown_mutations_fail_closed(self) -> None:
+    def test_unknown_mutations_with_evidence_fail_closed(self) -> None:
+        """U-G1b: a genuinely unrecognised command with no evidence of
+        mutation (no redirect, no named write flag) is now read rather than
+        refused for having no vocabulary entry - see test_sentinel_scoping.py.
+        What still fails closed is the same shape with real evidence: a real
+        write from an unrecognised command. Renamed from
+        `test_unknown_mutations_fail_closed`, whose fixture
+        ("change an unspecified production setting") tested exactly the
+        no-evidence case this task intentionally now reads."""
         self.assertFalse(classify_action("git status")["protected"])
-        preview = classify_action("change an unspecified production setting")
+        preview = classify_action("mystery-tool --in a > b.txt")
         self.assertTrue(preview["protected"])
-        self.assertEqual(preview["category"], "unclassified-mutation")
+        self.assertEqual(preview["category"], "unknown-command")
 
     def test_capability_is_exact_and_single_use(self) -> None:
         with isolated_project() as (_project, _state, _anchor, archive):
