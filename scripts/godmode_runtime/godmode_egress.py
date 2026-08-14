@@ -485,17 +485,44 @@ def untrusted_directives(text: str, source: str = "repository") -> dict[str, Any
     }
 
 
-def scan_project(project: Path, limit: int = 400) -> dict[str, Any]:
-    """Sweep readable project text for instruction-shaped content."""
-    hits: list[dict[str, Any]] = []
-    scanned = 0
+
+# 2048: this project's own candidate count (files matching the suffixes below,
+# outside .git/node_modules/__pycache__) measured at 592 on 2026-08-15 via
+# this same walk - see docs/falsification-probe.md reproduction in
+# tests/test_gate_falsifiability.py::_break_untrusted, which planted a file
+# past position 400 and the scan reported "data-only" without ever reading
+# it. 2048 is the next power of two at or above 2x that count (1184), giving
+# headroom for ordinary growth. The cap itself stays - an unbounded walk is
+# worse - but hitting it must now be loud (see `truncated` below), never a
+# clean verdict over an unscanned population.
+DEFAULT_SCAN_LIMIT = 2048
+
+
+def scan_project(project: Path, limit: int = DEFAULT_SCAN_LIMIT) -> dict[str, Any]:
+    """Sweep readable project text for instruction-shaped content.
+
+    Candidates are counted in full before the cap is applied: a scan that
+    truncates without saying so would let a clean read over part of the tree
+    stand in for a claim about all of it. When more candidates exist than
+    `limit`, the result carries `truncated: True` and the verdict reflects
+    that a scanned-and-clean result is impossible to state honestly - it
+    becomes "truncated" rather than "data-only", even when nothing was found
+    in the files that WERE read.
+    """
+    candidates: list[Path] = []
     for path in sorted(project.rglob("*")):
-        if scanned >= limit or not path.is_file():
+        if not path.is_file():
             continue
-        if path.suffix.lower() not in {".md", ".mdx", ".txt", ".rst", ".json", ".ya ml", ".yaml", ".yml"}:
+        if path.suffix.lower() not in {".md", ".mdx", ".txt", ".rst", ".json", ".yaml", ".yml"}:
             continue
         if any(part in {".git", "node_modules", "__pycache__"} for part in path.parts):
             continue
+        candidates.append(path)
+
+    truncated = len(candidates) > limit
+    hits: list[dict[str, Any]] = []
+    scanned = 0
+    for path in candidates[:limit]:
         scanned += 1
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -505,8 +532,16 @@ def scan_project(project: Path, limit: int = 400) -> dict[str, Any]:
         if report["count"]:
             hits.append({"path": report["source"], "count": report["count"],
                          "first": report["findings"][0]})
-    return {"scanned": scanned, "files_with_findings": len(hits), "hits": hits[:20],
-            "verdict": "instruction-shaped-content" if hits else "data-only"}
+
+    if hits:
+        verdict = "instruction-shaped-content"
+    elif truncated:
+        verdict = "truncated"
+    else:
+        verdict = "data-only"
+
+    return {"scanned": scanned, "candidates": len(candidates), "truncated": truncated,
+            "files_with_findings": len(hits), "hits": hits[:20], "verdict": verdict}
 
 
 def _self_check() -> None:
