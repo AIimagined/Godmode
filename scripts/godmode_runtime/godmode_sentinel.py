@@ -9,6 +9,7 @@ from __future__ import annotations
 # this same module, so a module-top import of these three paid their cost
 # on every tool call, not just the ones that mint or spend a capability.
 import base64
+from dataclasses import dataclass
 import hashlib
 import json
 import os
@@ -620,14 +621,10 @@ def _without_heredoc_bodies(command: str) -> str:
     return "\n".join(kept)
 
 
-def shell_segments(command: str) -> list[str]:
-    """Split a compound command into the parts that run, respecting quotes.
-
-    A pipeline of read-only commands is read-only, and a safe head must not
-    launder a dangerous tail: both facts need the parts separately, so the
-    classifier stops reading a whole shell line as one opaque operation.
-    """
-    command = _without_heredoc_bodies(command)
+def _raw_segments(command: str) -> list[str]:
+    """The character-level split shared by `shell_segments` and
+    `split_segments`: one state machine, quote- and backslash-aware, so the
+    two never learn to disagree about where a segment ends."""
     segments: list[str] = []
     current: list[str] = []
     quote: str | None = None
@@ -671,6 +668,97 @@ def shell_segments(command: str) -> list[str]:
         index += 1
     segments.append("".join(current).strip())
     return [segment for segment in segments if segment]
+
+
+def shell_segments(command: str) -> list[str]:
+    """Split a compound command into the parts that run, respecting quotes.
+
+    A pipeline of read-only commands is read-only, and a safe head must not
+    launder a dangerous tail: both facts need the parts separately, so the
+    classifier stops reading a whole shell line as one opaque operation.
+    """
+    return _raw_segments(_without_heredoc_bodies(command))
+
+
+@dataclass(frozen=True)
+class Segment:
+    """One piece of a compound command, tokenized for command-position
+    vocabulary matching rather than left as a string a pattern can search
+    anywhere in.
+
+    `tokens` never carries text that came from inside quotes - the same
+    blanking `_executable_text` already applied for the mutation patterns,
+    reused here so a quoted argument cannot read as a command word or an
+    operator no matter which check looks at it. `head` is the segment's own
+    command name and is exempt from every other exclusion in this module: a
+    command invoked by relative path (`./scripts/deploy.sh`) is still the
+    command, not an argument to itself.
+    """
+
+    head: str
+    subcommand: str | None
+    tokens: list[str]
+    has_redirect: bool
+    # The original segment text, quotes intact - kept for the callers (target
+    # extraction, anchored safe-list patterns) that need the exact text a
+    # token-list reconstruction cannot losslessly rebuild.
+    text: str = ""
+
+
+def _is_path_shaped(token: str) -> bool:
+    """A token that names a place rather than an action.
+
+    The one signal used is a path separator: `docs/RELEASE-CHECKLIST.md` is
+    an argument wherever it appears, while `deploy`, `migrate`, `--force` and
+    every other word this module matches on are bare words with none. A
+    filename extension alone is not used - `manage.py` and `db:migrate` are
+    verbs this module already depends on matching by their bare text.
+    """
+    return "/" in token or "\\" in token
+
+
+def split_segments(operation: str) -> list[Segment]:
+    """`operation`, split into `Segment`s a vocabulary check can trust.
+
+    Each segment's `tokens` excludes quoted text entirely (an argument's
+    content is not the command that ran it) and its `head` is always the
+    segment's own first word, never blanked - only the words *after* it are
+    ever excluded from `tokens` for looking path-shaped, and only `head` is
+    ever exempt from that exclusion, so a bare positional argument can never
+    read as a verb this module recognises.
+    """
+    segments: list[Segment] = []
+    for raw in _raw_segments(_without_heredoc_bodies(operation)):
+        blanked = _executable_text(raw)
+        words = blanked.split()
+        head = words[0] if words else ""
+        subcommand = next(
+            (word for word in words[1:]
+             if not word.startswith("-") and not _is_path_shaped(word)),
+            None,
+        )
+        has_redirect = bool(_REDIRECT.search(blanked))
+        segments.append(Segment(head=head, subcommand=subcommand, tokens=words,
+                                 has_redirect=has_redirect, text=raw))
+    return segments
+
+
+def _command_position_text(blanked: str) -> str:
+    """`blanked` (already quote-stripped) with path-shaped arguments removed
+    too, so a bare-word vocabulary pattern can only match the command and its
+    own verbs - never a filename that happens to contain one of those words.
+
+    The head is kept unconditionally: excluding it would hide the very
+    command a check exists to name, e.g. `./deploy.sh` invoked by relative
+    path is still a deploy.
+    """
+    words = blanked.split()
+    if not words:
+        return blanked
+    kept = [words[0]] + [word for word in words[1:] if not _is_path_shaped(word)]
+    return " ".join(kept)
+
+
 _SAFE_INSPECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     _SAFE_PREFIXES,
     _SAFE_GIT_BRANCH,
@@ -918,8 +1006,15 @@ def _categorize(normalized: str, project_root: Path | None = None) -> tuple[str,
     # Mutation patterns read the command with quoted arguments blanked, so
     # naming a protected operation is not performing one.
     executable = _executable_text(normalized)
+    # A second pass beyond quoting: a bare positional argument - a file path
+    # like `docs/RELEASE-CHECKLIST.md` - is not the command that read it, so
+    # the vocabulary checks below run on this rather than `executable`. The
+    # head is exempt (see `_command_position_text`); everything anchored at
+    # `^` is unaffected either way, since path-blanking never touches the
+    # front of the string unless the command itself is invoked by path.
+    command_position = _command_position_text(executable)
 
-    if _GIT_BRANCH_MUTATION.search(executable):
+    if _GIT_BRANCH_MUTATION.search(command_position):
         return (
             "git-branch-mutation",
             True,
@@ -936,14 +1031,21 @@ def _categorize(normalized: str, project_root: Path | None = None) -> tuple[str,
     # named mutations are skipped - but only those. The redirect check below
     # still applies, because `curl --help > ~/.bashrc` prints help and writes
     # a file, and the flag excuses the first half only.
-    asks_for_help = bool(_HELP_FLAG.search(executable))
+    asks_for_help = bool(_HELP_FLAG.search(command_position))
     if not asks_for_help:
         for category, pattern, impact in _ACTION_PATTERNS:
-            if pattern.search(executable):
+            if pattern.search(command_position):
                 return category, True, list(impact)
     # A redirect writes a file whatever the verb says, so it is checked after
-    # the named mutations but before the read allowances.
-    redirect = _REDIRECT.search(normalized)
+    # the named mutations but before the read allowances. Gated on a
+    # quote-aware scan first: `node -e "console.log(1 >>> 2)"` has a `>` only
+    # inside its quoted script argument, and searching the raw text for it -
+    # the previous behaviour - misread a JS bitshift/arrow operator as an
+    # empty-target redirect and refused an ordinary local computation. Once
+    # confirmed real, the target itself is still read from `normalized`
+    # rather than `executable`, so a legitimately quoted target
+    # (`> "out.txt"`) keeps resolving exactly as before.
+    redirect = _REDIRECT.search(normalized) if _REDIRECT.search(executable) else None
     if redirect and _NULL_DEVICE.match(redirect.group("target").strip().strip("\"'")):
         # Discarding output is not writing a file. Checked before containment,
         # because the null device is outside every working tree and so was
@@ -958,7 +1060,7 @@ def _categorize(normalized: str, project_root: Path | None = None) -> tuple[str,
             return ("worktree-file-mutation", True,
                     [f"a redirected write outside ordinary working files: {target[:80]}"])
         return "worktree-file-mutation", False, ["a redirected write inside the working tree"]
-    if _FIND_MUTATION.search(normalized):
+    if _FIND_MUTATION.search(command_position):
         return "filesystem-mutation", True, ["local files", "recoverability"]
     # Last, so a help flag never excuses a redirect or a delete beside it.
     if asks_for_help:
