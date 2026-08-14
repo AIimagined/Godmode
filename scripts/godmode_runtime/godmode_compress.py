@@ -28,6 +28,7 @@ MASKS: dict[str, tuple[str, ...]] = {
     "decision": ("status",),
     "invariant": ("status",),
     "lesson": ("status", "generalized_guard"),
+    "metric": ("measured", "turns"),
     "obligation": ("status",),
     "plan": ("state",),
     "sprint": ("state", "title"),
