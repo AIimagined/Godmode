@@ -113,6 +113,16 @@ from .godmode_egress import scan_staged
 from .godmode_scope import minimality
 from .godmode_errors import ArchiveError, GodmodeError
 from .godmode_verdict import record_verdict, verdict_for
+# U-V2 disposition register - a minimal, isolated block (imports, two
+# handlers, one subparser) since other in-flight work also touches this
+# file's argparse tree.
+from .godmode_register import (
+    DELTAS as REGISTER_DELTAS,
+    STATES as REGISTER_STATES,
+    conflict_findings,
+    register_view,
+    set_state,
+)
 from .godmode_forge import SkillProposal, forge_skill, validate_skill
 from .godmode_lens import (
     build_context_brief,
@@ -674,6 +684,49 @@ def cmd_verdict_show(args: argparse.Namespace, runtime: Runtime) -> CommandResul
     if record is None:
         raise ArchiveError(f"No verdict record at seq:{args.seq}")
     return CommandResult(record, exit_code=0)
+
+
+# U-V2 disposition register - `set` and `supersede` share this handler; the
+# only difference is `supersede`'s `--supersedes` is required by argparse,
+# since set_state() itself decides whether a value is actually needed.
+def cmd_register_set(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    record = set_state(
+        runtime.archive, args.domain, args.key, args.state, args.evidence,
+        supersedes=args.supersedes, delta=args.delta,
+    )
+    data = record["data"]
+    return CommandResult(
+        {"sequence": record["sequence"], "domain": data["register_domain"],
+         "key": data["register_key"], "state": data["state"],
+         "supersedes": data["supersedes"], "delta": data["delta"]},
+        exit_code=0,
+    )
+
+
+def cmd_register_show(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    view = register_view(runtime.archive, args.domain)
+    # Computed once, filtered per branch below: a --key query is a conflict
+    # blind spot otherwise - fix-round-1 review caught that asking about one
+    # key by name returned a clean `state: open` even when the domain-wide
+    # check simultaneously flagged that same key as a blocking conflict.
+    findings = conflict_findings(runtime.archive, args.domain)
+    if args.key:
+        entry = view.get(
+            args.key,
+            {"state": "open", "sequence": None, "evidence": [], "lineage": [], "delta": None},
+        )
+        key_findings = [f for f in findings if f["key"] == args.key]
+        return CommandResult(
+            {"domain": args.domain, "key": args.key, **entry, "conflicts": key_findings},
+            exit_code=1 if key_findings else 0,
+        )
+    # A conflict is a HARD halt (E6), so it must be visible in the exit status.
+    return CommandResult(
+        {"domain": args.domain, "register": view, "conflicts": findings},
+        exit_code=1 if findings else 0,
+    )
 
 
 def cmd_session_close(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -2293,6 +2346,39 @@ def _build_parser() -> argparse.ArgumentParser:
     verdict_show = verdict_sub.add_parser("show", help="Read back a verdict record by sequence")
     verdict_show.add_argument("--seq", type=int, required=True)
     verdict_show.set_defaults(handler=cmd_verdict_show)
+
+    # U-V2 disposition register - minimal isolated block, mirrors the
+    # `verdict` block above.
+    register = sub.add_parser(
+        "register",
+        help="Closed-enumeration disposition register, derived from decision records",
+    )
+    register_sub = register.add_subparsers(dest="register_command", required=True)
+    register_set = register_sub.add_parser(
+        "set", help="First disposition for a key, from 'open'; no --supersedes")
+    register_set.add_argument("--domain", required=True)
+    register_set.add_argument("--key", required=True)
+    register_set.add_argument("--state", choices=list(REGISTER_STATES), required=True)
+    register_set.add_argument("--evidence", action="append", default=[],
+                              help="witness:/verdict:/file: citation; repeatable, "
+                                   "required unless --state open")
+    register_set.add_argument("--delta", choices=list(REGISTER_DELTAS), default=None)
+    register_set.set_defaults(handler=cmd_register_set, supersedes=None)
+    register_supersede = register_sub.add_parser(
+        "supersede",
+        help="Leave a closed disposition; --supersedes must name the record it replaces")
+    register_supersede.add_argument("--domain", required=True)
+    register_supersede.add_argument("--key", required=True)
+    register_supersede.add_argument("--state", choices=list(REGISTER_STATES), required=True)
+    register_supersede.add_argument("--evidence", action="append", default=[],
+                                    help="witness:/verdict:/file: citation; repeatable")
+    register_supersede.add_argument("--delta", choices=list(REGISTER_DELTAS), default=None)
+    register_supersede.add_argument("--supersedes", type=int, required=True)
+    register_supersede.set_defaults(handler=cmd_register_set)
+    register_show = register_sub.add_parser("show", help="Read the derived view, or one key's entry")
+    register_show.add_argument("--domain", required=True)
+    register_show.add_argument("--key", default=None)
+    register_show.set_defaults(handler=cmd_register_show)
 
     method = sub.add_parser("method", help="Select an analysis method from the evidence shape")
     method.add_argument("--reports", type=int, default=1)
