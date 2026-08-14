@@ -1117,6 +1117,70 @@ class PlanModeTests(unittest.TestCase):
             self.assertFalse(mutation_verdict(archive, "S-1")["allowed"])
             self.assertFalse(approve(archive, "S-1")["approved"])
 
+    def _full_contract(self, **overrides: str) -> dict:
+        from godmode_runtime.godmode_plan import CONTRACT_FIELDS
+
+        contract = {field: "x" for field in CONTRACT_FIELDS if field != "editable"}
+        contract["accept"] = ["cmd:pytest tests/replay_test.py"]
+        contract.update(overrides)
+        return contract
+
+    def test_a_plan_with_no_accept_entry_is_refused_at_approve(self) -> None:
+        """E62 / Task 4b: `planmode approve` refuses a plan whose contract
+        carries no executable acceptance entry. The mandated plant: strip
+        `accept` from an otherwise-complete contract and approve must
+        refuse, naming `accept` among the missing fields."""
+        from godmode_runtime.godmode_plan import approve, specify, start
+
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            specify(archive, "S-1", "fix replay", {
+                "objective": "o", "outcome": "u", "acceptance": "a", "non_goals": "n"})
+            contract = self._full_contract(accept=[])
+            start(archive, "S-1", "fix replay", contract)
+            verdict = approve(archive, "S-1")
+        self.assertFalse(verdict["approved"])
+        self.assertIn("accept", verdict["missing"])
+
+    def test_a_plan_with_an_accept_entry_is_approved(self) -> None:
+        from godmode_runtime.godmode_plan import approve, specify, start
+
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            specify(archive, "S-1", "fix replay", {
+                "objective": "o", "outcome": "u", "acceptance": "a", "non_goals": "n"})
+            start(archive, "S-1", "fix replay", self._full_contract())
+            verdict = approve(archive, "S-1")
+        self.assertTrue(verdict["approved"])
+        self.assertEqual(verdict["missing"], [])
+
+    def test_completion_is_blocked_until_the_accept_command_is_attested_this_session(self) -> None:
+        """E62: at before_completion (`close_session`), each `accept` command
+        needs a this-session attestation - citing it in the plan is not
+        enough, it has to have actually been run."""
+        from godmode_runtime.godmode_attest import close_session, open_session, record_step
+        from godmode_runtime.godmode_charter import compile_charter
+        from godmode_runtime.godmode_plan import approve, specify, start
+
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            session = open_session(archive, "fix replay")
+            specify(archive, session, "fix replay", {
+                "objective": "o", "outcome": "u", "acceptance": "a", "non_goals": "n"})
+            start(archive, session, "fix replay", self._full_contract())
+            self.assertTrue(approve(archive, session)["approved"])
+            charter = compile_charter(project)
+
+            blocked = close_session(archive, session, charter)
+            self.assertFalse(blocked["closed"])
+            self.assertIn("cmd:pytest tests/replay_test.py",
+                          blocked["unattested_accept_commands"])
+
+            record_step(archive, session, "check:replay", "ran", result="exit 0",
+                       evidence=["cmd:pytest tests/replay_test.py"])
+            cleared = close_session(archive, session, charter)
+            self.assertEqual(cleared["unattested_accept_commands"], [])
+
 
 class DriftTests(unittest.TestCase):
     def test_drift_self_check(self) -> None:
@@ -1775,7 +1839,8 @@ class DriftControlTests(unittest.TestCase):
                 specify(archive, "S-a", "fix rotation", {
                     "objective": "o", "outcome": "u", "acceptance": "a", "non_goals": "n"})
                 start(archive, "S-a", "fix rotation", {f: "x" for f in
-                      __import__("godmode_runtime.godmode_plan", fromlist=["CONTRACT_FIELDS"]).CONTRACT_FIELDS})
+                      __import__("godmode_runtime.godmode_plan", fromlist=["CONTRACT_FIELDS"]).CONTRACT_FIELDS}
+                      | {"accept": "cmd:x"})
                 approve(archive, "S-a")
                 archive.append("checkpoint", "rotation fix staged",
                                {"status": "green", "next": "run the replay test"})
@@ -2276,8 +2341,10 @@ class GuardrailTests(unittest.TestCase):
             archive.initialize()
             specify(archive, "S", "approach", {
                 "objective": "o", "outcome": "u", "acceptance": "a", "non_goals": "n"})
-            start(archive, "S", "big rewrite", {f: "x" for f in CONTRACT_FIELDS} | {"points": "13"})
-            start(archive, "S", "small patch", {f: "x" for f in CONTRACT_FIELDS} | {"points": "3"})
+            start(archive, "S", "big rewrite",
+                  {f: "x" for f in CONTRACT_FIELDS} | {"points": "13", "accept": "cmd:x"})
+            start(archive, "S", "small patch",
+                  {f: "x" for f in CONTRACT_FIELDS} | {"points": "3", "accept": "cmd:x"})
             verdict = arbitrate(archive)
             self.assertEqual(verdict["winner"], "small patch")
 
