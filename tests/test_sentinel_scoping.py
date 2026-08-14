@@ -43,6 +43,32 @@ class UnknownDefaultsToAsk(unittest.TestCase):
         self.assertEqual(v["category"], "unknown-command")
 
 
+class RemoteExecAndTransferNeverDefaultOpen(unittest.TestCase):
+    """`ssh`/`scp`/`rsync`/`sftp`/`ftp`/`nc`/`ncat`/`telnet` join
+    `curl`/`wget`/`Invoke-WebRequest` in the never-R0 exception family
+    (controller ruling, post-report): a remote shell or a remote copy is not
+    a local read of anything, no matter how harmless the rest of the line
+    looks."""
+
+    def test_ssh_and_scp_are_not_r0(self) -> None:
+        for operation in ("ssh host cmd", "scp f host:"):
+            with self.subTest(operation=operation):
+                v = classify_action(operation)
+                self.assertNotEqual(v["tier"], "R0")
+                self.assertEqual(v["category"], "unknown-command")
+
+    def test_the_rest_of_the_family_is_not_r0(self) -> None:
+        for operation in ("rsync -av a b", "sftp host", "ftp host",
+                          "nc -l 1234", "ncat host 80", "telnet host 23"):
+            with self.subTest(operation=operation):
+                self.assertNotEqual(classify_action(operation)["tier"], "R0")
+
+    def test_an_ordinary_local_read_is_unaffected(self) -> None:
+        """Green control: widening the exception family must not touch
+        ordinary local commands."""
+        self.assertEqual(classify_action("ls")["tier"], "R0")
+
+
 class StreamTools(unittest.TestCase):
     def test_sed_in_pipe_without_i_is_r0(self) -> None:
         self.assertEqual(

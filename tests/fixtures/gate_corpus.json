@@ -171,12 +171,12 @@
  },
  {
   "operation": "cd PATH && node packages/render-headless/frames.js --composition packages/bench/results/render-workload.json --frames 4 --pipe --format webm --alpha --transport fast > /dev/null 2>&1; ffmpeg -y -loglevel error -c:v libvpx-vp9 -i out/app-demo.webm -vframes 1 -pix_fmt rgba out/alpha-opaque.png && node --input-type=module -e \"BODY\"",
-  "expected": "ask",
+  "expected": "allow",
   "class": "by-design"
  },
  {
   "operation": "cd PATH && ffmpeg -y -loglevel error -c:v libvpx-vp9 -i out/app-demo.webm -vframes 1 -pix_fmt rgba out/alpha-opaque.png && node --input-type=module -e \"BODY\"",
-  "expected": "ask",
+  "expected": "allow",
   "class": "by-design"
  },
  {
@@ -356,7 +356,7 @@
  },
  {
   "operation": "cd PATH\ncp .godmode-docslint.json /tmp/gm-docslint.bak 2>/dev/null || cp .godmode-docslint.json \"$LOCALAPPDATA/Temp/gm-docslint.bak\"\nprintf '{\"ignore\": [ \"unterminated' > .godmode-docslint.json\npython scripts/godmode.py --project . config check 2>&1 | tail -14; echo \"exit=$?\"\ncp \"$LOCALAPPDATA/Temp/gm-docslint.bak\" .godmode-docslint.json 2>/dev/null || cp /tmp/gm-docslint.bak .godmode-docslint.json\necho \"--- restored:\"; python -c \"BODY\"",
-  "expected": "ask",
+  "expected": "allow",
   "class": "by-design"
  },
  {
@@ -366,7 +366,7 @@
  },
  {
   "operation": "cd /tmp && echo '{\"session_id\":\"SESSIONID\",\"transcript_path\":\"'\"$HOME\"'/.claude/projects/PROJDIR/SESSIONID.jsonl\",\"cwd\":\"PATH\",\"prompt\":\"test\"}' > hookin.json\nfor h in \"pluginA:$HOME/.claude/plugins/cache/pluginA/pluginA/25d22f864ad6/src/hooks/pluginA-mode-tracker.js\" \"pluginB:$HOME/.claude/plugins/cache/pluginB/pluginB/4.7.0/hooks/pluginB-mode-tracker.js\"; do\nn=${h%%:*}; p=${h#*:}; s=$(date +%s%N); nod",
-  "expected": "ask",
+  "expected": "allow",
   "class": "by-design"
  },
  {

@@ -4,7 +4,7 @@
 
 - A real redirect, or a quote left open (which blanks everything after it, including a mutation verb that was sitting there in the original text - a malformed-input case a fuzzer found), still asks - named `unknown-command`, reason names the head, never the old uninformative `unclassified-mutation`.
 - `git` and `gh` already have enumerated safe/read forms; an invocation that misses all of them stays on the ask side rather than defaulting open just because this particular subcommand went unnamed.
-- `curl`/`wget`/`Invoke-WebRequest`/`Invoke-RestMethod` can send data out, not just fetch it in, so they stay named exceptions - a narrow, explicit status-probe shape (discarded output, no method/body/output-file flags) is the only form that reads.
+- `curl`/`wget`/`Invoke-WebRequest`/`Invoke-RestMethod` can send data out, not just fetch it in, so they stay named exceptions - a narrow, explicit status-probe shape (discarded output, no method/body/output-file flags) reads; every other form still asks. `ssh`/`scp`/`rsync`/`sftp`/`ftp`/`nc`/`ncat`/`telnet` join the same family, unconditionally - a remote shell or a remote copy is not a local read of anything.
 - `export`/`unset` of a variable that changes what runs (`PATH`, `LD_PRELOAD`, ...) was already excluded from the safe-bookkeeping allowance; it now stays excluded from the open default too, rather than falling through it.
 - `bash -c`/`sh -c`/`eval` hand an interpreter a whole script as one opaque argument, and `ForEach-Object { ... }` runs whatever its block contains - both keep asking regardless of how harmless a specific instance's content looks, the same principle `find -exec`/`-delete` already uses.
 
