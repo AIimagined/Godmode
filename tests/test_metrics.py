@@ -135,6 +135,55 @@ class MeasuredTests(unittest.TestCase):
             self.assertEqual(entry["value"], 0.5)
 
 
+class TokenReductionBasisTests(unittest.TestCase):
+    """token_reduction's basis: a real measured total when C-79's session-log
+    metric is on record, the size-heuristic estimate only when it isn't -
+    and the report always says which one was used (U-T1 follow-up)."""
+
+    def test_basis_is_estimated_when_no_measured_metric_record_exists(self) -> None:
+        with isolated_project() as (project, archive):
+            archive.append("checkpoint", "one", {"status": "green", "next": "x"})
+            entry = metrics(archive, project)["metrics"]["token_reduction"]
+        self.assertIn("estimated", entry["basis"])
+
+    def test_basis_is_measured_and_uses_real_tokens_when_a_measured_metric_exists(self) -> None:
+        with isolated_project() as (project, archive):
+            archive.append("checkpoint", "one", {"status": "green", "next": "x"})
+            archive.append("metric", "session measurement", {
+                "measured": True, "turns": 3, "tool_calls": {"Bash": 2},
+                "commands": 2, "test_runs": 0, "tokens_in": 9000,
+                "tokens_out": 500, "content_free": True, "session": "S-1",
+            })
+            entry = metrics(archive, project)["metrics"]["token_reduction"]
+        self.assertIn("measured", entry["basis"])
+        self.assertIn("9000", entry["basis"])
+
+    def test_a_gap_metric_record_does_not_count_as_a_measured_basis(self) -> None:
+        """`measured: False` is a stated gap, not a zero - it must not be
+        read as "the session spent zero tokens" and silently win over the
+        estimate."""
+        with isolated_project() as (project, archive):
+            archive.append("checkpoint", "one", {"status": "green", "next": "x"})
+            archive.append("metric", "session measurement", {
+                "measured": False, "reason": "transcript-file-not-found",
+                "session": None, "content_free": True,
+            })
+            entry = metrics(archive, project)["metrics"]["token_reduction"]
+        self.assertIn("estimated", entry["basis"])
+
+    def test_several_measured_metric_records_sum_their_tokens(self) -> None:
+        with isolated_project() as (project, archive):
+            archive.append("checkpoint", "one", {"status": "green", "next": "x"})
+            for tokens_in in (1000, 2500):
+                archive.append("metric", "session measurement", {
+                    "measured": True, "turns": 1, "tool_calls": {},
+                    "commands": 0, "test_runs": 0, "tokens_in": tokens_in,
+                    "tokens_out": 0, "content_free": True, "session": "S-1",
+                })
+            entry = metrics(archive, project)["metrics"]["token_reduction"]
+        self.assertIn("3500", entry["basis"])
+
+
 class RenderTests(unittest.TestCase):
     def test_markdown_names_every_metric_and_its_basis(self) -> None:
         with isolated_project() as (project, archive):

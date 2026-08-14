@@ -15,10 +15,10 @@ sys.path.insert(0, str(SCRIPTS))
 # Only names every `pre-action` call pays for. `pre-action` fires once per
 # tool call - the hot path - while session-start/user-prompt/pre-compact/
 # session-end fire once or a few times per session; their modules
-# (charter, corpus, drift's compare, lens, requests, contribution, and the
-# capability broker's secrets/getpass/hmac chain) are imported inside the
-# branch that actually uses them, below, instead of paying for six modules
-# a mutating tool call never touches.
+# (charter, corpus, drift's compare, lens, requests, contribution,
+# session_log, and the capability broker's secrets/getpass/hmac chain) are
+# imported inside the branch that actually uses them, below, instead of
+# paying for seven modules a mutating tool call never touches.
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_runtime.godmode_errors import GodmodeError  # noqa: E402
@@ -283,6 +283,20 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.event in {"pre-compact", "session-end"}:
+            if args.event == "session-end":
+                # Best-effort, counts-only measurement of the host's own
+                # transcript. Never blocks the checkpoint below: a missing
+                # transcript, an unreadable one, or any other failure here
+                # must not cost the operator the checkpoint this branch
+                # exists to record.
+                try:
+                    from godmode_runtime.godmode_session_log import record_measurement
+                    record_measurement(
+                        archive, submitted.get("transcript_path"),
+                        session=str(submitted.get("session_id") or "") or None,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
             summary = str(submitted.get("summary", "")).strip()[:1000]
             if not summary:
                 print(json.dumps({"godmode": "no-structured-checkpoint", "stored": False}))
