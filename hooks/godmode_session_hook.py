@@ -413,6 +413,27 @@ def main(argv: list[str] | None = None) -> int:
                     + ". Approve to run it."
                 )
             else:
+                # Recorded here, in the full escalation path only - the fast
+                # gate stays IO-free by contract, and this branch is where a
+                # refusal is actually born. Bounded so the record cannot grow
+                # the archive from an unbounded command line, and best-effort:
+                # a refusal that failed to record must still refuse, the same
+                # way the checkpoint and prompt records above degrade rather
+                # than take the hook down with them.
+                try:
+                    archive.append(
+                        "refusal",
+                        str(preview["category"])[:200] or "refusal",
+                        {
+                            "operation": operation[:500],
+                            "tool": tool or "operation",
+                            "tier": str(preview.get("tier", "R?")),
+                            "category": preview["category"],
+                        },
+                        evidence=[],
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
                 preview["reason"] = (
                     f"refused: this is irreversible ({preview['category']}, "
                     f"{preview.get('tier', 'R?')})"
@@ -423,7 +444,8 @@ def main(argv: list[str] | None = None) -> int:
                     f"{json.dumps(operation[:200])}` - it needs the password "
                     "from `godmode authorize setup`, is spent once, and expires. "
                     "In a hosted session, type it with a leading '!' to run it "
-                    "from the prompt without leaving the conversation."
+                    "from the prompt without leaving the conversation.\n"
+                    "! godmode authorize stage --from-last-refusal"
                 )
 
         # The fence, applied last and only to what would otherwise proceed. It
