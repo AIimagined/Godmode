@@ -247,9 +247,20 @@ def _segment_floor_clean(tokens: list[str], git_phrases: list[list[str]],
             # Compare the part of each trailing token before any `=`, so
             # `--output`, `--output=/tmp/x`, and a bare `-o` are all caught
             # by the same bare-flag key - a write flag disqualifies the
-            # segment whether its value is space- or `=`-separated.
+            # segment whether its value is space- or `=`-separated. A
+            # single-character short flag (`-o`) also has a THIRD spelling
+            # with no separator at all - `-o/tmp/x`, git's own glued form,
+            # one token - so a short denylisted flag is prefix-matched
+            # against each trailing token, not just compared for equality;
+            # a long flag (`--output`) is never prefix-matched, since gluing
+            # a value onto it with no `=` is not a form git itself accepts.
             for token in trailing:
-                if token.split("=", 1)[0] in denylisted:
+                bare = token.split("=", 1)[0]
+                if bare in denylisted:
+                    return False
+                if any(len(flag) == 2 and not flag.startswith("--")
+                       and token.startswith(flag) and token != flag
+                       for flag in denylisted):
                     return False
         return True
     return False
