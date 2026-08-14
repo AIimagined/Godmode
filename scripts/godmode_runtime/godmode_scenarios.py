@@ -13,6 +13,8 @@ same false-completeness this project exists to prevent.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
@@ -23,6 +25,34 @@ from unittest import mock
 from .godmode_anchor import resolve_anchor
 from .godmode_chronicle import Chronicle
 
+REGISTRY_SCHEMA = "godmode-eval-registry-v1"
+
+# Version bump per scenario name, `name.local.vN`. A scenario absent here is
+# implicitly v1. Bump the entry when a scenario's staging function is
+# intentionally rewritten (a different failure shape, a different assertion) -
+# that is what tells the registry check below "this digest is supposed to
+# have moved." An edit that lands without a bump is exactly the drift U-S1
+# exists to catch.
+SCENARIO_VERSIONS: dict[str, int] = {}
+
+
+def scenario_id(name: str) -> str:
+    """`name.local.vN` - local because these run against a disposable project
+    on this machine, never against a shared or hosted eval target."""
+    return f"{name}.local.v{SCENARIO_VERSIONS.get(name, 1)}"
+
+
+def content_digest(staged: Callable[[Path, Chronicle], tuple[bool, str]]) -> str:
+    """sha256 of the staging function's own source text.
+
+    `inspect.getsource` reads the function's exact body, not its behaviour -
+    two functions that happen to produce the same (caught, observed) pair
+    still digest differently if their code differs, because the registry is
+    pinning "what this scenario does", and *that* is what a silent edit
+    changes.
+    """
+    return hashlib.sha256(inspect.getsource(staged).encode("utf-8")).hexdigest()
+
 
 @dataclass(frozen=True)
 class Outcome:
@@ -30,10 +60,13 @@ class Outcome:
     failure: str
     caught: bool
     observed: str
+    id: str
+    digest: str
 
     def view(self) -> dict[str, Any]:
         return {"scenario": self.scenario, "failure": self.failure,
-                "caught": self.caught, "observed": self.observed}
+                "caught": self.caught, "observed": self.observed,
+                "id": self.id, "digest": self.digest}
 
 
 # Failures a real host must exhibit; Godmode cannot stage them locally. Named so
@@ -466,6 +499,103 @@ SCENARIOS: tuple[tuple[str, str, str, Callable[[Path, Chronicle], tuple[bool, st
 )
 
 
+# Pinned at each id's current version: the sha256 of that staging function's
+# source *as of that version*, frozen as a literal so it cannot silently
+# track a later edit to the same function. Bumping a scenario's
+# SCENARIO_VERSIONS entry on purpose is what earns it a new id here -
+# `content_digest(fn)` (see `_self_check` below, or run the module directly)
+# gives the value to paste in for the new version. Any other change to a
+# function's body, with the id (version) left alone, is the drift
+# `_registry_findings` exists to block.
+SCENARIO_DIGEST_REGISTRY: dict[str, str] = {
+    'duplicate-capability.local.v1': 'b21a8755ed2a8eacf475ffbb156b451748a69758cec647f7826c991980f34857',
+    'present-but-unwired.local.v1': '1323fc83bc925589a9a4201b6787455dc56c87351ae4e2f93a0bc7f0687370f5',
+    'fix-oscillation.local.v1': '26ba4c502304abfe6637f2c2b984128b6674bdd2d46e357b39d8e96c64e123a0',
+    'test-weakening.local.v1': '8d09717f5ee7d517c6f45f0c83bc727bb7a06db035479117652dbe7df9f5e9cc',
+    'hollow-guard.local.v1': '482d7855af4e8eabb8c45f17b397134b47a2b19d40172532715963def4d9cca1',
+    'secret-in-outbound-scope.local.v1': 'b2bd175db68e4e3d36f7f3d49c37a65f98641cb77fe915f495990dbe30cebab8',
+    'forged-capability.local.v1': '250ce59903c459fd44f1e68e1b1017c3b70fd16453fb4d4830f99ee2ec43646e',
+    'wrong-environment.local.v1': '184383991ce41367a19035741f096d0e77c38999eeab440d6eaa26d923677b90',
+    'stale-backlog.local.v1': 'a1f07f4c8cecb942decfd733deede81ec85670e1539b22dfb2e3942a087901ba',
+    'removal-forgotten.local.v1': 'dd01df73e7df5711d8544dfb01bd4dd00b512efb5e95be70704d99a1610b7895',
+    'unfalsifiable-absence.local.v1': '0e1aebe361078a9bb0ef01977ad257d62b255f07cee7df8cd1240fb1fbb8e731',
+    'undocumented-change.local.v1': '8d4e8ed0df33a72e82db48c4c66a11ea473d16cac62a6e62a974bbf21837898b',
+    'drifted-citation.local.v1': 'da6c808c44ec3235d9fcd64d66713b83687be570cecac14f791dda5316288abe',
+    'instruction-shaped-content.local.v1': 'b3dc75b345e15cddf88e77564a348cdc5fff0043822cc37d532651fde19b937e',
+    'orphaned-history.local.v1': 'b4d056588be558dda898d8e8d94bee1e81c62fcd4c7709f9e603f953596fe60c',
+    'false-rca.local.v1': '7f8826509f243f27018421739efd5892ffd6f9efa3a0b002c6967f85aefe8170',
+    'automated-deletion.local.v1': '0ee6c4b9f38e6dbae4a8d7be2b92aeb4ea77d369d108eb53b27aa0b430e58bed',
+    'new-table-temptation.local.v1': 'cc512fa5b382635a2852ac15b37850789eca15dd61888c05269ee6d6807cd881',
+    'context-brief-latency.local.v1': '92f336117ce1cc8ea733a7f12d649e81bcd8523b4e24f2a66e6982a8b1039664',
+    'session-restart.local.v1': '4d01814d565143bd80ce4ad183f34d4f0044c7fa20b2e45f310e960afe2913b7',
+    'prior-fix-unguarded.local.v1': 'bfdae584dcdb48b28511e51457d5ecce04e101704f4f02ead1f3ad6cfdcc57e5',
+    'tool-call-interception.local.v1': 'b2999f12ac92abdb0401d0cb1d008e8df2bc37f04011ad11290fd30b31b1c457',
+    'concurrent-agent-collision.local.v1': '306777d20ff49ece77165886926e100a7434d394a03e6bc01a62ead6b5ed8135',
+}
+
+
+def _live_scenario_ids() -> set[str]:
+    """Every id the current `SCENARIOS` tuple would produce, independent of
+    any `only` filter - the population the registry's orphan check measures
+    against. Reads the module-global `SCENARIOS` at call time (not a copy
+    captured earlier), so a test that reassigns `godmode_scenarios.SCENARIOS`
+    is seen here too."""
+    return {scenario_id(name) for name, _, _, _ in SCENARIOS}
+
+
+def _registry_findings(outcomes: list[Outcome]) -> list[dict[str, Any]]:
+    """Blocking findings that keep the registry's population grows-only in
+    both directions, plus digest drift within it:
+
+    - unregistered-scenario: a scenario in this run has no
+      `SCENARIO_DIGEST_REGISTRY` entry at all. Left alone, this scenario's
+      future edits would never trip digest-drift either, since a missing
+      entry can never disagree with a live digest - it would stay invisible
+      forever, not just until someone remembers to register it.
+    - digest-drift: a registered id's live digest no longer matches the
+      pinned value - a content edit with no version bump.
+    - orphaned-registry-entry: a registry key names no scenario currently in
+      `SCENARIOS` - a removed or renamed scenario left a stale pin behind.
+    """
+    findings: list[dict[str, Any]] = []
+    for outcome in outcomes:
+        pinned = SCENARIO_DIGEST_REGISTRY.get(outcome.id)
+        if pinned is None:
+            findings.append({
+                "detector": "unregistered-scenario",
+                "id": outcome.id,
+                "blocking": True,
+                "detail": (
+                    f"{outcome.id}: unregistered - no SCENARIO_DIGEST_REGISTRY entry, so this "
+                    "scenario's future edits would never be checked for digest drift"
+                ),
+            })
+        elif pinned != outcome.digest:
+            findings.append({
+                "detector": "digest-drift",
+                "id": outcome.id,
+                "blocking": True,
+                "detail": (
+                    f"{outcome.id}: staging function changed (digest {outcome.digest[:12]} != "
+                    f"registered {pinned[:12]}) but its version was not bumped"
+                ),
+            })
+
+    live_ids = _live_scenario_ids()
+    for registered_id in sorted(SCENARIO_DIGEST_REGISTRY):
+        if registered_id not in live_ids:
+            findings.append({
+                "detector": "orphaned-registry-entry",
+                "id": registered_id,
+                "blocking": True,
+                "detail": (
+                    f"{registered_id}: registry pins a digest for a scenario that no longer "
+                    "exists in SCENARIOS"
+                ),
+            })
+    return findings
+
+
 def run(only: str | None = None) -> dict[str, Any]:
     """Stage each failure in a disposable project and report what noticed."""
     outcomes: list[Outcome] = []
@@ -482,9 +612,13 @@ def run(only: str | None = None) -> dict[str, Any]:
                     caught, observed = staged(project, archive)
                 except Exception as exc:  # pragma: no cover - a broken scenario is a finding
                     caught, observed = False, f"scenario raised {exc.__class__.__name__}: {exc}"[:160]
-        outcomes.append(Outcome(scenario=name, failure=failure, caught=caught, observed=observed))
+        outcomes.append(Outcome(
+            scenario=name, failure=failure, caught=caught, observed=observed,
+            id=scenario_id(name), digest=content_digest(staged),
+        ))
 
     caught = [o for o in outcomes if o.caught]
+    registry_findings = _registry_findings(outcomes)
     return {
         "scenarios": [{**o.view(), "ref": refs.get(o.scenario, "")} for o in outcomes],
         "acceptance_refs": sorted({r for r in refs.values()}),
@@ -499,6 +633,11 @@ def run(only: str | None = None) -> dict[str, Any]:
             "and are named rather than counted"
         ),
         "verdict": "all-caught" if len(caught) == len(outcomes) else "gaps-found",
+        "registry": {
+            "schema": REGISTRY_SCHEMA,
+            "findings": registry_findings,
+            "blocking": bool(registry_findings),
+        },
     }
 
 
@@ -509,6 +648,14 @@ def _self_check() -> None:
     # Uncovered ground is listed, never folded into the coverage number.
     assert report["not_reproducible_here"], report
     assert all(entry["why"] for entry in report["not_reproducible_here"])
+
+    # U-S1: every scenario carries a versioned id and a content digest, and
+    # the shipped registry is clean against the code as it actually reads.
+    for entry in report["scenarios"]:
+        assert entry["id"] == f"{entry['scenario']}.local.v1", entry
+        assert len(entry["digest"]) == 64, entry
+    assert report["registry"]["blocking"] is False, report["registry"]
+    assert report["registry"]["findings"] == [], report["registry"]
 
     single = run(only="hollow-guard")
     assert single["total"] == 1 and single["caught"] == 1, single
