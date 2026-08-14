@@ -14,6 +14,7 @@ stay declared, so the ceiling report names which figures it measured.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import time
 from pathlib import Path
@@ -21,10 +22,14 @@ from typing import Any
 
 from .godmode_chronicle import Chronicle
 from .godmode_errors import ArchiveError
+from .godmode_stop import OperatorStop
 
 CEILINGS_FILENAME = ".godmode-ceilings.json"
 DEFAULT_CEILINGS = {"tokens": 0, "tool_calls": 0, "seconds": 0}  # 0 = no ceiling
 METER_FILENAME = "godmode-meter.json"
+# The operator's own escape hatch (U-R1): presence, not content, stops a
+# watchdog-boundary run regardless of what the skip-pattern scan finds.
+OPERATOR_STOP_FLAG = ".godmode-stop"
 
 
 def declared_ceilings(project: Path) -> dict[str, int]:
@@ -179,7 +184,9 @@ def watchdog(archive: Chronicle, session: str, skip_threshold: int = 3) -> dict[
 
     Three mandatory steps skipped in one run is a pattern, not three incidents;
     the scan turns it into an interrupt at the next boundary instead of a
-    post-hoc note.
+    post-hoc note. A second, opt-in-by-presence source of interrupt: an
+    `OperatorStop` flag (U-R1) - presence alone ends the run regardless of
+    what the skip scan found.
     """
     skipped: list[dict[str, str]] = []
     blocked: list[str] = []
@@ -200,16 +207,26 @@ def watchdog(archive: Chronicle, session: str, skip_threshold: int = 3) -> dict[
                             "reason": str(data.get("reason", ""))[:120]})
         if data.get("status") == "blocked":
             blocked.append(record["subject"])
-    anomaly = len(skipped) >= skip_threshold
+    operator_reason = OperatorStop(
+        Path(archive.anchor.project_root) / OPERATOR_STOP_FLAG
+    )([])
+    skip_anomaly = len(skipped) >= skip_threshold
+    anomaly = skip_anomaly or operator_reason is not None
+    if operator_reason is not None:
+        detail = operator_reason
+    elif skip_anomaly:
+        detail = (f"{len(skipped)} mandated steps skipped this session; stop and "
+                  "resolve the pattern before the next step")
+    else:
+        detail = "no skip pattern this session"
     return {
         "session": session,
         "skipped": skipped,
         "blocked_steps": blocked,
+        "operator_stop": operator_reason,
         "anomaly": anomaly,
         "verdict": "interrupt" if anomaly else "nominal",
-        "detail": (f"{len(skipped)} mandated steps skipped this session; stop and "
-                   "resolve the pattern before the next step" if anomaly
-                   else "no skip pattern this session"),
+        "detail": detail,
     }
 
 
@@ -254,16 +271,28 @@ def rewind_preview(archive: Chronicle, to_sequence: int) -> dict[str, Any]:
 EXPERIMENT_FILENAME = ".godmode-experiment.json"
 
 
-def run_experiment(archive: Chronicle, project: Path, timeout: int = 300) -> dict[str, Any]:
+def run_experiment(
+    archive: Chronicle, project: Path, timeout: int = 300, *, budget_s: float | None = None
+) -> dict[str, Any]:
     """S27-04/S8-03: the bounded experiment loop as one declarative file.
 
     `.godmode-experiment.json` declares hypothesis, command, success_exit and
     max_runs. The loop runs until success or the bound - never past it - and
     every run is recorded, so "I tried a few times" becomes a numbered series
     with outcomes.
+
+    `budget_s` (U-R1) is a second, independent bound over the whole series:
+    `max_runs` caps *how many* attempts happen, `budget_s` caps *how long*
+    they may take together. Optional, and off by default, so a caller that
+    never passes it sees exactly the prior behaviour - only wall time cuts
+    the series short early, and when it does the recorded action carries
+    `run_state: "truncated"` rather than pretending the bound was reached on
+    its own terms.
     """
     import shlex
     import subprocess
+
+    from .godmode_stop import attempt as stop_attempt
 
     path = project / EXPERIMENT_FILENAME
     if not path.is_file():
@@ -278,32 +307,52 @@ def run_experiment(archive: Chronicle, project: Path, timeout: int = 300) -> dic
 
     runs: list[dict[str, Any]] = []
     succeeded = False
-    for attempt in range(1, max_runs + 1):
-        try:
-            done = subprocess.run(command, cwd=str(project), capture_output=True,
-                                  text=True, encoding="utf-8", errors="replace", timeout=timeout)
-            code = done.returncode
-        except FileNotFoundError:
-            code = 127
-        except subprocess.TimeoutExpired:
-            code = 124
-        runs.append({"attempt": attempt, "exit": code})
-        if code == success_exit:
-            succeeded = True
-            break
+    truncated = False
+    with (stop_attempt(budget_s) if budget_s else _no_budget()) as handle:
+        for attempt in range(1, max_runs + 1):
+            if handle is not None and handle.remaining() <= 0:
+                truncated = True
+                break
+            try:
+                done = subprocess.run(command, cwd=str(project), capture_output=True,
+                                      text=True, encoding="utf-8", errors="replace", timeout=timeout)
+                code = done.returncode
+            except FileNotFoundError:
+                code = 127
+            except subprocess.TimeoutExpired:
+                code = 124
+            runs.append({"attempt": attempt, "exit": code})
+            if code == success_exit:
+                succeeded = True
+                break
+    run_state = "truncated" if truncated else "terminated"
     archive.append(
         "action", f"experiment:{str(spec['hypothesis'])[:80]}",
-        {"runs": runs, "succeeded": succeeded, "bound": max_runs},
+        {"runs": runs, "succeeded": succeeded, "bound": max_runs, "run_state": run_state},
     )
+    if truncated:
+        verdict = f"budget-exhausted: {len(runs)} of {max_runs} runs completed within budget_s"
+    elif succeeded:
+        verdict = "hypothesis-supported"
+    else:
+        verdict = (f"bound-reached: {len(runs)} runs without exit {success_exit}; "
+                   "revise the hypothesis rather than raising the bound")
     return {
         "hypothesis": spec["hypothesis"],
         "runs": runs,
         "succeeded": succeeded,
         "bound": max_runs,
-        "verdict": ("hypothesis-supported" if succeeded else
-                    f"bound-reached: {len(runs)} runs without exit {success_exit}; "
-                    "revise the hypothesis rather than raising the bound"),
+        "run_state": run_state,
+        "verdict": verdict,
     }
+
+
+@contextmanager
+def _no_budget():
+    """Stand-in for `stop_attempt()` when `budget_s` is not declared - the
+    loop above then only ever checks `handle is not None`, which is False.
+    """
+    yield None
 
 
 def arbitrate(archive: Chronicle) -> dict[str, Any]:

@@ -2170,7 +2170,9 @@ def cmd_experiment(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     from .godmode_guardrails import run_experiment
 
-    report = run_experiment(runtime.archive, Path(runtime.anchor.project_root))
+    report = run_experiment(
+        runtime.archive, Path(runtime.anchor.project_root), budget_s=args.budget_s
+    )
     return CommandResult(report, exit_code=0 if report["succeeded"] else 1)
 
 
@@ -2299,6 +2301,9 @@ def _build_parser() -> argparse.ArgumentParser:
     experiment = sub.add_parser(
         "experiment", help="Run the declared bounded experiment loop from .godmode-experiment.json"
     )
+    experiment.add_argument("--budget-s", type=float, default=None, dest="budget_s",
+                            help="U-R1 wall-time budget over the whole series; overrun "
+                                 "truncates early and records run_state=truncated")
     experiment.set_defaults(handler=cmd_experiment)
 
     config = sub.add_parser("config", help="Validate every .godmode-*.json config file")
