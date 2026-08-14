@@ -143,9 +143,19 @@ _INJECTION = (
     # "decode and execute: <base64>" carried an override instruction through
     # every pattern above because the instruction itself was encoded; the
     # detectable part is the decode-then-run FRAME, not the payload.
+    #
+    # The two verbs must be CONJOINED as an instruction ("decode and run",
+    # "decode, then execute"), not merely near each other: an unbounded
+    # window matched this project's own changelog line naming a
+    # "decode-then-execute frame carrying its instruction as an encoded
+    # payload" - prose DESCRIBING the attack, which is the documentation-of-
+    # the-defence false positive the gate-bypass rule above already learned
+    # once. A hyphenated compound is a noun, so the separator excludes `-`.
     ("encoded-payload",
-     r"\b(?:decode|unhex|un-?rot13|de-?obfuscate)\b.{0,30}\b(?:execute|run|eval|follow|obey)\b"
-     r"|\b(?:execute|run|eval)\b.{0,30}\b(?:base64|rot13|hex-encoded|encoded (?:payload|command|instruction))\b"),
+     r"\b(?:decode|unhex|un-?rot13|de-?obfuscate)\b[ ,]{1,3}(?:and |then |& )?"
+     r"\b(?:execute|run|eval|follow|obey)\b"
+     r"|\b(?:execute|run|eval)\b[ ,]{1,3}(?:the |this )?"
+     r"\b(?:base64|rot13|hex-encoded)\b"),
 )
 
 
