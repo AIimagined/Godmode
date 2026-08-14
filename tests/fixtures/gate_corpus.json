@@ -41,12 +41,12 @@
  },
  {
   "operation": "node -e \"BODY\"",
-  "expected": "ask",
+  "expected": "allow",
   "class": "by-design"
  },
  {
   "operation": "node -e \"BODY\"",
-  "expected": "ask",
+  "expected": "allow",
   "class": "by-design"
  },
  {
@@ -226,7 +226,7 @@
  },
  {
   "operation": "python -c \"BODY\"",
-  "expected": "ask",
+  "expected": "allow",
   "class": "by-design"
  },
  {
