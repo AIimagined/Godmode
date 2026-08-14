@@ -46,8 +46,8 @@ MUST_ALLOW = (
     # Everything v0.2.5 unblocked, asserted where the host will hit it rather
     # than only against the classifier. Each of these was refused by a shipped
     # build while the suite of the day reported green.
-    ("stage changes", "Bash", {"command": "git add -A"}),
-    ("commit", "Bash", {"command": "git commit -m 'a message'"}),
+    # ("stage changes" / "commit" moved to GIT_ASK_NOW below, U-G1c: they
+    # now ask rather than run silently - see GitAskPolicyTests.)
     ("name a protected command in an argument", "Bash",
      {"command": 'grep "git push" CHANGELOG.md'}),
     ("input redirect", "Bash", {"command": "wc -l < README.md"}),
@@ -69,6 +69,15 @@ MUST_DENY = (
     ("a substitution that destroys", "Bash", {"command": "echo $(rm -rf build)"}),
     ("a redirect out of the tree", "Bash", {"command": "echo x > ../outside.txt"}),
     ("discarding working changes", "Bash", {"command": "git checkout -- ."}),
+)
+
+# U-G1c (Controller Ruling 1): local, reversible git worktree operations ask
+# rather than either running silently or stopping dead - staging and
+# committing join the sibling operations (`checkout --`, `restore`, `mv`,
+# `stash`, `switch`) that already asked.
+GIT_ASK_NOW = (
+    ("stage changes", "Bash", {"command": "git add -A"}),
+    ("commit", "Bash", {"command": "git commit -m 'a message'"}),
 )
 
 
@@ -98,6 +107,18 @@ class WorkingSessionTests(unittest.TestCase):
         blocked = [label for label, tool, payload in MUST_ALLOW
                    if _decide(tool, payload)[0] != "allow"]
         self.assertEqual(blocked, [], f"the gate would stop a working session: {blocked}")
+
+
+class GitAskPolicyTests(unittest.TestCase):
+    """Staging and committing ask now, driven through the real hook payload
+    rather than only against `classify_action` - the same reason this whole
+    file exists (see the module docstring)."""
+
+    def test_staging_and_committing_ask_rather_than_run_silently_or_stop_dead(self) -> None:
+        for label, tool, payload in GIT_ASK_NOW:
+            with self.subTest(label=label):
+                decision, _reason = _decide(tool, payload)
+                self.assertEqual(decision, "ask", label)
 
 
 class ProtectedOperationTests(unittest.TestCase):
