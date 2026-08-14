@@ -534,14 +534,43 @@ SCENARIO_DIGEST_REGISTRY: dict[str, str] = {
 }
 
 
+def _live_scenario_ids() -> set[str]:
+    """Every id the current `SCENARIOS` tuple would produce, independent of
+    any `only` filter - the population the registry's orphan check measures
+    against. Reads the module-global `SCENARIOS` at call time (not a copy
+    captured earlier), so a test that reassigns `godmode_scenarios.SCENARIOS`
+    is seen here too."""
+    return {scenario_id(name) for name, _, _, _ in SCENARIOS}
+
+
 def _registry_findings(outcomes: list[Outcome]) -> list[dict[str, Any]]:
-    """Blocking findings for any outcome whose live digest drifted from its
-    pinned registry value while its id (and therefore its version) stayed
-    the same - a content change with no version bump."""
+    """Blocking findings that keep the registry's population grows-only in
+    both directions, plus digest drift within it:
+
+    - unregistered-scenario: a scenario in this run has no
+      `SCENARIO_DIGEST_REGISTRY` entry at all. Left alone, this scenario's
+      future edits would never trip digest-drift either, since a missing
+      entry can never disagree with a live digest - it would stay invisible
+      forever, not just until someone remembers to register it.
+    - digest-drift: a registered id's live digest no longer matches the
+      pinned value - a content edit with no version bump.
+    - orphaned-registry-entry: a registry key names no scenario currently in
+      `SCENARIOS` - a removed or renamed scenario left a stale pin behind.
+    """
     findings: list[dict[str, Any]] = []
     for outcome in outcomes:
         pinned = SCENARIO_DIGEST_REGISTRY.get(outcome.id)
-        if pinned is not None and pinned != outcome.digest:
+        if pinned is None:
+            findings.append({
+                "detector": "unregistered-scenario",
+                "id": outcome.id,
+                "blocking": True,
+                "detail": (
+                    f"{outcome.id}: unregistered - no SCENARIO_DIGEST_REGISTRY entry, so this "
+                    "scenario's future edits would never be checked for digest drift"
+                ),
+            })
+        elif pinned != outcome.digest:
             findings.append({
                 "detector": "digest-drift",
                 "id": outcome.id,
@@ -549,6 +578,19 @@ def _registry_findings(outcomes: list[Outcome]) -> list[dict[str, Any]]:
                 "detail": (
                     f"{outcome.id}: staging function changed (digest {outcome.digest[:12]} != "
                     f"registered {pinned[:12]}) but its version was not bumped"
+                ),
+            })
+
+    live_ids = _live_scenario_ids()
+    for registered_id in sorted(SCENARIO_DIGEST_REGISTRY):
+        if registered_id not in live_ids:
+            findings.append({
+                "detector": "orphaned-registry-entry",
+                "id": registered_id,
+                "blocking": True,
+                "detail": (
+                    f"{registered_id}: registry pins a digest for a scenario that no longer "
+                    "exists in SCENARIOS"
                 ),
             })
     return findings

@@ -49,11 +49,16 @@ def grade_includes(actual: str, expected: str) -> bool:
 
 
 def grade_fuzzy(actual: str, expected: str) -> bool:
-    """Mutual containment after whitespace/case normalisation.
+    """Containment in either direction after whitespace/case normalisation.
 
-    True when either normalised string contains the other. Two empty
-    strings (after normalisation) are equal, not a vacuous match against
-    everything else.
+    True when either normalised string contains the other - deliberately an
+    OR, not both directions at once (which for strings would collapse to
+    near-equality). This is the loosest grader in the vocabulary on purpose:
+    a short `expected` that is a literal substring of a longer, otherwise
+    unrelated `actual` counts as a match here. A caller that wants the
+    stricter comparison reaches for `match` instead. Two empty strings
+    (after normalisation) are equal, not a vacuous match against everything
+    else.
     """
 
     def normalize(text: str) -> str:
