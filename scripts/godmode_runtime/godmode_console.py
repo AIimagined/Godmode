@@ -142,6 +142,7 @@ from .godmode_sentinel import (
     classify_action,
     find_secret_shapes,
     read_password_stdin,
+    stage_from_refusal,
 )
 
 
@@ -1699,8 +1700,26 @@ def cmd_authorize_stage(args: argparse.Namespace, runtime: Runtime) -> CommandRe
     unreachable and the only answer to a false positive was switching the guard
     off. Staging is that answer, with every property of the token kept - the
     password, the exact operation, the expiry, the single use.
+
+    `--from-last-refusal` reads the operation from the gate's own refusal
+    record instead of asking the operator to retype what the refusal already
+    named verbatim. Nothing about the trust model changes: the password is
+    still required, the capability is still spent once and still expires -
+    only the typing is gone. The operation is echoed back before the
+    password is read, so a stale `--nth` is caught by eye rather than spent
+    on the wrong command.
     """
     _require_archive(runtime)
+    if args.from_last_refusal:
+        operation = stage_from_refusal(runtime.archive, nth=args.nth)
+        print(json.dumps(
+            {"from_last_refusal": True, "nth": args.nth, "operation": operation},
+            ensure_ascii=False,
+        ))
+    elif args.operation:
+        operation = args.operation
+    else:
+        raise ArchiveError("`authorize stage` requires --operation or --from-last-refusal")
     broker = CapabilityBroker(runtime.archive)
     password = read_password_stdin() if args.password_stdin else None
     if password is None:
@@ -1710,13 +1729,14 @@ def cmd_authorize_stage(args: argparse.Namespace, runtime: Runtime) -> CommandRe
         import getpass
 
         password = getpass.getpass("Godmode authorization password: ")
-    broker.stage(args.operation, password, args.ttl)
-    preview = classify_action(args.operation)
+    broker.stage(operation, password, args.ttl)
+    preview = classify_action(operation)
     return CommandResult({
         "staged": True,
-        "operation": args.operation,
+        "operation": operation,
         "category": preview["category"],
         "tier": preview["tier"],
+        "from_last_refusal": args.from_last_refusal,
         "spends_on": "the next attempt at this exact operation, once",
         # The token is not printed. It is already where it needs to be, and a
         # capability on a terminal is a capability in a scrollback buffer.
@@ -2849,7 +2869,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
     staging = authorize_sub.add_parser(
         "stage", help="Authorize one exact operation for the next tool call")
-    staging.add_argument("--operation", required=True)
+    staging.add_argument("--operation")
+    staging.add_argument(
+        "--from-last-refusal", action="store_true",
+        help="Stage the operation named by the gate's own most recent refusal")
+    staging.add_argument(
+        "--nth", type=int, default=1,
+        help="With --from-last-refusal, pick the nth-most-recent refusal (default 1)")
     staging.add_argument("--ttl", type=int, default=None)
     staging.add_argument("--password-stdin", action="store_true")
     staging.set_defaults(handler=cmd_authorize_stage)

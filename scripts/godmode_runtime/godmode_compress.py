@@ -31,6 +31,7 @@ MASKS: dict[str, tuple[str, ...]] = {
     "metric": ("measured", "turns"),
     "obligation": ("status",),
     "plan": ("state",),
+    "refusal": ("tool", "tier", "category"),
     "sprint": ("state", "title"),
     "verdict": ("disposition", "run_state", "acquitted_by"),
 }

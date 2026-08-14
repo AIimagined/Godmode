@@ -2088,6 +2088,27 @@ class CapabilityBroker:
         return classification
 
 
+def stage_from_refusal(archive: Any, nth: int = 1) -> str:
+    """The operation named by the nth-most-recent refusal on record.
+
+    The refusal that names a remedy nobody can perform used to be answered by
+    retyping the exact command the gate had just printed - `--nth 1` is that
+    same command, read back from the record instead of the eye. `--nth 2`
+    reaches past a refusal that already landed once staging is underway, so a
+    second escalation before the first is spent does not orphan it.
+
+    Raises rather than defaulting to some earlier, unrelated refusal: a stale
+    operation staged silently is worse than a command that says plainly there
+    is nothing to stage.
+    """
+    if nth < 1:
+        raise AuthorizationError("--nth must be 1 or greater")
+    records = archive.select(kind="refusal", limit=nth)
+    if len(records) < nth:
+        raise AuthorizationError("No refusal is on record; nothing to stage")
+    return str(records[-nth]["data"].get("operation", ""))
+
+
 def _self_check() -> None:
     """The gate's own contract, exercised in both directions.
 
