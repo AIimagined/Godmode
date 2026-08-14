@@ -1,6 +1,6 @@
 """Guard-erosion classes: ways a green guard stops guarding.
 
-Absorbed from the [private] corpus, where each was recorded live:
+Absorbed from a recorded lessons corpus, where each was recorded live:
 
 - A guard test with no reachable assertion passed while the bug it named was
   live (L-282: the plant landed and every assertion stayed green because none

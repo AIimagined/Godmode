@@ -1,4 +1,4 @@
-"""Evidence-integrity detectors absorbed from the [private] lesson corpus.
+"""Evidence-integrity detectors absorbed from a recorded lessons corpus.
 
 Three classes, each recorded live before it was gated:
 
