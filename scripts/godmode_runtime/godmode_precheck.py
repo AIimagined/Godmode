@@ -21,6 +21,16 @@ Sometimes the earlier rejection was right and the request should stop; sometimes
 the constraint that drove it has gone. Only a person can tell those apart, and
 an agent that could clear its own precheck would clear it the way it currently
 skips it.
+
+**Precedent is a fourth, sharper question.** `already_rejected` above matches
+by fuzzy term overlap over free-text `decision`/`lesson`/`request` records - a
+weak test by design, because a strong one that reports nothing is the check
+that cannot fail. U-V2's disposition register (`godmode_register.py`) is the
+precise counterpart: a closed-enumeration `rejected-precedent` entry is a
+refusal the archive itself adjudicated, not prose that happens to contain a
+refusal word. A task whose normalized terms name a `rejected-precedent` key
+is told the sequence and the way through - cite it and supersede it, or drop
+the work - rather than being left to rediscover the same refusal by hand.
 """
 
 from __future__ import annotations
@@ -31,6 +41,7 @@ from typing import Any
 
 from .godmode_chronicle import Chronicle
 from .godmode_constants import SETTLED_STATUSES
+from .godmode_register import rejected_precedents
 from .godmode_requests import closure_reason
 
 # Kinds that can carry a "we decided against this" meaning. There is no
@@ -168,12 +179,35 @@ def precheck(project_root: Path | str, archive: Chronicle, task: str) -> dict[st
                             "same thing, and does what is known there change the approach?",
             })
 
-    findings = bool(already_built or already_rejected or already_reported)
+    precedents = rejected_precedents(archive)
+    searched.append(f"{len(precedents)} rejected-precedent register entries")
+    rejected_precedent_hits: list[dict[str, Any]] = []
+    for hit in precedents:
+        key_terms = _terms(hit["key"].replace("-", " ").replace("_", " "))
+        # A precise match, not a weak one: the register is a closed
+        # enumeration the archive itself adjudicated, so every term the
+        # precedent's key names must be present in the task - unlike
+        # already_rejected's deliberately loose overlap-of-two over free
+        # text, a short identifying key earns a subset match instead of an
+        # arbitrary threshold that would be too strict for a one-word key
+        # and too loose for a five-word one.
+        if key_terms and key_terms.issubset(terms):
+            rejected_precedent_hits.append({
+                "where": f"seq:{hit['sequence']}",
+                "domain": hit["domain"],
+                "key": hit["key"],
+                "sequence": hit["sequence"],
+                "message": "cite and supersede it, or drop the work",
+            })
+
+    findings = bool(already_built or already_rejected or already_reported
+                    or rejected_precedent_hits)
     return {
         "task": task,
         "already_built": already_built,
         "already_rejected": already_rejected,
         "already_reported": already_reported,
+        "rejected_precedents": rejected_precedent_hits,
         # Stated so an empty answer cannot be read as clearance from a check
         # that examined nothing.
         "searched": searched,
@@ -190,9 +224,17 @@ def render(report: dict[str, Any]) -> str:
                 f"{report['symbols_examined']} symbols and "
                 f"{report['records_examined']} records.")
     lines = [f"Prior work touching '{report['task'][:60]}':"]
-    # Open first: a thing already filed and unclosed is the one a reader is most
-    # likely to be about to duplicate, and the one that carries what is already
-    # known about it.
+    # Precedent first: a closed-enumeration refusal the archive itself
+    # adjudicated is a sharper claim than free-text overlap, and the one
+    # that comes with a way through rather than just a warning.
+    for hit in report.get("rejected_precedents", []):
+        lines.append(
+            f"  [rejected-precedent] {hit['domain']}:{hit['key']} "
+            f"({hit['where']}) - {hit['message']}"
+        )
+    # Open first of the rest: a thing already filed and unclosed is the one a
+    # reader is most likely to be about to duplicate, and the one that
+    # carries what is already known about it.
     for hit in report.get("already_reported", []):
         lines.append(f"  [already filed, open] {hit['subject']} ({hit['where']})")
     for hit in report["already_rejected"]:
