@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 import tempfile
 import time
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 import uuid
 
 import shutil
@@ -36,6 +36,7 @@ def writer_fingerprint() -> dict[str, str]:
     }
 from .godmode_constants import EVENT_KINDS, RUNTIME_VERSION, SCHEMA_VERSION
 from .godmode_errors import ArchiveError
+from . import godmode_invariants as _invariants
 from .godmode_sentinel import enforce_private_payload
 
 
@@ -69,6 +70,35 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+# Kind-specific data-shape invariants, enforced by append() at the archive
+# seam rather than left to whichever caller happens to build the record.
+# append() must never grow one branch per kind - a validator lives in
+# godmode_invariants.py (dependency-free, so importing it here creates no
+# cycle) and append() only ever asks "does this kind have one?" without
+# knowing what any of them actually check. A validator raises ArchiveError
+# to refuse; a normal return accepts.
+#
+# KIND_INVARIANTS is seeded from godmode_invariants.KIND_VALIDATORS AT THIS
+# MODULE'S OWN IMPORT, not left to populate itself as a side effect of some
+# other module (e.g. godmode_verdict.py) being imported first. That
+# distinction is load-bearing: a process that imports godmode_chronicle
+# without ever importing the kind-owning module still gets the guarantee,
+# because importing godmode_chronicle IS what populates it. (An earlier
+# version of this mechanism relied on kind-owning modules self-registering
+# at their own import time - a fresh interpreter that imported only the
+# archive core saw an empty registry and could append either forbidden
+# verdict combination unchecked. Eager seeding from a dependency-free module
+# closes that import-order gap.) register_kind_invariant() remains available
+# for a validator that genuinely cannot live in godmode_invariants.py, but
+# every kind shipped today is seeded eagerly and needs no such call.
+KindInvariant = Callable[[dict[str, Any]], None]
+KIND_INVARIANTS: dict[str, KindInvariant] = dict(_invariants.KIND_VALIDATORS)
+
+
+def register_kind_invariant(kind: str, validator: KindInvariant) -> None:
+    KIND_INVARIANTS[kind] = validator
 
 
 class Chronicle:
@@ -498,6 +528,9 @@ class Chronicle:
         subject = subject.strip()
         if not subject or len(subject) > 200:
             raise ArchiveError("Record subject must contain 1-200 characters")
+        validator = KIND_INVARIANTS.get(kind)
+        if validator is not None:
+            validator(data)
         evidence = evidence or []
         payload_for_scan = {"subject": subject, "data": data, "evidence": evidence}
         enforce_private_payload(payload_for_scan)

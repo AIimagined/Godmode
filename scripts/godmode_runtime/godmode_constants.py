@@ -15,7 +15,7 @@ EVENT_KINDS = frozenset(
         "action", "attestation", "branch", "change", "checklist", "checkpoint",
         "claim", "database", "decision", "documentation", "incident", "invariant",
         "inventory", "lesson", "metric", "obligation", "plan", "request", "session",
-        "sprint", "version",
+        "sprint", "verdict", "version",
     }
 )
 
