@@ -19,6 +19,7 @@ from __future__ import annotations
 import builtins
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import time
@@ -43,7 +44,9 @@ if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
 
 from tests.test_gate_corpus import corpus_entries, _decision  # noqa: E402
-from godmode_runtime.godmode_sentinel import _raw_segments  # noqa: E402
+from godmode_runtime.godmode_sentinel import (  # noqa: E402
+    _raw_segments, _executable_text, _FIND_MUTATION, classify_action,
+)
 
 
 def payload(command: str, tool: str = "Bash") -> dict[str, Any]:
@@ -68,25 +71,57 @@ class TableShape(unittest.TestCase):
 
     def test_required_keys_present(self) -> None:
         for key in ("version", "generated_from", "floor", "read_heads",
-                    "mutation_heads", "db_clients", "git_ask", "git_refuse"):
+                    "mutation_heads", "db_clients", "git_ask", "git_refuse",
+                    "find_mutation_flags", "flag_denylist"):
             self.assertIn(key, TABLE)
 
     def test_floor_is_conservative_read_only_in_full_sentinel(self) -> None:
         """Every literal floor phrase, run bare, is R0 in the full sentinel
         today. This is the parity property Task 5's own table build will
         re-check for real; this fixture is built to already satisfy it."""
-        from godmode_runtime.godmode_sentinel import classify_action
         for phrase in TABLE["floor"]["claude-code"]:
             with self.subTest(phrase=phrase):
                 verdict = classify_action(phrase, project_root=PLUGIN_ROOT)
                 self.assertEqual(verdict["tier"], "R0", phrase)
 
     def test_read_heads_are_r0_in_full_sentinel_bare(self) -> None:
-        from godmode_runtime.godmode_sentinel import classify_action
         for head in TABLE["read_heads"]:
             with self.subTest(head=head):
                 verdict = classify_action(f"{head} somefile", project_root=PLUGIN_ROOT)
                 self.assertEqual(verdict["tier"], "R0", head)
+
+    def test_find_mutation_flags_match_the_sentinels_own_set(self) -> None:
+        """Review round 1, Critical finding 1: the fast gate's find-flag
+        check only covered `-exec`/`-delete`, missing `-execdir`/`-ok`/
+        `-okdir` from `_FIND_MUTATION` (godmode_sentinel.py). Now
+        table-driven; this is the drift guard tying the table's flag set to
+        the regex's own alternation, parsed directly from the compiled
+        pattern rather than retyped by hand - so a sixth flag added to
+        `_FIND_MUTATION` later shows up here as a mismatch instead of
+        silently reopening the gap.
+        """
+        match = re.search(r"-\(\?:([^)]+)\)", _FIND_MUTATION.pattern)
+        self.assertIsNotNone(match, _FIND_MUTATION.pattern)
+        sentinel_flags = {f"-{name}" for name in match.group(1).split("|")}
+        self.assertEqual(set(TABLE["find_mutation_flags"]), sentinel_flags)
+
+    def test_flag_denylist_entries_name_real_floor_phrases(self) -> None:
+        floor_phrases = set(TABLE["floor"]["claude-code"])
+        for phrase in TABLE["flag_denylist"]:
+            self.assertIn(phrase, floor_phrases, phrase)
+
+    def test_denylisted_git_output_flags_are_r0_in_full_sentinel_today(self) -> None:
+        """The full sentinel's own `--output=<file>` gap (review Critical
+        finding 2) is real and separately tracked - documented here so this
+        test fails loudly, not silently, once the sentinel lane closes it
+        (at which point the denylist becomes redundant-but-still-correct,
+        not wrong)."""
+        for phrase, flags in TABLE["flag_denylist"].items():
+            for flag in flags:
+                command = f"{phrase} {flag}=/tmp/x" if flag.startswith("--") else f"{phrase} {flag} /tmp/x"
+                with self.subTest(command=command):
+                    verdict = classify_action(command, project_root=PLUGIN_ROOT)
+                    self.assertEqual(verdict["tier"], "R0", command)
 
 
 class Equivalence(unittest.TestCase):
@@ -104,16 +139,36 @@ class SegmentSplitEquivalence(unittest.TestCase):
     this suite exercises - the two must never learn to disagree about where
     a segment ends, even though one blanks quotes and the other keeps them."""
 
-    def test_segment_count_matches_the_source_of_truth(self) -> None:
-        samples = [entry["operation"] for entry in corpus_entries()] + [
+    def _samples(self) -> list[str]:
+        return [entry["operation"] for entry in corpus_entries()] + [
             "git status && ls -la", "echo hi | grep x", "a; b; c",
             'echo "a; b" && echo c', "ls\r\ncat file.txt",
         ]
-        for command in samples:
+
+    def test_segment_count_matches_the_source_of_truth(self) -> None:
+        for command in self._samples():
             with self.subTest(command=command[:60]):
                 local = fast._blanked_segments(command)
                 source = _raw_segments(command)
                 self.assertEqual(len(local), len(source), command[:80])
+
+    def test_segment_content_matches_the_source_of_truth(self) -> None:
+        """Review round 1, Minor finding 1: the original guard only checked
+        segment *count*. `_executable_text`, applied per-segment to
+        `_raw_segments`'s raw (quote-intact) output, blanks quotes the same
+        way `_blanked_segments` does in one fused pass - a segment boundary
+        only ever falls where the quote-tracking state is already `None`
+        (that's what makes it a boundary), so blanking each raw segment
+        independently is provably equivalent to blanking during the single
+        fused pass, and the two lists must now match element-for-element,
+        not just in length.
+        """
+        for command in self._samples():
+            with self.subTest(command=command[:60]):
+                local = fast._blanked_segments(command)
+                source = [_executable_text(segment).strip()
+                          for segment in _raw_segments(command)]
+                self.assertEqual(local, source, command[:80])
 
 
 class NoArchiveIO(unittest.TestCase):
@@ -209,6 +264,44 @@ class KnownShapes(unittest.TestCase):
             fast.fast_verdict(payload("find . -name x -exec rm {} +"), TABLE),
             "escalate")
         self.assertEqual(fast.fast_verdict(payload("find . -delete"), TABLE), "escalate")
+
+    def test_find_execdir_ok_okdir_escalate(self) -> None:
+        """Review round 1, Critical finding 1 - reproduced live against the
+        pre-fix module (fast: allow, full: R4/protected) for all three;
+        fixed by table-driving the full `_FIND_MUTATION` flag set instead
+        of a hand-picked two-flag subset."""
+        for command in ("find . -execdir rm {} ;", "find . -ok rm {} ;",
+                         "find . -okdir rm {} ;"):
+            with self.subTest(command=command):
+                self.assertEqual(fast.fast_verdict(payload(command), TABLE),
+                                 "escalate")
+
+    def test_find_without_a_mutation_flag_still_allows(self) -> None:
+        """Green control: the fix must not make ordinary `find` protected."""
+        self.assertEqual(fast.fast_verdict(payload("find . -name x"), TABLE), "allow")
+
+    def test_git_output_flag_escalates_on_log_diff_show(self) -> None:
+        """Review round 1, Critical finding 2 - reproduced live against the
+        pre-fix module (fast: allow, full: R0 - a real, unrecorded write the
+        full sentinel doesn't yet catch either; see the changelog fragment
+        for the separately-tracked sentinel-lane fix). `--output=<file>`,
+        `--output <file>`-shaped (bare `--output` token), and bare `-o`
+        must all escalate."""
+        for command in ("git log --output=/tmp/x", "git diff --output=/tmp/x",
+                         "git show --output=/tmp/x", "git log --output /tmp/x",
+                         "git log -o /tmp/x", "git diff -o /tmp/x",
+                         "git show -o /tmp/x"):
+            with self.subTest(command=command):
+                self.assertEqual(fast.fast_verdict(payload(command), TABLE),
+                                 "escalate")
+
+    def test_log_diff_show_without_a_write_flag_still_allow(self) -> None:
+        """Green controls: the fix must not degrade the fast path's
+        everyday utility - ordinary log/diff formatting flags stay allowed."""
+        for command in ("git log --oneline -20", "git diff --stat",
+                         "git show --stat", "git log -- src/foo.py"):
+            with self.subTest(command=command):
+                self.assertEqual(fast.fast_verdict(payload(command), TABLE), "allow")
 
     def test_bare_git_branch_create_escalates(self) -> None:
         """The one real mutation reachable without any flag at all on this
