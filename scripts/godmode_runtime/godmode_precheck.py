@@ -31,6 +31,15 @@ refusal the archive itself adjudicated, not prose that happens to contain a
 refusal word. A task whose normalized terms name a `rejected-precedent` key
 is told the sequence and the way through - cite it and supersede it, or drop
 the work - rather than being left to rediscover the same refusal by hand.
+
+**Foreign precedent is a fifth question, strictly advisory.** U-E2's
+cross-project exchange (`godmode_register.py`'s `reg-foreign:` namespace)
+lets a precedent imported from another project's archive travel here as a
+FILE, never a network call. It is surfaced the same way `rejected_precedents`
+is - matched by the key's own terms, never by fuzzy free-text overlap - but
+it never joins `already_rejected`, never contributes to `findings`/`verdict`,
+and is labeled distinctly (`foreign precedent (from <fp8>)`) so a reader can
+never mistake it for something this project's own archive adjudicated.
 """
 
 from __future__ import annotations
@@ -41,6 +50,8 @@ from typing import Any
 
 from .godmode_chronicle import Chronicle
 from .godmode_constants import SETTLED_STATUSES
+from .godmode_register import FOREIGN_SUBJECT_PREFIX
+from .godmode_register import foreign_precedents as foreign_register_precedents
 from .godmode_register import rejected_precedents
 from .godmode_requests import closure_reason
 
@@ -130,6 +141,15 @@ def precheck(project_root: Path | str, archive: Chronicle, task: str) -> dict[st
     for record in records:
         kind = record.get("kind")
         data = record.get("data") or {}
+        # U-E2: a `reg-foreign:` record is a decision-kind record too (an
+        # imported precedent's `state` field routinely reads "rejected-
+        # precedent", which trips `_REFUSAL_WORDS` on its own), but it must
+        # never be scored by this LOCAL free-text scanner - only the
+        # dedicated, explicitly-advisory `foreign_precedents` section below
+        # may surface it. Skipped here, not filtered out of `records`
+        # itself, so `records_examined`/`searched` still count it honestly.
+        if str(record.get("subject", "")).startswith(FOREIGN_SUBJECT_PREFIX):
+            continue
         if kind == "request":
             # A request closed as `refused` is a rejection with the operator's
             # own words attached, which is the strongest form of prior ground
@@ -200,6 +220,33 @@ def precheck(project_root: Path | str, archive: Chronicle, task: str) -> dict[st
                 "message": "cite and supersede it, or drop the work",
             })
 
+    foreign_hits = foreign_register_precedents(archive)
+    searched.append(f"{len(foreign_hits)} foreign precedent (reg-foreign:) entries")
+    foreign_precedent_hits: list[dict[str, Any]] = []
+    for hit in foreign_hits:
+        key_terms = _terms(hit["key"].replace("-", " ").replace("_", " "))
+        # Same precise, subset-of-key-terms match as the local rejected-
+        # precedent check above - never the weaker overlap-of-two used for
+        # free text. U-E2's trust model (advisory everywhere): this hit
+        # never enters `findings`/`verdict` below, no matter how strong the
+        # match is - a foreign precedent cannot block, only inform.
+        if key_terms and key_terms.issubset(terms):
+            origin = str(hit.get("origin") or "")
+            foreign_precedent_hits.append({
+                "where": f"seq:{hit['sequence']}",
+                "domain": hit["domain"],
+                "key": hit["key"],
+                "state": hit["state"],
+                "sequence": hit["sequence"],
+                "origin": origin,
+                "message": f"foreign precedent (from {origin[:8]}) - advisory only; "
+                           "review before treating it as settled here",
+            })
+
+    # `foreign_precedent_hits` is deliberately excluded from `findings`: U-E2's
+    # trust model makes a foreign precedent advisory everywhere, and that
+    # includes never flipping this precheck from "proceed" to "prior work
+    # found" on its own.
     findings = bool(already_built or already_rejected or already_reported
                     or rejected_precedent_hits)
     return {
@@ -208,6 +255,7 @@ def precheck(project_root: Path | str, archive: Chronicle, task: str) -> dict[st
         "already_rejected": already_rejected,
         "already_reported": already_reported,
         "rejected_precedents": rejected_precedent_hits,
+        "foreign_precedents": foreign_precedent_hits,
         # Stated so an empty answer cannot be read as clearance from a check
         # that examined nothing.
         "searched": searched,
@@ -220,9 +268,19 @@ def precheck(project_root: Path | str, archive: Chronicle, task: str) -> dict[st
 def render(report: dict[str, Any]) -> str:
     """For a reader deciding whether to keep going, not for a parser."""
     if report["verdict"] == "no-prior-work-found":
-        return (f"No prior work found for '{report['task'][:60]}'; searched "
-                f"{report['symbols_examined']} symbols and "
-                f"{report['records_examined']} records.")
+        lines = [f"No prior work found for '{report['task'][:60]}'; searched "
+                 f"{report['symbols_examined']} symbols and "
+                 f"{report['records_examined']} records."]
+        # A foreign precedent never changes this verdict (advisory
+        # everywhere, U-E2), but it must not go unmentioned just because it
+        # was the only thing found - that would be surfacing it in the JSON
+        # report while silently dropping it from the text a human reads.
+        for hit in report.get("foreign_precedents", []):
+            lines.append(
+                f"  [foreign precedent (from {hit['origin'][:8]})] {hit['domain']}:{hit['key']} "
+                f"state={hit['state']} ({hit['where']}) - advisory only, not a local finding"
+            )
+        return "\n".join(lines)
     lines = [f"Prior work touching '{report['task'][:60]}':"]
     # Precedent first: a closed-enumeration refusal the archive itself
     # adjudicated is a sharper claim than free-text overlap, and the one
@@ -231,6 +289,14 @@ def render(report: dict[str, Any]) -> str:
         lines.append(
             f"  [rejected-precedent] {hit['domain']}:{hit['key']} "
             f"({hit['where']}) - {hit['message']}"
+        )
+    # Advisory only, and rendered as such: a foreign precedent never blocked
+    # `verdict` above, and its line here must not read like the local,
+    # archive-adjudicated finding directly above it.
+    for hit in report.get("foreign_precedents", []):
+        lines.append(
+            f"  [foreign precedent (from {hit['origin'][:8]})] {hit['domain']}:{hit['key']} "
+            f"state={hit['state']} ({hit['where']}) - advisory only, not a local finding"
         )
     # Open first of the rest: a thing already filed and unclosed is the one a
     # reader is most likely to be about to duplicate, and the one that
