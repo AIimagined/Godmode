@@ -90,7 +90,16 @@ _EXACT_ONLY_GIT_PHRASES = frozenset({"git branch", "git remote -v"})
 # operator `godmode_sentinel._REDIRECT` detects, without the target-capture
 # group this module never needs (a redirect anywhere disqualifies the whole
 # segment; where it points is the full hook's question, not this one's).
-_REDIRECT_PRESENT = re.compile(r"(?<![0-9<>])>{1,2}(?!&)")
+#
+# Synced with `godmode_sentinel._REDIRECT`'s own fix (task-3-4-review.md
+# Critical): the lookbehind used to also exclude a digit immediately before
+# `>`, which was meant to keep `2>&1` (fd duplication) from matching but
+# also blinded this check to `1>out.txt`/`2>err.log`/`0>f` - real,
+# digit-qualified file writes, invisible here exactly as they were in the
+# full sentinel. `(?!&)` alone already excludes fd-duplication (the `&`
+# immediately after `>` is what makes it a duplication, not a write), so the
+# digit exclusion added nothing `(?!&)` didn't already cover.
+_REDIRECT_PRESENT = re.compile(r"(?<![<>])>{1,2}(?!&)")
 
 _SEPARATORS = re.compile(r"[ \t]*(?:\|\||&&|[;|\r\n]|(?<![<>])&)[ \t\r\n]*")
 
