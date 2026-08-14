@@ -25,6 +25,7 @@ from .godmode_attest import (
     open_session,
     opening_handshake,
     record_claim,
+    record_criterion,
     record_step,
 )
 from .godmode_assess import assess as assess_project
@@ -623,6 +624,24 @@ def cmd_gate(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult(verdict.view(), exit_code=0 if verdict.allowed else 1)
 
 
+def _load_timeline(transcript_path: str | None) -> dict[str, Any] | None:
+    """U-T2: best-effort `session_timeline`, never raising into the caller.
+
+    A missing or unreadable transcript is treated exactly like no transcript
+    at all - `None` - so the temporal/ordering checks it feeds see a stated
+    gap, not an error, and skip themselves rather than penalise a claim over
+    an instrument that was never available.
+    """
+    if not transcript_path:
+        return None
+    from .godmode_session_log import session_timeline
+
+    try:
+        return session_timeline(Path(transcript_path))
+    except (OSError, ValueError):
+        return None
+
+
 def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     record = record_claim(
@@ -633,14 +652,34 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         args.grade,
         cites=args.cite,
         external=args.external,
+        timeline=_load_timeline(getattr(args, "transcript", None)),
     )
     data = record["data"]
     # A downgrade is a finding, so it must be visible in the exit status too.
     return CommandResult(
         {"claim": data["text"], "grade": data["grade"], "claimed": data["claimed_grade"],
          "downgraded": data["downgraded"], "reason": data.get("reason", ""),
-         "unresolved": data["unresolved"], "unsupported": data.get("unsupported", [])},
+         "unresolved": data["unresolved"], "unsupported": data.get("unsupported", []),
+         "advisories": data.get("advisories", [])},
         exit_code=1 if data["downgraded"] else 0,
+    )
+
+
+def cmd_criterion(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    record = record_criterion(
+        runtime.archive,
+        _session(runtime, args.session),
+        args.task,
+        args.text,
+        cites=args.cite,
+        timeline=_load_timeline(getattr(args, "transcript", None)),
+    )
+    data = record["data"]
+    return CommandResult(
+        {"task": data["task"], "text": data["text"], "late": data["late"],
+         "advisories": data["advisories"]},
+        exit_code=1 if data["late"] else 0,
     )
 
 
@@ -2258,8 +2297,26 @@ def _build_parser() -> argparse.ArgumentParser:
     claim.add_argument("--cite", action="append", default=[], help="rec:<hash> or file:<path>#L<n>; repeatable")
     claim.add_argument("--external", action="store_true",
                        help="Claim about an external API/library; requires a doc:/url: primary source")
+    claim.add_argument("--transcript",
+                       help="This session's transcript path; enables the U-T2 red-before-green "
+                            "check on a fix claim citing cmd:<command>")
     claim.add_argument("--session")
     claim.set_defaults(handler=cmd_claim)
+
+    criterion = sub.add_parser(
+        "criterion",
+        help="Record what passing looks like, before the work it judges (E4/[private])",
+    )
+    criterion.add_argument("--task", required=True, type=subject_text,
+                           help="Slug identifying the work this criterion judges")
+    criterion.add_argument("text")
+    criterion.add_argument("--cite", action="append", default=[],
+                           help="cmd:<command> the criterion will be judged by; repeatable")
+    criterion.add_argument("--transcript",
+                           help="This session's transcript path; enables the ordering check "
+                                "(a criterion recorded after work has started)")
+    criterion.add_argument("--session")
+    criterion.set_defaults(handler=cmd_criterion)
 
     verdict = sub.add_parser(
         "verdict",
@@ -2340,6 +2397,13 @@ def _build_parser() -> argparse.ArgumentParser:
     planmode_start.add_argument("--title", required=True, type=subject_text)
     planmode_start.add_argument("--session")
     for field in PLAN_FIELDS:
+        if field == "accept":
+            # E62: executable acceptance is a list of cmd:<command> entries,
+            # not prose - repeatable, unlike every other contract field.
+            planmode_start.add_argument(
+                "--accept", dest="accept", action="append", default=[],
+                help="cmd:<command> the plan is judged done by; repeatable")
+            continue
         planmode_start.add_argument(f"--{field.replace('_', '-')}", dest=field, default="")
     planmode_start.set_defaults(handler=cmd_planmode_start)
     planmode_approve = planmode_sub.add_parser("approve")

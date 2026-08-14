@@ -18,6 +18,7 @@ from .godmode_errors import ArchiveError
 CONTRACT_FIELDS = (
     "objective",
     "acceptance",
+    "accept",
     "scope",
     "out_of_scope",
     "current_state",
@@ -38,6 +39,12 @@ CONTRACT_FIELDS = (
 # existed - and because a fence nobody wrote should fence nothing rather than
 # everything. The gap is reported by `fence_verdict`, not inferred.
 OPTIONAL_FIELDS = ("editable",)
+
+# E62: `acceptance` is prose an operator reads; `accept` is its executable
+# form - one or more `cmd:<command>` entries that must actually be run and
+# attested before completion (see `unattested_accept_commands`). A list
+# field, so it is kept out of the generic string-coercion loop in `start`.
+LIST_FIELDS = ("accept",)
 
 # The spec is the what/why; the plan is the how. A plan without a spec is a
 # solution to an unstated problem, so `start` refuses until one exists.
@@ -100,14 +107,18 @@ def latest_spec(archive: Chronicle, title: str | None = None) -> dict[str, Any] 
     return None
 
 
-def start(archive: Chronicle, session: str, title: str, contract: dict[str, str]) -> dict[str, Any]:
+def start(archive: Chronicle, session: str, title: str, contract: dict[str, Any]) -> dict[str, Any]:
     spec = latest_spec(archive, title) or latest_spec(archive)
     if spec is None:
         raise ArchiveError(
             "A plan without a spec is refused; run `planmode specify` first so the "
             "what/why exists before the how"
         )
-    filled = {field: str(contract.get(field, "")).strip() for field in CONTRACT_FIELDS}
+    filled = {
+        field: str(contract.get(field, "")).strip()
+        for field in CONTRACT_FIELDS if field not in LIST_FIELDS
+    }
+    filled["accept"] = _normalize_accept(contract.get("accept"))
     record = archive.append(
         "plan",
         title,
@@ -120,10 +131,44 @@ def start(archive: Chronicle, session: str, title: str, contract: dict[str, str]
     }
 
 
-def gaps(contract: dict[str, str]) -> list[str]:
-    return [field for field in CONTRACT_FIELDS
-            if field not in OPTIONAL_FIELDS
-            and not str(contract.get(field, "")).strip()]
+def _normalize_accept(raw: Any) -> list[str]:
+    """Coerce a plan's `accept` field to a list of `cmd:<command>` strings.
+
+    Accepts a single string (one command, the CLI's natural shape for a
+    repeated `--accept` flag collapsing to one value) or a list; anything
+    else is empty. Every non-empty entry must already read `cmd:...` - E62
+    is specifically executable acceptance, not another prose field wearing
+    a new name.
+    """
+    if raw is None:
+        entries: list[Any] = []
+    elif isinstance(raw, str):
+        entries = [raw] if raw.strip() else []
+    elif isinstance(raw, (list, tuple)):
+        entries = list(raw)
+    else:
+        entries = []
+    accept = [str(entry).strip() for entry in entries if str(entry).strip()]
+    for entry in accept:
+        if not entry.startswith("cmd:"):
+            raise ArchiveError(
+                f"plan 'accept' entries must read 'cmd:<command>'; got {entry!r}"
+            )
+    return accept
+
+
+def gaps(contract: dict[str, Any]) -> list[str]:
+    missing = []
+    for field in CONTRACT_FIELDS:
+        if field in OPTIONAL_FIELDS:
+            continue
+        if field in LIST_FIELDS:
+            if not contract.get(field):
+                missing.append(field)
+            continue
+        if not str(contract.get(field, "")).strip():
+            missing.append(field)
+    return missing
 
 
 def approve(archive: Chronicle, session: str) -> dict[str, Any]:
@@ -182,6 +227,36 @@ def bind_execution(archive: Chronicle, session: str, summary: str, files: list[s
     return {"plan": plan["id"], "files": sorted(files), "outside_scope": sorted(drift)}
 
 
+def unattested_accept_commands(archive: Chronicle, session: str) -> list[str]:
+    """E62: accept commands from the active plan with no this-session attestation.
+
+    An `accept` entry is a `cmd:<command>` citation. It is "attested" the
+    same way any other command citation is: an `attestation` record from
+    this session carries the exact string in its evidence - see `run_check`
+    in `godmode_attest`, which writes precisely that. Reading it back here
+    rather than importing `godmode_attest` keeps this module's only
+    dependency on the archive's own record shape, which every other
+    citation check in this codebase already relies on.
+
+    An empty list means either no active plan, or a plan whose `accept`
+    field is empty - `approve` already refuses the latter via `gaps`, so
+    this function's job is narrower: of the accept commands a plan DOES
+    carry, which ones this session has not actually run.
+    """
+    plan = active_plan(archive)
+    if plan is None:
+        return []
+    accept = plan["contract"].get("accept") or []
+    if not accept:
+        return []
+    cited: set[str] = set()
+    for record in archive.select(kind="attestation", limit=1000):
+        if record["data"].get("session") != session:
+            continue
+        cited.update(record.get("evidence", []))
+    return [command for command in accept if command not in cited]
+
+
 def _self_check() -> None:
     import os
     import tempfile
@@ -229,6 +304,7 @@ def _self_check() -> None:
             start(archive, session, "stop token replay", {
                 "objective": "stop refresh-token replay",
                 "acceptance": "a replayed token is rejected",
+                "accept": ["cmd:pytest tests/auth/rotate_test.py"],
                 "scope": "src/auth/rotate.py tests/auth/rotate_test.py",
                 "out_of_scope": "billing",
                 "current_state": "rotation reuses the token",
@@ -242,6 +318,17 @@ def _self_check() -> None:
             })
             assert approve(archive, session)["approved"]
             assert mutation_verdict(archive, session)["allowed"]
+
+            # E62: an approved plan's accept command has not run this session yet.
+            assert unattested_accept_commands(archive, session) == [
+                "cmd:pytest tests/auth/rotate_test.py"
+            ]
+            archive.append(
+                "attestation", "check:rotate",
+                {"session": session, "status": "ran", "result": "exit 0"},
+                evidence=["cmd:pytest tests/auth/rotate_test.py"],
+            )
+            assert unattested_accept_commands(archive, session) == []
 
             # The approved plan survives a handoff: a different session executes it.
             successor = "S-next-model"

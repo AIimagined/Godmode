@@ -76,6 +76,7 @@ def _approved_plan(archive, session, title="ship subtraction"):
     start(archive, session, title, {
         "objective": "add a subtraction helper",
         "acceptance": "the suite covers sub()",
+        "accept": "cmd:python -m unittest",
         "scope": "app.py tests/test_app.py",
         "out_of_scope": "multiplication",
         "current_state": "only add() exists",
@@ -101,6 +102,10 @@ class CompletionReportTests(unittest.TestCase):
                 "The add function returns a sum.", "verified",
                 cites=["file:app.py#L2"],
             )
+            # E62: the plan's accept command needs a this-session attestation
+            # too, or `close_session` (and so `status`) stays short of verified.
+            record_step(archive, session, "check:subtraction", "ran", result="exit 0",
+                       evidence=["cmd:python -m unittest"])
             report = completion_report(archive, archive.anchor, project, session=session)
             fields = report["fields"]
 
