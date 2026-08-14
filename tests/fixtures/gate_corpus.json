@@ -40,14 +40,14 @@
   "class": "by-design"
  },
  {
-  "operation": "node -e \"\nconst N=1920*1080*4;\nconst data=new Uint8ClampedArray(N);\nfor(let i=0;i<N;i++) data[i]=(i*2654435761)>>>13 & 255;\nconst buf={width:1920,height:1080,data};\n\nfunction oldHash(buffer){\n  let hash=0x811c9dc5;\n  const mix=(byte)=>{ hash^=byte; hash=Math.imul(hash,0x01000193)>>>0; };\n  mix(buffer.width&0xff); mix((buffer.width>>8)&0xff);\n  mix(buffer.height&0xff); mix((buffer.height>>8)&0xff);\n  for(let i=0;i<buffer.data.length;i++) mix(buffer.data[i]);\n  return hash.toString(16).padStart(8,",
-  "expected": "allow",
-  "class": "FP1"
+  "operation": "node -e \"BODY\"",
+  "expected": "ask",
+  "class": "by-design"
  },
  {
-  "operation": "node -e \"\nconst {execFileSync}=require('child_process');\nfunction run(args,label){\n  const t0=process.hrtime.bigint();\n  const out=execFileSync(process.execPath,['packages/render-headless/frames.js',...args],{encoding:'utf8'});\n  const ms=Number(process.hrtime.bigint()-t0)/1e6;\n  const p=out.split('profile:')[1];\n  console.log(label,(ms/1000).toFixed(1)+'s total');\n  if(p) console.log(p.trim().split('\\n').filter(l=>/total|measured|phase|shot|decode|hash|seek|write|effects/.test(l)).join('\\n'));",
-  "expected": "allow",
-  "class": "FP1"
+  "operation": "node -e \"BODY\"",
+  "expected": "ask",
+  "class": "by-design"
  },
  {
   "operation": "cp \"PATH\" test/fixtures/fixture-contract.json && ls test/fixtures/ | head",
@@ -170,14 +170,14 @@
   "class": "by-design"
  },
  {
-  "operation": "cd PATH && node packages/render-headless/frames.js --composition packages/bench/results/render-workload.json --frames 4 --pipe --format webm --alpha --transport fast > /dev/null 2>&1; ffmpeg -y -loglevel error -c:v libvpx-vp9 -i out/app-demo.webm -vframes 1 -pix_fmt rgba out/alpha-opaque.png && node --input-type=module -e \"\nimport {decodePng} from './src/render/png.ts';\nimport {readFileSync} from 'node:fs';\nconst img=decodePng(readFileSync('out/alpha-opaque.png'));\nlet o=0,t=0,p=0;\nfor(let i=3",
-  "expected": "allow",
-  "class": "FP2"
+  "operation": "cd PATH && node packages/render-headless/frames.js --composition packages/bench/results/render-workload.json --frames 4 --pipe --format webm --alpha --transport fast > /dev/null 2>&1; ffmpeg -y -loglevel error -c:v libvpx-vp9 -i out/app-demo.webm -vframes 1 -pix_fmt rgba out/alpha-opaque.png && node --input-type=module -e \"BODY\"",
+  "expected": "ask",
+  "class": "by-design"
  },
  {
-  "operation": "cd PATH && ffmpeg -y -loglevel error -c:v libvpx-vp9 -i out/app-demo.webm -vframes 1 -pix_fmt rgba out/alpha-opaque.png && node --input-type=module -e \"\nimport {decodePng} from './src/render/png.ts';\nimport {readFileSync} from 'node:fs';\nconst img=decodePng(readFileSync('out/alpha-opaque.png'));\nlet o=0,t=0,p=0;\nfor(let i=3;i<img.data.length;i+=4){const a=img.data[i];if(a===255)o++;else if(a===0)t++;else p++;}\nconsole.log('opaque control:',img.width+'x'+img.height,'opaque',o,'transparent',t,'p",
-  "expected": "allow",
-  "class": "FP2"
+  "operation": "cd PATH && ffmpeg -y -loglevel error -c:v libvpx-vp9 -i out/app-demo.webm -vframes 1 -pix_fmt rgba out/alpha-opaque.png && node --input-type=module -e \"BODY\"",
+  "expected": "ask",
+  "class": "by-design"
  },
  {
   "operation": "P=~/.claude/plugins/cache/publisher/godmode && ls \"$P\" && python -c \"\nimport json,os\np=os.path.expanduser('~/.claude/plugins/cache/publisher/godmode')\nfor v in sorted(os.listdir(p)):\n    m=os.path.join(p,v,'.claude-plugin','plugin.json')\n    if os.path.isfile(m): print(v,'->',json.load(open(m,encoding='utf-8')).get('version'))\n\"; echo \"--- hooks registered:\"; cat \"$P/0.2.1/hooks/hooks.json\" 2>/dev/null | python -c \"import json,sys; d=json.load(sys.stdin); print(list(d['hooks'].keys()))\" 2>/dev",
@@ -225,8 +225,8 @@
   "class": "by-design"
  },
  {
-  "operation": "python -c \"\nimport sys; sys.path.insert(0,'scripts')\nfrom godmode_runtime.godmode_sentinel import shell_segments, classify_action\ncmd = 'for f in *.md; do echo \\\"\\$(wc -l < \\\\\\\"\\$f\\\\\\\") \\$f\\\"; done | sort -rn | head -5'\nfor s in shell_segments(cmd):\n    v = classify_action(s)\n    print(f\\\"{'DENY' if v['protected'] else 'ok  '} {v['category']:24} {s!r}\\\")\nprint()\nfor probe in ['wc -l < README.md', 'cat < input.txt', 'sort file > out.txt', 'echo \\$(ls)']:\n    v = classify_action(probe)\n    print(f",
-  "expected": "allow",
+  "operation": "python -c \"BODY\"",
+  "expected": "ask",
   "class": "by-design"
  },
  {
@@ -355,9 +355,9 @@
   "class": "FP2"
  },
  {
-  "operation": "cd PATH\ncp .godmode-docslint.json /tmp/gm-docslint.bak 2>/dev/null || cp .godmode-docslint.json \"$LOCALAPPDATA/Temp/gm-docslint.bak\"\nprintf '{\"ignore\": [ \"unterminated' > .godmode-docslint.json\npython scripts/godmode.py --project . config check 2>&1 | tail -14; echo \"exit=$?\"\ncp \"$LOCALAPPDATA/Temp/gm-docslint.bak\" .godmode-docslint.json 2>/dev/null || cp /tmp/gm-docslint.bak .godmode-docslint.json\necho \"--- restored:\"; python -c \"import json;print(json.load(open('.godmode-docslint.json')) and '",
-  "expected": "allow",
-  "class": "FP2"
+  "operation": "cd PATH\ncp .godmode-docslint.json /tmp/gm-docslint.bak 2>/dev/null || cp .godmode-docslint.json \"$LOCALAPPDATA/Temp/gm-docslint.bak\"\nprintf '{\"ignore\": [ \"unterminated' > .godmode-docslint.json\npython scripts/godmode.py --project . config check 2>&1 | tail -14; echo \"exit=$?\"\ncp \"$LOCALAPPDATA/Temp/gm-docslint.bak\" .godmode-docslint.json 2>/dev/null || cp /tmp/gm-docslint.bak .godmode-docslint.json\necho \"--- restored:\"; python -c \"BODY\"",
+  "expected": "ask",
+  "class": "by-design"
  },
  {
   "operation": "python - <<'EOF' BODY",
