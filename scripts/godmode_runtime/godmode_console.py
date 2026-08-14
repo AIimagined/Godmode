@@ -80,6 +80,8 @@ from .godmode_contribution import render_line as render_contribution
 from .godmode_fuzz import fuzz as run_fuzz
 from .godmode_metrics import metrics as product_metrics
 from .godmode_metrics import render_markdown as render_metrics
+from .godmode_roi import render_roi
+from .godmode_roi import roi_report
 from .godmode_stages import advance as stage_advance
 from .godmode_stages import skip_stage, sop_attest, sop_status, stage_gate
 from .godmode_index import IndexStale
@@ -1707,6 +1709,15 @@ def cmd_metrics(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult(report, exit_code=1 if report["verdict"] == "below-target" else 0)
 
 
+def cmd_roi(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """U-E1: counts-only ROI report. JSON with --json, prose otherwise."""
+    _require_archive(runtime)
+    report = roi_report(runtime.archive, sessions=args.sessions)
+    if getattr(args, "json", False):
+        return CommandResult(report)
+    return CommandResult({"report": render_roi(report)})
+
+
 def cmd_expunge(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     return CommandResult(runtime.archive.expunge(args.sequence, args.reason))
@@ -2764,6 +2775,12 @@ def _build_parser() -> argparse.ArgumentParser:
     metrics_parser.add_argument("--window", type=int, default=500)
     metrics_parser.add_argument("--markdown", action="store_true")
     metrics_parser.set_defaults(handler=cmd_metrics)
+
+    roi_parser = sub.add_parser(
+        "roi", help="Counts-only ROI report: burn beside gate activity, no causal claims")
+    roi_parser.add_argument("--sessions", type=int, default=None,
+                            help="Limit the fold to the most recent N sessions")
+    roi_parser.set_defaults(handler=cmd_roi)
 
     expunge_parser = sub.add_parser(
         "expunge",
