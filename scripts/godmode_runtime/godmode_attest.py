@@ -26,6 +26,7 @@ GRADES = ("observed", "hypothesis", "verified", "unknown")
 
 _FILE_CITE = re.compile(r"^file:(?P<path>[^#]+)(?:#L(?P<start>\d+)(?:-L?(?P<end>\d+))?)?$")
 _RECORD_CITE = re.compile(r"^rec:(?P<digest>[0-9a-f]{6,64})$")
+_VERDICT_CITE = re.compile(r"^verdict:(?P<sequence>\d+)$")
 
 # Named because naming them is the intervention. Each entry is a thought that has
 # preceded a skipped step, mapped to the gate it predicts. Surfaced on a block so the
@@ -476,6 +477,16 @@ def _citation_resolves(project: Path, archive: Chronicle, citation: str,
         return any(
             record["record_hash"].startswith(digest) and record["kind"] != "claim"
             for record in archive.select(limit=2000)
+        )
+    match = _VERDICT_CITE.match(citation)
+    if match:
+        # Existence is not enough here: a claim standing on a refuted or
+        # malformed verdict is the false-claim class this whole mechanism
+        # exists to catch, so only a confirmed disposition resolves.
+        sequence = int(match.group("sequence"))
+        return any(
+            record["sequence"] == sequence and record["data"].get("disposition") == "confirmed"
+            for record in archive.select(kind="verdict", limit=2000)
         )
     match = _FILE_CITE.match(citation)
     if match:
