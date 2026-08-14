@@ -47,7 +47,6 @@ RULE_TEMPLATES: dict[str, str] = {
     "default-branch": "the default branch is `{value}`",
     "stack": "this project's stack includes {value}",
 }
-_DEFAULT_TEMPLATE = "{kind}: {value}"
 
 
 def soft_rule_text(detection: dict[str, Any], enforcement: str = "SOFT") -> str:
@@ -62,7 +61,7 @@ def soft_rule_text(detection: dict[str, Any], enforcement: str = "SOFT") -> str:
             "detected rules may only be emitted as SOFT; promoting one to a "
             "blocking rule is a human decision made in the charter document"
         )
-    template = RULE_TEMPLATES.get(detection["kind"], _DEFAULT_TEMPLATE)
+    template = RULE_TEMPLATES[detection["kind"]]
     body = template.format(**detection)
     return f"- {body} (detected: {detection['source']}) [SOFT - detected, promote after review]"
 

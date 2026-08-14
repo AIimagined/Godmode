@@ -26,8 +26,9 @@ if str(SCRIPTS) not in sys.path:
 if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 
+from godmode_runtime.godmode_corpus import resolve_roles  # noqa: E402
 from godmode_runtime.godmode_detect import (  # noqa: E402
-    FILE_CAP, detect_repo, soft_rule_text,
+    FILE_CAP, bootstrap_charter, detect_repo, soft_rule_text,
 )
 from godmode_runtime.godmode_errors import GodmodeError  # noqa: E402
 from test_godmode_runtime import isolated_project  # noqa: E402
@@ -160,6 +161,48 @@ class InitIntegration(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertNotIn("detect", payload)
             self.assertFalse((project / "GODMODE.md").exists())
+
+
+class Population(unittest.TestCase):
+    """Fixture-free: the population run the plan requires, committed as an
+    assertion rather than eyeballed output once and thrown away.
+
+    Runs against this repo's own real root - resolved from this test file's
+    own location, never `cwd` - so the assertion travels with the repo
+    wherever it is checked out. No exact-count pin: a repo that grows more
+    manifests or CI commands over time must not need this test edited to
+    match, only its floor (`> 0`) held. No absolute path is asserted on;
+    only counts, substrings, and byte/mtime equality.
+    """
+
+    def test_this_repo_detects_candidates_and_leaves_its_charter_untouched(self) -> None:
+        repo_root = PLUGIN_ROOT
+
+        detections = detect_repo(repo_root)
+        self.assertGreater(len(detections), 0)
+        for detection in detections:
+            self.assertIn("SOFT", detection["rule_text"])
+            self.assertIn("(detected: ", detection["rule_text"])
+
+        # This repo already carries an authority document, so bootstrap_charter
+        # must take the report-only branch and touch none of its bytes.
+        resolution = resolve_roles(repo_root)
+        self.assertTrue(
+            resolution.bindings,
+            "this repo is expected to already carry a bound authority document",
+        )
+        before = {
+            binding.path: (binding.path.read_bytes(), binding.path.stat().st_mtime_ns)
+            for binding in resolution.bindings
+        }
+
+        result = bootstrap_charter(repo_root)
+
+        self.assertEqual(result["mode"], "report")
+        for binding in resolution.bindings:
+            before_bytes, before_mtime = before[binding.path]
+            self.assertEqual(binding.path.read_bytes(), before_bytes)
+            self.assertEqual(binding.path.stat().st_mtime_ns, before_mtime)
 
 
 if __name__ == "__main__":
