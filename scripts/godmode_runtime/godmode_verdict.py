@@ -1,27 +1,47 @@
-"""Witness + independent-checker verdicts (U-V1).
+"""Witness + independent-checker verdicts (U-V1), extended to N-checker panels (U-E4).
 
 "Agent claims it fixed X" becomes admissible only as: a claimed value stated
-explicitly, a data-only witness sufficient to recompute it, and a checker
-that recomputes from the witness alone (never invoking the producer that
-made the claim) and asserts against the stated value.
+explicitly, a data-only witness sufficient to recompute it, and one or more
+checkers that recompute from the witness alone (never invoking the producer
+that made the claim) and assert against the stated value.
 
-Three dispositions, never two. Structural preconditions of the witness are
-validated BEFORE the checker ever runs: a missing file or an unresolvable
-seq means the claim was never judged (`witness-malformed`), which is a
-different fact from "judged and found false" (`refuted`). A checker that
-cannot be parsed, is empty, cannot start, or never finishes is the same
-failure - "the checker could not judge" is not "the claim is false" - so all
-of those also land on `witness-malformed`, never `refuted`, and never as an
-uncaught exception: an adversarial checker string is a malformed judge, not
-a fourth outcome.
+Four dispositions, never fewer, never averaged. Structural preconditions of
+the witness are validated BEFORE any checker ever runs: a missing file or an
+unresolvable seq means the claim was never judged (`witness-malformed`),
+which is a different fact from "judged and found false" (`refuted`). A
+checker that cannot be parsed, is empty, cannot start, or never finishes is
+the same failure - "the checker could not judge" is not "the claim is
+false" - so all of those also land on `witness-malformed` for that checker,
+never `refuted`, and never as an uncaught exception: an adversarial checker
+string is a malformed judge, not a fourth outcome.
 
-Two invariants are enforced INNATELY at the archive seam - `Chronicle.append`
+`record_verdict` runs `checker_cmd` as a REPEATED panel (1..N; a single
+command is still accepted and folds to a one-element panel, so every caller
+from before this panel existed is unaffected). Each checker runs
+independently (own subprocess, own timeout, producer never invoked); the
+per-checker result is recorded verbatim in `data["checks"]` as
+`{"checker", "exit", "disposition"}` (plus a `reason` when that checker
+could not judge at all). The panel folds to ONE overall disposition by a
+closed rule, never a score:
+
+- all judged checkers `confirmed` -> `confirmed`.
+- any judged checker `refuted` -> `contested` when at least one other judged
+  checker `confirmed`, else `refuted` outright (unanimous refutation is not
+  contested - contested means the panel disagreed).
+- a checker that could not judge (`witness-malformed`) is excluded from the
+  fold and recorded as a stated gap in `checks`, UNLESS no checker judged
+  anything at all, in which case the whole panel folds to
+  `witness-malformed` - a minority of malformed checkers never taints an
+  otherwise-unanimous verdict, and it never manufactures a judgment out of
+  checkers that could not run either.
+
+Three invariants are enforced INNATELY at the archive seam - `Chronicle.append`
 consults a `KIND_INVARIANTS` registry that `godmode_chronicle.py` seeds from
 `godmode_invariants.py` at its OWN import, not as a side effect of this
 module being imported - so a future caller that builds a `verdict` record
 via a raw `archive.append(...)` (the experiment ledger among them) is held
-to the same rule as `record_verdict`/`attest_run_state`, whether or not that
-caller ever imports this module. The two rules (owned by
+to the same rules as `record_verdict`/`attest_run_state`, whether or not
+that caller ever imports this module. The three rules (owned by
 `godmode_invariants._verdict_invariants`, not duplicated here):
 
 - Drive-vs-acquit: `acquitted_by: "self"` may attest execution completeness
@@ -30,6 +50,14 @@ caller ever imports this module. The two rules (owned by
 - Terminated-vs-truncated: a `run_state: "truncated"` run (a budget or
   timeout cutoff) can never be recorded `confirmed` - budget exhaustion must
   not impersonate completion.
+- Fold-vs-check: a `disposition: "confirmed"` fold can never carry a
+  `checks` entry whose own disposition is `refuted` - that combination is
+  not "confirmed", it is a fold that lied about a dissent it is holding.
+
+`verdict:<seq>` citations resolve only when that verdict's disposition is
+`confirmed` (`godmode_attest._citation_resolves`) - `contested` is refused
+by that same rule with no separate code path, the same way `refuted` and
+`witness-malformed` already were.
 """
 
 from __future__ import annotations
@@ -43,7 +71,7 @@ from typing import Any
 from .godmode_chronicle import Chronicle
 from .godmode_errors import ArchiveError
 
-DISPOSITIONS = ("confirmed", "refuted", "witness-malformed")
+DISPOSITIONS = ("confirmed", "refuted", "witness-malformed", "contested")
 RUN_STATES = ("terminated", "truncated")
 ACQUITTED_BY = ("independent", "self")
 
@@ -135,40 +163,63 @@ def _run_checker(
     return disposition, None, checker_exit
 
 
+def _fold_panel(checks: list[dict[str, Any]]) -> str:
+    """Closed fold, no scoring - see the module docstring for the rule.
+
+    `checks` already holds one entry per checker, each with its own
+    `disposition` of `confirmed`/`refuted`/`witness-malformed`. A malformed
+    checker is excluded from the fold (it is recorded in `checks` as a
+    stated gap, not silently dropped) unless it is ALL of them, in which
+    case the panel as a whole never reached a judgment.
+    """
+    judged = [c["disposition"] for c in checks if c["disposition"] != "witness-malformed"]
+    if not judged:
+        return "witness-malformed"
+    if all(d == "confirmed" for d in judged):
+        return "confirmed"
+    # At least one refuted among the judged checkers past this point.
+    if any(d == "confirmed" for d in judged):
+        return "contested"
+    return "refuted"
+
+
 def _append_verdict(
     archive: Chronicle,
     claim: str,
     claimed_value: str,
     witness_kind: str | None,
     witness_value: str | None,
-    checker_cmd: str,
+    checks: list[dict[str, Any]],
     disposition: str | None,
     run_state: str,
     acquitted_by: str,
-    checker_exit: int | None,
-    malformed_reason: str | None = None,
 ) -> dict[str, Any]:
+    single = len(checks) == 1
     evidence: list[str] = []
-    if checker_cmd:
-        evidence.append(f"cmd:{checker_cmd}")
+    for index, check in enumerate(checks):
+        cmd = check.get("checker")
+        prefix = "" if single else f"{index}:"
+        if cmd:
+            evidence.append(f"cmd:{prefix}{cmd}")
+        if check.get("exit") is not None:
+            evidence.append(f"checker_exit:{prefix}{check['exit']}")
+        if check.get("reason") is not None:
+            evidence.append(f"reason:{prefix}{check['reason']}")
     if witness_kind and witness_value is not None:
         evidence.append(f"{witness_kind}:{witness_value}")
-    if checker_exit is not None:
-        evidence.append(f"checker_exit:{checker_exit}")
-    if malformed_reason is not None:
-        evidence.append(f"reason:{malformed_reason}")
     data = {
         "claim": claim,
         "claimed_value": claimed_value,
         "witness": {"kind": witness_kind, "ref": witness_value},
-        "checker": f"cmd:{checker_cmd}" if checker_cmd else None,
+        "checker": f"cmd:{checks[0]['checker']}" if single and checks[0].get("checker") else None,
+        "checks": checks,
         "disposition": disposition,
         "run_state": run_state,
         "acquitted_by": acquitted_by,
     }
     subject = (claim or "verdict")[:_SUBJECT_CAP]
-    # The two forbidden combinations are checked inside archive.append()
-    # itself (godmode_invariants._verdict_invariants, seeded into
+    # The forbidden combinations are checked inside archive.append() itself
+    # (godmode_invariants._verdict_invariants, seeded into
     # Chronicle.append()'s KIND_INVARIANTS at godmode_chronicle's own
     # import) - not duplicated here, and not dependent on this module
     # having been imported either.
@@ -181,21 +232,30 @@ def record_verdict(
     claim: str,
     claimed_value: str,
     witness_ref: str,
-    checker_cmd: str,
+    checker_cmd: str | list[str],
     *,
     run_state: str = "terminated",
     acquitted_by: str = "independent",
     timeout: int = 300,
 ) -> dict[str, Any]:
-    """Run an independent checker against a witness and record the verdict.
+    """Run one or more independent checkers against a witness, fold, record.
 
-    The checker never sees the producer of the claim - only the witness. It
-    is invoked exactly once the witness has passed structural validation
-    (exists and is readable for `file:`, resolves in the archive for
-    `seq:`); a witness that fails that check means the checker never runs at
-    all, and the record says so (`witness-malformed`), not `refuted`. An
-    empty, unparseable, or unlaunchable `checker_cmd` is the same class of
-    failure and lands on the same disposition, never an uncaught exception.
+    `checker_cmd` accepts a bare command string (folds to a one-checker
+    panel - every pre-panel caller of this function is unaffected) or a
+    list of 1..N command strings for a real panel. No checker ever sees the
+    producer of the claim - only the witness. Every checker is invoked only
+    once the witness has passed structural validation (exists and is
+    readable for `file:`, resolves in the archive for `seq:`); a witness
+    that fails that check means NO checker ever runs, and the record says so
+    (`witness-malformed`), not `refuted`. An empty, unparseable, or
+    unlaunchable checker command is the same class of failure for that one
+    checker and lands its own `checks` entry on `witness-malformed`, never
+    an uncaught exception.
+
+    The panel folds to one `disposition` per the closed rule in the module
+    docstring; every individual checker's own exit/disposition/gap-reason is
+    still recorded verbatim in `data["checks"]`, so a downgrade to
+    `contested` never hides which checker dissented.
     """
     if run_state not in RUN_STATES:
         raise ArchiveError(
@@ -206,19 +266,35 @@ def record_verdict(
             f"Unknown acquitted_by '{acquitted_by}'; expected one of {', '.join(ACQUITTED_BY)}"
         )
 
+    checkers = [checker_cmd] if isinstance(checker_cmd, str) else list(checker_cmd)
+    if not checkers:
+        raise ArchiveError("record_verdict needs at least one checker command")
+
     if ":" in witness_ref:
         witness_kind, witness_value = witness_ref.split(":", 1)
     else:
         witness_kind, witness_value = "unknown", witness_ref
 
-    if not _witness_readable(project, archive, witness_kind, witness_value):
-        disposition, reason, checker_exit = "witness-malformed", "witness-unreadable", None
-    else:
-        disposition, reason, checker_exit = _run_checker(checker_cmd, project, timeout)
+    witness_ok = _witness_readable(project, archive, witness_kind, witness_value)
+    checks: list[dict[str, Any]] = []
+    for cmd in checkers:
+        if not witness_ok:
+            disposition, reason, checker_exit = (
+                "witness-malformed", "witness-unreadable", None,
+            )
+        else:
+            disposition, reason, checker_exit = _run_checker(cmd, project, timeout)
+        entry: dict[str, Any] = {
+            "checker": cmd, "exit": checker_exit, "disposition": disposition,
+        }
+        if reason is not None:
+            entry["reason"] = reason
+        checks.append(entry)
 
+    folded = _fold_panel(checks)
     return _append_verdict(
-        archive, claim, claimed_value, witness_kind, witness_value, checker_cmd,
-        disposition, run_state, acquitted_by, checker_exit, reason,
+        archive, claim, claimed_value, witness_kind, witness_value, checks,
+        folded, run_state, acquitted_by,
     )
 
 
@@ -233,14 +309,15 @@ def attest_run_state(
     `acquitted_by` is fixed at `"self"`: an agent can attest that it ran to
     completion (or was cut off) without that being mistaken for an
     independent checker's verdict on whether the result is correct.
-    `disposition` stays `None` - self acquits execution, never quality.
+    `disposition` stays `None` - self acquits execution, never quality. No
+    checker ran, so `checks` stays empty.
     """
     if run_state not in RUN_STATES:
         raise ArchiveError(
             f"Unknown run_state '{run_state}'; expected one of {', '.join(RUN_STATES)}"
         )
     return _append_verdict(
-        archive, claim, "", None, None, "", None, run_state, "self", None,
+        archive, claim, "", None, None, [], None, run_state, "self",
     )
 
 

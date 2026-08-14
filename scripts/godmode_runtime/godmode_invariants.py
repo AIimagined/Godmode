@@ -34,12 +34,20 @@ KindInvariant = Callable[[dict[str, Any]], None]
 
 
 def _verdict_invariants(data: dict[str, Any]) -> None:
-    """U-V1's two forbidden combinations - never two dispositions worth of trust for one.
+    """U-V1's forbidden combinations, extended by U-E4's panel fold - never a
+    disposition worth of trust the record's own detail contradicts.
 
     Drive-vs-acquit: a self-acquitted "confirmed" would let an agent grade
     its own quality as verified; only an independent checker may do that.
     Terminated-vs-truncated: a "confirmed" on a truncated (budget/timeout
     cutoff) run would let exhaustion impersonate completion.
+    Fold-vs-check (U-E4): a "confirmed" fold whose own `checks` list carries
+    a checker that came back `refuted` is not confirmed, it is a fold that
+    buried a dissent - that combination is `contested` or nothing, never
+    `confirmed`. A raw append that hand-builds a `checks` list is held to
+    this exactly as `record_verdict`'s own fold is (`godmode_verdict._fold_panel`
+    can never itself produce it, but a raw append bypasses the fold, which is
+    the whole reason this needs to be enforced here too).
     """
     if data.get("disposition") != "confirmed":
         return
@@ -53,6 +61,13 @@ def _verdict_invariants(data: dict[str, Any]) -> None:
         raise ArchiveError(
             "a truncated run cannot be recorded 'confirmed'; budget or "
             "timeout exhaustion must not impersonate completion"
+        )
+    checks = data.get("checks") or []
+    if any(isinstance(c, dict) and c.get("disposition") == "refuted" for c in checks):
+        raise ArchiveError(
+            "a 'confirmed' fold cannot carry a 'checks' entry that came back "
+            "'refuted'; a panel with any refuting check is 'contested' at "
+            "best, never 'confirmed' - this combination is refused outright"
         )
 
 

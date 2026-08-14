@@ -51,6 +51,16 @@ def _write_checker(project: Path) -> Path:
     return checker
 
 
+def _write_stub(project: Path, name: str, exit_code: int) -> str:
+    """A tiny checker script that only ever exits with a fixed code -
+    `ok.py`/`fail.py` from the case matrix. Never reads the witness; the
+    panel fold under test is about disagreement between checkers'
+    dispositions, not about what any one of them recomputes."""
+    path = project / name
+    path.write_text(f"import sys\nsys.exit({exit_code})\n", encoding="utf-8")
+    return f"{sys.executable} {name}"
+
+
 class VerdictTests(unittest.TestCase):
     def test_confirmed_when_checker_recomputes_the_claim(self) -> None:
         with isolated_project() as (project, _s, _a, archive):
@@ -316,6 +326,166 @@ class VerdictTests(unittest.TestCase):
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
             self.assertIsNone(verdict_for(archive, 999))
+
+
+class PanelFold(unittest.TestCase):
+    """U-E4: `record_verdict` accepts a REPEATED `--checker` (1..N); the
+    panel folds to one disposition by a closed rule, never a score.
+    `contested` joins the disposition enum for exactly the disagreement
+    case; a `confirmed` fold can never carry a refuting check, checked both
+    through the fold itself and through a direct raw append that bypasses
+    it (the archive-seam invariant added to godmode_invariants.py)."""
+
+    def _witness(self, project: Path) -> None:
+        (project / "witness.txt").write_text("21\n21\n", encoding="utf-8")
+
+    def test_all_confirm_confirmed(self) -> None:
+        # [ok, ok] -> confirmed
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            self._witness(project)
+            ok1 = _write_stub(project, "ok1.py", 0)
+            ok2 = _write_stub(project, "ok2.py", 0)
+            record = record_verdict(
+                archive, project, "panel agrees", "42", "file:witness.txt",
+                [ok1, ok2],
+            )
+        self.assertEqual(record["data"]["disposition"], "confirmed")
+        checks = record["data"]["checks"]
+        self.assertEqual(len(checks), 2)
+        self.assertTrue(all(c["disposition"] == "confirmed" for c in checks))
+
+    def test_split_is_contested_and_uncitable(self) -> None:
+        # [ok, fail] -> contested; verdict: citation fails
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            self._witness(project)
+            ok = _write_stub(project, "ok.py", 0)
+            fail = _write_stub(project, "fail.py", 1)
+            verdict = record_verdict(
+                archive, project, "panel disagrees", "42", "file:witness.txt",
+                [ok, fail],
+            )
+            self.assertEqual(verdict["data"]["disposition"], "contested")
+            claim = record_claim(
+                archive, project, "session-1", "the panel-backed claim", "verified",
+                cites=[f"verdict:{verdict['sequence']}"],
+            )
+        # `contested` resolves through the SAME rule that already refuses
+        # refuted/witness-malformed - `_citation_resolves` only accepts
+        # `disposition == "confirmed"` (godmode_attest.py, unmodified here).
+        self.assertEqual(claim["data"]["grade"], "hypothesis")
+        self.assertTrue(claim["data"]["downgraded"])
+
+    def test_all_refute_refuted(self) -> None:
+        # [fail, fail] -> refuted
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            self._witness(project)
+            fail1 = _write_stub(project, "fail1.py", 1)
+            fail2 = _write_stub(project, "fail2.py", 1)
+            record = record_verdict(
+                archive, project, "panel refutes", "42", "file:witness.txt",
+                [fail1, fail2],
+            )
+        self.assertEqual(record["data"]["disposition"], "refuted")
+        self.assertTrue(all(c["disposition"] == "refuted" for c in record["data"]["checks"]))
+
+    def test_malformed_minority_is_stated_gap(self) -> None:
+        # [ok, crash] -> confirmed + gap recorded in checks
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            self._witness(project)
+            ok = _write_stub(project, "ok.py", 0)
+            crash = str(project / "does-not-exist.py")  # missing path -> crash
+            record = record_verdict(
+                archive, project, "panel with a crash", "42", "file:witness.txt",
+                [ok, crash],
+            )
+        self.assertEqual(record["data"]["disposition"], "confirmed")
+        checks = record["data"]["checks"]
+        self.assertEqual(len(checks), 2)
+        gaps = [c for c in checks if c["disposition"] == "witness-malformed"]
+        self.assertEqual(len(gaps), 1)
+        self.assertIn("reason", gaps[0])
+        judged = [c for c in checks if c["disposition"] == "confirmed"]
+        self.assertEqual(len(judged), 1)
+
+    def test_all_malformed_witness_malformed(self) -> None:
+        # [crash, crash] -> witness-malformed
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            self._witness(project)
+            crash1 = str(project / "no-such-checker-1.py")
+            crash2 = str(project / "no-such-checker-2.py")
+            record = record_verdict(
+                archive, project, "panel all crash", "42", "file:witness.txt",
+                [crash1, crash2],
+            )
+        self.assertEqual(record["data"]["disposition"], "witness-malformed")
+        self.assertEqual(len(record["data"]["checks"]), 2)
+        self.assertTrue(
+            all(c["disposition"] == "witness-malformed" for c in record["data"]["checks"])
+        )
+
+    def test_single_checker_string_still_a_one_element_panel(self) -> None:
+        # Backward compat: a bare `checker_cmd` string (every pre-panel
+        # caller) still folds to a one-element panel, unchanged output.
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            self._witness(project)
+            _write_checker(project)
+            record = record_verdict(
+                archive, project, "sum improved", "42", "file:witness.txt",
+                f"{sys.executable} check.py witness.txt 42",
+            )
+        self.assertEqual(record["data"]["disposition"], "confirmed")
+        self.assertEqual(len(record["data"]["checks"]), 1)
+        self.assertIn("checker_exit:0", record["evidence"])
+
+    def _raw_panel_data(self, **overrides: object) -> dict:
+        data = {
+            "claim": "raw panel", "claimed_value": "v",
+            "witness": {"kind": "file", "ref": "witness.txt"},
+            "checker": "cmd:panel", "disposition": "confirmed",
+            "run_state": "terminated", "acquitted_by": "independent",
+            "checks": [
+                {"checker": "cmd:a", "exit": 0, "disposition": "confirmed"},
+                {"checker": "cmd:b", "exit": 1, "disposition": "refuted"},
+            ],
+        }
+        data.update(overrides)
+        return data
+
+    def test_append_invariant_confirmed_with_refuting_check_refused(self) -> None:
+        # Plant: hand-build a record dict with disposition=confirmed but a
+        # `checks` entry that came back refuted, and append it RAW (never
+        # through record_verdict/_fold_panel, which could never produce this
+        # combination itself) -> the archive seam refuses it outright.
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            with self.assertRaises(ArchiveError):
+                archive.append(
+                    "verdict", "raw confirmed with a refuting check",
+                    self._raw_panel_data(),
+                    evidence=[],
+                )
+
+    def test_append_invariant_allows_confirmed_when_no_check_refutes(self) -> None:
+        # Green control: the new rule only fires on an actual refuting
+        # check - a confirmed fold whose checks all agree still lands.
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            record = archive.append(
+                "verdict", "raw confirmed, panel agrees",
+                self._raw_panel_data(checks=[
+                    {"checker": "cmd:a", "exit": 0, "disposition": "confirmed"},
+                    {"checker": "cmd:b", "exit": None, "disposition": "witness-malformed",
+                     "reason": "checker-timeout"},
+                ]),
+                evidence=[],
+            )
+        self.assertEqual(record["data"]["disposition"], "confirmed")
 
 
 if __name__ == "__main__":
