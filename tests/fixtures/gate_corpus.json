@@ -180,7 +180,7 @@
   "class": "by-design"
  },
  {
-  "operation": "P=~/.claude/plugins/cache/publisher/godmode && ls \"$P\" && python -c \"\nimport json,os\np=os.path.expanduser('~/.claude/plugins/cache/publisher/godmode')\nfor v in sorted(os.listdir(p)):\n    m=os.path.join(p,v,'.claude-plugin','plugin.json')\n    if os.path.isfile(m): print(v,'->',json.load(open(m,encoding='utf-8')).get('version'))\n\"; echo \"--- hooks registered:\"; cat \"$P/0.2.1/hooks/hooks.json\" 2>/dev/null | python -c \"import json,sys; d=json.load(sys.stdin); print(list(d['hooks'].keys()))\" 2>/dev",
+  "operation": "P=~/.claude/plugins/cache/publisher/godmode && ls \"$P\" && python -c \"\nimport json,os\np=os.path.expanduser('~/.claude/plugins/cache/publisher/godmode')\nfor v in sorted(os.listdir(p)):\n    m=os.path.join(p,v,'.claude-plugin','plugin.json')\n    if os.path.isfile(m): print(v,'->',json.load(open(m,encoding='utf-8')).get('version'))\n\"; echo \"--- hooks registered:\"; cat \"$P/0.2.1/hooks/hooks.json\" 2>/dev/null | python -c \"import json,sys; d=json.load(sys.stdin); print(list(d['hooks'].keys()))\" 2>/dev/null",
   "expected": "allow",
   "class": "by-design"
  },

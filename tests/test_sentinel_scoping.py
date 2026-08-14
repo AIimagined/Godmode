@@ -132,6 +132,34 @@ class FindOkAndExecdirAlreadyDemoteFromR0(unittest.TestCase):
                 self.assertNotEqual(classify_action(operation)["tier"], "R0")
 
 
+class DigitPrefixedRedirectsAreEvidence(unittest.TestCase):
+    """Review-found Critical (task-3-4-review.md): `_REDIRECT`'s lookbehind
+    used to also exclude a digit immediately before `>`, meant to keep
+    `2>&1` (fd duplication) from misreading as a write - but it excluded
+    every genuine `N>file` form too (`1>out.txt`, `2>err.log`, `0>f`),
+    invisible to `has_redirect` entirely, not merely to containment. This
+    was a pre-existing blind spot; U-G1b's own no-evidence-reads-R0 default
+    turned it into a silent, ungated arbitrary-file write for any
+    unrecognised command using the `N>` form, where the old fail-closed-for-
+    ignorance default had accidentally been covering for it."""
+
+    def test_digit_prefixed_redirects_to_a_file_are_not_r0(self) -> None:
+        for operation in ("mysterytool 1> out.txt", "mysterytool 2>err.log",
+                          "cmd 0>f"):
+            with self.subTest(operation=operation):
+                v = classify_action(operation)
+                self.assertNotEqual(v["tier"], "R0")
+                self.assertEqual(v["category"], "unknown-command")
+
+    def test_fd_duplication_still_carries_no_redirect_evidence(self) -> None:
+        """Green controls: `(?!&)` alone already excludes true fd-duplication
+        - the digit lookbehind never needed to help it, and removing the
+        digit exclusion must not start flagging these."""
+        self.assertEqual(classify_action("cmd 2>&1 | grep x")["tier"], "R0")
+        self.assertEqual(classify_action("git status 2>&1")["tier"], "R0")
+        self.assertEqual(classify_action("ls >&2")["tier"], "R0")
+
+
 class CategoryScoping(unittest.TestCase):
     def test_git_restore_is_git_never_database(self) -> None:
         v = classify_action("git restore src/app.ts")

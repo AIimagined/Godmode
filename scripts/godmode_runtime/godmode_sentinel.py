@@ -618,7 +618,24 @@ _LOCAL_COMPUTE = re.compile(
 # An input redirect does not: `wc -l < README.md` reads it. Treating both as
 # writes refused a plain word count, and the symmetry of the characters was the
 # only reason they were ever grouped.
-_REDIRECT = re.compile(r"(?<![0-9<>])>{1,2}(?!&)\s*(?P<target>[^\s;&|<>]*)")
+#
+# The lookbehind used to also exclude a digit immediately before `>`
+# (`(?<![0-9<>])`), meant to keep `2>&1` (fd duplication - writes nothing)
+# from being misread as a write. It over-excluded: `1>out.txt`, `2>err.log`,
+# `0>f` are ordinary, real file-descriptor-qualified writes - digit-prefixed
+# redirects `N>file`, not `N>&M` duplications - and the digit lookbehind made
+# every one of them invisible to `has_redirect`/`redirect_target` entirely,
+# not merely to containment. `(?!&)` immediately after the operator already
+# excludes true fd-duplication (`2>&1`, `1>&2`, `>&2` - whatever precedes the
+# `>`, the very next character being `&` is what makes it a duplication, not
+# a write), so the digit exclusion was doing nothing `(?!&)` didn't already
+# do, while blinding a real write class. Found by review as a critical
+# regression: this task's own no-evidence-reads-R0 default (see the
+# unknown-command fallback below) turned this pre-existing blind spot into a
+# silent, ungated arbitrary-file write for any unrecognised command using the
+# `N>` form, where the old fail-closed-for-ignorance default had accidentally
+# been covering for it.
+_REDIRECT = re.compile(r"(?<![<>])>{1,2}(?!&)\s*(?P<target>[^\s;&|<>]*)")
 
 # Editing a file in the working tree is the work, not a protected action. What
 # guards a bad edit is the integrity monitor, the plan gate and the secret
