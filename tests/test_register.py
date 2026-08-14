@@ -10,8 +10,11 @@ can never drift from the ledger that backs it.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import subprocess
 import sys
+import tempfile
 import unittest
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -115,6 +118,38 @@ class EvidenceRequiredTests(unittest.TestCase):
                     "decision", "reg:retrieval:rank-fusion",
                     {"register_domain": "retrieval", "register_key": "rank-fusion",
                      "state": "half-decided", "supersedes": None, "delta": None,
+                     "evidence": ["file:notes.md"]},
+                    evidence=["file:notes.md"],
+                )
+
+    def test_a_raw_append_with_register_key_but_no_state_field_is_refused(self) -> None:
+        """Fix-round-1 review's exact probe: a register-shaped record
+        (`register_key` present) with the `state` field entirely absent must
+        not slip through as "not register-shaped" - a missing state is
+        malformed, not implicitly `open`. Before the fix this succeeded and
+        `state_of()`/`register_view()` silently read it as `open` while
+        `conflict_findings()` simultaneously flagged it as `unknown-state` -
+        two read paths disagreeing about the same record."""
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            with self.assertRaises(ArchiveError):
+                archive.append(
+                    "decision", "reg:retrieval:rank-fusion",
+                    {"register_domain": "retrieval", "register_key": "rank-fusion",
+                     "supersedes": None, "delta": None, "evidence": ["file:notes.md"]},
+                    evidence=["file:notes.md"],
+                )
+
+    def test_a_raw_append_with_register_key_and_an_explicit_none_state_is_refused(self) -> None:
+        """The same malformed-record case, reached via an explicit `None`
+        rather than an absent key - both must be refused identically."""
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            with self.assertRaises(ArchiveError):
+                archive.append(
+                    "decision", "reg:retrieval:rank-fusion",
+                    {"register_domain": "retrieval", "register_key": "rank-fusion",
+                     "state": None, "supersedes": None, "delta": None,
                      "evidence": ["file:notes.md"]},
                     evidence=["file:notes.md"],
                 )
@@ -271,6 +306,51 @@ class RejectedPrecedentTests(unittest.TestCase):
         self.assertEqual(hits, [])
 
 
+class SubjectKeyMismatchTests(unittest.TestCase):
+    """Fix-round-1 Minor: a raw append's subject `<key>` segment can disagree
+    with `data["register_key"]` - key grouping trusts `data`, not the
+    subject, so the mismatch needs a dedicated read-time check. Cross-check
+    needs the record's real stored `subject` alongside its `data`; the
+    archive-seam hook only ever sees `data`, so this is `conflict_findings`
+    territory, not a write-time refusal (matching the transition/supersedes
+    checks it already carries, and the review's own sanctioned alternative
+    of "a conflict_findings addition")."""
+
+    def test_a_mismatched_subject_and_register_key_is_a_conflict(self) -> None:
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            archive.append(
+                "decision", "reg:retrieval:x",
+                {"register_domain": "retrieval", "register_key": "y",
+                 "state": "established", "supersedes": None, "delta": None,
+                 "evidence": ["file:a.md"]},
+                evidence=["file:a.md"],
+            )
+            findings = conflict_findings(archive, "retrieval")
+        mismatches = [f for f in findings if f["conflict"] == "subject-key-mismatch"]
+        self.assertTrue(mismatches, findings)
+        self.assertEqual(mismatches[0]["key"], "y")
+
+    def test_a_matching_subject_and_register_key_has_no_mismatch_finding(self) -> None:
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            set_state(archive, "retrieval", "rank-fusion", "established", ["file:a.md"])
+            findings = conflict_findings(archive, "retrieval")
+        self.assertEqual([f for f in findings if f["conflict"] == "subject-key-mismatch"], [])
+
+    def test_a_key_containing_a_colon_is_ambiguous_and_not_flagged(self) -> None:
+        """A key that itself contains ':' makes the subject's own key segment
+        ambiguous to parse back out of - guarded out rather than guessed at,
+        per the review's own escape hatch."""
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            record = set_state(archive, "retrieval", "vendor:sub-key", "established",
+                               ["file:a.md"])
+            self.assertTrue(record["subject"].startswith("reg:retrieval:vendor:sub-key"))
+            findings = conflict_findings(archive, "retrieval")
+        self.assertEqual([f for f in findings if f["conflict"] == "subject-key-mismatch"], [])
+
+
 class InvariantSyncTests(unittest.TestCase):
     """godmode_invariants._register_invariants duplicates STATES/prefixes
     rather than importing this module (avoiding an import cycle back
@@ -294,6 +374,70 @@ class InvariantSyncTests(unittest.TestCase):
         from godmode_runtime import godmode_chronicle
 
         self.assertIsNotNone(godmode_chronicle.KIND_INVARIANTS.get("decision"))
+
+
+class FreshInterpreterSeamTests(unittest.TestCase):
+    """Same bar as `verdict`'s own fresh-interpreter probe
+    (`test_verdict.VerdictTests.test_fresh_interpreter_without_verdict_import_still_blocks_forbidden_combos`):
+    a FRESH Python process imports only `godmode_chronicle` - never
+    `godmode_register` - and every raw-append violation the archive seam is
+    supposed to catch must still be caught, proving the guarantee is innate
+    to `KIND_INVARIANTS` seeding at `godmode_chronicle` import time, not a
+    side effect of the register module ever having been loaded. Updated for
+    fix-round-1's new strictness: the missing-`state` probe is included
+    alongside the two pre-existing ones."""
+
+    def test_fresh_interpreter_without_register_import_still_blocks_forbidden_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            state = base / "private-state"
+            project.mkdir()
+            script = (
+                "import sys\n"
+                f"sys.path.insert(0, {str(SCRIPTS)!r})\n"
+                "assert 'godmode_runtime.godmode_register' not in sys.modules\n"
+                "from godmode_runtime import godmode_chronicle\n"
+                "from godmode_runtime.godmode_anchor import resolve_anchor\n"
+                "from godmode_runtime.godmode_errors import ArchiveError\n"
+                "assert 'godmode_runtime.godmode_register' not in sys.modules, "
+                "'godmode_chronicle must not import godmode_register'\n"
+                "assert godmode_chronicle.KIND_INVARIANTS.get('decision') is not None, "
+                "'KIND_INVARIANTS must be populated eagerly, before any other import'\n"
+                f"anchor = resolve_anchor({str(project)!r})\n"
+                "archive = godmode_chronicle.Chronicle(anchor)\n"
+                "archive.initialize()\n"
+                "base_data = {'register_domain': 'a', 'register_key': 'z', "
+                "'supersedes': None, 'delta': None}\n"
+                "blocked = 0\n"
+                "try:\n"
+                "    archive.append('decision', 'reg:a:z (no evidence)', "
+                "dict(base_data, state='established', evidence=[]), evidence=[])\n"
+                "except ArchiveError:\n"
+                "    blocked += 1\n"
+                "try:\n"
+                "    archive.append('decision', 'reg:a:z (unlisted state)', "
+                "dict(base_data, state='kinda-maybe', evidence=['file:x']), "
+                "evidence=['file:x'])\n"
+                "except ArchiveError:\n"
+                "    blocked += 1\n"
+                "try:\n"
+                "    archive.append('decision', 'reg:a:z (no state field)', "
+                "dict(base_data, evidence=['file:x']), evidence=['file:x'])\n"
+                "except ArchiveError:\n"
+                "    blocked += 1\n"
+                "print('BLOCKED:' + str(blocked))\n"
+                "assert 'godmode_runtime.godmode_register' not in sys.modules, "
+                "'the seam must never need to import godmode_register to enforce this'\n"
+            )
+            env = dict(os.environ)
+            env["GODMODE_STATE_HOME"] = str(state)
+            result = subprocess.run(
+                [sys.executable, "-c", script],
+                capture_output=True, text=True, timeout=30, env=env,
+            )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("BLOCKED:3", result.stdout)
 
 
 class ConsoleSmokeTests(unittest.TestCase):
@@ -338,6 +482,51 @@ class ConsoleSmokeTests(unittest.TestCase):
             exit_code = main(["--project", str(project), "register", "show",
                               "--domain", "retrieval"])
         self.assertEqual(exit_code, 1)
+
+    def test_the_register_show_command_surfaces_conflicts_for_one_key(self) -> None:
+        """Fix-round-1 linked finding: a --key query is the natural way to
+        ask about one key by name, and must not answer a clean `open`/exit-0
+        for a key the domain-wide check simultaneously flags as blocking."""
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            from godmode_runtime.godmode_console import main
+
+            main(["--project", str(project), "register", "set",
+                  "--domain", "retrieval", "--key", "rank-fusion",
+                  "--state", "established", "--evidence", "file:a.md"])
+            archive.append(
+                "decision", "reg:retrieval:rank-fusion",
+                {"register_domain": "retrieval", "register_key": "rank-fusion",
+                 "state": "superseded", "supersedes": None, "delta": None,
+                 "evidence": ["file:b.md"]},
+                evidence=["file:b.md"],
+            )
+            from godmode_runtime.godmode_console import _build_parser, cmd_register_show
+            from godmode_runtime.godmode_console import Runtime
+            from godmode_runtime.godmode_anchor import resolve_anchor
+
+            args = _build_parser().parse_args(
+                ["register", "show", "--domain", "retrieval", "--key", "rank-fusion"])
+            runtime = Runtime(anchor=resolve_anchor(project), archive=archive)
+            result = cmd_register_show(args, runtime)
+        self.assertEqual(result.exit_code, 1)
+        self.assertTrue(result.payload["conflicts"], result.payload)
+
+    def test_the_register_show_command_says_clean_for_an_unconflicted_key(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            set_state(archive, "retrieval", "rank-fusion", "established", ["file:a.md"])
+
+            from godmode_runtime.godmode_console import _build_parser, cmd_register_show
+            from godmode_runtime.godmode_console import Runtime
+            from godmode_runtime.godmode_anchor import resolve_anchor
+
+            args = _build_parser().parse_args(
+                ["register", "show", "--domain", "retrieval", "--key", "rank-fusion"])
+            runtime = Runtime(anchor=resolve_anchor(project), archive=archive)
+            result = cmd_register_show(args, runtime)
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(result.payload["conflicts"], [])
 
 
 if __name__ == "__main__":

@@ -120,6 +120,23 @@ def _key_of(record: dict[str, Any]) -> str | None:
     return str(key) if key else None
 
 
+def _unambiguous_subject_key(subject: str, domain: str) -> str | None:
+    """The `<key>` segment of `reg:<domain>:<key>` - only when unambiguous.
+
+    A key may itself contain ':' (confirmed by design: grouping is entirely
+    `data["register_key"]`-driven, never a subject colon-split - see
+    `_key_of`), which makes a subject carrying more than three ':'-separated
+    segments ambiguous to parse a key back out of. Rather than guess, this
+    returns `None` for anything but an exact, single-colon-free key segment,
+    per review guidance: guard only the unambiguous case, skip the rest.
+    """
+    prefix = f"{_SUBJECT_PREFIX}{domain}:"
+    if not subject.startswith(prefix):
+        return None
+    remainder = subject[len(prefix):]
+    return None if ":" in remainder else remainder
+
+
 def _grouped_by_key(records: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     by_key: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for record in records:
@@ -249,7 +266,7 @@ def set_state(
 
 
 def conflict_findings(archive: Chronicle, domain: str) -> list[dict[str, Any]]:
-    """Illegal lineages a raw append could write that `set_state()` would refuse.
+    """Illegal lineages and mismatched records a raw append could write.
 
     `set_state()` enforces legal-transition-only and correct-supersedes-citation
     at write time, but only for callers that go through it; a hand-built
@@ -260,9 +277,38 @@ def conflict_findings(archive: Chronicle, domain: str) -> list[dict[str, Any]]:
     the same two violations `set_state()` would have refused - a HARD halt
     finding per E6: "conflict, ask before doing anything else," not a
     silent latest-wins.
+
+    A third, cheaper check rides along for the same reason: `set_state()`
+    always writes a subject whose own `<key>` segment agrees with
+    `data["register_key"]`, but nothing stops a raw append from disagreeing -
+    a record filed under `reg:<domain>:x` whose `data["register_key"]` is
+    actually `y` groups under `y` (data is what grouping trusts, confirmed
+    correct against a colliding-prefix probe), while the subject visually
+    implies it revises `x`. That mismatch needs the record's real, stored
+    `subject` alongside its `data` to detect at all - the archive-seam hook
+    sees only `data`, never the subject a caller passed to `append()` - so,
+    like the lineage checks above, this is read-time-only, not a write-time
+    refusal.
     """
     findings: list[dict[str, Any]] = []
-    for key, entries in _grouped_by_key(_domain_records(archive, domain)).items():
+    records = _domain_records(archive, domain)
+    for record in records:
+        data = record.get("data") or {}
+        register_key = data.get("register_key")
+        if register_key is None:
+            continue
+        subject_key = _unambiguous_subject_key(record.get("subject", ""), domain)
+        if subject_key is not None and subject_key != register_key:
+            findings.append({
+                "domain": domain, "key": register_key, "sequence": record["sequence"],
+                "conflict": "subject-key-mismatch",
+                "message": (
+                    f"seq:{record['sequence']} subject names key '{subject_key}' but "
+                    f"data.register_key is '{register_key}' - the subject is not a "
+                    "reliable handle for this record"
+                ),
+            })
+    for key, entries in _grouped_by_key(records).items():
         state = "open"
         seq: int | None = None
         for record in entries:
