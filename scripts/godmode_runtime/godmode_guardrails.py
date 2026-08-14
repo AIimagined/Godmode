@@ -30,6 +30,9 @@ METER_FILENAME = "godmode-meter.json"
 # The operator's own escape hatch (U-R1): presence, not content, stops a
 # watchdog-boundary run regardless of what the skip-pattern scan finds.
 OPERATOR_STOP_FLAG = ".godmode-stop"
+# U-R2's freshness watchdog: a loop that claims activity but has not
+# touched the archive in this many seconds is not running, it is hung.
+DEFAULT_MAX_STATE_AGE_S = 900
 
 
 def declared_ceilings(project: Path) -> dict[str, int]:
@@ -179,14 +182,59 @@ def _session_start_sequence(archive: Chronicle, session: str) -> int:
     return 0
 
 
-def watchdog(archive: Chronicle, session: str, skip_threshold: int = 3) -> dict[str, Any]:
+def state_freshness(
+    archive: Chronicle, active: bool, max_age_s: int = DEFAULT_MAX_STATE_AGE_S
+) -> dict[str, Any]:
+    """U-R2's freshness watchdog: a loop-active claim needs a fresh archive.
+
+    A loop that claims to be running produces records; one that has not in
+    `max_age_s` seconds is not running, it is hung - and hung reads as
+    active from the outside, which is exactly the gap this closes by
+    routing to the same `human-escalation` verdict a stall streak reaches
+    (`godmode_loop.stall_escalation`), so a caller does not need two
+    different words for the same "a human needs to look" state.
+    """
+    if not active:
+        return {
+            "active": False, "stale": False, "verdict": "not-active",
+            "detail": "no loop claims activity; freshness is not evaluated",
+        }
+    head = archive.head
+    if not head.is_file():
+        return {
+            "active": True, "stale": False, "verdict": "nominal",
+            "detail": "no archive activity recorded yet",
+        }
+    age = time.time() - head.stat().st_mtime
+    stale = age > max_age_s
+    return {
+        "active": True,
+        "age_seconds": round(age, 1),
+        "max_age_seconds": max_age_s,
+        "stale": stale,
+        "verdict": "human-escalation" if stale else "nominal",
+        "detail": (
+            f"loop claims activity but the archive has not been touched in "
+            f"{round(age)}s (over {max_age_s}s); treat as hung, not running - "
+            "escalate the same as a stall streak"
+            if stale else "archive activity is current with the loop's claim"
+        ),
+    }
+
+
+def watchdog(
+    archive: Chronicle, session: str, skip_threshold: int = 3,
+    *, loop_active: bool = False, max_state_age_s: int = DEFAULT_MAX_STATE_AGE_S,
+) -> dict[str, Any]:
     """Anomaly scan for the current session, cheap enough for every boundary.
 
     Three mandatory steps skipped in one run is a pattern, not three incidents;
     the scan turns it into an interrupt at the next boundary instead of a
-    post-hoc note. A second, opt-in-by-presence source of interrupt: an
+    post-hoc note. Two more sources of interrupt, both opt-in so a caller
+    that never sets them sees the original behaviour unchanged: an
     `OperatorStop` flag (U-R1) - presence alone ends the run regardless of
-    what the skip scan found.
+    what the skip scan found - and, when `loop_active` says a loop believes
+    itself running, the U-R2 freshness check above.
     """
     skipped: list[dict[str, str]] = []
     blocked: list[str] = []
@@ -210,10 +258,13 @@ def watchdog(archive: Chronicle, session: str, skip_threshold: int = 3) -> dict[
     operator_reason = OperatorStop(
         Path(archive.anchor.project_root) / OPERATOR_STOP_FLAG
     )([])
+    freshness = state_freshness(archive, loop_active, max_state_age_s)
     skip_anomaly = len(skipped) >= skip_threshold
-    anomaly = skip_anomaly or operator_reason is not None
+    anomaly = skip_anomaly or operator_reason is not None or freshness["stale"]
     if operator_reason is not None:
         detail = operator_reason
+    elif freshness["stale"]:
+        detail = freshness["detail"]
     elif skip_anomaly:
         detail = (f"{len(skipped)} mandated steps skipped this session; stop and "
                   "resolve the pattern before the next step")
@@ -224,6 +275,7 @@ def watchdog(archive: Chronicle, session: str, skip_threshold: int = 3) -> dict[
         "skipped": skipped,
         "blocked_steps": blocked,
         "operator_stop": operator_reason,
+        "freshness": freshness,
         "anomaly": anomaly,
         "verdict": "interrupt" if anomaly else "nominal",
         "detail": detail,
