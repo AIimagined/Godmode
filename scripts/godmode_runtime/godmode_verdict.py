@@ -9,12 +9,17 @@ Three dispositions, never two. Structural preconditions of the witness are
 validated BEFORE the checker ever runs: a missing file or an unresolvable
 seq means the claim was never judged (`witness-malformed`), which is a
 different fact from "judged and found false" (`refuted`). A checker that
-cannot start or never finishes is the same failure - "the checker could not
-judge" is not "the claim is false" - so `FileNotFoundError` and
-`TimeoutExpired` also land on `witness-malformed`, never `refuted`.
+cannot be parsed, is empty, cannot start, or never finishes is the same
+failure - "the checker could not judge" is not "the claim is false" - so all
+of those also land on `witness-malformed`, never `refuted`, and never as an
+uncaught exception: an adversarial checker string is a malformed judge, not
+a fourth outcome.
 
-Two invariants are enforced at the moment a verdict record would be written,
-not left for a later reader to notice:
+Two invariants are enforced at the archive seam itself (`Chronicle.append`'s
+`KIND_INVARIANTS` registry, registered below at import), not just by the
+functions in this module - so a future caller that builds a `verdict`
+record via a raw `archive.append(...)` (the experiment ledger among them)
+is held to the same rule as `record_verdict`/`attest_run_state`:
 
 - Drive-vs-acquit: `acquitted_by: "self"` may attest execution completeness
   only. A `disposition: "confirmed"` needs an independent checker; a
@@ -32,7 +37,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from .godmode_chronicle import Chronicle
+from .godmode_chronicle import Chronicle, register_kind_invariant
 from .godmode_errors import ArchiveError
 
 DISPOSITIONS = ("confirmed", "refuted", "witness-malformed")
@@ -43,10 +48,30 @@ _SUBJECT_CAP = 120
 
 
 def _split_command(command: str) -> list[str]:
-    # Posix-mode shlex (the default) treats backslash as an escape character,
-    # which mangles a bare Windows path (C:\Users\...\python.exe) before the
-    # OS ever sees it. Non-posix mode leaves backslashes alone.
-    return shlex.split(command, posix=os.name != "nt")
+    """Tokenize a checker command, safe for a bare or quoted Windows path.
+
+    Posix-mode shlex (the plain-`shlex.split(command)` default) treats
+    backslash as an escape character, which mangles a bare Windows path
+    (`C:\\Users\\...\\python.exe`) before the OS ever sees it. Non-posix mode
+    leaves backslashes alone, at the cost of leaving surrounding quote
+    characters attached to the token instead of consuming them - so a path
+    quoted to protect embedded spaces (`"C:\\Program Files\\...\\python.exe"`)
+    comes back as a single token that still carries its own quote marks and
+    fails to resolve as a file. Stripping one matching pair of outer quotes
+    off each token (the same thing posix mode would have consumed) covers
+    that case without reintroducing the backslash-eating problem posix mode
+    has on this platform. May raise ValueError on unbalanced quoting -
+    callers treat that as "could not parse", not a crash.
+    """
+    if os.name != "nt":
+        return shlex.split(command)
+    return [_strip_outer_quotes(token) for token in shlex.split(command, posix=False)]
+
+
+def _strip_outer_quotes(token: str) -> str:
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in ("'", '"'):
+        return token[1:-1]
+    return token
 
 
 def _witness_readable(project: Path, archive: Chronicle, kind: str, value: str) -> bool:
@@ -66,6 +91,73 @@ def _witness_readable(project: Path, archive: Chronicle, kind: str, value: str) 
     return False
 
 
+def _run_checker(
+    checker_cmd: str, project: Path, timeout: int
+) -> tuple[str, str | None, int | None]:
+    """Launch the checker; every failure to even judge lands on witness-malformed.
+
+    Returns (disposition, malformed_reason, checker_exit). malformed_reason
+    is None whenever disposition is confirmed/refuted - it names WHY the
+    checker could not judge, so the record explains the gap instead of
+    silently folding "could not run" into "false".
+    """
+    try:
+        argv = _split_command(checker_cmd)
+    except ValueError:
+        return "witness-malformed", "checker-unparseable", None
+    if not argv:
+        return "witness-malformed", "checker-empty", None
+    try:
+        completed = subprocess.run(
+            argv,
+            cwd=str(project),
+            timeout=timeout,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except FileNotFoundError:
+        return "witness-malformed", "checker-not-found", None
+    except subprocess.TimeoutExpired:
+        return "witness-malformed", "checker-timeout", None
+    except OSError:
+        # Covers platform-specific launch failures shlex's own tokenizing
+        # cannot catch - an empty or otherwise unusable argv reaching the OS
+        # (WinError 87 on Windows for `subprocess.run([])`; other launch
+        # failures elsewhere). Still "could not judge", not "judged false".
+        return "witness-malformed", "checker-unlaunchable", None
+    checker_exit = completed.returncode
+    disposition = "confirmed" if checker_exit == 0 else "refuted"
+    return disposition, None, checker_exit
+
+
+def _verdict_invariants(data: dict[str, Any]) -> None:
+    """The two forbidden combinations, enforced for every append of this kind.
+
+    Registered with Chronicle's KIND_INVARIANTS below so this runs whether
+    the record was built by `record_verdict`, `attest_run_state`, or any
+    future direct `archive.append("verdict", ...)` caller - the archive
+    seam is the one place this cannot be bypassed by a new call site.
+    """
+    if data.get("disposition") != "confirmed":
+        return
+    if data.get("acquitted_by") == "self":
+        raise ArchiveError(
+            "acquitted_by='self' may attest execution completeness only; a "
+            "'confirmed' disposition needs an independent checker "
+            "(acquitted_by='independent') - self-acquitted quality is refused"
+        )
+    if data.get("run_state") == "truncated":
+        raise ArchiveError(
+            "a truncated run cannot be recorded 'confirmed'; budget or "
+            "timeout exhaustion must not impersonate completion"
+        )
+
+
+register_kind_invariant("verdict", _verdict_invariants)
+
+
 def _append_verdict(
     archive: Chronicle,
     claim: str,
@@ -77,18 +169,8 @@ def _append_verdict(
     run_state: str,
     acquitted_by: str,
     checker_exit: int | None,
+    malformed_reason: str | None = None,
 ) -> dict[str, Any]:
-    if disposition == "confirmed" and acquitted_by == "self":
-        raise ArchiveError(
-            "acquitted_by='self' may attest execution completeness only; a "
-            "'confirmed' disposition needs an independent checker "
-            "(acquitted_by='independent') - self-acquitted quality is refused"
-        )
-    if disposition == "confirmed" and run_state == "truncated":
-        raise ArchiveError(
-            "a truncated run cannot be recorded 'confirmed'; budget or "
-            "timeout exhaustion must not impersonate completion"
-        )
     evidence: list[str] = []
     if checker_cmd:
         evidence.append(f"cmd:{checker_cmd}")
@@ -96,6 +178,8 @@ def _append_verdict(
         evidence.append(f"{witness_kind}:{witness_value}")
     if checker_exit is not None:
         evidence.append(f"checker_exit:{checker_exit}")
+    if malformed_reason is not None:
+        evidence.append(f"reason:{malformed_reason}")
     data = {
         "claim": claim,
         "claimed_value": claimed_value,
@@ -106,6 +190,9 @@ def _append_verdict(
         "acquitted_by": acquitted_by,
     }
     subject = (claim or "verdict")[:_SUBJECT_CAP]
+    # The two forbidden combinations are checked by KIND_INVARIANTS inside
+    # archive.append() itself - not duplicated here - so this is the only
+    # place either check runs, whatever path built the data.
     return archive.append("verdict", subject, data, evidence=evidence)
 
 
@@ -127,7 +214,9 @@ def record_verdict(
     is invoked exactly once the witness has passed structural validation
     (exists and is readable for `file:`, resolves in the archive for
     `seq:`); a witness that fails that check means the checker never runs at
-    all, and the record says so (`witness-malformed`), not `refuted`.
+    all, and the record says so (`witness-malformed`), not `refuted`. An
+    empty, unparseable, or unlaunchable `checker_cmd` is the same class of
+    failure and lands on the same disposition, never an uncaught exception.
     """
     if run_state not in RUN_STATES:
         raise ArchiveError(
@@ -143,32 +232,14 @@ def record_verdict(
     else:
         witness_kind, witness_value = "unknown", witness_ref
 
-    checker_exit: int | None = None
     if not _witness_readable(project, archive, witness_kind, witness_value):
-        disposition = "witness-malformed"
+        disposition, reason, checker_exit = "witness-malformed", "witness-unreadable", None
     else:
-        try:
-            completed = subprocess.run(
-                _split_command(checker_cmd),
-                cwd=str(project),
-                timeout=timeout,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-            )
-            checker_exit = completed.returncode
-            disposition = "confirmed" if checker_exit == 0 else "refuted"
-        except FileNotFoundError:
-            # The checker could not run at all - "could not judge" is not
-            # "judged false".
-            disposition = "witness-malformed"
-        except subprocess.TimeoutExpired:
-            disposition = "witness-malformed"
+        disposition, reason, checker_exit = _run_checker(checker_cmd, project, timeout)
 
     return _append_verdict(
         archive, claim, claimed_value, witness_kind, witness_value, checker_cmd,
-        disposition, run_state, acquitted_by, checker_exit,
+        disposition, run_state, acquitted_by, checker_exit, reason,
     )
 
 
