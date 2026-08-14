@@ -894,6 +894,12 @@ def record_claim(
             # U-T2: the citation resolves (checked above), but a fix claim
             # needs more than a citation - it needs the command to have been
             # observed failing before the fix and passing after.
+            #
+            # R3+ tier proxy: fix-vocabulary claims + Edit/Write mutation turns
+            # stand in for sentinel risk tiers (out of scope here); known gap:
+            # non-file-mutating R3+ commands (git branch -D) are not counted
+            # as mutations. Wire to classify_action tiers when a task owns
+            # the sentinel.
             temporal_reason = _temporal_violation(timeline, cmd_citations)
             if temporal_reason:
                 effective, reason = "hypothesis", temporal_reason
@@ -921,6 +927,11 @@ def record_claim(
     # Criterion pre-registration [E4]: advisory only - it informs a fix claim
     # that a criterion exists and was not cited, it never downgrades one. A
     # project that never records criteria gets no friction from this at all.
+    #
+    # R3+ tier proxy: fix-vocabulary claims + Edit/Write mutation turns stand
+    # in for sentinel risk tiers (out of scope here); known gap: non-file-
+    # mutating R3+ commands (git branch -D) are not counted as mutations.
+    # Wire to classify_action tiers when a task owns the sentinel.
     advisories: list[str] = []
     if grade == "verified" and fix_claim:
         session_has_criterion = any(
