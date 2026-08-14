@@ -26,6 +26,7 @@ from .godmode_attest import (
     opening_handshake,
     record_claim,
     record_criterion,
+    record_differential,
     record_step,
     register_metric_contract,
 )
@@ -705,6 +706,22 @@ def cmd_metric_contract_register(args: argparse.Namespace, runtime: Runtime) -> 
     data = record["data"]
     return CommandResult(
         {"sequence": record["sequence"], "name": args.name, "anchor": data["anchor"]},
+        exit_code=0,
+    )
+
+
+# U-E3 differential-evidence - minimal isolated block, mirrors the `register`
+# block below.
+def cmd_differential_record(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    record = record_differential(
+        runtime.archive, args.subject, args.a, args.b, args.delta, args.method,
+    )
+    data = record["data"]
+    return CommandResult(
+        {"sequence": record["sequence"], "subject": data["subject"],
+         "a_ref": data["a_ref"], "b_ref": data["b_ref"], "delta": data["delta"],
+         "method": data["method"]},
         exit_code=0,
     )
 
@@ -2441,6 +2458,28 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Regex the cited line:<name>:<value> evidence must match")
     metric_contract_register.add_argument("--session")
     metric_contract_register.set_defaults(handler=cmd_metric_contract_register)
+
+    # U-E3 differential-evidence - minimal isolated block, mirrors the
+    # `register` block below.
+    differential = sub.add_parser(
+        "differential",
+        help="Record a comparison of two archived states; a root-cause claim "
+             "cites it (U-E3)",
+    )
+    differential_sub = differential.add_subparsers(dest="differential_command", required=True)
+    differential_record = differential_sub.add_parser(
+        "record", help="Record the comparison")
+    differential_record.add_argument("--subject", required=True, type=subject_text)
+    differential_record.add_argument(
+        "--a", dest="a", required=True, help="seq:<n>, file:<path>, or cmd:<...>")
+    differential_record.add_argument(
+        "--b", dest="b", required=True, help="seq:<n>, file:<path>, or cmd:<...>")
+    differential_record.add_argument(
+        "--delta", action="append", default=[],
+        help="One observed difference; repeatable, up to 20 entries")
+    differential_record.add_argument(
+        "--method", required=True, help="cmd:<command run to compare> or 'read'")
+    differential_record.set_defaults(handler=cmd_differential_record)
 
     verdict = sub.add_parser(
         "verdict",
