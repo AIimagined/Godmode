@@ -17,9 +17,28 @@ import subprocess
 from typing import Any
 
 from .godmode_chronicle import Chronicle
+from .godmode_errors import ArchiveError
 
 REPEAT_THRESHOLD = 3
 LOOP_CONFIG_FILENAME = ".godmode-loop.json"
+
+# U-R2: consecutive no-progress rounds before each mandated response.
+STALL_REDIRECT_THRESHOLD = 2  # N1: blocking "change direction" finding
+STALL_HALT_THRESHOLD = 4  # N2: governance human-escalation halt
+# Progress that clears a stall streak - the same records U-V1/U-R3 already
+# treat as evidence something happened, not just was attempted.
+_PROGRESS_KINDS = frozenset({"change", "attestation", "verdict"})
+# A record an operator wrote, not the agent inferring on their behalf
+# (godmode_requests.record_request's default `source`). Only this kind of
+# record clears a halt: an agent redirecting itself does not count as the
+# human escalation the halt asked for.
+_OPERATOR_SOURCE_KINDS = frozenset({"request", "decision"})
+
+# Task 10b: what a loop/experiment declaration may claim about how closely
+# it is watched. "unattended" is not a third level quietly accepted here -
+# nothing in this runtime reads every cycle's output before the next one
+# starts, so nothing may declare itself safe to run with nobody watching.
+MATURITY_LEVELS = ("report-only", "assisted")
 
 # §15.3: a rollback target must be a state known good, not merely the most
 # recent bookmark - the last checkpoint by sequence is often the broken state
@@ -232,6 +251,145 @@ def hypothesis_reset_required(
     return findings
 
 
+def _current_stall_streak(records: list[dict[str, Any]]) -> tuple[int, int | None]:
+    """The stall streak as of the END of `records` - a live status, not a
+    log of every threshold ever crossed.
+
+    A round closes at each checkpoint. It is empty when nothing of kind
+    change/attestation/verdict was recorded since the previous one (or the
+    start of the archive, for the first). An operator-sourced record
+    (`request`/`decision` with `data.source == "stated"`) clears the streak
+    outright, wherever it appears - it is itself "record what you'll do
+    differently," so a checkpoint is not required to make it count.
+    """
+    streak = 0
+    last_seq: int | None = None
+    progress_since_last = False
+    for record in records:
+        kind = record["kind"]
+        if kind in _PROGRESS_KINDS:
+            progress_since_last = True
+        if (kind in _OPERATOR_SOURCE_KINDS
+                and record["data"].get("source") == "stated"):
+            streak = 0
+            progress_since_last = False
+            last_seq = record["sequence"]
+            continue
+        if kind != "checkpoint":
+            continue
+        streak = 0 if progress_since_last else streak + 1
+        progress_since_last = False
+        last_seq = record["sequence"]
+    return streak, last_seq
+
+
+def stall_escalation(
+    records: list[dict[str, Any]],
+    n1: int = STALL_REDIRECT_THRESHOLD,
+    n2: int = STALL_HALT_THRESHOLD,
+) -> list[dict[str, Any]]:
+    """U-R2: graduated response to consecutive empty rounds, not one
+    threshold treated as both "notice" and "emergency".
+
+    Below N1: nominal, no finding. From N1 to just under N2: a blocking
+    `stall-redirect` finding - change direction, record what differs. At N2
+    and beyond: a governance `stall-escalation` halt - human escalation
+    required, cleared only by an operator-sourced record (see
+    `_current_stall_streak`), never by the agent simply continuing.
+    """
+    streak, last_seq = _current_stall_streak(records)
+    citations = [last_seq] if last_seq is not None else []
+    if streak >= n2:
+        return [_finding(
+            "stall-escalation",
+            f"{streak} consecutive rounds produced no change, attestation, or "
+            "verdict; human escalation required - this halt clears only on an "
+            "operator-sourced record, not on trying again",
+            True, citations,
+        )]
+    if streak >= n1:
+        return [_finding(
+            "stall-redirect",
+            f"{streak} consecutive rounds produced no change, attestation, or "
+            "verdict; change direction - record what you'll do differently "
+            "before the next round",
+            True, citations,
+        )]
+    return []
+
+
+def declare_maturity(value: Any) -> str:
+    """Validate a loop/experiment declaration's `maturity` field (Task 10b).
+
+    Only `"report-only"` and `"assisted"` are legal. `"unattended"` is
+    refused by name, not silently mapped to the nearest legal level: nothing
+    here reads a cycle's output before starting the next one, so nothing may
+    declare itself safe to run with no human in that loop.
+    """
+    if value not in MATURITY_LEVELS:
+        raise ArchiveError(
+            f"maturity '{value}' is not a legal declaration; only "
+            f"{' or '.join(MATURITY_LEVELS)} may run. Unattended execution is "
+            "refused by policy - no reader checks a cycle's output before the "
+            "next one starts, so no declaration may claim nobody needs to"
+        )
+    return value
+
+
+def loop_ready(declaration: dict[str, Any]) -> dict[str, Any]:
+    """Task 10b's pre-flight audit: structural readiness before cycle one.
+
+    Checks the CONTRACT's shape, not whether its parts are individually
+    sound - a declared stop contract's own predicates are `godmode_stop`'s
+    tests to own, not this function's. `maturity` is validated by
+    `declare_maturity` first and RAISES on an illegal value (a refusal, not
+    a finding); everything below is a blocking finding instead, because a
+    loop with a legal maturity but a missing budget is not lawless, it is
+    merely not ready yet.
+    """
+    declare_maturity(declaration.get("maturity"))
+
+    findings: list[dict[str, Any]] = []
+    if not declaration.get("stop_contract"):
+        findings.append({
+            "check": "stop-contract", "blocking": True,
+            "detail": "no stop contract declared (U-R1); a loop with no "
+                      "termination predicate has no way to end on purpose",
+        })
+    budget = declaration.get("budget_s")
+    if isinstance(budget, bool) or not isinstance(budget, (int, float)) or budget <= 0:
+        findings.append({
+            "check": "budget", "blocking": True,
+            "detail": "no positive budget_s declared; an unbounded loop "
+                      "spends without a ceiling to report against",
+        })
+    verdict_path = declaration.get("verdict_path")
+    if not isinstance(verdict_path, str) or not verdict_path.strip():
+        findings.append({
+            "check": "verdict-path", "blocking": True,
+            "detail": "no verdict_path named; a loop that cannot say where "
+                      "its verdict lands cannot be checked afterward",
+        })
+    escalation = declaration.get("escalation") or {}
+    n1, n2 = escalation.get("n1"), escalation.get("n2")
+    sane = (isinstance(n1, int) and not isinstance(n1, bool)
+            and isinstance(n2, int) and not isinstance(n2, bool)
+            and 0 < n1 < n2)
+    if not sane:
+        findings.append({
+            "check": "escalation-thresholds", "blocking": True,
+            "detail": f"escalation thresholds not sane (n1={n1!r}, n2={n2!r}); "
+                      "n1 must be a positive int less than n2",
+        })
+    blocking = any(finding["blocking"] for finding in findings)
+    return {
+        "maturity": declaration.get("maturity"),
+        "findings": findings,
+        "blocking": blocking,
+        "verdict": "not-ready" if blocking else "ready",
+    }
+
+
 def model_blame_allowed(records: list[dict[str, Any]], session: str | None = None) -> dict[str, Any]:
     """Blaming the model requires a non-model control: the same input through a
     path with no model in it. Without one, the blame is a hypothesis.
@@ -289,6 +447,7 @@ def analyze(archive: Chronicle) -> dict[str, Any]:
         + _prior_fix_reversal(records)
         + _silent_success(records)
         + hypothesis_reset_required(records, threshold)
+        + stall_escalation(records)
         # Read from history rather than from the records, because every
         # detector above needs a failure somebody chose to write down.
         + repeated_repairs(Path(archive.anchor.project_root))

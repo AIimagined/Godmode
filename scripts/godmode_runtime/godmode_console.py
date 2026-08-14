@@ -54,6 +54,9 @@ from .godmode_guardrails import arbitrate, check_ceilings, rewind_preview, watch
 from .godmode_locale import check_locales
 from .godmode_loop import analyze as analyze_loops
 from .godmode_loop import model_blame_allowed
+# U-R2/Task-10b - minimal isolated block (one import line, one argparse flag,
+# one handler branch), same pattern as the U-V2 register block above.
+from .godmode_loop import LOOP_CONFIG_FILENAME, loop_ready
 from .godmode_mistakes import analyze as analyze_mistakes
 from .godmode_mistakes import stale_runtime
 from .godmode_netgate import differential as netgate_differential
@@ -428,6 +431,10 @@ _CONFIG_CONTRACTS: dict[str, dict[str, tuple[type, bool]]] = {
     ".godmode-dependency-policy.json": {"max_dependencies": (int, False),
                                         "banned_licenses": (list, False)},
     ".godmode-privacy.json": {"sensitive_paths": (list, False), "never_leave": (list, False)},
+    # Task 10b's maturity/stop_contract/budget_s/verdict_path/escalation fields
+    # on this same file are validated by `loop_ready` (legal maturity, positive
+    # budget, sane thresholds) rather than here - this table's (type, required)
+    # shape has no way to spell "int or float", which budget_s legitimately is.
     ".godmode-loop.json": {"repeat_threshold": (int, False)},
     ".godmode-operator.json": {"persona": (str, True), "hard_gates": (list, True),
                                "communication": (str, True), "decision_authority": (str, True)},
@@ -967,6 +974,16 @@ def cmd_loop(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             session=_session(runtime, args.session) if args.session else None,
         )
         return CommandResult(verdict, exit_code=0 if verdict["allowed"] else 1)
+    if args.preflight:
+        # Task 10b: audit BEFORE cycle one, not after it stalls. `declare_maturity`
+        # (inside loop_ready) raises on an illegal maturity - that propagates as
+        # the usual GodmodeError refusal, naming the policy, not a finding here.
+        declaration_path = Path(runtime.anchor.project_root) / LOOP_CONFIG_FILENAME
+        declaration: dict[str, Any] = {}
+        if declaration_path.is_file():
+            declaration = json.loads(declaration_path.read_text(encoding="utf-8"))
+        verdict = loop_ready(declaration)
+        return CommandResult(verdict, exit_code=1 if verdict["blocking"] else 0)
     report = analyze_loops(runtime.archive)
     return CommandResult(report, exit_code=1 if report["blocking"] else 0)
 
@@ -2814,6 +2831,9 @@ def _build_parser() -> argparse.ArgumentParser:
     loop.add_argument("--blame", action="store_true",
                       help="Check whether blaming the model is supported by a non-model control")
     loop.add_argument("--session")
+    loop.add_argument("--preflight", action="store_true",
+                      help="Task 10b: audit .godmode-loop.json readiness (stop contract, "
+                           "budget, verdict path, escalation thresholds) before cycle one")
     loop.set_defaults(handler=cmd_loop)
 
     environment = sub.add_parser(
