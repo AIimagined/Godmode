@@ -134,5 +134,14 @@
       "--output",
       "-o"
     ]
+  },
+  "output_flags_by_head": {
+    "git": [
+      "--output"
+    ],
+    "sort": [
+      "-o",
+      "--output"
+    ]
   }
 }

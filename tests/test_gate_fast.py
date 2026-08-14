@@ -72,8 +72,18 @@ class TableShape(unittest.TestCase):
     def test_required_keys_present(self) -> None:
         for key in ("version", "generated_from", "floor", "read_heads",
                     "mutation_heads", "db_clients", "git_ask", "git_refuse",
-                    "find_mutation_flags", "flag_denylist"):
+                    "find_mutation_flags", "flag_denylist",
+                    "output_flags_by_head"):
             self.assertIn(key, TABLE)
+
+    def test_output_flags_by_head_matches_the_sentinels_own_table(self) -> None:
+        """Final review Critical finding C2's fix: `output_flags_by_head` is
+        an exported copy of `_OUTPUT_FLAGS_BY_HEAD`, not a retyped one - pin
+        it against the real dict directly so the two can never drift."""
+        from godmode_runtime.godmode_sentinel import _OUTPUT_FLAGS_BY_HEAD
+        expected = {head: set(flags) for head, flags in _OUTPUT_FLAGS_BY_HEAD.items()}
+        actual = {head: set(flags) for head, flags in TABLE["output_flags_by_head"].items()}
+        self.assertEqual(actual, expected)
 
     def test_floor_is_conservative_read_only_in_full_sentinel(self) -> None:
         """Every literal floor phrase, run bare, is R0 in the full sentinel
@@ -365,6 +375,87 @@ class KnownShapes(unittest.TestCase):
         """
         self.assertIn("tr", TABLE["read_heads"])
         self.assertEqual(fast.fast_verdict(payload("tr a b"), TABLE), "allow")
+
+
+class Adversarial(unittest.TestCase):
+    """Final whole-branch review (final-review.md), two Critical findings.
+    Synthetic, hand-constructed probes - deliberately NOT added to
+    `tests/fixtures/gate_corpus.json`, whose provenance is real denials
+    only; a synthetic entry there would corrupt that population. This class
+    is where synthetic adversarial coverage belongs instead.
+    """
+
+    def test_c1_command_substitution_escalates(self) -> None:
+        """Reproduced red against the pre-fix module (fast: allow, exit 0,
+        silent - the full hook never invoked; full sentinel: R4 or R5,
+        protected). A REGRESSION from this plan's own pre-fast-gate
+        baseline, which refused `cat $(rm -rf /)` outright - the fast gate
+        had reopened a hole the branch itself had closed."""
+        for command in (
+            "cat $(rm -rf build)",
+            "echo $(git push --force origin main)",
+            "ls `rm -rf x`",
+            "diff <(cat a) <(cat b)",
+            "cat <(rm -rf build)",
+            "grep x <(rm -rf build)",
+            "echo hi >(tee /etc/hosts)",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(fast.fast_verdict(payload(command), TABLE),
+                                 "escalate")
+
+    def test_c1_quoting_does_not_exempt_substitution(self) -> None:
+        """The fix is a RAW scan on purpose: `"$(...)"` inside double quotes
+        still runs the inner command (the shell only suppresses
+        word-splitting of the result), so a quote-aware exemption here would
+        reopen the exact gap this fixes through a quote."""
+        self.assertEqual(
+            fast.fast_verdict(payload('echo "$(rm -rf build)"'), TABLE),
+            "escalate")
+
+    def test_c1_green_controls_unaffected(self) -> None:
+        """A bare `$` not followed by `(` is ordinary text, not a
+        substitution marker - ordinary floor-clean commands must stay
+        allowed."""
+        for command in ("git status", 'grep "price $40" f.txt',
+                         "echo $HOME", "ls -la"):
+            with self.subTest(command=command):
+                self.assertEqual(fast.fast_verdict(payload(command), TABLE), "allow")
+
+    def test_c2_sort_output_flag_escalates(self) -> None:
+        """Reproduced red against the pre-fix module (fast: allow, silent;
+        full sentinel: R2/ask via `_OUTPUT_FLAGS_BY_HEAD["sort"]`). The
+        read-head branch matched on head alone and never consulted an
+        output-flag table at all - the git-phrase branch's `flag_denylist`
+        fix from review round 1 covered only git, not the other read heads
+        that share the same write-capable-flag shape."""
+        for command in ("sort -o /etc/hosts f.txt",
+                         "sort --output=/etc/hosts f.txt",
+                         "sort -o/etc/hosts f.txt",
+                         "sort --output /etc/hosts f.txt"):
+            with self.subTest(command=command):
+                self.assertEqual(fast.fast_verdict(payload(command), TABLE),
+                                 "escalate")
+
+    def test_c2_sort_without_an_output_flag_still_allows(self) -> None:
+        """Green controls: ordinary `sort` usage - including short flags
+        that are not the denylisted `-o` - must stay fast-allowed."""
+        for command in ("sort f.txt", "sort -u f.txt", "sort -n -r data.csv"):
+            with self.subTest(command=command):
+                self.assertEqual(fast.fast_verdict(payload(command), TABLE), "allow")
+
+    def test_c1_and_c2_end_to_end_through_the_real_script(self) -> None:
+        """The exact end-to-end smoke the review asked for: pipe the C1
+        payload into the actual script and confirm the full hook's
+        refusal JSON appears on stdout, proving escalation - not just the
+        in-process `fast_verdict` call - actually happens."""
+        raw = json.dumps(payload("cat $(rm -rf build)")).encode("utf-8")
+        result = subprocess.run(
+            [sys.executable, str(FAST_GATE)],
+            input=raw, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            cwd=PLUGIN_ROOT, timeout=30,
+        )
+        self.assertIn(b"permissionDecision", result.stdout)
 
 
 class Latency(unittest.TestCase):
