@@ -41,6 +41,7 @@ import sys
 import tempfile
 from typing import Any
 
+from . import godmode_graders
 from .godmode_errors import GodmodeError
 
 EVAL_SCHEMA = "godmode-skill-eval-v1"
@@ -48,6 +49,7 @@ SNAPSHOT_SCHEMA = "godmode-routing-snapshot-v1"
 ASSERTION_SCHEMA = "godmode-behavior-assertions-v1"
 CHARTER_SNAPSHOT_SCHEMA = "godmode-charter-snapshot-v1"
 RANKING_SNAPSHOT_SCHEMA = "godmode-ranking-snapshot-v1"
+COMPARISON_SCHEMA = "godmode-eval-comparison-v1"
 
 # One probe may not hang the whole eval run; a minute is generous for a local CLI.
 ASSERTION_TIMEOUT_SECONDS = 60
@@ -309,6 +311,12 @@ def _run_check(project: Path, check: dict[str, Any]) -> tuple[bool, str]:
     machine, which is the opposite of an eval. `python` maps to the interpreter
     running the evals, because the probe must test this runtime, not whichever
     binary PATH happens to resolve today.
+
+    A check may name a `grader` from the closed vocabulary in
+    `godmode_graders` instead of (or in addition to considering) a bare
+    substring: `{"grader": "json_match", "expected": "..."}`. `match` accepts
+    an optional `prefix: true`. An unknown grader name is a definition error,
+    reported rather than silently treated as a pass or a fail.
     """
     command = str(check.get("command", "")).strip()
     if not command:
@@ -330,6 +338,21 @@ def _run_check(project: Path, check: dict[str, Any]) -> tuple[bool, str]:
             f"exit {proc.returncode}, expected {expected_exit}; output: "
             f"{output.strip()[:160]}"
         )
+    grader_name = check.get("grader")
+    if grader_name is not None:
+        expected = check.get("expected", "")
+        kwargs: dict[str, Any] = {}
+        if "prefix" in check:
+            kwargs["prefix"] = bool(check["prefix"])
+        try:
+            held = godmode_graders.grade(str(grader_name), output, expected, **kwargs)
+        except GodmodeError as exc:
+            return False, f"grader definition error: {exc}"
+        if not held:
+            return False, (
+                f"grader {grader_name!r} did not match; output: {output.strip()[:160]}"
+            )
+        return True, f"exit {proc.returncode}, grader {grader_name!r} matched"
     needle = check.get("expect_contains")
     if needle is not None and str(needle) not in output:
         return False, f"output lacks {str(needle)!r}; output: {output.strip()[:160]}"
@@ -396,6 +419,42 @@ def run_behavior_assertions(project: Path) -> dict[str, Any]:
         "skills": skills,
         "totals": totals,
         "verdict": "assertions-held" if totals["failed"] == 0 else "assertion-failed",
+    }
+
+
+def compare_eval_results(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    """Compare two result records that each carry an `id` (U-S1).
+
+    A result's `id` is `name.local.vN` (see `godmode_scenarios.scenario_id`):
+    the version is part of what identifies the eval, not a label alongside
+    it. Two records with different ids are describing different eval
+    definitions - a different digest, a different version, or an unrelated
+    eval entirely - so any "score went up/down" claim across them would be
+    comparing different things and calling it drift. The comparison is
+    refused outright rather than computed and hoped nobody notices; two
+    records that share an id are compared field-by-field so the delta names
+    exactly what moved.
+    """
+    id_before, id_after = before.get("id"), after.get("id")
+    if id_before != id_after:
+        return {
+            "schema": COMPARISON_SCHEMA,
+            "comparable": False,
+            "verdict": "refused",
+            "reason": "scores are comparable only within an id",
+            "ids": [id_before, id_after],
+        }
+    changed = {
+        key: {"was": before.get(key), "now": after.get(key)}
+        for key in sorted(set(before) | set(after))
+        if key != "id" and before.get(key) != after.get(key)
+    }
+    return {
+        "schema": COMPARISON_SCHEMA,
+        "comparable": True,
+        "id": id_before,
+        "verdict": "compared",
+        "changed": changed,
     }
 
 
@@ -816,6 +875,41 @@ def _self_check() -> None:
     grid = adversarial_grid()
     assert grid["not_executable"] == 0, grid["grid"]
     assert grid["cells"] == 13, grid["cells"]
+
+    # U-S1: grader vocabulary is reachable from a behaviour-assertion check,
+    # and two result records compare only when their ids agree.
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        gamma = root / "skills" / "gamma"
+        gamma.mkdir(parents=True)
+        (gamma / "SKILL.md").write_text(
+            "---\nname: gamma\ndescription: Probe grader wiring.\n---\n", encoding="utf-8")
+        (gamma / "godmode-evals.json").write_text(json.dumps({
+            "schema": EVAL_SCHEMA, "skill": "gamma",
+            "routing": {"positive": [], "near_negative": []},
+            "behavior_assertions": [
+                {"assert": "the grader vocabulary matches a prefixed exit",
+                 "check": {"command": "python -c \"print('gm1.ok')\"",
+                           "grader": "match", "expected": "gm1.", "prefix": True}},
+            ],
+        }), encoding="utf-8")
+        graded = run_behavior_assertions(root)
+        assert graded["verdict"] == "assertions-held", graded
+        assert graded["skills"]["gamma"]["passed"] == 1, graded
+
+    same = compare_eval_results(
+        {"id": "hollow-guard.local.v1", "caught": True},
+        {"id": "hollow-guard.local.v1", "caught": False},
+    )
+    assert same["verdict"] == "compared" and same["changed"], same
+
+    different = compare_eval_results(
+        {"id": "hollow-guard.local.v1", "caught": True},
+        {"id": "hollow-guard.local.v2", "caught": True},
+    )
+    assert different["verdict"] == "refused", different
+    assert different["reason"] == "scores are comparable only within an id", different
+
     print("godmode_evals self-check OK")
 
 
