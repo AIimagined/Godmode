@@ -161,7 +161,6 @@ class RiskTierTests(unittest.TestCase):
             "git commit -m 'save'": "R2",
             "git commit --amend": "R3",
             "delete from users where id = 4": "R3",
-            "change an unspecified production setting": "R3",
             "git push origin main": "R4",
             "deploy the release to production": "R4",
             "rm -rf build/": "R4",
@@ -186,10 +185,18 @@ class RiskTierTests(unittest.TestCase):
             self.assertEqual(preview["tier"], "R5", operation)
             self.assertTrue(preview["second_confirmation_required"], operation)
 
-    def test_unclassified_mutation_never_drops_below_r3(self) -> None:
+    def test_an_unrecognised_phrase_with_no_evidence_is_now_r0(self) -> None:
+        """U-G1b retired `unclassified-mutation`'s fail-closed-for-ignorance
+        default (see test_sentinel_scoping.py): a phrase with no vocabulary
+        hit and no evidence of mutation - no redirect, no named write flag -
+        reads as an ordinary, unrecognised command now, at R0, rather than
+        asking (at best) or refusing for having no vocabulary entry. This
+        test used to be named `test_unclassified_mutation_never_drops_below_
+        r3`; renamed because that premise no longer holds."""
         preview = classify_action("perform an unnamed maintenance operation")
-        self.assertEqual(preview["category"], "unclassified-mutation")
-        self.assertEqual(preview["tier"], "R3")
+        self.assertEqual(preview["category"], "read-only-inspection")
+        self.assertEqual(preview["tier"], "R0")
+        self.assertFalse(preview["protected"])
 
 
 class CapabilityScopeTests(unittest.TestCase):

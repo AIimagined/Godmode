@@ -168,8 +168,14 @@ class HelpFlagTests(GateCase):
 
     def test_a_help_flag_does_not_excuse_a_redirect_beside_it(self) -> None:
         """The flag stops the command from acting; it does not stop the
-        shell from writing where the output goes."""
-        self.refused("curl --help > ~/.bashrc", "worktree-file-mutation")
+        shell from writing where the output goes. `curl` is not a recognised
+        head (U-G1b: it is one of the network fetchers named as never
+        defaulting open), so a redirect beside it is judged as an
+        unrecognised command with evidence of a write, not evaluated for
+        containment the way a recognised head's redirect is - category is
+        `unknown-command`, not `worktree-file-mutation`, but it is still
+        refused either way, which is what this test exists to prove."""
+        self.refused("curl --help > ~/.bashrc", "unknown-command")
 
     def test_a_help_flag_does_not_excuse_a_second_command(self) -> None:
         self.refused("gh --help && rm -rf build", "filesystem-mutation")
@@ -306,11 +312,28 @@ class StillClosedTests(GateCase):
     """The refusals that are the design working, kept so a later widening has
     to argue with a test rather than with a memory."""
 
-    def test_an_unknown_binary_fails_closed(self) -> None:
+    def test_an_unknown_binary_with_no_evidence_is_now_read(self) -> None:
+        """U-G1b retired the fail-closed-for-ignorance default this test used
+        to pin (`test_an_unknown_binary_fails_closed`): a corpus of real
+        denials showed most unrecognised commands were harmless (`rev`, `cp`
+        into the tree, a status probe...), and refusing every one of them for
+        having no vocabulary entry was the approval-fatigue failure this
+        gate's own usability tests exist to catch. No redirect, no named
+        write flag, no evidence - read now, at R0."""
         for command in ("wsl --list --verbose", "graphify clone https://example.invalid/x",
                         "codex plugin add godmode"):
             with self.subTest(command=command):
-                self.refused(command)
+                self.allowed(command)
+
+    def test_an_unknown_binary_with_evidence_still_fails_closed(self) -> None:
+        """The same three binaries, each now with something pointing at a
+        mutation - a real redirect this classifier cannot evaluate for
+        containment on an unrecognised command's behalf."""
+        for command in ("wsl --list --verbose > out.txt",
+                        "graphify clone https://example.invalid/x > /etc/hosts",
+                        "codex plugin add godmode > ~/.bashrc"):
+            with self.subTest(command=command):
+                self.refused(command, "unknown-command")
 
     def test_a_powershell_script_block_is_not_read_by_its_verb(self) -> None:
         """`ForEach-Object { … }` runs whatever the block contains."""
