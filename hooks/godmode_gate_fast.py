@@ -103,6 +103,28 @@ _REDIRECT_PRESENT = re.compile(r"(?<![<>])>{1,2}(?!&)")
 
 _SEPARATORS = re.compile(r"[ \t]*(?:\|\||&&|[;|\r\n]|(?<![<>])&)[ \t\r\n]*")
 
+# Final review, Critical finding C1: `$(...)`, backtick, `<(...)`, `>(...)`
+# command/process substitution runs a second, entirely unexamined command
+# with none of this module's checks ever seeing it - it is not a separator
+# `_SEPARATORS` splits on, contains no bare `>` `_REDIRECT_PRESENT` matches
+# (process substitution's own `<`/`>` sit directly against `(`, a shape the
+# redirect regex's target class `[^\s;&|<>]*` cannot enter, so this is not
+# redundant with that check), and its head never appears as a segment head
+# at all - `cat $(rm -rf build)` is one segment whose head is `cat`, a
+# floor-clean read head, and the substitution's `rm -rf build` is invisible
+# to every check below. Reproduced live: `classify_action("cat $(rm -rf
+# build)")` is R4/protected in the full sentinel (a regression from this
+# plan's own pre-fast-gate baseline, which refused it outright) while the
+# fast gate silently allowed it. Fixed by a RAW, pre-parse scan of the exact
+# input text - deliberately not quote-aware, and deliberately run before any
+# segmentation: `"$(cmd)"` inside double quotes still runs `cmd` (the shell
+# only suppresses *word-splitting* of the result, not the substitution
+# itself), so exempting quoted spans here would reopen exactly this gap
+# through a quote. Any of the four markers anywhere in the raw text
+# escalates the whole command; a bare `$` not followed by `(` (`price $40`)
+# never matches, so ordinary text with a dollar sign is unaffected.
+_SUBSTITUTION_MARKERS = ("`", "$(", "<(", ">(")
+
 
 def _blanked_segments(command: str) -> list[str]:
     """Split `command` into shell segments, quotes already blanked.
@@ -218,29 +240,74 @@ def _flag_denylist(table: dict[str, Any]) -> dict[str, frozenset[str]] | None:
     `git status`/`ls-files`/etc. carry no write-to-file flag of this shape,
     so they are not required to appear here.
     """
-    raw = table.get("flag_denylist")
+    return _string_set_mapping(table.get("flag_denylist"))
+
+
+def _output_flags_by_head(table: dict[str, Any]) -> dict[str, frozenset[str]] | None:
+    """`{"sort": {"-o", "--output"}, "git": {"--output"}, ...}` - the same
+    shape as `_flag_denylist`, keyed by bare command head instead of a full
+    git phrase, consulted by the non-git read-head branch. Final review
+    Critical finding C2: that branch matched on `tokens[0] in read_heads`
+    alone and never checked for a write-capable flag at all, so
+    `sort -o /etc/hosts f.txt` fast-allowed a real write the full sentinel
+    gates (`godmode_sentinel._OUTPUT_FLAGS_BY_HEAD["sort"]`). Required, same
+    fail-closed shape as every other table field.
+    """
+    return _string_set_mapping(table.get("output_flags_by_head"))
+
+
+def _string_set_mapping(raw: Any) -> dict[str, frozenset[str]] | None:
     if not isinstance(raw, dict):
         return None
-    denylist: dict[str, frozenset[str]] = {}
-    for phrase, flags in raw.items():
-        if not isinstance(phrase, str) or not isinstance(flags, list):
+    result: dict[str, frozenset[str]] = {}
+    for key, values in raw.items():
+        if not isinstance(key, str) or not isinstance(values, list):
             return None
         entries = []
-        for flag in flags:
-            if not isinstance(flag, str):
+        for value in values:
+            if not isinstance(value, str):
                 return None
-            entries.append(flag)
-        denylist[phrase] = frozenset(entries)
-    return denylist
+            entries.append(value)
+        result[key] = frozenset(entries)
+    return result
+
+
+def _denylisted(token: str, denylisted: frozenset[str]) -> bool:
+    """Whether `token` (one trailing token after a floor-clean head/phrase)
+    carries a flag in `denylisted`. Shared by the git-phrase branch
+    (`flag_denylist`) and the non-git read-head branch
+    (`output_flags_by_head`) so the two can never learn to match
+    differently. Three spellings of the same flag are all caught: the bare
+    flag itself, an `=`-joined value (`--output=/tmp/x` - compare the part
+    before any `=`), and - single-character short flags only, matching what
+    the tools themselves accept (`sort -oFILE`, git's own glued form) - a
+    value glued on with no separator at all (`-o/tmp/x`). A long flag
+    (`--output`) is never prefix-matched: gluing a value onto it with no `=`
+    is not a form any of these tools accept, and prefix-matching it would
+    catch an unrelated long flag that merely starts the same way.
+    """
+    bare = token.split("=", 1)[0]
+    if bare in denylisted:
+        return True
+    return any(len(flag) == 2 and not flag.startswith("--")
+               and token.startswith(flag) and token != flag
+               for flag in denylisted)
 
 
 def _segment_floor_clean(tokens: list[str], git_phrases: list[list[str]],
                           read_heads: set[str],
-                          flag_denylist: dict[str, frozenset[str]]) -> bool:
+                          flag_denylist: dict[str, frozenset[str]],
+                          output_flags_by_head: dict[str, frozenset[str]]) -> bool:
     if not tokens:
         return False
-    if tokens[0] != "git":
-        return tokens[0] in read_heads
+    head = tokens[0]
+    if head != "git":
+        if head not in read_heads:
+            return False
+        denylisted = output_flags_by_head.get(head)
+        if denylisted and any(_denylisted(token, denylisted) for token in tokens[1:]):
+            return False
+        return True
     for phrase in git_phrases:
         n = len(phrase)
         if tokens[:n] != phrase:
@@ -252,35 +319,19 @@ def _segment_floor_clean(tokens: list[str], git_phrases: list[list[str]],
         if joined in _EXACT_ONLY_GIT_PHRASES:
             return False
         denylisted = flag_denylist.get(joined)
-        if denylisted:
-            # Compare the part of each trailing token before any `=`, so
-            # `--output`, `--output=/tmp/x`, and a bare `-o` are all caught
-            # by the same bare-flag key - a write flag disqualifies the
-            # segment whether its value is space- or `=`-separated. A
-            # single-character short flag (`-o`) also has a THIRD spelling
-            # with no separator at all - `-o/tmp/x`, git's own glued form,
-            # one token - so a short denylisted flag is prefix-matched
-            # against each trailing token, not just compared for equality;
-            # a long flag (`--output`) is never prefix-matched, since gluing
-            # a value onto it with no `=` is not a form git itself accepts.
-            for token in trailing:
-                bare = token.split("=", 1)[0]
-                if bare in denylisted:
-                    return False
-                if any(len(flag) == 2 and not flag.startswith("--")
-                       and token.startswith(flag) and token != flag
-                       for flag in denylisted):
-                    return False
+        if denylisted and any(_denylisted(token, denylisted) for token in trailing):
+            return False
         return True
     return False
 
 
 def fast_verdict(payload: dict[str, Any], table: dict[str, Any] | None) -> str:
-    """`"allow"` only if every segment of a Bash/PowerShell command is a
-    floor-clean read with no redirect, none of the table's
-    `find_mutation_flags`, and no denylisted write flag on a git phrase that
-    carries one. Anything else - malformed input, a malformed table, a
-    fenced tool, an internal exception - is `"escalate"`. Never a guess.
+    """`"allow"` only if the raw command carries no command/process
+    substitution marker, and every segment is a floor-clean read with no
+    redirect, none of the table's `find_mutation_flags`, and no denylisted
+    write flag on the git phrase or read head it matches. Anything else -
+    malformed input, a malformed table, a fenced tool, an internal exception
+    - is `"escalate"`. Never a guess.
     """
     try:
         if not isinstance(table, dict):
@@ -297,6 +348,12 @@ def fast_verdict(payload: dict[str, Any], table: dict[str, Any] | None) -> str:
         if not isinstance(command, str) or not command.strip():
             return "escalate"
 
+        # Raw, pre-parse, no quote exemption - see `_SUBSTITUTION_MARKERS`'s
+        # comment for why this runs before segmentation and before quotes
+        # are ever blanked.
+        if any(marker in command for marker in _SUBSTITUTION_MARKERS):
+            return "escalate"
+
         read_heads_raw = table.get("read_heads")
         if not isinstance(read_heads_raw, list):
             return "escalate"
@@ -310,6 +367,9 @@ def fast_verdict(payload: dict[str, Any], table: dict[str, Any] | None) -> str:
         flag_denylist = _flag_denylist(table)
         if flag_denylist is None:
             return "escalate"
+        output_flags_by_head = _output_flags_by_head(table)
+        if output_flags_by_head is None:
+            return "escalate"
 
         segments = _blanked_segments(command)
         if not segments:
@@ -320,7 +380,8 @@ def fast_verdict(payload: dict[str, Any], table: dict[str, Any] | None) -> str:
             tokens = segment.split()
             if find_flags.intersection(tokens):
                 return "escalate"
-            if not _segment_floor_clean(tokens, git_phrases, read_heads, flag_denylist):
+            if not _segment_floor_clean(tokens, git_phrases, read_heads,
+                                        flag_denylist, output_flags_by_head):
                 return "escalate"
         return "allow"
     except Exception:  # noqa: BLE001 - fail-safe boundary, never crash the gate

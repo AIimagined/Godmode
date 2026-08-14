@@ -37,15 +37,23 @@ itself now gates - see `_output_flag_target`) with a fast-gate-only caution
 addition, `-o`: git itself rejects a bare `-o` on `log`/`diff`/`show`, so the
 full sentinel owes it nothing, but the fast gate treats it as denylisted
 anyway out of defense in depth (documented at its point of use in
-`hooks/godmode_gate_fast.py`). `git_ask`/`git_refuse` and `mutation_heads`
-have no single clean data table in the sentinel to read verbatim - each is a
-curated candidate list, classified through `classify_action` at generation
-time and asserted to land where its bucket claims (protected + tier != R5 for
-`git_ask`, protected + tier == R5 for `git_refuse`, protected + the expected
-category for a `mutation_heads` entry) - so a sentinel change that moves one
-of these candidates to a different bucket breaks the build instead of
-shipping a table that silently disagrees with the classifier it was built
-from.
+`hooks/godmode_gate_fast.py`). `output_flags_by_head` exports
+`_OUTPUT_FLAGS_BY_HEAD` verbatim (final review Critical finding C2: the fast
+gate's read-head branch matched on head alone and never consulted this table
+at all, silently allowing `sort -o /etc/hosts f.txt` - a real write-capable
+flag on a non-git read head - past the floor; `flag_denylist` above only ever
+covered the three git phrases) - the whole dict, not a filtered subset,
+because the git entry is redundant-but-harmless there (the fast gate's git
+branch never looks at `output_flags_by_head`, only at `flag_denylist`) and a
+verbatim export is the one form that can never itself drift from the source
+dict. `git_ask`/`git_refuse` and `mutation_heads` have no single clean data
+table in the sentinel to read verbatim - each is a curated candidate list,
+classified through `classify_action` at generation time and asserted to land
+where its bucket claims (protected + tier != R5 for `git_ask`, protected +
+tier == R5 for `git_refuse`, protected + the expected category for a
+`mutation_heads` entry) - so a sentinel change that moves one of these
+candidates to a different bucket breaks the build instead of shipping a
+table that silently disagrees with the classifier it was built from.
 
 Usage: `python scripts/dev/build_decision_table.py` writes
 `hooks/gate_table.json`; `--stdout` prints the same JSON to stdout instead
@@ -72,6 +80,10 @@ from godmode_runtime.godmode_sentinel import (  # noqa: E402
     _FIND_MUTATION,
     _OUTPUT_FLAGS_BY_HEAD,
     classify_action,
+)
+
+assert set(_OUTPUT_FLAGS_BY_HEAD) >= {"git", "sort"}, (
+    "expected heads dropped from the sentinel's own _OUTPUT_FLAGS_BY_HEAD"
 )
 
 SENTINEL_PATH = SCRIPTS_DIR / "godmode_runtime" / "godmode_sentinel.py"
@@ -212,6 +224,17 @@ def _build_flag_denylist() -> dict[str, list[str]]:
     return {phrase: list(flags) for phrase in _DENYLISTED_GIT_PHRASES}
 
 
+def _build_output_flags_by_head() -> dict[str, list[str]]:
+    """`_OUTPUT_FLAGS_BY_HEAD`, exported verbatim (see module docstring for
+    why: a filtered subset is a second thing that can drift from the
+    source, a verbatim export cannot). Consumed by the fast gate's
+    non-git read-head branch, which - unlike the git-phrase branch and its
+    `flag_denylist` - had no output-flag check at all before final-review
+    Critical finding C2 (`sort -o /etc/hosts f.txt` fast-allowed a real
+    write past the floor)."""
+    return {head: list(flags) for head, flags in _OUTPUT_FLAGS_BY_HEAD.items()}
+
+
 def _build_git_ask_refuse() -> tuple[list[str], list[str]]:
     ask: list[str] = []
     for phrase in _GIT_ASK_CANDIDATES:
@@ -267,6 +290,7 @@ def build_table() -> dict[str, object]:
         "git_refuse": git_refuse,
         "find_mutation_flags": _build_find_mutation_flags(),
         "flag_denylist": _build_flag_denylist(),
+        "output_flags_by_head": _build_output_flags_by_head(),
     }
 
 
