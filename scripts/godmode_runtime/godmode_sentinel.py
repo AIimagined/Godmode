@@ -117,6 +117,15 @@ _GIT_BRANCH_MUTATION = re.compile(
 # `merge-base` being read as `merge`, in the direction that matters.
 _GIT_LOCAL_CHANGE = re.compile(r"(?i)^\s*git\s+(?:add|commit)(?![-\w])(?!.*\s--amend\b)")
 
+# `git checkout -b <name>` creates a branch and switches to it; the plain
+# `checkout`/`checkout --`/pathspec forms discard working-tree changes or
+# move HEAD around history, which is the shape `_ACTION_PATTERNS`'s
+# `git-history-or-remote` pattern still catches (that pattern excludes this
+# `-b`/`-B` form explicitly - see its own comment). `-B` resets an existing
+# branch to the given start point as well as creating one; treated the same
+# as `-b` here, since neither leaves the machine or discards committed work.
+_GIT_BRANCH_CREATE = re.compile(r"(?i)^\s*git\s+checkout\s+-[bB]\b")
+
 # `git -C <path> log` is a log. Every git rule here reads the subcommand at a
 # fixed position, so a global option in front of it meant no rule matched and
 # the read fell through to unclassified-mutation. Stripping the options and
@@ -202,7 +211,10 @@ _ACTION_PATTERNS: tuple[tuple[str, re.Pattern[str], tuple[str, ...]], ...] = (
             # hyphen, so the word matched and a read was reported as history
             # mutation - the same shape as `Out-String` reading while
             # `Out-File` writes, which is why neither is matched by prefix.
-            r"\bgit\s+(?:push|merge(?!-base)|rebase|reset|clean|tag|checkout|switch|"
+            # `checkout(?!\s+-[bB]\b)`: `-b`/`-B` creates (and switches to) a
+            # local branch rather than discarding work or rewriting history -
+            # `_GIT_BRANCH_CREATE` names that form separately, above.
+            r"\bgit\s+(?:push|merge(?!-base)|rebase|reset|clean|tag|checkout(?!\s+-[bB]\b)|switch|"
             r"branch\s+(?:-[dDmM]|--delete)|worktree\s+(?:remove|prune|move)|"
             r"stash\s+(?:drop|pop|clear|apply|push|save|branch|create|store)|"
             r"remote\s+(?:add|remove|rm|rename|set-url|set-head|set-branches|prune|update))\b"
@@ -1102,6 +1114,10 @@ def evidence_pipe_advisory(command: str) -> str | None:
 _TIER_BY_CATEGORY = {
     "read-only-inspection": "R0",
     "local-compute-or-state": "R1",
+    # A new local branch, unprotected - the same tier `local-compute-or-
+    # state` sits at, for the same reason: it changes nothing that isn't
+    # trivially reversed and nothing leaves the machine.
+    "git-branch-create": "R1",
     "worktree-file-mutation": "R2",
     # Recorded at the same tier as a file edit: it changes local state and
     # nothing leaves the machine.
@@ -1306,9 +1322,30 @@ def _categorize(normalized: str, project_root: Path | None = None) -> tuple[str,
         return "read-only-inspection", False, ["local read-only state"]
     # Checked after the branch mutation and before the protected patterns, so
     # a commit is ordinary while `--amend` still falls through to them.
+    #
+    # Staging and committing are reversible and local, and were left
+    # unprotected on exactly that reasoning - which was correct about the
+    # risk and wrong about the conclusion. `checkout --`/`restore`/`mv`/
+    # `stash`/`switch` carry the same reversibility and already ask (R3);
+    # `add`/`commit` sitting on the allowed side of that line was never a
+    # decision, just the one git rule this classifier had not yet been
+    # given (U-G1c / Controller Ruling 1). Protected now, at the same R2
+    # tier - `_decision_for` reduces any protected tier below R5 to "ask",
+    # so this is a one-key confirmation, not a stop.
     if write_target is None and _GIT_LOCAL_CHANGE.match(executable):
-        return ("local-repository-change", False,
+        return ("local-repository-change", True,
                 ["the index or a new local commit; nothing leaves the machine"])
+    if write_target is None and _GIT_BRANCH_CREATE.match(executable):
+        # `git checkout -b <name>` creates a local branch and switches to
+        # it - the same shape as `git branch <name>` (already unprotected
+        # via `_SAFE_GIT_BRANCH` only covering listing forms falls through
+        # correctly elsewhere), not the history-rewriting `checkout --`/
+        # pathspec form the pattern below still catches. Named separately
+        # rather than folded into `local-repository-change`: a new branch
+        # is not a commit, and conflating the two would blur the message
+        # either category is meant to give.
+        return ("git-branch-create", False,
+                ["a new local branch; nothing leaves the machine"])
     # A help banner describes the operation instead of performing it, so the
     # named mutations are skipped - but only those. The redirect check below
     # still applies, because `curl --help > ~/.bashrc` prints help and writes

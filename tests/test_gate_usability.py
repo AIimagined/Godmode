@@ -363,17 +363,23 @@ class ExecutablePositionTests(unittest.TestCase):
 class LocalGitTests(unittest.TestCase):
     """Committing is the work; pushing is the consequence.
 
-    A commit is local and reversible, and gating it made committing impossible
-    in a session where no capability can be attached to a tool call. What
-    deserves the interruption is the operation that leaves the machine or
-    destroys work.
+    A commit is local and reversible. It was once left unprotected on that
+    reasoning (`godmode_session_hook.py`'s own history: the gate could only
+    ever refuse a protected call outright, no host tool call carries a field
+    a capability could travel in, so "protected" meant "blocked" and gating
+    committing made a session unusable). That is no longer true - the host
+    can ask, and asking is an in-session approval - so `add`/`commit` now
+    join the sibling worktree operations (`checkout --`, `restore`, `mv`,
+    `stash`, `switch`) that already ask rather than being the one git rule
+    left on the other side of that line (U-G1c, Controller Ruling 1).
     """
 
-    def test_committing_and_staging_are_not_protected(self) -> None:
+    def test_committing_and_staging_now_ask_rather_than_run_silently(self) -> None:
         for operation in ("git add -A", "git add scripts/",
                           "git commit -m 'a message'",
                           "git commit"):
-            self.assertFalse(classify_action(operation)["protected"], operation)
+            self.assertTrue(classify_action(operation)["protected"], operation)
+            self.assertEqual(classify_action(operation)["tier"], "R2", operation)
 
     def test_what_leaves_the_machine_or_destroys_work_is_still_protected(self) -> None:
         for operation in ("git push origin main", "git push --force",
