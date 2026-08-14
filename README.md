@@ -269,12 +269,14 @@ data.
 **What happens on a model or host switch?** Every record names its author, and
 `drift` reports mandated steps that silently stopped happening.
 
-**Is it slow?** Read-only work is untouched. A fast table-lookup gate runs
-first and allows vetted, read-only-shaped commands (`git status`, `git log`,
-...) in about 90ms median, in-process, no subprocess spawned. Only a real
-mutation or an ambiguous call escalates to the full check that resolves
-repository identity, which costs about 470ms median (measured 2026-08-14; see
-`hooks/GODMODE_HOOKS.md`). Read-only tools skip the gate entirely.
+**Is it slow?** Read-only work is untouched. A fast table-lookup answers most
+mutating calls locally, in-process, with no subprocess spawned: a vetted,
+read-only-shaped command (`git status`, `git log`, ...) resolves in about
+90ms median. Only a real mutation or an ambiguous call escalates to the full
+runtime check that resolves repository identity, which costs about 470ms
+median (measured 2026-08-14; see `hooks/GODMODE_HOOKS.md`). Read-only tools
+such as `Read` or `Grep` are outside the hook's own matcher, so they never
+reach either path.
 
 ## Documentation
 
