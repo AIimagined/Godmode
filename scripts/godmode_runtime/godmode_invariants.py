@@ -72,13 +72,26 @@ _REGISTER_EVIDENCE_PREFIXES = ("witness:", "verdict:", "file:")
 
 
 def _register_invariants(data: dict[str, Any]) -> None:
-    """U-V2's two structural facts, checkable from `data` alone.
+    """U-V2's structural facts, checkable from `data` alone.
 
     Only fires for register-shaped `decision` records - every other subject
     this kind carries (removals, capability negotiations, charter reviews,
     skill lifecycle...) has no `register_key` field and passes through
-    unexamined. Two checks, both purely structural:
+    unexamined. Once `register_key` IS present, though, the record has
+    declared itself register-shaped, and everything below is enforced -
+    there is no such thing as a register-shaped record this hook lets
+    through unexamined:
 
+    - `state` must be present at all. Fix-round-1 review caught a gap here:
+      an earlier version of this guard skipped validation entirely for a
+      register-shaped record with no `state` field, which then read as a
+      silent `open` through `state_of()`/`register_view()` while
+      `conflict_findings()` simultaneously flagged the very same record as
+      an unknown-state conflict - two read paths disagreeing about one
+      record, reachable only through a raw append (`set_state()` always
+      supplies `state` from a required argument). A missing `state` is not
+      "not register-shaped," it is a malformed register record, and is
+      refused here on that same structural, single-record basis.
     - the declared state must be one of the closed enumeration; an unlisted
       spelling is refused outright rather than silently read as `open`, so
       garbage never reaches the ledger for a later reader to explain away.
@@ -90,15 +103,24 @@ def _register_invariants(data: dict[str, Any]) -> None:
       already be inside `data` to be checkable here at all.
 
     What this does NOT check - because it structurally cannot - is transition
-    legality or whether a `supersedes` value names the record it actually
-    replaces: both need the archive's history, which a single record's
-    `data` never carries. `godmode_register.set_state()` refuses those at
-    write time for callers that go through it; `conflict_findings()` detects
-    them at read time for a raw append that does not.
+    legality, whether a `supersedes` value names the record it actually
+    replaces, or whether the subject's own key segment agrees with
+    `data["register_key"]`: all three need either the archive's history or
+    the record's real stored `subject`, neither of which a single record's
+    `data` carries. `godmode_register.set_state()` refuses the
+    history-dependent ones at write time for callers that go through it;
+    `conflict_findings()` detects all three at read time for a raw append
+    that does not.
     """
-    if "register_key" not in data or "state" not in data:
+    if "register_key" not in data:
         return
     state = data.get("state")
+    if state is None:
+        raise ArchiveError(
+            "Register-shaped decision record (register_key present) has no "
+            "'state' field - a register entry with no state is malformed, "
+            "not implicitly 'open'"
+        )
     if state not in _REGISTER_STATES:
         raise ArchiveError(
             f"Unknown register state '{state}'; expected one of "

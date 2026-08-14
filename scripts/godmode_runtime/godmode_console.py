@@ -705,13 +705,21 @@ def cmd_register_set(args: argparse.Namespace, runtime: Runtime) -> CommandResul
 def cmd_register_show(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     view = register_view(runtime.archive, args.domain)
+    # Computed once, filtered per branch below: a --key query is a conflict
+    # blind spot otherwise - fix-round-1 review caught that asking about one
+    # key by name returned a clean `state: open` even when the domain-wide
+    # check simultaneously flagged that same key as a blocking conflict.
+    findings = conflict_findings(runtime.archive, args.domain)
     if args.key:
         entry = view.get(
             args.key,
             {"state": "open", "sequence": None, "evidence": [], "lineage": [], "delta": None},
         )
-        return CommandResult({"domain": args.domain, "key": args.key, **entry}, exit_code=0)
-    findings = conflict_findings(runtime.archive, args.domain)
+        key_findings = [f for f in findings if f["key"] == args.key]
+        return CommandResult(
+            {"domain": args.domain, "key": args.key, **entry, "conflicts": key_findings},
+            exit_code=1 if key_findings else 0,
+        )
     # A conflict is a HARD halt (E6), so it must be visible in the exit status.
     return CommandResult(
         {"domain": args.domain, "register": view, "conflicts": findings},
