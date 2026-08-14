@@ -64,7 +64,7 @@ class IncludesGraderTests(unittest.TestCase):
 
 
 class FuzzyGraderTests(unittest.TestCase):
-    def test_mutual_containment_after_normalisation(self) -> None:
+    def test_containment_after_normalisation(self) -> None:
         self.assertTrue(grade_fuzzy("Retry   Backoff", "retry backoff"))
         self.assertTrue(grade_fuzzy("retry", "retry backoff strategy"))
         self.assertTrue(grade_fuzzy("retry backoff strategy", "retry"))
@@ -76,6 +76,17 @@ class FuzzyGraderTests(unittest.TestCase):
         self.assertTrue(grade_fuzzy("   ", ""))
         self.assertFalse(grade_fuzzy("", "backoff"))
         self.assertFalse(grade_fuzzy("backoff", ""))
+
+    def test_asymmetric_short_expected_inside_long_actual_is_intended(self) -> None:
+        # Ruled (review #3): "fuzzy" is deliberately an OR of either-direction
+        # containment, not a stricter both-directions-at-once reading (which
+        # for strings collapses to near-equality). A short `expected` that is
+        # a literal substring of an unrelated, much longer `actual` is a
+        # match by design - this is the looser grader in the vocabulary, and
+        # callers who want the strict comparison reach for `match` instead.
+        long_output = "this is a long output that happens to contain ok somewhere"
+        self.assertTrue(grade_fuzzy("ok", long_output))
+        self.assertTrue(grade_fuzzy(long_output, "ok"))
 
 
 class JsonMatchGraderTests(unittest.TestCase):
@@ -186,10 +197,12 @@ class RegistryDriftTests(unittest.TestCase):
             if f["id"] == "hollow-guard.local.v1")
         self.assertIn("version was not bumped", detail)
 
-    def test_a_version_bump_alongside_the_edit_clears_the_finding(self) -> None:
-        # The same plant, but with the version correctly bumped: an
-        # unregistered id (v2 was never pinned) is not a digest-drift
-        # finding, because there is nothing pinned to drift from.
+    def test_a_version_bump_alone_is_still_blocking(self) -> None:
+        # Bumping the version without registering the new id's digest used
+        # to slip through silently (the old bug this round's review fixed):
+        # the new id had no registry entry, so it was never checked. Under
+        # the grows-only-both-ways registry, this is now caught twice over -
+        # the new id is unregistered, and the old id is orphaned.
         def planted(project, archive):
             return True, "a deliberately new version of this scenario"
 
@@ -209,8 +222,131 @@ class RegistryDriftTests(unittest.TestCase):
             scen.SCENARIO_VERSIONS.update(original_versions)
 
         self.assertEqual(report["scenarios"][0]["id"], "hollow-guard.local.v2")
+        self.assertTrue(report["registry"]["blocking"], report["registry"])
+        detectors = {f["detector"] for f in report["registry"]["findings"]}
+        self.assertIn("unregistered-scenario", detectors)
+
+    def test_a_correctly_registered_version_bump_clears_the_finding(self) -> None:
+        # The full, correct workflow for an intentional edit: bump the
+        # version, register the new id's digest, and retire the old id's
+        # entry. Only then does the registry go clean again.
+        def planted(project, archive):
+            return True, "a deliberately new version of this scenario"
+
+        original_scenarios = scen.SCENARIOS
+        original_versions = dict(scen.SCENARIO_VERSIONS)
+        original_registry = dict(scen.SCENARIO_DIGEST_REGISTRY)
+        scen.SCENARIOS = tuple(
+            (name, ref, failure, planted) if name == "hollow-guard"
+            else (name, ref, failure, fn)
+            for name, ref, failure, fn in original_scenarios
+        )
+        scen.SCENARIO_VERSIONS["hollow-guard"] = 2
+        scen.SCENARIO_DIGEST_REGISTRY.pop("hollow-guard.local.v1", None)
+        scen.SCENARIO_DIGEST_REGISTRY["hollow-guard.local.v2"] = scen.content_digest(planted)
+        try:
+            report = scen.run(only="hollow-guard")
+        finally:
+            scen.SCENARIOS = original_scenarios
+            scen.SCENARIO_VERSIONS.clear()
+            scen.SCENARIO_VERSIONS.update(original_versions)
+            scen.SCENARIO_DIGEST_REGISTRY.clear()
+            scen.SCENARIO_DIGEST_REGISTRY.update(original_registry)
+
+        self.assertEqual(report["scenarios"][0]["id"], "hollow-guard.local.v2")
         self.assertFalse(report["registry"]["blocking"], report["registry"])
         self.assertEqual(report["registry"]["findings"], [])
+
+    def test_a_scenario_with_no_registry_entry_is_blocking(self) -> None:
+        # Population is grows-only both ways (review #1, direction one): a
+        # scenario that joins SCENARIOS without a matching
+        # SCENARIO_DIGEST_REGISTRY entry must not go quietly - it would
+        # otherwise stay permanently unchecked for digest drift, since
+        # `pinned` would be None forever.
+        def brand_new(project, archive):
+            return True, "a scenario nobody registered yet"
+
+        original = scen.SCENARIOS
+        scen.SCENARIOS = original + (
+            ("brand-new-scenario", "E-99", "a scenario added without registering it", brand_new),
+        )
+        try:
+            report = scen.run(only="brand-new-scenario")
+        finally:
+            scen.SCENARIOS = original
+
+        self.assertTrue(report["registry"]["blocking"], report["registry"])
+        finding = next(
+            (f for f in report["registry"]["findings"]
+             if f["id"] == "brand-new-scenario.local.v1"),
+            None,
+        )
+        self.assertIsNotNone(finding, report["registry"])
+        self.assertEqual(finding["detector"], "unregistered-scenario")
+        self.assertIn("unregistered", finding["detail"].lower())
+
+    def test_a_registry_entry_for_a_removed_scenario_is_blocking(self) -> None:
+        # Population is grows-only both ways (review #1, direction two /
+        # closes Minor #3-in-the-first-review i.e. the old Minor about
+        # orphaned entries): removing a scenario while its registry entry
+        # stays behind must not go quietly either - a stale pin is exactly
+        # as silent a failure mode as an unregistered one.
+        original = scen.SCENARIOS
+        scen.SCENARIOS = tuple(entry for entry in original if entry[0] != "hollow-guard")
+        try:
+            report = scen.run()
+        finally:
+            scen.SCENARIOS = original
+
+        self.assertTrue(report["registry"]["blocking"], report["registry"])
+        finding = next(
+            (f for f in report["registry"]["findings"]
+             if f["id"] == "hollow-guard.local.v1"),
+            None,
+        )
+        self.assertIsNotNone(finding, report["registry"])
+        self.assertEqual(finding["detector"], "orphaned-registry-entry")
+        self.assertIn("no longer exists", finding["detail"])
+
+
+class ConsoleGateTests(unittest.TestCase):
+    """The literal CLI gate CI runs (`godmode scenarios --brief`) must fail
+    on a blocking registry finding, not only on a missed catch."""
+
+    @staticmethod
+    def _run_cli(argv: list[str]) -> tuple[int, str]:
+        import contextlib
+        import io
+
+        from godmode_runtime import godmode_console as console
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = console.main(argv)
+        return code, buf.getvalue()
+
+    def test_clean_tree_exits_zero(self) -> None:
+        code, out = self._run_cli(
+            ["--project", str(PLUGIN_ROOT), "scenarios", "--only", "hollow-guard", "--brief"])
+        self.assertEqual(code, 0, out)
+
+    def test_a_digest_drift_plant_fails_the_gate(self) -> None:
+        def planted(project, archive):
+            return True, "a body that was never reviewed at this version"
+
+        original = scen.SCENARIOS
+        scen.SCENARIOS = tuple(
+            (name, ref, failure, planted) if name == "hollow-guard"
+            else (name, ref, failure, fn)
+            for name, ref, failure, fn in original
+        )
+        try:
+            code, out = self._run_cli(
+                ["--project", str(PLUGIN_ROOT), "scenarios", "--only", "hollow-guard", "--brief"])
+        finally:
+            scen.SCENARIOS = original
+
+        self.assertNotEqual(code, 0, out)
 
 
 class CrossIdComparisonTests(unittest.TestCase):

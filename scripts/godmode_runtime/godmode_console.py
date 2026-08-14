@@ -1105,8 +1105,13 @@ def cmd_recurrences(args: argparse.Namespace, runtime: Runtime) -> CommandResult
 def cmd_scenarios(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     report = run_scenarios(only=args.only)
     # A control that passes its unit test and misses the failure it was written
-    # for is the expensive kind of green, so a miss fails the command.
-    return CommandResult(report, exit_code=0 if report["verdict"] == "all-caught" else 1)
+    # for is the expensive kind of green, so a miss fails the command. A
+    # blocking registry finding (U-S1: an unregistered, drifted, or orphaned
+    # eval id) is the same kind of green for the registry itself - the
+    # findings already ride along in the payload, but they must fail the
+    # gate too, or the registry is inert as CI protection.
+    ok = report["verdict"] == "all-caught" and not report["registry"]["blocking"]
+    return CommandResult(report, exit_code=0 if ok else 1)
 
 
 def _working_tree_changes(project: Path) -> list[str]:
