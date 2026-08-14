@@ -4,13 +4,19 @@
 lifecycle or pre-action hooks. Claude Code registers only its non-blocking
 `SessionStart` path through `hooks/hooks.json`. That path is silent until the current
 project has been explicitly initialized, then emits a structured continuity brief as
-additional context. It does not read the Claude transcript.
+additional context. It does not read the Claude transcript; neither does `pre-compact`
+or `pre-action`.
 
 Supported explicit events are `session-start`, `pre-compact`, `session-end`, and
 `pre-action`. Lifecycle checkpoints accept only the structured fields `summary`,
 `status`, `next`, `hypothesis`, `outcome`, and `evidence`; unknown fields, prompts,
-messages, and tool transcripts are ignored. Pre-action mode classifies an exact
-operation and denies protected work unless a matching one-use capability is supplied.
+and messages are ignored. `session-end` is the one exception: it also reads
+`transcript_path`, if the host supplies one, for a best-effort, counts-only
+measurement pass (tool names from a closed enum, command shapes, and token
+totals from the transcript's own usage blocks) - never transcript content, and
+a missing or unreadable transcript is recorded as a stated gap rather than an
+error. Pre-action mode classifies an exact operation and denies protected work
+unless a matching one-use capability is supplied.
 
 ## The pre-tool gate
 
