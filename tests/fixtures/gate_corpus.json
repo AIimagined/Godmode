@@ -475,7 +475,7 @@
   "class": "by-design"
  },
  {
-  "operation": "git add specs/035-render-planning packages/render-plan 2>&1 | grep -v warning; git commit -q -m \"feat(render-plan): dirty-frame diff, hash-addressed cache, shard plans (specs/035)\n\nThe provable-incremental story vendorlib cannot tell, as pure planning\nlogic (zero deps, nothing wired into frames.js):\n- diff.ts: dirtyFrames classification per plan.md, governed by\n  conservative correctness (over-approximate freely, never under);\n  keyframe locality narrows to segments between byte-identical common",
+  "operation": "git add specs/035-render-planning packages/render-plan 2>&1 | grep -v warning; git commit -q -m \"BODY\"",
   "expected": "ask",
   "class": "by-design"
  },
@@ -565,7 +565,7 @@
   "class": "by-design"
  },
  {
-  "operation": "git commit -q -m \"fix(repo): stop gitignoring packages/build - the bundle toolchain was never committed\"; git log --oneline -1; git ls-files packages/build",
+  "operation": "git commit -q -m \"BODY\"; git log --oneline -1; git ls-files packages/build",
   "expected": "ask",
   "class": "by-design"
  },
@@ -580,7 +580,7 @@
   "class": "by-design"
  },
  {
-  "operation": "git add STATUS.md README.md 2>&1 | grep -v warning; git commit -q -m \"docs: STATUS.md - measured implementation inventory, including failing gates\"; git log --oneline -1; git rev-list --count origin/main..HEAD",
+  "operation": "git add STATUS.md README.md 2>&1 | grep -v warning; git commit -q -m \"BODY\"; git log --oneline -1; git rev-list --count origin/main..HEAD",
   "expected": "ask",
   "class": "by-design"
  },
