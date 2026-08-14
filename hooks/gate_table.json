@@ -40,5 +40,17 @@
   "mutation_heads": {},
   "db_clients": [],
   "git_ask": [],
-  "git_refuse": []
+  "git_refuse": [],
+  "find_mutation_flags": [
+    "-delete",
+    "-exec",
+    "-execdir",
+    "-ok",
+    "-okdir"
+  ],
+  "flag_denylist": {
+    "git log": ["--output", "-o"],
+    "git diff": ["--output", "-o"],
+    "git show": ["--output", "-o"]
+  }
 }

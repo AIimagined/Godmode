@@ -66,6 +66,26 @@ _SHELL_TOOLS = frozenset({"Bash", "PowerShell"})
 # instead of matching the floor.
 _EXACT_ONLY_GIT_PHRASES = frozenset({"git branch", "git remote -v"})
 
+# `git log`/`git diff`/`git show` never mutate through a bare positional
+# argument the way `branch` does, but they DO carry a real write-to-file
+# flag (`--output=<file>` / `--output <file>` / `-o <file>`, inherited from
+# the diff-formatting machinery all three share) that writes a file with no
+# shell redirect operator involved - invisible to `_REDIRECT_PRESENT`.
+# Review round 1 (task-6-review.md, Critical finding 2) reproduced this live:
+# `classify_action("git log --output=/tmp/x")` is R0 in the full sentinel
+# TODAY too (a real, separately-tracked gap in the full sentinel, being
+# fixed in the sentinel lane per the changelog fragment) - which meant the
+# one-directional equivalence test passed even though this floor entry
+# permits a real, permanent, unrecorded write. Table-driven (not
+# hardcoded) so Task 5's generator can extend or correct it without a code
+# change here: `table["flag_denylist"][<phrase>]` names the flags a
+# floor-clean match for that exact phrase must not carry, checked against
+# the part of each trailing token before any `=` (so `--output`,
+# `--output=/tmp/x`, and a bare `-o` all match the same bare-flag key).
+# `git branch`/`git remote -v` are exact-match-only already (no trailing
+# token permitted at all) and never consult this table, since the true
+# fix there is "no argument", not "no denylisted flag".
+
 # Quote-aware presence check for an unquoted shell redirect - the same
 # operator `godmode_sentinel._REDIRECT` detects, without the target-capture
 # group this module never needs (a redirect anywhere disqualifies the whole
@@ -159,8 +179,55 @@ def _git_phrases(table: dict[str, Any]) -> list[list[str]] | None:
     return phrases
 
 
+def _find_mutation_flags(table: dict[str, Any]) -> frozenset[str] | None:
+    """The token set that disqualifies ANY segment, table-driven so it stays
+    tied to `godmode_sentinel._FIND_MUTATION`'s own five flags
+    (`-delete`/`-exec`/`-execdir`/`-ok`/`-okdir`) rather than a second,
+    independently-maintained copy of that list. Required and validated like
+    every other table field this module trusts: missing or malformed means
+    the table cannot be trusted for this either, so the caller escalates
+    everything, not just `find` calls - the same fail-closed shape
+    `_git_phrases`/`read_heads` already use.
+    """
+    raw = table.get("find_mutation_flags")
+    if not isinstance(raw, list) or not raw:
+        return None
+    flags = []
+    for flag in raw:
+        if not isinstance(flag, str):
+            return None
+        flags.append(flag)
+    return frozenset(flags)
+
+
+def _flag_denylist(table: dict[str, Any]) -> dict[str, frozenset[str]] | None:
+    """`{"git log": {"--output", "-o"}, ...}` - the write-capable flags a
+    floor-clean match for that exact git phrase must not carry among its
+    trailing tokens. Required (see `_find_mutation_flags`'s docstring for
+    why missing/malformed means escalate-everything, not skip-the-check).
+    A phrase absent from this mapping simply has no denylisted flags -
+    `git status`/`ls-files`/etc. carry no write-to-file flag of this shape,
+    so they are not required to appear here.
+    """
+    raw = table.get("flag_denylist")
+    if not isinstance(raw, dict):
+        return None
+    denylist: dict[str, frozenset[str]] = {}
+    for phrase, flags in raw.items():
+        if not isinstance(phrase, str) or not isinstance(flags, list):
+            return None
+        entries = []
+        for flag in flags:
+            if not isinstance(flag, str):
+                return None
+            entries.append(flag)
+        denylist[phrase] = frozenset(entries)
+    return denylist
+
+
 def _segment_floor_clean(tokens: list[str], git_phrases: list[list[str]],
-                          read_heads: set[str]) -> bool:
+                          read_heads: set[str],
+                          flag_denylist: dict[str, frozenset[str]]) -> bool:
     if not tokens:
         return False
     if tokens[0] != "git":
@@ -170,17 +237,30 @@ def _segment_floor_clean(tokens: list[str], git_phrases: list[list[str]],
         if tokens[:n] != phrase:
             continue
         trailing = tokens[n:]
+        joined = " ".join(phrase)
         if not trailing:
             return True
-        return " ".join(phrase) not in _EXACT_ONLY_GIT_PHRASES
+        if joined in _EXACT_ONLY_GIT_PHRASES:
+            return False
+        denylisted = flag_denylist.get(joined)
+        if denylisted:
+            # Compare the part of each trailing token before any `=`, so
+            # `--output`, `--output=/tmp/x`, and a bare `-o` are all caught
+            # by the same bare-flag key - a write flag disqualifies the
+            # segment whether its value is space- or `=`-separated.
+            for token in trailing:
+                if token.split("=", 1)[0] in denylisted:
+                    return False
+        return True
     return False
 
 
 def fast_verdict(payload: dict[str, Any], table: dict[str, Any] | None) -> str:
     """`"allow"` only if every segment of a Bash/PowerShell command is a
-    floor-clean read with no redirect and no `-exec`/`-delete`. Anything
-    else - malformed input, a malformed table, a fenced tool, an internal
-    exception - is `"escalate"`. Never a guess.
+    floor-clean read with no redirect, none of the table's
+    `find_mutation_flags`, and no denylisted write flag on a git phrase that
+    carries one. Anything else - malformed input, a malformed table, a
+    fenced tool, an internal exception - is `"escalate"`. Never a guess.
     """
     try:
         if not isinstance(table, dict):
@@ -204,6 +284,12 @@ def fast_verdict(payload: dict[str, Any], table: dict[str, Any] | None) -> str:
         git_phrases = _git_phrases(table)
         if git_phrases is None:
             return "escalate"
+        find_flags = _find_mutation_flags(table)
+        if find_flags is None:
+            return "escalate"
+        flag_denylist = _flag_denylist(table)
+        if flag_denylist is None:
+            return "escalate"
 
         segments = _blanked_segments(command)
         if not segments:
@@ -212,9 +298,9 @@ def fast_verdict(payload: dict[str, Any], table: dict[str, Any] | None) -> str:
             if _REDIRECT_PRESENT.search(segment):
                 return "escalate"
             tokens = segment.split()
-            if "-exec" in tokens or "-delete" in tokens:
+            if find_flags.intersection(tokens):
                 return "escalate"
-            if not _segment_floor_clean(tokens, git_phrases, read_heads):
+            if not _segment_floor_clean(tokens, git_phrases, read_heads, flag_denylist):
                 return "escalate"
         return "allow"
     except Exception:  # noqa: BLE001 - fail-safe boundary, never crash the gate

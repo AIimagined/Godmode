@@ -35,4 +35,25 @@ gate's own logic adds roughly 94ms of that 196ms, not the full hook's several
 hundred. The in-process verdict itself is far cheaper still: 1000 calls to
 `fast_verdict` complete in under 1 second (well over 1000/sec), and the allow
 path opens zero files (proven by an instrumented `open()` count in
-`tests/test_gate_fast.py`).
+`tests/test_gate_fast.py`). The escalate path (fast gate spawns the full hook
+as a second process) measured 441.3ms median for `git push --force`, 7-spawn
+median - comfortably inside the 3s `hooks.json` timeout even with the extra
+spawn.
+
+**Fix round 1 (post-review):** two Critical findings, both live-reproduced
+fast-allows of a full-sentinel refusal/ask, both fixed and table-driven so
+Task 5's generator can own the values: (1) the `find` mutation-flag check
+covered only `-exec`/`-delete`, missing `-execdir`/`-ok`/`-okdir` from
+`godmode_sentinel._FIND_MUTATION`'s own five-flag set - now read from
+`gate_table.json["find_mutation_flags"]`, with a drift-guard test parsing
+`_FIND_MUTATION`'s compiled regex directly so a sixth flag added there later
+fails this suite instead of silently reopening the gap; (2) `git log/diff/show
+--output=<file>` (and the equivalent bare `-o`/`--output <file>` forms) wrote
+a file with no shell redirect involved, invisible to the fast gate's
+redirect check - now blocked by a per-phrase `gate_table.json["flag_denylist"]`
+check, while ordinary formatting flags (`--oneline`, `--stat`, a trailing
+pathspec) stay fast-allowed. **Note:** the full sentinel's own `--output=`
+gap this exposed is real and unfixed by this change (the fast gate now
+refuses to fast-allow it, but the full hook it escalates to still classifies
+it R0 today) - that gap is being closed separately in the sentinel lane, not
+by this task.
