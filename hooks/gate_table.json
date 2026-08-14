@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "generated_from": "provisional",
+  "floor": {
+    "claude-code": [
+      "git status",
+      "git log",
+      "git diff",
+      "git show",
+      "git branch",
+      "git ls-files",
+      "git rev-parse",
+      "git rev-list",
+      "git remote -v",
+      "git shortlog",
+      "git describe",
+      "git blame"
+    ]
+  },
+  "read_heads": [
+    "ls",
+    "cat",
+    "head",
+    "tail",
+    "wc",
+    "grep",
+    "rg",
+    "find",
+    "pwd",
+    "which",
+    "echo",
+    "sort",
+    "uniq",
+    "cut",
+    "file",
+    "stat",
+    "du",
+    "df"
+  ],
+  "mutation_heads": {},
+  "db_clients": [],
+  "git_ask": [],
+  "git_refuse": [],
+  "find_mutation_flags": [
+    "-delete",
+    "-exec",
+    "-execdir",
+    "-ok",
+    "-okdir"
+  ],
+  "flag_denylist": {
+    "git log": ["--output", "-o"],
+    "git diff": ["--output", "-o"],
+    "git show": ["--output", "-o"]
+  }
+}
