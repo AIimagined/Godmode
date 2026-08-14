@@ -269,9 +269,12 @@ data.
 **What happens on a model or host switch?** Every record names its author, and
 `drift` reports mandated steps that silently stopped happening.
 
-**Is it slow?** Read-only work is untouched. The pre-tool gate costs about 0.7s
-on a mutating call (resolving repository identity) and is skipped entirely for
-read-only tools.
+**Is it slow?** Read-only work is untouched. A fast table-lookup gate runs
+first and allows vetted, read-only-shaped commands (`git status`, `git log`,
+...) in about 90ms median, in-process, no subprocess spawned. Only a real
+mutation or an ambiguous call escalates to the full check that resolves
+repository identity, which costs about 470ms median (measured 2026-08-14; see
+`hooks/GODMODE_HOOKS.md`). Read-only tools skip the gate entirely.
 
 ## Documentation
 
