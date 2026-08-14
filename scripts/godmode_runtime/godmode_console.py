@@ -67,7 +67,7 @@ from .godmode_obligations import review_obligations
 from .godmode_atlas import speculative_seams, unfollowed_dependents
 from .godmode_precheck import precheck as run_precheck
 from .godmode_fence import (
-    BOUNDARY_CONFIG, audit_changes, declared_design, propose_design,
+    BOUNDARY_CONFIG, audit_changes, completion_audit, declared_design, propose_design,
     unaccepted_completions,
 )
 from .godmode_requests import digest as request_digest, review_requests
@@ -1553,9 +1553,17 @@ def cmd_fence_audit(args: argparse.Namespace, runtime: Runtime) -> CommandResult
     The boundary gate covers tools that announce a `file_path`. This covers the
     result - including work done by a shell command, before the plan was
     approved, or in a session where the plugin was switched off.
+
+    `--complete` (U-B1) asks a finer question of the same gap: not just which
+    files changed, but which hunks, parsed straight from `git diff
+    --unified=0 HEAD` - so an out-of-fence edit, an unauthorized deletion, and
+    a stray debug tag are told apart rather than folded into one path list.
     """
     _require_archive(runtime)
     project = Path(runtime.anchor.project_root)
+    if args.complete:
+        report = completion_audit(runtime.archive, project)
+        return CommandResult(report, exit_code=1 if report["findings"] else 0)
     changed = list(args.changed) if args.changed else _working_tree_changes(project)
     report = audit_changes(runtime.archive, project, changed)
     return CommandResult(report, exit_code=1 if report["untraceable"] else 0)
@@ -2757,6 +2765,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "audit", help="Changed files that fall outside the declared editable set")
     fence_audit.add_argument("--changed", nargs="+", default=None,
                              help="Changed paths; defaults to the working tree")
+    fence_audit.add_argument("--complete", action="store_true",
+                             help="Surgical-diff mode (U-B1): partition `git diff "
+                                  "--unified=0 HEAD` by fence membership, flag "
+                                  "unauthorized deletions and instrumentation tags")
     fence_audit.set_defaults(handler=cmd_fence_audit)
     fence_sub.add_parser(
         "acceptance", help="Completions that cite no acceptance"
