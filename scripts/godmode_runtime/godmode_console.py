@@ -27,6 +27,7 @@ from .godmode_attest import (
     record_claim,
     record_criterion,
     record_step,
+    register_metric_contract,
 )
 from .godmode_assess import assess as assess_project
 from .godmode_assess import assurance_case
@@ -693,6 +694,18 @@ def cmd_criterion(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         {"task": data["task"], "text": data["text"], "late": data["late"],
          "advisories": data["advisories"]},
         exit_code=1 if data["late"] else 0,
+    )
+
+
+def cmd_metric_contract_register(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    record = register_metric_contract(
+        runtime.archive, _session(runtime, args.session), args.name, args.anchor,
+    )
+    data = record["data"]
+    return CommandResult(
+        {"sequence": record["sequence"], "name": args.name, "anchor": data["anchor"]},
+        exit_code=0,
     )
 
 
@@ -2410,6 +2423,24 @@ def _build_parser() -> argparse.ArgumentParser:
                                 "(a criterion recorded after work has started)")
     criterion.add_argument("--session")
     criterion.set_defaults(handler=cmd_criterion)
+
+    # U-T3 anchored-metric contracts - minimal isolated block, mirrors the
+    # `register` block below.
+    metric_contract = sub.add_parser(
+        "metric-contract",
+        help="Anchored-metric citation contracts: a numeric claim must cite "
+             "the registered line shape (U-T3)",
+    )
+    metric_contract_sub = metric_contract.add_subparsers(
+        dest="metric_contract_command", required=True)
+    metric_contract_register = metric_contract_sub.add_parser(
+        "register", help="Declare the anchor a claim about this metric must cite")
+    metric_contract_register.add_argument("--name", required=True, type=subject_text)
+    metric_contract_register.add_argument(
+        "--anchor", required=True,
+        help="Regex the cited line:<name>:<value> evidence must match")
+    metric_contract_register.add_argument("--session")
+    metric_contract_register.set_defaults(handler=cmd_metric_contract_register)
 
     verdict = sub.add_parser(
         "verdict",

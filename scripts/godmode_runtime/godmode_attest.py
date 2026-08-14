@@ -28,6 +28,10 @@ GRADES = ("observed", "hypothesis", "verified", "unknown")
 _FILE_CITE = re.compile(r"^file:(?P<path>[^#]+)(?:#L(?P<start>\d+)(?:-L?(?P<end>\d+))?)?$")
 _RECORD_CITE = re.compile(r"^rec:(?P<digest>[0-9a-f]{6,64})$")
 _VERDICT_CITE = re.compile(r"^verdict:(?P<sequence>\d+)$")
+# U-T3: the one output shape a numeric claim about a registered metric may
+# cite - reconstructed as "<name>:<value>" and checked against the metric's
+# own registered anchor pattern.
+_LINE_CITE = re.compile(r"^line:(?P<name>[^:]+):(?P<value>.+)$")
 
 # Named because naming them is the intervention. Each entry is a thought that has
 # preceded a skipped step, mapped to the gate it predicts. Surfaced on a block so the
@@ -489,6 +493,19 @@ def _citation_resolves(project: Path, archive: Chronicle, citation: str,
             record["sequence"] == sequence and record["data"].get("disposition") == "confirmed"
             for record in archive.select(kind="verdict", limit=2000)
         )
+    match = _LINE_CITE.match(citation)
+    if match:
+        # U-T3: resolves only against a metric contract registered for this
+        # exact name, and only when the reconstructed "name:value" text
+        # matches the anchor that contract declared at registration - an
+        # unregistered metric name resolves nothing, by design.
+        anchor = _registered_anchor(archive, match.group("name"))
+        if anchor is None:
+            return False
+        try:
+            return re.match(anchor, f"{match.group('name')}:{match.group('value')}") is not None
+        except re.error:
+            return False
     if citation.startswith("criterion:"):
         # U-T2: resolves when a criterion record exists under that exact
         # subject - the citation string and the subject are the same text,
@@ -651,16 +668,17 @@ _ROOT_CAUSE = re.compile(
     r"(?i)\broot cause\b|\bcaused by\b|\bbecause\b|\bthe reason\b|\bdue to\b"
     r"|\bwhat (?:broke|caused) it\b")
 
-# What a differential looks like in the record: a command that was run, or a
-# comparison named as one. A file citation is not enough - pointing at one side
-# of a comparison is what the ledger calls reading the artefact, not diffing it.
-_DIFFERENTIAL = re.compile(r"(?i)^(?:cmd:|diff:)")
-
 
 def looks_like_root_cause(text: str) -> tuple[bool, str]:
     """Whether a claim asserts why something happened."""
     match = _ROOT_CAUSE.search(text)
     return (True, f"asserts a cause: {match.group(0)}") if match else (False, "")
+
+
+# What a differential looks like in the record: a command that was run, or a
+# comparison named as one. A file citation is not enough - pointing at one side
+# of a comparison is what the ledger calls reading the artefact, not diffing it.
+_DIFFERENTIAL = re.compile(r"(?i)^(?:cmd:|diff:)")
 
 
 def cites_a_differential(citations: list[str]) -> bool:
@@ -738,6 +756,123 @@ _WEAK_VERBS = re.compile(
 )
 
 LATE_CRITERION_FINDING = "criterion must precede the work it judges"
+
+
+# U-T3: anchored-metric contracts. A numeric claim about a registered metric
+# must cite an output line matching the anchor declared for it, never a
+# paraphrase - and when it does cite one, the value on that line must be the
+# number the claim states, or the two are said out loud.
+_ANCHOR_MAX_LEN = 200
+
+
+def _registered_anchor(archive: Chronicle, name: str) -> str | None:
+    """The anchor most recently registered for `name`, or `None` if never."""
+    subject = f"metric-contract:{name}"
+    anchor: str | None = None
+    for record in archive.select(kind="decision", limit=500):
+        if record["subject"] == subject:
+            anchor = record["data"].get("anchor")
+    return anchor
+
+
+def _registered_metric_names(archive: Chronicle) -> set[str]:
+    return {
+        record["subject"][len("metric-contract:"):]
+        for record in archive.select(kind="decision", limit=500)
+        if record["subject"].startswith("metric-contract:")
+    }
+
+
+def register_metric_contract(
+    archive: Chronicle, session: str, name: str, anchor: str
+) -> dict[str, Any]:
+    """Declare the one output shape a numeric claim about `name` may cite.
+
+    Validated at registration, before the anchor can ever gate a claim: it
+    must compile as a regex, and it is length-capped. That pair - a
+    `re.compile` try plus a length cap - is deliberately the whole defense
+    here (the E49-absorbed unsafe-pattern idea): this runs once, over a
+    short pattern an operator declares by hand, not over untrusted input at
+    scale, so it suffices at this size without a bespoke catastrophic-
+    backtracking detector.
+    """
+    name = name.strip()
+    if not name:
+        raise ArchiveError("A metric contract needs a non-empty name")
+    if not anchor or len(anchor) > _ANCHOR_MAX_LEN:
+        raise ArchiveError(f"A metric anchor must be 1-{_ANCHOR_MAX_LEN} characters")
+    try:
+        re.compile(anchor)
+    except re.error as exc:
+        raise ArchiveError(f"Metric anchor {anchor!r} is not a valid pattern: {exc}") from exc
+    return archive.append(
+        "decision", f"metric-contract:{name}",
+        {"anchor": anchor, "session": session},
+        evidence=[],
+    )
+
+
+# Markdown emphasis stripped before the metric-name search runs, so
+# "**val_bpb** improved to 3.21" still names the metric it bolded. Bare `*`
+# and `` ` `` only - NOT `_`, because a metric name is exactly the kind of
+# identifier that carries underscores itself (`val_bpb`), and stripping every
+# underscore in the text would delete the very thing this is searching for.
+_EMPHASIS = re.compile(r"[*`]")
+_NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
+
+
+def _strip_emphasis(text: str) -> str:
+    return _EMPHASIS.sub("", text)
+
+
+def _metric_line_citations(name: str, citations: list[str]) -> list[tuple[str, str]]:
+    """(citation, cited_value) pairs among `citations` naming this metric."""
+    found: list[tuple[str, str]] = []
+    for citation in citations:
+        match = _LINE_CITE.match(str(citation))
+        if match and match.group("name") == name:
+            found.append((str(citation), match.group("value")))
+    return found
+
+
+def _numbers_differ(cited: str, claimed: str) -> bool:
+    try:
+        return float(cited) != float(claimed)
+    except ValueError:
+        return cited != claimed
+
+
+def _metric_contract_reason(archive: Chronicle, text: str, citations: list[str]) -> str | None:
+    """U-T3: the downgrade reason when a claimed number contradicts its
+    cited anchored line, or `None` when the claim should be left alone.
+
+    Only fires when a registered metric's name literally appears in the
+    (emphasis-stripped) claim text - an unregistered metric name gets no
+    friction from this at all. Only the FIRST number in the claim text is
+    compared against each mentioned metric's cited value: a single claim
+    naming two metrics with two different numbers each is a known scale
+    limit of this check, not a silent skip - the common case this contract
+    targets (one metric, one number) is exact.
+    """
+    names = _registered_metric_names(archive)
+    if not names:
+        return None
+    normalized = _strip_emphasis(text)
+    mentioned = [name for name in names if re.search(rf"\b{re.escape(name)}\b", normalized)]
+    if not mentioned:
+        return None
+    numbers = _NUMBER.findall(normalized)
+    if not numbers:
+        return None
+    claimed = numbers[0]
+    for name in mentioned:
+        for citation, cited_value in _metric_line_citations(name, citations):
+            if _numbers_differ(cited_value, claimed):
+                return (
+                    f"the cited line says {name}:{cited_value}, the claim says "
+                    f"{claimed} ({citation} does not match)"
+                )
+    return None
 
 
 def record_criterion(
@@ -839,6 +974,21 @@ def record_claim(
                  "reason": "a root cause needs the differential that confirmed it; "
                            f"{why}, and nothing cited was run to check it - cite "
                            "cmd:<the comparison you ran> or diff:<what you compared>"},
+                evidence=citations,
+            )
+    # U-T3: a claimed number that contradicts the value on its own cited
+    # anchored line - checked before the external gate for the same reason
+    # as the root-cause check above: a claim can be held to more than one
+    # discipline at once.
+    if grade == "verified":
+        metric_reason = _metric_contract_reason(archive, text, citations)
+        if metric_reason:
+            return archive.append(
+                "claim", text[:120],
+                {"text": text, "grade": "hypothesis", "claimed_grade": grade,
+                 "session": session, "downgraded": True, "unresolved": [],
+                 "operator_asserted": [],
+                 "reason": metric_reason},
                 evidence=citations,
             )
     if external and grade == "verified":
