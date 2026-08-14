@@ -16,10 +16,23 @@ from typing import Any
 from .godmode_anchor import run_git
 from .godmode_errors import ArchiveError
 
-_ENV_PRODUCTION = re.compile(r"\b(prod(?:uction)?|live|release)\b", re.IGNORECASE)
-_ENV_STAGING = re.compile(r"\b(stag(?:e|ing)|preprod|uat|qa)\b", re.IGNORECASE)
+# `_` is a word character, so `\bproduction\b` does NOT match
+# `production_backup` - an adversarial sweep found
+# `localhost:5432/production_backup` classified as development and
+# therefore mutable WITHOUT a capability, which is the exact inversion this
+# classifier exists to prevent. The boundary is widened to any non-alnum
+# edge (or string end), so an underscore, hyphen or dot separator still
+# yields the marker. `prd` joins the vocabulary for the same reason: it is
+# how the environment is abbreviated in real hostnames.
+_EDGE = r"(?<![a-z0-9])"      # left: not preceded by an alphanumeric
+_EDGE_R = r"(?![a-z0-9])"     # right: not followed by an alphanumeric
+_ENV_PRODUCTION = re.compile(
+    rf"{_EDGE}(prod(?:uction)?|prd|live|release){_EDGE_R}", re.IGNORECASE)
+_ENV_STAGING = re.compile(
+    rf"{_EDGE}(stag(?:e|ing)|preprod|uat|qa){_EDGE_R}", re.IGNORECASE)
 _ENV_DEV = re.compile(
-    r"\b(dev(?:elopment)?|local(?:host)?|test|sandbox|127\.0\.0\.1|::1)\b", re.IGNORECASE
+    rf"{_EDGE}(dev(?:elopment)?|local(?:host)?|test|sandbox|127\.0\.0\.1|::1){_EDGE_R}",
+    re.IGNORECASE,
 )
 
 

@@ -62,6 +62,14 @@ _SECRET_PATTERNS = (
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"\b(?:ghp|github_pat)_[A-Za-z0-9_]{20,}\b"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
+    # Three shapes an adversarial sweep found in ONE of the two secret
+    # scanners but not the other (this gate missed conn-strings the egress
+    # scan caught; both missed JWTs and Slack tokens). The seam test in
+    # tests/test_secret_scanner_parity.py now pins every named kind against
+    # BOTH scanners, so the two rule sets cannot silently diverge again.
+    re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\b"),
+    re.compile(r"(?i)\b[a-z][a-z0-9+.-]{1,30}:\/\/[^\s:@\/]+:[^\s@\/]{4,}@"),
+    re.compile(r"\bxox[abprse]-[A-Za-z0-9-]{10,}\b"),
     re.compile(r"(?i)\b(?:authorization\s*:\s*bearer|bearer)\s+[A-Za-z0-9._~-]{12,}"),
     re.compile(r"(?i)\b(?:password|passwd|api[_-]?key|secret|token)\s*[:=]\s*[^\s,;]{8,}"),
     # A credential the way a person says one. The rule above needs a `:` or `=`
