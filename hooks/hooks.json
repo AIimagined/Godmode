@@ -39,10 +39,9 @@
             "type": "command",
             "command": "python",
             "args": [
-              "${CLAUDE_PLUGIN_ROOT}/hooks/godmode_session_hook.py",
-              "pre-action"
+              "${CLAUDE_PLUGIN_ROOT}/hooks/godmode_gate_fast.py"
             ],
-            "timeout": 10
+            "timeout": 3
           }
         ]
       }
