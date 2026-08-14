@@ -308,6 +308,27 @@ class KnownShapes(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(fast.fast_verdict(payload(command), TABLE), "allow")
 
+    def test_glued_short_flag_denylist_escalates(self) -> None:
+        """Task 5 deferred-minor fix: the denylist match compared a trailing
+        token to the denylisted flag exactly (after stripping any `=value`),
+        which caught `-o /tmp/x` (two tokens) and `-o=x` but not git's own
+        glued short-flag spelling `-oFILE` (one token, no separator at all) -
+        `git log -o/tmp/x` fast-allowed a real, unrecorded write. Matching
+        must prefix-match short (single-dash, single-character) denylisted
+        flags against each trailing token instead of comparing for equality."""
+        for command in ("git log -o/tmp/x", "git diff -o/tmp/x",
+                         "git show -o/tmp/x"):
+            with self.subTest(command=command):
+                self.assertEqual(fast.fast_verdict(payload(command), TABLE),
+                                 "escalate")
+
+    def test_glued_short_flag_fix_does_not_overmatch_long_flags(self) -> None:
+        """Green control: a long flag must never prefix-match - only the
+        exact `--output`/`--output=...` forms are denylisted, so an unrelated
+        long flag that happens to start with the same letters stays allowed."""
+        self.assertEqual(
+            fast.fast_verdict(payload("git log --oneline"), TABLE), "allow")
+
     def test_bare_git_branch_create_escalates(self) -> None:
         """The one real mutation reachable without any flag at all on this
         floor - a bare trailing word after `git branch` creates a branch."""
@@ -331,16 +352,19 @@ class KnownShapes(unittest.TestCase):
         self.assertEqual(fast.fast_verdict(payload("npm view pkg version"), TABLE),
                          "escalate")
 
-    def test_bare_tr_is_not_on_the_floor(self) -> None:
-        """Provisional-table deviation from the brief's literal read-head
-        list, documented in the task report: `classify_action` does not yet
-        recognise bare `tr` as read-only (it is one of the FP3 corpus
-        entries this same plan's Task 3/4 exists to fix), so putting it on
-        this floor today would let the fast gate allow what the full
-        sentinel still asks about - the one thing this module must never do.
+    def test_bare_tr_is_on_the_floor(self) -> None:
+        """Reverses the provisional table's deliberate exclusion. That
+        fixture left `tr` off the floor because `classify_action` did not
+        yet recognise a bare `tr` as read-only (one of the FP3 corpus
+        entries this same plan's Task 3 exists to fix). Task 5's generator
+        re-verifies this live against the sentinel at build time
+        (`scripts/dev/build_decision_table.py::_build_read_heads`) rather
+        than trusting the old exclusion: `classify_action("tr a b")` is R0
+        now, so `tr` belongs on the floor, and the fast gate must fast-allow
+        it exactly like every other read head.
         """
-        self.assertNotIn("tr", TABLE["read_heads"])
-        self.assertEqual(fast.fast_verdict(payload("tr a b"), TABLE), "escalate")
+        self.assertIn("tr", TABLE["read_heads"])
+        self.assertEqual(fast.fast_verdict(payload("tr a b"), TABLE), "allow")
 
 
 class Latency(unittest.TestCase):
