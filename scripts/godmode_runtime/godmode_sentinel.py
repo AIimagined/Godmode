@@ -138,12 +138,55 @@ _GIT_GLOBAL_OPTION = re.compile(
 # quoted spans before the mutation patterns is safe only because the safe
 # listings are a whitelist matched on the original: a shell invoked on a
 # quoted script is not on that list and still fails closed.
-_QUOTED_SPAN = re.compile(r"'[^']*'|\"[^\"]*\"")
-
-
+#
+# A regex (`'[^']*'|"[^"]*"`) was the first version here and had no
+# backslash-escape awareness: `grep "he said \"drop table users\""` closed
+# the match at the first escaped `\"` instead of the real closing quote, so
+# "drop table users" read as live text and the search was refused as a
+# database mutation - the exact false-refusal shape the plant test
+# (`grep "drop table" ...` -> R0) exists to prevent, just one quoting layer
+# deeper than that test reaches. `_raw_segments` a few hundred lines below
+# already tracks quotes correctly (a backslash escapes the next character
+# unless inside single quotes, so an escaped quote can't end a quoted span
+# early); `_executable_text` mirrors those exact rules character-by-character
+# rather than sharing `_raw_segments` outright - `_raw_segments` also has to
+# find multi-character separators at each unquoted position via
+# `_SEPARATORS.match(command, index)`, which needs the original string and
+# index together in a way a blanking pass does not, and merging the two
+# risked the segment splitter for a benefit blanking does not need. Any
+# change to one's quote/backslash rule must be checked against the other.
 def _executable_text(command: str) -> str:
-    """The command with its quoted arguments blanked out."""
-    return _QUOTED_SPAN.sub(" ", command)
+    """The command with its quoted arguments blanked out, one character at
+    a time rather than by collapsing each quoted span to one space - so a
+    quote's start and end positions in the result line up exactly with
+    `command`, which `_categorize`'s redirect-target extraction depends on.
+    """
+    result: list[str] = []
+    quote: str | None = None
+    index = 0
+    length = len(command)
+    while index < length:
+        character = command[index]
+        if character == "\\" and quote != "'" and index + 1 < length:
+            blank = quote is not None
+            result.append(" " if blank else character)
+            result.append(" " if blank else command[index + 1])
+            index += 2
+            continue
+        if quote:
+            result.append(" ")
+            if character == quote:
+                quote = None
+            index += 1
+            continue
+        if character in "\"'":
+            quote = character
+            result.append(" ")
+            index += 1
+            continue
+        result.append(character)
+        index += 1
+    return "".join(result)
 
 
 _ACTION_PATTERNS: tuple[tuple[str, re.Pattern[str], tuple[str, ...]], ...] = (
@@ -686,22 +729,46 @@ class Segment:
     vocabulary matching rather than left as a string a pattern can search
     anywhere in.
 
-    `tokens` never carries text that came from inside quotes - the same
-    blanking `_executable_text` already applied for the mutation patterns,
-    reused here so a quoted argument cannot read as a command word or an
-    operator no matter which check looks at it. `head` is the segment's own
-    command name and is exempt from every other exclusion in this module: a
-    command invoked by relative path (`./scripts/deploy.sh`) is still the
-    command, not an argument to itself.
+    `tokens` is the complete, quote-stripped word list - every word after
+    quoted text is blanked, nothing else removed - so a consumer that needs
+    the real arguments (a path to check for protection, a value to read)
+    still has them. It does NOT by itself guard against the bare-word-in-path
+    defect this task exists to close: `split_segments('grep -n release
+    docs/RELEASE-CHECKLIST.md')[0].tokens` still contains
+    `'docs/RELEASE-CHECKLIST.md'`, and "release" would still be found by a
+    naive `\\brelease\\b` search over it joined back into text.
+
+    `vocab_tokens` is the narrower, purpose-built list this module's own
+    bare-word vocabulary patterns are matched against - `head` plus every
+    later word that is not path-shaped (see `_is_path_shaped`) - the exact
+    exclusion `_categorize` applies, sharing this same construction rather
+    than a second, string-based path. **A new bare-word check must be built
+    against `vocab_tokens`, never `tokens`** - joining `tokens` directly
+    reopens the FP1 defect this task closes (`grep -n release
+    docs/RELEASE-CHECKLIST.md` keeps "release" in `tokens`; it is absent
+    from `vocab_tokens`). `head` is exempt from this exclusion even when
+    path-shaped: a command invoked by relative path (`./scripts/deploy.sh`)
+    is still the command, not an argument to itself.
+
+    `has_redirect`/`redirect_target` are the confirmed, quote-aware
+    presence and location of an unquoted `>`/`>>` and the text following it
+    - read from `text` at the exact position the quote-aware parse
+    confirmed real, never by re-searching `text` from its start (an earlier
+    quoted `>`, e.g. in `echo "a > b" > /etc/hosts`, would otherwise be
+    found first and its target read as the write's real destination).
+    `redirect_target` is `None` when `has_redirect` is `False`, and may be
+    `""` when the operator has nothing after it.
     """
 
     head: str
     subcommand: str | None
     tokens: list[str]
+    vocab_tokens: list[str]
     has_redirect: bool
-    # The original segment text, quotes intact - kept for the callers (target
-    # extraction, anchored safe-list patterns) that need the exact text a
-    # token-list reconstruction cannot losslessly rebuild.
+    redirect_target: str | None
+    # The original segment text, quotes intact - kept for the callers (safe-
+    # list patterns) that need the exact text a token-list reconstruction
+    # cannot losslessly rebuild.
     text: str = ""
 
 
@@ -717,46 +784,63 @@ def _is_path_shaped(token: str) -> bool:
     return "/" in token or "\\" in token
 
 
+def _vocab_tokens(words: list[str]) -> list[str]:
+    """`words` with every word after the first that is path-shaped removed -
+    the one list this module's bare-word vocabulary patterns may trust,
+    shared by `Segment.vocab_tokens` and `_categorize` so the two can never
+    diverge. The head is kept unconditionally: excluding it would hide the
+    very command a check exists to name, e.g. `./deploy.sh` invoked by
+    relative path is still a deploy.
+    """
+    if not words:
+        return []
+    return [words[0]] + [word for word in words[1:] if not _is_path_shaped(word)]
+
+
+def _segment_from_text(raw: str) -> Segment:
+    """One `Segment` built from a single segment's raw text.
+
+    The shared core `split_segments` calls per piece of a compound command,
+    also called directly by `_categorize` - which already has one segment's
+    text in hand, having done its own compound-command splitting via
+    `shell_segments` - so vocabulary matching and redirect-target extraction
+    are never a second, independently-maintained implementation of what a
+    `Segment` already computes.
+    """
+    blanked = _executable_text(raw)
+    words = blanked.split()
+    head = words[0] if words else ""
+    subcommand = next(
+        (word for word in words[1:]
+         if not word.startswith("-") and not _is_path_shaped(word)),
+        None,
+    )
+    match = _REDIRECT.search(blanked)
+    redirect_target = None
+    if match:
+        # `_executable_text` blanks one character at a time rather than
+        # collapsing a quoted span, so `match.start()` in `blanked` names
+        # the exact same index in `raw` - re-anchoring there reads the real
+        # operator's target from the untouched text (which may itself be
+        # legitimately quoted) without ever re-searching `raw` from its
+        # start, where an earlier quoted `>` would be found first.
+        raw_match = _REDIRECT.match(raw, match.start())
+        redirect_target = raw_match.group("target") if raw_match else ""
+    return Segment(head=head, subcommand=subcommand, tokens=words,
+                   vocab_tokens=_vocab_tokens(words), has_redirect=bool(match),
+                   redirect_target=redirect_target, text=raw)
+
+
 def split_segments(operation: str) -> list[Segment]:
     """`operation`, split into `Segment`s a vocabulary check can trust.
 
-    Each segment's `tokens` excludes quoted text entirely (an argument's
-    content is not the command that ran it) and its `head` is always the
-    segment's own first word, never blanked - only the words *after* it are
-    ever excluded from `tokens` for looking path-shaped, and only `head` is
-    ever exempt from that exclusion, so a bare positional argument can never
-    read as a verb this module recognises.
+    Each segment's `tokens`/`vocab_tokens` exclude quoted text entirely (an
+    argument's content is not the command that ran it); `vocab_tokens` also
+    excludes path-shaped arguments (see `Segment`'s own docstring for which
+    field a new check must use).
     """
-    segments: list[Segment] = []
-    for raw in _raw_segments(_without_heredoc_bodies(operation)):
-        blanked = _executable_text(raw)
-        words = blanked.split()
-        head = words[0] if words else ""
-        subcommand = next(
-            (word for word in words[1:]
-             if not word.startswith("-") and not _is_path_shaped(word)),
-            None,
-        )
-        has_redirect = bool(_REDIRECT.search(blanked))
-        segments.append(Segment(head=head, subcommand=subcommand, tokens=words,
-                                 has_redirect=has_redirect, text=raw))
-    return segments
-
-
-def _command_position_text(blanked: str) -> str:
-    """`blanked` (already quote-stripped) with path-shaped arguments removed
-    too, so a bare-word vocabulary pattern can only match the command and its
-    own verbs - never a filename that happens to contain one of those words.
-
-    The head is kept unconditionally: excluding it would hide the very
-    command a check exists to name, e.g. `./deploy.sh` invoked by relative
-    path is still a deploy.
-    """
-    words = blanked.split()
-    if not words:
-        return blanked
-    kept = [words[0]] + [word for word in words[1:] if not _is_path_shaped(word)]
-    return " ".join(kept)
+    return [_segment_from_text(raw)
+            for raw in _raw_segments(_without_heredoc_bodies(operation))]
 
 
 _SAFE_INSPECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -1004,15 +1088,21 @@ def _categorize(normalized: str, project_root: Path | None = None) -> tuple[str,
         return "read-only-inspection", False, ["a loop header; its body is judged separately"]
 
     # Mutation patterns read the command with quoted arguments blanked, so
-    # naming a protected operation is not performing one.
+    # naming a protected operation is not performing one. Built once, through
+    # `Segment` rather than a second, string-based path, so vocabulary
+    # matching and redirect-target extraction share the exact same
+    # quote/path-aware construction `split_segments` hands to Task 3/4 - a
+    # bare-word check added here and one added against `segment.vocab_tokens`
+    # can never quietly disagree about what counts as an argument.
+    segment = _segment_from_text(normalized)
     executable = _executable_text(normalized)
-    # A second pass beyond quoting: a bare positional argument - a file path
-    # like `docs/RELEASE-CHECKLIST.md` - is not the command that read it, so
-    # the vocabulary checks below run on this rather than `executable`. The
-    # head is exempt (see `_command_position_text`); everything anchored at
-    # `^` is unaffected either way, since path-blanking never touches the
-    # front of the string unless the command itself is invoked by path.
-    command_position = _command_position_text(executable)
+    # `vocab_tokens` excludes path-shaped arguments - a file path like
+    # `docs/RELEASE-CHECKLIST.md` is not the command that read it - so the
+    # bare-word checks below run on this rather than `executable`. Everything
+    # anchored at `^` is unaffected either way, since path-blanking never
+    # touches the front of the string unless the command itself is invoked
+    # by path.
+    command_position = " ".join(segment.vocab_tokens)
 
     if _GIT_BRANCH_MUTATION.search(command_position):
         return (
@@ -1037,25 +1127,28 @@ def _categorize(normalized: str, project_root: Path | None = None) -> tuple[str,
             if pattern.search(command_position):
                 return category, True, list(impact)
     # A redirect writes a file whatever the verb says, so it is checked after
-    # the named mutations but before the read allowances. Gated on a
-    # quote-aware scan first: `node -e "console.log(1 >>> 2)"` has a `>` only
-    # inside its quoted script argument, and searching the raw text for it -
-    # the previous behaviour - misread a JS bitshift/arrow operator as an
-    # empty-target redirect and refused an ordinary local computation. Once
-    # confirmed real, the target itself is still read from `normalized`
-    # rather than `executable`, so a legitimately quoted target
-    # (`> "out.txt"`) keeps resolving exactly as before.
-    redirect = _REDIRECT.search(normalized) if _REDIRECT.search(executable) else None
-    if redirect and _NULL_DEVICE.match(redirect.group("target").strip().strip("\"'")):
+    # the named mutations but before the read allowances. `segment.has_redirect`
+    # is a quote-aware presence check: `node -e "console.log(1 >>> 2)"` has a
+    # `>` only inside its quoted script argument, so this stays False rather
+    # than misreading a JS bitshift/arrow operator as an empty-target
+    # redirect. The target is read from `segment.redirect_target`, located at
+    # the confirmed real operator's own position rather than by re-searching
+    # `normalized` from its start - `echo "a > b" > /etc/hosts` has an
+    # earlier `>` sitting inside a quoted argument, and an unanchored
+    # re-search finds that one first, extracting a garbage target and waving
+    # the real write through as contained. A legitimately quoted target
+    # (`> "out.txt"`) still resolves correctly, because `redirect_target` is
+    # read from the untouched original text, not the blanked one.
+    target = segment.redirect_target if segment.has_redirect else None
+    if target is not None and _NULL_DEVICE.match(target.strip().strip("\"'")):
         # Discarding output is not writing a file. Checked before containment,
         # because the null device is outside every working tree and so was
         # refused as a write to somewhere it does not belong.
-        redirect = None
-    if redirect:
+        target = None
+    if target is not None:
         # The same act as an `Edit`, judged the same way. Refusing every
         # redirect while permitting the declared edit of the same path gated
         # the honest form and not the other, which is all cost and no cover.
-        target = redirect.group("target")
         if not target or not _contained(target, project_root) or _SENSITIVE_EDIT.search(target):
             return ("worktree-file-mutation", True,
                     [f"a redirected write outside ordinary working files: {target[:80]}"])

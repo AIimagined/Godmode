@@ -275,10 +275,27 @@ class QuotedSeparatorTests(GateCase):
 
     def test_an_escaped_separator_still_cannot_hide_a_mutation(self) -> None:
         """Not splitting on `\\;` matches what the shell does - it passes a
-        literal semicolon and starts no second command - and the mutation is
-        still visible in the text either way."""
+        literal semicolon and starts no second command - and an unquoted
+        mutation is still visible in the text either way."""
         self.refused("ls \\; rm -rf /")
-        self.refused('echo "a\\" ; rm -rf /"')
+
+    def test_an_escaped_quote_inside_a_quoted_argument_hides_no_second_command(self) -> None:
+        """`echo "a\\" ; rm -rf /"` was refused here on the premise that an
+        escaped quote hides a second command behind the semicolon - it does
+        not, in a real shell or in this one, once quote-blanking is
+        escape-aware (fixed in Task 2's review round 1, Important finding 2):
+        `\\"` inside a double-quoted string is an escaped literal quote, not
+        a close, so the whole line is one `echo` call with one argument.
+        Confirmed against bash directly (`set -x` traces `echo "a\\" ; rm -rf
+        /"` to a single `echo 'a" ; rm -rf /'`; nothing after the semicolon
+        ever runs). `shell_segments` already read it as one segment before
+        this fix - the old refusal came from `_executable_text`'s
+        escape-unaware quote scan closing the span early and leaving
+        `rm -rf /` unblanked, the identical defect shape (an escaped quote
+        misread) as `QuotedSeparatorTests`' own `COMMAND` above, just
+        producing a false refusal here instead of a false split. Read
+        correctly, this is an ordinary echo of a literal string."""
+        self.allowed('echo "a\\" ; rm -rf /"')
 
     def test_an_unescaped_separator_still_splits(self) -> None:
         self.assertEqual(shell_segments("ls; rm -rf x"), ["ls", "rm -rf x"])
