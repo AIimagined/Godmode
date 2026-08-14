@@ -110,18 +110,23 @@ class TableShape(unittest.TestCase):
         for phrase in TABLE["flag_denylist"]:
             self.assertIn(phrase, floor_phrases, phrase)
 
-    def test_denylisted_git_output_flags_are_r0_in_full_sentinel_today(self) -> None:
-        """The full sentinel's own `--output=<file>` gap (review Critical
-        finding 2) is real and separately tracked - documented here so this
-        test fails loudly, not silently, once the sentinel lane closes it
-        (at which point the denylist becomes redundant-but-still-correct,
-        not wrong)."""
+    def test_denylisted_git_output_flags_are_gated_in_full_sentinel(self) -> None:
+        """The full sentinel closed its `--output=<file>` gap (review Critical
+        finding 2, fixed in the sentinel lane). The fast gate's denylist is
+        now redundant-but-still-correct defense in depth: fast escalates,
+        full gates the write. This pins the full sentinel's side so the pair
+        can never silently reopen."""
         for phrase, flags in TABLE["flag_denylist"].items():
             for flag in flags:
-                command = f"{phrase} {flag}=/tmp/x" if flag.startswith("--") else f"{phrase} {flag} /tmp/x"
+                if not flag.startswith("--"):
+                    # Short flags (-o) sit in the denylist as fast-gate
+                    # caution only: git rejects them on log/diff/show, so
+                    # the full sentinel owes them nothing.
+                    continue
+                command = f"{phrase} {flag}=/tmp/x"
                 with self.subTest(command=command):
                     verdict = classify_action(command, project_root=PLUGIN_ROOT)
-                    self.assertEqual(verdict["tier"], "R0", command)
+                    self.assertNotEqual(verdict["tier"], "R0", command)
 
 
 class Equivalence(unittest.TestCase):
