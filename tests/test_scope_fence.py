@@ -45,6 +45,7 @@ SPEC = {"objective": "o", "outcome": "u", "acceptance": "a", "non_goals": "n"}
 def _approved_plan(archive, editable: str | None) -> None:
     specify(archive, "S-1", "narrow the rotation fix", SPEC)
     contract = {field: "x" for field in CONTRACT_FIELDS if field != "editable"}
+    contract["accept"] = "cmd:x"
     if editable is not None:
         contract["editable"] = editable
     start(archive, "S-1", "narrow the rotation fix", contract)
@@ -80,6 +81,7 @@ class DeclarationTests(unittest.TestCase):
             archive.initialize()
             specify(archive, "S-1", "narrow the rotation fix", SPEC)
             contract = {field: "x" for field in CONTRACT_FIELDS if field != "editable"}
+            contract["accept"] = "cmd:x"
             contract["editable"] = "src/auth/**"
             start(archive, "S-1", "narrow the rotation fix", contract)
             self.assertIsNone(declared_fence(archive))

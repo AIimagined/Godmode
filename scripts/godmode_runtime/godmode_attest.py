@@ -20,6 +20,7 @@ from typing import Any
 
 from .godmode_chronicle import Chronicle
 from .godmode_errors import ArchiveError
+from .godmode_session_log import command_digest
 
 STATUSES = ("ran", "empty", "skipped", "blocked")
 GRADES = ("observed", "hypothesis", "verified", "unknown")
@@ -488,6 +489,14 @@ def _citation_resolves(project: Path, archive: Chronicle, citation: str,
             record["sequence"] == sequence and record["data"].get("disposition") == "confirmed"
             for record in archive.select(kind="verdict", limit=2000)
         )
+    if citation.startswith("criterion:"):
+        # U-T2: resolves when a criterion record exists under that exact
+        # subject - the citation string and the subject are the same text,
+        # so no separate parsing is needed to compare them.
+        return any(
+            record["subject"] == citation
+            for record in archive.select(kind="criterion", limit=500)
+        )
     match = _FILE_CITE.match(citation)
     if match:
         target = project / match.group("path")
@@ -658,6 +667,130 @@ def cites_a_differential(citations: list[str]) -> bool:
     return any(_DIFFERENTIAL.match(str(citation)) for citation in citations)
 
 
+# U-T2: a claim that a broken thing now works. Narrow on purpose - the
+# red-before-green rule below is a real burden (it demands the cited command
+# was actually run failing, not merely cited), and holding every verified
+# claim to it would be the over-gating that gets a check switched off. Only
+# claims using this vocabulary are held to the temporal shape.
+_FIX_VOCAB = re.compile(
+    r"(?i)\bfix(?:e[sd]|ing)?\b|\bresolv(?:e[sd]?|ing)\b|\brepair(?:ed|s|ing)?\b"
+    r"|\bpatch(?:ed|es|ing)?\b|\bcorrect(?:ed|s|ing)?\b|\bnow pass(?:es|ing)?\b"
+    r"|\bbug is (?:fixed|gone)\b"
+)
+
+
+def looks_like_fix_claim(text: str) -> tuple[bool, str]:
+    """Whether a claim asserts that something broken now works."""
+    match = _FIX_VOCAB.search(text)
+    return (True, f"asserts a fix: {match.group(0)}") if match else (False, "")
+
+
+# E4 R4 / E6 tdd, superpowers-class: a completion claim citing a test command
+# is admissible only when the SAME command is observed failing before the
+# fix-edit and passing after - the temporal shape, not just the citation.
+# One reason text for every way the shape can be missing (green-only,
+# red-only, or absent): the point is the missing shape, not which half of it
+# is missing.
+TEMPORAL_REASON = (
+    "cited test was never seen failing (red) before the fix - run it red, "
+    "fix, run it green"
+)
+
+
+def _temporal_violation(timeline: dict[str, Any], cmd_citations: list[str]) -> str | None:
+    """Whether none of the cited commands show red-before-green.
+
+    Returns the downgrade reason when the shape is missing; `None` when at
+    least one cited command was observed failing before the last mutating
+    turn and passing after it. A command absent from the timeline entirely
+    (never observed running) is treated the same as one with no matching
+    outcome - it cannot show a shape it was never seen having.
+    """
+    commands = timeline.get("commands") or {}
+    mutations = timeline.get("mutation_turns") or []
+    last_mutation = max(mutations) if mutations else None
+
+    for citation in cmd_citations:
+        command_text = str(citation)[len("cmd:"):]
+        observations = commands.get(command_digest(command_text), [])
+        if not observations:
+            continue
+        reds = [turn for turn, exit_code in observations if exit_code != 0]
+        greens = [turn for turn, exit_code in observations if exit_code == 0]
+        if not reds or not greens:
+            continue
+        if last_mutation is not None:
+            if any(r < last_mutation for r in reds) and any(g > last_mutation for g in greens):
+                return None
+        # No mutation recorded in the timeline at all (unusual for a fix
+        # claim, but not this check's business to refuse) - fall back to the
+        # ordering the rule is really about: seen failing, then seen passing.
+        elif min(reds) < max(greens):
+            return None
+    return TEMPORAL_REASON
+
+
+# E4/[private]: state what passing looks like before doing the work, so the
+# criterion judges the work rather than the work retrofitting the criterion.
+_WEAK_VERBS = re.compile(
+    r"(?i)\b(?:improve[sd]?|clean(?:ed|s|ing)?(?:\s+up)?|better|nicer"
+    r"|enhance[sd]?|polish(?:ed|ing)?)\b"
+)
+
+LATE_CRITERION_FINDING = "criterion must precede the work it judges"
+
+
+def record_criterion(
+    archive: Chronicle,
+    session: str,
+    task: str,
+    text: str,
+    cites: list[str] | None = None,
+    timeline: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Record what passing looks like, under subject `criterion:<task>`.
+
+    A later claim cites it back by that same string (`criterion:<task>`,
+    resolved in `_citation_resolves`). Two checks here, both advisory - they
+    inform the record, they never block writing the criterion:
+
+    * Weak-criterion lint: no `cmd:` citation and only vague verbs
+      (improve/clean/better) in the text - nothing an outside reader could
+      check pass/fail against.
+    * Ordering: when `timeline` is supplied (a transcript was available) and
+      it already shows a mutation turn, the criterion is being written after
+      work has already started, and cannot have judged that work. `timeline`
+      absent is a stated gap, not a violation - the ordering simply cannot
+      be checked without an instrument.
+    """
+    if not task.strip():
+        raise ArchiveError("A criterion needs a non-empty task slug")
+    citations = cites or []
+    has_command = any(str(c).startswith("cmd:") for c in citations)
+    advisories: list[str] = []
+    if not has_command and _WEAK_VERBS.search(text):
+        advisories.append(
+            "weak criterion: no command citation and only vague verbs "
+            "(improve/clean/better) - state what passing looks like, "
+            "ideally citing cmd:<the check that will judge it>"
+        )
+    late = bool(timeline is not None and timeline.get("mutation_turns"))
+    if late:
+        advisories.append(LATE_CRITERION_FINDING)
+    return archive.append(
+        "criterion",
+        f"criterion:{task.strip()}",
+        {
+            "task": task.strip(),
+            "text": text,
+            "session": session,
+            "late": late,
+            "advisories": advisories,
+        },
+        evidence=citations,
+    )
+
+
 def record_claim(
     archive: Chronicle,
     project: Path,
@@ -666,6 +799,7 @@ def record_claim(
     grade: str,
     cites: list[str] | None = None,
     external: bool = False,
+    timeline: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Persist a claim, downgrading it when its citations do not resolve.
 
@@ -675,6 +809,13 @@ def record_claim(
     A claim about an external API or library (`external=True`) must cite a
     primary source read this session (`doc:` or `url:` citation) - memory of a
     library is a hypothesis about a version that may no longer exist.
+
+    `timeline` (U-T2, from `godmode_session_log.session_timeline`) is the
+    optional per-command red/green shape from this session's transcript. A
+    fix-vocabulary claim citing `cmd:<command>` is checked against it: when
+    a timeline is supplied and shows no red-before-green for any cited
+    command, the claim downgrades. `timeline=None` (no transcript available)
+    skips the check entirely - absence of the instrument is never a penalty.
     """
     if grade not in GRADES:
         raise ArchiveError(f"Unknown claim grade '{grade}'; expected one of {', '.join(GRADES)}")
@@ -724,6 +865,8 @@ def record_claim(
         if citation not in unresolved
         and _position_support(project, citation, text) == "unsupported"
     ]
+    fix_claim, _fix_why = looks_like_fix_claim(text)
+    cmd_citations = [c for c in citations if str(c).startswith("cmd:")]
     effective = grade
     reason = ""
     absence = is_absence_claim(text)
@@ -747,6 +890,13 @@ def record_claim(
                 suggestion = near_miss(unresolved[0], known_citations(archive))
                 if suggestion:
                     reason += f"; did you mean {suggestion!r}"
+        elif fix_claim and timeline is not None and cmd_citations:
+            # U-T2: the citation resolves (checked above), but a fix claim
+            # needs more than a citation - it needs the command to have been
+            # observed failing before the fix and passing after.
+            temporal_reason = _temporal_violation(timeline, cmd_citations)
+            if temporal_reason:
+                effective, reason = "hypothesis", temporal_reason
         elif absence and not _probed_twice(archive, citations):
             # One probe that found nothing is evidence about where it looked.
             # A second, different probe is what turns that into a fact about
@@ -767,6 +917,24 @@ def record_claim(
             )
         elif unsupported:
             effective, reason = "hypothesis", "cited location does not support the claim"
+
+    # Criterion pre-registration [E4]: advisory only - it informs a fix claim
+    # that a criterion exists and was not cited, it never downgrades one. A
+    # project that never records criteria gets no friction from this at all.
+    advisories: list[str] = []
+    if grade == "verified" and fix_claim:
+        session_has_criterion = any(
+            record["data"].get("session") == session
+            for record in archive.select(kind="criterion", limit=500)
+        )
+        if session_has_criterion and not any(
+            str(c).startswith("criterion:") for c in citations
+        ):
+            advisories.append(
+                "no criterion citation: cite criterion:<task> naming what "
+                "you judged success by"
+            )
+
     record = archive.append(
         "claim",
         text[:120],
@@ -779,6 +947,7 @@ def record_claim(
             "unsupported": unsupported,
             "downgraded": effective != grade,
             "reason": reason,
+            "advisories": advisories,
             # Named rather than implied: a later reader can see which part of
             # the support was machine-checked and which was taken on the
             # author's word, instead of reading one uniform "verified".
@@ -947,13 +1116,20 @@ def close_session(archive: Chronicle, session: str, charter: dict[str, Any]) -> 
         if record["data"].get("session") == session and record["data"].get("downgraded")
     ]
     half_done = half_done_pairs(archive, session, charter)
-    allowed = not unattested and not downgraded and not half_done
+    # E62 (Task 4b): each `accept: cmd:...` entry on the active plan needs a
+    # this-session attestation before completion - the same discipline as an
+    # unattested HARD rule, applied to a plan's own executable acceptance.
+    from .godmode_plan import unattested_accept_commands
+
+    unattested_accept = unattested_accept_commands(archive, session)
+    allowed = not unattested and not downgraded and not half_done and not unattested_accept
     verdict: dict[str, Any] = {
         "session": session,
         "closed": allowed,
         "unattested_hard_rules": unattested,
         "downgraded_claims": downgraded,
         "half_done_pairs": half_done,
+        "unattested_accept_commands": unattested_accept,
         "watch_for": [] if allowed else [text for text, _ in RATIONALIZATIONS],
     }
     if allowed and not charter.get("compiled"):

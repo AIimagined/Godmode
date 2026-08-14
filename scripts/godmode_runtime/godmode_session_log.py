@@ -39,10 +39,26 @@ read. Every other field, and every string value anywhere in the transcript,
 is looked at only long enough to classify it (a shell command matched
 against a fixed test-runner pattern, a tool name matched against a fixed
 enum) and then discarded - never copied into a stored record.
+
+**The red/green choice, recorded (U-T2).** `command_timeline` additionally
+reads a `tool_result` block's `is_error` and `tool_use_id` fields, to pair a
+shell command with its outcome. The same real, read-only 2026-08-15 read
+that pinned the shape above was checked specifically for a structured exit
+code on these blocks: there is none. A `tool_result` block is
+`{"type": "tool_result", "tool_use_id": ..., "content": <str>, "is_error":
+<bool, sometimes absent>}` - `content` is always a plain string (never a
+structured payload carrying a numeric code), and `is_error` is the one
+boolean signal, present on some blocks and absent from others (absent reads
+as not-an-error, same as the host's own rendering). So red/green here is
+derived from `is_error`, not parsed from a POSIX exit status: a synthesised
+`exit_code` of `1` when `is_error` is `true`, `0` otherwise. `content` is
+never read for this purpose - a real exit code embedded in prose output
+would require reading command output, which this module does not do.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -165,6 +181,127 @@ def measure(transcript_path: Path) -> dict[str, Any]:
         "tokens_out": tokens_out,
         "content_free": True,
     }
+
+
+# Tools that change project files, for the red-before-green mutation anchor
+# (U-T2): a fix-vocabulary claim is checked against a test run seen failing
+# before the last of these and passing after. `NotebookEdit` is included
+# alongside `Edit`/`Write` for the same reason it is tracked separately in
+# `_KNOWN_TOOLS` above - it mutates project content just as they do.
+_MUTATING_TOOLS = frozenset({"Edit", "Write", "NotebookEdit"})
+
+
+def command_digest(command_text: str) -> str:
+    """A stable digest of a shell command's text - never the text itself.
+
+    Both sides of a temporal check must derive the same digest from the same
+    normalisation, or a real match reads as a miss: this is called here
+    while scanning the transcript, and again in `godmode_attest` on a
+    claim's `cmd:` citation. Normalisation is deliberately minimal - strip
+    only - because a citation is expected to quote the command verbatim.
+    """
+    normalized = str(command_text).strip()
+    return hashlib.sha256(normalized.encode("utf-8", errors="replace")).hexdigest()
+
+
+def _scan_timeline(transcript_path: Path) -> tuple[dict[str, list[tuple[int, int]]], list[int]]:
+    """One streaming pass producing both the command timeline and mutation turns.
+
+    Shares `measure`'s turn-counting rule (increment on each assistant-role
+    message) so a `(turn, exit_code)` pair here lines up with a mutation
+    turn recorded from the same scan. A shell `tool_use` is paired with its
+    outcome by `tool_use_id` -> the matching `tool_result` block's
+    `is_error`; a command whose result never arrives (a torn tail, a
+    still-running call) is simply absent from the timeline rather than
+    guessed at.
+    """
+    commands: dict[str, list[tuple[int, int]]] = {}
+    mutations: list[int] = []
+    pending: dict[str, tuple[str, int]] = {}
+    turn = 0
+
+    with Path(transcript_path).open("r", encoding="utf-8", errors="replace") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            message = event.get("message")
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            role = message.get("role")
+
+            if role == "assistant":
+                turn += 1
+                for block in content:
+                    if not isinstance(block, dict) or block.get("type") != "tool_use":
+                        continue
+                    name = str(block.get("name") or "")
+                    if name in _MUTATING_TOOLS:
+                        mutations.append(turn)
+                    if name in _SHELL_TOOLS:
+                        block_input = block.get("input")
+                        command_text = ""
+                        if isinstance(block_input, dict):
+                            command_text = str(block_input.get("command", ""))
+                        tool_id = block.get("id")
+                        if tool_id is not None and command_text.strip():
+                            pending[str(tool_id)] = (command_digest(command_text), turn)
+            elif role == "user":
+                for block in content:
+                    if not isinstance(block, dict) or block.get("type") != "tool_result":
+                        continue
+                    tool_id = block.get("tool_use_id")
+                    match = pending.pop(str(tool_id), None) if tool_id is not None else None
+                    if match is None:
+                        continue
+                    digest, observed_turn = match
+                    exit_code = 1 if block.get("is_error") is True else 0
+                    commands.setdefault(digest, []).append((observed_turn, exit_code))
+
+    return commands, mutations
+
+
+def command_timeline(transcript_path: Path) -> dict[str, list[tuple[int, int]]]:
+    """Per-command outcome timeline: `{cmd_digest: [(turn, exit_code)]}`.
+
+    Digests only, never the command text - see `command_digest`. `exit_code`
+    is a synthesised binary outcome derived from `is_error` (see the module
+    docstring's U-T2 note), not a parsed POSIX exit status: treat any
+    nonzero value as "failed", not as a specific code. Raises the same
+    `OSError`/`ValueError` as `measure` for a path that cannot be opened -
+    the caller decides what a missing transcript means.
+    """
+    commands, _mutations = _scan_timeline(Path(transcript_path))
+    return commands
+
+
+def mutation_turns(transcript_path: Path) -> list[int]:
+    """Turns (1-based assistant-message index) carrying an Edit/Write/NotebookEdit."""
+    _commands, mutations = _scan_timeline(Path(transcript_path))
+    return mutations
+
+
+def session_timeline(transcript_path: Path) -> dict[str, Any]:
+    """The combined shape `record_claim`/`record_criterion` consume as `timeline`.
+
+    `{"commands": {cmd_digest: [(turn, exit_code)]}, "mutation_turns": [...]}`,
+    built from one scan rather than two separate calls to `command_timeline`
+    and `mutation_turns`. A caller (hook or CLI) that has a transcript path
+    computes this once and passes it through; a caller with no transcript
+    passes `None`, which both consumers treat as a stated gap, never a
+    penalty.
+    """
+    commands, mutations = _scan_timeline(Path(transcript_path))
+    return {"commands": commands, "mutation_turns": mutations}
 
 
 def _gap(archive: Any, session: str | None, reason: str) -> dict[str, Any]:
