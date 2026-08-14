@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 import tempfile
 import time
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 import uuid
 
 import shutil
@@ -69,6 +69,25 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+# Kind-specific data-shape invariants, enforced by append() at the archive
+# seam rather than left to whichever caller happens to build the record.
+# append() must never grow one branch per kind - a kind that needs a shape
+# invariant registers a validator here (typically as an import-time side
+# effect of the module that owns that kind, e.g. godmode_verdict.py), and
+# append() only ever asks "does this kind have one?" without knowing what
+# any of them actually check. A validator raises ArchiveError to refuse;
+# a normal return accepts. This is what closes the gap a private helper
+# inside one call path (e.g. record_verdict()) cannot: any future caller
+# that builds the same kind of record via a raw append() - the experiment
+# ledger's verdict records among them - is held to the same rule.
+KindInvariant = Callable[[dict[str, Any]], None]
+KIND_INVARIANTS: dict[str, KindInvariant] = {}
+
+
+def register_kind_invariant(kind: str, validator: KindInvariant) -> None:
+    KIND_INVARIANTS[kind] = validator
 
 
 class Chronicle:
@@ -498,6 +517,9 @@ class Chronicle:
         subject = subject.strip()
         if not subject or len(subject) > 200:
             raise ArchiveError("Record subject must contain 1-200 characters")
+        validator = KIND_INVARIANTS.get(kind)
+        if validator is not None:
+            validator(data)
         evidence = evidence or []
         payload_for_scan = {"subject": subject, "data": data, "evidence": evidence}
         enforce_private_payload(payload_for_scan)

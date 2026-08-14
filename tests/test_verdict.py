@@ -125,6 +125,91 @@ class VerdictTests(unittest.TestCase):
                     run_state="truncated",
                 )
 
+    def _raw_verdict_data(self, **overrides: object) -> dict:
+        data = {
+            "claim": "raw", "claimed_value": "v",
+            "witness": {"kind": "file", "ref": "witness.txt"},
+            "checker": "cmd:x", "disposition": "confirmed",
+            "run_state": "terminated", "acquitted_by": "independent",
+        }
+        data.update(overrides)
+        return data
+
+    def test_archive_append_refuses_raw_self_confirmed(self) -> None:
+        # The review's exact probe: a hand-built record that never goes
+        # through record_verdict/_append_verdict must still be refused, at
+        # the archive layer itself, not just by the helper function.
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            with self.assertRaises(ArchiveError):
+                archive.append(
+                    "verdict", "raw self-confirmed",
+                    self._raw_verdict_data(acquitted_by="self"),
+                    evidence=[],
+                )
+
+    def test_archive_append_refuses_raw_truncated_confirmed(self) -> None:
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            with self.assertRaises(ArchiveError):
+                archive.append(
+                    "verdict", "raw truncated-confirmed",
+                    self._raw_verdict_data(run_state="truncated"),
+                    evidence=[],
+                )
+
+    def test_archive_append_accepts_valid_raw_verdict(self) -> None:
+        # Green control: the registry guards only the two forbidden
+        # combinations, not the kind itself - a legitimate raw append still
+        # lands.
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            record = archive.append(
+                "verdict", "raw refuted",
+                self._raw_verdict_data(disposition="refuted"),
+                evidence=[],
+            )
+        self.assertEqual(record["data"]["disposition"], "refuted")
+
+    def test_empty_checker_cmd_is_malformed(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            (project / "witness.txt").write_text("21\n21\n", encoding="utf-8")
+            record = record_verdict(
+                archive, project, "sum improved", "42",
+                "file:witness.txt", "",
+            )
+        self.assertEqual(record["data"]["disposition"], "witness-malformed")
+        self.assertTrue(any(e.startswith("reason:checker-empty")
+                            for e in record["evidence"]))
+
+    def test_unparseable_checker_cmd_is_malformed(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            (project / "witness.txt").write_text("21\n21\n", encoding="utf-8")
+            record = record_verdict(
+                archive, project, "sum improved", "42",
+                "file:witness.txt", "'unbalanced",
+            )
+        self.assertEqual(record["data"]["disposition"], "witness-malformed")
+        self.assertTrue(any(e.startswith("reason:checker-unparseable")
+                            for e in record["evidence"]))
+
+    def test_quoted_checker_path_still_runs(self) -> None:
+        # A checker command quoted to protect a space-containing interpreter
+        # path must still run, not fall to malformed because the quote
+        # marks rode along as literal characters in the token.
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            (project / "witness.txt").write_text("21\n21\n", encoding="utf-8")
+            _write_checker(project)
+            record = record_verdict(
+                archive, project, "sum improved", "42",
+                "file:witness.txt",
+                f'"{sys.executable}" check.py witness.txt 42',
+            )
+        self.assertEqual(record["data"]["disposition"], "confirmed")
+
     def test_self_may_attest_execution_only(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
