@@ -1,6 +1,6 @@
 """Claim-discipline detectors M19-M21 and the truncation-honest compressor.
 
-Absorbed from the [private] corpus:
+Absorbed from a recorded lessons corpus:
 
 - M19 carried-status-unverified: a "pending sweep" that reports labels is not
   a sweep - six of nine listed items were already shipped (L-189/L-192/L-243).
