@@ -26,7 +26,9 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import os
 import re
+import subprocess
 from pathlib import Path
 
 from .godmode_constants import RUNTIME_VERSION
@@ -130,6 +132,46 @@ def _is_public(path: Path, project: Path) -> bool:
     except ValueError:
         return False
     return not any(part in _PRIVATE_PARTS for part in relative.parts)
+
+
+def _git_ignored_relatives(project: Path, relatives: list[str]) -> frozenset[str]:
+    """Which of these project-relative paths git would ignore.
+
+    A scratch orchestration doc under a gitignored directory (task reports,
+    progress notes) is working material the same as anything under
+    `_PRIVATE_PARTS` - the `.gitignore` already says so, and the linter should
+    not need a second, hand-maintained list that drifts from it. Batched into
+    one `check-ignore --stdin` call rather than one process per file. Fails
+    open (nothing excluded) when there is no git repository or no git binary,
+    so a non-git project lints exactly as it did before this existed.
+    """
+    if not relatives:
+        return frozenset()
+    environment = os.environ.copy()
+    environment["GIT_OPTIONAL_LOCKS"] = "0"
+    environment["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        # Bytes in, bytes out: `text=True` runs stdin through universal-newline
+        # translation, which turns "\n" into "\r\n" on Windows - git then reads
+        # a trailing \r as part of the filename and echoes it back C-quoted, so
+        # nothing ever matches. Encoding by hand keeps the exact bytes git sees.
+        result = subprocess.run(
+            ["git", "-C", str(project), "check-ignore", "--stdin"],
+            input="\n".join(relatives).encode("utf-8"),
+            check=False,
+            capture_output=True,
+            timeout=5,
+            env=environment,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return frozenset()
+    # 0 = some input paths are ignored, 1 = none are - both are ordinary
+    # outcomes. Anything else (128: no git repository, etc.) is a git failure
+    # unrelated to any one file, so exclude nothing rather than guess.
+    if result.returncode not in (0, 1):
+        return frozenset()
+    stdout = result.stdout.decode("utf-8", errors="replace")
+    return frozenset(line for line in stdout.splitlines() if line)
 
 
 def lint_text(path: str, text: str, ignore: tuple[str, ...] = ()) -> list[dict[str, Any]]:
@@ -410,16 +452,20 @@ def lint_docs(project: Path) -> dict[str, Any]:
     config = _config(project)
     ignore = tuple(config.get("ignore_checks") or ())
     contracts, findings = _declared_contracts(config)
+    candidates = [path for path in sorted(project.rglob("*"))
+                  if path.is_file() and _is_public(path, project)]
+    relatives = {path: path.relative_to(project).as_posix() for path in candidates}
+    ignored = _git_ignored_relatives(project, list(relatives.values()))
     scanned = 0
-    for path in sorted(project.rglob("*")):
-        if not path.is_file() or not _is_public(path, project):
+    for path in candidates:
+        relative = relatives[path]
+        if relative in ignored:
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         scanned += 1
-        relative = path.relative_to(project).as_posix()
         findings.extend(lint_text(relative, text, ignore=ignore))
         if contracts:
             findings.extend(_contract_findings(relative, text, contracts))
