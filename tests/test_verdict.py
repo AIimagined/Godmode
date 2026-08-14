@@ -16,8 +16,11 @@ not left to a later reader to notice.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import subprocess
 import sys
+import tempfile
 import unittest
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -170,6 +173,63 @@ class VerdictTests(unittest.TestCase):
                 evidence=[],
             )
         self.assertEqual(record["data"]["disposition"], "refuted")
+
+    def test_fresh_interpreter_without_verdict_import_still_blocks_forbidden_combos(self) -> None:
+        """The invariant guard must be innate to the archive core, not a side
+        effect of some other module having been imported first.
+
+        Mirrors the reviewer's exact probe: a FRESH Python process imports
+        only godmode_chronicle and godmode_anchor - never godmode_verdict,
+        never godmode_console (the only module that would pull
+        godmode_verdict in transitively) - and still refuses both forbidden
+        raw-append combinations. This is the test that fails if registration
+        is ever made lazy again (e.g. reverting to a kind-owning module
+        self-registering at its own import).
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            state = base / "private-state"
+            project.mkdir()
+            script = (
+                "import sys\n"
+                f"sys.path.insert(0, {str(SCRIPTS)!r})\n"
+                "assert 'godmode_runtime.godmode_verdict' not in sys.modules\n"
+                "from godmode_runtime import godmode_chronicle\n"
+                "from godmode_runtime.godmode_anchor import resolve_anchor\n"
+                "from godmode_runtime.godmode_errors import ArchiveError\n"
+                "assert 'godmode_runtime.godmode_verdict' not in sys.modules, "
+                "'godmode_chronicle must not import godmode_verdict'\n"
+                "assert godmode_chronicle.KIND_INVARIANTS.get('verdict') is not None, "
+                "'KIND_INVARIANTS must be populated eagerly, before any other import'\n"
+                f"anchor = resolve_anchor({str(project)!r})\n"
+                "archive = godmode_chronicle.Chronicle(anchor)\n"
+                "archive.initialize()\n"
+                "base_data = {'claim': 'raw', 'claimed_value': 'v', "
+                "'witness': {'kind': 'file', 'ref': 'witness.txt'}, "
+                "'checker': 'cmd:x', 'disposition': 'confirmed', "
+                "'run_state': 'terminated', 'acquitted_by': 'independent'}\n"
+                "blocked = 0\n"
+                "try:\n"
+                "    archive.append('verdict', 'raw self-confirmed (no verdict import)', "
+                "dict(base_data, acquitted_by='self'), evidence=[])\n"
+                "except ArchiveError:\n"
+                "    blocked += 1\n"
+                "try:\n"
+                "    archive.append('verdict', 'raw truncated-confirmed (no verdict import)', "
+                "dict(base_data, run_state='truncated'), evidence=[])\n"
+                "except ArchiveError:\n"
+                "    blocked += 1\n"
+                "print('BLOCKED:' + str(blocked))\n"
+            )
+            env = dict(os.environ)
+            env["GODMODE_STATE_HOME"] = str(state)
+            result = subprocess.run(
+                [sys.executable, "-c", script],
+                capture_output=True, text=True, timeout=30, env=env,
+            )
+        self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+        self.assertIn("BLOCKED:2", result.stdout)
 
     def test_empty_checker_cmd_is_malformed(self) -> None:
         with isolated_project() as (project, _s, _a, archive):

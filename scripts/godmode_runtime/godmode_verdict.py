@@ -15,11 +15,14 @@ of those also land on `witness-malformed`, never `refuted`, and never as an
 uncaught exception: an adversarial checker string is a malformed judge, not
 a fourth outcome.
 
-Two invariants are enforced at the archive seam itself (`Chronicle.append`'s
-`KIND_INVARIANTS` registry, registered below at import), not just by the
-functions in this module - so a future caller that builds a `verdict`
-record via a raw `archive.append(...)` (the experiment ledger among them)
-is held to the same rule as `record_verdict`/`attest_run_state`:
+Two invariants are enforced INNATELY at the archive seam - `Chronicle.append`
+consults a `KIND_INVARIANTS` registry that `godmode_chronicle.py` seeds from
+`godmode_invariants.py` at its OWN import, not as a side effect of this
+module being imported - so a future caller that builds a `verdict` record
+via a raw `archive.append(...)` (the experiment ledger among them) is held
+to the same rule as `record_verdict`/`attest_run_state`, whether or not that
+caller ever imports this module. The two rules (owned by
+`godmode_invariants._verdict_invariants`, not duplicated here):
 
 - Drive-vs-acquit: `acquitted_by: "self"` may attest execution completeness
   only. A `disposition: "confirmed"` needs an independent checker; a
@@ -37,7 +40,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from .godmode_chronicle import Chronicle, register_kind_invariant
+from .godmode_chronicle import Chronicle
 from .godmode_errors import ArchiveError
 
 DISPOSITIONS = ("confirmed", "refuted", "witness-malformed")
@@ -132,32 +135,6 @@ def _run_checker(
     return disposition, None, checker_exit
 
 
-def _verdict_invariants(data: dict[str, Any]) -> None:
-    """The two forbidden combinations, enforced for every append of this kind.
-
-    Registered with Chronicle's KIND_INVARIANTS below so this runs whether
-    the record was built by `record_verdict`, `attest_run_state`, or any
-    future direct `archive.append("verdict", ...)` caller - the archive
-    seam is the one place this cannot be bypassed by a new call site.
-    """
-    if data.get("disposition") != "confirmed":
-        return
-    if data.get("acquitted_by") == "self":
-        raise ArchiveError(
-            "acquitted_by='self' may attest execution completeness only; a "
-            "'confirmed' disposition needs an independent checker "
-            "(acquitted_by='independent') - self-acquitted quality is refused"
-        )
-    if data.get("run_state") == "truncated":
-        raise ArchiveError(
-            "a truncated run cannot be recorded 'confirmed'; budget or "
-            "timeout exhaustion must not impersonate completion"
-        )
-
-
-register_kind_invariant("verdict", _verdict_invariants)
-
-
 def _append_verdict(
     archive: Chronicle,
     claim: str,
@@ -190,9 +167,11 @@ def _append_verdict(
         "acquitted_by": acquitted_by,
     }
     subject = (claim or "verdict")[:_SUBJECT_CAP]
-    # The two forbidden combinations are checked by KIND_INVARIANTS inside
-    # archive.append() itself - not duplicated here - so this is the only
-    # place either check runs, whatever path built the data.
+    # The two forbidden combinations are checked inside archive.append()
+    # itself (godmode_invariants._verdict_invariants, seeded into
+    # Chronicle.append()'s KIND_INVARIANTS at godmode_chronicle's own
+    # import) - not duplicated here, and not dependent on this module
+    # having been imported either.
     return archive.append("verdict", subject, data, evidence=evidence)
 
 
