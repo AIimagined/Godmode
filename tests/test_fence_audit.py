@@ -41,6 +41,7 @@ def _approved_plan(archive, editable: str | None, acceptance: str = "the suite p
     specify(archive, "S-1", "narrow the rotation fix", SPEC)
     contract = {field: "x" for field in CONTRACT_FIELDS if field != "editable"}
     contract["acceptance"] = acceptance
+    contract["accept"] = "cmd:x"
     if editable is not None:
         contract["editable"] = editable
     start(archive, "S-1", "narrow the rotation fix", contract)
