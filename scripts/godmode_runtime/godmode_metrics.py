@@ -155,10 +155,33 @@ def _action_transparency(records: list[dict[str, Any]]) -> tuple[float | None, s
 
 
 def _token_reduction(archive: Chronicle, records: list[dict[str, Any]]) -> tuple[float | None, str]:
-    """How much of the raw record mass the bounded brief spares the model."""
+    """How much of the raw record mass the bounded brief spares the model.
+
+    Prefers a real basis over a guess. C-79/U-T1's session-log measurement
+    writes `metric` records with `measured: True` and a real `tokens_in`
+    read from the host's own transcript usage blocks - when this window
+    holds at least one, their summed `tokens_in` IS what the session
+    actually spent, and that replaces the byte-length guess entirely rather
+    than blending with it. A `measured: False` record is a stated gap, not a
+    zero, and must not be summed as though the session spent nothing. Falls
+    back to the `len(json.dumps(records))//4` heuristic only when no
+    measured record is present in this window. Either way the basis string
+    names which one was used, so a suspicious number can be checked against
+    which kind of basis produced it.
+    """
     if not records:
         return None, "no records to bound"
-    raw = max(1, len(json.dumps(records, ensure_ascii=False, default=str)) // 4)
+    measured_tokens = sum(
+        int(r["data"].get("tokens_in") or 0)
+        for r in records
+        if r["kind"] == "metric" and r["data"].get("measured") is True
+    )
+    if measured_tokens > 0:
+        raw = measured_tokens
+        basis_kind = "measured"
+    else:
+        raw = max(1, len(json.dumps(records, ensure_ascii=False, default=str)) // 4)
+        basis_kind = "estimated"
     try:
         from .godmode_lens import build_context_brief
 
@@ -166,7 +189,8 @@ def _token_reduction(archive: Chronicle, records: list[dict[str, Any]]) -> tuple
         bounded = int(brief.get("estimated_tokens") or raw)
     except Exception:  # pragma: no cover - a brief that cannot build measures nothing
         return None, "context brief unavailable"
-    return max(0.0, 1 - bounded / raw), f"{bounded} of {raw} est. tokens after bounding"
+    return (max(0.0, 1 - bounded / raw),
+            f"{bounded} of {raw} {basis_kind} tokens after bounding")
 
 
 def _gate_effectiveness(records: list[dict[str, Any]]) -> tuple[float | None, str]:
