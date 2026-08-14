@@ -6,6 +6,206 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.2.11] - 2026-08-15
+
+### Added
+
+- Ten new detectors and three hardened surfaces for evidence discipline:
+
+  - `evidence_pipe_advisory` (sentinel + hook): a verdict-bearing test/gate run piped through a truncating filter is advised against before it destroys its own evidence.
+  - `scripted-source-edit` category (sentinel): `sed -i`/`perl -i`/`awk -i inplace` named and asked about instead of failing closed as unclassified.
+  - Guard-erosion monitors (integrity): `assertion-free-test`, `silent-catch-in-test`, `fixed-slice-anchor` join the guard-quality pass, population-validated against this repo's own suite.
+  - Mistake detectors M19-M22 (mistakes): `carried-status-unverified` (a pending list is not evidence), `remedy-on-hypothesis` (no fix built on an unconfirmed root), `absence-without-control` (an absence claim needs a control probe), `class-claim-single-file` (an "every caller" fix that diffs one file cites its sweep or narrows its claim).
+  - Markdown normalisation before every prose matcher (mistakes): models bold exactly the keywords a matcher anchors on.
+  - `guard_citations_resolve` (reconcile): guard-bearing records with dead or absent file citations are reported in both drift directions.
+  - `upstream_verdicts` (parity): a version-range bump closes only when every enumerated item carries an import verdict AND a behaviour verdict, confirmed-* with its proving line.
+  - Push disclosure (sentinel): `git push` names the push-triggered workflows it would fire, because a push to a deploy-wired branch is a deploy action.
+  - Overwrite disclosure (sentinel): a declared Write onto an existing filename names the overwrite instead of implying a blank slate.
+  - Truncation-honest compression (compress): a subject the cap clipped carries `subject_truncated_at` in its mask, ending the short-record/shortened-record ambiguity the module's own docstring condemns.
+- The evidence-prefix vocabulary the M18-M22 detectors read (searched:, control:, second:, scanned:, population:) is taught where operators and agents actually look: `claim --help` epilog (with a worked example), the investigation skill's new "Absence protocol" section, and the governance skill's new "Absorption verdicts" section - a detector whose input convention nobody knows is a dead gate.
+
+  Researching this surfaced a real bug the docs would otherwise have shipped false: `_citation_resolves`'s fallback was a bare `return False`, so citing `searched:`/`control:`/`second:` - the exact vocabulary now being taught - silently downgraded a `--grade verified` claim to `hypothesis`, punishing the evidence discipline the detectors exist to reward. Fixed the same way `doc:`/`url:` already work (resolves as a declared citation, same plausibility floor).
+
+  Also documented honestly rather than pretended: `godmode mistakes`' absence detectors (M18/M21) and the claim-grading pipeline's own stricter absence gate (`_probed_twice`/`_cites_a_search`, which needs two distinct `cmd:` citations) are two separate, unintegrated mechanisms - citing `control:`/`second:` satisfies the former, not the latter. And `upstream_verdicts` (the dual-verdict absorption reader) has no CLI verb writing its record shape yet - `remember --kind decision` stores one free-text value, not two separate verdict fields. Both gaps are named in the skill docs, not silently implied solved.
+- A stdlib-only fast gate (`hooks/godmode_gate_fast.py`) now sits in front of the
+  full pre-tool hook. It answers exactly one question - is this command's head
+  on a vetted, conservative read-only floor (`hooks/gate_table.json`), with no
+  redirect and no `-exec`/`-delete` - and only ever returns `allow` (skip the
+  full hook, silently, no archive I/O) or `escalate` (run the full hook,
+  unchanged, output and exit code mirrored verbatim). Every ambiguous or
+  malformed input escalates; nothing is ever guessed into an allow. The
+  equivalence held against the 142-command real-denial corpus is one-directional
+  by design: every command the fast gate allows, the full sentinel also allows -
+  never the converse - so the fast path stays correct as the full classifier
+  continues to change under it.
+
+  `hooks/gate_table.json` ships as a PROVISIONAL, hand-built fixture (Task 5's
+  generated decision table replaces its contents, not its shape): the floor
+  holds only the host-parity read-only set named for this plan (`git
+  status/log/diff/show/branch/ls-files/rev-parse/rev-list/remote -v/shortlog/
+  describe/blame` plus `ls/cat/head/tail/wc/grep/rg/find/pwd/which/echo/sort/
+  uniq/cut/file/stat/du/df`) - one deliberate omission from that list: `tr` is
+  excluded because the full sentinel does not yet recognise a bare `tr` as
+  read-only (a stream-tool gap this same plan charters a later task to close),
+  so including it here would let the fast gate allow what the full hook still
+  asks about. `git branch` and `git remote -v` require an exact match with no
+  trailing token - both are the one shape on this floor where a bare positional
+  argument, not a flag, performs a real mutation (branch create/delete/rename).
+
+  `hooks/hooks.json`'s `PreToolUse` command now points at the fast gate
+  (`godmode_gate_fast.py`, no arguments) with its timeout dropped from 10s to 3s;
+  `SessionStart`/`UserPromptSubmit` are unchanged.
+
+  Measured on this machine (`git status`, 7-spawn median, matching
+  `scripts/dev/hook-probe.ps1`'s own methodology): fast path 196ms vs full hook
+  542.7ms - a bare `python -c "pass"` spawn alone measures 102ms here, so
+  interpreter-startup overhead dominates both numbers on Windows and the fast
+  gate's own logic adds roughly 94ms of that 196ms, not the full hook's several
+  hundred. The in-process verdict itself is far cheaper still: 1000 calls to
+  `fast_verdict` complete in under 1 second (well over 1000/sec), and the allow
+  path opens zero files (proven by an instrumented `open()` count in
+  `tests/test_gate_fast.py`). The escalate path (fast gate spawns the full hook
+  as a second process) measured 441.3ms median for `git push --force`, 7-spawn
+  median - comfortably inside the 3s `hooks.json` timeout even with the extra
+  spawn.
+
+  **Fix round 1 (post-review):** two Critical findings, both live-reproduced
+  fast-allows of a full-sentinel refusal/ask, both fixed and table-driven so
+  Task 5's generator can own the values: (1) the `find` mutation-flag check
+  covered only `-exec`/`-delete`, missing `-execdir`/`-ok`/`-okdir` from
+  `godmode_sentinel._FIND_MUTATION`'s own five-flag set - now read from
+  `gate_table.json["find_mutation_flags"]`, with a drift-guard test parsing
+  `_FIND_MUTATION`'s compiled regex directly so a sixth flag added there later
+  fails this suite instead of silently reopening the gap; (2) `git log/diff/show
+  --output=<file>` (and the equivalent bare `-o`/`--output <file>` forms) wrote
+  a file with no shell redirect involved, invisible to the fast gate's
+  redirect check - now blocked by a per-phrase `gate_table.json["flag_denylist"]`
+  check, while ordinary formatting flags (`--oneline`, `--stat`, a trailing
+  pathspec) stay fast-allowed. **Note:** the full sentinel's own `--output=`
+  gap this exposed is real and unfixed by this change (the fast gate now
+  refuses to fast-allow it, but the full hook it escalates to still classifies
+  it R0 today) - that gap is being closed separately in the sentinel lane, not
+  by this task.
+- `hooks/gate_table.json` is now generated, not hand-built: a new
+  `scripts/dev/build_decision_table.py` reads `godmode_sentinel.py`'s own vocab
+  tables - `DB_CLIENTS`, `_FIND_MUTATION`'s compiled flag alternation,
+  `_OUTPUT_FLAGS_BY_HEAD`'s git write-flag entry - and re-verifies every floor
+  phrase, read head, git-ask/git-refuse candidate, and mutation head against
+  `classify_action` at generation time, so a sentinel change that moves one of
+  them to a different tier breaks the build instead of shipping a table that
+  silently disagrees with the classifier it was built from. `generated_from`
+  is a 12-hex sha256 prefix of `godmode_sentinel.py`'s own bytes;
+  `tests/test_gate_parity.py` asserts regenerating the table (`--stdout`)
+  reproduces the checked-in file exactly, plus a plant test proving that
+  check would actually fail on a dropped floor entry.
+
+  The provisional table's one deliberate omission is reversed: `tr` was left
+  off the floor because the sentinel did not yet classify a bare `tr` as
+  read-only when that fixture was hand-built. Re-verified live against
+  today's sentinel (`classify_action("tr a b")` is R0), `tr` now belongs on
+  the floor and the fast gate fast-allows it like every other read head
+  (`tests/test_gate_fast.py::KnownShapes::test_bare_tr_is_on_the_floor`).
+
+  `git_ask`/`git_refuse` and `mutation_heads` are populated for the first
+  time - curated candidate lists, each classified through `classify_action` at
+  build time and asserted into the bucket its own verdict names, rather than
+  retyped by hand disconnected from the classifier.
+
+  Deferred-minor fix, red-first: `hooks/godmode_gate_fast.py`'s `flag_denylist`
+  matching compared each trailing token to a denylisted flag by exact string
+  (after stripping any `=value`), which caught `-o /tmp/x` and `-o=x` but not
+  git's own glued short-flag spelling - `git log -o/tmp/x`, one token, no
+  separator at all - fast-allowing a real, unrecorded write. A short
+  (single-dash, single-character) denylisted flag is now prefix-matched
+  against each trailing token as well as compared for equality; a long flag
+  (`--output`) is never prefix-matched, since gluing a value onto it with no
+  `=` is not a form git itself accepts.
+- Task premise checked and found not to hold, per the plan's own "read first" step: godmode_bindings.py declares packaging/marketplace metadata only (name, version, license, author) - it has no per-host HARD/SOFT/UNAVAILABLE control concept to compare for drift. The real control logic (`host_capabilities()`) computes ONE shared table from environment facts (GODMODE_PRETOOL_GATE, GODMODE_MODEL, stdin TTY), never from the host label, and is never independently duplicated per host - so cross-host control "parity" holds by construction, not by convention that could drift, and a comparison test would have been vacuous.
+
+  Built instead: tests locking in the actual guarantee (the control table is identical across claude/codex/grok/any host label) and the actual variance (tool_call_interception genuinely varies, but by GODMODE_PRETOOL_GATE, never by which host string is set) - plus a guard that the packaged host set stays exactly {claude, codex, grok}, so a fourth host prompts re-examining this premise rather than silently assuming it still holds.
+- `godmode init --detect` writes a starter charter from what a repo already proves about itself, instead of leaving a new project staring at an empty one.
+
+  It reads manifests (`package.json` scripts, `pyproject.toml`, `go.mod`, `Cargo.toml`), CI workflow `run:` lines, lint/format configs, `.gitignore` build markers, a migrations directory, and the default branch - all pure reads, stdlib-only, capped at 400 files with the cap always reported. Every candidate it writes is SOFT with its provenance named inline (`(detected: package.json scripts.test)`); the emitter hard-refuses to write anything else, because a wrong guess must never become a blocking gate uninspected - promotion stays a human decision made in the charter document itself.
+
+  Tighten-only: a project with an existing authority document gets a report of detected candidates and nothing is overwritten. A repo with no signal at all still gets an honest minimal stub instead of silence.
+- `godmode init --roles` scaffolds one purpose-line stub per genuinely unbound authority role (checklist, decisions, invariants, inventory, lessons, operating-guide, operator-profile, sprint-truth, state), never overwrites an existing file, and skips glob-shaped candidate patterns rather than guessing a filename.
+
+  Fixed a pre-existing bug found while building this: `assess`'s `missing_roles` read a role's candidate patterns that failed to match as if they meant the role itself was unbound - `operating-guide` binds fine through GODMODE.md while its other three candidates (OPERATING-GUIDE.md/AGENTS.md/CLAUDE.md) all fail to match, and the old computation still listed it as missing. `missing_roles` now subtracts roles that have at least one binding; `init --roles` needed the correct set or it would have scaffolded a role that already has a home.
+- `godmode guide` - a one-page, ≤60-line orientation (five day-one commands, what runs silently vs asks vs needs the password, where state lives) printed directly rather than routed through the CommandResult/JSON pipeline every data-bearing command uses, since it names nothing about any specific project. `godmode --help` now says "Start here: godmode guide" instead of opening on eighty flat subcommands with no entry point. `init`'s JSON payload gains a `next` field (inspect / resume / guide) for the ordinary case - kept inside the existing JSON contract, unlike guide, because init's output is real per-project data a caller may parse.
+- `assess` reports `charter.hard_unplanted`: every HARD rule with no `plant`-proven attestation on record, archive-wide (not session-scoped, unlike `gate()`'s per-session attested_rule_ids - this is a lifetime fact about whether the guard mechanism has ever been observed catching a violation). Matches `plant_and_observe`'s real shape: an attestation with subject `guard:<name>`, status "ran" only when the green-red-green sequence proved out, `data.rule_ids` naming which HARD rules it covers. A "blocked" plant (never went red, or didn't return to green) does not clear a rule - proven with a negative-control test.
+
+  Honest, not silently closed: this repo's own 5 HARD rules are all currently `hard_unplanted` (verified live via `godmode assess`). Closing that gap means planting each - a genuine file+command+violation per rule - which is separate, larger work than reporting the gap; left as a named follow-up rather than done hastily or hidden.
+- Two formerly host-only failure scenarios are staged locally and counted (21 -> 23 caught, NEEDS_A_HOST 4 -> 2): `tool-call-interception` drives `hooks/godmode_session_hook.py` as a real subprocess with a genuine PreToolUse-shaped payload (the same entrypoint this project's own hook-latency work drove directly all session) and checks its printed decision, not an internal function's return value; `concurrent-agent-collision` races 5 threads against one archive and proves the chain stays valid (Chronicle's write_lock exists exactly for this). Neither actually needed a live host - the scenario file had just never driven the real entrypoint instead of the function it wraps.
+
+  Both carry their own negative control: the pre-tool boundary swapped for a stub that never refuses (correctly reports not-caught), and write_lock disabled (correctly corrupts the chain and reports not-caught with "sequence is not contiguous"). The remaining 2 host-only scenarios (opaque-model-egress, cross-agent-resume) stay named rather than counted.
+
+  Found and fixed during this work: the collision scenario's first draft conflated two different properties - chain INTEGRITY (what write_lock actually guarantees) with every writer completing within a 5s lock timeout under 10-way contention (an unrelated liveness property that legitimately degrades under real system load, and did - one CI-adjacent run genuinely saw a writer back off). Reduced to 5 threads and asserted on chain validity alone; a writer correctly backing off under contention is the lock working as designed, not a collision. The negative control (disabled lock -> real corruption) still catches the actual defect class this scenario exists for.
+- scripts/dev/run-suite.ps1 shards the unittest suite across 4 parallel PowerShell jobs, each writing its own full log file (never piped through a filter, per the evidence-pipe rule). Verified against the serial baseline (939 tests, exact match, no silent drops) and negative-control proven: a planted failing test in one shard correctly produced exit 1 and VERDICT=FAILED naming the right shard, then was reverted.
+
+### Changed
+
+- resolve_anchor() no longer shells to git six times on every call (rev-parse --show-toplevel, rev-parse --git-common-dir, branch --show-current, rev-parse HEAD, remote, remote get-url): the result is cached keyed on the git reflog's (.git/logs/HEAD) identity (mtime_ns, size) - the file that reliably appends on both a commit AND a checkout, unlike .git/HEAD itself which measurably does NOT change across commits on the same branch (verified empirically before choosing the key). A commit, checkout, or branch switch invalidates the cache on the very next call; no TTL guessed. Falls back to .git/HEAD identity when no reflog exists (fresh repo before its first commit). Handles worktrees by following the `gitdir:` indirection file. Named ceiling: `remote_hashes` can go stale between a `git remote add` and the next commit/checkout, since remote changes don't touch the reflog - narrower and rarer than the branch/head class this cache targets.
+
+  Measured: hook median 700.1ms -> 295-333ms (scripts/dev/hook-probe.ps1, two clean runs after discarding one 851ms outlier attributable to OS-level noise, not this change - cProfile of the same invocation shows zero resolve_anchor/git subprocess calls post-fix, versus six pre-fix). This was the dominant cost the original P1 import-deferral estimate missed entirely - found by profiling the correctly-invoked hook after the initial baseline turned out to measure an argparse error path (the hook's required positional `event` argument was omitted from every prior measurement).
+- Capability tokens default to 300s (180 measured expiring under an agent's ordinary retry latency - a slow tool round-trip plus one retry could outlast it; 300 stays one short conversation, not an open-ended window). `authorize setup`/`issue` carry real help text (both `authorize --help`'s subcommand listing and their own standalone `--help`, which needed `description=` too since `help=` alone only reaches the parent listing). The irreversible-operation refusal now tells hosted-session users they can type the staging command with a leading `!` to run it from the prompt without leaving the conversation.
+
+  A pre-existing test hardcoded the old TTL as a bare literal (180); updated to assert against `_DEFAULT_TTL_SECONDS` so a future deliberate tune can't silently desync the test from what ships.
+- `godmode charter --review-advisory RULE_ID --reason "..."` records why a mechanical check cannot decide an ADVISORY rule, as a `decision` record (subject `charter-advisory-reviewed:<rule-id>`). `assess` cross-references every currently-compiled ADVISORY rule against reviewed decisions and reports `advisory_unexplained` - a rule with no enforcement is a wish; one with no enforcement AND no stated reason is a wish nobody has examined.
+
+  Inspecting this repo's own 3 advisory rules (checkable_share 0.625) found they are sentence-fragment artifacts: GODMODE.md's descriptive prose wraps mid-sentence, and the line-based directive scanner catches half-sentences containing words like "require"/"never"/"before" that name no real directive. Manufacturing a detection shape for them would be false enforcement - the charter module's own docstring warns against exactly this. All three are now reviewed via the new command (dogfooded against the real repo, not just tested in isolation); `advisory_unexplained` is `[]` here. `checkable_share` stays 0.625 by design - reviewing names the reason, it does not fake a check.
+- Archive reads are memoized in-process: `Chronicle.read_events()` caches the parsed record list keyed on a hash of every event file's (mtime_ns, size) - not just the newest file, which a tamper-evidence test caught directly (mutating an OLDER record's bytes in place left the newest file and record count unchanged, so a newest-only key would have let `verify()` pass on tampered disk content). `accepted_keys()` gets its own cache keyed on the config file's own stat, fixing a pre-existing inefficiency the events-cache work exposed: `verify()` calls `accepted_keys()` once PER RECORD, and an uncached read re-parsed the same rarely-changing config file that many times per verify pass - traced live at 384 total `_read_json` calls from one hook invocation on a 96-record archive (288 of them redundant config re-reads, only 96 real event-file reads). `watchdog()` now windows its attestation scan to the current session's own records (found via the `session` record whose hash produced the session id) instead of the last 1000 attestations across every session this archive has ever held.
+
+  Hash-chain re-verification itself is deliberately NOT cached - `verify()` always re-checks every record's hash on every call, cache hit or miss, because that is the tamper-evidence guarantee the whole data structure exists for. The cache only removes redundant disk reads and JSON parsing, never the integrity check.
+
+  Measured at this repo's current size (96 records), the net wall-clock effect is within noise (~295-390ms across repeated hook-probe runs, matching the anchor-cache commit's numbers). The real win scales with archive size and call repetition, both verified directly rather than assumed: at a synthetic 1000-record archive, the identity check costs 69.9ms against a 327.4ms full parse (~4.7x cheaper), and three repeated `read_events()` calls - the exact pattern one `pre-action` hook invocation performs (latest_session, watchdog's window lookup, watchdog's own scan) - cost 719ms warm versus an estimated ~1371ms cold, a ~1.9x speedup that widens as records accumulate.
+- `git add`/`git commit` now ask instead of running silently. Both were left unprotected on the reasoning that a commit is local and reversible, and gating it made committing impossible in a session where the gate could only ever refuse a protected call outright - no host tool call carries a field a capability could travel in. That premise stopped being true once the host started asking rather than only refusing: asking *is* an in-session approval, and the sibling worktree operations that carry the same reversibility (`checkout --`, `restore`, `mv`, `stash`, `switch`) already asked. `add`/`commit` sitting on the allowed side of that line was never a decision, just the one git rule this classifier had not yet been given (Controller Ruling 1).
+
+  `git checkout -b <branch>` (and `-B`) no longer asks. It matched the same pattern as `checkout --`/pathspec history-rewriting forms, which is the wrong shape for it: creating a local branch discards nothing and leaves the machine no differently than `git branch <name>` already does. Category `git-branch-create`, R1 - the same tier ordinary local computation sits at.
+
+  Protected-path reads (`ls`/`cat`/`grep`/`head`/`tail`/`wc`/`stat`/`file`/`find` of a directory inside this gate's own runtime) were already R0 - confirmed with regression tests (`tests/test_sentinel_policy.py`) rather than left as an accident of `_SAFE_SHELL_READS` not looking at arguments at all, since a corpus of real denials had already found zero surviving instances of this failing.
+- Hook hot path defers cold imports to the branches that actually use them: CapabilityBroker (secrets/getpass/hmac), the fence module (design_verdict/fence_verdict), and six event-scoped modules (charter, corpus, drift's compare, lens, requests, contribution) that `pre-action` never touches but were previously imported unconditionally on every tool call. Also moved `godmode_anchor`'s `secrets` import (which transitively pulls in `hmac`) into its once-per-device salt-creation path. PreToolUse median latency 807.5ms -> 700.1ms measured by scripts/dev/hook-probe.ps1 (7-spawn median, corrected probe — the original baseline had omitted the hook's required positional `event` argument and was timing an argparse-error path, not real hook logic).
+
+### Fixed
+
+- Two real gaps found by an adversarial "test the detectors on novel phrasing, not their own fixtures" pass, both fixed:
+
+  - `evidence_pipe_advisory`'s verdict-runner regex covered `godmode verify/gates/attest/precheck` but missed `selftest/scenarios/mistakes/assess` - every one of them equally verdict-bearing and equally truncatable by the same pipe pattern (`godmode selftest | Select-Object -Last 5` sailed through unflagged). All four added; non-verdict subcommands (`capabilities`, `inspect`) confirmed to stay clean.
+  - The M18/M21 absence-claim detectors' `_ABSENCE` regex covered "nothing found" but not the reversed word order - "the search turned up nothing", "the query came back empty", "the scan yielded nothing" all passed through both detectors completely undetected. Extended the pattern; verified against three realistic phrasings plus two negative controls.
+
+  Also probed and found NOT gaps, documented as known ceilings rather than silently fixed: a DROP TABLE hidden inside a backtick command substitution (`psql -c \`echo 'DROP TABLE orders'\``) is under-classified as `unclassified-mutation` R3 instead of `database-mutation` R5, because the classifier evaluates a substitution's own behavior (echoing text) rather than simulating how its output is consumed by the outer command - it still fails closed (asks before running), it just doesn't earn the stronger tier. The same shape applies to git aliases renaming a destructive operation to an arbitrary word. Both are inherent limits of static-regex classification without executing or parsing `.git/config`, not regressions from today's work.
+- Three more gaps found by an adversarial pass over detector families the previous sweep had not touched (prompt injection, secret shapes, environment classification), all fixed with negative controls and population checks:
+
+  - **Environment classifier read a production database as development.** `\bproduction\b` does not match `production_backup` - `_` is a word character, so no boundary exists between them - and `localhost:5432/production_backup` therefore classified as *development*, the one tier where `mutation_allowed_without_capability` is True. A production database reachable on localhost was mutable without a capability, through a hostname anyone might really use. Boundaries widened to any non-alphanumeric edge; `prd` added as a real-world abbreviation. The negative that makes this safe rather than merely stricter is pinned: `my-product-catalog` must never read as production just because `product` starts with `prod`.
+
+  - **Two secret scanners disagreed about what a secret is.** The sentinel's archive gate (blocks credential-shaped payloads from being stored) and the egress staged-file scan (names the kind, masks the value) each covered shapes the other missed - connection strings caught by one, `ghp_`/`sk-` prefixes by the other, JWTs and Slack tokens by neither. Both rule sets extended to a common set, and a new seam test pins every canonical shape against BOTH scanners so they cannot silently diverge again.
+
+  - **Injection detection missed three real shapes**: a possessive override ("disregard *your* earlier guidance" - `earlier` was absent from the alternation entirely), a verification bypass whose object was the test suite rather than a "gate", and a decode-then-execute frame carrying its instruction as an encoded payload. All three added.
+
+  The gate-bypass widening initially cost a false positive on this repo's own README - the row *describing* the monitor that blocks skips read as an instruction to skip - caught by a population sweep against the shipped docs (0 findings before, 1 after). Bounded the verb-to-object distance so the verb must govern the object rather than merely share a line with it; population sweep back to 0.
+
+  Also probed and found sound, no changes needed: the capability broker refused all four attacks (replay of a spent token, tampered payload with an intact signature, a token spent on a different operation, a token minted in another project); archive integrity refused both a middle-record hash tamper and a truncated record at 400 records.
+- `classify_action` no longer lets argument text convict a command. Two real false-positive shapes from a 50-session denial harvest, both a vocabulary check searching the whole line instead of the command's own words:
+
+  - A `>`/`>>` found anywhere in the raw text was read as a shell redirect even when the only `>` on the line sat inside a quoted argument - `node -e "console.log(1 >>> 2)"` (a JS bitshift) and `node -e "const f = l=>l.trim()"` (an arrow function) both misread as an empty-target write outside the working tree, refusing an ordinary local computation. Redirect detection is now gated on a quote-aware scan first: an operator is only trusted when it survives the same quote-blanking already used for the mutation patterns.
+  - A bare word inside an unquoted file path argument - `docs/RELEASE-CHECKLIST.md` read by `grep`/`tail` - matched the `release-or-external-write` vocabulary the same as if it named the verb. Vocabulary matching now runs on each segment's command-position text: the head (kept even when it is a relative path, so `./deploy.sh` is still a deploy) plus every word after it that is not itself path-shaped.
+
+  New public interface for later gate work: `split_segments(operation) -> list[Segment]`, where `Segment` carries `head`, `subcommand`, `tokens` (quoted text excluded) and `has_redirect` per piece of a compound command - Tasks 3-4 build the remaining fixes (unknown-command vocabulary, stream-tool safe reads, git-subcommand scoping, protected-path reads) on top of this rather than re-deriving tokenization.
+
+  Also fixed, found first and unblocking this: the docs linter's file walk did not honor `.gitignore`, so scratch orchestration reports under a gitignored directory were held to the shipped-docs standard and could fail `tests.test_docs_lint` for reasons unrelated to any shipped document.
+- `classify_action` no longer refuses a command for the sole reason that it has no vocabulary entry. A 50-session denial corpus showed the fail-closed `unclassified-mutation` bucket - meant for a genuinely unknown state - catching mostly harmless, unrecognised commands (`rev`, `cp` into the tree, a `curl`/`Invoke-WebRequest` status probe, bare `sed`/`tr` in a pipeline, several PowerShell constructs) alongside the rare real gap. A segment with no recognised vocabulary and no evidence it mutates anything - no real redirect, no named write flag - now reads at R0 instead of asking or refusing for ignorance.
+
+  "No evidence" is narrower than "unrecognised," on purpose:
+
+  - A real redirect, or a quote left open (which blanks everything after it, including a mutation verb that was sitting there in the original text - a malformed-input case a fuzzer found), still asks - named `unknown-command`, reason names the head, never the old uninformative `unclassified-mutation`.
+  - `git` and `gh` already have enumerated safe/read forms; an invocation that misses all of them stays on the ask side rather than defaulting open just because this particular subcommand went unnamed.
+  - `curl`/`wget`/`Invoke-WebRequest`/`Invoke-RestMethod` can send data out, not just fetch it in, so they stay named exceptions - a narrow, explicit status-probe shape (discarded output, no method/body/output-file flags) reads; every other form still asks. `ssh`/`scp`/`rsync`/`sftp`/`ftp`/`nc`/`ncat`/`telnet` join the same family, unconditionally - a remote shell or a remote copy is not a local read of anything.
+  - `export`/`unset` of a variable that changes what runs (`PATH`, `LD_PRELOAD`, ...) was already excluded from the safe-bookkeeping allowance; it now stays excluded from the open default too, rather than falling through it.
+  - `bash -c`/`sh -c`/`eval` hand an interpreter a whole script as one opaque argument, and `ForEach-Object { ... }` runs whatever its block contains - both keep asking regardless of how harmless a specific instance's content looks, the same principle `find -exec`/`-delete` already uses.
+
+  Also scoped, in the same pass: a database client's own head (`psql`, `mysql`, `sqlite3`, `redis-cli`, `mongosh`, `mariadb`, `pg_dump`, `pg_restore`) is now protected on invocation alone, not only when a migration/reset verb is visible - the verb is usually inside a quoted statement (`psql -c 'drop table users'`), which blanks it before any verb-anchored pattern runs.
+
+  Found while widening this: `_SAFE_INSPECTION_PATTERNS`/`_GIT_LOCAL_CHANGE` matched on a command's own verb and returned before anything looked at its arguments, so a real `>` redirect past one of them was never inspected (`git log --oneline > /etc/hosts` classified as a plain read) - and the same was true of a per-command output-file flag doing the redirect's job without spelling the operator (`git log --output=/tmp/x`, `sort -o out.txt`). Both are now judged by their target the same way an ordinary redirect already is, via a small per-command flag table (`_OUTPUT_FLAGS_BY_HEAD`) rather than a one-off regex per command. `find -execdir`/`-ok`/`-okdir` were already covered by the existing `_FIND_MUTATION` pattern; pinned with tests rather than left unverified.
+
 ## [0.2.10] - 2026-08-11
 
 ### Added
