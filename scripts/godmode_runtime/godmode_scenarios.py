@@ -281,7 +281,14 @@ def _automated_deletion(project: Path, archive: Chronicle) -> tuple[bool, str]:
     impact preview, never as something a guard-style call would just run."""
     from .godmode_sentinel import classify_action
 
-    preview = classify_action("delete the build directory recursively")
+    # A real shell command, not English prose describing one: the classifier
+    # matches command vocabulary, not sentences, and a made-up phrase like
+    # "delete the build directory recursively" was only ever caught because
+    # every unrecognised command failed closed by default (U-G1b removed
+    # that default - see godmode_sentinel.py's `_categorize`). `rm -rf`
+    # is the real, named filesystem-mutation pattern this probe means to
+    # exercise.
+    preview = classify_action("rm -rf build")
     # Guard-style: the preview describes, it does not execute.
     preview["executes_operation"] = False
     caught = bool(preview["protected"]) and bool(preview.get("impact"))

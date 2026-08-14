@@ -219,7 +219,13 @@ class WindowsCommandTests(unittest.TestCase):
         purpose, so a cmdlet nobody enumerated is denied rather than allowed."""
         verdict = classify_action("Invoke-WebRequest https://example.com")
         self.assertTrue(verdict["protected"])
-        self.assertEqual(verdict["category"], "unclassified-mutation")
+        # Renamed by U-G1b: a genuinely unrecognised command with no evidence
+        # of mutation is now read (see WindowsCommandTests below and
+        # test_sentinel_scoping.py), and `unclassified-mutation`'s fail-
+        # closed-for-ignorance default went with it - but a network fetcher
+        # is one of the named exceptions that still asks, by name, precisely
+        # because "unrecognised cmdlet" is not the risk here.
+        self.assertEqual(verdict["category"], "unknown-command")
 
 
 class DangerousCommandTests(unittest.TestCase):
@@ -235,10 +241,30 @@ class DangerousCommandTests(unittest.TestCase):
         self.assertTrue(verdict["protected"])
         self.assertEqual(verdict["tier"], "R5")
 
-    def test_an_unknown_command_still_fails_closed(self) -> None:
+    def test_an_unknown_command_with_no_evidence_is_now_read(self) -> None:
+        """U-G1b: `unclassified-mutation` was the fail-closed bucket for a
+        genuinely unknown state, applied instead to any command this
+        classifier simply had no vocabulary for - a corpus of real denials
+        showed most of those were harmless (`rev`, `cp` into the tree, a
+        PowerShell assignment...). A made-up command with nothing pointing at
+        a mutation - no redirect, no named write flag - is read now; what
+        still asks by name is covered below and in test_sentinel_scoping.py."""
         verdict = classify_action("frobnicate --all")
+        self.assertFalse(verdict["protected"])
+        self.assertEqual(verdict["tier"], "R0")
+
+    def test_an_unknown_command_with_evidence_still_asks(self) -> None:
+        verdict = classify_action("frobnicate --all > important.txt")
         self.assertTrue(verdict["protected"])
-        self.assertEqual(verdict["category"], "unclassified-mutation")
+        self.assertEqual(verdict["category"], "unknown-command")
+
+    def test_quoting_an_opaque_script_still_fails_closed(self) -> None:
+        """The named exception `ExecutablePositionTests` below already pins:
+        an unrecognised interpreter handed a whole script as one opaque
+        argument is not "no evidence" in the same sense a plain unrecognised
+        reporting tool is."""
+        verdict = classify_action('bash -c "frobnicate --all"')
+        self.assertTrue(verdict["protected"])
 
 
 class ShellControlFlowTests(unittest.TestCase):
