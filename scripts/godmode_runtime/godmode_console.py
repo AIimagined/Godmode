@@ -1153,7 +1153,11 @@ def cmd_egress(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 def cmd_untrusted(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     report = scan_untrusted(Path(runtime.anchor.project_root))
-    return CommandResult(report, exit_code=1 if report["files_with_findings"] else 0)
+    # A truncated sweep is not a clean one: findings warn on what was found,
+    # truncation warns on what was never read. Either costs the exit code, or
+    # a capped scan of an unscanned population would still read as "pass".
+    warned = report["files_with_findings"] or report.get("truncated")
+    return CommandResult(report, exit_code=1 if warned else 0)
 
 
 def cmd_bindings(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
