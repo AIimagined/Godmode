@@ -110,6 +110,7 @@ from .godmode_egress import scan_project as scan_untrusted
 from .godmode_egress import scan_staged
 from .godmode_scope import minimality
 from .godmode_errors import ArchiveError, GodmodeError
+from .godmode_verdict import record_verdict, verdict_for
 from .godmode_forge import SkillProposal, forge_skill, validate_skill
 from .godmode_lens import (
     build_context_brief,
@@ -641,6 +642,36 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
          "unresolved": data["unresolved"], "unsupported": data.get("unsupported", [])},
         exit_code=1 if data["downgraded"] else 0,
     )
+
+
+def cmd_verdict_record(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    record = record_verdict(
+        runtime.archive,
+        Path(runtime.anchor.project_root),
+        args.claim,
+        args.value,
+        args.witness,
+        args.checker,
+        run_state=args.run_state,
+        acquitted_by=args.acquitted_by,
+        timeout=args.timeout,
+    )
+    data = record["data"]
+    return CommandResult(
+        {"sequence": record["sequence"], "claim": data["claim"],
+         "disposition": data["disposition"], "run_state": data["run_state"],
+         "acquitted_by": data["acquitted_by"]},
+        exit_code=0 if data["disposition"] == "confirmed" else 1,
+    )
+
+
+def cmd_verdict_show(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    record = verdict_for(runtime.archive, args.seq)
+    if record is None:
+        raise ArchiveError(f"No verdict record at seq:{args.seq}")
+    return CommandResult(record, exit_code=0)
 
 
 def cmd_session_close(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -2229,6 +2260,28 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="Claim about an external API/library; requires a doc:/url: primary source")
     claim.add_argument("--session")
     claim.set_defaults(handler=cmd_claim)
+
+    verdict = sub.add_parser(
+        "verdict",
+        help="Run an independent checker against a witness; the claim's admissibility",
+    )
+    verdict_sub = verdict.add_subparsers(dest="verdict_command", required=True)
+    verdict_record = verdict_sub.add_parser(
+        "record",
+        help="Run the checker and store confirmed/refuted/witness-malformed",
+    )
+    verdict_record.add_argument("--claim", required=True)
+    verdict_record.add_argument("--value", required=True, help="The claimed value the checker verifies")
+    verdict_record.add_argument("--witness", required=True, help="file:<path> or seq:<n>")
+    verdict_record.add_argument("--checker", required=True,
+                                help="Checker command, as one quoted string; runs against the witness alone")
+    verdict_record.add_argument("--run-state", choices=list(("terminated", "truncated")), default="terminated")
+    verdict_record.add_argument("--acquitted-by", choices=list(("independent", "self")), default="independent")
+    verdict_record.add_argument("--timeout", type=int, default=300)
+    verdict_record.set_defaults(handler=cmd_verdict_record)
+    verdict_show = verdict_sub.add_parser("show", help="Read back a verdict record by sequence")
+    verdict_show.add_argument("--seq", type=int, required=True)
+    verdict_show.set_defaults(handler=cmd_verdict_show)
 
     method = sub.add_parser("method", help="Select an analysis method from the evidence shape")
     method.add_argument("--reports", type=int, default=1)

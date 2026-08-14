@@ -31,6 +31,7 @@ MASKS: dict[str, tuple[str, ...]] = {
     "obligation": ("status",),
     "plan": ("state",),
     "sprint": ("state", "title"),
+    "verdict": ("disposition", "run_state", "acquitted_by"),
 }
 _DEFAULT_KEEP: tuple[str, ...] = ("status", "state")
 _TEXT_CAP = 120
