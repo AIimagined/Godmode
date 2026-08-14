@@ -62,17 +62,25 @@ def _run_git(project: Path, *args: str) -> None:
     )
 
 
-def _init_repo(project: Path, files: dict[str, str]) -> None:
+def _init_repo(project: Path, files: dict[str, str | bytes]) -> None:
     """A real git history: init, an identity, one commit holding the starting
     state, so the diff parser runs against actual `git diff` output rather
-    than a hand-built fixture pretending to be one."""
+    than a hand-built fixture pretending to be one.
+
+    A `bytes` value writes the file binary (used by the binary-diff tests -
+    `\x00` in the content is what makes git itself treat the file as binary
+    and switch its diff output to the no-hunk-header `Binary files ... differ`
+    shape)."""
     _run_git(project, "init", "-q")
     _run_git(project, "config", "user.email", "fence-test@example.com")
     _run_git(project, "config", "user.name", "Fence Test")
     for relative, content in files.items():
         path = project / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        if isinstance(content, bytes):
+            path.write_bytes(content)
+        else:
+            path.write_text(content, encoding="utf-8")
         _run_git(project, "add", relative)
     _run_git(project, "commit", "-q", "-m", "initial")
 
@@ -100,6 +108,35 @@ class OutOfFenceHunkTests(unittest.TestCase):
             (project / "b.py").write_text("b = 2\n", encoding="utf-8")
             report = completion_audit(archive, project)
         self.assertNotIn("a.py", [f["path"] for f in report["findings"]])
+
+
+class BinaryDiffTests(unittest.TestCase):
+    """`git diff --unified=0` emits no `@@ ... @@` header for a binary file -
+    only `Binary files a/X and b/X differ` - so a hunk-only parse has to
+    notice that line explicitly, or an out-of-fence binary write is not
+    flagged, just never seen."""
+
+    def test_an_unfenced_binary_change_names_the_file_and_reads_binary(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            _init_repo(project, {"a.py": "a = 1\n", "b.bin": b"\x00\x01original-bytes"})
+            _approved_plan(archive, "a.py")
+            (project / "b.bin").write_bytes(b"\x00\x01changed-bytes-here-now")
+            report = completion_audit(archive, project)
+        out_of_fence = [f for f in report["findings"] if f["path"] == "b.bin"]
+        self.assertEqual(len(out_of_fence), 1, report["findings"])
+        self.assertEqual(out_of_fence[0]["kind"], "out-of-fence-hunk")
+        self.assertEqual(out_of_fence[0]["hunks"], "binary")
+
+    def test_a_fenced_binary_change_is_clean(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            _init_repo(project, {"b.bin": b"\x00\x01original-bytes"})
+            _approved_plan(archive, "b.bin")
+            (project / "b.bin").write_bytes(b"\x00\x01changed-bytes-here-now")
+            report = completion_audit(archive, project)
+        self.assertEqual(report["findings"], [])
+        self.assertEqual(report["verdict"], "every-hunk-traces")
 
 
 class UnauthorizedDeletionTests(unittest.TestCase):
@@ -189,6 +226,26 @@ class UndeclaredFenceTests(unittest.TestCase):
             report = completion_audit(archive, project)
         self.assertEqual(report["changes_examined"], 1)
         self.assertIsNone(report["fence"])
+
+    def test_no_declared_fence_still_catches_a_debug_tag(self) -> None:
+        """Locks in Adjudication A: the debug-tag sweep is not one of the
+        fence-shaped checks that fails open when nothing is declared - it is
+        its own, unconditional question, asked of every added line regardless
+        of whether any plan ever declared an editable set at all."""
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            _init_repo(project, {"a.py": "a = 1\n"})
+            _approved_plan(archive, None)
+            (project / "a.py").write_text(
+                "a = 1\nprint('[DEBUG-trace] here')\n", encoding="utf-8")
+            report = completion_audit(archive, project)
+        residue = [f for f in report["findings"] if f["kind"] == "instrumentation-residue"]
+        self.assertEqual(len(residue), 1, report["findings"])
+        self.assertEqual(residue[0]["path"], "a.py")
+        self.assertEqual(residue[0]["line"], 2)
+        # And still nothing fence-shaped, since nothing was declared.
+        self.assertNotIn("out-of-fence-hunk", [f["kind"] for f in report["findings"]])
+        self.assertNotIn("unauthorized-deletion", [f["kind"] for f in report["findings"]])
 
 
 class TagPatternExtensionTests(unittest.TestCase):

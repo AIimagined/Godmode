@@ -421,6 +421,12 @@ def fence_verdict(archive: Chronicle, path: str, *,
 
 _HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
+# `git diff --unified=0` never emits a `@@ ... @@` header for a binary file -
+# only this line, with the two path spellings the create/modify/delete cases
+# each use in place of `---`/`+++`. Without matching it, a binary change is
+# invisible to every check below it: not "clean", just never seen.
+_BINARY_HEADER = re.compile(r"^Binary files (.+) and (.+) differ$")
+
 
 def _diff_path(spelled: str) -> str | None:
     """A `---`/`+++` path as `declared_fence` would spell it, or `None` for
@@ -440,6 +446,10 @@ def _diff_hunks(diff_text: str) -> dict[str, list[dict[str, Any]]]:
     hands back per-hunk line numbers, and those are what every question this
     gate asks needs: which lines were removed with nothing added back, and
     which added line a residue finding has to name by file and line.
+
+    A binary file gets one hunk-less entry marked `"binary": True` - it never
+    has `@@ ... @@` hunks of its own, but omitting it from `files` entirely
+    would make an out-of-fence binary write invisible rather than clean.
     """
     files: dict[str, list[dict[str, Any]]] = {}
     old_side: str | None = None
@@ -457,6 +467,16 @@ def _diff_hunks(diff_text: str) -> dict[str, list[dict[str, Any]]]:
         if line.startswith("+++ "):
             path = _diff_path(line[4:]) or old_side
             hunks = files.setdefault(path, []) if path else None
+            current = None
+            continue
+        binary = _BINARY_HEADER.match(line)
+        if binary:
+            path = _diff_path(binary.group(2)) or _diff_path(binary.group(1))
+            if path:
+                files.setdefault(path, []).append({
+                    "old_start": 0, "new_start": 0, "added": [], "removed": [],
+                    "binary": True,
+                })
             current = None
             continue
         match = _HUNK_HEADER.match(line)
@@ -488,7 +508,9 @@ def completion_audit(archive: Chronicle, project_root: Path | str) -> dict[str, 
     Three finding kinds, asked of the same parsed diff:
 
     * `out-of-fence-hunk` - a hunk that adds or changes lines in a file the
-      declared set does not cover;
+      declared set does not cover, or a binary file changed outside it (`git
+      diff` carries no hunk header for binary content, so its `hunks` field
+      reads `"binary"` rather than a count);
     * `unauthorized-deletion` - a hunk that only removes lines, in a file the
       declared set does not cover: pre-existing code outside the plan's own
       scope is not the plan's to remove, whatever the reason;
@@ -513,8 +535,10 @@ def completion_audit(archive: Chronicle, project_root: Path | str) -> dict[str, 
             verdict = fence_verdict(archive, path, project_root=root)
             if verdict["allowed"]:
                 continue
-            deletion_only = [h for h in hunks if h["removed"] and not h["added"]]
-            other = [h for h in hunks if h["added"]]
+            binary = [h for h in hunks if h.get("binary")]
+            text_hunks = [h for h in hunks if not h.get("binary")]
+            deletion_only = [h for h in text_hunks if h["removed"] and not h["added"]]
+            other = [h for h in text_hunks if h["added"]]
             if deletion_only:
                 findings.append({
                     "kind": "unauthorized-deletion",
@@ -533,6 +557,18 @@ def completion_audit(archive: Chronicle, project_root: Path | str) -> dict[str, 
                     "hunks": len(other),
                     "detail": f"'{path}' changed ({len(other)} hunk(s)) but the plan's "
                               f"editable set ({', '.join(patterns)}) does not cover it",
+                    "remedy": verdict["remedy"],
+                })
+            if binary:
+                # No hunk count exists to report - a binary diff carries no
+                # `@@ ... @@` header at all - so the count itself says what
+                # kind of change this was rather than pretending to a number.
+                findings.append({
+                    "kind": "out-of-fence-hunk",
+                    "path": path,
+                    "hunks": "binary",
+                    "detail": f"'{path}' changed (binary) but the plan's editable set "
+                              f"({', '.join(patterns)}) does not cover it",
                     "remedy": verdict["remedy"],
                 })
 
