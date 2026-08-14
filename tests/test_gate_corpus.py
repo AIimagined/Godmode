@@ -23,6 +23,7 @@ far.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sys
 import unittest
@@ -300,6 +301,110 @@ class StillClosedTests(GateCase):
 
     def test_the_worst_part_of_a_pipeline_still_decides(self) -> None:
         self.refused("git status && git push --force origin main")
+
+
+# ---------------------------------------------------------------------------
+# Regression corpus from real denials (gate-v2, U-G4) - a red baseline.
+#
+# tests/fixtures/gate_corpus.json is 142 commands this machine's own sessions
+# were actually denied for, harvested from a 50-session transcript window
+# (commands only, sanitised: absolute paths -> PATH, heredoc/inline bodies ->
+# a literal BODY token, every project/personal name found in the raw harvest
+# replaced with a neutral placeholder - the harvest script itself is
+# throwaway and is not shipped; see task-1-report.md for the harvested-string
+# audit). Each entry is `{operation, expected: allow|ask|refuse, class:
+# FP1..FP5|by-design}`, hand-labelled against what the classifier SHOULD do,
+# not against whatever it happens to do today - that gap is the point.
+#
+# `_decision` below is not the sketch in the task brief; it is what
+# godmode_session_hook.py actually does, read in full before writing this:
+#
+#   classify_action(operation, project_root=...) returns a dict shaped
+#     {"protected": bool, "category": str, "tier": "R0".."R5",
+#      "impact": [...], "second_confirmation_required": bool,
+#      "operation_digest": str}
+#   - no "allow" key and no "decision" key live in that dict; both are
+#     computed by the hook, not the classifier.
+#
+#   godmode_session_hook.main()'s pre-tool branch computes `preview["allow"]`
+#   itself: governance_block/design_block force it False (session-ceiling and
+#   scope-fence state classify_action never sees and this test never
+#   constructs, so neither key is ever present here); otherwise
+#   `not preview["protected"]` IS `preview["allow"]` - protected is the only
+#   input for a bare operation string.
+#   `_decision_for(preview)` is then called only when `allow` is False, and
+#   answers "ask" or "deny" from exactly one input:
+#     _REFUSE_OUTRIGHT = frozenset({"R5"})
+#     return "deny" if preview.get("tier") in _REFUSE_OUTRIGHT else "ask"
+#
+#   Collapsed for an operation string alone (no session/fence state):
+#     protected is False                    -> "allow"
+#     protected is True and tier == "R5"     -> "refuse" (the hook's "deny")
+#     protected is True and tier != "R5"     -> "ask"
+#   Every protected tier below R5 (R2, R3, R4 alike) reduces to "ask" - there
+#   is no separate R0-R4 ladder to reproduce, whatever the brief's sketch
+#   suggested. The `_FENCED_TOOLS` scope-fence branch runs only for Edit/Write
+#   with a `file_path`, which classify_action alone never receives, so it
+#   never fires for this corpus either.
+# ---------------------------------------------------------------------------
+
+FIXTURE = Path(__file__).parent / "fixtures" / "gate_corpus.json"
+
+# The 50-session window that produced this corpus yielded 142 unique denied
+# commands, not the round number a brief might guess at; grows-only from
+# here, per Controller Ruling 4 (the floor is the measured count, recorded).
+_CORPUS_FLOOR = 142
+
+
+def corpus_entries() -> list[dict[str, str]]:
+    """Parsed fixture, reused verbatim by Task 6's fast-gate equivalence test."""
+    entries = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    assert len(entries) >= _CORPUS_FLOOR, "corpus is grows-only"
+    return entries
+
+
+def _decision(operation: str) -> str:
+    """godmode_session_hook's real allow/ask/refuse mapping for a bare
+    operation string - see the module comment above for the reading."""
+    verdict = classify_action(operation, project_root=PROJECT)
+    if not verdict["protected"]:
+        return "allow"
+    return "refuse" if verdict["tier"] == "R5" else "ask"
+
+
+class GateCorpus(unittest.TestCase):
+    """Every command labelled by hand against what SHOULD happen, checked
+    against what the classifier actually does today.
+
+    FP-class entries (FP1: argument text read as command words or operators -
+    a JS `=>`/`>>>`/`<tag>` inside a quoted node -e/-p argument or sed
+    replacement misread as a shell redirect, a bare word like "release"
+    inside a file *path* argument misread as the release verb; FP2: an
+    unrecognised-but-harmless command - `rev`, `tr`, `cp` into the tree,
+    `sleep`, `ps`, `git fetch`, a curl/Invoke-WebRequest status probe, a
+    PowerShell assignment whose value is itself a command, a PowerShell
+    `foreach(){}` *statement* (not the `ForEach-Object` cmdlet) - fails
+    closed for having no matching vocabulary; FP3: a stream tool with no
+    write flag, `sed`/`tr` without `-i`, inside a pipeline; FP4: a git
+    subcommand scoped too broadly, `checkout -b` read as history-mutating
+    `checkout --`) are expected to FAIL now - that is the red baseline this
+    task exists to record, not a bug in the test. `by-design` entries include
+    both the classifier's already-correct verdicts AND the approved-but-
+    unimplemented git-ask policy (Controller Ruling 1 / Task 4: `git
+    add`/`commit`/`checkout --`/`restore`/`mv`/`stash`/`switch` are labelled
+    `ask` now; the two of those still classified as ordinary local-repository
+    changes - bare `add`/`commit` - fail red until Task 4 lands `GIT_ASK`,
+    which is also by-design, not a mislabel).
+    """
+
+    def test_every_entry_matches_expected(self) -> None:
+        failures = []
+        for entry in corpus_entries():
+            got = _decision(entry["operation"])
+            if got != entry["expected"]:
+                failures.append((entry["class"], entry["operation"][:80],
+                                 entry["expected"], got))
+        self.assertEqual(failures, [])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,712 @@
+[
+ {
+  "operation": "git add src/render/canvas.js test/canvas-camera.test.ts specs/040-camera-2p5d demo/camera.json STATUS.md && git commit -F - <<'EOF' BODY",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "python - <<'PY' BODY",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "git checkout -- src/effects/library.ts && echo reverted",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "git restore src/effects/library.ts; git status --short src/effects/library.ts; wc -l src/effects/library.ts",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "node packages/build/bundle.js --effects nope > /dev/null 2>&1; echo \"exit=$?\"; rm packages/build/shake-probe.mjs; ls packages/build/",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "node packages/build/bundle.js --effects nope > /dev/null 2>&1; echo \"exit=$?\"",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "rm packages/build/shake-probe.mjs && ls packages/build/",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "Remove-Item packages/build/shake-probe.mjs -Confirm:$false; Get-ChildItem packages/build -Name",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "node -e \"\nconst N=1920*1080*4;\nconst data=new Uint8ClampedArray(N);\nfor(let i=0;i<N;i++) data[i]=(i*2654435761)>>>13 & 255;\nconst buf={width:1920,height:1080,data};\n\nfunction oldHash(buffer){\n  let hash=0x811c9dc5;\n  const mix=(byte)=>{ hash^=byte; hash=Math.imul(hash,0x01000193)>>>0; };\n  mix(buffer.width&0xff); mix((buffer.width>>8)&0xff);\n  mix(buffer.height&0xff); mix((buffer.height>>8)&0xff);\n  for(let i=0;i<buffer.data.length;i++) mix(buffer.data[i]);\n  return hash.toString(16).padStart(8,",
+  "expected": "allow",
+  "class": "FP1"
+ },
+ {
+  "operation": "node -e \"\nconst {execFileSync}=require('child_process');\nfunction run(args,label){\n  const t0=process.hrtime.bigint();\n  const out=execFileSync(process.execPath,['packages/render-headless/frames.js',...args],{encoding:'utf8'});\n  const ms=Number(process.hrtime.bigint()-t0)/1e6;\n  const p=out.split('profile:')[1];\n  console.log(label,(ms/1000).toFixed(1)+'s total');\n  if(p) console.log(p.trim().split('\\n').filter(l=>/total|measured|phase|shot|decode|hash|seek|write|effects/.test(l)).join('\\n'));",
+  "expected": "allow",
+  "class": "FP1"
+ },
+ {
+  "operation": "cp \"PATH\" test/fixtures/fixture-contract.json && ls test/fixtures/ | head",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "for f in src/geometry/path.ts src/particles/emitter.js src/data/bind.ts src/captions/captions.ts src/timeline/comp.ts src/timeline/driver.ts src/render/canvas.js src/render/dom.js src/timeline/mixers.ts src/timeline/timeline-core.ts; do echo \"== $f\"; grep -o \"^export \\(function\\|const\\|interface\\|type\\) [A-Za-z0-9_]*\" \"$f\" | sed 's/^export [a-z]* //' | tr '\\n' ' '; echo; done",
+  "expected": "allow",
+  "class": "FP3"
+ },
+ {
+  "operation": "grep -o \"^export \\(function\\|const\\|interface\\|type\\) [A-Za-z0-9_]*\" src/geometry/path.ts src/particles/emitter.js src/data/bind.ts src/captions/captions.ts | sed 's/export //' | head -40",
+  "expected": "allow",
+  "class": "FP3"
+ },
+ {
+  "operation": "grep -o \"^export \\(function\\|const\\|interface\\|type\\) [A-Za-z0-9_]*\" src/timeline/comp.ts src/timeline/driver.ts src/timeline/mixers.ts src/render/canvas.js src/render/dom.js | sed 's/export //' | head -40",
+  "expected": "allow",
+  "class": "FP3"
+ },
+ {
+  "operation": "$p = @(\"$env:TEMP\",\"PATH\",\"PATH\"); foreach($d in $p){ if(Test-Path $d){ Get-ChildItem $d -Directory -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '(?i)toolA|person1|person2|toolC|audit|snapshot|research' } | Select-Object FullName,LastWriteTime } }",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "cd PATH; python scripts/godmode.py atlas --help 2>&1 | Select-Object -First 40; \"=== PLANMODE ===\"; python scripts/godmode.py planmode --help 2>&1 | Select-Object -First 40",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "$d=\"PATH\"; foreach($r in 'toolA','toolB'){ \"## $r\"; Get-ChildItem \"$d\\$r\" -Recurse -File | Where-Object { $_.FullName -notmatch '\\\\.git\\\\' } | ForEach-Object { \"{0}  ({1} lines)\" -f $_.FullName.Replace(\"$d\\$r\\\",''), (Get-Content $_.FullName -ErrorAction SilentlyContinue | Measure-Object -Line).Lines } }",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "cd PATH; $env:CLAUDE_PROJECT_DIR=\"PATH\"; foreach($m in 'session-start','user-prompt','pre-action'){ $body = if($m -eq 'pre-action'){'{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git status\"},\"cwd\":\"PATH\"}'} elseif($m -eq 'user-prompt'){'{\"prompt\":\"where are we\",\"cwd\":\"PATH\"}'} else {'{\"cwd\":\"PATH\"}'}; $t=Measure-Command { $body | python hooks/godmode_session_hook.py $m > $null 2>&1 }; \"{0}: {1} ms\" -f $m, [math]::Round($t.TotalMilliseconds) }",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "cd PATH; Measure-Command { '{\"cwd\":\"PATH\"}' | python hooks/godmode_session_hook.py session-start | Out-Null } | Select-Object TotalMilliseconds",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "for m in session-start user-prompt; do s=$(date +%s%N); echo '{\"cwd\":\"PATH\",\"prompt\":\"where are we\"}' | python hooks/godmode_session_hook.py $m >/dev/null 2>&1; e=$(date +%s%N); echo \"$m $(( (e-s)/1000000 )) ms\"; done",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "cd PATH; Get-ChildItem tests -Filter \"test_*.py\" | ForEach-Object { $_.BaseName } | Sort-Object",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "cd PATH; git checkout -b feat/change-scope-guardrails 2>&1; git status --short",
+  "expected": "allow",
+  "class": "FP4"
+ },
+ {
+  "operation": "npm view @pkg/producer version 2>/dev/null; echo \"---pinned---\"; node -e \"const p=require('./package.json');console.log(JSON.stringify(Object.fromEntries(Object.entries({...p.dependencies,...p.devDependencies}).filter(([k])=>k.includes('pkg'))),null,1))\"",
+  "expected": "allow",
+  "class": "FP1"
+ },
+ {
+  "operation": "npx vitest run lib/__tests__/binResolution.test.ts 2>&1 | tail -30",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "npx tsc --noEmit 2>&1 | tail -10; echo \"TSC_EXIT=$?\"",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "cat >> docs/FIXED-REGISTRY.md <<'EOF' BODY",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "npm install --save-exact @pkg/core@0.7.103 @pkg/engine@0.7.103 @pkg/parsers@0.7.103 @pkg/player@0.7.103 @pkg/producer@0.7.103 @pkg/sdk@0.7.103 @pkg/shader-transitions@0.7.103 pkg@0.7.103 2>&1 | tail -15",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "tail -1 docs/FIXED-REGISTRY.md | rev | cut -c1-120 | rev",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "node packages/render-headless/frames.js --frames 12 2>&1 | tail -5 && cp out/frame-hashes.json /tmp/seq.json 2>/dev/null || cp out/frame-hashes.json \"$TEMP/seq.json\"; echo \"SEQ SAVED\"",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "time node packages/render-headless/frames.js --composition packages/bench/results/render-workload.json 2>&1 | tail -3",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "$sw=[Diagnostics.Stopwatch]::StartNew(); node packages/render-headless/frames.js --composition packages/bench/results/render-workload.json | Select-Object -Last 1; $sw.Stop(); \"SEQ-SEQUENCE wall seconds: {0:N1}\" -f $sw.Elapsed.TotalSeconds",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "find . -name \"*.test.*\" -not -path \"*/node_modules/*\" | sed 's|/[^/]*$||' | sort -u",
+  "expected": "allow",
+  "class": "FP3"
+ },
+ {
+  "operation": "git commit --amend -F \"PATH\"",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "git mv src/timeline/timeline.ts src/timeline/timeline-core.ts && ls src/timeline/",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "cd PATH && node packages/render-headless/frames.js --composition packages/bench/results/render-workload.json --frames 4 --pipe --format webm --alpha --transport fast > /dev/null 2>&1; ffmpeg -y -loglevel error -c:v libvpx-vp9 -i out/app-demo.webm -vframes 1 -pix_fmt rgba out/alpha-opaque.png && node --input-type=module -e \"\nimport {decodePng} from './src/render/png.ts';\nimport {readFileSync} from 'node:fs';\nconst img=decodePng(readFileSync('out/alpha-opaque.png'));\nlet o=0,t=0,p=0;\nfor(let i=3",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "cd PATH && ffmpeg -y -loglevel error -c:v libvpx-vp9 -i out/app-demo.webm -vframes 1 -pix_fmt rgba out/alpha-opaque.png && node --input-type=module -e \"\nimport {decodePng} from './src/render/png.ts';\nimport {readFileSync} from 'node:fs';\nconst img=decodePng(readFileSync('out/alpha-opaque.png'));\nlet o=0,t=0,p=0;\nfor(let i=3;i<img.data.length;i+=4){const a=img.data[i];if(a===255)o++;else if(a===0)t++;else p++;}\nconsole.log('opaque control:',img.width+'x'+img.height,'opaque',o,'transparent',t,'p",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "P=~/.claude/plugins/cache/publisher/godmode && ls \"$P\" && python -c \"\nimport json,os\np=os.path.expanduser('~/.claude/plugins/cache/publisher/godmode')\nfor v in sorted(os.listdir(p)):\n    m=os.path.join(p,v,'.claude-plugin','plugin.json')\n    if os.path.isfile(m): print(v,'->',json.load(open(m,encoding='utf-8')).get('version'))\n\"; echo \"--- hooks registered:\"; cat \"$P/0.2.1/hooks/hooks.json\" 2>/dev/null | python -c \"import json,sys; d=json.load(sys.stdin); print(list(d['hooks'].keys()))\" 2>/dev",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "ls scripts/godmode_runtime | head -3",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "ls scripts/godmode_runtime",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "ls ~/.claude/plugins/cache/ 2>/dev/null | grep -i god; echo \"---\"; find ~/.claude/plugins -name godmode_sentinel.py 2>/dev/null",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "ls",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "Get-ChildItem \"$env:USERPROFILE\\.claude\\plugins\\cache\" -Recurse -Filter godmode_sentinel.py -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "rm -rf /tmp/godmode-gate-probe-does-not-exist",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "grep -n \"_CONFIG_CONTRACTS\" -A 14 scripts/godmode_runtime/godmode_console.py | head -18; echo \"=== which exist here:\"; for f in .godmode-docs.json .godmode-docslint.json .godmode-privacy.json .godmode-report.json .godmode-dependency-policy.json; do [ -f \"$f\" ] && echo \"present: $f\"; done",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "for f in *.md; do echo \"$(wc -l < \"$f\") $f\"; done | sort -rn | head -5",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "python -c \"\nimport sys; sys.path.insert(0,'scripts')\nfrom godmode_runtime.godmode_sentinel import shell_segments, classify_action\ncmd = 'for f in *.md; do echo \\\"\\$(wc -l < \\\\\\\"\\$f\\\\\\\") \\$f\\\"; done | sort -rn | head -5'\nfor s in shell_segments(cmd):\n    v = classify_action(s)\n    print(f\\\"{'DENY' if v['protected'] else 'ok  '} {v['category']:24} {s!r}\\\")\nprint()\nfor probe in ['wc -l < README.md', 'cat < input.txt', 'sort file > out.txt', 'echo \\$(ls)']:\n    v = classify_action(probe)\n    print(f",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "python -m unittest tests.test_gate_usability 2>&1 | grep -E \"^(FAIL|ERROR|Ran|OK|FAILED)\" | head",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "python -m unittest tests.test_gate_usability 2>&1 | tail -18",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "python -m unittest discover -s tests > /tmp/s17.log; echo \"suite=$?\"; grep -E \"^(Ran |OK|FAILED)\" /tmp/s17.log; grep -A 8 \"^FAIL:\" /tmp/s17.log | head -14",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "python -m unittest discover -s tests 2>&1 | tail -6",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "git add -A && git commit -q -m \"$(cat <<'EOF' BODY",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "python -c 'import sys; sys.path.insert(0,\"scripts\")\nfrom godmode_runtime.godmode_sentinel import classify_action\nfor p in [\"git commit -m fix\", \"git add -A\", \"git push origin main\", \"git commit --amend\"]:\n    v=classify_action(p)\n    print((\"DENY \" if v[\"protected\"] else \"ok   \")+v[\"tier\"]+\" \"+v[\"category\"].ljust(24)+repr(p))'",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "rm -rf /tmp/godmode-live-probe-nonexistent",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "git push origin main && git log --oneline -3 && git rev-parse HEAD origin/main",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "D=\"PATH\"\npython -c \"import json;d=json.load(open(r'$D/.claude-plugin/plugin.json'));print('version',d['version'])\"\necho \"--- runtime modules present:\"\nfor m in godmode_census godmode_obligations godmode_release godmode_usage godmode_integrity godmode_sentinel; do\n  [ -f \"$D/scripts/godmode_runtime/$m.py\" ] && echo \"  yes $m\" || echo \"  NO  $m\"; done\necho \"--- newest source mtime:\"; ls -t \"$D/scripts/godmode_runtime/\" | head -3\necho \"--- repo tag for 0.2.6:\"; cd PATH && git log --oneline -1 v0.2.",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "cd PATH && git log --oneline -1 v0.2.6 && echo \"ahead: $(git rev-list --count v0.2.6..HEAD)\"",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "git -C PATH log --oneline -1 v0.2.6",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "git -C PATH log --oneline -1",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "echo \"ahead: $(git rev-list --count v0.2.6..HEAD)\"",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "git rev-list --count v0.2.6..HEAD",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "cd PATH\nS=\"PATH\"\npython \"$S/probe2.py\"\necho \"=== escaped-separator safety:\"\npython - <<'PY' BODY",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "cd PATH\npython -m unittest discover -s tests 2>&1 | grep -E \"^(FAIL|ERROR):|^(Ran|OK|FAILED)\"\necho \"=== gates:\"\nfor g in \"docs --lint\" \"untrusted --brief\" \"trust\" \"selftest --brief\" \"changelog check\" \"integrity\" \"config check --brief\" \"evals --brief\" \"scenarios --brief\" \"grid --brief\" \"version --reconcile --brief\"; do\n  python scripts/godmode.py --project . $g > /dev/null 2>&1; printf \"%-28s %s\\n\" \"$g\" \"$?\"; done",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "cd PATH && git commit -q -m \"$(cat <<'EOF' BODY",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "cd PATH && git ls-remote origin refs/heads/main",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "cd PATH && git push origin main",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "cd PATH\npython -m unittest discover -s tests 2>&1 | grep -E \"^(FAIL|ERROR):|^(Ran|OK|FAILED)\"\necho \"=== gates:\"\nfor g in \"docs --lint\" \"untrusted --brief\" \"trust\" \"selftest --brief\" \"changelog check\" \"integrity\" \"config check --brief\" \"evals --brief\" \"scenarios --brief\" \"grid --brief\" \"bindings --brief\" \"sbom --gate --brief\"; do\n  python scripts/godmode.py --project . $g >/dev/null 2>&1; printf \"%-28s %s\\n\" \"$g\" \"$?\"; done",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "cd PATH\npython -m unittest discover -s tests 2>&1 | grep -E \"^(FAIL|ERROR):|^(Ran|OK|FAILED)\"\necho \"=== gates:\"\nfor g in \"docs --lint\" \"untrusted --brief\" \"trust\" \"selftest --brief\" \"changelog check\" \"integrity\" \"config check --brief\" \"evals --brief\" \"scenarios --brief\" \"grid --brief\" \"bindings --brief\" \"sbom --gate --brief\"; do\n  python scripts/godmode.py --project . $g 2>&1 | tail -1 > /tmp/gm-out; printf \"%-28s %s\\n\" \"$g\" \"${PIPESTATUS[0]}\"; done",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "cd PATH\npython -m unittest discover -s tests 2>&1 | grep -E \"^(FAIL|ERROR):|^(Ran|OK|FAILED)\"\necho \"=== gates:\"\nfor g in \"docs --lint\" \"untrusted --brief\" \"trust\" \"selftest --brief\" \"changelog check\" \"integrity\" \"config check --brief\" \"evals --brief\" \"scenarios --brief\" \"grid --brief\" \"bindings --brief\" \"sbom --gate --brief\"; do\n  python scripts/godmode.py --project . $g 2>&1 | tail -1 | sed \"s|^|  |\"; printf \"%-28s exit=%s\\n\" \"$g\" \"${PIPESTATUS[0]}\"; done",
+  "expected": "allow",
+  "class": "FP3"
+ },
+ {
+  "operation": "cd PATH && git add -A && git commit -q -F \"PATH\" && git log --oneline -4 && echo \"--- ahead of origin:\" && git rev-list --count origin/main..HEAD",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "cd PATH\necho \"=== distinct authors/committers across all history:\"\ngit log --all --format=\"A|%an|%ae\" | sort -u\necho \"---\"\ngit log --all --format=\"C|%cn|%ce\" | sort -u\necho \"=== total commits:\"; git rev-list --count HEAD",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "cd \"PATH\"\npython - <<'PY' 2>/dev/null || true BODY",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "cd PATH\ncp .godmode-docslint.json /tmp/gm-docslint.bak 2>/dev/null || cp .godmode-docslint.json \"$LOCALAPPDATA/Temp/gm-docslint.bak\"\nprintf '{\"ignore\": [ \"unterminated' > .godmode-docslint.json\npython scripts/godmode.py --project . config check 2>&1 | tail -14; echo \"exit=$?\"\ncp \"$LOCALAPPDATA/Temp/gm-docslint.bak\" .godmode-docslint.json 2>/dev/null || cp /tmp/gm-docslint.bak .godmode-docslint.json\necho \"--- restored:\"; python -c \"import json;print(json.load(open('.godmode-docslint.json')) and '",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "python - <<'EOF' BODY",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "cd /tmp && echo '{\"session_id\":\"SESSIONID\",\"transcript_path\":\"'\"$HOME\"'/.claude/projects/PROJDIR/SESSIONID.jsonl\",\"cwd\":\"PATH\",\"prompt\":\"test\"}' > hookin.json\nfor h in \"pluginA:$HOME/.claude/plugins/cache/pluginA/pluginA/25d22f864ad6/src/hooks/pluginA-mode-tracker.js\" \"pluginB:$HOME/.claude/plugins/cache/pluginB/pluginB/4.7.0/hooks/pluginB-mode-tracker.js\"; do\nn=${h%%:*}; p=${h#*:}; s=$(date +%s%N); nod",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "SP=\"PATH\"\nprintf '{\"session_id\":\"SESSIONID\",\"transcript_path\":\"%s/.claude/projects/PROJDIR/SESSIONID.jsonl\",\"cwd\":\"PATH\",\"prompt\":\"test\"}' \"$HOME\" > \"$SP/hookin.json\"\nfor h in \"pluginA|$HOME/.claude/plugins/cache/pluginA/pluginA/25d22f864ad6/src/hooks/pluginA-mode-tracker.js\" \"pluginB|$HOME/.claude/plugins/cache/pluginB/pluginB/4.7.0/hooks/pluginB-mode-tracker.js\"; do\nn=${h%%|*}; p=${h#*|}; s=$(date +%s",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "cat >> lib/__tests__/captureModule.test.ts <<'EOF' BODY",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "git diff --numstat lib/captureModule.ts; echo \"=== RUN ===\"; npx vitest run lib/__tests__/captureModule.test.ts 2>&1 | grep -E \"AssertionError|Tests |× |NOT DETECTED\" | head -12",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "npx vitest run lib/__tests__/captureModule.test.ts 2>&1 | grep -E \"Tests |×|AssertionError\" | head -12",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "npx vitest run lib/__tests__/captureModule.test.ts 2>&1 | tail -30",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "npx vitest run lib/__tests__/captureModule.test.ts 2>&1 | tail -15",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "npx vitest run lib/__tests__/captureModule.test.ts --reporter=dot",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "npx vitest run lib/__tests__/captureModule.test.ts",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "git status --short lib/colorModule.ts; rm lib/colorModule.ts && echo \"DELETED\"; ls lib/colorModule.ts 2>&1 | tail -1; grep -rn \"colorModule\" lib/ app/ modules/ scripts/ docs/ 2>/dev/null | grep -v LESSONS.md | head",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "npx tsc --noEmit 2>&1 | tail -12",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "grep -c \"\" docs/FIXED-REGISTRY.md; tail -1 docs/FIXED-REGISTRY.md | rev | cut -c1-60 | rev",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "grep -n \"^| 236\" docs/RELEASE-CHECKLIST.md | cut -c1-160",
+  "expected": "allow",
+  "class": "FP1"
+ },
+ {
+  "operation": "$f = (Get-Command ffmpeg -ErrorAction SilentlyContinue).Source; \"ffmpeg: $f\"; if ($f) { \"size: {0:N1} MB\" -f ((Get-Item $f).Length/1MB) }; $n = (Get-Command node).Source; \"node: $n  size: {0:N1} MB\" -f ((Get-Item $n).Length/1MB); try { $p = Get-MpPreference; \"RTP disabled: $($p.DisableRealtimeMonitoring)\"; \"existing path exclusions: $($p.ExclusionPath -join '; ')\" } catch { \"Defender query failed: $_\" }",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "grep -oE \"command\\(['\\\"][a-z][a-z0-9 <>:.|-]{2,30}['\\\"]\" node_modules/pkg/dist/cli.js | sort -u | head -50",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "ls -l logs/proj3.log 2>/dev/null | awk '{print $5\" bytes\"}'; grep -oE \"\\\"(capture_[a-z_]+|brand_[a-z_]+|palette[a-z_]*|ffmpeg[a-z_]*|ffprobe[a-z_]*|heal_[a-z_]+)\\\"\" logs/proj3.log 2>/dev/null | sort | uniq -c | sort -rn | head -20",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "git fetch origin --quiet 2>&1 | head -2; for f in lib/assetModule.ts app/api/chat/route.ts; do for b in origin/main origin/playground; do printf \"%-28s %-20s \" \"$f\" \"$b\"; git diff --numstat \"$b\" -- \"$f\" 2>/dev/null | awk '{print $1\"+ \"$2\"-\"}' | head -1; echo; done; done",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "for d in 031-media-assets 032-pptx-export 033-vendorlib-bench 034-evaluator-loop 035-render-planning; do echo \"== $d\"; ls specs/$d 2>/dev/null | tr '\\n' ' '; echo; done; echo \"=== impl presence:\"; ls src/agent/ | tr '\\n' ' '; echo; ls packages/render-plan/ 2>/dev/null | tr '\\n' ' '; echo; ls packages/export-pptx 2>/dev/null | tr '\\n' ' '; echo; ls packages/render-headless/audio.js 2>/dev/null; grep -c \"assets\" src/project/project.ts",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "node packages/render-headless/frames.js --frames 3 --fps 30 --pipe >/dev/null 2>&1; node -e \"const h=require('./out/frame-hashes.json');console.log('frame0:',h[0], h[0]==='ea69b40a'?'UNCHANGED ✓':'CHANGED ✗')\"",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "git restore out/ && npm test 2>&1 | grep -E \"^ℹ (tests|pass|fail)\"",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "git restore out/",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "git checkout -- out/ && git status --porcelain out/ | head -3",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "git add specs/035-render-planning packages/render-plan 2>&1 | grep -v warning; git commit -q -m \"feat(render-plan): dirty-frame diff, hash-addressed cache, shard plans (specs/035)\n\nThe provable-incremental story vendorlib cannot tell, as pure planning\nlogic (zero deps, nothing wired into frames.js):\n- diff.ts: dirtyFrames classification per plan.md, governed by\n  conservative correctness (over-approximate freely, never under);\n  keyframe locality narrows to segments between byte-identical common",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "git commit -q -F - << 'EOF' BODY",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "git log --oneline -1; git rev-list --count origin/main..HEAD",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "grep -n \"UsageError\\|export function\\|^import\" packages/cli/src/inspect.ts | head -8; echo \"=== main dispatch:\"; grep -n \"case \\\"\\|COMMANDS\\|USAGE\" packages/cli/src/main.ts | head -20",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "S=\"$LOCALAPPDATA/Temp/claude/PROJDIR/SESSIONID/scratchpad\"; cd \"$S\" && node make-demo-v2.mjs >/dev/null && cd \"PATH\" && node packages/cli/bin/app.js inspect \"$S/demo-v2.json\" | head -8",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "rm -f packages/cli/dist/main.js && S=\"$LOCALAPPDATA/Temp/claude/PROJDIR/SESSIONID/scratchpad\"; node packages/cli/bin/app.js inspect \"$S/demo-v2.json\" | head -8",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "rm probe-tmp.mjs",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "until [ \"$(stat -c %s out/app-demo.mp4 2>/dev/null || echo 48)\" -gt 100000 ]; do sleep 15; done; echo \"encode flushing\"",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "ls -la out/app-demo.mp4 | awk '{print $5}'; ps -W 2>/dev/null | grep -ci chrome || true",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "S=\"$LOCALAPPDATA/Temp/claude/PROJDIR/SESSIONID/scratchpad\"; node packages/render-headless/frames.js --composition \"$S/demo-v2.json\" --pipe --quality good 2>&1 | tail -3 && cp out/app-demo.mp4 \"$S/app-demo-1080p.mp4\" && cp out/frame-hashes.json \"$S/v2-hashes.json\" && echo COPIED",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "S=\"$LOCALAPPDATA/Temp/claude/PROJDIR/SESSIONID/scratchpad\"; time node packages/render-headless/frames.js --composition \"$S/demo-v2.json\" --frames 40 --pipe 2>&1 | grep -E \"frames:\"",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "S=\"$LOCALAPPDATA/Temp/claude/PROJDIR/SESSIONID/scratchpad\"; node packages/render-headless/frames.js --composition \"$S/demo-v2.json\" --frames 300 --pipe --quality good 2>&1 | grep -E \"frames:\" ; cp out/app-demo.mp4 \"$S/demo-1080p-part1.mp4\"; cp out/frame-hashes.json \"$S/v2-part1-hashes.json\"; ls -la \"$S/demo-1080p-part1.mp4\" | awk '{print $5}'",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "S=\"$LOCALAPPDATA/Temp/claude/PROJDIR/SESSIONID/scratchpad\"; for f in 40 96 200; do ffmpeg -y -loglevel error -i \"$S/demo-1080p-part1.mp4\" -vf \"select=eq(n\\,$f)\" -vframes 1 \"$S/still-$f.png\"; done; ls \"$S\"/still-*.png | wc -l",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "S=\"$LOCALAPPDATA/Temp/claude/PROJDIR/SESSIONID/scratchpad\"; ffmpeg -y -loglevel error -i \"$S/demo-1080p-part1.mp4\" -vf \"select=eq(n\\,96)\" -vframes 1 \"$S/still-96.png\" && ls -la \"$S/still-96.png\" | awk '{print $5}'",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "ls specs/ | tail -8; echo \"=== search for unbuilt subsystems:\"; for t in particle camera parallax rapier physics webgpu lottie caption harfbuzz; do printf \"%-10s %s\\n\" \"$t\" \"$(grep -ril \"$t\" src/ packages/*/src packages/*/*.js 2>/dev/null | grep -v node_modules | head -2 | tr '\\n' ' ')\"; done",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "ls specs/ | wc -l; ls specs/ | tail -6; echo \"=== core size check:\"; ls -la dist/app.browser.js 2>/dev/null | awk '{print $5}'; gzip -c dist/app.browser.js 2>/dev/null | wc -c",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "gzip -c dist/app.browser.js | wc -c",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "python - << 'PY' BODY",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "git commit -q -m \"fix(repo): stop gitignoring packages/build - the bundle toolchain was never committed\"; git log --oneline -1; git ls-files packages/build",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "git ls-files packages/build; git log --oneline -2",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "git ls-files packages/build",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "git add STATUS.md README.md 2>&1 | grep -v warning; git commit -q -m \"docs: STATUS.md - measured implementation inventory, including failing gates\"; git log --oneline -1; git rev-list --count origin/main..HEAD",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "git rev-list --count origin/main..HEAD",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "git ls-files | grep -iE \"previewHtml|CanvasStage\"",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "node -e \"\nconst fs=require('fs');\nconst m=JSON.parse(fs.readFileSync('node_modules/pkg/dist/studio/index.js.map','utf8'));\nconst i=m.sources.findIndex(s=>/useTimelinePlayer/.test(s));\nconsole.log('idx',i,m.sources[i]);\nconst src=m.sourcesContent[i]||'';\nconst k=src.indexOf('getAdapter');\nconsole.log(src.slice(Math.max(0,k-2500),k+3000));\n\"",
+  "expected": "allow",
+  "class": "FP1"
+ },
+ {
+  "operation": "grep -o \"zd=[^,;]\\{0,60\\}\" node_modules/@pkg/core/dist/pkg.runtime.iife.js | head -5; echo \"---\"; grep -o \"hf-proxy[^\\\"]\\{0,30\\}\\|hfProxy[^\\\"]\\{0,30\\}\\|__hfProxy[^\\\"]\\{0,30\\}\" node_modules/@pkg/core/dist/pkg.runtime.iife.js | sort -u | head",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "grep -oE \"var zd=\\\"[^\\\"]+\\\"|zd=\\\"[^\\\"]+\\\"\" node_modules/@pkg/core/dist/pkg.runtime.iife.js | head -5",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "npx vitest run lib/__tests__/transportModule.test.ts 2>&1 | tail -30",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "npx vitest run lib/__tests__/transportModule.test.ts",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "npx vitest --run lib/__tests__/transportModule.test.ts",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "grep -E \"proj3_WORKSPACE\" .env.local 2>/dev/null | sed 's/=.*/=<set>/'; ls compositions 2>/dev/null | head",
+  "expected": "allow",
+  "class": "FP1"
+ },
+ {
+  "operation": "node -p \"const p=require('./package.json');JSON.stringify({dev:Object.keys(p.devDependencies||{}).filter(d=>/play|puppet/i.test(d)),deps:Object.keys(p.dependencies||{}).filter(d=>/play|puppet/i.test(d))})\"; ls compositions/intro compositions/template-demo 2>/dev/null",
+  "expected": "allow",
+  "class": "FP1"
+ },
+ {
+  "operation": "grep -n \"^| 22[0-9]\\|^| 21[0-9]\" docs/RELEASE-CHECKLIST.md | tail -12; echo \"=== header ===\"; grep -n \"^|---\\|^| # \\|^| ID\" docs/RELEASE-CHECKLIST.md | head -5",
+  "expected": "allow",
+  "class": "FP1"
+ },
+ {
+  "operation": "tail -4 docs/RELEASE-CHECKLIST.md | cut -c1-400",
+  "expected": "allow",
+  "class": "FP1"
+ },
+ {
+  "operation": "grep -rn \"srcset\" lib/ app/ --include=*.ts --include=*.tsx | head -12; echo \"=== img collection ===\"; grep -n \"querySelectorAll(\\\"img\\|img\\[src\\|images\\.push\\|assetsFound\" lib/captureUrl.ts lib/multiPageCapture.ts 2>/dev/null | head -15",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "grep -oE \"\\\"--(skip-assets|max-screenshots|capture-budget|skip-vision)\\\"\" node_modules/pkg/dist/cli.js | sort -u | head; echo \"=== how options are declared ===\"; grep -oE \".{120}--skip-assets.{160}\" node_modules/pkg/dist/cli.js | head -2",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "until grep -qE \"Tests +[0-9]+ (passed|failed)\" \"PATH\" 2>/dev/null; do sleep 15; done; grep -E \"Test Files|Tests \" \"PATH\" | tail -3",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "Get-NetTCPConnection -State Listen -LocalPort 3000,3001,3002 -ErrorAction SilentlyContinue | Select-Object LocalPort, OwningProcess | ForEach-Object { $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; [PSCustomObject]@{ Port=$_.LocalPort; PID=$_.OwningProcess; Name=$p.ProcessName; Started=$p.StartTime } } | Format-Table -AutoSize",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "$children = Get-CimInstance Win32_Process -Filter \"ParentProcessId=36152\" | Select-Object ProcessId, Name; $children; Stop-Process -Id 36152 -Force -Confirm:$false; Start-Sleep -Milliseconds 800; if (Get-NetTCPConnection -State Listen -LocalPort 3000 -ErrorAction SilentlyContinue) { \"PORT STILL BUSY\" } else { \"port 3000 free\" }",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "Stop-Process -Id 36152 -Force -Confirm:$false",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "taskkill //PID 36152 //T //F",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "rm -f lib/colorModule.ts && npm run tsc 2>&1 | tail -4 && git status --porcelain lib/ | head -5",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "Remove-Item -Path \"lib\\colorModule.ts\" -Confirm:$false",
+  "expected": "ask",
+  "class": "by-design"
+ },
+ {
+  "operation": "curl -s -o /dev/null -w \"HTTP %{http_code} in %{time_total}s\\n\" httPATH 2>&1 | tail -2",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "try { $r = Invoke-WebRequest -Uri \"httPATH\" -UseBasicParsing -TimeoutSec 25; \"HTTP $($r.StatusCode) · $($r.Content.Length) bytes\" } catch { \"REQUEST FAILED: $($_.Exception.Message)\" }",
+  "expected": "allow",
+  "class": "FP2"
+ },
+ {
+  "operation": "ls docs/CHANGELOG.md >/dev/null 2>&1 && echo \"CHANGELOG exists\" && tail -4 docs/CHANGELOG.md | cut -c1-200",
+  "expected": "allow",
+  "class": "by-design"
+ },
+ {
+  "operation": "npm run tsc 2>&1 | tail -3; echo \"=== checklist rows 229-236 ===\"; grep -c \"^- \\[ \\] \\*\\*23[0-6]\\|^- \\[ \\] \\*\\*229\" docs/RELEASE-CHECKLIST.md; echo \"=== registry rows today ===\"; grep -c \"2026-08-09 |\" docs/FIXED-REGISTRY.md; echo \"=== lessons ===\"; grep -c \"^## L-28[0-3]\" docs/LESSONS.md; echo \"=== handover present ===\"; ls docs/HANDOVER-2026-08-09-B-mirror-parity.md",
+  "expected": "allow",
+  "class": "FP1"
+ }
+]
