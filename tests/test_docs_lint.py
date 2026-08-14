@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -84,6 +85,39 @@ class InternalLeakTests(unittest.TestCase):
     def test_a_local_path_is_flagged(self) -> None:
         findings = lint_text("README.md", r"Run it from C:\Users\someone\Documents\project.")
         self.assertEqual(findings[0]["check"], "local-path")
+
+
+class GitIgnoredScopeTests(unittest.TestCase):
+    """Scratch orchestration docs under a gitignored directory are working
+    material, same as anything under `_PRIVATE_PARTS` - the .gitignore already
+    says so; the linter should not need a second, hand-maintained list."""
+
+    def _project_with_ignored_and_tracked_docs(self, tmp_path: Path) -> Path:
+        project = tmp_path
+        subprocess.run(["git", "init", "-q", str(project)],
+                        check=True, capture_output=True, timeout=30)
+        (project / ".gitignore").write_text("scratch/\n", encoding="utf-8")
+        scratch = project / "scratch"
+        scratch.mkdir()
+        (scratch / "notes.md").write_text(
+            "Chosen over MIT because of patents.\n", encoding="utf-8")
+        (project / "README.md").write_text(
+            "Chosen over MIT because of patents.\n", encoding="utf-8")
+        return project
+
+    def test_a_gitignored_document_produces_zero_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            project = self._project_with_ignored_and_tracked_docs(Path(raw))
+            report = lint_docs(project)
+            paths = {f["path"] for f in report["findings"]}
+            self.assertNotIn("scratch/notes.md", paths)
+
+    def test_the_same_finding_outside_the_ignored_directory_still_fires(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            project = self._project_with_ignored_and_tracked_docs(Path(raw))
+            report = lint_docs(project)
+            paths = {f["path"] for f in report["findings"]}
+            self.assertIn("README.md", paths)
 
 
 class ScopeTests(unittest.TestCase):
