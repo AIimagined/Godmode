@@ -14,7 +14,7 @@ from pathlib import Path
 import re
 from typing import Any
 
-from .godmode_anchor import canonical_path
+from .godmode_anchor import canonical_path, run_git
 from .godmode_errors import CorpusError
 
 ROLES_FILENAME = ".godmode-roles.json"
@@ -363,6 +363,33 @@ def _relevance_fallback(segments: list[Segment], terms: list[str]) -> dict[int, 
     return scores
 
 
+def _freshness_stamp(project: Path, path: str, is_git: bool) -> int:
+    """A file's edit recency, from a source that agrees across checkouts.
+
+    Filesystem mtime records when THIS checkout wrote the byte to disk, not
+    when its content last meaningfully changed - `git clone`/`git checkout`
+    do not preserve historical mtimes, so two clones of the identical commit
+    can disagree on file order even though project state is identical (the
+    concrete failure: `evals/fixtures/ranking.json` drifted between two
+    clones of the same commit). A commit's own timestamp is part of the
+    object the clone already received, so every clone of that commit agrees
+    on it regardless of checkout order - reading `git log` instead of
+    `stat()` fixes the instability at its source rather than papering over
+    one symptom of it. Non-git projects have no such record and no separate
+    checkout step to reorder against, so mtime remains the right (and only)
+    instrument there.
+    """
+    if is_git:
+        stamp = run_git(project, "log", "-1", "--format=%ct", "--", path)
+        if stamp and stamp.isdigit():
+            return int(stamp) * 1_000_000_000
+        return 0
+    try:
+        return (project / path).stat().st_mtime_ns
+    except OSError:
+        return 0
+
+
 def rank(
     segments: list[Segment], task: str, project: Path | None = None
 ) -> list[tuple[Segment, float]]:
@@ -387,12 +414,11 @@ def rank(
 
     freshness: dict[str, float] = {}
     if project is not None:
-        stamps: dict[str, int] = {}
-        for path in {segment.path for segment in segments}:
-            try:
-                stamps[path] = (project / path).stat().st_mtime_ns
-            except OSError:
-                stamps[path] = 0
+        is_git = (project / ".git").exists()
+        stamps: dict[str, int] = {
+            path: _freshness_stamp(project, path, is_git)
+            for path in {segment.path for segment in segments}
+        }
         newest_first = sorted(stamps, key=lambda p: (-stamps[p], p))
         # A small, bounded factor: freshness reorders equals, never outvotes weight.
         for position, path in enumerate(newest_first):
