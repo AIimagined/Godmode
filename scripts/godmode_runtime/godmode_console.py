@@ -154,8 +154,12 @@ from .godmode_sentinel import (
     CapabilityBroker,
     classify_action,
     find_secret_shapes,
+    pin_evaluator,
+    pinned_evaluators,
     read_password_stdin,
     stage_from_refusal,
+    unpin_evaluator,
+    unpin_operation_text,
 )
 
 
@@ -1748,6 +1752,56 @@ def cmd_guard(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult(preview)
 
 
+def cmd_protect(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """Pin, unpin, or list protected evaluator files (U-B2).
+
+    Pinning is tighten-only and needs no capability - the same reasoning
+    `pin_evaluator` itself carries. Unpinning is the operation that can
+    defeat the mechanism, so it is gated exactly like every other R5
+    operation: a staged capability is tried silently first (the same
+    ergonomics the hook already gives every other refusal an answer to),
+    then an explicit `--capability`, and only then refused - never executed
+    on a bare `--unpin` with nothing behind it.
+    """
+    _require_archive(runtime)
+    project_root = runtime.anchor.project_root
+    if args.list:
+        pins = pinned_evaluators(runtime.archive)
+        return CommandResult({
+            "evaluators": [{"path": path, "sha256": digest}
+                           for path, digest in sorted(pins.items())],
+        })
+    if args.pin:
+        result = pin_evaluator(runtime.archive, project_root, args.pin)
+        return CommandResult({"pinned": True, **result})
+
+    # --unpin
+    operation = unpin_operation_text(args.unpin)
+    broker = CapabilityBroker(runtime.archive)
+    staged = broker.consume_staged(operation)
+    if staged is not None:
+        result = unpin_evaluator(runtime.archive, project_root, args.unpin)
+        return CommandResult({"unpinned": True, "authorized_by": "staged capability",
+                              **result})
+    if args.capability:
+        broker.consume(operation, args.capability)
+        result = unpin_evaluator(runtime.archive, project_root, args.unpin)
+        return CommandResult({"unpinned": True, "capability_consumed": True, **result})
+    return CommandResult(
+        {
+            "unpinned": False,
+            "capability_required": True,
+            "reason": (
+                "unpinning a protected evaluator needs a capability; stage one with "
+                f"`godmode authorize stage --operation {json.dumps(operation)}` - it "
+                "needs the password from `godmode authorize setup`, is spent once, "
+                "and expires"
+            ),
+        },
+        exit_code=3,
+    )
+
+
 def cmd_authorize_setup(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     broker = CapabilityBroker(runtime.archive)
@@ -3033,6 +3087,18 @@ def _build_parser() -> argparse.ArgumentParser:
     guard.add_argument("--operation", required=True)
     guard.add_argument("--capability")
     guard.set_defaults(handler=cmd_guard)
+
+    protect = sub.add_parser(
+        "protect", help="Pin, unpin, or list protected evaluator files (U-B2)")
+    protect_target = protect.add_mutually_exclusive_group(required=True)
+    protect_target.add_argument("--pin", metavar="PATH",
+                                help="Pin a file as a protected evaluator; needs no capability")
+    protect_target.add_argument("--unpin", metavar="PATH",
+                                help="Unpin a protected evaluator; needs a capability")
+    protect_target.add_argument("--list", action="store_true",
+                                help="List currently pinned evaluators")
+    protect.add_argument("--capability", help="Capability token authorizing --unpin")
+    protect.set_defaults(handler=cmd_protect)
 
     authorize = sub.add_parser("authorize", help="Configure or issue local capabilities")
     authorize_sub = authorize.add_subparsers(dest="authorize_command", required=True)
