@@ -14,7 +14,6 @@ stay declared, so the ceiling report names which figures it measured.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
 import time
 from pathlib import Path
@@ -339,12 +338,26 @@ def run_experiment(
     never passes it sees exactly the prior behaviour - only wall time cuts
     the series short early, and when it does the recorded action carries
     `run_state: "truncated"` rather than pretending the bound was reached on
-    its own terms.
+    its own terms. Each individual attempt is bounded by whichever ceiling
+    is TIGHTER - the per-run `timeout` or what remains of `budget_s` - so a
+    single long-running attempt cannot itself blow past a declared budget
+    unkilled; only the loop noticing *afterward* that the series ran long
+    is not enough (review fix, U-R1).
+
+    Task 10b (review fix): a `maturity` field in the spec is validated by
+    `godmode_loop.declare_maturity`, which RAISES on an illegal value
+    ("unattended" included) before cycle one - the same refusal the loop
+    path gives, named the same way. A spec with no `maturity` at all is not
+    gated (every pre-existing `.godmode-experiment.json` keeps working
+    unchanged); the instant one declares a maturity, `experiment_ready`'s
+    findings (stop contract present via the `max_runs` already required
+    above, budget declared) become a real gate - blocking findings refuse
+    the run before cycle one, not just report on it afterward.
     """
     import shlex
-    import subprocess
 
-    from .godmode_stop import attempt as stop_attempt
+    from .godmode_loop import experiment_ready
+    from .godmode_stop import AttemptHandle
 
     path = project / EXPERIMENT_FILENAME
     if not path.is_file():
@@ -353,6 +366,13 @@ def run_experiment(
     for field in ("hypothesis", "command", "max_runs"):
         if field not in spec:
             raise ArchiveError(f"{EXPERIMENT_FILENAME}: $.{field} is required")
+    preflight = experiment_ready(spec)  # raises on an illegal declared maturity
+    if preflight["gated"] and preflight["blocking"]:
+        reasons = "; ".join(f["detail"] for f in preflight["findings"])
+        raise ArchiveError(
+            f"{EXPERIMENT_FILENAME} declares a maturity but is not pre-flight "
+            f"ready: {reasons}"
+        )
     success_exit = int(spec.get("success_exit", 0))
     max_runs = max(1, min(int(spec["max_runs"]), 20))  # deliberate ceiling: hard cap 20; raise if a real program needs more
     command = shlex.split(str(spec["command"]))
@@ -360,23 +380,31 @@ def run_experiment(
     runs: list[dict[str, Any]] = []
     succeeded = False
     truncated = False
-    with (stop_attempt(budget_s) if budget_s else _no_budget()) as handle:
-        for attempt in range(1, max_runs + 1):
-            if handle is not None and handle.remaining() <= 0:
+    series_deadline = time.monotonic() + float(budget_s) if budget_s else None
+    for attempt_number in range(1, max_runs + 1):
+        remaining = (series_deadline - time.monotonic()) if series_deadline is not None else None
+        if remaining is not None and remaining <= 0:
+            truncated = True
+            break
+        attempt_budget = min(timeout, remaining) if remaining is not None else timeout
+        handle = AttemptHandle(deadline=time.monotonic() + attempt_budget)
+        try:
+            result = handle.run(command, cwd=str(project))
+            code = result["returncode"]
+        except FileNotFoundError:
+            code = 127
+            result = {"run_state": "terminated"}
+        runs.append({"attempt": attempt_number, "exit": code})
+        if result["run_state"] == "truncated":
+            # Cut off by the series budget, not merely the unrelated per-run
+            # `timeout` ceiling: only when the budget was the tighter bound
+            # does the SERIES itself count as truncated, not just this attempt.
+            if remaining is not None and attempt_budget < timeout:
                 truncated = True
-                break
-            try:
-                done = subprocess.run(command, cwd=str(project), capture_output=True,
-                                      text=True, encoding="utf-8", errors="replace", timeout=timeout)
-                code = done.returncode
-            except FileNotFoundError:
-                code = 127
-            except subprocess.TimeoutExpired:
-                code = 124
-            runs.append({"attempt": attempt, "exit": code})
-            if code == success_exit:
-                succeeded = True
-                break
+            break
+        if code == success_exit:
+            succeeded = True
+            break
     run_state = "truncated" if truncated else "terminated"
     archive.append(
         "action", f"experiment:{str(spec['hypothesis'])[:80]}",
@@ -395,16 +423,9 @@ def run_experiment(
         "succeeded": succeeded,
         "bound": max_runs,
         "run_state": run_state,
+        "preflight": preflight,
         "verdict": verdict,
     }
-
-
-@contextmanager
-def _no_budget():
-    """Stand-in for `stop_attempt()` when `budget_s` is not declared - the
-    loop above then only ever checks `handle is not None`, which is False.
-    """
-    yield None
 
 
 def arbitrate(archive: Chronicle) -> dict[str, Any]:
