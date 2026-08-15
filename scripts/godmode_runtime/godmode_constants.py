@@ -16,7 +16,7 @@ EVENT_KINDS = frozenset(
         "claim", "criterion", "database", "decision", "differential", "documentation",
         "incident", "invariant", "inventory", "lesson", "metric", "obligation", "pin",
         "plan", "refusal", "request",
-        "session", "sprint", "verdict", "version",
+        "session", "sprint", "upstream-diff", "verdict", "version",
     }
 )
 

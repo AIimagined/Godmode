@@ -151,6 +151,63 @@ def _register_invariants(data: dict[str, Any]) -> None:
         )
 
 
+# B3-1's paired-verdict rule, checkable from `data` alone. Kept in sync with
+# godmode_upstream.DISPOSITIONS / BEHAVIOR_VERDICTS by hand, not by import -
+# same convention as _REGISTER_STATES above: this module stays dependency-
+# free with respect to every kind-owning module, not only the ones that
+# would actually cycle back through godmode_chronicle, so the guarantee
+# never depends on which kind-owning module happens to have been written
+# first. tests/test_upstream.py asserts the two tuples still agree.
+_UPSTREAM_DISPOSITIONS = ("adopt", "extend", "diverge-deliberately", "n/a-different-surface")
+_UPSTREAM_BEHAVIOR_VERDICTS = ("confirmed-we-have-it", "confirmed-we-dont", "unverified")
+
+
+def _upstream_diff_invariants(data: dict[str, Any]) -> None:
+    """B3-1: a `finding` that carries a `disposition` (the import verdict -
+    can this upstream symbol be reused as-is) must also carry a
+    `behavior_verdict` (the separately-required second verdict - does the
+    defect/capability this symbol implies also exist in our own independent
+    implementation). `n/a-different-surface` on the import question can
+    never stand in for the behavior answer, so it is held to this exactly
+    like every other disposition - see godmode_upstream.py's module
+    docstring for the full two-verdict contract this protects.
+
+    `godmode_upstream.record_upstream_diff` already refuses this before
+    ever calling `Chronicle.append`; this is the same defense-in-depth
+    `_register_invariants` and `_pin_invariants` above apply to their own
+    kinds, so a raw append cannot bypass what the owning function enforces.
+    A finding with `disposition: None` (undecided, not yet reviewed) passes
+    through unexamined - only a disposition that was actually SET incurs the
+    requirement.
+    """
+    findings = data.get("findings")
+    if not isinstance(findings, list):
+        return
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        disposition = finding.get("disposition")
+        if disposition is None:
+            continue
+        if disposition not in _UPSTREAM_DISPOSITIONS:
+            raise ArchiveError(
+                f"Unknown upstream-diff disposition {disposition!r}; expected "
+                f"one of {_UPSTREAM_DISPOSITIONS}"
+            )
+        behavior_verdict = finding.get("behavior_verdict")
+        if behavior_verdict is None:
+            raise ArchiveError(
+                "An upstream-diff finding cannot carry a disposition with no "
+                "behavior_verdict; 'n/a' on the import question can never "
+                "stand in for the behavior answer - refused"
+            )
+        if behavior_verdict not in _UPSTREAM_BEHAVIOR_VERDICTS:
+            raise ArchiveError(
+                f"Unknown upstream-diff behavior_verdict {behavior_verdict!r}; "
+                f"expected one of {_UPSTREAM_BEHAVIOR_VERDICTS}"
+            )
+
+
 def _pin_invariants(data: dict[str, Any]) -> None:
     """U-B2's protected-evaluator pins - the archived sha256 IS the security
     property this whole mechanism rests on. A pin record with no valid digest
@@ -194,4 +251,5 @@ KIND_VALIDATORS: dict[str, KindInvariant] = {
     "verdict": _verdict_invariants,
     "decision": _register_invariants,
     "pin": _pin_invariants,
+    "upstream-diff": _upstream_diff_invariants,
 }
