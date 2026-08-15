@@ -170,9 +170,21 @@ _GIT_REFUSE_CANDIDATES = [
 # (scripted-source-edit, database-mutation's verb-anchored half) are not
 # "heads" in this sense and are left out rather than misrepresented; each
 # candidate is verified against `classify_action` below.
+#
+# `move-item` (U-B2 fix-round-1) is deliberately ABSENT: it still sits in
+# `_ACTION_PATTERNS`'s filesystem-mutation entry, but a dedicated branch in
+# `_categorize` - checked first - now intercepts `mv`/`cp`/`Move-Item`/
+# `Copy-Item` before that entry is ever reached, classifying by DESTINATION
+# argument (`pinned-evaluator-mutation`, ordinary `worktree-file-mutation`,
+# or `unknown-command` when it cannot read one with confidence) rather than
+# unconditionally by name. A bare `move-item target` - one positional
+# argument - is exactly the shape that new branch cannot read a destination
+# from confidently, so it is `unknown-command` now, not
+# `filesystem-mutation`; this table generator's own candidate list follows
+# that move rather than asserting a bucket the sentinel no longer puts it in.
 _MUTATION_HEAD_CANDIDATES: dict[str, list[str]] = {
     "filesystem-mutation": [
-        "rm", "rmdir", "rd", "del", "remove-item", "move-item", "new-item",
+        "rm", "rmdir", "rd", "del", "remove-item", "new-item",
         "set-content", "add-content", "out-file", "clear-content",
         "rename-item",
     ],
