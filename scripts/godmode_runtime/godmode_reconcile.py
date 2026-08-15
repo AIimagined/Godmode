@@ -8,6 +8,7 @@ exit, not a convention.
 
 from __future__ import annotations
 
+import importlib
 import json
 import re
 from pathlib import Path
@@ -345,4 +346,193 @@ def guard_citations_resolve(archive: Any, project: Path) -> dict[str, Any]:
         "dead_citations": dead,
         "unanchored_guards": unanchored,
         "verdict": "resolved" if not dead and not unanchored else "guard-drift",
+    }
+
+
+# --- U-S2: the capability register (§20 applied to Godmode's own claims) ---
+#
+# `capabilities.json` is E52's defect (a capability statement with no machine
+# link to code) applied to Godmode's own capability list. Same discipline as
+# `guard_citations_resolve` above: both directions are drift. A `built` entry
+# whose pointer no longer resolves is a dead claim; an `unbuilt` or
+# `rejected` entry whose pointer DOES resolve is a status that went stale the
+# moment the code landed and nobody flipped the label.
+
+CAPABILITIES_FILENAME = "capabilities.json"
+
+
+def _strip_prefix(value: str, prefix: str) -> str:
+    return value[len(prefix):] if value.startswith(prefix) else value
+
+
+def load_capabilities(project: Path) -> dict[str, Any]:
+    path = Path(project) / CAPABILITIES_FILENAME
+    if not path.is_file():
+        raise ArchiveError(f"{CAPABILITIES_FILENAME} not found at the repository root")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ArchiveError(f"{CAPABILITIES_FILENAME} is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ArchiveError(f"{CAPABILITIES_FILENAME} must contain a JSON object")
+    return data
+
+
+def reconcile_capabilities(project: Path) -> dict[str, Any]:
+    """Every `built` capability's impl+guard pointers resolve; no stale label hides one.
+
+    `partial` entries are held to the weaker rule: any pointer they DO list
+    must resolve (a partial claim citing a file that is not there is not
+    partial, it is unbuilt with an aspiration). `unbuilt` and `rejected`
+    entries carry no pointers by design - a resolving pointer on either is
+    reported as `stale_status`, not silently accepted.
+    """
+    project = Path(project)
+    data = load_capabilities(project)
+    caps = data.get("capabilities", [])
+    dead: list[dict[str, Any]] = []
+    stale: list[dict[str, Any]] = []
+    debt: list[str] = []
+
+    for cap in caps:
+        cid = str(cap.get("id", "?"))
+        status = cap.get("status")
+        pointers = [_strip_prefix(p, "file:") for p in cap.get("impl", [])] + \
+                   [_strip_prefix(p, "test:") for p in cap.get("guard", [])]
+        pointers = [p for p in pointers if p]
+
+        if status == "built":
+            for p in pointers:
+                if not (project / p).is_file():
+                    dead.append({"id": cid, "path": p,
+                                "detail": "a 'built' entry's pointer does not resolve"})
+        elif status == "partial":
+            for p in pointers:
+                if not (project / p).is_file():
+                    dead.append({"id": cid, "path": p,
+                                "detail": "a 'partial' entry's listed pointer does not resolve"})
+        elif status in ("unbuilt", "rejected"):
+            if status == "unbuilt":
+                debt.append(cid)
+            for p in pointers:
+                if (project / p).is_file():
+                    stale.append({"id": cid, "path": p, "status": status,
+                                  "detail": f"a '{status}' entry names a pointer that resolves; "
+                                            "the status is stale and should be updated"})
+
+    return {
+        "checked": len(caps),
+        "dead_pointers": dead,
+        "stale_status": stale,
+        "capability_debt": sorted(debt),
+        "verdict": "reconciled" if not dead and not stale else "capability-drift",
+    }
+
+
+def reconcile_detectors(project: Path) -> dict[str, Any]:
+    """Every catalogued mistake-class detector id resolves to its function AND its test.
+
+    This is the fabrication-pattern catalog (Task 13b) held to the same
+    discipline as the capability register: an id with no function to call or
+    no test guarding it is a label, not a detector.
+    """
+    project = Path(project)
+    data = load_capabilities(project)
+    detectors = data.get("detectors", [])
+    dead: list[dict[str, Any]] = []
+
+    for detector in detectors:
+        did = str(detector.get("id", "?"))
+        file_path = _strip_prefix(detector.get("file", ""), "file:")
+        test_path = _strip_prefix(detector.get("test", ""), "test:")
+        function_name = detector.get("function", "")
+
+        if not file_path or not (project / file_path).is_file():
+            dead.append({"id": did, "path": file_path, "detail": "detector file does not resolve"})
+            continue
+        if not test_path or not (project / test_path).is_file():
+            dead.append({"id": did, "path": test_path, "detail": "detector guard test does not resolve"})
+
+        module_name = Path(file_path).stem
+        try:
+            module = importlib.import_module(f"godmode_runtime.{module_name}")
+        except ImportError as exc:
+            dead.append({"id": did, "path": module_name, "detail": f"module import failed: {exc}"})
+            continue
+        if not function_name or not hasattr(module, function_name):
+            dead.append({"id": did, "path": function_name,
+                        "detail": "detector function does not resolve in its module"})
+
+    return {
+        "checked": len(detectors),
+        "count": len(detectors),
+        "dead": dead,
+        "verdict": "reconciled" if not dead else "detector-drift",
+    }
+
+
+# --- U-S2/13c: the capability-coverage matrix, same discipline extended to docs ---
+
+_COVERAGE_ROW = re.compile(
+    r"^\|\s*(?P<class>[^|]+?)\s*\|\s*(?P<status>covered|partial|planned|not-claimed|roadmap)"
+    r"\s*\|\s*(?P<surface>.+?)\s*\|\s*$",
+    re.IGNORECASE,
+)
+_COVERAGE_POINTER = re.compile(r"`(file|test):([^`]+)`")
+
+
+def reconcile_capability_coverage(project: Path,
+                                  doc: str = "docs/CAPABILITY-COVERAGE.md") -> dict[str, Any]:
+    """Every `covered`/`partial` row's pointers resolve; no `planned`/`not-claimed` row's do.
+
+    Same both-directions discipline as `reconcile_capabilities`: a `covered`
+    or `partial` row that has drifted (its file was renamed or deleted) is
+    caught, and so is a boundary row (`planned`/`not-claimed`/`roadmap`)
+    whose pointer quietly started resolving without the status being
+    updated to say so. `partial` sits with `covered` here, not with the
+    boundary rows: a partial row's whole point is that PART of the class is
+    genuinely mechanized, so its listed pointers must be real too - a
+    partial claim citing nothing, or citing a dead path, is not partial, it
+    is unbuilt with an aspiration.
+    """
+    project = Path(project)
+    path = project / doc
+    if not path.is_file():
+        raise ArchiveError(f"{doc} not found")
+    rows: list[dict[str, Any]] = []
+    dead: list[dict[str, Any]] = []
+    stale: list[dict[str, Any]] = []
+
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = _COVERAGE_ROW.match(line.strip())
+        if not match or set(match.group("class")) <= {"-", " "}:
+            continue
+        klass = match.group("class")
+        status = match.group("status").lower()
+        surface = match.group("surface")
+        pointers = [p for _, p in _COVERAGE_POINTER.findall(surface)]
+        rows.append({"class": klass, "status": status, "pointers": len(pointers)})
+
+        if status in ("covered", "partial"):
+            if not pointers:
+                dead.append({"class": klass,
+                            "detail": f"a '{status}' row names no file:/test: pointer"})
+            for p in pointers:
+                if not (project / p).is_file():
+                    dead.append({"class": klass, "path": p,
+                                "detail": f"a '{status}' row's pointer does not resolve"})
+        else:
+            for p in pointers:
+                if (project / p).is_file():
+                    stale.append({"class": klass, "path": p, "status": status,
+                                  "detail": f"a '{status}' row names a pointer that resolves; "
+                                            "the status is stale and should be 'covered' or "
+                                            "'partial'"})
+
+    return {
+        "rows": len(rows),
+        "classes": [r["class"] for r in rows],
+        "dead_pointers": dead,
+        "stale_status": stale,
+        "verdict": "reconciled" if not dead and not stale else "coverage-drift",
     }

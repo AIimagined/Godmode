@@ -64,6 +64,8 @@ from .godmode_mistakes import stale_runtime
 from .godmode_netgate import differential as netgate_differential
 from .godmode_parity import absorption_check, parity_matrix, schema_ladder
 from .godmode_reconcile import classify_environment, reconcile_docs, reconcile_versions, record_triggers
+from .godmode_reconcile import reconcile_capabilities, reconcile_capability_coverage, reconcile_detectors
+from .godmode_minimality import minimality_report
 from .godmode_removal import REQUIRED_FIELDS as REMOVAL_FIELDS
 from .godmode_report import completion_report, render_markdown
 from .godmode_docslint import lint_docs
@@ -1135,7 +1137,27 @@ def cmd_release(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult(report, exit_code=0)
 
 
+def cmd_minimality(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    # No archive means no census/decay sections; the report says so rather
+    # than failing, the same policy every other archive-optional report uses.
+    archive = runtime.archive if runtime.archive.initialized() else None
+    report = minimality_report(Path(runtime.anchor.project_root), archive=archive)
+    return CommandResult(report)
+
+
 def cmd_capabilities(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if getattr(args, "reconcile", False):
+        # U-S2/13b/13c: the capability register, the detector catalog, and
+        # the capability-coverage matrix, all held to the same
+        # both-directions discipline in one report.
+        project = Path(runtime.anchor.project_root)
+        caps = reconcile_capabilities(project)
+        detectors = reconcile_detectors(project)
+        coverage = reconcile_capability_coverage(project)
+        report = {"capabilities": caps, "detectors": detectors, "coverage": coverage}
+        ok = (caps["verdict"] == "reconciled" and detectors["verdict"] == "reconciled"
+              and coverage["verdict"] == "reconciled")
+        return CommandResult(report, exit_code=0 if ok else 1)
     if getattr(args, "usage", False):
         # The product's own standard, applied to its own description of
         # itself: which declared surfaces the record shows were used.
@@ -2945,7 +2967,14 @@ def _build_parser() -> argparse.ArgumentParser:
     capabilities_parser.add_argument(
         "--usage", action="store_true",
         help="Report which declared surfaces this project has never used")
+    capabilities_parser.add_argument(
+        "--reconcile", action="store_true",
+        help="Check capabilities.json, its detector catalog, and the capability-coverage "
+             "matrix against shipped code and tests")
     capabilities_parser.set_defaults(handler=cmd_capabilities)
+    minimality_parser = sub.add_parser(
+        "minimality", help="Rank existing duplicate/orphan/seam/decay surfaces into one report")
+    minimality_parser.set_defaults(handler=cmd_minimality)
     inspect = sub.add_parser("inspect", help="Capture an on-demand repository snapshot")
     inspect.set_defaults(handler=cmd_inspect)
     resume = sub.add_parser("resume", help="Build a bounded continuity brief")
