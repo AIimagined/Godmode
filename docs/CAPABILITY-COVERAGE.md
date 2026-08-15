@@ -23,6 +23,11 @@ someone updates the row.
 | Content trust and injection defense | covered | Settings/MCP/skill/agent/command content scanned for instruction-shaped and secret-shaped text (`file:scripts/godmode_runtime/godmode_trust.py`, `test:tests/test_trust.py`) |
 | Session burn measurement | covered | Host-transcript counts only — tool calls, commands, tests, token usage, turns — content-free by construction (`file:scripts/godmode_runtime/godmode_session_log.py`, `test:tests/test_session_log.py`) |
 | Prose-restyling / token-burn reduction | not-claimed | Roadmap only. Godmode measures burn (session-log counts) and bounds its own context (a capped session brief); rewriting a host's or a model's output prose to use fewer tokens is a host output-style concern, not a native godmode mechanism, and is not claimed here. |
+| Observe posture: advisory-only gating with would-have-caught reporting | covered | Policy-declared observe mode converts every blocking path to a recorded advisory, announced at session start and surfaced by assess; digest renders counts only (`file:hooks/godmode_session_hook.py`, `file:scripts/godmode_runtime/godmode_roi.py`, `test:tests/test_observe_mode.py`) |
+| Graduated starting postures | covered | `init --profile novice|standard|strict` sets starting policy on the tighten-only ratchet; no profile can loosen an explicit setting (`file:scripts/godmode_runtime/godmode_profile.py`, `test:tests/test_profiles.py`) |
+| Recurring-ask surfacing | covered | Request-ledger clusters repeated asks across sessions into SOFT charter-rule proposals; term display is redaction-guarded, promotion is human-only (`file:scripts/godmode_runtime/godmode_recurrence.py`, `test:tests/test_recurrence.py`) |
+| Doc freshness advisories | covered | Advisory-only lint for open markers without a dated check and living-doc title collisions without a supersedes pointer (`file:scripts/godmode_runtime/godmode_docslint.py`, `test:tests/test_docs_lint.py`) |
+| Demonstration script | covered | A two-minute terminal walk-through whose commands are pinned against the real CLI parser (`file:docs/DEMO.md`, `test:tests/test_demo_doc.py`) |
 
 ## Regenerating this table
 
