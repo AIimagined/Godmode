@@ -9,7 +9,9 @@ lower-weighted document, and the order never depends on input order.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -75,6 +77,63 @@ class RankContractTests(unittest.TestCase):
                         _segment("fresh.md", 1.0, "token rotation notes")]
             ordered = [s.path for s, _ in rank(segments, "token rotation", project=project)]
             self.assertEqual(ordered[0], "fresh.md")
+
+
+def _git(project: Path, *args: str, env: dict[str, str] | None = None) -> None:
+    full_env = dict(os.environ)
+    if env:
+        full_env.update(env)
+    subprocess.run(["git", "-C", str(project), *args], check=True,
+                   capture_output=True, text=True, env=full_env)
+
+
+class GitCheckoutOrderIndependenceTests(unittest.TestCase):
+    """Fix round 1 (adjudication a): freshness must not depend on filesystem
+    mtime for a git project. `git clone`/`git checkout` do not preserve
+    historical mtimes, so two clones of the identical commit disagreed on
+    file order purely from checkout timing - the concrete failure was
+    `evals/fixtures/ranking.json` drifting between two clones of one
+    commit. Freshness now reads `git log`'s commit timestamp, which is part
+    of the commit object every clone already has, so it agrees regardless
+    of when or in what order the working tree was written to disk.
+    """
+
+    def test_ranking_is_identical_regardless_of_on_disk_mtime_order(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            _git(project, "init", "-q")
+            _git(project, "config", "user.email", "test@example.com")
+            _git(project, "config", "user.name", "Test")
+
+            (project / "older.md").write_text("token rotation notes", encoding="utf-8")
+            _git(project, "add", "older.md")
+            _git(project, "commit", "-q", "-m", "older", env={
+                "GIT_AUTHOR_DATE": "2020-01-01T00:00:00", "GIT_COMMITTER_DATE": "2020-01-01T00:00:00"})
+
+            (project / "newer.md").write_text("token rotation notes", encoding="utf-8")
+            _git(project, "add", "newer.md")
+            _git(project, "commit", "-q", "-m", "newer", env={
+                "GIT_AUTHOR_DATE": "2024-01-01T00:00:00", "GIT_COMMITTER_DATE": "2024-01-01T00:00:00"})
+
+            segments = [_segment("older.md", 1.0, "token rotation notes"),
+                        _segment("newer.md", 1.0, "token rotation notes")]
+
+            baseline = [s.path for s, _ in rank(segments, "token rotation", project=project)]
+            # By git history, "newer.md" is the more recently committed file -
+            # freshness should favour it regardless of what the filesystem says.
+            self.assertEqual(baseline[0], "newer.md")
+
+            # Shuffle on-disk mtimes to the OPPOSITE of commit order - exactly
+            # what a real checkout can do (checkout writes files in whatever
+            # order the filesystem layer chooses, not commit order). A
+            # mtime-driven scorer would flip; a git-log-driven one must not.
+            now = 1_700_000_000.0
+            os.utime(project / "older.md", (now + 1000, now + 1000))
+            os.utime(project / "newer.md", (now, now))
+
+            shuffled = [s.path for s, _ in rank(segments, "token rotation", project=project)]
+            self.assertEqual(shuffled, baseline)
+            self.assertEqual(shuffled[0], "newer.md")
 
 
 class BriefEquivalenceTests(unittest.TestCase):
