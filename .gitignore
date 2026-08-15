@@ -10,7 +10,6 @@
 .evidence/
 .decisions/
 .lessons/
-/[private]
 /v*r*j.md
 
 # Defensive private-record patterns.
@@ -39,3 +38,6 @@ build/
 .DS_Store
 Thumbs.db
 docs-site/
+
+# Host workspace state (worktree checkouts, agent scratch) - never shippable.
+.claude/

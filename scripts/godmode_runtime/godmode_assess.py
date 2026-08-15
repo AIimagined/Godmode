@@ -20,7 +20,9 @@ from typing import Any
 from .godmode_atlas import build as build_atlas
 from .godmode_charter import ADVISORY, HARD, SOFT, compile_charter
 from .godmode_corpus import resolve_roles, segment_document
-from .godmode_errors import GodmodeError
+from .godmode_errors import ArchiveError, GodmodeError
+from .godmode_reconcile import reconcile_capabilities
+from .godmode_sentinel import GATE_MODE_OBSERVE, local_authorization_policy
 from .godmode_status import authority_claims
 
 # What an agent will realistically spend reading rules before starting work.
@@ -31,10 +33,96 @@ def _finding(severity: str, code: str, detail: str, remedy: str) -> dict[str, st
     return {"severity": severity, "code": code, "detail": detail, "remedy": remedy}
 
 
-def assess(project: Path, budget: int = TYPICAL_COLD_START_TOKENS) -> dict[str, Any]:
+def _reviewed_advisory_reasons(archive: Any) -> dict[str, str]:
+    """rule_id -> the reason a human recorded for why it stays unenforced.
+
+    A rule with no enforcement is a wish; a rule with no enforcement AND no
+    stated reason is a wish nobody has examined. `charter --review-advisory`
+    writes the `decision` record this reads (subject
+    `charter-advisory-reviewed:<rule-id>`, data.reason). Best-effort: a
+    missing or unreadable archive means no rule has been reviewed yet, not
+    an error worth failing assess over.
+    """
+    if archive is None:
+        return {}
+    reasons: dict[str, str] = {}
+    try:
+        records = archive.read_events()
+    except Exception:  # noqa: BLE001 - assess degrades, never fails, on this
+        return {}
+    for record in records:
+        if record.get("kind") != "decision":
+            continue
+        subject = str(record.get("subject", ""))
+        if not subject.startswith("charter-advisory-reviewed:"):
+            continue
+        rule_id = subject[len("charter-advisory-reviewed:"):]
+        reason = str((record.get("data") or {}).get("reason", "")).strip()
+        if rule_id and reason:
+            reasons[rule_id] = reason
+    return reasons
+
+
+def _planted_rule_ids(archive: Any) -> set[str]:
+    """HARD rule ids that have EVER been observed failing under a planted violation.
+
+    Archive-wide, not session-scoped - `plant_and_observe`'s green-red-green
+    sequence is a lifetime fact about whether the guard mechanism itself can
+    catch a violation, unlike `gate()`'s attested_rule_ids (which requires
+    fresh per-session attestation for a different purpose: whether THIS
+    session did its mandated steps). Only status "ran" counts - "blocked"
+    means the sequence did not prove out (stayed green under the plant, or
+    never returned to green after restoring), and a plant that could not
+    prove itself is not evidence the guard works.
+    """
+    if archive is None:
+        return set()
+    covered: set[str] = set()
+    try:
+        records = archive.read_events()
+    except Exception:  # noqa: BLE001 - assess degrades, never fails, on this
+        return set()
+    for record in records:
+        if record.get("kind") != "attestation":
+            continue
+        data = record.get("data") or {}
+        if data.get("status") == "ran" and str(record.get("subject", "")).startswith("guard:"):
+            covered.update(data.get("rule_ids", []))
+    return covered
+
+
+def assess(project: Path, budget: int = TYPICAL_COLD_START_TOKENS,
+          archive: Any = None) -> dict[str, Any]:
     """Measure whether this project's own guidance can be complied with."""
     findings: list[dict[str, str]] = []
     report: dict[str, Any] = {"project": project.name, "budget": budget}
+
+    # U-E7: observe mode is a loosening of enforcement, and the operator
+    # directive requires it stay explicit and loud - `assess` is where an
+    # operator checks a project's posture, so it states this one always,
+    # not only when something else is already wrong. Same seam every other
+    # observe-mode reader uses (`local_authorization_policy`); a malformed
+    # or unreadable policy degrades to "enforce" here exactly as it does in
+    # the hook, never to a crashed `assess` run. `archive=None` (assess run
+    # without one) also reads as "enforce": the policy file's `gate_mode`
+    # is unreachable without an archive to root the read against.
+    gate_mode = "enforce"
+    if archive is not None:
+        try:
+            if local_authorization_policy(archive).get("gate_mode") == GATE_MODE_OBSERVE:
+                gate_mode = GATE_MODE_OBSERVE
+        except GodmodeError:
+            gate_mode = "enforce"
+    report["gate_mode"] = gate_mode
+    if gate_mode == GATE_MODE_OBSERVE:
+        findings.append(_finding(
+            "medium", "gate-observe-mode",
+            "gate_mode is 'observe' in .godmode-authorization-policy.json: every "
+            "deny/ask this project's gate would otherwise produce is recorded as "
+            "an advisory refusal instead - nothing is blocked.",
+            "Read the would-have-caught counts with `godmode roi --digest`; "
+            "remove gate_mode from the policy file to return to enforcement.",
+        ))
 
     resolution = resolve_roles(project)
     segments = []
@@ -52,7 +140,15 @@ def assess(project: Path, budget: int = TYPICAL_COLD_START_TOKENS) -> dict[str, 
         "segments": len(segments),
         "tokens_to_read_everything": required_tokens,
         "times_over_budget": ratio,
-        "missing_roles": sorted({role for role, _ in resolution.missing}),
+        # A role's `missing` entries are its unmatched CANDIDATE PATTERNS, not
+        # a verdict on the role - operating-guide binds fine through GODMODE.md
+        # while OPERATING-GUIDE.md/AGENTS.md/CLAUDE.md all miss, and a role
+        # already satisfied by one pattern must never read as missing because
+        # its OTHER candidates didn't also happen to exist.
+        "missing_roles": sorted(
+            {role for role, _ in resolution.missing}
+            - {b.role for b in resolution.bindings}
+        ),
         "collisions": [{"path": p, "roles": list(r)} for p, r in resolution.collisions],
     }
 
@@ -90,12 +186,20 @@ def assess(project: Path, budget: int = TYPICAL_COLD_START_TOKENS) -> dict[str, 
         charter = compile_charter(project)
         enforceable = charter["enforcement"][HARD] + charter["enforcement"][SOFT]
         share = round(enforceable / charter["rules"], 3) if charter["rules"] else 0.0
+        reviewed = _reviewed_advisory_reasons(archive)
+        advisory_rules = [r for r in charter["compiled"] if r["enforcement"] == ADVISORY]
+        unexplained = [r["id"] for r in advisory_rules if r["id"] not in reviewed]
+        planted = _planted_rule_ids(archive)
+        hard_rules = [r for r in charter["compiled"] if r["enforcement"] == HARD]
+        unplanted = [r["id"] for r in hard_rules if r["id"] not in planted]
         report["charter"] = {
             "rules": charter["rules"],
             "hard": charter["enforcement"][HARD],
             "soft": charter["enforcement"][SOFT],
             "advisory": charter["enforcement"][ADVISORY],
             "checkable_share": share,
+            "advisory_unexplained": unexplained,
+            "hard_unplanted": unplanted,
         }
         if charter["rules"] and share < 0.25:
             findings.append(_finding(
@@ -106,6 +210,25 @@ def assess(project: Path, budget: int = TYPICAL_COLD_START_TOKENS) -> dict[str, 
             ))
     except GodmodeError as exc:
         report["charter"] = {"unavailable": str(exc)[:160]}
+
+    # U-S2: capability register debt, surfaced instead of hidden in a
+    # separate command nobody remembers to run. A project with no
+    # capabilities.json (every project but this one, today) reports an
+    # empty debt list rather than an error - the register is Godmode's own
+    # claim about itself, not a requirement it imposes on every project.
+    try:
+        capability_reconcile = reconcile_capabilities(project)
+        report["capability_debt"] = capability_reconcile["capability_debt"]
+        if capability_reconcile["verdict"] != "reconciled":
+            findings.append(_finding(
+                "high", "capability-drift",
+                f"{len(capability_reconcile['dead_pointers'])} dead pointer(s) and "
+                f"{len(capability_reconcile['stale_status'])} stale status label(s) in "
+                "capabilities.json.",
+                "Run `godmode capabilities --reconcile` and fix each dead or stale entry.",
+            ))
+    except ArchiveError:
+        report["capability_debt"] = []
 
     atlas = build_atlas(project)
     diagnosis = atlas.diagnose()

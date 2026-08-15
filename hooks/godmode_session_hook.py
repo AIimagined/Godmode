@@ -12,22 +12,22 @@ from typing import Any
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
+# Only names every `pre-action` call pays for. `pre-action` fires once per
+# tool call - the hot path - while session-start/user-prompt/pre-compact/
+# session-end fire once or a few times per session; their modules
+# (charter, corpus, drift's compare, lens, requests, contribution,
+# session_log, and the capability broker's secrets/getpass/hmac chain) are
+# imported inside the branch that actually uses them, below, instead of
+# paying for seven modules a mutating tool call never touches.
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_runtime.godmode_errors import GodmodeError  # noqa: E402
 from godmode_runtime.godmode_attest import attested_rule_ids, latest_session  # noqa: E402
-from godmode_runtime.godmode_charter import compile_charter  # noqa: E402
-from godmode_runtime.godmode_corpus import resolve_roles  # noqa: E402
-from godmode_runtime.godmode_requests import record_request  # noqa: E402
-from godmode_runtime.godmode_drift import capabilities as host_capabilities  # noqa: E402
-from godmode_runtime.godmode_drift import compare as compare_sessions  # noqa: E402
-from godmode_runtime.godmode_fence import design_verdict, fence_verdict  # noqa: E402
-from godmode_runtime.godmode_lens import build_context_brief  # noqa: E402
-from godmode_runtime.godmode_contribution import contribution  # noqa: E402
-from godmode_runtime.godmode_contribution import render_line as render_contribution  # noqa: E402
 from godmode_runtime.godmode_guardrails import check_ceilings  # noqa: E402
 from godmode_runtime.godmode_guardrails import meter_tool_call, tool_operation, watchdog  # noqa: E402
-from godmode_runtime.godmode_sentinel import CapabilityBroker, classify_action  # noqa: E402
+from godmode_runtime.godmode_sentinel import (  # noqa: E402
+    GATE_MODE_OBSERVE, classify_action, evidence_pipe_advisory,
+    local_authorization_policy)
 
 
 CLAUDE_CONTEXT_LIMIT = 9_000
@@ -98,6 +98,13 @@ def _session_obligations(anchor: Any, archive: Chronicle) -> dict[str, Any]:
     adapter is worse than none. Any failure here degrades to a stated limitation
     instead of taking the session down.
     """
+    # Deferred: this function runs once per session, on session-start only,
+    # so paying import cost here never touches the per-tool-call hot path.
+    from godmode_runtime.godmode_charter import compile_charter
+    from godmode_runtime.godmode_corpus import resolve_roles
+    from godmode_runtime.godmode_drift import capabilities as host_capabilities
+    from godmode_runtime.godmode_drift import compare as compare_sessions
+
     project = Path(anchor.project_root)
     obligations: dict[str, Any] = {}
     try:
@@ -145,6 +152,25 @@ def _session_obligations(anchor: Any, archive: Chronicle) -> dict[str, Any]:
         "host": surface["host"],
         "unavailable": surface["unavailable"],
     }
+    # U-E7: observe mode must be impossible to enter silently, which means
+    # every session that opens under it is told so at open, not merely at
+    # the moment a call would have been blocked. Best-effort like every
+    # other obligation above: a malformed policy file degrades to "not
+    # observe" here exactly as it does in the pre-action path below, never
+    # to a crashed session-start hook.
+    try:
+        policy = local_authorization_policy(archive)
+    except GodmodeError:
+        policy = {}
+    if policy.get("gate_mode") == GATE_MODE_OBSERVE:
+        obligations["enforcement"]["gate_mode"] = GATE_MODE_OBSERVE
+        obligations["enforcement"]["notice"] = (
+            "gate in OBSERVE mode - nothing will be blocked; every deny/ask "
+            "this session would have produced is instead recorded as an "
+            "advisory refusal (`godmode roi --digest` reads them back). "
+            "Entered via .godmode-authorization-policy.json's gate_mode - "
+            "edit that file to return to enforcement."
+        )
     return obligations
 
 
@@ -172,6 +198,15 @@ def _session_obligations(anchor: Any, archive: Chronicle) -> dict[str, Any]:
 _REFUSE_OUTRIGHT = frozenset({"R5"})
 
 
+def _broker(archive: Chronicle) -> Any:
+    # Deferred: CapabilityBroker drags secrets/hmac/getpass into the import
+    # graph, which only the two consume branches below ever need - the
+    # ordinary allow path (the overwhelming majority of tool calls) never
+    # pays for them.
+    from godmode_runtime.godmode_sentinel import CapabilityBroker
+    return CapabilityBroker(archive)
+
+
 def _decision_for(preview: dict[str, Any]) -> str:
     """`ask` or `deny`, from the tier the classifier already computed.
 
@@ -190,6 +225,79 @@ def _decision_for(preview: dict[str, Any]) -> str:
     if preview.get("design_block"):
         return "deny"
     return "deny" if preview.get("tier") in _REFUSE_OUTRIGHT else "ask"
+
+
+def _apply_observe_mode(archive: Chronicle, tool: str, operation: str,
+                        preview: dict[str, Any]) -> dict[str, Any]:
+    """U-E7: convert a would-have-blocked decision into an advisory.
+
+    Called exactly once per call, and only when the local policy's
+    `gate_mode` is `godmode_sentinel.GATE_MODE_OBSERVE` (entry requires that
+    exact, validated file edit - see `CapabilityBroker._policy()` - never
+    `init --profile`, which stays enforcement-only by design; see
+    `godmode_profile.py`'s module docstring) AND only after every check that
+    can set `preview["allow"] = False` has already run: ceilings, the
+    watchdog, the classifier's own ask/deny split, the design boundary, the
+    scope fence. This is the single point downstream of all of them, so it
+    is the single point observe mode needs to touch - every detector and
+    gate above keeps classifying exactly as it always did; only what
+    happens with a "no" changes.
+
+    The fast gate (`hooks/godmode_gate_fast.py`) is untouched by this unit:
+    its allow path was already silent, and every escalation reaches this
+    hook, where the conversion below applies uniformly regardless of which
+    check produced the "no".
+
+    Two things happen, never a third: an archive record - the SAME
+    `refusal` kind `stage_from_refusal`/`roi_report` already read, with
+    `observed: True` added - and `allow` flips from False to True (never
+    the reverse: a malformed or unreadable policy already resolved to "not
+    observe" before this function is ever called, so fail-open is
+    unaffected). No `permissionDecision` is emitted for this call; the
+    advisory is printed the same way an allowed call's evidence-pipe
+    advisory already is (`systemMessage`, no `hookSpecificOutput`) - which
+    is what keeps the host's silence-is-allow contract intact even for a
+    call that has something loud to say.
+
+    `stage_from_refusal` treats an `observed: True` refusal as never
+    stageable (its own docstring names the decision); `godmode_roi.py`
+    excludes it from `gate.denied` - that bucket counts real enforcement
+    outcomes, not hypothetical ones - and folds it instead into `godmode
+    roi --digest`'s would-have-caught counts, labeled `would-have-denied`/
+    `would-have-asked` (an event label, never a prevention or savings
+    claim - same causal-denylist discipline as U-E1).
+
+    Best-effort recording, exactly like the enforcement-mode write it
+    replaces: a run that cannot be recorded must still be allowed to
+    continue under a posture whose entire point is "never block".
+    """
+    would_have = "ask" if _decision_for(preview) == "ask" else "deny"
+    try:
+        archive.append(
+            "refusal",
+            str(preview.get("category", "refusal"))[:200] or "refusal",
+            {
+                "operation": operation[:500],
+                "tool": tool or "operation",
+                "tier": str(preview.get("tier", "R?")),
+                "category": preview.get("category", "unclassified-mutation"),
+                "observed": True,
+                "would_have": would_have,
+            },
+            evidence=[],
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    reason = str(preview.get("reason") or preview.get("category", "operation"))[:300]
+    preview["allow"] = True
+    preview["observed"] = True
+    preview["observe_advisory"] = (
+        "OBSERVE MODE - nothing is blocked: this call would have been "
+        f"{'asked about' if would_have == 'ask' else 'denied'} "
+        f"({preview.get('category', 'unclassified-mutation')}, "
+        f"{preview.get('tier', 'R?')}). {reason}"
+    )[:500]
+    return preview
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -233,6 +341,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.event == "session-start":
+            from godmode_runtime.godmode_lens import build_context_brief
             brief = build_context_brief(anchor, archive)
             brief["obligations"] = _session_obligations(anchor, archive)
             if claude_session:
@@ -253,6 +362,7 @@ def main(argv: list[str] | None = None) -> int:
             # more thing to answer beside the work already running.
             prompt = str(submitted.get("prompt", ""))
             try:
+                from godmode_runtime.godmode_requests import record_request
                 record_request(
                     archive, prompt,
                     session=str(submitted.get("session_id") or "") or None,
@@ -266,6 +376,20 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.event in {"pre-compact", "session-end"}:
+            if args.event == "session-end":
+                # Best-effort, counts-only measurement of the host's own
+                # transcript. Never blocks the checkpoint below: a missing
+                # transcript, an unreadable one, or any other failure here
+                # must not cost the operator the checkpoint this branch
+                # exists to record.
+                try:
+                    from godmode_runtime.godmode_session_log import record_measurement
+                    record_measurement(
+                        archive, submitted.get("transcript_path"),
+                        session=str(submitted.get("session_id") or "") or None,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
             summary = str(submitted.get("summary", "")).strip()[:1000]
             if not summary:
                 print(json.dumps({"godmode": "no-structured-checkpoint", "stored": False}))
@@ -288,6 +412,8 @@ def main(argv: list[str] | None = None) -> int:
             # when nothing fired, and switched off by .godmode-report.json.
             session = latest_session(archive)
             if session:
+                from godmode_runtime.godmode_contribution import contribution
+                from godmode_runtime.godmode_contribution import render_line as render_contribution
                 summary = render_contribution(
                     contribution(archive, Path(anchor.project_root), session))
                 if summary:
@@ -328,11 +454,40 @@ def main(argv: list[str] | None = None) -> int:
                     "session; resolve the pattern before the next tool call"
                 )
 
+        # U-S4 approval-declarations - minimal isolated block. The local
+        # policy's `password_required`/`approval_required` widen the
+        # protected set (godmode_sentinel.classify_action's own
+        # `extra_protected`/`require_approval`); read here, right before the
+        # call that needs it, so this preview is what a declared category
+        # actually gets rather than the un-widened default it silently fell
+        # back to before. A malformed policy file is its own failure, not
+        # this gate's: caught locally and treated as "no widening this call"
+        # rather than left to propagate into the broad GodmodeError handler
+        # around this whole function, which degrades to allowing everything.
+        try:
+            policy = local_authorization_policy(archive)
+        except GodmodeError:
+            policy = {}
+        # U-E7: read once, alongside password_required/approval_required
+        # above (same seam, same malformed-file degrade-to-"not observe"
+        # behaviour). `observe` gates ONLY the conversion at the bottom of
+        # this block, after every check below has already decided whether
+        # this call would be denied or asked about - see
+        # `_apply_observe_mode`'s docstring for why that ordering matters.
+        observe = policy.get("gate_mode") == GATE_MODE_OBSERVE
         # The root is passed, not inferred: containment decides whether an edit
         # is ordinary work, and without it every edit the host sends - always
         # an absolute path - was judged to be outside the tree and refused.
+        # `archive=archive` (U-B2): a pinned evaluator's Edit/Write payload
+        # is denied here, at the same call every other protected category
+        # already goes through - the archive is the authoritative pin
+        # store, and this is the one call site that has it in scope.
         preview = classify_action(
-            operation, project_root=Path(anchor.project_root)) if operation else {
+            operation, project_root=Path(anchor.project_root),
+            archive=archive,
+            extra_protected=policy.get("password_required", ()),
+            require_approval=policy.get("approval_required", ()),
+        ) if operation else {
             "protected": True, "category": "unclassified-mutation",
             "impact": ["no operation described"]}
         preview["executes_operation"] = False
@@ -347,7 +502,7 @@ def main(argv: list[str] | None = None) -> int:
             preview["governance_block"] = True
         elif not preview["protected"]:
             preview["allow"] = True
-        elif (staged := CapabilityBroker(archive).consume_staged(operation)) is not None:
+        elif (staged := _broker(archive).consume_staged(operation)) is not None:
             # An operator authorised this exact command with the password, and
             # left it where the hook can read it. Without this the refusal
             # named a remedy nobody could perform, so the only answer to a
@@ -356,7 +511,7 @@ def main(argv: list[str] | None = None) -> int:
             preview["capability_consumed"] = True
             preview["authorized_by"] = "staged capability"
         elif submitted.get("capability"):
-            CapabilityBroker(archive).consume(operation, str(submitted["capability"]))
+            _broker(archive).consume(operation, str(submitted["capability"]))
             preview["allow"] = True
             preview["capability_consumed"] = True
         else:
@@ -380,6 +535,34 @@ def main(argv: list[str] | None = None) -> int:
                     + ". Approve to run it."
                 )
             else:
+                # Recorded here, in the full escalation path only - the fast
+                # gate stays IO-free by contract, and this branch is where a
+                # refusal is actually born. Bounded so the record cannot grow
+                # the archive from an unbounded command line, and best-effort:
+                # a refusal that failed to record must still refuse, the same
+                # way the checkpoint and prompt records above degrade rather
+                # than take the hook down with them.
+                #
+                # Skipped under observe (U-E7): the single, later call to
+                # `_apply_observe_mode` writes the record for this call
+                # instead, with `observed: True` set - writing it here too
+                # would double-record the same decision, once enforced and
+                # once advisory, for a call that was never actually denied.
+                if not observe:
+                    try:
+                        archive.append(
+                            "refusal",
+                            str(preview["category"])[:200] or "refusal",
+                            {
+                                "operation": operation[:500],
+                                "tool": tool or "operation",
+                                "tier": str(preview.get("tier", "R?")),
+                                "category": preview["category"],
+                            },
+                            evidence=[],
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
                 preview["reason"] = (
                     f"refused: this is irreversible ({preview['category']}, "
                     f"{preview.get('tier', 'R?')})"
@@ -388,7 +571,10 @@ def main(argv: list[str] | None = None) -> int:
                     "stage a capability for this exact command: `godmode "
                     "authorize stage --operation "
                     f"{json.dumps(operation[:200])}` - it needs the password "
-                    "from `godmode authorize setup`, is spent once, and expires."
+                    "from `godmode authorize setup`, is spent once, and expires. "
+                    "In a hosted session, type it with a leading '!' to run it "
+                    "from the prompt without leaving the conversation.\n"
+                    "! godmode authorize stage --from-last-refusal"
                 )
 
         # The fence, applied last and only to what would otherwise proceed. It
@@ -406,6 +592,10 @@ def main(argv: list[str] | None = None) -> int:
         if preview.get("allow") and tool in _FENCED_TOOLS:
             target = str((submitted.get("tool_input") or {}).get("file_path", "")).strip()
             if target:
+                # Deferred: only Edit/Write-class tools pay for the fence
+                # module - the far more common read-only and R0-R2 tool
+                # calls never reach this branch.
+                from godmode_runtime.godmode_fence import design_verdict, fence_verdict
                 # The design boundary is checked first and denies outright. It
                 # is project state rather than task state, and the operator
                 # said this one needs their permission - a one-key `ask` in the
@@ -425,9 +615,33 @@ def main(argv: list[str] | None = None) -> int:
                         preview["fence"] = fenced["fence"]
                         preview["reason"] = f"{fenced['detail']}. {fenced['remedy']}"
 
+        # U-E7 observe mode: the single point every check above converges at.
+        # Ceilings, the watchdog, the classifier's ask/deny split, the design
+        # boundary, and the scope fence have all already run and each may
+        # have set `preview["allow"] = False` above - this is deliberately
+        # placed after every one of them so the conversion is total, not a
+        # partial list of "the paths someone remembered to route through
+        # observe mode". The fast gate stays out of this entirely: its allow
+        # path was already silent and untouched, and every escalation lands
+        # here, where this already applies.
+        if observe and not preview.get("allow", True):
+            preview = _apply_observe_mode(archive, tool, operation, preview)
+
         if pretool:
             # Silence is the allow signal in this contract; only a refusal speaks,
             # so an allowed tool call costs the host nothing but the exit code.
+            if preview["allow"] and operation:
+                # An allowed call may still deserve one sentence: a test run
+                # piped through a truncating filter destroys the evidence the
+                # run exists to produce, or (U-E7) this call would have been
+                # denied/asked about and observe mode let it through anyway -
+                # the classifier cannot know which run is the deciding one,
+                # and observe mode cannot be silent about looser enforcement.
+                advisory = preview.get("observe_advisory") or evidence_pipe_advisory(operation)
+                if advisory:
+                    print(json.dumps({"systemMessage": advisory},
+                                     ensure_ascii=False))
+                return 0
             if not preview["allow"]:
                 print(json.dumps({
                     "hookSpecificOutput": {

@@ -213,11 +213,19 @@ class ChronicleTests(unittest.TestCase):
 
 
 class CapabilityTests(unittest.TestCase):
-    def test_unknown_mutations_fail_closed(self) -> None:
+    def test_unknown_mutations_with_evidence_fail_closed(self) -> None:
+        """U-G1b: a genuinely unrecognised command with no evidence of
+        mutation (no redirect, no named write flag) is now read rather than
+        refused for having no vocabulary entry - see test_sentinel_scoping.py.
+        What still fails closed is the same shape with real evidence: a real
+        write from an unrecognised command. Renamed from
+        `test_unknown_mutations_fail_closed`, whose fixture
+        ("change an unspecified production setting") tested exactly the
+        no-evidence case this task intentionally now reads."""
         self.assertFalse(classify_action("git status")["protected"])
-        preview = classify_action("change an unspecified production setting")
+        preview = classify_action("mystery-tool --in a > b.txt")
         self.assertTrue(preview["protected"])
-        self.assertEqual(preview["category"], "unclassified-mutation")
+        self.assertEqual(preview["category"], "unknown-command")
 
     def test_capability_is_exact_and_single_use(self) -> None:
         with isolated_project() as (_project, _state, _anchor, archive):
@@ -1109,6 +1117,70 @@ class PlanModeTests(unittest.TestCase):
             self.assertFalse(mutation_verdict(archive, "S-1")["allowed"])
             self.assertFalse(approve(archive, "S-1")["approved"])
 
+    def _full_contract(self, **overrides: str) -> dict:
+        from godmode_runtime.godmode_plan import CONTRACT_FIELDS
+
+        contract = {field: "x" for field in CONTRACT_FIELDS if field != "editable"}
+        contract["accept"] = ["cmd:pytest tests/replay_test.py"]
+        contract.update(overrides)
+        return contract
+
+    def test_a_plan_with_no_accept_entry_is_refused_at_approve(self) -> None:
+        """E62 / Task 4b: `planmode approve` refuses a plan whose contract
+        carries no executable acceptance entry. The mandated plant: strip
+        `accept` from an otherwise-complete contract and approve must
+        refuse, naming `accept` among the missing fields."""
+        from godmode_runtime.godmode_plan import approve, specify, start
+
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            specify(archive, "S-1", "fix replay", {
+                "objective": "o", "outcome": "u", "acceptance": "a", "non_goals": "n"})
+            contract = self._full_contract(accept=[])
+            start(archive, "S-1", "fix replay", contract)
+            verdict = approve(archive, "S-1")
+        self.assertFalse(verdict["approved"])
+        self.assertIn("accept", verdict["missing"])
+
+    def test_a_plan_with_an_accept_entry_is_approved(self) -> None:
+        from godmode_runtime.godmode_plan import approve, specify, start
+
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            specify(archive, "S-1", "fix replay", {
+                "objective": "o", "outcome": "u", "acceptance": "a", "non_goals": "n"})
+            start(archive, "S-1", "fix replay", self._full_contract())
+            verdict = approve(archive, "S-1")
+        self.assertTrue(verdict["approved"])
+        self.assertEqual(verdict["missing"], [])
+
+    def test_completion_is_blocked_until_the_accept_command_is_attested_this_session(self) -> None:
+        """E62: at before_completion (`close_session`), each `accept` command
+        needs a this-session attestation - citing it in the plan is not
+        enough, it has to have actually been run."""
+        from godmode_runtime.godmode_attest import close_session, open_session, record_step
+        from godmode_runtime.godmode_charter import compile_charter
+        from godmode_runtime.godmode_plan import approve, specify, start
+
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            session = open_session(archive, "fix replay")
+            specify(archive, session, "fix replay", {
+                "objective": "o", "outcome": "u", "acceptance": "a", "non_goals": "n"})
+            start(archive, session, "fix replay", self._full_contract())
+            self.assertTrue(approve(archive, session)["approved"])
+            charter = compile_charter(project)
+
+            blocked = close_session(archive, session, charter)
+            self.assertFalse(blocked["closed"])
+            self.assertIn("cmd:pytest tests/replay_test.py",
+                          blocked["unattested_accept_commands"])
+
+            record_step(archive, session, "check:replay", "ran", result="exit 0",
+                       evidence=["cmd:pytest tests/replay_test.py"])
+            cleared = close_session(archive, session, charter)
+            self.assertEqual(cleared["unattested_accept_commands"], [])
+
 
 class DriftTests(unittest.TestCase):
     def test_drift_self_check(self) -> None:
@@ -1767,7 +1839,8 @@ class DriftControlTests(unittest.TestCase):
                 specify(archive, "S-a", "fix rotation", {
                     "objective": "o", "outcome": "u", "acceptance": "a", "non_goals": "n"})
                 start(archive, "S-a", "fix rotation", {f: "x" for f in
-                      __import__("godmode_runtime.godmode_plan", fromlist=["CONTRACT_FIELDS"]).CONTRACT_FIELDS})
+                      __import__("godmode_runtime.godmode_plan", fromlist=["CONTRACT_FIELDS"]).CONTRACT_FIELDS}
+                      | {"accept": "cmd:x"})
                 approve(archive, "S-a")
                 archive.append("checkpoint", "rotation fix staged",
                                {"status": "green", "next": "run the replay test"})
@@ -1930,6 +2003,194 @@ class MistakeClassTests(unittest.TestCase):
             report = analyze(archive)
             self.assertTrue([f for f in report["findings"] if f["detector"] == "claim-splitting"])
 
+    def test_a_bare_wall_clock_in_a_claim_blocks(self) -> None:
+        from godmode_runtime.godmode_mistakes import analyze
+
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            archive.append("claim", "the render finished",
+                           {"text": "the render click landed at 12:37 and feedback at 12:54"})
+            report = analyze(archive)
+            hits = [f for f in report["findings"] if f["detector"] == "unframed-clock"]
+            self.assertTrue(hits)
+            self.assertTrue(hits[0]["blocking"])
+            self.assertTrue(report["blocking"])
+
+    def test_a_framed_or_iso_time_is_not_a_finding(self) -> None:
+        from godmode_runtime.godmode_mistakes import unframed_clock
+
+        records = [
+            {"kind": "claim", "sequence": 1, "subject": "s",
+             "data": {"text": "filed 18:24:57 IST, generated 12:24 UTC"}},
+            {"kind": "claim", "sequence": 2, "subject": "s",
+             "data": {"text": "recorded at 2026-08-11T12:54:57+00:00 by the ledger"}},
+            {"kind": "claim", "sequence": 3, "subject": "s",
+             "data": {"text": "the encode ran 1:30 elapsed, well under budget"}},
+            {"kind": "claim", "sequence": 4, "subject": "s",
+             "data": {"text": "the window opened at 09:15 +05:30 as configured"}},
+        ]
+        self.assertEqual(unframed_clock(records), [])
+
+    def test_a_bare_clock_in_a_lesson_reports_without_blocking(self) -> None:
+        from godmode_runtime.godmode_mistakes import unframed_clock
+
+        records = [{"kind": "lesson", "sequence": 7, "subject": "the sweep runs at 03:00",
+                    "data": {"value": "the sweep runs at 03:00"}}]
+        findings = unframed_clock(records)
+        self.assertEqual(len(findings), 1)
+        self.assertFalse(findings[0]["blocking"])
+        self.assertEqual(findings[0]["citations"], ["seq:7"])
+
+    def test_a_record_not_written_for_a_person_is_left_alone(self) -> None:
+        from godmode_runtime.godmode_mistakes import unframed_clock
+
+        records = [{"kind": "action", "sequence": 3, "subject": "cron 09:30",
+                    "data": {"text": "scheduled 09:30"}}]
+        self.assertEqual(unframed_clock(records), [])
+
+    def test_a_superseded_lesson_stops_being_reported(self) -> None:
+        """Correcting a record is the lifecycle; it must not become a permanent finding."""
+        from godmode_runtime.godmode_mistakes import invariant_vs_instance
+
+        def lesson(seq, status=None):
+            data = {"value": "v", "generalized_guard": "every caller"}
+            if status:
+                data["status"] = status
+            return {"kind": "lesson", "sequence": seq, "subject": "escape shell args",
+                    "data": data, "evidence": ["file:run.py"]}
+
+        self.assertEqual(len(invariant_vs_instance([lesson(1)])), 1)
+        self.assertEqual(invariant_vs_instance([lesson(1, "superseded")]), [])
+        self.assertEqual(invariant_vs_instance([lesson(1, "retired")]), [])
+        # No status at all still counts as live.
+        self.assertEqual(len(invariant_vs_instance([lesson(1, "active")])), 1)
+
+        # The archive is append-only: the correction carries the status, and the
+        # record being corrected never can. A LATER settlement on the same
+        # subject retires the original.
+        original, correction = lesson(1), lesson(2, "superseded")
+        self.assertEqual(invariant_vs_instance([original, correction]), [])
+        # An EARLIER settlement does not pre-clear a new ruling written after it.
+        self.assertEqual(len(invariant_vs_instance([lesson(1, "superseded"), lesson(2)])), 1)
+        # And a settlement on a different subject settles nothing here.
+        other = {"kind": "lesson", "sequence": 2, "subject": "something else",
+                 "data": {"value": "v", "status": "superseded"}, "evidence": []}
+        self.assertEqual(len(invariant_vs_instance([lesson(1), other])), 1)
+
+    def test_an_absence_or_a_count_without_its_extent_blocks(self) -> None:
+        from godmode_runtime.godmode_mistakes import claim_from_a_sample
+
+        def claim(seq, text, evidence=()):
+            return {"kind": "claim", "sequence": seq, "subject": "s",
+                    "data": {"text": text}, "evidence": list(evidence)}
+
+        flagged = [
+            claim(1, "no evidence the timeline registers"),          # two greps missed
+            claim(2, "29 errors today"),                             # a capped query
+            claim(3, "the helper is not referenced"),
+        ]
+        for record in flagged:
+            self.assertEqual(len(claim_from_a_sample([record])), 1, record["data"]["text"])
+            self.assertTrue(claim_from_a_sample([record])[0]["blocking"])
+
+        cleared = [
+            claim(4, "no evidence of it across all 47 scanned documents"),
+            claim(5, "29 errors out of 150 rows"),
+            claim(6, "no matches", evidence=["searched:*.py under scripts/, uncapped"]),
+            claim(7, "the render took 12 seconds"),        # a number, not a count
+            claim(8, "the encode no longer stalls"),       # 'no longer' is not an absence
+        ]
+        self.assertEqual(claim_from_a_sample(cleared), [])
+
+    def test_a_named_root_cause_without_a_file_citation_blocks(self) -> None:
+        from godmode_runtime.godmode_mistakes import root_without_code
+
+        cited = {"kind": "claim", "sequence": 2, "subject": "s",
+                 "data": {"text": "the bar rewinds because the executor assigns a lower value"},
+                 "evidence": ["file:renderExecutor.ts#L547"]}
+        graded = {"kind": "claim", "sequence": 3, "subject": "s",
+                  "data": {"text": "the bar rewinds because the preflight restarts",
+                           "grade": "hypothesis"}, "evidence": []}
+        observed = {"kind": "claim", "sequence": 4, "subject": "s",
+                    "data": {"text": "the bar reached 100% and restarted"}, "evidence": []}
+        by_record = {"kind": "claim", "sequence": 5, "subject": "s",
+                     "data": {"text": "the bar rewinds because of the retry path"},
+                     "evidence": ["rec:abc123"]}
+
+        findings = root_without_code([cited, graded, observed, by_record])
+        # Only the one that indicts a mechanism while citing another record.
+        self.assertEqual([f["citations"] for f in findings], [["seq:5"]])
+        self.assertTrue(findings[0]["blocking"])
+
+    def test_two_live_answers_report_and_three_block(self) -> None:
+        from godmode_runtime.godmode_mistakes import unretracted_reversal
+
+        def claim(seq, text, status=None):
+            data = {"text": text}
+            if status:
+                data["status"] = status
+            return {"kind": "claim", "sequence": seq, "subject": "why the bar rewinds",
+                    "data": data, "evidence": []}
+
+        one = [claim(1, "the preflight restarts it")]
+        self.assertEqual(unretracted_reversal(one), [])
+
+        two = one + [claim(2, "the executor assigns a lower value")]
+        findings = unretracted_reversal(two)
+        self.assertEqual(len(findings), 1)
+        self.assertFalse(findings[0]["blocking"])
+        self.assertEqual(findings[0]["citations"], ["seq:1", "seq:2"])
+
+        three = two + [claim(3, "the retry path re-enters the job")]
+        self.assertTrue(unretracted_reversal(three)[0]["blocking"])
+
+        # Withdrawing the abandoned answers settles it - the documented remedy.
+        settled = [claim(1, "the preflight restarts it", status="superseded"),
+                   claim(2, "the executor assigns a lower value", status="withdrawn"),
+                   claim(3, "the retry path re-enters the job")]
+        self.assertEqual(unretracted_reversal(settled), [])
+
+    def test_repeating_one_answer_is_not_a_reversal(self) -> None:
+        from godmode_runtime.godmode_mistakes import unretracted_reversal
+
+        same = [{"kind": "claim", "sequence": n, "subject": "why the bar rewinds",
+                 "data": {"text": "the executor assigns a lower value"}, "evidence": []}
+                for n in (1, 2, 3)]
+        self.assertEqual(unretracted_reversal(same), [])
+
+    def test_an_unlabelled_start_time_does_not_flip_the_stale_verdict(self) -> None:
+        """The same instant must not answer differently for having dropped its offset."""
+        from godmode_runtime.godmode_mistakes import stale_runtime
+        from datetime import datetime, timedelta, timezone
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / "app.py").write_text("x = 1\n", encoding="utf-8")
+            newest = datetime.fromtimestamp(
+                (project / "app.py").stat().st_mtime, tz=timezone.utc)
+            started = (newest + timedelta(hours=2)).replace(microsecond=0)
+            aware = stale_runtime(project, started.isoformat())
+            naive = stale_runtime(project, started.replace(tzinfo=None).isoformat())
+            # Started after the newest source: not stale, whichever way it is written.
+            self.assertFalse(aware["stale"])
+            self.assertEqual(aware["stale"], naive["stale"])
+            # The reported mtime always states its frame.
+            self.assertTrue(naive["newest_mtime"].endswith("+00:00"))
+
+    def test_a_stored_instant_without_an_offset_is_read_as_utc(self) -> None:
+        """A naive timestamp used to raise TypeError past `except ValueError`."""
+        from godmode_runtime.godmode_lens import _parse_time
+        from datetime import datetime, timezone
+
+        naive = _parse_time("2026-08-11T12:00:00")
+        self.assertEqual(naive.tzinfo, timezone.utc)
+        # The subtraction the health check performs must not raise.
+        self.assertGreater((datetime.now(timezone.utc) - naive).total_seconds(), 0)
+        aware = _parse_time("2026-08-11T12:00:00+05:30")
+        self.assertEqual(aware.utcoffset().total_seconds(), 19_800)
+        self.assertIsNone(_parse_time("not a time"))
+        self.assertIsNone(_parse_time(None))
+
     def test_stale_runtime_blocks_rca_against_a_dead_program(self) -> None:
         from godmode_runtime.godmode_mistakes import stale_runtime
 
@@ -2040,6 +2301,25 @@ class GuardrailTests(unittest.TestCase):
             self.assertEqual(verdict["verdict"], "interrupt")
             self.assertEqual(len(verdict["skipped"]), 3)
 
+    def test_watchdog_windows_to_the_current_session_only(self) -> None:
+        # A prior session's skips must not count toward this session's
+        # pattern - the archive before this session opened is history, not
+        # behaviour to police now. Two skips in a PRIOR session plus two in
+        # THIS one must read as 2, not 4, and stay under the threshold.
+        from godmode_runtime.godmode_attest import open_session, record_step
+        from godmode_runtime.godmode_guardrails import watchdog
+
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            old_session = open_session(archive, "prior")
+            for step in ("read sources", "run parity"):
+                record_step(archive, old_session, step, "skipped", reason="old run")
+            session = open_session(archive, "watch")
+            record_step(archive, session, "check invariants", "skipped", reason="new run")
+            verdict = watchdog(archive, session)
+            self.assertEqual(verdict["verdict"], "nominal")
+            self.assertEqual(len(verdict["skipped"]), 1)
+
     def test_rewind_previews_only_verified_checkpoints(self) -> None:
         from godmode_runtime.godmode_guardrails import rewind_preview
 
@@ -2061,8 +2341,10 @@ class GuardrailTests(unittest.TestCase):
             archive.initialize()
             specify(archive, "S", "approach", {
                 "objective": "o", "outcome": "u", "acceptance": "a", "non_goals": "n"})
-            start(archive, "S", "big rewrite", {f: "x" for f in CONTRACT_FIELDS} | {"points": "13"})
-            start(archive, "S", "small patch", {f: "x" for f in CONTRACT_FIELDS} | {"points": "3"})
+            start(archive, "S", "big rewrite",
+                  {f: "x" for f in CONTRACT_FIELDS} | {"points": "13", "accept": "cmd:x"})
+            start(archive, "S", "small patch",
+                  {f: "x" for f in CONTRACT_FIELDS} | {"points": "3", "accept": "cmd:x"})
             verdict = arbitrate(archive)
             self.assertEqual(verdict["winner"], "small patch")
 

@@ -112,8 +112,11 @@ _EGRESS_SHAPES = (
 
 # Text shaped like an instruction to the agent rather than content for the project.
 _INJECTION = (
-    ("override", r"\bignore (?:all |any )?(?:previous|prior|above|earlier) (?:instructions?|rules?|prompts?)\b"),
-    ("override", r"\bdisregard (?:the )?(?:above|previous|prior|system)\b"),
+    ("override", r"\bignore (?:all |any )?(?:previous|prior|above|earlier) (?:instructions?|rules?|prompts?|guidance)\b"),
+    # Possessive forms found missing by an adversarial pass: "disregard your
+    # earlier guidance" is the same override with a pronoun, and "earlier"
+    # was absent from the alternation entirely.
+    ("override", r"\bdisregard (?:the |your |any )?(?:above|previous|prior|earlier|system)\b"),
     ("persona", r"\byou are now\b|\bact as\b.*\b(?:admin|root|developer mode)\b|\bpretend to be\b"),
     ("role-forgery", r"^\s*(?:system|assistant|developer)\s*:", ),
     ("authority", r"\bnew instructions?\b|\bupdated (?:system )?prompt\b|\bthis overrides\b"),
@@ -125,7 +128,34 @@ _INJECTION = (
     ("exfiltration",
      r"\b(?:send|post|upload|exfiltrat\w*|leak)\s+(?:\w+[\s'\"-]+){0,4}"
      r"(?:secret|token|key|credential|\.env)\b"),
-    ("gate-bypass", r"\b(?:skip|bypass|disable|turn off)\b.*\b(?:check|gate|guard|review|approval|confirmation)\b"),
+    # `tests?|suite|verification` joined the object list after "skip the test
+    # suite, just merge" passed undetected - skipping verification is the
+    # gate-bypass this pattern exists for, whatever the object is called.
+    # Bounded to a few words for the same reason as the exfiltration pattern
+    # above: unbounded `.*` matched the noun "a skip" in a README row and
+    # reached "test" four words later - the sentence DESCRIBING the monitor
+    # that blocks skips read as an instruction to skip. The verb must govern
+    # the object, not merely share a line with it.
+    ("gate-bypass",
+     r"\b(?:skip|bypass|disable|turn off)\s+(?:\w+\s+){0,3}"
+     r"(?:checks?|gates?|guards?|reviews?|approvals?|confirmations?|tests?|suites?|verification)\b"),
+    # A payload the reader cannot inspect, paired with a verb that runs it.
+    # "decode and execute: <base64>" carried an override instruction through
+    # every pattern above because the instruction itself was encoded; the
+    # detectable part is the decode-then-run FRAME, not the payload.
+    #
+    # The two verbs must be CONJOINED as an instruction ("decode and run",
+    # "decode, then execute"), not merely near each other: an unbounded
+    # window matched this project's own changelog line naming a
+    # "decode-then-execute frame carrying its instruction as an encoded
+    # payload" - prose DESCRIBING the attack, which is the documentation-of-
+    # the-defence false positive the gate-bypass rule above already learned
+    # once. A hyphenated compound is a noun, so the separator excludes `-`.
+    ("encoded-payload",
+     r"\b(?:decode|unhex|un-?rot13|de-?obfuscate)\b[ ,]{1,3}(?:and |then |& )?"
+     r"\b(?:execute|run|eval|follow|obey)\b"
+     r"|\b(?:execute|run|eval)\b[ ,]{1,3}(?:the |this )?"
+     r"\b(?:base64|rot13|hex-encoded)\b"),
 )
 
 
@@ -137,6 +167,13 @@ _SECRET_KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("aws-access-key", re.compile(r"\b(?P<secret>AKIA[0-9A-Z]{16})\b")),
     ("private-key-header", re.compile(r"(?P<secret>-----BEGIN [A-Z ]*PRIVATE KEY-----)")),
     ("bearer-token", re.compile(r"(?i)\bbearer\s+(?P<secret>[A-Za-z0-9._~+/=-]{12,})")),
+    # Four shapes an adversarial sweep found covered by the sentinel's
+    # archive gate but not here (ghp_/sk- prefixes), or by neither scanner
+    # (JWT, Slack). The seam test pins every kind against BOTH scanners.
+    ("forge-token", re.compile(r"\b(?P<secret>(?:ghp|github_pat)_[A-Za-z0-9_]{20,})\b")),
+    ("provider-key", re.compile(r"\b(?P<secret>sk-[A-Za-z0-9_-]{20,})\b")),
+    ("jwt", re.compile(r"\b(?P<secret>eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,})\b")),
+    ("slack-token", re.compile(r"\b(?P<secret>xox[abprse]-[A-Za-z0-9-]{10,})\b")),
     # A scheme with user:password@host embeds the credential in the address. The
     # separator is escaped so no URL literal enters runtime source (same reasoning
     # as the WEB shape above).
@@ -448,17 +485,44 @@ def untrusted_directives(text: str, source: str = "repository") -> dict[str, Any
     }
 
 
-def scan_project(project: Path, limit: int = 400) -> dict[str, Any]:
-    """Sweep readable project text for instruction-shaped content."""
-    hits: list[dict[str, Any]] = []
-    scanned = 0
+
+# 2048: this project's own candidate count (files matching the suffixes below,
+# outside .git/node_modules/__pycache__) measured at 592 on 2026-08-15 via
+# this same walk - see docs/falsification-probe.md reproduction in
+# tests/test_gate_falsifiability.py::_break_untrusted, which planted a file
+# past position 400 and the scan reported "data-only" without ever reading
+# it. 2048 is the next power of two at or above 2x that count (1184), giving
+# headroom for ordinary growth. The cap itself stays - an unbounded walk is
+# worse - but hitting it must now be loud (see `truncated` below), never a
+# clean verdict over an unscanned population.
+DEFAULT_SCAN_LIMIT = 2048
+
+
+def scan_project(project: Path, limit: int = DEFAULT_SCAN_LIMIT) -> dict[str, Any]:
+    """Sweep readable project text for instruction-shaped content.
+
+    Candidates are counted in full before the cap is applied: a scan that
+    truncates without saying so would let a clean read over part of the tree
+    stand in for a claim about all of it. When more candidates exist than
+    `limit`, the result carries `truncated: True` and the verdict reflects
+    that a scanned-and-clean result is impossible to state honestly - it
+    becomes "truncated" rather than "data-only", even when nothing was found
+    in the files that WERE read.
+    """
+    candidates: list[Path] = []
     for path in sorted(project.rglob("*")):
-        if scanned >= limit or not path.is_file():
+        if not path.is_file():
             continue
-        if path.suffix.lower() not in {".md", ".mdx", ".txt", ".rst", ".json", ".ya ml", ".yaml", ".yml"}:
+        if path.suffix.lower() not in {".md", ".mdx", ".txt", ".rst", ".json", ".yaml", ".yml"}:
             continue
         if any(part in {".git", "node_modules", "__pycache__"} for part in path.parts):
             continue
+        candidates.append(path)
+
+    truncated = len(candidates) > limit
+    hits: list[dict[str, Any]] = []
+    scanned = 0
+    for path in candidates[:limit]:
         scanned += 1
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -468,8 +532,16 @@ def scan_project(project: Path, limit: int = 400) -> dict[str, Any]:
         if report["count"]:
             hits.append({"path": report["source"], "count": report["count"],
                          "first": report["findings"][0]})
-    return {"scanned": scanned, "files_with_findings": len(hits), "hits": hits[:20],
-            "verdict": "instruction-shaped-content" if hits else "data-only"}
+
+    if hits:
+        verdict = "instruction-shaped-content"
+    elif truncated:
+        verdict = "truncated"
+    else:
+        verdict = "data-only"
+
+    return {"scanned": scanned, "candidates": len(candidates), "truncated": truncated,
+            "files_with_findings": len(hits), "hits": hits[:20], "verdict": verdict}
 
 
 def _self_check() -> None:

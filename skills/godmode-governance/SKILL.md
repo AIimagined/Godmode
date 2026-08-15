@@ -43,6 +43,25 @@ Read [godmode-protection-matrix.md](references/godmode-protection-matrix.md) whe
 - `planmode specify|start|approve|check|arbitrate|bind` gates mutation behind a spec-backed approved plan; `rewind --to SEQ` previews a rollback to a verified checkpoint.
 - `ceilings --spent ...` stops a run that exceeded its declared budget; `removal record|why` keeps deletions explicable.
 
+## Absorption verdicts
+
+An upstream item (a dependency bump, a vendor release note, a competitor's
+fix) gets a `decision` record with subject `absorb:<item>` and BOTH verdicts
+in its data: `import_verdict` (adopt | extend | diverge | skip | n-a) and
+`behaviour_verdict` (confirmed-have | confirmed-dont | unverified).
+`confirmed-*` needs a `file:` citation proving it. "n-a - different surface"
+answers whether we can import it, never whether the same defect lives in our
+own implementation - that is what the behaviour verdict is for, and an item
+with only an import verdict is half-recorded.
+
+🔴 No CLI verb writes this shape yet - `remember --kind decision` stores one
+free-text `--value`, not two separate verdict fields. Until a dedicated verb
+exists, write the record via direct archive access
+(`archive.append("decision", "absorb:<item>", {"import_verdict": ...,
+"behaviour_verdict": ...}, evidence=["file:..."])`); `godmode_runtime
+.godmode_parity.upstream_verdicts(archive, items)` reads it back and reports
+`verdicted` / `half_verdicted` / `unread` per item.
+
 ## Completion
 
 Report the classification, whether authorization was required, what actually ran, the recovery boundary, and fresh verification. If execution was outside the available host boundary, stop after the preview and say so plainly.

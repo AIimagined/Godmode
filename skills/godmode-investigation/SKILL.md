@@ -55,5 +55,24 @@ shape and `method --check-record` refuses an incomplete one; `reflect` surfaces
 contradictions with prior claims; `integrity` blocks test-weakening changes;
 `mistakes --process-started` blocks an RCA against a stale process.
 
+## Absence protocol
+
+An absence claim ("no callers", "0 rows", "not found") carries a `control:` or
+`second:` citation or it is flagged: `godmode mistakes`' M21
+(`absence-without-control`) fires on an absence claim that states its extent
+(`searched:`/`scanned:`) but never proves the search mechanism itself could
+have found something. An empty result from a broken probe reads identically
+to a true negative - the control is what tells them apart. See `godmode
+claim --help` for the full citation-prefix vocabulary.
+
+Separately, and more strictly: a `--grade verified` absence claim recorded
+via `godmode claim` needs TWO DISTINCT `cmd:` citations (or one that
+positively enumerated something, not just came back empty) to avoid an
+automatic downgrade to `hypothesis` - one probe that found nothing is
+evidence about where you looked, not about what exists. This is the grading
+pipeline's own gate and is a separate, stricter mechanism from M21 above; the
+two are not unified, and citing `control:`/`second:` alone does not satisfy
+it.
+
 Read [godmode-evidence-cycle.md](references/godmode-evidence-cycle.md) for the attempt
 record and completion checklist.

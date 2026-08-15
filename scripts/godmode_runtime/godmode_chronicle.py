@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 import tempfile
 import time
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 import uuid
 
 import shutil
@@ -36,6 +36,7 @@ def writer_fingerprint() -> dict[str, str]:
     }
 from .godmode_constants import EVENT_KINDS, RUNTIME_VERSION, SCHEMA_VERSION
 from .godmode_errors import ArchiveError
+from . import godmode_invariants as _invariants
 from .godmode_sentinel import enforce_private_payload
 
 
@@ -71,6 +72,35 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
             os.unlink(temporary)
 
 
+# Kind-specific data-shape invariants, enforced by append() at the archive
+# seam rather than left to whichever caller happens to build the record.
+# append() must never grow one branch per kind - a validator lives in
+# godmode_invariants.py (dependency-free, so importing it here creates no
+# cycle) and append() only ever asks "does this kind have one?" without
+# knowing what any of them actually check. A validator raises ArchiveError
+# to refuse; a normal return accepts.
+#
+# KIND_INVARIANTS is seeded from godmode_invariants.KIND_VALIDATORS AT THIS
+# MODULE'S OWN IMPORT, not left to populate itself as a side effect of some
+# other module (e.g. godmode_verdict.py) being imported first. That
+# distinction is load-bearing: a process that imports godmode_chronicle
+# without ever importing the kind-owning module still gets the guarantee,
+# because importing godmode_chronicle IS what populates it. (An earlier
+# version of this mechanism relied on kind-owning modules self-registering
+# at their own import time - a fresh interpreter that imported only the
+# archive core saw an empty registry and could append either forbidden
+# verdict combination unchecked. Eager seeding from a dependency-free module
+# closes that import-order gap.) register_kind_invariant() remains available
+# for a validator that genuinely cannot live in godmode_invariants.py, but
+# every kind shipped today is seeded eagerly and needs no such call.
+KindInvariant = Callable[[dict[str, Any]], None]
+KIND_INVARIANTS: dict[str, KindInvariant] = dict(_invariants.KIND_VALIDATORS)
+
+
+def register_kind_invariant(kind: str, validator: KindInvariant) -> None:
+    KIND_INVARIANTS[kind] = validator
+
+
 class Chronicle:
     """A project-bound archive whose primary records are immutable files."""
 
@@ -81,6 +111,10 @@ class Chronicle:
         self.config = self.root / "godmode-archive.json"
         self.lock_path = self.root / "godmode-write.lock"
         self.head = self.root / "godmode-head.json"
+        self._events_cache_key: tuple[Any, ...] | None = None
+        self._events_cache: list[dict[str, Any]] | None = None
+        self._accepted_keys_cache_key: tuple[int, int] | None = None
+        self._accepted_keys_cache: set[str] | None = None
 
     def initialized(self) -> bool:
         return self.config.is_file() and self.events.is_dir()
@@ -92,13 +126,31 @@ class Chronicle:
         immutable and hash-chained, so editing history to fit a new identity would
         destroy the very property that makes it trustworthy. Instead the archive
         remembers which identity it grew out of and accepts those records as its own.
+
+        Cached on the config file's own (mtime_ns, size): verify() calls this
+        once PER RECORD, so an uncached read re-opened and re-parsed the same
+        rarely-changing file up to N times per verify pass - traced live at
+        96 redundant reads per verify call on a 96-record archive. `adopt()`
+        is the only writer, and a fresh stat on every call means a same-pass
+        adopt is still seen on the very next call.
         """
+        try:
+            stat = self.config.stat()
+            key = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            key = None
+        if key is not None and key == self._accepted_keys_cache_key \
+                and self._accepted_keys_cache is not None:
+            return self._accepted_keys_cache
+
         keys = {self.anchor.project_key}
         if self.config.is_file():
             try:
                 keys.update(self._read_json(self.config).get("adopted_keys", []))
             except ArchiveError:
                 pass
+        if key is not None:
+            self._accepted_keys_cache_key, self._accepted_keys_cache = key, keys
         return keys
 
     def orphaned(self) -> dict[str, Any] | None:
@@ -259,8 +311,46 @@ class Chronicle:
             return []
         return sorted(self.events.glob("*.godmode.json"))
 
+    def _events_identity(self) -> str | None:
+        """Cheap identity of the WHOLE events directory: every file's stat, hashed.
+
+        NOT just the newest file - a tamper-evidence test caught that design
+        directly: mutating an OLDER record's bytes in place (a plain
+        write_text on an existing file, no new file added) left the count
+        and the newest file's own stat unchanged, so that cache would have
+        returned pre-tamper content and made verify() pass on tampered disk
+        state. Chronicle's whole purpose is tamper evidence; a cache that
+        can silently mask it is worse than no cache.
+
+        Every file's (name, mtime_ns, size) folds into one hash. Still zero
+        content reads - stat only - so it stays far cheaper than the parse
+        it protects against, while catching a write to ANY record file.
+        """
+        try:
+            names = os.listdir(self.events)
+        except OSError:
+            return None
+        parts: list[str] = []
+        for name in sorted(names):
+            if not name.endswith(".godmode.json"):
+                continue
+            try:
+                stat = (self.events / name).stat()
+            except OSError:
+                return None  # a file vanished mid-scan; force a fresh read
+            parts.append(f"{name}:{stat.st_mtime_ns}:{stat.st_size}")
+        if not parts:
+            return None
+        return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+
     def read_events(self, *, verify: bool = True) -> list[dict[str, Any]]:
-        records = [self._read_json(path) for path in self.event_paths()]
+        identity = self._events_identity()
+        if identity is not None and identity == self._events_cache_key \
+                and self._events_cache is not None:
+            records = self._events_cache
+        else:
+            records = [self._read_json(path) for path in self.event_paths()]
+            self._events_cache_key, self._events_cache = identity, records
         if verify:
             self.verify(records)
         return records
@@ -438,6 +528,9 @@ class Chronicle:
         subject = subject.strip()
         if not subject or len(subject) > 200:
             raise ArchiveError("Record subject must contain 1-200 characters")
+        validator = KIND_INVARIANTS.get(kind)
+        if validator is not None:
+            validator(data)
         evidence = evidence or []
         payload_for_scan = {"subject": subject, "data": data, "evidence": evidence}
         enforce_private_payload(payload_for_scan)
@@ -483,7 +576,14 @@ class Chronicle:
             raise ArchiveError("Expunge requires a non-empty reason")
         self.initialize()
         with self.write_lock():
-            records = self.read_events(verify=True)
+            # Shallow copies of the CACHED records, not the cached objects
+            # themselves: this method mutates every record from the target
+            # onward in place (data/evidence/hash rewrite) before writing
+            # them back, and read_events() now returns the same list object
+            # on every cache hit. Mutating that shared list here would let a
+            # later read_events() call see partially-expunged content that
+            # was never verified or written to disk.
+            records = [dict(record) for record in self.read_events(verify=True)]
             if not 1 <= sequence <= len(records):
                 raise ArchiveError(f"No record with sequence {sequence} to expunge")
             target = records[sequence - 1]

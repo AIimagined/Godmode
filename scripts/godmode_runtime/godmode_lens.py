@@ -23,6 +23,7 @@ from .godmode_constants import (
     MANIFEST_NAMES,
     MAX_HASH_BYTES,
     RUNTIME_VERSION,
+    SETTLED_STATUSES,
 )
 from .godmode_errors import IdentityError
 
@@ -266,12 +267,28 @@ def inventory_diff(previous: dict[str, Any] | None, current: dict[str, Any]) -> 
 
 
 def _parse_time(value: str | None) -> datetime | None:
+    """Read a stored instant, always as an aware UTC one.
+
+    Every write here is `datetime.now(timezone.utc).isoformat()`, so values
+    carry an offset - except the ones that do not: a record hand-written, or one
+    migrated from a schema that stored a bare clock. `fromisoformat` returns a
+    NAIVE datetime for those, and subtracting a naive from an aware one raises
+    TypeError, which `except ValueError` does not catch. One unlabelled
+    timestamp anywhere in the archive therefore crashed the health check rather
+    than ageing a single baseline wrongly.
+
+    An unlabelled value is read as UTC, because UTC is the only clock this
+    project writes. That is a stated assumption rather than a guess, and it
+    belongs here rather than at each call site that would otherwise have to make
+    it separately - and differently.
+    """
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def detect_context_issues(
@@ -398,10 +415,22 @@ def detect_context_issues(
 
     invariant_values: dict[str, set[str]] = defaultdict(set)
     for record in records:
-        if record["kind"] == "invariant":
-            invariant_values[record["subject"]].add(
-                json.dumps(record["data"].get("value"), sort_keys=True)
-            )
+        if record["kind"] != "invariant":
+            continue
+        # Retiring an invariant is the lifecycle, not a conflict. Retiring one
+        # means writing a new record with a new value and a retired status, so
+        # comparing every record ever written for a subject made the documented
+        # act of retirement produce an error by construction - and `doctor`
+        # reported the archive unhealthy for doing the right thing.
+        #
+        # A missing status still counts as live: records written before status
+        # was recorded must keep being checked, or the exemption retires the
+        # detector rather than the record.
+        if str(record["data"].get("status", "")).lower() in SETTLED_STATUSES:
+            continue
+        invariant_values[record["subject"]].add(
+            json.dumps(record["data"].get("value"), sort_keys=True)
+        )
     contradictions = sorted(subject for subject, values in invariant_values.items() if len(values) > 1)
     if contradictions:
         issues.append(

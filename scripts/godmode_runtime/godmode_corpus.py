@@ -14,7 +14,7 @@ from pathlib import Path
 import re
 from typing import Any
 
-from .godmode_anchor import canonical_path
+from .godmode_anchor import canonical_path, run_git
 from .godmode_errors import CorpusError
 
 ROLES_FILENAME = ".godmode-roles.json"
@@ -363,6 +363,58 @@ def _relevance_fallback(segments: list[Segment], terms: list[str]) -> dict[int, 
     return scores
 
 
+def _mtime_stamp(project: Path, path: str) -> int:
+    try:
+        return (project / path).stat().st_mtime_ns
+    except OSError:
+        return 0
+
+
+def _freshness_stamp(project: Path, path: str, is_git: bool) -> int:
+    """A file's edit recency, from a source that agrees across checkouts.
+
+    Filesystem mtime records when THIS checkout wrote the byte to disk, not
+    when its content last meaningfully changed - `git clone`/`git checkout`
+    do not preserve historical mtimes, so two clones of the identical commit
+    can disagree on file order even though project state is identical (the
+    concrete failure: `evals/fixtures/ranking.json` drifted between two
+    clones of the same commit). A commit's own timestamp is part of the
+    object the clone already received, so every clone of that commit agrees
+    on it regardless of checkout order - reading `git log` instead of
+    `stat()` fixes the instability at its source rather than papering over
+    one symptom of it. Non-git projects have no such record and no separate
+    checkout step to reorder against, so mtime remains the right (and only)
+    instrument there.
+
+    An untracked file, or one staged but never committed, has no `git log`
+    entry - that is not the same absence as "this project has no git
+    history for anything," and stamping it 0 (the oldest possible value)
+    would rank a file edited a minute ago behind a six-year-old committed
+    sibling, the freshness feature working backwards. Falling back to mtime
+    for exactly that case is the pre-existing behaviour and carries none of
+    the checkout-order risk: an uncommitted file's mtime is this session's
+    real edit time, not a byte a checkout wrote from history. Determinism
+    across checkouts is guaranteed for committed files only.
+
+    A non-git project (or an untracked file inside a git one) has no commit
+    object to anchor on, so this function still returns raw mtime as the
+    freshness *value* for it - that fallback is unchanged. What callers must
+    not do is compare that value's magnitude *across* files to order a
+    non-git project, because mtime there is assigned by whatever copied or
+    checked the files out, not by their content: two copies of an identical
+    non-git project can disagree on which file's mtime is newer purely from
+    copy timing, the exact instability the git-log fix above already fixed
+    for tracked files (`rank` degrades non-git ordering to a path sort for
+    this reason - see there).
+    """
+    if is_git:
+        stamp = run_git(project, "log", "-1", "--format=%ct", "--", path)
+        if stamp and stamp.isdigit():
+            return int(stamp) * 1_000_000_000
+        return _mtime_stamp(project, path)
+    return _mtime_stamp(project, path)
+
+
 def rank(
     segments: list[Segment], task: str, project: Path | None = None
 ) -> list[tuple[Segment, float]]:
@@ -378,6 +430,20 @@ def rank(
     tens of segments across three signals, where it collapsed into ties broken
     alphabetically. It also contradicts a deliberate property - role authority is
     *meant* to dominate - which fusion exists to prevent.
+
+    Determinism boundary: within one freshness mode, tie order is guaranteed
+    stable - git-tracked projects always order by commit time (ties broken by
+    path), non-git projects always order by path sort, and either mode
+    reproduces the identical ranking for identical project state regardless of
+    when or how the project was checked out or copied. Cross-mode equality is
+    NOT guaranteed and is out of contract: git-log commit time and path sort
+    are different instruments free to disagree on the tie order for equal-
+    relevance segments, so a snapshot generated against a git checkout is not
+    promised to match a ranking computed against a `.git`-stripped copy of the
+    same content, and vice versa. A snapshot (such as
+    `evals/fixtures/ranking.json`) must be generated and compared in the same
+    mode it will be evaluated in - never generated in one mode and asserted
+    against the other.
     """
     terms = _terms(task)
     raw: dict[int, float] = {}
@@ -387,13 +453,24 @@ def rank(
 
     freshness: dict[str, float] = {}
     if project is not None:
-        stamps: dict[str, int] = {}
-        for path in {segment.path for segment in segments}:
-            try:
-                stamps[path] = (project / path).stat().st_mtime_ns
-            except OSError:
-                stamps[path] = 0
-        newest_first = sorted(stamps, key=lambda p: (-stamps[p], p))
+        is_git = (project / ".git").exists()
+        stamps: dict[str, int] = {
+            path: _freshness_stamp(project, path, is_git)
+            for path in {segment.path for segment in segments}
+        }
+        if is_git:
+            newest_first = sorted(stamps, key=lambda p: (-stamps[p], p))
+        else:
+            # A non-git project has no commit-object timestamp for any file,
+            # so every stamp here came from the mtime fallback - a value
+            # copy timing controls, not content. Ordering by that magnitude
+            # across files is exactly the checkout-order instability the
+            # git-log fix above exists to prevent, just with no deterministic
+            # substitute value available; the tie-break degrades to path,
+            # the same deterministic instrument the git branch already uses
+            # as ITS secondary key, so identical non-git copies always agree
+            # regardless of which file the copy happened to timestamp newest.
+            newest_first = sorted(stamps)
         # A small, bounded factor: freshness reorders equals, never outvotes weight.
         for position, path in enumerate(newest_first):
             freshness[path] = 1.0 + 0.05 / (1 + position)

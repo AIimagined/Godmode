@@ -169,9 +169,23 @@ class GateFalsifiabilityTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls._temporary = tempfile.TemporaryDirectory(prefix="godmode-falsify-")
         cls.project = Path(cls._temporary.name) / "project"
+        # `.git` is kept, not stripped. The gate's contract is "this
+        # repository", and this repository includes its git history -
+        # stripping `.git` produced a copy in a shape no deployment of this
+        # project actually takes (a checkout with no history), and
+        # `godmode_corpus.rank` freshness ordering deliberately reads
+        # git-log commit time when `.git` exists (see its docstring): a
+        # gitless copy silently exercises the *other*, non-git-only
+        # instrument, which does not promise to agree with a git-mode
+        # snapshot like the committed `evals/fixtures/ranking.json`. That
+        # mismatch was reported here as a gate failure
+        # (`evals --brief` -> ranking-changed) when the actual defect was
+        # the harness testing an out-of-contract shape. Copying `.git`
+        # keeps the harness itself in-contract; the copy stays cheap
+        # (~20MB for this repository).
         shutil.copytree(
             PLUGIN_ROOT, cls.project,
-            ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"))
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -183,6 +197,27 @@ class GateFalsifiabilityTests(unittest.TestCase):
              "--project", str(self.project), *gate.split()],
             capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=600)
+
+    def test_the_harness_copy_carries_git_history(self) -> None:
+        """The cross-mode boundary, pinned rather than merely reasoned about.
+
+        A gitless copy of a git project is out-of-contract for snapshot
+        comparison: `godmode_corpus.rank` freshness reads git-log commit
+        time when `.git` exists and degrades to a path-sort fallback when it
+        does not (see its docstring), and those two instruments are not
+        promised to agree on tie order for the same content - only *within*
+        one mode is ordering guaranteed stable. A harness copy missing
+        `.git` silently switched the fixture from the mode the committed
+        `evals/fixtures/ranking.json` snapshot was generated in to the other
+        one, which is exactly the defect this test forecloses by construction:
+        if the copy ever loses `.git` again, this fails before the ranking
+        gate has a chance to fail confusingly downstream.
+        """
+        self.assertTrue((self.project / ".git").exists(),
+                         "the falsifiability harness's project copy must keep "
+                         ".git, or it evaluates gates in a mode "
+                         "(non-git/path-sort freshness) that the committed "
+                         "snapshot fixtures were not generated in")
 
     def test_every_gate_is_green_before_and_red_after_its_mutation(self) -> None:
         """Both halves per gate, so the result cannot depend on test order.

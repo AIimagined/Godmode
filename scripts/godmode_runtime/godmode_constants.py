@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 PRODUCT = "Godmode"
-RUNTIME_VERSION = "0.2.9"
+RUNTIME_VERSION = "0.2.12"
 SCHEMA_VERSION = 1
 ARCHIVE_DIRNAME = "godmode-state"
 MAX_HASH_BYTES = 5 * 1024 * 1024
@@ -12,12 +12,20 @@ DEFAULT_RECORD_LIMIT = 24
 
 EVENT_KINDS = frozenset(
     {
-        "action", "attestation", "branch", "change", "checklist", "checkpoint",
-        "claim", "database", "decision", "documentation", "incident", "invariant",
-        "inventory", "lesson", "obligation", "plan", "request", "session", "sprint",
-        "version",
+        "action", "assumption", "attestation", "branch", "change", "checklist", "checkpoint",
+        "claim", "criterion", "database", "decision", "differential", "documentation",
+        "incident", "invariant", "inventory", "lesson", "metric", "obligation", "pin",
+        "plan", "refusal", "request",
+        "session", "sprint", "upstream-diff", "verdict", "version",
     }
 )
+
+# Statuses that put a record out of force. Read by the contradiction check
+# (a value that no longer binds cannot contradict one that does) and by the
+# reversal check (an answer that was withdrawn is not a competing answer).
+# One owner, because two readers asking "is this still in force?" with two
+# different word lists is a disagreement waiting for a release to expose it.
+SETTLED_STATUSES = frozenset({"retired", "superseded", "withdrawn", "revoked"})
 
 IGNORED_DIRECTORY_NAMES = frozenset(
     {

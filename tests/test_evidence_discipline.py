@@ -100,22 +100,35 @@ class RootCauseDetectionTests(unittest.TestCase):
 
 
 class RootCauseGradingTests(unittest.TestCase):
-    """The rule that survives an agent in a hurry."""
+    """The rule that survives an agent in a hurry - refined by U-E3 into the
+    differential-evidence detector: it only holds a root-cause claim to
+    needing the diff once the archive actually holds two comparable states
+    to diff (absence of that instrument is a stated gap, never a penalty),
+    and once it fires the claim needs a RESOLVING `diff:`/`verdict:`, not
+    just a `cmd:` that ran."""
 
-    def _record(self, text: str, cites: list[str]) -> dict:
-        """Records the run behind a `cmd:` citation first.
+    def _record(self, text: str, cites: list[str], comparable: bool = True) -> dict:
+        """Records the run behind a `cmd:` citation first, and (by default)
+        two comparable-state records sharing a term with `text` - the
+        differential gate only applies once the archive holds something to
+        diff. `comparable=False` exercises the claim with nothing to compare.
 
         A command citation resolves only when an attestation records having run
         it — anyone can write the words, and only a run leaves the record. That
         contract already existed and is the right one, so this exercises the
         real workflow rather than a shortcut around it.
         """
-        from godmode_runtime.godmode_attest import record_claim, record_step
+        from godmode_runtime.godmode_attest import _salient, record_claim, record_step
         from test_godmode_runtime import isolated_project
 
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
             (project / "notes.txt").write_text("x\n", encoding="utf-8")
+            if comparable:
+                terms = sorted(_salient(text))[:2]
+                state_subject = " ".join(terms) if terms else "captured state"
+                archive.append("checkpoint", state_subject, {"status": "captured"}, evidence=[])
+                archive.append("checkpoint", state_subject, {"status": "captured"}, evidence=[])
             for citation in cites:
                 if str(citation).startswith("cmd:"):
                     record_step(archive, "s1", "differential", "ran",
@@ -128,10 +141,35 @@ class RootCauseGradingTests(unittest.TestCase):
         self.assertEqual(record["data"]["grade"], "hypothesis")
         self.assertIn("differential", record["data"]["reason"])
 
-    def test_a_root_cause_that_cites_what_confirmed_it_stands(self) -> None:
+    def test_a_root_cause_that_cites_the_diff_that_confirmed_it_stands(self) -> None:
+        from godmode_runtime.godmode_attest import record_claim, record_differential
+        from test_godmode_runtime import isolated_project
+
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            (project / "before.html").write_text("a\n", encoding="utf-8")
+            (project / "after.html").write_text("b\n", encoding="utf-8")
+            archive.append("checkpoint", "injected opacity hide", {"status": "captured"}, evidence=[])
+            archive.append("checkpoint", "injected opacity hide", {"status": "captured"}, evidence=[])
+            diff = record_differential(
+                archive, "opacity hide", "file:before.html", "file:after.html",
+                ["opacity forced to 0 on the injected frame"], "read",
+            )
+            record = record_claim(
+                archive, project, "s1",
+                "the root cause is the injected opacity hide", "verified",
+                cites=["file:before.html", f"diff:{diff['sequence']}"],
+            )
+        self.assertEqual(record["data"]["grade"], "verified")
+
+    def test_no_comparable_states_leaves_a_root_cause_claim_untouched(self) -> None:
+        """Absence of the instrument is a stated gap, never a penalty (U-E3,
+        same discipline as U-T2) - a project with nothing to compare yet
+        pays no friction for lacking a diff."""
         record = self._record(
-            "the root cause is the injected opacity hide",
-            ["file:notes.txt", "cmd:diff before.html after.html"])
+            "the root cause is the injected opacity hide", ["file:notes.txt"],
+            comparable=False,
+        )
         self.assertEqual(record["data"]["grade"], "verified")
 
     def test_an_ordinary_claim_needs_no_differential(self) -> None:
@@ -141,7 +179,7 @@ class RootCauseGradingTests(unittest.TestCase):
     def test_the_reason_names_the_missing_step(self) -> None:
         """A refusal that does not say what would satisfy it teaches nothing."""
         record = self._record("this failed because the cache was stale", [])
-        self.assertIn("cmd:", record["data"]["reason"])
+        self.assertIn("diff:", record["data"]["reason"])
 
 
 if __name__ == "__main__":

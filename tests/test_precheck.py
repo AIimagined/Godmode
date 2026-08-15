@@ -30,7 +30,14 @@ if str(SCRIPTS) not in sys.path:
 if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 
-from godmode_runtime.godmode_precheck import precheck  # noqa: E402
+from godmode_runtime.godmode_precheck import (  # noqa: E402
+    declare_paired_artifact,
+    declared_paired_artifacts,
+    paired_artifact_findings,
+    precheck,
+    render,
+)
+from godmode_runtime.godmode_register import set_state  # noqa: E402
 from test_godmode_runtime import isolated_project  # noqa: E402
 
 
@@ -83,6 +90,115 @@ class PriorRejectionTests(unittest.TestCase):
                            {"value": "rank fusion rejected", "status": "decided"})
             report = precheck(project, archive, "invoice rounding for VAT")
         self.assertEqual(report["already_rejected"], [])
+
+
+class RegisterPrecedentTests(unittest.TestCase):
+    """U-V2: the register's `rejected-precedent` entries are a sharper,
+    closed-enumeration counterpart to the free-text `already_rejected`
+    match above - the archive itself adjudicated this refusal, and the
+    finding names the way through instead of only a warning.
+    """
+
+    def test_a_rejected_precedent_is_surfaced_with_its_sequence_and_the_way_through(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            rejected = set_state(archive, "retrieval", "vector-search",
+                                 "rejected-precedent", ["file:notes.md"])
+            report = precheck(project, archive, "bring back vector search over the corpus")
+        self.assertTrue(report["rejected_precedents"], report)
+        hit = report["rejected_precedents"][0]
+        self.assertEqual(hit["sequence"], rejected["sequence"])
+        self.assertEqual(hit["where"], f"seq:{rejected['sequence']}")
+        self.assertIn("cite and supersede it, or drop the work", hit["message"])
+        self.assertEqual(report["verdict"], "prior-work-found")
+
+    def test_an_unrelated_task_does_not_match_a_rejected_precedent(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            set_state(archive, "retrieval", "vector-search", "rejected-precedent",
+                     ["file:notes.md"])
+            report = precheck(project, archive, "invoice rounding for VAT")
+        self.assertEqual(report["rejected_precedents"], [])
+
+    def test_a_reopened_precedent_is_not_surfaced_again(self) -> None:
+        """Supersede-and-reestablish is the way through the precedent, and
+        once taken, precheck must stop reporting the old refusal as live."""
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            rejected = set_state(archive, "retrieval", "vector-search",
+                                 "rejected-precedent", ["file:notes.md"])
+            set_state(archive, "retrieval", "vector-search", "established",
+                     ["file:notes.md"], supersedes=rejected["sequence"])
+            report = precheck(project, archive, "bring back vector search over the corpus")
+        self.assertEqual(report["rejected_precedents"], [])
+
+    def test_the_rendered_report_names_the_precedent(self) -> None:
+        from godmode_runtime.godmode_precheck import render
+
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            set_state(archive, "retrieval", "vector-search", "rejected-precedent",
+                     ["file:notes.md"])
+            report = precheck(project, archive, "bring back vector search over the corpus")
+        self.assertIn("rejected-precedent", render(report))
+        self.assertIn("retrieval:vector-search", render(report))
+
+
+class AlreadyFiledTests(unittest.TestCase):
+    """The third question: not built, not refused, but already known and open.
+
+    The case: an item describing the same symptom class as the report under
+    investigation, filed the day before, listed twice in the session's own
+    queue, and never connected to the case in hand.
+    """
+
+    def test_an_open_obligation_on_the_same_subject_is_surfaced(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            archive.append("obligation", "trailing blank tail on render",
+                           {"value": "delivered 30.40s of an authored 37.75s composition; "
+                                     "the blank tail was trimmed",
+                            "status": "active"})
+            report = precheck(project, archive, "investigate blank tail after render")
+        self.assertTrue(report["already_reported"])
+        self.assertEqual(report["verdict"], "prior-work-found")
+
+    def test_a_discharged_item_is_not_re_reported(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            archive.append("obligation", "trailing blank tail on render",
+                           {"value": "blank tail trimmed on render", "status": "closed"})
+            archive.append("obligation", "blank tail on a second render",
+                           {"value": "blank tail trimmed on render", "status": "retired"})
+            report = precheck(project, archive, "investigate blank tail after render")
+        self.assertEqual(report["already_reported"], [])
+
+    def test_an_item_with_no_status_still_counts_as_open(self) -> None:
+        """Records written before status was recorded must keep being reported."""
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            archive.append("incident", "blank tail on render",
+                           {"value": "the delivered render lost its trailing scenes"})
+            report = precheck(project, archive, "investigate blank tail after render")
+        self.assertTrue(report["already_reported"])
+
+    def test_an_unrelated_open_item_is_not_matched(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            archive.append("obligation", "publish the release page",
+                           {"value": "publish the release page", "status": "active"})
+            report = precheck(project, archive, "investigate blank tail after render")
+        self.assertEqual(report["already_reported"], [])
+
+    def test_a_truncated_symbol_list_says_it_was_truncated(self) -> None:
+        """A list capped at ten that does not say so is the defect this reports."""
+        from godmode_runtime.godmode_precheck import render
+
+        report = {"task": "t", "already_reported": [], "already_rejected": [],
+                  "already_built": [{"where": f"f.py:{n} sym", "name": "sym",
+                                     "question": "?"} for n in range(14)],
+                  "verdict": "prior-work-found"}
+        self.assertIn("and 4 more existing symbols, not shown", render(report))
 
 
 class SearchDisclosureTests(unittest.TestCase):
@@ -197,6 +313,118 @@ class ClosureReasonTests(unittest.TestCase):
                                      "local-first retrieval"})
             report = precheck(project, archive, "add rank fusion to retrieval")
         self.assertTrue(report["already_rejected"], report)
+
+
+# GAP-2's other half: a project declares "these two artifacts change
+# together" once (a `decision` record namespaced `paired-artifact:<label>`,
+# the same reuse-a-kind-with-a-prefix house pattern `removal:` uses), and
+# every later diff is checked against that declaration - advisory only, v1.
+class PairedArtifactDeclarationTests(unittest.TestCase):
+    def test_a_declared_pair_round_trips(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            declare_paired_artifact(
+                archive, "event-kinds", "scripts/godmode_runtime/godmode_constants.py",
+                "scripts/godmode_runtime/godmode_compress.py",
+                "EVENT_KINDS names every record kind; MASKS must cover the same "
+                "vocabulary or a compressed view silently drops a kind's fields")
+            pairs = declared_paired_artifacts(archive)
+        self.assertEqual(len(pairs), 1)
+        self.assertEqual(pairs[0]["label"], "event-kinds")
+        self.assertEqual(pairs[0]["a"], "scripts/godmode_runtime/godmode_constants.py")
+        self.assertEqual(pairs[0]["b"], "scripts/godmode_runtime/godmode_compress.py")
+
+    def test_a_later_declaration_of_the_same_label_supersedes_the_last(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            declare_paired_artifact(archive, "p", "a.py", "b.py", "first")
+            declare_paired_artifact(archive, "p", "a.py", "c.py", "revised")
+            pairs = declared_paired_artifacts(archive)
+        self.assertEqual(len(pairs), 1)
+        self.assertEqual(pairs[0]["b"], "c.py")
+
+    def test_no_archive_no_declarations_is_an_honest_empty_list_not_an_error(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            self.assertEqual(declared_paired_artifacts(archive), [])
+
+
+class PairedArtifactCheckTests(unittest.TestCase):
+    """Red-first from the spec: a declared pair with a one-sided diff is
+    advisory; both sides touched (or neither) is clean."""
+
+    def test_a_one_sided_diff_against_a_declared_pair_is_advisory(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            declare_paired_artifact(archive, "p", "a.py", "b.py", "must move together")
+            report = paired_artifact_findings(archive, ["a.py"])
+        self.assertEqual(report["verdict"], "one-sided-change")
+        self.assertEqual(len(report["findings"]), 1)
+        hit = report["findings"][0]
+        self.assertEqual(hit["touched"], "a.py")
+        self.assertEqual(hit["untouched"], "b.py")
+        self.assertIn("must move together", hit["question"])
+
+    def test_both_sides_touched_is_clean(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            declare_paired_artifact(archive, "p", "a.py", "b.py", "")
+            report = paired_artifact_findings(archive, ["a.py", "b.py"])
+        self.assertEqual(report["verdict"], "paired-or-clean")
+        self.assertEqual(report["findings"], [])
+
+    def test_neither_side_touched_is_clean(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            declare_paired_artifact(archive, "p", "a.py", "b.py", "")
+            report = paired_artifact_findings(archive, ["unrelated.py"])
+        self.assertEqual(report["verdict"], "paired-or-clean")
+        self.assertEqual(report["findings"], [])
+
+    def test_no_declared_pairs_is_clean_regardless_of_diff(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            report = paired_artifact_findings(archive, ["a.py"])
+        self.assertEqual(report["declared_pairs"], 0)
+        self.assertEqual(report["findings"], [])
+
+    def test_windows_and_posix_path_separators_are_treated_as_the_same_path(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            declare_paired_artifact(archive, "p", "scripts/a.py", "scripts/b.py", "")
+            report = paired_artifact_findings(archive, ["scripts\\a.py"])
+        self.assertEqual(len(report["findings"]), 1)
+
+    def test_it_never_blocks_and_never_joins_the_precheck_verdict(self) -> None:
+        """Advisory only, v1: a paired-artifact hit does not exist to gate
+        anything, and it must not silently flip an otherwise-clean precheck
+        into 'prior work found' the way a real finding would."""
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            declare_paired_artifact(archive, "p", "a.py", "b.py", "")
+            report = precheck(project, archive, "invoice rounding for VAT",
+                             changed_files=["a.py"])
+        self.assertEqual(report["verdict"], "no-prior-work-found")
+        self.assertEqual(report["paired_artifacts"]["verdict"], "one-sided-change")
+
+    def test_precheck_omits_the_section_when_no_changed_files_are_given(self) -> None:
+        """Backward compatible: a caller that never asks about a diff (the
+        signature every existing caller of `precheck()` still uses) gets
+        exactly the report shape it always got."""
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            report = precheck(project, archive, "invoice rounding for VAT")
+        self.assertNotIn("paired_artifacts", report)
+
+    def test_a_paired_artifact_hit_is_rendered_and_labeled_advisory(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            declare_paired_artifact(archive, "p", "a.py", "b.py", "")
+            report = precheck(project, archive, "invoice rounding for VAT",
+                             changed_files=["a.py"])
+        text = render(report)
+        self.assertIn("paired-artifact, advisory", text)
+        self.assertIn("a.py", text)
+        self.assertIn("b.py", text)
 
 
 if __name__ == "__main__":
