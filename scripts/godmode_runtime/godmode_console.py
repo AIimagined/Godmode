@@ -90,6 +90,10 @@ from .godmode_metrics import metrics as product_metrics
 from .godmode_metrics import render_markdown as render_metrics
 from .godmode_roi import render_roi
 from .godmode_roi import roi_report
+# U-E10 - minimal isolated block (one import line, one subcommand, one
+# handler), same pattern as the U-R2 loop-ready block above.
+from .godmode_recurrence import DEFAULT_THRESHOLD as RECURRENCE_DEFAULT_THRESHOLD
+from .godmode_recurrence import mine_recurring_asks, render as render_recurrence
 from .godmode_stages import advance as stage_advance
 from .godmode_stages import skip_stage, sop_attest, sop_status, stage_gate
 from .godmode_index import IndexStale
@@ -2020,6 +2024,15 @@ def cmd_roi(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult({"report": render_roi(report)})
 
 
+def cmd_recurring(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """U-E10: recurring-ask mining. Proposals only; JSON with --json, prose otherwise."""
+    _require_archive(runtime)
+    report = mine_recurring_asks(runtime.archive, threshold=args.threshold)
+    if getattr(args, "json", False):
+        return CommandResult(report)
+    return CommandResult({"report": render_recurrence(report)})
+
+
 def cmd_expunge(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     return CommandResult(runtime.archive.expunge(args.sequence, args.reason))
@@ -3317,6 +3330,18 @@ def _build_parser() -> argparse.ArgumentParser:
     roi_parser.add_argument("--sessions", type=int, default=None,
                             help="Limit the fold to the most recent N sessions")
     roi_parser.set_defaults(handler=cmd_roi)
+
+    recurring_parser = sub.add_parser(
+        "recurring",
+        help="U-E10: mine the request ledger for asks repeated across sessions - "
+             "SOFT charter-rule proposals only, nothing auto-written",
+    )
+    recurring_parser.add_argument(
+        "--threshold", type=int, default=RECURRENCE_DEFAULT_THRESHOLD,
+        help="Distinct sessions a normalized ask must recur in to be reported "
+             f"(default: {RECURRENCE_DEFAULT_THRESHOLD})",
+    )
+    recurring_parser.set_defaults(handler=cmd_recurring)
 
     expunge_parser = sub.add_parser(
         "expunge",
