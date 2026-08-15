@@ -215,6 +215,118 @@ class ArchiveContractTests(unittest.TestCase):
             report = mine_recurring_asks(archive)
             self.assertEqual(report["verdict"], "insufficient-data", report)
             self.assertEqual(report["sessions_seen"], 0)
+            self.assertEqual(report["requests_without_session"], 3)
+
+
+class SessionlessExclusionStated(unittest.TestCase):
+    """Minor from review round 1: the exclusion must be stated in the report,
+    not left for a reader to infer from a count mismatch."""
+
+    def test_the_count_is_in_the_report_dict(self) -> None:
+        with isolated_project() as (_project, _s, _a, archive):
+            archive.initialize()
+            for session in ("S-1", "S-2", "S-3"):
+                _ask(archive, "please add a retry queue", session=session)
+            record_request(archive, "no session on this one")  # no session=
+            report = mine_recurring_asks(archive)
+            self.assertEqual(report["verdict"], "candidates-found", report)
+            self.assertEqual(report["requests_without_session"], 1)
+
+    def test_the_count_is_named_in_render(self) -> None:
+        with isolated_project() as (_project, _s, _a, archive):
+            archive.initialize()
+            for session in ("S-1", "S-2", "S-3"):
+                _ask(archive, "please add a retry queue", session=session)
+            record_request(archive, "no session on this one")  # no session=
+            text = render(mine_recurring_asks(archive))
+            self.assertIn("Requests with no session on record: 1", text)
+            self.assertIn("excluded", text)
+
+
+class OpaqueTermRedaction(unittest.TestCase):
+    """IMPORTANT from review round 1: a generic high-entropy token, matching
+    none of the upstream secret scanner's curated vendor shapes, must not
+    reach the report verbatim. Defense in depth lives inside this module -
+    `_display_term` - because the upstream gate was never built to catch
+    this shape of input.
+
+    Red-first: this is the reviewer's own demonstrated leak, reproduced
+    verbatim as the fixture.
+    """
+
+    # The reviewer's exact adversarial probe: a 40-character token with no
+    # vendor prefix, no separators, and no dictionary shape - proven in the
+    # review to survive `enforce_private_payload` and reach the archive.
+    _GENERIC_TOKEN = "j8f2kd9s71ndkalpqmz8x7bv3wnfg5tq2hjrkl0p"
+
+    def test_the_reviewers_token_is_redacted_to_a_shape_marker(self) -> None:
+        assert len(self._GENERIC_TOKEN) == 40, "fixture drifted from the review"
+        with isolated_project() as (_project, _s, _a, archive):
+            archive.initialize()
+            for session in ("S-1", "S-2", "S-3"):
+                _ask(archive, self._GENERIC_TOKEN, session=session)
+
+            report = mine_recurring_asks(archive)
+            rendered = render(report)
+            dumped = json.dumps(report)
+
+            self.assertEqual(report["verdict"], "candidates-found", report)
+            self.assertIn("<token:40ch>", rendered)
+            self.assertIn("<token:40ch>", dumped)
+            self.assertEqual(report["candidates"][0]["terms"], ["<token:40ch>"])
+
+    def test_the_raw_token_never_appears_in_rendered_text_or_json(self) -> None:
+        """The exact assertion the review asked for: grep count zero."""
+        with isolated_project() as (_project, _s, _a, archive):
+            archive.initialize()
+            for session in ("S-1", "S-2", "S-3"):
+                _ask(archive, self._GENERIC_TOKEN, session=session)
+
+            report = mine_recurring_asks(archive)
+            rendered = render(report)
+            dumped = json.dumps(report)
+
+            occurrences = rendered.count(self._GENERIC_TOKEN) + dumped.count(self._GENERIC_TOKEN)
+            self.assertEqual(occurrences, 0, "the raw token must never appear in output")
+
+    def test_ordinary_words_are_the_green_control_displayed_unchanged(self) -> None:
+        """The redaction must be selective: a real word, even a longish
+        compound one, is not mistaken for a token."""
+        with isolated_project() as (_project, _s, _a, archive):
+            archive.initialize()
+            for session in ("S-1", "S-2", "S-3"):
+                _ask(archive, "please migrate the queue worker", session=session)
+
+            candidate = mine_recurring_asks(archive)["candidates"][0]
+            self.assertIn("queue", candidate["terms"])
+            self.assertIn("worker", candidate["terms"])
+            self.assertIn("migrate", candidate["terms"])
+            self.assertFalse(any(t.startswith("<token:") for t in candidate["terms"]))
+
+    def test_a_short_alphanumeric_id_is_not_falsely_flagged(self) -> None:
+        """Below the length floor, a short mixed-alnum term (a real ticket ID,
+        say) is not treated as opaque - the predicate only fires on genuinely
+        long, unworded strings."""
+        from godmode_runtime.godmode_recurrence import _looks_opaque
+
+        self.assertFalse(_looks_opaque("ABC123"))
+        self.assertFalse(_looks_opaque("sha256"))
+
+    def test_clustering_still_keys_on_the_raw_term_not_the_display_form(self) -> None:
+        """Two different opaque tokens of the same length must not silently
+        merge into one cluster just because they display identically."""
+        with isolated_project() as (_project, _s, _a, archive):
+            archive.initialize()
+            other_token = "z9q1wm4kd0xltbap2vhn7rfg8sc6yj3eou5tqk1nx"  # 41 chars
+            self.assertNotEqual(len(other_token), len(self._GENERIC_TOKEN))
+            for session in ("S-1", "S-2", "S-3"):
+                _ask(archive, self._GENERIC_TOKEN, session=session)
+            for session in ("S-4", "S-5", "S-6"):
+                _ask(archive, other_token, session=session)
+
+            report = mine_recurring_asks(archive)
+            self.assertEqual(report["verdict"], "candidates-found", report)
+            self.assertEqual(len(report["candidates"]), 2, report)
 
 
 if __name__ == "__main__":
