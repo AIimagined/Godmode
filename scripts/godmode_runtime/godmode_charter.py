@@ -394,6 +394,48 @@ _POSITIVE_VERBS = re.compile(
 )
 
 
+# Doctrine exemption (controller ruling, 2026-08-15): safety prohibitions
+# keep their prohibition form. "Never mutate production without an
+# authorized capability" is not bad prose waiting to be rewritten positively
+# - for a safety-critical HARD gate, the negative form IS the clearest form,
+# and this project's own two GODMODE.md gates in exactly this shape were
+# wrongly rewritten once by an earlier pass of this same check (the rewrite
+# also silently narrowed one rule and changed the trigger verb of the
+# other - proof that "just restate it positively" is not a safe transform
+# for this class of rule). Exempted only when the negation opens the
+# sentence and names a concrete object: "never mutate production", "never
+# claim verified". NOT exempted when the object is a placeholder with
+# nothing specific in it ("do not do things") or the verb names no object
+# at all before the clause boundary ("never push without..." - that shape
+# is exactly what this check still exists to catch, because the missing
+# object is the tell that the rule may not have said what it forbids).
+_PROHIBITION_OPENER = re.compile(
+    r"^\W*(?:never|no|don't|do not|must not|cannot|can't|won't)\s+"
+    r"(?P<verb>\w+)\s+(?:(?:a|an|the)\s+)?(?P<object>\w+)",
+    re.IGNORECASE,
+)
+_VAGUE_OBJECTS = frozenset({
+    "things", "thing", "stuff", "something", "anything", "everything",
+    "someone", "anyone", "it", "that", "this", "those", "these", "them",
+})
+# Words a clause boundary uses right after the verb when no object was
+# named yet ("never push without an explicit ask") - captured by the same
+# regex slot an object would fill, so they are excluded explicitly rather
+# than mistaken for one.
+_CLAUSE_BOUNDARY_WORDS = frozenset({
+    "without", "unless", "until", "before", "after", "if", "and", "or", "but",
+})
+
+
+def _named_prohibition(text: str) -> bool:
+    """Whether `text` opens with a negation naming a concrete object."""
+    match = _PROHIBITION_OPENER.match(text.strip())
+    if not match:
+        return False
+    obj = match.group("object").lower()
+    return obj not in _VAGUE_OBJECTS and obj not in _CLAUSE_BOUNDARY_WORDS
+
+
 def negation_heavy(text: str) -> bool:
     """Whether a directive reads as prohibitions with no positive form.
 
@@ -403,7 +445,14 @@ def negation_heavy(text: str) -> bool:
     sentence ("never merge without recording a reviewer") is an ordinary,
     checkable rule; it is the rule with nothing but prohibitions that reads
     as an instruction in how to do the forbidden thing.
+
+    A named prohibition (see `_named_prohibition`) is exempted outright,
+    regardless of the count/positive-verb shape above: for a rule already
+    stated as "never <verb> <concrete object>", restating it positively is
+    the wrong fix, not a better one.
     """
+    if _named_prohibition(text):
+        return False
     return (
         len(_NEGATION_TOKENS.findall(text)) >= 2
         and not _POSITIVE_VERBS.search(text)

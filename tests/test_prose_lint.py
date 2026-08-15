@@ -118,6 +118,67 @@ class NegationHeavyTests(unittest.TestCase):
             "Always ask before pushing; state the reviewer before merging."))
 
 
+class NamedProhibitionDoctrineExemptionTests(unittest.TestCase):
+    """Controller ruling, 2026-08-15: safety prohibitions keep their
+    prohibition form. A HARD rule phrased "never/no/must not <verb>
+    <concrete object>" is exempt outright - not bad prose to rewrite - which
+    is the doctrine an earlier pass of this same check violated by rewriting
+    two of GODMODE.md's own gates. The exemption is scoped to a *named*
+    object: a placeholder ("do not do things") or a verb with nothing named
+    before the clause boundary ("never push without...") still flags.
+    """
+
+    def test_the_two_real_godmode_gates_produce_zero_findings(self) -> None:
+        # The exact prior wording (git show 08e9a3d:GODMODE.md), not a
+        # paraphrase - this is what the ruling requires stay unflagged.
+        with isolated_project() as (project, _s, _a, _archive):
+            (project / "GODMODE.md").write_text(
+                "# Gates\n"
+                "- Never claim verified without a citation that resolves; "
+                "an absence claim requires the search that would disprove "
+                "it.\n"
+                "- Never mutate production or an unknown environment "
+                "without an authorized capability.\n",
+                encoding="utf-8",
+            )
+            charter = compile_charter(project)
+            hard = [r for r in charter["compiled"] if r["enforcement"] == "HARD"]
+            self.assertEqual(len(hard), 2, charter["compiled"])
+            report = lint_charter_prose(charter)
+        self.assertNotIn("negation-heavy-rule", _codes(report), report["findings"])
+
+    def test_a_named_prohibition_with_an_article_before_the_object_is_exempt(self) -> None:
+        # "a test" - the article must not swallow "test" as the object.
+        self.assertFalse(negation_heavy(
+            "Never weaken a test without a recorded rationale; a guard "
+            "must be observed failing before it counts."))
+
+    def test_a_vague_placeholder_object_still_flags(self) -> None:
+        # The coordinator's own example of genuinely bad prose: no positive
+        # verb, and "things" names nothing a reader could check.
+        self.assertTrue(negation_heavy(
+            "Do not do things that are not helpful and not unclear."))
+
+    def test_the_vague_placeholder_still_flags_through_the_full_hard_pipeline(self) -> None:
+        with isolated_project() as (project, _s, _a, _archive):
+            (project / "GODMODE.md").write_text(
+                "# Gates\n- Never do anything without doing something.\n",
+                encoding="utf-8",
+            )
+            charter = compile_charter(project)
+            hard = [r for r in charter["compiled"] if r["enforcement"] == "HARD"]
+            self.assertTrue(hard, charter["compiled"])
+            report = lint_charter_prose(charter)
+        self.assertIn("negation-heavy-rule", _codes(report))
+
+    def test_a_verb_with_no_named_object_before_the_boundary_still_flags(self) -> None:
+        # "never push without" - the object slot is the clause boundary
+        # itself ("without"), not a concrete thing, so this stays flagged;
+        # it is the shape the check still exists to catch.
+        self.assertTrue(negation_heavy(
+            "Never push without an explicit ask; do not skip the review."))
+
+
 class NoDoneCriterionTests(unittest.TestCase):
     """A rule the charter itself could not map to a checkable shape."""
 
@@ -222,17 +283,21 @@ class LintDocsIntegrationTests(unittest.TestCase):
 class ThisRepositoryProseLintTests(unittest.TestCase):
     """Population sweep: godmode's own charter passes its own linter.
 
-    Triage of the 2026-08-15 sweep, recorded here rather than only in the
-    task report: 5 HARD rules in GODMODE.md's `## Gates`, two of which were
-    originally phrased "never X without Y" and were rewritten positively
-    (still HARD, same enforcement shape - see the charter compile assertion
-    below). The remaining 3 findings are ADVISORY rules already known and
-    already reviewed (`AdvisoryReviewRepoTests`,
-    tests/test_charter_checkability.py) - sentence-fragment artifacts of the
-    line-based directive scanner, not real rules; accepted as advisory
-    rather than rewritten, since inventing a verification shape for a
-    narrative fragment would be false enforcement. Zero duplicated-source
-    findings: this repo binds exactly one role document today.
+    Triage, recorded here rather than only in the task report. 5 HARD rules
+    in GODMODE.md's `## Gates`; two are phrased "never X without Y" and stay
+    exactly that way - a controller ruling (2026-08-15) reversed the first
+    pass of this sweep, which had rewritten them positively and, in doing
+    so, silently narrowed one rule and changed the trigger verb of the
+    other. `NamedProhibitionDoctrineExemptionTests` above is the mechanism
+    that now keeps them unflagged; this class is the population-level proof
+    it actually holds on this repo's real content. The remaining 3 findings
+    are ADVISORY rules already known and already reviewed
+    (`AdvisoryReviewRepoTests`, tests/test_charter_checkability.py) -
+    sentence-fragment artifacts of the line-based directive scanner, not
+    real rules; accepted as advisory rather than rewritten, since inventing
+    a verification shape for a narrative fragment would be false
+    enforcement. Zero duplicated-source findings: this repo binds exactly
+    one role document today.
     """
 
     def test_no_hard_rule_reads_as_a_pure_prohibition(self) -> None:
