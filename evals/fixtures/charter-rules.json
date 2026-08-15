@@ -12,12 +12,6 @@
       "trigger": "always",
       "verify": "none"
     },
-    "R-1f13ed9464": {
-      "enforcement": "ADVISORY",
-      "text_hash": "6911b008d570a9a1",
-      "trigger": "always",
-      "verify": "none"
-    },
     "R-2259c5b00c": {
       "enforcement": "HARD",
       "text_hash": "a6d2ad57a9c431e3",
@@ -27,6 +21,12 @@
     "R-32633debfc": {
       "enforcement": "ADVISORY",
       "text_hash": "8caf101b1f2c5c9b",
+      "trigger": "always",
+      "verify": "none"
+    },
+    "R-40b5224071": {
+      "enforcement": "ADVISORY",
+      "text_hash": "674f6de7f309e503",
       "trigger": "always",
       "verify": "none"
     },

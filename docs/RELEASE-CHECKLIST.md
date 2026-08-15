@@ -2,7 +2,7 @@
 
 Standing verification rows this project re-runs before it ships.
 
-Before this sprint's commits land: the affected suites
+Before this repository's commits land: the affected suites
 (`tests.test_capability_register`, `tests.test_minimality`, plus every
 existing suite touched by the reconcile/assess/console edits) pass serially;
 `godmode assess` on this repo reports `capability_debt` as a stated list
