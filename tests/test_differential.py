@@ -1,6 +1,6 @@
 """U-E3: differential-evidence detector - diff before theory.
 
-Mechanizes varunraj-kinetiq §4.8a / L-267: when two comparable states exist,
+Diff before theory: when two comparable states exist,
 a root-cause claim without the differential is inadmissible as a finding.
 
 `record_differential` records a comparison of two archived states -
