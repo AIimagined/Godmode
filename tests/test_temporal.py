@@ -3,7 +3,7 @@
 A completion claim citing a test command is admissible only when the SAME
 command is observed failing before the fix-edit and passing after - the
 temporal shape, not just the citation (E4 R4 / E6 tdd, superpowers-class).
-Criterion pre-registration (E4/[private]): state what passing looks like
+Criterion pre-registration (E4): state what passing looks like
 before doing the work, and cite it from the claim that judges the work done.
 
 Every fixture transcript line below is built to the REAL host shape pinned
