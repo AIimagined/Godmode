@@ -1002,6 +1002,19 @@ def _write_verdict(path: str, project_root: Path | None, archive: Any) -> tuple[
 # is protected unconditionally by name, and these two are not.
 _MOVE_COPY_HEAD = re.compile(r"(?i)^\s*(?:mv|cp|move-item|copy-item)\b")
 
+# The move/copy asymmetry (fix-round-2, task-7 re-review, Important): `mv`
+# REMOVES the source from its own path - a pinned evaluator named as an
+# `mv` source is gone from its pinned location the moment the command
+# runs, which is the same defeat as overwriting it. `cp` does not - the
+# pinned file is untouched at its own path; `cp evaluator.py backup.py`
+# duplicates its bytes into a new, unpinned file and leaves the original
+# exactly as it was, the same as `cat evaluator.py > backup.py` already
+# does (unprotected, R2). Only `_MOVE_HEAD`-matched sources get the pin
+# check below - do not widen this back to `_MOVE_COPY_HEAD` without
+# re-deriving this reasoning, since that regressed straight back to the
+# over-denial this fix exists to remove.
+_MOVE_HEAD = re.compile(r"(?i)^\s*(?:mv|move-item)\b")
+
 # GNU/BusyBox coreutils' `-t DIR`/`--target-directory=DIR` moves the
 # destination out of its usual trailing position (`mv -t DIR src1 src2 ...`)
 # - real syntax, not a hypothetical. This module does not attempt to
@@ -1020,15 +1033,17 @@ def _move_copy_arguments(segment: "Segment") -> tuple[list[str], str] | None:
     name", never "read as safe": the caller treats it the same way an
     unrecognised command with a real write already is.
 
-    Fix-round-1: a source is checked for a pin hit too, not only the
-    destination - `mv evaluator.py elsewhere.py` renames a pinned path
-    away exactly as effectively as overwriting it does (`pin_drift` would
-    later report the pinned path as "no longer exists", but the hook's own
-    preventive half is what this exists to restore). It gets none of the
-    destination's OTHER checks (sensitivity, containment) - reading FROM
-    any path, pinned or not, inside the tree or out, is ordinary; only
-    "does this move a pinned evaluator's content away from its pinned
-    path" is a pin question at all.
+    Fix-round-1: for `mv`-shaped commands only (the caller checks
+    `_MOVE_HEAD`, not every head this function itself accepts), a source is
+    also checked for a pin hit - `mv evaluator.py elsewhere.py` renames a
+    pinned path away exactly as effectively as overwriting it does
+    (`pin_drift` would later report the pinned path as "no longer exists",
+    but the hook's own preventive half is what this exists to restore). A
+    `cp` source gets no such check (fix-round-2: `cp` does not remove
+    anything from the pinned path, so `cp evaluator.py backup.py` is an
+    ordinary read - see `_MOVE_HEAD`'s own comment). Neither shape's source
+    gets the destination's OTHER checks (sensitivity, containment) - reading
+    FROM any path, pinned or not, inside the tree or out, is ordinary.
 
     Tokenized from `segment.text` (the untouched original, quotes intact)
     via `shlex.split(..., posix=False)` rather than `segment.tokens`
@@ -1732,12 +1747,17 @@ def _categorize(normalized: str, project_root: Path | None = None,
                          "form, a flag where a path was expected, or fewer "
                          "than two paths)"])
             sources, destination = arguments
-            # A pinned evaluator renamed away is the same defeat as one
-            # overwritten - the numbers it produces stop meaning anything
-            # either way. Sources get only this one check, never the
-            # destination's containment/sensitivity checks: reading FROM a
-            # path is not itself a mutation.
-            for source in sources:
+            # `mv`-only (fix-round-2): a pinned evaluator renamed away is
+            # the same defeat as one overwritten - `mv` removes the source
+            # from its own path. `cp` does not remove anything, so a `cp`
+            # source names an ordinary read (`cp evaluator.py backup.py`
+            # is the same act as `cat evaluator.py > backup.py`, already
+            # unprotected) - see `_MOVE_HEAD`'s own comment for the full
+            # reasoning; do not widen this to every `_MOVE_COPY_HEAD` match
+            # again. Sources get only this one check even for `mv`, never
+            # the destination's containment/sensitivity checks: reading
+            # FROM a path is not itself a mutation.
+            for source in (sources if _MOVE_HEAD.match(normalized) else ()):
                 pinned = _pinned_evaluator_hit(source, project_root, archive)
                 if pinned is not None:
                     return ("pinned-evaluator-mutation", True,
