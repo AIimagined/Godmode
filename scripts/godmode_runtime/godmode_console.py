@@ -1298,13 +1298,22 @@ def cmd_untrusted(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 def cmd_swallow(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     project = Path(runtime.anchor.project_root)
     report = scan_swallow(project)
+    # RULING B3-3-2: a live regression fails EVERY invocation, including
+    # `--update-baseline` - `update_baseline`'s min() protection genuinely
+    # holds the ceiling and never baselines the regression away, but an exit
+    # code that reads 0 regardless would collapse "regression" and
+    # "regression, not rescued" into one observable - the exact silent-
+    # failure shape this scanner exists to catch in OTHER code. A truncated
+    # sweep is a claim about a population that was never fully read, so it
+    # fails the same way; advisory findings alone do not (see module
+    # docstring).
+    warned = bool(report["regressions"]) or report["truncated"]
     if getattr(args, "update_baseline", False):
         written = update_swallow_baseline(project, report["counts"])
-        return CommandResult({"baseline_written": written, "counts": report["counts"]})
-    # A regression is the hard signal; a truncated sweep is a claim about a
-    # population that was never fully read. Advisory findings alone do not
-    # fail the command - see the module docstring for why.
-    warned = bool(report["regressions"]) or report["truncated"]
+        return CommandResult(
+            {"baseline_written": written, "counts": report["counts"]},
+            exit_code=1 if warned else 0,
+        )
     return CommandResult(report, exit_code=1 if warned else 0)
 
 
