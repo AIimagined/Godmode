@@ -395,6 +395,17 @@ def _freshness_stamp(project: Path, path: str, is_git: bool) -> int:
     the checkout-order risk: an uncommitted file's mtime is this session's
     real edit time, not a byte a checkout wrote from history. Determinism
     across checkouts is guaranteed for committed files only.
+
+    A non-git project (or an untracked file inside a git one) has no commit
+    object to anchor on, so this function still returns raw mtime as the
+    freshness *value* for it - that fallback is unchanged. What callers must
+    not do is compare that value's magnitude *across* files to order a
+    non-git project, because mtime there is assigned by whatever copied or
+    checked the files out, not by their content: two copies of an identical
+    non-git project can disagree on which file's mtime is newer purely from
+    copy timing, the exact instability the git-log fix above already fixed
+    for tracked files (`rank` degrades non-git ordering to a path sort for
+    this reason - see there).
     """
     if is_git:
         stamp = run_git(project, "log", "-1", "--format=%ct", "--", path)
@@ -433,7 +444,19 @@ def rank(
             path: _freshness_stamp(project, path, is_git)
             for path in {segment.path for segment in segments}
         }
-        newest_first = sorted(stamps, key=lambda p: (-stamps[p], p))
+        if is_git:
+            newest_first = sorted(stamps, key=lambda p: (-stamps[p], p))
+        else:
+            # A non-git project has no commit-object timestamp for any file,
+            # so every stamp here came from the mtime fallback - a value
+            # copy timing controls, not content. Ordering by that magnitude
+            # across files is exactly the checkout-order instability the
+            # git-log fix above exists to prevent, just with no deterministic
+            # substitute value available; the tie-break degrades to path,
+            # the same deterministic instrument the git branch already uses
+            # as ITS secondary key, so identical non-git copies always agree
+            # regardless of which file the copy happened to timestamp newest.
+            newest_first = sorted(stamps)
         # A small, bounded factor: freshness reorders equals, never outvotes weight.
         for position, path in enumerate(newest_first):
             freshness[path] = 1.0 + 0.05 / (1 + position)
