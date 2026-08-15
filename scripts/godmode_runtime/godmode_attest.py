@@ -36,6 +36,12 @@ _DIFF_CITE = re.compile(r"^diff:(?P<sequence>\d+)$")
 # cite - reconstructed as "<name>:<value>" and checked against the metric's
 # own registered anchor pattern.
 _LINE_CITE = re.compile(r"^line:(?P<name>[^:]+):(?P<value>.+)$")
+# The cap `line:`'s value half is held to before it is ever matched against
+# an anchor (see `_citation_resolves`'s `line:` handling) - a metric value
+# never legitimately needs more than this many characters, and the length
+# cap on the anchor itself (`_ANCHOR_MAX_LEN`) bounds the wrong side of the
+# match: it says nothing about how long the TEXT matched against it may be.
+_MAX_METRIC_VALUE_LEN = 64
 
 # Named because naming them is the intervention. Each entry is a thought that has
 # preceded a skipped step, mapped to the gate it predicts. Surfaced on a block so the
@@ -530,8 +536,20 @@ def _citation_resolves(project: Path, archive: Chronicle, citation: str,
         anchor = _registered_anchor(archive, match.group("name"))
         if anchor is None:
             return False
+        value = match.group("value")
+        # Layer 2 of 2 against catastrophic backtracking (layer 1 is the
+        # registration-time shape refusal in `register_metric_contract`):
+        # `value` is an agent-supplied citation string, matched against an
+        # anchor at GRADING time - untrusted input reaching a regex the
+        # length cap on the anchor itself never bounded. A metric value
+        # never legitimately needs more than this many characters, so
+        # anything longer is refused outright, before the regex engine
+        # ever sees it - holds even for a pattern layer 1's heuristic
+        # missed.
+        if len(value) > _MAX_METRIC_VALUE_LEN:
+            return False
         try:
-            return re.match(anchor, f"{match.group('name')}:{match.group('value')}") is not None
+            return re.match(anchor, f"{match.group('name')}:{value}") is not None
         except re.error:
             return False
     if citation.startswith("criterion:"):
@@ -937,6 +955,30 @@ LATE_CRITERION_FINDING = "criterion must precede the work it judges"
 # number the claim states, or the two are said out loud.
 _ANCHOR_MAX_LEN = 200
 
+# A quantified group ((X+), (X*), (X{m,n})) immediately followed by another
+# quantifier - (X+)+, (X*)+, (X+)*, (X*)*, and the {m,n} forms - is the
+# textbook catastrophic-backtracking shape: the same run of input characters
+# can be partitioned between the two quantifiers exponentially many ways
+# before the engine gives up, so a short anchor and a short(ish) matched
+# value are enough to hang. `re.compile("(a+)+b").match("a" * 28)` on this
+# codebase's own interpreter does not return in under 8 seconds - the length
+# cap above bounds the ANCHOR's length, which says nothing about that.
+#
+# This is a text scan for the named shapes, not a full regex parser - it
+# will not catch every pathological pattern, but it catches these by name,
+# at registration time, before an agent-supplied value is ever matched
+# against the anchor. `_MAX_METRIC_VALUE_LEN` (grading time, see
+# `_citation_resolves`'s `line:` handling) is the second, independent layer:
+# it holds even for a shape this heuristic misses.
+_QUANT = r"(?:[+*]|\{\d+,\d*\})"
+_CATASTROPHIC_SHAPE = re.compile(r"\((?:[^()]*" + _QUANT + r"[^()]*)\)" + _QUANT)
+
+
+def _catastrophic_shape(pattern: str) -> str | None:
+    """The nested-quantifier substring that risks exponential backtracking."""
+    match = _CATASTROPHIC_SHAPE.search(pattern)
+    return match.group(0) if match else None
+
 
 def _registered_anchor(archive: Chronicle, name: str) -> str | None:
     """The anchor most recently registered for `name`, or `None` if never."""
@@ -961,13 +1003,19 @@ def register_metric_contract(
 ) -> dict[str, Any]:
     """Declare the one output shape a numeric claim about `name` may cite.
 
-    Validated at registration, before the anchor can ever gate a claim: it
-    must compile as a regex, and it is length-capped. That pair - a
-    `re.compile` try plus a length cap - is deliberately the whole defense
-    here (the E49-absorbed unsafe-pattern idea): this runs once, over a
-    short pattern an operator declares by hand, not over untrusted input at
-    scale, so it suffices at this size without a bespoke catastrophic-
-    backtracking detector.
+    Validated at registration, before the anchor can ever gate a claim, in
+    three steps: it must compile as a regex; it is length-capped; and it is
+    scanned for the named catastrophic-backtracking shapes (`(X+)+`, `(X*)+`,
+    `(X+)*`, `(X*)*`, and the `{m,n}` forms - see `_catastrophic_shape`).
+    `re.compile` plus a length cap alone is NOT the whole defense - a review
+    round demonstrated `(a+)+b` compiles fine, is well under the length cap,
+    and hangs the interpreter once matched against a crafted `line:` value at
+    grading time, because the length cap bounds the anchor's own length, not
+    the length of the text later matched against it (see
+    `_MAX_METRIC_VALUE_LEN`, the second, independent layer against the same
+    class of pattern). The shape scan is a heuristic text match, not a full
+    regex parser, so this runs once over a short pattern an operator
+    declares by hand - not a claim that every pathological pattern is caught.
     """
     name = name.strip()
     if not name:
@@ -978,6 +1026,12 @@ def register_metric_contract(
         re.compile(anchor)
     except re.error as exc:
         raise ArchiveError(f"Metric anchor {anchor!r} is not a valid pattern: {exc}") from exc
+    shape = _catastrophic_shape(anchor)
+    if shape:
+        raise ArchiveError(
+            f"Metric anchor {anchor!r} contains a nested-quantifier shape "
+            f"({shape!r}) that risks catastrophic backtracking - simplify it"
+        )
     return archive.append(
         "decision", f"metric-contract:{name}",
         {"anchor": anchor, "session": session},

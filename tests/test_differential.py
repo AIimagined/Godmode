@@ -298,5 +298,48 @@ class PlantTests(unittest.TestCase):
         self.assertIn("diff:", out["data"]["reason"])
 
 
+class ConsoleSmokeTests(unittest.TestCase):
+    """Pins the bundled KeyError fix from the U-E3 commit (a pre-existing
+    bug, found while smoke-testing this exact path): `record_claim`'s
+    differential and external-primary-source downgrade paths stored the
+    claimed grade under `"requested"` instead of `"claimed_grade"` - the
+    key `cmd_claim` (`godmode_console.py`) reads directly, so `godmode
+    claim` KeyError'd on either path pre-fix. Nothing exercised `godmode
+    claim` through the console layer before this - the fully green unit
+    suite never would have caught it, or a regression of it."""
+
+    def test_a_differential_downgrade_through_the_console_layer_reports_cleanly(self) -> None:
+        import contextlib
+        import io
+        import json as jsonlib
+
+        from godmode_runtime.godmode_console import main
+
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _checkpoint(archive, "render pipeline")
+            _checkpoint(archive, "render pipeline")
+            (project / "notes.txt").write_text("x\n", encoding="utf-8")
+            opened = main(
+                ["--project", str(project), "session", "open", "--label", "console"])
+            self.assertEqual(opened, 0)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                exit_code = main([
+                    "--project", str(project), "claim",
+                    "the root cause is the pipeline reorder",
+                    "--grade", "verified", "--cite", "file:notes.txt",
+                ])
+        payload = jsonlib.loads(out.getvalue())
+        # A downgrade is a finding, reported as a nonzero exit - "clean" here
+        # means "well-formed JSON and no uncaught exception", not exit 0.
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(payload["grade"], "hypothesis")
+        self.assertTrue(payload["downgraded"])
+        # This is the assertion that KeyErrors pre-fix: `cmd_claim` reads
+        # `data["claimed_grade"]` into this "claimed" field.
+        self.assertEqual(payload["claimed"], "verified")
+
+
 if __name__ == "__main__":
     unittest.main()
