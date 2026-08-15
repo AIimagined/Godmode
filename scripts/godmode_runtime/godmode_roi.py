@@ -130,10 +130,22 @@ def roi_report(archive: Chronicle, sessions: int | None = None) -> dict[str, Any
             session_count += 1
 
         elif kind == "refusal":
-            # Every refusal record IS a denial - godmode_session_hook.py
-            # only appends this kind from its deny branch (see the module
-            # docstring). Disjoint from the `action`/`roi_event` convention
-            # below, so folding both never double-counts the same record.
+            # U-E7: a refusal carrying `observed: True` was written under
+            # gate_mode=observe - the call was NEVER actually denied, only
+            # classified as though it would have been. Folding it into
+            # `gate.denied` here would misreport a hypothetical as a real
+            # enforcement outcome, which is exactly the causal-attribution
+            # slip this report's own framing rule exists to refuse. It is
+            # counted instead by `roi_digest`, below, labeled
+            # `would-have-denied`/`would-have-asked` - an event label, never
+            # a claim about what the operation would have done or what
+            # would have followed. Every OTHER refusal record IS a real
+            # denial - godmode_session_hook.py only appends the non-observed
+            # shape from its deny branch (see the module docstring) - and
+            # those still fold here, disjoint from the `action`/`roi_event`
+            # convention below, so folding both never double-counts.
+            if data.get("observed") is True:
+                continue
             gate_denied += 1
             _cite(record)
 
@@ -272,5 +284,97 @@ def render_roi(report: dict[str, Any]) -> str:
     )
     lines.append("")
     lines.append("Basis: " + (", ".join(report["basis"]) if report["basis"] else "(none)"))
+
+    return "\n".join(lines) + "\n"
+
+
+def roi_digest(archive: Chronicle, sessions: int | None = None) -> dict[str, Any]:
+    """U-E7: the would-have-caught view over gate_mode=observe records only.
+
+    Folds ONLY `kind="refusal"` records carrying `observed: True` - the
+    advisory record `hooks/godmode_session_hook.py`'s `_apply_observe_mode`
+    writes for a call that would have been denied or asked about under
+    enforcement, but ran anyway because the local policy's `gate_mode` was
+    `"observe"`. Disjoint from `roi_report`'s `gate.denied`, which excludes
+    these on purpose (see that function's own comment) - a would-have-caught
+    count and a real enforcement count answer different questions and must
+    never be added together.
+
+    Same causal-denylist discipline as `roi_report`: `would_have_denied`/
+    `would_have_asked` name what the CLASSIFIER decided, never what the
+    operator would have done, never what damage (if any) would have
+    followed. "would-have-denied" is an event label, not a savings or
+    prevention claim - `render_digest` is checked against `CAUSAL_DENYLIST`
+    exactly like `render_roi` is.
+    """
+    records = archive.read_events()
+
+    floor_sequence = 0
+    if sessions is not None and sessions > 0:
+        session_sequences = [r["sequence"] for r in records if r["kind"] == "session"]
+        if len(session_sequences) > sessions:
+            floor_sequence = session_sequences[-sessions]
+
+    would_have_denied = 0
+    would_have_asked = 0
+    by_category: dict[str, int] = {}
+    basis: list[str] = []
+
+    def _cite(record: dict[str, Any]) -> None:
+        if len(basis) < _BASIS_CAP:
+            basis.append(f"seq:{record['sequence']}")
+
+    for record in records:
+        if record["sequence"] < floor_sequence:
+            continue
+        if record["kind"] != "refusal":
+            continue
+        data = record.get("data") or {}
+        if data.get("observed") is not True:
+            continue
+        category = str(data.get("category") or "unclassified-mutation")[:80]
+        by_category[category] = by_category.get(category, 0) + 1
+        if data.get("would_have") == "ask":
+            would_have_asked += 1
+        else:
+            would_have_denied += 1
+        _cite(record)
+
+    return {
+        "would_have_denied": would_have_denied,
+        "would_have_asked": would_have_asked,
+        "by_category": dict(sorted(by_category.items())),
+        "basis": basis,
+    }
+
+
+def render_digest(digest: dict[str, Any]) -> str:
+    """Prose rendering: counts, categories, and `seq:` refs only - the same
+    content-free discipline `render_roi` holds, never a record's free-text
+    fields, never a causal-attribution word.
+    """
+    total = digest["would_have_denied"] + digest["would_have_asked"]
+    lines: list[str] = [
+        "GODMODE ROI DIGEST - observe-mode records only; counts + seq refs, "
+        "causal attribution is the operator's call",
+        f"Observed refusals (from {total} observed refusal records; "
+        "gate_mode=observe let every one of these through):",
+        f"  would-have-denied={digest['would_have_denied']} "
+        f"would-have-asked={digest['would_have_asked']}",
+        "",
+    ]
+    if digest["by_category"]:
+        lines.append("By category (from the same observed refusal records):")
+        for category, count in digest["by_category"].items():
+            lines.append(f"  {category}: {count}")
+    else:
+        lines.append("By category: (none observed)")
+    lines.append("")
+    lines.append(
+        "These are events the classifier flagged - what the operation was, "
+        "not what would otherwise have happened to it or because of it."
+    )
+    lines.append("")
+    lines.append("Basis: " + (", ".join(digest["basis"]) if digest["basis"] else "(none)"))
 
     return "\n".join(lines) + "\n"

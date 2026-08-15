@@ -2074,6 +2074,12 @@ def _decode(data: str) -> bytes:
 
 POLICY_FILENAME = ".godmode-authorization-policy.json"
 
+# U-E7: the one `gate_mode` value this file understands. Set here so the
+# validating reader (`CapabilityBroker._policy()`) and every consumer of
+# `local_authorization_policy()` (the full hook, `assess`) compare against
+# the same literal rather than a second, independently-spelled copy.
+GATE_MODE_OBSERVE = "observe"
+
 # 180 expired under an agent's ordinary retry latency (a slow tool round-trip
 # plus one retry could outlast it); 300 measured comfortable while staying
 # one short conversation, not an open-ended window.
@@ -2141,6 +2147,27 @@ class CapabilityBroker:
             ):
                 raise AuthorizationError("approval_required must be a list of category names")
             policy["approval_required"] = tuple(approval)
+        # U-E7 observe mode: a LOOSENING of enforcement (every deny/ask
+        # becomes an advisory - see `hooks/godmode_session_hook.py`'s
+        # `_apply_observe_mode`), so this is the one key in this file that
+        # is validated to exactly one legal spelling rather than merely
+        # type-checked. `"observ"`, `"Observe"`, `true`, or any other value
+        # refuses loudly (`AuthorizationError`) instead of being silently
+        # ignored or silently treated as the mode it almost spells - a
+        # loosening that could be entered by typo is not the deliberate,
+        # explicit act the operator directive requires. Absent entirely
+        # (every project predating this unit) parses to no key at all, the
+        # same as every other optional field here, which is what keeps
+        # enforcement the default nobody has to opt into.
+        mode = raw.get("gate_mode")
+        if mode is not None:
+            if mode != GATE_MODE_OBSERVE:
+                raise AuthorizationError(
+                    f"gate_mode must be {GATE_MODE_OBSERVE!r} if set (the only value "
+                    f"this understands - a typo must not silently loosen enforcement), "
+                    f"not {mode!r}"
+                )
+            policy["gate_mode"] = GATE_MODE_OBSERVE
         return policy
 
     def _classify(self, operation: str) -> dict[str, Any]:
@@ -2565,7 +2592,7 @@ def local_authorization_policy(archive: Any) -> dict[str, Any]:
 
 
 def stage_from_refusal(archive: Any, nth: int = 1) -> str:
-    """The operation named by the nth-most-recent refusal on record.
+    """The operation named by the nth-most-recent STAGEABLE refusal on record.
 
     The refusal that names a remedy nobody can perform used to be answered by
     retyping the exact command the gate had just printed - `--nth 1` is that
@@ -2576,13 +2603,33 @@ def stage_from_refusal(archive: Any, nth: int = 1) -> str:
     Raises rather than defaulting to some earlier, unrelated refusal: a stale
     operation staged silently is worse than a command that says plainly there
     is nothing to stage.
+
+    U-E7 decision: a `refusal` record carrying `observed: True` (written by
+    `godmode_session_hook.py`'s `_apply_observe_mode` when the local
+    policy's `gate_mode` is `"observe"`) is NEVER counted here, and `--nth`
+    skips past it as if it did not exist. Nothing was actually blocked when
+    it was written - the whole point of observe mode is that the call
+    proceeded - so there is no live refusal for a staged capability to
+    answer; staging one anyway would mint a real, spendable escalation
+    around a call the classifier only ever asked about hypothetically,
+    which is a bigger door than observe mode's own advisory framing implies
+    it opens. An operator who wants to act on an observed pattern has the
+    honest path already: fix the policy (drop `gate_mode`) and hit the
+    operation again for real, or read the digest (`godmode roi --digest`)
+    and stage deliberately with `authorize stage --operation`.
     """
     if nth < 1:
         raise AuthorizationError("--nth must be 1 or greater")
-    records = archive.select(kind="refusal", limit=nth)
-    if len(records) < nth:
+    # Fetched at `select`'s own cap (500) rather than `limit=nth`: observed
+    # refusals interleaved with real ones mean the nth-from-the-end STAGEABLE
+    # record is not necessarily the nth-from-the-end record of either kind,
+    # so narrowing the read to `nth` before filtering could silently miss a
+    # real refusal sitting behind a run of observed ones.
+    records = archive.select(kind="refusal", limit=500)
+    stageable = [record for record in records if not record["data"].get("observed")]
+    if len(stageable) < nth:
         raise AuthorizationError("No refusal is on record; nothing to stage")
-    return str(records[-nth]["data"].get("operation", ""))
+    return str(stageable[-nth]["data"].get("operation", ""))
 
 
 def _self_check() -> None:

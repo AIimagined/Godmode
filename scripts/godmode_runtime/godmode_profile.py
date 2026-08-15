@@ -34,6 +34,16 @@ would silently drop that ask, and this refuses instead, naming exactly
 which categories would be lost - the operator still has the whole file to
 hand-edit. `standard` never reaches this check: it does not manage the key,
 so an existing, tighter file survives it untouched.
+
+U-E7 note: this module never reads or writes `gate_mode` (the
+`.godmode-authorization-policy.json` key that puts the gate into observe
+mode - see `godmode_sentinel.GATE_MODE_OBSERVE`). `init --profile` stays an
+enforcement-only path on purpose: every profile here only ever ADDS to
+`approval_required`, and a "novice" starting posture that could silently
+also loosen enforcement into advisory-only would contradict the whole
+tighten-only ratchet this module exists to run. Observe mode has exactly
+one door in - a deliberate, explicit edit of the policy file's `gate_mode`
+key - and this module is not it.
 """
 
 from __future__ import annotations
