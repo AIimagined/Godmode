@@ -31,7 +31,9 @@ import re
 import subprocess
 from pathlib import Path
 
+from .godmode_charter import ADVISORY, HARD, compile_charter, negation_heavy
 from .godmode_constants import RUNTIME_VERSION
+from .godmode_errors import GodmodeError
 from typing import Any
 
 CONFIG_FILENAME = ".godmode-docslint.json"
@@ -440,6 +442,102 @@ def _figure_findings(relative: str, text: str, project: Path) -> list[dict[str, 
     return findings
 
 
+# U-S4 charter prose linter. Extends the negative-check half of this module
+# to the operating guidance the runtime already compiles into rules
+# (`godmode_charter.compile_charter`), rather than raw document text - a
+# charter rule can be well-formed and still read badly, or point at nothing
+# a machine can check, or say twice what it should say once. Every finding
+# here carries `severity: "advisory"`, which `lint_docs`' own `high_severity`
+# count and exit code never look at: this is prose feedback, not a gate, and
+# it never blocks a commit or downgrades the charter's own HARD enforcement.
+def _normalize_directive(text: str) -> str:
+    """A directive reduced to what it says, not how it is formatted."""
+    return re.sub(r"\s+", " ", text.lower()).strip(" .")
+
+
+def _rule_location(rule: dict[str, Any]) -> tuple[str, int]:
+    path, _, line = str(rule.get("source", "")).rpartition(":")
+    try:
+        return path, int(line)
+    except ValueError:
+        return path, 1
+
+
+def _duplicated_directive_findings(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The same directive bound into two role documents.
+
+    Two documents stating the same rule is not redundancy that helps a
+    reader - it is two sources of truth that can drift apart the first time
+    only one of them is edited. Grouped by role/path pair rather than by
+    role alone: two rules in the same document repeating themselves is an
+    editing accident the author can see by reading the file; this check is
+    for the copy nobody notices because it lives in a different file.
+    """
+    by_text: dict[str, list[dict[str, Any]]] = {}
+    for rule in rules:
+        by_text.setdefault(_normalize_directive(rule["text"]), []).append(rule)
+    findings: list[dict[str, Any]] = []
+    for group in by_text.values():
+        paths = sorted({_rule_location(rule)[0] for rule in group})
+        if len(paths) < 2:
+            continue
+        first = group[0]
+        path, line = _rule_location(first)
+        findings.append({
+            "path": path, "line": line, "check": "duplicated-source",
+            "severity": "advisory", "rule_id": first["id"],
+            "why": f"the same directive is also bound from {', '.join(p for p in paths if p != path)}",
+            "remedy": "keep one source of truth for this directive; have the "
+                      "other role document point at it instead of restating it",
+            "excerpt": first["text"][:160],
+        })
+    return findings
+
+
+def lint_charter_prose(charter: dict[str, Any]) -> dict[str, Any]:
+    """Advisory findings over a project's own compiled charter rules.
+
+    Three checks, none of them blocking:
+
+    * `negation-heavy-rule` - a HARD rule with two or more negation tokens
+      ("never", "without", "not"...) and no positive verb anywhere in it:
+      the shape a rule takes when it states only what must not happen, which
+      puts the forbidden behaviour in the reader's head first.
+    * `no-done-criterion` - a rule the charter itself could not map to any
+      checkable shape (`enforcement == ADVISORY`, `verify == "none"`): it
+      names no command and no assertable token, so nothing here says what
+      passing or failing would look like.
+    * `duplicated-source` - the same normalized directive bound from two
+      different role documents.
+    """
+    rules = charter.get("compiled") or []
+    findings: list[dict[str, Any]] = []
+    for rule in rules:
+        path, line = _rule_location(rule)
+        if rule.get("enforcement") == HARD and negation_heavy(rule["text"]):
+            findings.append({
+                "path": path, "line": line, "check": "negation-heavy-rule",
+                "severity": "advisory", "rule_id": rule["id"],
+                "why": "a HARD rule stated only as prohibitions names the "
+                       "forbidden behaviour and never the one to do instead",
+                "remedy": "restate positively: say what to do, not only what "
+                          "not to do",
+                "excerpt": rule["text"][:160],
+            })
+        if rule.get("enforcement") == ADVISORY:
+            findings.append({
+                "path": path, "line": line, "check": "no-done-criterion",
+                "severity": "advisory", "rule_id": rule["id"],
+                "why": "no command or assertable token in this directive - "
+                       "nothing here says what passing or failing looks like",
+                "remedy": "name a command, a file, or a checkable token; "
+                          "otherwise this stays prose, not a gate",
+                "excerpt": rule["text"][:160],
+            })
+    findings.extend(_duplicated_directive_findings(rules))
+    return {"findings": findings, "checked": len(rules)}
+
+
 def lint_docs(project: Path) -> dict[str, Any]:
     """Lint every public document in the project.
 
@@ -472,6 +570,17 @@ def lint_docs(project: Path) -> dict[str, Any]:
         findings.extend(_figure_findings(relative, text, project))
         findings.extend(_self_pin_findings(relative, text, RUNTIME_VERSION))
     high = [f for f in findings if f["severity"] == "high"]
+    # Advisory only, kept out of `findings`/`high_severity`/`verdict` on
+    # purpose: a badly-phrased charter rule is feedback for the operator, not
+    # a reason `docs --lint` should exit non-zero or read "findings" instead
+    # of "clean". A project whose charter compilation fails (unreadable
+    # `.godmode-roles.json`, an unreachable bound document) gets an empty
+    # list here rather than taking the whole lint command down with it.
+    prose_advisories: list[dict[str, Any]] = []
+    try:
+        prose_advisories = lint_charter_prose(compile_charter(project))["findings"]
+    except GodmodeError:
+        pass
     return {
         "documents_scanned": scanned,
         "findings": findings,
@@ -480,5 +589,6 @@ def lint_docs(project: Path) -> dict[str, Any]:
         # Stated so a report cannot be read as "checked against a contract"
         # when none was declared.
         "contracts_applied": sorted(contracts),
+        "prose_advisories": prose_advisories,
         "verdict": "clean" if not findings else "findings",
     }

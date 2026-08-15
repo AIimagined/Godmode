@@ -366,6 +366,50 @@ def applicable_rules(charter: dict[str, Any], path: str) -> dict[str, Any]:
     }
 
 
+# U-S4 prose linter - negation-heavy detection. A rule can be checkable and
+# still read badly: "never commit without a changelog" names the forbidden
+# behaviour and puts it first, which is the shape a prohibition-only rule
+# takes. Restated positively ("every commit carries a changelog") the same
+# rule survives a skim; two or more negations with nothing positive to do
+# instead is the signal, not any single "never"/"not".
+_NEGATION_TOKENS = re.compile(
+    r"\b(?:not|never|no|none|cannot|can't|won't|don't|doesn't|didn't|isn't|"
+    r"aren't|without|forbidden|prohibited|disallow(?:ed)?|refus(?:e|es|ed|ing)|"
+    r"non-\w+)\b",
+    re.IGNORECASE,
+)
+# Verbs that name what to do rather than what to avoid. Their presence beside
+# a negation is exactly the "do X, never Y" shape that is not a candidate for
+# this finding - the rule already states the positive half.
+_POSITIVE_VERBS = re.compile(
+    r"\b(?:state[sd]?|stating|writ(?:e|es|ing|ten)|run|runs|running|"
+    r"record(?:ed|s|ing)?|cit(?:e|es|ing|ed)|ensur(?:e|es|ing|ed)|"
+    r"confirm(?:ed|s|ing)?|verif(?:y|ies|ied|ying)|check(?:ed|s|ing)?|"
+    r"log(?:ged|s|ging)?|report(?:ed|s|ing)?|document(?:ed|s|ing)?|"
+    r"declar(?:e|es|ing|ed)|includ(?:e|es|ing|ed)|add(?:ed|s|ing)?|"
+    r"us(?:e|es|ing|ed)|keep(?:s|ing)?|kept|mak(?:e|es|ing)|made|"
+    r"provid(?:e|es|ing|ed)|attest(?:ed|s|ing)?|nam(?:e|es|ing|ed)|"
+    r"observ(?:e|es|ing|ed)|authoriz(?:e|es|ing|ed)|own(?:s|ed|ing)?)\b",
+    re.IGNORECASE,
+)
+
+
+def negation_heavy(text: str) -> bool:
+    """Whether a directive reads as prohibitions with no positive form.
+
+    Two or more negation tokens and no positive verb: the shape a rule takes
+    when it only says what must not happen. The threshold is >=2 because a
+    single "never" paired with a positive verb elsewhere in the same
+    sentence ("never merge without recording a reviewer") is an ordinary,
+    checkable rule; it is the rule with nothing but prohibitions that reads
+    as an instruction in how to do the forbidden thing.
+    """
+    return (
+        len(_NEGATION_TOKENS.findall(text)) >= 2
+        and not _POSITIVE_VERBS.search(text)
+    )
+
+
 def rules_for(charter: dict[str, Any], trigger: str, enforcement: str | None = None) -> list[dict[str, Any]]:
     return [
         rule

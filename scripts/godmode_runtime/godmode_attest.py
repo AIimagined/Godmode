@@ -62,6 +62,9 @@ class Verdict:
     allowed: bool
     trigger: str
     missing: tuple[dict[str, Any], ...]
+    # SOFT findings that ride alongside a gate check without affecting
+    # `allowed` - currently just the assumption gate (U-S4), below.
+    advisories: tuple[str, ...] = ()
 
     def view(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -69,6 +72,8 @@ class Verdict:
             "allowed": self.allowed,
             "missing": list(self.missing),
         }
+        if self.advisories:
+            payload["advisories"] = list(self.advisories)
         if not self.allowed:
             payload["watch_for"] = [
                 text for text, trigger in RATIONALIZATIONS if trigger == self.trigger
@@ -387,8 +392,17 @@ def attested_rule_ids(archive: Chronicle, session: str) -> set[str]:
     return covered
 
 
-def gate(archive: Chronicle, session: str, charter: dict[str, Any], trigger: str) -> Verdict:
-    """Block when a HARD rule for this trigger has no attestation in this session."""
+def gate(
+    archive: Chronicle, session: str, charter: dict[str, Any], trigger: str,
+    timeline: dict[str, Any] | None = None,
+) -> Verdict:
+    """Block when a HARD rule for this trigger has no attestation in this session.
+
+    `timeline` is optional and only read for `before_approach` (U-S4's
+    assumption gate, below); every other trigger ignores it, and its
+    absence never blocks anything - a SOFT advisory degrades to silent
+    when the instrument that would confirm it is not available.
+    """
     covered = attested_rule_ids(archive, session)
     missing = tuple(
         {"id": rule["id"], "text": rule["text"], "source": rule["source"], "verify": rule["verify"]}
@@ -397,7 +411,52 @@ def gate(archive: Chronicle, session: str, charter: dict[str, Any], trigger: str
         and rule["enforcement"] == "HARD"
         and rule["id"] not in covered
     )
-    return Verdict(allowed=not missing, trigger=trigger, missing=missing)
+    advisories: tuple[str, ...] = ()
+    if trigger == "before_approach":
+        note = assumption_gate(archive, session, timeline)
+        if note:
+            advisories = (note,)
+    return Verdict(allowed=not missing, trigger=trigger, missing=missing, advisories=advisories)
+
+
+# U-S4 assumption gate [E4]. R3+ tier proxy: fix-vocabulary claims + Edit/Write
+# mutation turns stand in for sentinel risk tiers (out of scope here) - the
+# same proxy U-T2's temporal check and `record_criterion`'s late-ordering
+# check already use (see their comments above); reused rather than reinvented
+# so "R3+ work happened this session" means the same thing everywhere it is
+# asked. Known gap carried forward unchanged: non-file-mutating R3+ commands
+# (`git branch -D`) are not counted as mutations.
+ASSUMPTION_GATE_ADVISORY = "state assumptions or state that there are none"
+
+
+def assumption_gate(
+    archive: Chronicle, session: str, timeline: dict[str, Any] | None = None,
+) -> str | None:
+    """The advisory once, for a session doing R3+ work with no assumption record.
+
+    Cleared by any `assumption` record on this session - including one whose
+    value literally says there were none; the gate asks the question, it does
+    not grade the answer. Recomputed fresh from the archive on every call
+    (the same idiom `gate()`'s own HARD-rule check already uses), so it reads
+    as one standing fact about the session rather than a counter that could
+    fall out of sync with it: call it once or a hundred times before the
+    first assumption record lands and it names the same session-level gap
+    every time, not once per call.
+    """
+    engaged = bool(timeline is not None and timeline.get("mutation_turns"))
+    if not engaged:
+        engaged = any(
+            record["data"].get("session") == session
+            and looks_like_fix_claim(str(record["data"].get("text", "")))[0]
+            for record in archive.select(kind="claim", limit=500)
+        )
+    if not engaged:
+        return None
+    has_assumption = any(
+        record["data"].get("session") == session
+        for record in archive.select(kind="assumption", limit=500)
+    )
+    return None if has_assumption else ASSUMPTION_GATE_ADVISORY
 
 
 # Words too common to corroborate anything. A claim whose only overlap with the
