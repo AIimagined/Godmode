@@ -126,6 +126,11 @@ from .godmode_egress import notice as egress_notice
 from .godmode_egress import scan_project as scan_untrusted
 from .godmode_egress import scan_staged
 from .godmode_scope import minimality
+# B3-3 - minimal isolated block (one import line, one subcommand, one
+# handler): the silent/swallowed-error scanner, same pattern as the U-E10
+# block above.
+from .godmode_swallow import scan_project as scan_swallow
+from .godmode_swallow import update_baseline as update_swallow_baseline
 from .godmode_errors import ArchiveError, GodmodeError
 from .godmode_verdict import record_verdict, verdict_for
 # U-V2 disposition register - a minimal, isolated block (imports, two
@@ -1287,6 +1292,19 @@ def cmd_untrusted(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # truncation warns on what was never read. Either costs the exit code, or
     # a capped scan of an unscanned population would still read as "pass".
     warned = report["files_with_findings"] or report.get("truncated")
+    return CommandResult(report, exit_code=1 if warned else 0)
+
+
+def cmd_swallow(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    project = Path(runtime.anchor.project_root)
+    report = scan_swallow(project)
+    if getattr(args, "update_baseline", False):
+        written = update_swallow_baseline(project, report["counts"])
+        return CommandResult({"baseline_written": written, "counts": report["counts"]})
+    # A regression is the hard signal; a truncated sweep is a claim about a
+    # population that was never fully read. Advisory findings alone do not
+    # fail the command - see the module docstring for why.
+    warned = bool(report["regressions"]) or report["truncated"]
     return CommandResult(report, exit_code=1 if warned else 0)
 
 
@@ -2940,6 +2958,13 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("untrusted", help="Report repository text shaped like an instruction").set_defaults(
         handler=cmd_untrusted
     )
+
+    swallow = sub.add_parser(
+        "swallow", help="Scan for silent/swallowed-error shapes; ratchets a per-file baseline"
+    )
+    swallow.add_argument("--update-baseline", action="store_true",
+                         help="Tighten the stored baseline to current counts; never raises it")
+    swallow.set_defaults(handler=cmd_swallow)
 
     sub.add_parser("assurance", help="Emit an assurance case generated from live probes").set_defaults(
         handler=cmd_assurance
