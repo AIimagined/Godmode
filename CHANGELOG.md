@@ -6,6 +6,181 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.2.13] - 2026-08-16
+
+### Added
+
+- Blast-radius-scaled evidence bar (PARTIAL-P2/B3-4): `record_claim` gains an opt-in `blast_radius` field (`godmode claim --blast-radius ops-directed|sticky-side-effect|checksum-guard`) - a claim that declares one needs >=2 INDEPENDENT witnesses among its citations before a `verified` grade holds, not merely enough citations that resolve. Independence is a simple, documented predicate (`_witness_identity`/`_independent_witness_count`): two citations are the SAME witness only when both their kind and their resolved target match - a `file:` target drops any `#L...` line locator (two reads of one file are one witness), every other kind's target is its citation text verbatim, and two different kinds are always independent of each other regardless of target. Two copies of one `cmd:` string, or the same file cited twice at different lines, downgrade to `hypothesis` naming the bar; a `cmd:` and a `file:` citation on distinct artifacts pass. A claim that never sets `blast_radius` is graded exactly as before this field existed - v1 is opt-in, and no existing caller changes behaviour.
+- Added a provenance-before-deletion gate (B3-6, PARTIAL-P1).
+
+  `godmode_removal.py` already records *why* something was deleted, after the
+  fact. `godmode_fence.deletion_verdict` is the mirror: *before* a deletion the
+  fence would otherwise allow - an `rm` or archive-move of a tracked file -
+  it asks whether a pre-check is on record.
+
+  Requirement-driven like B3-5: with no policy declaration it stays advisory,
+  recording what a pre-check would have covered and never blocking. Once
+  `.godmode-authorization-policy.json` declares `deletion_provenance_gate`,
+  the file's deletion is refused until `godmode fence delete-precheck --path
+  <p> --history-read "..." --sole-carrier "..."` is on record - reusing C-16's
+  reverse-impact traversal (`atlas.build(project).affected(path)`) rather than
+  rebuilding it, so the record carries what traversal actually found.
+
+  The shipped U-B2 evaluator-pin store (`godmode_sentinel.pinned_evaluators`)
+  outranks this gate entirely: a pinned file's deletion stays denied
+  regardless of policy or attestation, checked via the same
+  `_pinned_evaluator_hit` helper the edit/mv/redirect branches of the
+  classifier already use - not a second, independently maintained pin
+  mechanism. Deleting an untracked scratch file is unaffected either way:
+  nothing about it carries a provenance obligation to check.
+- Duplicate-authority drift detector and paired-artifact declarations (GAP-2).
+  `godmode_minimality.py` gains a `duplicate-authority` finding class:
+  small literal collections (module-level string-list constants, enum-like
+  dict keys, name-hinted version-string literals) are fingerprinted across
+  the whole repo via `ast`, and their member sets are handed to
+  `godmode_atlas._jaccard` - the same near-dup machinery `Atlas.duplicates()`
+  already applies to symbol name/body shingles, reused rather than rebuilt,
+  now applied to data literals instead of code shape. Two or more
+  independent sites sharing >=60% of members (`duplicate_authority_threshold`,
+  tunable, documented on `minimality_report`) are flagged naming both. An
+  exact match is exempt only when exactly one side lives under `tests/` - a
+  fixture intentionally restating a source list verbatim as a known-good
+  sample is the classic false positive this class of detector earns a bad
+  reputation from; two SOURCE sites, or a near-but-not-exact test/source
+  pair, still flag. The report also carries one advisory note naming the
+  magic-count anti-pattern (`assert len(x) == N`) and recommending a
+  subset/superset assertion instead - no code enforcement of that note in v1.
+
+  `godmode_precheck.py` gains the declared counterpart: `paired-artifact`.
+  A project states "these two artifacts change together" once
+  (`declare_paired_artifact`, a `decision` record namespaced
+  `paired-artifact:<label>` - the same reuse-an-existing-kind,
+  namespace-the-subject house pattern `removal:` and `reg:`/`reg-foreign:`
+  already use). It is project policy a session writes and revises, not a
+  generated snapshot like a static declared-config file. `precheck` - not
+  `godmode_fence.completion_audit` - checks every later diff against it,
+  because precheck already runs before work starts, while the missing half
+  is still cheap to add. A commit/diff touching exactly one declared half is
+  flagged naming which; both sides, or neither, is clean.
+  Advisory only, v1 - it never joins `precheck`'s `findings`/`verdict`, the
+  same treatment `foreign_precedents` already gets. `godmode_console.py`
+  wires `precheck --changed` (defaulting to the working tree, same as
+  `fence audit`) and a new `godmode paired-artifact declare` command.
+
+  Population sweep of this repository found real candidates: `STATES`
+  (`godmode_register.py`) and `_REGISTER_STATES` (`godmode_invariants.py`)
+  are byte-identical, deliberately hand-mirrored to avoid an import cycle
+  (already documented in both modules' own comments, already guarded by
+  `tests.test_register`) - accepted as-is, and a strong candidate for its
+  own `paired-artifact` declaration rather than a code fix. `EVENT_KINDS`
+  (`godmode_constants.py`) and `MASKS`'s keys (`godmode_compress.py`) share
+  51.9% membership - under the auto-detector's threshold, so not flagged by
+  it - but are exactly the kind of pair worth an explicit `paired-artifact`
+  declaration despite that, since the auto-similarity score and "should a
+  human be told when one changes without the other" are different
+  questions; recorded here as the two mechanisms' worked example rather than
+  written into a live archive, since this repository ships no committed
+  `godmode-state` archive to declare it into.
+- Added a license/provenance gate for external-repo interaction (B3-5, GAP-4).
+
+  Any external repository entering the work - a URL a command would `curl` or
+  `git clone`, a `--source-repo` flag, a fetch or remote-add of a non-dependency
+  repo - is now detected generically by `godmode_sentinel.classify_action` as
+  `external_repo_ref`, alongside its existing category and tier, and never in
+  place of them: an operation that already failed closed as a mutation still
+  does.
+
+  Detection alone decides nothing. Whether it becomes a hard gate is
+  requirement-driven: with no policy declaration, `godmode license check`
+  records an advisory only and never blocks. Once an operator's own
+  `.godmode-authorization-policy.json` declares `external_absorption_gate`,
+  the same operation is refused until `godmode license attest --repo <ref>
+  --classification <permissive|proprietary-no-redistribution|unlicensed|
+  copyleft-incompatible>` is on record for that exact repository - and
+  anything other than `permissive` also needs a `--clean-room-note`
+  describing what was read versus what was written.
+- `godmode swallow` (U-B3-3): a static scanner for the shapes that discard a
+  failure instead of reporting it - an empty or pass-only `except`/`catch`
+  block, a bound exception name that is never referenced, a `{data, error}`
+  destructure that drops `error`, and a `try` whose success branch logs while
+  every failure branch stays silent. Python is a real `ast` parse; JS/TS is
+  regex-shape best-effort, stated as such in the module docstring.
+
+  Findings carry `severity: "advisory"` - a hard block on every hit would
+  punish the non-fatal catches this runtime's own code relies on. What does
+  fail is a ratchet: `.godmode-swallow-baseline.json` stores a per-file count
+  of un-exempted findings, and a file whose count exceeds its stored entry is
+  a `regression`, the command's one hard signal. `--update-baseline` tightens
+  the file toward current counts but can never raise a stored ceiling, so
+  re-running it cannot make a real regression disappear - only fixing the
+  site, or annotating it, does.
+
+  A `# godmode: swallow-ok <reason>` (or `// godmode: swallow-ok <reason>` in
+  JS/TS) comment anywhere in the flagged span exempts that one site from the
+  count - and its reason is always listed in the report's `exemptions`, never
+  dropped silently. An annotation with no reason text exempts nothing; the
+  site stays in `findings`, marked `annotation_without_reason`.
+
+  The initial sweep over this repository found 27 sites, all `empty-except`,
+  spread across 18 files - no `unused-exception-name` or `success-only-log`
+  hits. All 27 are now the committed baseline rather than annotated
+  individually: reading them, they are this codebase's own established
+  degrade-not-block idiom (a best-effort cache read, a permission-hardening
+  `chmod` that is a no-op on some platforms, a process already gone by the
+  time it is killed), several already carrying their own inline reasoning.
+  Annotating them site-by-site belongs to whichever change touches each file
+  next; this change only had to prove the ratchet catches a new, unreasoned
+  site landing on top of that baseline.
+- External-tool error-severity gate (PARTIAL-P3/B3-7): closes L-173's exact shape - a third-party tool's own declared error severity, observed in its own captured output, logged and shipped anyway because only its exit code was ever read. `register_error_pattern`/`godmode error-pattern register --tool <name> --pattern <regex>` declares a tool + regex (requirement-driven, no defaults - an undeclared tool gates nothing). `record_verdict` now tests each checker's OWN captured stdout+stderr (never persisted verbatim) against every declared pattern whose tool name appears in that checker's command; if the fold lands on `confirmed` and a declared pattern matched, the write is refused unless `tool_error_ack` is `"acknowledged-remediated"` or `"acknowledged-deferred: <reason>"` (`godmode verdict record --tool-error-ack ...`). `contested`/`refuted`/`witness-malformed` folds are never gated - only `confirmed` claims the output was clean. `godmode_invariants._verdict_invariants` holds a raw `archive.append(...)` verdict record to the same rule from the denormalised `tool_error_findings`/`tool_error_ack` fields alone, the same defense-in-depth pattern as U-V1's drive-vs-acquit and terminated-vs-truncated invariants; its ack-vocabulary regex is a by-hand copy of `godmode_verdict.TOOL_ERROR_ACK`, asserted in sync by `tests.test_tool_error_gate`. The charter-rule template for a project that wants this doctrine stated in GODMODE.md prose lives in `register_error_pattern`'s own docstring - the pattern declaration itself is data, not something the prose compiler can safely mine.
+- Upstream/vendor capability-and-doctrine diff (B3-1/GAP-1): `godmode upstream --diff <package>` (Python first-class via `importlib.metadata` + a real import of the top-level module; Node best-effort via `node_modules/<name>/package.json`'s `exports`/`bin` map) or `--path <vendored-tree>` (a forked or fully-copied external repo, carrying the same duty a lockfile dependency does) resolves the target's shipped surface and diffs it - reusing `godmode_atlas`'s existing symbol-extraction and name-similarity machinery, never a second implementation - against the project's own equivalents. One `upstream-diff` record per run; each upstream symbol with no project-side name match becomes a `finding` needing two separately-required verdicts, never one: an import verdict (`adopt`/`extend`/`diverge-deliberately`/`n/a-different-surface`, `--dispose SYMBOL=DISPOSITION:BEHAVIOR_VERDICT`) and a behavior verdict (`confirmed-we-have-it`/`confirmed-we-dont`/`unverified`) - a disposition with no paired behavior verdict is refused both by `record_upstream_diff` and, in defense in depth, by a new `godmode_invariants` archive-seam check that also catches a raw append. An unresolvable target never guesses: it writes a `stated-gap` verdict naming the reason. Enumeration is capped with the loud-cap discipline `godmode_egress.scan_project` already uses - the full population is measured before the cap, and `truncated: true` says so on the record. The duty itself is requirement-driven, never always-on: `required_scope`/`gate_applies` read a project's own compiled charter for a rule naming the `upstream-diff` duty (specific packages, or an explicit any-dependency/any-forked-repo scope); no matching rule means no gate, and a declaration can only add duty, never narrow it. `CHARTER_RULE_TEMPLATE` is the one emitted example, phrased to compile HARD with no edit to `godmode_charter.py`'s existing rule-shape table.
+
+### Changed
+
+- The README and marketplace listing kit now say only what the product does
+  today, each claim paired with the command that reproduces it.
+
+  The prior README asserted "five skills" where six now ship, an "at-risk"
+  assessment verdict that this checkout currently reports as "workable," and
+  a "Hosts: 6" badge that flattened three live-tested plugin hosts and three
+  adapter-only hosts into one undifferentiated number. None of those were
+  caught by review because nothing re-ran them against the repository they
+  described.
+
+  The rewrite opens with the felt problem instead of a feature list, puts
+  observe mode ahead of any enforcement claim so a reader can watch what
+  Godmode would have caught before trusting it to block anything, and groups
+  the mechanisms (gate, verdicts, register, measurement, trust, run
+  governance) each behind its own verify-yourself command. Every number in
+  "The numbers" was run against this repository to write the section, and
+  the two that weren't (the pre-v0.2.11 gate latency figures) are labeled as
+  historical measurements with their release-note basis instead of being
+  re-asserted as current.
+
+  Host support is now stated in tiers instead of one combined claim: Claude
+  Code's gate and session hook run live every session this repository is
+  worked in; Codex and Grok ship the same plugin package and hooks
+  convention but are not independently live-probed under those hosts; the
+  three instruction-file adapters (OpenCode, Cursor, Gemini CLI) declare
+  `tool_call_interception` as `UNAVAILABLE` because none of them exposes a
+  pre-tool boundary. The platform note is explicit too: developed and tested
+  on Windows, where the Windows kill path for an overrun run is exercised
+  for real and the POSIX kill path (`os.killpg`) is pinned by a mocked unit
+  test, not live-probed on a POSIX host.
+
+  `docs/LISTING.md` is new: short and long descriptions, keywords, category,
+  and submission steps per marketplace (Claude, Codex, Grok), plus a
+  manifest audit that finds neither `.claude-plugin/plugin.json` nor
+  `.grok-plugin/plugin.json` carries any pointer to the shipped logo, and
+  that Codex has no `marketplace.json` where Claude and Grok both do. The
+  audit is read-only by design; the manifest edits it surfaces are a
+  follow-up task.
+
+  `tests/test_readme_commands.py` pins every fenced `godmode` invocation in
+  the README against the real CLI parser (`_build_parser`), the same
+  mechanism `tests/test_demo_doc.py` already runs against `docs/DEMO.md`. A
+  doc edit that renames or invents a subcommand fails this test, not a
+  reader's copy-paste.
+
 ## [0.2.12] - 2026-08-15
 
 ### Added
