@@ -34,6 +34,7 @@ from pathlib import Path
 from .godmode_charter import ADVISORY, HARD, compile_charter, negation_heavy
 from .godmode_constants import RUNTIME_VERSION
 from .godmode_errors import GodmodeError
+from .godmode_precheck import _terms
 from typing import Any
 
 CONFIG_FILENAME = ".godmode-docslint.json"
@@ -538,6 +539,120 @@ def lint_charter_prose(charter: dict[str, Any]) -> dict[str, Any]:
     return {"findings": findings, "checked": len(rules)}
 
 
+# U-E11 doc-freshness advisories. Two shapes absorbed from lessons this
+# project's own history produced: a plan doc can say "pending" the day it is
+# written and still say "pending" a year later with nobody the wiser, and a
+# living doc can be drafted to replace another without either one saying so,
+# leaving a reader unable to tell which is current. Neither is the kind of
+# defect `unfinished-marker` or the contract checks already catch - a
+# shipped TODO is wrong the moment it ships, but "pending" dated the day it
+# was written is an honest status, not a leak. Both land in
+# `prose_advisories` beside the charter-prose checks for the same reason
+# those do: worth a reader's attention, never a reason `docs --lint` exits
+# non-zero.
+def _fence_mask(lines: list[str]) -> list[bool]:
+    """True for a line that is fenced content, or a fence delimiter itself -
+    the same toggle `lint_text` and `_headings` already use, factored out so
+    a third check does not re-derive it a third time."""
+    fenced = False
+    mask: list[bool] = []
+    for line in lines:
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            mask.append(True)
+        else:
+            mask.append(fenced)
+    return mask
+
+
+# A small, closed, documented tuple - not every English use of these words
+# names an open item ("in progress" describing a download bar would be noise
+# everywhere), but this is the vocabulary a status line or a plan actually
+# uses to say "not done yet". Word-bounded so "pendingness" or "topology"
+# cannot match.
+_OPEN_MARKER = re.compile(
+    r"(?i)\b(?:pending|todo|open item|not started|in progress)\b")
+_DATED_ANNOTATION = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+
+
+def _stale_open_marker_findings(relative: str, text: str) -> list[dict[str, Any]]:
+    """An open-status marker with no dated check on its own or a neighboring
+    line. The date does not have to prove the item is closed - only that a
+    human looked at it recently enough to say so; that is the cheapest
+    signal that distinguishes a status from a fossil."""
+    lines = text.splitlines()
+    mask = _fence_mask(lines)
+    findings: list[dict[str, Any]] = []
+    for index, line in enumerate(lines):
+        if mask[index] or not _OPEN_MARKER.search(line):
+            continue
+        neighborhood = [line]
+        if index > 0:
+            neighborhood.append(lines[index - 1])
+        if index + 1 < len(lines):
+            neighborhood.append(lines[index + 1])
+        if any(_DATED_ANNOTATION.search(candidate) for candidate in neighborhood):
+            continue
+        findings.append({
+            "path": relative, "line": index + 1, "check": "stale-open-marker",
+            "severity": "advisory",
+            "why": "open marker without a dated check",
+            "remedy": "add a YYYY-MM-DD verification date on this line or the "
+                      "next, or close the item",
+            "excerpt": line.strip()[:160],
+        })
+    return findings
+
+
+# The two shapes a document points at the one it replaces, or the one that
+# replaces it - "keep v1 simple" means exactly these two, not a synonym
+# search. A doc carrying either is telling the reader the collision is known
+# and intentional, so the advisory has nothing left to say.
+_SUPERSEDES_POINTER = re.compile(r"(?i)\bsupersed(?:es|ed[- ]by)\b")
+
+
+def _title_collision_findings(documents: list[tuple[str, str]]) -> list[dict[str, Any]]:
+    """LIVING docs - the same ones `lint_docs` already scanned - whose first
+    heading normalizes to the same term set, with none of them pointing at
+    which one is current.
+
+    Normalization reuses `godmode_precheck._terms` rather than duplicating
+    it: two titles are "the same" here by exactly the test the rest of the
+    runtime already uses to decide two pieces of text are about the same
+    thing. Archive/changelog dirs are exempt via `_HISTORICAL`, the same
+    pattern the figure and self-pin checks already use to exclude a
+    historical record - a shipped changelog entry cannot point forward to
+    whatever superseded it.
+    """
+    groups: dict[frozenset[str], list[tuple[str, str]]] = {}
+    for relative, text in documents:
+        if _HISTORICAL.search(relative):
+            continue
+        headings = _headings(text)
+        if not headings:
+            continue
+        terms = frozenset(_terms(headings[0][0]))
+        if not terms:
+            continue
+        groups.setdefault(terms, []).append((relative, text))
+    findings: list[dict[str, Any]] = []
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        if any(_SUPERSEDES_POINTER.search(text) for _, text in group):
+            continue
+        paths = sorted(relative for relative, _ in group)
+        findings.append({
+            "path": paths[0], "line": 1, "check": "title-collision",
+            "severity": "advisory",
+            "why": f"the same normalized title also appears in {', '.join(paths[1:])}",
+            "remedy": "rename one, or add a `Supersedes`/`Superseded by` "
+                      "pointer naming the other",
+            "paths": paths,
+        })
+    return findings
+
+
 def lint_docs(project: Path) -> dict[str, Any]:
     """Lint every public document in the project.
 
@@ -555,6 +670,8 @@ def lint_docs(project: Path) -> dict[str, Any]:
     relatives = {path: path.relative_to(project).as_posix() for path in candidates}
     ignored = _git_ignored_relatives(project, list(relatives.values()))
     scanned = 0
+    living_documents: list[tuple[str, str]] = []
+    prose_advisories: list[dict[str, Any]] = []
     for path in candidates:
         relative = relatives[path]
         if relative in ignored:
@@ -564,11 +681,14 @@ def lint_docs(project: Path) -> dict[str, Any]:
         except OSError:
             continue
         scanned += 1
+        living_documents.append((relative, text))
         findings.extend(lint_text(relative, text, ignore=ignore))
         if contracts:
             findings.extend(_contract_findings(relative, text, contracts))
         findings.extend(_figure_findings(relative, text, project))
         findings.extend(_self_pin_findings(relative, text, RUNTIME_VERSION))
+        prose_advisories.extend(_stale_open_marker_findings(relative, text))
+    prose_advisories.extend(_title_collision_findings(living_documents))
     high = [f for f in findings if f["severity"] == "high"]
     # Advisory only, kept out of `findings`/`high_severity`/`verdict` on
     # purpose: a badly-phrased charter rule is feedback for the operator, not
@@ -576,9 +696,8 @@ def lint_docs(project: Path) -> dict[str, Any]:
     # of "clean". A project whose charter compilation fails (unreadable
     # `.godmode-roles.json`, an unreachable bound document) gets an empty
     # list here rather than taking the whole lint command down with it.
-    prose_advisories: list[dict[str, Any]] = []
     try:
-        prose_advisories = lint_charter_prose(compile_charter(project))["findings"]
+        prose_advisories.extend(lint_charter_prose(compile_charter(project))["findings"])
     except GodmodeError:
         pass
     return {
