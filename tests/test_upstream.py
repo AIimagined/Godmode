@@ -135,6 +135,38 @@ class DiffAgainstProjectTests(_SitePackage):
             self.assertIsNone(finding["disposition"])
             self.assertIsNone(finding["behavior_verdict"])
 
+    def test_a_constant_finding_carries_a_note_surfacing_the_matching_boundary(self) -> None:
+        """Round-1 review Minor #1: the function/class-only matching
+        boundary must be visible in actual output, not only in the module
+        docstring - a JSON consumer that never reads source still learns a
+        finding may already be covered by a same-purpose constant."""
+        # Only rotate_widget has a project-side equivalent: WidgetStore (a
+        # class) and DEFAULT_TIMEOUT (a constant) both stay findings, so the
+        # note's presence can be contrasted against a genuine class finding
+        # in the same diff, not asserted in isolation.
+        project = self.base / "project"
+        project.mkdir()
+        (project / "app.py").write_text(
+            "def rotate_widget():\n    return 2\n", encoding="utf-8")
+        resolved = resolve_python_package("fixturepkg")
+        self.assertEqual(resolved["symbol_kinds"]["DEFAULT_TIMEOUT"], "value")
+        self.assertEqual(resolved["symbol_kinds"]["WidgetStore"], "class")
+
+        diff = diff_against_project(resolved, project)
+        by_symbol = {f["upstream_symbol"]: f for f in diff["findings"]}
+        self.assertEqual(set(by_symbol), {"WidgetStore", "DEFAULT_TIMEOUT"})
+
+        timeout_finding = by_symbol["DEFAULT_TIMEOUT"]
+        self.assertEqual(timeout_finding["upstream_symbol_kind"], "value")
+        self.assertIn("non-callable value", timeout_finding["note"])
+        self.assertIn("constant", timeout_finding["note"])
+
+        # A genuine class finding never gets the constant-shaped note - the
+        # field only appears where the boundary actually applies.
+        class_finding = by_symbol["WidgetStore"]
+        self.assertEqual(class_finding["upstream_symbol_kind"], "class")
+        self.assertNotIn("note", class_finding)
+
     def test_full_coverage_reports_no_findings(self) -> None:
         # A package whose __all__ names only functions/classes: godmode_atlas
         # (reused unmodified here, per the module's "import, don't duplicate"
