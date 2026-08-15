@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -177,6 +178,54 @@ class GitCheckoutOrderIndependenceTests(unittest.TestCase):
             _git(project, "add", "just_written.md")
             staged_ordered = [s.path for s, _ in rank(segments, "token rotation", project=project)]
             self.assertEqual(staged_ordered[0], "just_written.md")
+
+
+class NonGitCopyOrderIndependenceTests(unittest.TestCase):
+    """Fix round 3: a NON-git project has no commit object either, so the
+    git-log fix above does not reach it - freshness there fell all the way
+    back to raw filesystem mtime, and mtime is assigned by whatever copied
+    or checked out the files, not by their content. Two copies of the exact
+    same project can end up with their files' mtimes in a different
+    relative order purely from copy timing (`tests/test_gate_falsifiability`
+    copies this very repo with `.git` stripped, exposing it as a real
+    `evals --brief` failure: `ranking-changed` even though the copy is
+    byte-identical to the tree the fixture was pinned against). Mtime
+    remains the freshness *value* `_freshness_stamp` returns for a non-git
+    path - that fallback (fix round 2) stays - but a non-git project has no
+    signal that agrees across copies the way a commit timestamp does, so
+    ordering among its files must not be driven by comparing raw mtime
+    magnitudes across copies. It degrades to the same deterministic
+    instrument the git path already uses as its secondary key: path.
+    """
+
+    def test_ranking_is_identical_across_non_git_copies_with_shuffled_mtimes(self) -> None:
+        segments = [_segment("alpha.md", 1.0, "token rotation notes"),
+                    _segment("beta.md", 1.0, "token rotation notes"),
+                    _segment("gamma.md", 1.0, "token rotation notes")]
+
+        def _make_copy(order: list[str]) -> Path:
+            project = Path(tempfile.mkdtemp())
+            self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+            for name in ("alpha.md", "beta.md", "gamma.md"):
+                (project / name).write_text("token rotation notes", encoding="utf-8")
+            # Assign mtimes in a different relative order per copy - exactly
+            # what independent copy operations can do despite identical
+            # content, with no `.git` present to anchor freshness on.
+            base = 1_700_000_000.0
+            for position, name in enumerate(order):
+                stamp = base + position
+                os.utime(project / name, (stamp, stamp))
+            return project
+
+        copy_one = _make_copy(["alpha.md", "beta.md", "gamma.md"])
+        copy_two = _make_copy(["gamma.md", "alpha.md", "beta.md"])
+
+        ordered_one = [s.path for s, _ in rank(segments, "token rotation", project=copy_one)]
+        ordered_two = [s.path for s, _ in rank(segments, "token rotation", project=copy_two)]
+        self.assertEqual(
+            ordered_one, ordered_two,
+            "identical non-git copies must rank identically regardless of "
+            "which file the copy operation happened to timestamp newest")
 
 
 class BriefEquivalenceTests(unittest.TestCase):
