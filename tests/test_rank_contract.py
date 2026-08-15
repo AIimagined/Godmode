@@ -96,6 +96,12 @@ class GitCheckoutOrderIndependenceTests(unittest.TestCase):
     commit. Freshness now reads `git log`'s commit timestamp, which is part
     of the commit object every clone already has, so it agrees regardless
     of when or in what order the working tree was written to disk.
+
+    This determinism guarantee is scoped to COMMITTED files only. An
+    untracked file, or one staged but never committed, has no `git log`
+    entry to read at all, so there is no commit object for a clone to
+    agree on - mtime is the only signal that exists for it, exactly as for
+    a non-git project, and fix round 2 covers that boundary case below.
     """
 
     def test_ranking_is_identical_regardless_of_on_disk_mtime_order(self) -> None:
@@ -134,6 +140,43 @@ class GitCheckoutOrderIndependenceTests(unittest.TestCase):
             shuffled = [s.path for s, _ in rank(segments, "token rotation", project=project)]
             self.assertEqual(shuffled, baseline)
             self.assertEqual(shuffled[0], "newer.md")
+
+    def test_an_untracked_file_falls_back_to_mtime_instead_of_stamping_zero(self) -> None:
+        """Fix round 2: `git log` has no entry for an untracked (or
+        staged-but-uncommitted) file - that must not read as "this project
+        has no git history for anything" and stamp the oldest possible
+        value. A file written a minute ago has to outrank a six-year-old
+        COMMITTED sibling on a freshness tie, or the feature runs backwards
+        for every file nobody has committed yet, which in practice is most
+        of a session's live edits.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            _git(project, "init", "-q")
+            _git(project, "config", "user.email", "test@example.com")
+            _git(project, "config", "user.name", "Test")
+
+            (project / "ancient.md").write_text("token rotation notes", encoding="utf-8")
+            _git(project, "add", "ancient.md")
+            _git(project, "commit", "-q", "-m", "ancient", env={
+                "GIT_AUTHOR_DATE": "2018-01-01T00:00:00", "GIT_COMMITTER_DATE": "2018-01-01T00:00:00"})
+
+            # Written just now, never `git add`-ed: no git log entry exists.
+            (project / "just_written.md").write_text("token rotation notes", encoding="utf-8")
+
+            segments = [_segment("ancient.md", 1.0, "token rotation notes"),
+                        _segment("just_written.md", 1.0, "token rotation notes")]
+            ordered = [s.path for s, _ in rank(segments, "token rotation", project=project)]
+            self.assertEqual(
+                ordered[0], "just_written.md",
+                "an untracked file must not stamp 0 (oldest possible) and lose a "
+                "freshness tie to a years-old committed file")
+
+            # Staged but not yet committed hits the same code path (`git log`
+            # still has nothing for it) and must resolve the same way.
+            _git(project, "add", "just_written.md")
+            staged_ordered = [s.path for s, _ in rank(segments, "token rotation", project=project)]
+            self.assertEqual(staged_ordered[0], "just_written.md")
 
 
 class BriefEquivalenceTests(unittest.TestCase):

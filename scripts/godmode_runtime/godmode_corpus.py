@@ -363,6 +363,13 @@ def _relevance_fallback(segments: list[Segment], terms: list[str]) -> dict[int, 
     return scores
 
 
+def _mtime_stamp(project: Path, path: str) -> int:
+    try:
+        return (project / path).stat().st_mtime_ns
+    except OSError:
+        return 0
+
+
 def _freshness_stamp(project: Path, path: str, is_git: bool) -> int:
     """A file's edit recency, from a source that agrees across checkouts.
 
@@ -378,16 +385,23 @@ def _freshness_stamp(project: Path, path: str, is_git: bool) -> int:
     one symptom of it. Non-git projects have no such record and no separate
     checkout step to reorder against, so mtime remains the right (and only)
     instrument there.
+
+    An untracked file, or one staged but never committed, has no `git log`
+    entry - that is not the same absence as "this project has no git
+    history for anything," and stamping it 0 (the oldest possible value)
+    would rank a file edited a minute ago behind a six-year-old committed
+    sibling, the freshness feature working backwards. Falling back to mtime
+    for exactly that case is the pre-existing behaviour and carries none of
+    the checkout-order risk: an uncommitted file's mtime is this session's
+    real edit time, not a byte a checkout wrote from history. Determinism
+    across checkouts is guaranteed for committed files only.
     """
     if is_git:
         stamp = run_git(project, "log", "-1", "--format=%ct", "--", path)
         if stamp and stamp.isdigit():
             return int(stamp) * 1_000_000_000
-        return 0
-    try:
-        return (project / path).stat().st_mtime_ns
-    except OSError:
-        return 0
+        return _mtime_stamp(project, path)
+    return _mtime_stamp(project, path)
 
 
 def rank(
