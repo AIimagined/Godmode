@@ -30,7 +30,13 @@ if str(SCRIPTS) not in sys.path:
 if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 
-from godmode_runtime.godmode_precheck import precheck  # noqa: E402
+from godmode_runtime.godmode_precheck import (  # noqa: E402
+    declare_paired_artifact,
+    declared_paired_artifacts,
+    paired_artifact_findings,
+    precheck,
+    render,
+)
 from godmode_runtime.godmode_register import set_state  # noqa: E402
 from test_godmode_runtime import isolated_project  # noqa: E402
 
@@ -307,6 +313,118 @@ class ClosureReasonTests(unittest.TestCase):
                                      "local-first retrieval"})
             report = precheck(project, archive, "add rank fusion to retrieval")
         self.assertTrue(report["already_rejected"], report)
+
+
+# GAP-2's other half: a project declares "these two artifacts change
+# together" once (a `decision` record namespaced `paired-artifact:<label>`,
+# the same reuse-a-kind-with-a-prefix house pattern `removal:` uses), and
+# every later diff is checked against that declaration - advisory only, v1.
+class PairedArtifactDeclarationTests(unittest.TestCase):
+    def test_a_declared_pair_round_trips(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            declare_paired_artifact(
+                archive, "event-kinds", "scripts/godmode_runtime/godmode_constants.py",
+                "scripts/godmode_runtime/godmode_compress.py",
+                "EVENT_KINDS names every record kind; MASKS must cover the same "
+                "vocabulary or a compressed view silently drops a kind's fields")
+            pairs = declared_paired_artifacts(archive)
+        self.assertEqual(len(pairs), 1)
+        self.assertEqual(pairs[0]["label"], "event-kinds")
+        self.assertEqual(pairs[0]["a"], "scripts/godmode_runtime/godmode_constants.py")
+        self.assertEqual(pairs[0]["b"], "scripts/godmode_runtime/godmode_compress.py")
+
+    def test_a_later_declaration_of_the_same_label_supersedes_the_last(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            declare_paired_artifact(archive, "p", "a.py", "b.py", "first")
+            declare_paired_artifact(archive, "p", "a.py", "c.py", "revised")
+            pairs = declared_paired_artifacts(archive)
+        self.assertEqual(len(pairs), 1)
+        self.assertEqual(pairs[0]["b"], "c.py")
+
+    def test_no_archive_no_declarations_is_an_honest_empty_list_not_an_error(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            self.assertEqual(declared_paired_artifacts(archive), [])
+
+
+class PairedArtifactCheckTests(unittest.TestCase):
+    """Red-first from the spec: a declared pair with a one-sided diff is
+    advisory; both sides touched (or neither) is clean."""
+
+    def test_a_one_sided_diff_against_a_declared_pair_is_advisory(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            declare_paired_artifact(archive, "p", "a.py", "b.py", "must move together")
+            report = paired_artifact_findings(archive, ["a.py"])
+        self.assertEqual(report["verdict"], "one-sided-change")
+        self.assertEqual(len(report["findings"]), 1)
+        hit = report["findings"][0]
+        self.assertEqual(hit["touched"], "a.py")
+        self.assertEqual(hit["untouched"], "b.py")
+        self.assertIn("must move together", hit["question"])
+
+    def test_both_sides_touched_is_clean(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            declare_paired_artifact(archive, "p", "a.py", "b.py", "")
+            report = paired_artifact_findings(archive, ["a.py", "b.py"])
+        self.assertEqual(report["verdict"], "paired-or-clean")
+        self.assertEqual(report["findings"], [])
+
+    def test_neither_side_touched_is_clean(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            declare_paired_artifact(archive, "p", "a.py", "b.py", "")
+            report = paired_artifact_findings(archive, ["unrelated.py"])
+        self.assertEqual(report["verdict"], "paired-or-clean")
+        self.assertEqual(report["findings"], [])
+
+    def test_no_declared_pairs_is_clean_regardless_of_diff(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            report = paired_artifact_findings(archive, ["a.py"])
+        self.assertEqual(report["declared_pairs"], 0)
+        self.assertEqual(report["findings"], [])
+
+    def test_windows_and_posix_path_separators_are_treated_as_the_same_path(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            declare_paired_artifact(archive, "p", "scripts/a.py", "scripts/b.py", "")
+            report = paired_artifact_findings(archive, ["scripts\\a.py"])
+        self.assertEqual(len(report["findings"]), 1)
+
+    def test_it_never_blocks_and_never_joins_the_precheck_verdict(self) -> None:
+        """Advisory only, v1: a paired-artifact hit does not exist to gate
+        anything, and it must not silently flip an otherwise-clean precheck
+        into 'prior work found' the way a real finding would."""
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            declare_paired_artifact(archive, "p", "a.py", "b.py", "")
+            report = precheck(project, archive, "invoice rounding for VAT",
+                             changed_files=["a.py"])
+        self.assertEqual(report["verdict"], "no-prior-work-found")
+        self.assertEqual(report["paired_artifacts"]["verdict"], "one-sided-change")
+
+    def test_precheck_omits_the_section_when_no_changed_files_are_given(self) -> None:
+        """Backward compatible: a caller that never asks about a diff (the
+        signature every existing caller of `precheck()` still uses) gets
+        exactly the report shape it always got."""
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            report = precheck(project, archive, "invoice rounding for VAT")
+        self.assertNotIn("paired_artifacts", report)
+
+    def test_a_paired_artifact_hit_is_rendered_and_labeled_advisory(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            declare_paired_artifact(archive, "p", "a.py", "b.py", "")
+            report = precheck(project, archive, "invoice rounding for VAT",
+                             changed_files=["a.py"])
+        text = render(report)
+        self.assertIn("paired-artifact, advisory", text)
+        self.assertIn("a.py", text)
+        self.assertIn("b.py", text)
 
 
 if __name__ == "__main__":
