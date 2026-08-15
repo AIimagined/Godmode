@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_from": "7afd37a92b82",
+  "generated_from": "4746304b16d6",
   "floor": {
     "claude-code": [
       "git status",
@@ -45,7 +45,6 @@
       "rd",
       "del",
       "remove-item",
-      "move-item",
       "new-item",
       "set-content",
       "add-content",

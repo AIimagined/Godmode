@@ -364,8 +364,13 @@ def main(argv: list[str] | None = None) -> int:
         # The root is passed, not inferred: containment decides whether an edit
         # is ordinary work, and without it every edit the host sends - always
         # an absolute path - was judged to be outside the tree and refused.
+        # `archive=archive` (U-B2): a pinned evaluator's Edit/Write payload
+        # is denied here, at the same call every other protected category
+        # already goes through - the archive is the authoritative pin
+        # store, and this is the one call site that has it in scope.
         preview = classify_action(
-            operation, project_root=Path(anchor.project_root)) if operation else {
+            operation, project_root=Path(anchor.project_root),
+            archive=archive) if operation else {
             "protected": True, "category": "unclassified-mutation",
             "impact": ["no operation described"]}
         preview["executes_operation"] = False
