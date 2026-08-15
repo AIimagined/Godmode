@@ -72,7 +72,7 @@ from .godmode_docslint import lint_docs
 from .godmode_trust import scan_agent_configuration
 from .godmode_obligations import review_obligations
 from .godmode_atlas import speculative_seams, unfollowed_dependents
-from .godmode_precheck import precheck as run_precheck
+from .godmode_precheck import declare_paired_artifact, precheck as run_precheck
 from .godmode_fence import (
     BOUNDARY_CONFIG, audit_changes, completion_audit, declared_design, propose_design,
     unaccepted_completions,
@@ -1718,12 +1718,40 @@ def cmd_precheck(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     Both answers were already in the archive and nothing read either. The one
     moment they are worth having is before the work starts, which is the one
     moment nobody thinks to ask.
+
+    GAP-2's paired-artifact question rides along on the same diff-listing
+    default `fence audit` already uses (`--changed`, or the working tree)
+    - precheck already runs before work starts, which is also the moment a
+    one-sided diff against a declared pair is still cheap to fix.
     """
     _require_archive(runtime)
-    report = run_precheck(Path(runtime.anchor.project_root), runtime.archive, args.about)
+    project = Path(runtime.anchor.project_root)
+    changed = list(args.changed) if args.changed else _working_tree_changes(project)
+    report = run_precheck(project, runtime.archive, args.about, changed_files=changed)
     # Non-zero on a hit so a script can stop, but the payload is a question and
     # never a refusal: prior work is a reason to look, not grounds to decline.
+    # A paired-artifact hit never contributes to this exit code either - v1
+    # is advisory only, same as every other question this command asks.
     return CommandResult(report, exit_code=1 if report["verdict"] == "prior-work-found" else 0)
+
+
+def cmd_precheck_declare_pair(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """Declare "these two artifacts change together" (GAP-2).
+
+    Writes once; every later `precheck` (and `--changed` sweep) checks
+    every diff against it from then on. `--label` names the pair for
+    later re-declaration or lookup - it is not free text, it is the key.
+    """
+    _require_archive(runtime)
+    record = declare_paired_artifact(
+        runtime.archive, args.label, args.a, args.b, args.reason or "",
+    )
+    data = record["data"]
+    return CommandResult(
+        {"sequence": record["sequence"], "label": args.label,
+         "a": data["a"], "b": data["b"], "reason": data["reason"]},
+        exit_code=0,
+    )
 
 
 def cmd_boundaries_propose_ui(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -3136,7 +3164,29 @@ def _build_parser() -> argparse.ArgumentParser:
         "precheck", help="Whether this was already built or already refused")
     precheck_parser.add_argument("--about", required=True,
                                  help="The task, in the words you would describe it")
+    precheck_parser.add_argument("--changed", nargs="+", default=None,
+                                 help="Changed paths, for the paired-artifact check "
+                                      "(GAP-2); defaults to the working tree")
     precheck_parser.set_defaults(handler=cmd_precheck)
+
+    # A sibling top-level command, not a `precheck` subcommand: `precheck`
+    # already ships as a flat leaf (`--about` required directly, no
+    # subcommand) and is named in released docs that way - nesting a
+    # subcommand under it would make `--about` a required argument of
+    # `declare-pair` too and break that documented surface for no reason.
+    paired_artifact = sub.add_parser(
+        "paired-artifact", help="Artifacts declared to change together (GAP-2)")
+    paired_artifact_sub = paired_artifact.add_subparsers(
+        dest="paired_artifact_command", required=True)
+    paired_artifact_declare = paired_artifact_sub.add_parser(
+        "declare", help="Declare two artifacts that must change together")
+    paired_artifact_declare.add_argument("--label", required=True,
+                                         help="Unique name for this pair")
+    paired_artifact_declare.add_argument("--a", required=True, help="First artifact's path")
+    paired_artifact_declare.add_argument("--b", required=True, help="Second artifact's path")
+    paired_artifact_declare.add_argument("--reason", default="",
+                                         help="Why these two must change together")
+    paired_artifact_declare.set_defaults(handler=cmd_precheck_declare_pair)
 
     boundaries = sub.add_parser("boundaries", help="Design surfaces this project protects")
     boundaries_sub = boundaries.add_subparsers(dest="boundaries_command", required=True)
