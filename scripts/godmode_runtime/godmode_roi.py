@@ -19,13 +19,22 @@ unreadable transcript, `record_measurement`'s own stated gap) count toward
 measured, `tokens` carries no `in`/`out` keys at all - a gap is stated, never
 interpolated as zero or guessed from anything else.
 
-**Gate activity, precedent hits, fence findings.** No dedicated archive kind
-exists for these yet - no shipped hook currently appends one. This module
-defines the convention a future emitter would use: an `action` record whose
+**Gate activity, precedent hits, fence findings.** Denials have a real,
+already-shipped source: `godmode_session_hook.py` appends a `kind="refusal"`
+record at every R5 deny (`stage_from_refusal` reads them back the same way).
+Every `refusal` record IS a denial - the hook's `ask` branch never appends
+one, only the deny branch does - so `gate.denied` folds `kind="refusal"`
+records unconditionally, no field to check. For `asked`/`advisories` (and a
+second, additional source for `denied`), this module also defines the
+convention a future emitter would use: an `action` record whose
 `data["roi_event"]` is one of the closed values below (`GATE_DENIED`,
-`GATE_ASKED`, `GATE_ADVISORY`, `PRECEDENT_HIT`, `FENCE_FINDING`). Until a
-writer exists, these buckets count what is actually in the archive - zero,
-honestly, rather than a number nothing produced. The same discipline covers
+`GATE_ASKED`, `GATE_ADVISORY`, `PRECEDENT_HIT`, `FENCE_FINDING`). No shipped
+writer emits `action`/`roi_event` records yet, and the two sources are
+disjoint by kind (`refusal` vs `action`), so no dedupe is needed between
+them - a record can only ever be counted once. Until an `action`/`roi_event`
+writer exists, the `asked`/`advisories` buckets and this second `denied`
+source count what is actually in the archive - zero, honestly, rather than a
+number nothing produced. The same discipline covers
 `verdicts.contested`: the `verdict` disposition vocabulary
 (`godmode_verdict.DISPOSITIONS`) does not include `"contested"` yet - a
 future verdict-panel unit (U-E4) may ship it - so this report counts
@@ -119,6 +128,14 @@ def roi_report(archive: Chronicle, sessions: int | None = None) -> dict[str, Any
 
         if kind == "session":
             session_count += 1
+
+        elif kind == "refusal":
+            # Every refusal record IS a denial - godmode_session_hook.py
+            # only appends this kind from its deny branch (see the module
+            # docstring). Disjoint from the `action`/`roi_event` convention
+            # below, so folding both never double-counts the same record.
+            gate_denied += 1
+            _cite(record)
 
         elif kind == "metric":
             if data.get("measured") is True:
