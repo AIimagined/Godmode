@@ -2129,6 +2129,19 @@ class CapabilityBroker:
         return classification
 
 
+# U-S4 approval-declarations - minimal isolated block. A public accessor for
+# the same policy `CapabilityBroker._policy()` already reads, for a caller
+# (the pre-tool hook) that needs `password_required`/`approval_required` to
+# widen its own `classify_action` call but has no reason to construct a
+# broker, mint capabilities, or import anything `CapabilityBroker`'s other
+# methods pull in locally. Raises the same `AuthorizationError` `_policy()`
+# does on a malformed file - deliberately not swallowed here, so a caller
+# with different failure-mode needs (fail-safe vs. fail-loud) decides for
+# itself rather than this function silently picking one for every caller.
+def local_authorization_policy(archive: Any) -> dict[str, Any]:
+    return CapabilityBroker(archive)._policy()  # noqa: SLF001
+
+
 def stage_from_refusal(archive: Any, nth: int = 1) -> str:
     """The operation named by the nth-most-recent refusal on record.
 
