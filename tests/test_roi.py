@@ -107,6 +107,24 @@ def _seed_session_without_measurement(archive) -> None:
     _metric_gap(archive)
 
 
+def _refusal(archive, *, category: str = "database-mutation") -> None:
+    """The real shape `godmode_session_hook.py` writes at every R5 deny -
+    see its `archive.append("refusal", ...)` call. No `roi_event` field: this
+    kind carries denials on its own, disjoint from the `action`/`roi_event`
+    convention above."""
+    archive.append(
+        "refusal",
+        category[:200],
+        {
+            "operation": "rm -rf /",
+            "tool": "Bash",
+            "tier": "R5",
+            "category": category,
+        },
+        evidence=[],
+    )
+
+
 class RoiCounts(unittest.TestCase):
     def test_counts_fold_from_fixture_records(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
@@ -152,6 +170,32 @@ class ContentFree(unittest.TestCase):
             self.assertNotIn(
                 "SENTINEL_SECRET_XYZ", render_roi(roi_report(archive, sessions=None))
             )
+
+
+class RefusalFolding(unittest.TestCase):
+    """`godmode_session_hook.py` writes a real `kind="refusal"` record at
+    every R5 deny (`stage_from_refusal` reads them back) - a second,
+    already-shipped source of denial counts, disjoint from the `action`/
+    `roi_event` convention above (no shipped writer emits `GATE_DENIED`
+    action records yet). `gate.denied` must fold both, or a real archive
+    full of refusals reports zero denials while denials actually happened.
+    """
+
+    def test_refusal_kind_records_fold_into_gate_denied(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            for _ in range(3):
+                _refusal(archive)
+            r = roi_report(archive, sessions=None)
+            self.assertEqual(r["gate"]["denied"], 3)
+            self.assertTrue(any(b.startswith("seq:") for b in r["basis"]))
+
+    def test_refusal_and_roi_event_denials_both_count(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            _refusal(archive)
+            _refusal(archive)
+            _gate_event(archive, GATE_DENIED)
+            r = roi_report(archive, sessions=None)
+            self.assertEqual(r["gate"]["denied"], 3)
 
 
 class ContestedDispositionAbsent(unittest.TestCase):
