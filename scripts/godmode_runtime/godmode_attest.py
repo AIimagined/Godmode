@@ -1109,6 +1109,90 @@ def register_metric_contract(
     )
 
 
+# PARTIAL-P3/B3-7: a declared tool name, used only to test whether it is
+# mentioned in a checker command - not a shell identifier, so this stays
+# permissive (dots and plus for things like "eslint.config", dashes for
+# "media-lint") while still refusing anything empty or absurdly long.
+_TOOL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$")
+
+
+def register_error_pattern(
+    archive: Chronicle, session: str, tool: str, pattern: str
+) -> dict[str, Any]:
+    """PARTIAL-P3/B3-7: declare a third-party tool's error-severity vocabulary.
+
+    Requirement-driven, no defaults: an undeclared tool gates nothing.
+    `godmode_verdict.record_verdict` only ever tests a checker's OWN
+    captured output against a pattern registered HERE for a tool named in
+    that same checker's command - a project that never calls this function
+    sees no change in behaviour at all, whatever its checkers print.
+
+    Charter-rule TEMPLATE (this docstring is the emission - see the module
+    note on `godmode_charter.py` templates being doc-only for kinds like
+    this one, whose actual declaration is data, not prose an operator
+    writes by hand). A project that wants this gate states the doctrine in
+    GODMODE.md, in a shape the existing `never ... without ...` classifier
+    already compiles to a HARD `attestation_present` rule:
+
+        Never confirm a verdict whose checker output logs a declared tool's
+        error severity without an acknowledged-remediated or
+        acknowledged-deferred attestation.
+
+    ...and separately, ONCE, registers the tool + pattern this data-level
+    gate actually matches against (prose cannot carry a regex safely):
+
+        godmode error-pattern register --tool pytest --pattern "(?i)\\berror\\b"
+
+    Validated exactly as `register_metric_contract` validates its anchor -
+    same class of hand-written, untrusted regex, later matched against
+    untrusted captured tool output, so it earns the same three checks
+    (compiles, length-capped, scanned for catastrophic-backtracking shapes).
+    """
+    tool = tool.strip()
+    if not tool or not _TOOL_NAME.match(tool):
+        raise ArchiveError(
+            "An error-pattern tool name must be 1-64 characters of "
+            "letters/digits/._+- starting with a letter or digit"
+        )
+    if not pattern or len(pattern) > _ANCHOR_MAX_LEN:
+        raise ArchiveError(f"An error pattern must be 1-{_ANCHOR_MAX_LEN} characters")
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        raise ArchiveError(f"Error pattern {pattern!r} is not a valid pattern: {exc}") from exc
+    shape = _catastrophic_shape(pattern)
+    if shape:
+        raise ArchiveError(
+            f"Error pattern {pattern!r} contains a nested-quantifier shape "
+            f"({shape!r}) that risks catastrophic backtracking - simplify it"
+        )
+    return archive.append(
+        "decision", f"error-pattern:{tool}",
+        {"tool": tool, "pattern": pattern, "session": session},
+        evidence=[],
+    )
+
+
+def declared_error_patterns(archive: Chronicle) -> dict[str, str]:
+    """Every tool -> pattern declared via `register_error_pattern`.
+
+    An empty result means no tool is declared at all - the fast, common
+    path `record_verdict` takes for every caller that has never touched
+    this mechanism. The most recently registered pattern for a given tool
+    wins, the same "last write wins" precedent `_registered_anchor` already
+    uses for metric contracts.
+    """
+    patterns: dict[str, str] = {}
+    for record in archive.select(kind="decision", limit=500):
+        subject = record["subject"]
+        if not subject.startswith("error-pattern:"):
+            continue
+        data = record["data"]
+        tool = data.get("tool") or subject[len("error-pattern:"):]
+        patterns[tool] = data.get("pattern", "")
+    return patterns
+
+
 # Markdown emphasis stripped before the metric-name search runs, so
 # "**val_bpb** improved to 3.21" still names the metric it bolded. Bare `*`
 # and `` ` `` only - NOT `_`, because a metric name is exactly the kind of
