@@ -151,6 +151,41 @@ def _register_invariants(data: dict[str, Any]) -> None:
         )
 
 
+def _pin_invariants(data: dict[str, Any]) -> None:
+    """U-B2's protected-evaluator pins - the archived sha256 IS the security
+    property this whole mechanism rests on. A pin record with no valid digest
+    would sit in the archive claiming to protect a file while enforcing
+    nothing, and nothing downstream re-derives or re-checks the shape at read
+    time - `pinned_evaluators()` trusts whatever a `pin`-kind record says, the
+    same way `_register_invariants` above notes a raw append can otherwise
+    bypass a fold that would have refused it.
+
+    `action` distinguishes a pin from an unpin on the same evolving-history
+    shape every other folded kind here uses (state carried by replaying
+    records, not by mutating one in place). Only `pin` needs a digest; an
+    `unpin` names what it released and nothing else.
+    """
+    action = data.get("action")
+    if action not in ("pin", "unpin"):
+        raise ArchiveError(
+            "a pin-kind record must declare action 'pin' or 'unpin'"
+        )
+    path = data.get("path")
+    if not isinstance(path, str) or not path.strip():
+        raise ArchiveError("a pin-kind record must name a non-empty path")
+    if action == "unpin":
+        return
+    digest = data.get("sha256")
+    if not isinstance(digest, str) or len(digest) != 64 or any(
+        char not in "0123456789abcdef" for char in digest.lower()
+    ):
+        raise ArchiveError(
+            "a pin record must carry the sha256 digest of the pinned file; "
+            "an archived pin with no valid hash enforces nothing while "
+            "claiming to"
+        )
+
+
 # kind -> validator. Every entry here is enforced unconditionally the moment
 # godmode_chronicle.py is imported - see KIND_INVARIANTS in that module,
 # which is seeded from this dict at chronicle module load, not populated
@@ -158,4 +193,5 @@ def _register_invariants(data: dict[str, Any]) -> None:
 KIND_VALIDATORS: dict[str, KindInvariant] = {
     "verdict": _verdict_invariants,
     "decision": _register_invariants,
+    "pin": _pin_invariants,
 }
