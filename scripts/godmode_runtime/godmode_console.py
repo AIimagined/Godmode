@@ -127,6 +127,7 @@ from .godmode_sentinel import (
     find_secret_shapes,
     read_password_stdin,
 )
+from .godmode_sentinel import LICENSE_CLASSIFICATIONS, license_verdict, record_license_attestation
 
 
 MAX_SUBJECT = 200
@@ -1430,6 +1431,23 @@ def cmd_guard(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult(preview)
 
 
+def cmd_license_check(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """B3-5: whether an operation naming an external repo may proceed."""
+    _require_archive(runtime)
+    verdict = license_verdict(runtime.archive, Path(runtime.anchor.project_root),
+                              args.operation)
+    return CommandResult(verdict, exit_code=0 if verdict["allowed"] else 1)
+
+
+def cmd_license_attest(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """B3-5: record a license classification for a repository read or absorbed."""
+    _require_archive(runtime)
+    record = record_license_attestation(
+        runtime.archive, args.repo, args.classification, args.clean_room_note or ""
+    )
+    return CommandResult({"record": _event_view(record)})
+
+
 def cmd_authorize_setup(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     broker = CapabilityBroker(runtime.archive)
@@ -2442,6 +2460,23 @@ def _build_parser() -> argparse.ArgumentParser:
     guard.add_argument("--operation", required=True)
     guard.add_argument("--capability")
     guard.set_defaults(handler=cmd_guard)
+
+    license_parser = sub.add_parser(
+        "license", help="B3-5: license/provenance gate for external-repo interaction")
+    license_sub = license_parser.add_subparsers(dest="license_command", required=True)
+    license_check = license_sub.add_parser(
+        "check", help="Whether an operation naming an external repo may proceed")
+    license_check.add_argument("--operation", required=True)
+    license_check.set_defaults(handler=cmd_license_check)
+    license_attest = license_sub.add_parser(
+        "attest", help="Record a license classification for a repository read or absorbed")
+    license_attest.add_argument("--repo", required=True, help="The repository reference")
+    license_attest.add_argument("--classification", required=True,
+                                choices=LICENSE_CLASSIFICATIONS)
+    license_attest.add_argument(
+        "--clean-room-note", default="",
+        help="Required for anything other than 'permissive': what was read versus written")
+    license_attest.set_defaults(handler=cmd_license_attest)
 
     authorize = sub.add_parser("authorize", help="Configure or issue local capabilities")
     authorize_sub = authorize.add_subparsers(dest="authorize_command", required=True)

@@ -724,6 +724,150 @@ _R5_ESCALATIONS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# B3-5: external-repo license/provenance gate (GAP-4, lessons sweep
+# 2026-08-15; operator refinement 2026-08-15 generalises the trigger).
+#
+# Detection is generic on purpose: a repo URL provided to follow, read,
+# absorb, fork or copy; a `git clone`/fetch/remote-add of a non-dependency
+# repo; a `curl`/`wget`/`Invoke-WebRequest` aimed at a repo host; or an
+# explicit `--source-repo` flag are all one condition - an external
+# repository entering the work - not a distillation-specific one. This block
+# only detects; whether detection becomes a hard ask is requirement-driven,
+# decided by `_absorption_policy_declared` below, never by default.
+# ---------------------------------------------------------------------------
+
+_REPO_HOST = re.compile(
+    r"(?i)\b(?:github\.com|gitlab\.com|bitbucket\.org|codeberg\.org|sr\.ht|"
+    r"sourceforge\.net|huggingface\.co)[/:][\w.-]+/[\w.-]+"
+)
+_SOURCE_REPO_FLAG = re.compile(r"(?i)--source-repo(?:[= ](\S+))?")
+
+LICENSE_CLASSIFICATIONS = (
+    "permissive", "proprietary-no-redistribution", "unlicensed", "copyleft-incompatible",
+)
+
+
+def detect_external_repo(operation: str) -> str | None:
+    """The external repository this operation names, or `None`.
+
+    A flag takes priority over a bare host match: `--source-repo` is the
+    operator naming the repository on purpose, where a URL is only ever
+    inferred from the command's shape.
+    """
+    flag = _SOURCE_REPO_FLAG.search(operation)
+    if flag:
+        return (flag.group(1) or flag.group(0)).strip()
+    host = _REPO_HOST.search(operation)
+    return host.group(0) if host else None
+
+
+def _absorption_policy_declared(project_root: Path | None) -> bool:
+    """Whether this project's operator declared the external-absorption gate.
+
+    Reuses the same tighten-only `POLICY_FILENAME` the capability broker
+    already reads rather than adding a second small file for one more fact an
+    operator may declare - the DUPDRIFT lesson this very sweep names.
+    Undeclared means advisory-only: nothing here becomes a hard gate by
+    default.
+    """
+    if project_root is None:
+        return False
+    path = Path(project_root) / POLICY_FILENAME
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return False
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(raw, dict) and bool(raw.get("external_absorption_gate"))
+
+
+def record_license_attestation(
+    archive: Any, repo_ref: str, classification: str, clean_room_note: str = "",
+) -> dict[str, Any]:
+    """Record the license classification an operator attests for `repo_ref`.
+
+    Non-permissive requires a clean-room provenance note on the absorbing
+    work: the classification alone says what the source allows, never
+    whether this project's own expression is clear of it.
+    """
+    if classification not in LICENSE_CLASSIFICATIONS:
+        raise AuthorizationError(
+            f"Unknown license classification '{classification}'; expected one of "
+            f"{', '.join(LICENSE_CLASSIFICATIONS)}"
+        )
+    if classification != "permissive" and not clean_room_note.strip():
+        raise AuthorizationError(
+            f"A '{classification}' classification requires a clean-room provenance "
+            "note describing what was read versus what was written"
+        )
+    return archive.append(
+        "action",
+        f"license-check:{repo_ref}"[:200],
+        {
+            "repo_ref": repo_ref,
+            "classification": classification,
+            "clean_room_note": clean_room_note.strip(),
+        },
+        evidence=[],
+    )
+
+
+def _latest_license_attestation(archive: Any, repo_ref: str) -> dict[str, Any] | None:
+    matches = archive.select(kind="action", subject=f"license-check:{repo_ref}"[:200], limit=50)
+    return matches[-1]["data"] if matches else None
+
+
+def license_verdict(archive: Any, project_root: Path | None, operation: str) -> dict[str, Any]:
+    """Whether an external-repo operation may proceed, and why.
+
+    Red-first in both modes. Undeclared, the first call records an advisory
+    and never blocks - naming what a license check would have covered.
+    Declared, the first call blocks until a license-classification
+    attestation exists for this exact repository reference, and a
+    non-permissive classification also needs the clean-room note.
+    """
+    repo_ref = detect_external_repo(operation)
+    if repo_ref is None:
+        return {"applicable": False, "allowed": True}
+    declared = _absorption_policy_declared(project_root)
+    if not declared:
+        if archive is not None:
+            archive.append(
+                "action", f"license-check-advisory:{repo_ref}"[:200],
+                {"repo_ref": repo_ref, "gate": "advisory",
+                 "detail": "no policy declares the external-absorption gate; recorded "
+                           "what a license check would have covered"},
+                evidence=[],
+            )
+        return {"applicable": True, "allowed": True, "gate": "advisory", "repo_ref": repo_ref}
+    attestation = _latest_license_attestation(archive, repo_ref) if archive is not None else None
+    if attestation is None:
+        return {
+            "applicable": True, "allowed": False, "gate": "declared", "repo_ref": repo_ref,
+            "detail": f"policy declares the external-absorption gate and '{repo_ref}' has "
+                      "no recorded license classification",
+            "remedy": "record one: `godmode license attest --repo "
+                      f"{repo_ref!r} --classification <permissive|"
+                      "proprietary-no-redistribution|unlicensed|copyleft-incompatible> "
+                      "[--clean-room-note \"...\"]`",
+        }
+    non_permissive = attestation["classification"] != "permissive"
+    if non_permissive and not str(attestation.get("clean_room_note", "")).strip():
+        return {
+            "applicable": True, "allowed": False, "gate": "declared", "repo_ref": repo_ref,
+            "detail": f"'{repo_ref}' is classified '{attestation['classification']}' and "
+                      "carries no clean-room provenance note",
+            "remedy": "re-record the attestation with --clean-room-note describing what "
+                      "was read versus what was written",
+        }
+    return {
+        "applicable": True, "allowed": True, "gate": "declared", "repo_ref": repo_ref,
+        "classification": attestation["classification"],
+    }
+
+
 def find_secret_shapes(value: Any, location: str = "$") -> list[str]:
     findings: list[str] = []
     if isinstance(value, dict):
@@ -930,6 +1074,14 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     if not normalized:
         raise AuthorizationError("Operation description cannot be empty")
 
+    # B3-5 detection: a repository outside this project entering the work,
+    # named wherever it appears in the operation - a URL a compound command
+    # would `curl` or `git clone`, or an explicit `--source-repo` flag. A
+    # plain regex search over the whole text covers every segment and every
+    # substitution without needing its own branch in the recursion below, so
+    # it is computed once and carried onto whichever dict this call returns.
+    external_repo_ref = detect_external_repo(normalized)
+
     # What a substitution runs is a command like any other, judged alongside
     # the line that contains it rather than taken on trust or refused on sight.
     inner = substituted_commands(normalized)
@@ -941,6 +1093,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         worst["impact"] = sorted({item for v in parts for item in v["impact"]})
         worst["operation_digest"] = hashlib.sha256(normalized.encode()).hexdigest()
         worst["substitutions"] = len(inner)
+        worst["external_repo_ref"] = external_repo_ref
         return worst
 
     segments = shell_segments(normalized)
@@ -953,6 +1106,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         worst["impact"] = sorted({item for v in verdicts for item in v["impact"]})
         worst["operation_digest"] = hashlib.sha256(normalized.encode()).hexdigest()
         worst["segments"] = len(segments)
+        worst["external_repo_ref"] = external_repo_ref
         return worst
 
     category, protected, impact = _categorize(normalized, project_root)
@@ -967,6 +1121,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         "impact": impact,
         "tier": tier,
         "second_confirmation_required": second_confirmation,
+        "external_repo_ref": external_repo_ref,
     }
 
 
@@ -1480,5 +1635,20 @@ def _self_check() -> None:
     assert shell_segments("ls | head -3 && git status; cat x") == [
         "ls", "head -3", "git status", "cat x"]
     assert shell_segments("grep 'a|b' file") == ["grep 'a|b' file"]
+
+    # B3-5: detection is additive and never changes an existing category or
+    # protected verdict - an ordinary read stays a read, whether or not it
+    # names an external repository.
+    assert detect_external_repo("git clone https://github.com/octocat/hello-world") == \
+        "github.com/octocat/hello-world"
+    cloned = classify_action("git clone https://github.com/octocat/hello-world")
+    assert cloned["external_repo_ref"] == "github.com/octocat/hello-world", cloned
+    assert cloned["protected"], "a clone still fails closed as a mutation"
+    assert cloned["category"] == "unclassified-mutation", cloned
+    assert detect_external_repo("curl -sL https://gitlab.com/foo/bar/-/archive.tar.gz") is not None
+    assert detect_external_repo("some-skill --source-repo https://example.com/x") == \
+        "https://example.com/x"
+    assert detect_external_repo("ls -la") is None
+    assert classify_action("ls -la")["external_repo_ref"] is None
 
     print("godmode_sentinel self-check OK")
