@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import posixpath
 import sys
 import re
 from typing import Any
@@ -24,6 +25,17 @@ from .godmode_session_log import command_digest
 
 STATUSES = ("ran", "empty", "skipped", "blocked")
 GRADES = ("observed", "hypothesis", "verified", "unknown")
+# PARTIAL-P2/B3-4: closed vocabulary a claim may opt into via `blast_radius`.
+# Closed on purpose - an open string field would let every claim invent its
+# own severity label, which is not a bar anyone could size a check against.
+# Named for the shape of what a wrong "verified" costs, not the domain:
+# an action that reaches outside this worktree, a side effect that persists
+# past the session that caused it, or a guard whose entire job is to detect
+# byte-level tampering.
+BLAST_RADIUS_KINDS = ("ops-directed", "sticky-side-effect", "checksum-guard")
+# The independent-witness floor every `blast_radius` value shares in v1 - see
+# `_independent_witness_count`'s docstring for what "independent" means here.
+_BLAST_RADIUS_MIN_WITNESSES = 2
 
 _FILE_CITE = re.compile(r"^file:(?P<path>[^#]+)(?:#L(?P<start>\d+)(?:-L?(?P<end>\d+))?)?$")
 _RECORD_CITE = re.compile(r"^rec:(?P<digest>[0-9a-f]{6,64})$")
@@ -1098,6 +1110,90 @@ def register_metric_contract(
     )
 
 
+# PARTIAL-P3/B3-7: a declared tool name, used only to test whether it is
+# mentioned in a checker command - not a shell identifier, so this stays
+# permissive (dots and plus for things like "eslint.config", dashes for
+# "media-lint") while still refusing anything empty or absurdly long.
+_TOOL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$")
+
+
+def register_error_pattern(
+    archive: Chronicle, session: str, tool: str, pattern: str
+) -> dict[str, Any]:
+    """PARTIAL-P3/B3-7: declare a third-party tool's error-severity vocabulary.
+
+    Requirement-driven, no defaults: an undeclared tool gates nothing.
+    `godmode_verdict.record_verdict` only ever tests a checker's OWN
+    captured output against a pattern registered HERE for a tool named in
+    that same checker's command - a project that never calls this function
+    sees no change in behaviour at all, whatever its checkers print.
+
+    Charter-rule TEMPLATE (this docstring is the emission - see the module
+    note on `godmode_charter.py` templates being doc-only for kinds like
+    this one, whose actual declaration is data, not prose an operator
+    writes by hand). A project that wants this gate states the doctrine in
+    GODMODE.md, in a shape the existing `never ... without ...` classifier
+    already compiles to a HARD `attestation_present` rule:
+
+        Never confirm a verdict whose checker output logs a declared tool's
+        error severity without an acknowledged-remediated or
+        acknowledged-deferred attestation.
+
+    ...and separately, ONCE, registers the tool + pattern this data-level
+    gate actually matches against (prose cannot carry a regex safely):
+
+        godmode error-pattern register --tool pytest --pattern "(?i)\\berror\\b"
+
+    Validated exactly as `register_metric_contract` validates its anchor -
+    same class of hand-written, untrusted regex, later matched against
+    untrusted captured tool output, so it earns the same three checks
+    (compiles, length-capped, scanned for catastrophic-backtracking shapes).
+    """
+    tool = tool.strip()
+    if not tool or not _TOOL_NAME.match(tool):
+        raise ArchiveError(
+            "An error-pattern tool name must be 1-64 characters of "
+            "letters/digits/._+- starting with a letter or digit"
+        )
+    if not pattern or len(pattern) > _ANCHOR_MAX_LEN:
+        raise ArchiveError(f"An error pattern must be 1-{_ANCHOR_MAX_LEN} characters")
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        raise ArchiveError(f"Error pattern {pattern!r} is not a valid pattern: {exc}") from exc
+    shape = _catastrophic_shape(pattern)
+    if shape:
+        raise ArchiveError(
+            f"Error pattern {pattern!r} contains a nested-quantifier shape "
+            f"({shape!r}) that risks catastrophic backtracking - simplify it"
+        )
+    return archive.append(
+        "decision", f"error-pattern:{tool}",
+        {"tool": tool, "pattern": pattern, "session": session},
+        evidence=[],
+    )
+
+
+def declared_error_patterns(archive: Chronicle) -> dict[str, str]:
+    """Every tool -> pattern declared via `register_error_pattern`.
+
+    An empty result means no tool is declared at all - the fast, common
+    path `record_verdict` takes for every caller that has never touched
+    this mechanism. The most recently registered pattern for a given tool
+    wins, the same "last write wins" precedent `_registered_anchor` already
+    uses for metric contracts.
+    """
+    patterns: dict[str, str] = {}
+    for record in archive.select(kind="decision", limit=500):
+        subject = record["subject"]
+        if not subject.startswith("error-pattern:"):
+            continue
+        data = record["data"]
+        tool = data.get("tool") or subject[len("error-pattern:"):]
+        patterns[tool] = data.get("pattern", "")
+    return patterns
+
+
 # Markdown emphasis stripped before the metric-name search runs, so
 # "**val_bpb** improved to 3.21" still names the metric it bolded. Bare `*`
 # and `` ` `` only - NOT `_`, because a metric name is exactly the kind of
@@ -1212,6 +1308,63 @@ def record_criterion(
     )
 
 
+# PARTIAL-P2/B3-4: two witnesses that would both dissolve to the same
+# underlying fact are not two witnesses - they are one fact, cited twice.
+# Fix-round-1 (review I1): a `file:` target compared as raw text let cosmetic
+# spelling alone launder a single read into two witnesses - `file:x` and
+# `file:./x` name the identical on-disk file but partitioned to different
+# strings. Slash direction is canonicalised to `/` FIRST so `posixpath`'s own
+# `.`/`..` collapsing (which only understands `/`) works the same whether the
+# citation was written with a Windows backslash or not - this is deliberately
+# "ntpath-safe" by normalizing away the platform difference up front rather
+# than delegating to `ntpath` itself, which would accept a bare `x` as a
+# relative-to-current-drive path and complicate the comparison for no benefit
+# here (this is never used to touch the filesystem, only to compare two
+# citation strings). Casefolded only on a case-insensitive host (`os.name ==
+# "nt"`): POSIX filesystems are case-sensitive by default, so `file:X` and
+# `file:x` legitimately name different files there and must NOT collapse.
+def _normalize_file_target(path: str) -> str:
+    normalized = posixpath.normpath(path.replace("\\", "/"))
+    if os.name == "nt":
+        normalized = normalized.casefold()
+    return normalized
+
+
+def _witness_identity(citation: str) -> tuple[str, str]:
+    """(kind, resolved-target) used only to test whether two citations name
+    the same underlying artifact - never to test whether either resolves.
+
+    Same kind AND same target means "the same witness": a `file:` target
+    drops any `#L...` line locator AND is normalized (see
+    `_normalize_file_target`) before comparison, so `file:pin.py#L10`,
+    `file:./pin.py#L40`, and `file:sub/../pin.py` are all the same file read
+    more than once, not independent reads. Every other kind's target is its
+    citation text verbatim after the prefix, so `cmd:python check.py a.txt`
+    and `cmd:python check.py b.txt` are two distinct artifacts (different
+    resolved targets) even though both are `cmd:`, while two copies of the
+    exact same `cmd:` string collapse to one. A different kind is always
+    independent of every other kind, regardless of target - a `file:` and a
+    `cmd:` citation are never "the same witness" just because they happen to
+    concern the same subject.
+    """
+    kind, sep, rest = citation.partition(":")
+    if not sep:
+        return "", citation
+    if kind == "file":
+        rest = _normalize_file_target(rest.split("#", 1)[0])
+    return kind, rest
+
+
+def _independent_witness_count(citations: list[str]) -> int:
+    """How many DISTINCT underlying artifacts `citations` names.
+
+    Simple by design (documented, not tuned): the count of unique
+    `_witness_identity` pairs. Two copies of one witness count once;
+    anything genuinely different - kind or target - counts again.
+    """
+    return len({_witness_identity(str(c)) for c in citations})
+
+
 def record_claim(
     archive: Chronicle,
     project: Path,
@@ -1221,6 +1374,7 @@ def record_claim(
     cites: list[str] | None = None,
     external: bool = False,
     timeline: dict[str, Any] | None = None,
+    blast_radius: str | None = None,
 ) -> dict[str, Any]:
     """Persist a claim, downgrading it when its citations do not resolve.
 
@@ -1237,9 +1391,25 @@ def record_claim(
     a timeline is supplied and shows no red-before-green for any cited
     command, the claim downgrades. `timeline=None` (no transcript available)
     skips the check entirely - absence of the instrument is never a penalty.
+
+    `blast_radius` (PARTIAL-P2/B3-4) is opt-in and defaults to unset: a
+    claim that does not declare one is graded exactly as before this field
+    existed. Declared as one of `BLAST_RADIUS_KINDS` (an ops-directed
+    action, a sticky/persisting side effect, or a checksum-class guard), it
+    raises the evidence bar for a `verified` grade past mere citation
+    resolution - the claim needs `_BLAST_RADIUS_MIN_WITNESSES` INDEPENDENT
+    witnesses (see `_witness_identity`), not that many citations. Two
+    citations that both resolve to the same file, or two copies of the same
+    `cmd:` string, are one witness said twice and downgrade exactly like too
+    few citations at all, naming the bar in the reason.
     """
     if grade not in GRADES:
         raise ArchiveError(f"Unknown claim grade '{grade}'; expected one of {', '.join(GRADES)}")
+    if blast_radius is not None and blast_radius not in BLAST_RADIUS_KINDS:
+        raise ArchiveError(
+            f"Unknown blast_radius '{blast_radius}'; expected one of "
+            f"{', '.join(BLAST_RADIUS_KINDS)}"
+        )
     citations = cites or []
     # Detected as well as declared: the check protected whoever remembered to
     # pass the flag, which is not the person who needs it.
@@ -1257,7 +1427,7 @@ def record_claim(
                 "claim", text[:120],
                 {"text": text, "grade": "hypothesis", "claimed_grade": grade,
                  "session": session, "downgraded": True, "unresolved": [],
-                 "operator_asserted": [],
+                 "operator_asserted": [], "blast_radius": blast_radius,
                  "reason": differential_reason},
                 evidence=citations,
             )
@@ -1272,7 +1442,7 @@ def record_claim(
                 "claim", text[:120],
                 {"text": text, "grade": "hypothesis", "claimed_grade": grade,
                  "session": session, "downgraded": True, "unresolved": [],
-                 "operator_asserted": [],
+                 "operator_asserted": [], "blast_radius": blast_radius,
                  "reason": metric_reason},
                 evidence=citations,
             )
@@ -1282,7 +1452,7 @@ def record_claim(
             record = archive.append(
                 "claim", text[:120],
                 {"text": text, "grade": "hypothesis", "claimed_grade": grade, "session": session,
-                 "downgraded": True, "unresolved": [],
+                 "downgraded": True, "unresolved": [], "blast_radius": blast_radius,
                  "reason": "external claim without a primary source read this session; "
                            "cite doc:<path> or url:<address> from a source actually opened"},
                 evidence=citations,
@@ -1325,6 +1495,20 @@ def record_claim(
                 suggestion = near_miss(unresolved[0], known_citations(archive))
                 if suggestion:
                     reason += f"; did you mean {suggestion!r}"
+        elif blast_radius is not None and (
+            witness_count := _independent_witness_count(citations)
+        ) < _BLAST_RADIUS_MIN_WITNESSES:
+            # PARTIAL-P2/B3-4: every citation resolved (checked above), but a
+            # blast_radius claim needs INDEPENDENT witnesses, not just enough
+            # citations - two citations that both name the same file, or two
+            # copies of the same cmd:, are one fact said twice.
+            effective, reason = (
+                "hypothesis",
+                f"blast_radius={blast_radius!r} needs >={_BLAST_RADIUS_MIN_WITNESSES} "
+                "independent witnesses (distinct citation kinds or distinct "
+                f"resolved artifacts); found {witness_count} distinct among "
+                f"{len(citations)} citation(s)",
+            )
         elif fix_claim and timeline is not None and cmd_citations:
             # U-T2: the citation resolves (checked above), but a fix claim
             # needs more than a citation - it needs the command to have been
@@ -1394,6 +1578,11 @@ def record_claim(
             "downgraded": effective != grade,
             "reason": reason,
             "advisories": advisories,
+            # PARTIAL-P2/B3-4: stored even when unset (None) so every claim
+            # record carries the same field set - a reader never has to
+            # guess whether an absent key means "not declared" or "not yet
+            # this schema version".
+            "blast_radius": blast_radius,
             # Named rather than implied: a later reader can see which part of
             # the support was machine-checked and which was taken on the
             # author's word, instead of reading one uniform "verified".
