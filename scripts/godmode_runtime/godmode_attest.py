@@ -24,6 +24,17 @@ from .godmode_session_log import command_digest
 
 STATUSES = ("ran", "empty", "skipped", "blocked")
 GRADES = ("observed", "hypothesis", "verified", "unknown")
+# PARTIAL-P2/B3-4: closed vocabulary a claim may opt into via `blast_radius`.
+# Closed on purpose - an open string field would let every claim invent its
+# own severity label, which is not a bar anyone could size a check against.
+# Named for the shape of what a wrong "verified" costs, not the domain:
+# an action that reaches outside this worktree, a side effect that persists
+# past the session that caused it, or a guard whose entire job is to detect
+# byte-level tampering.
+BLAST_RADIUS_KINDS = ("ops-directed", "sticky-side-effect", "checksum-guard")
+# The independent-witness floor every `blast_radius` value shares in v1 - see
+# `_independent_witness_count`'s docstring for what "independent" means here.
+_BLAST_RADIUS_MIN_WITNESSES = 2
 
 _FILE_CITE = re.compile(r"^file:(?P<path>[^#]+)(?:#L(?P<start>\d+)(?:-L?(?P<end>\d+))?)?$")
 _RECORD_CITE = re.compile(r"^rec:(?P<digest>[0-9a-f]{6,64})$")
@@ -1212,6 +1223,42 @@ def record_criterion(
     )
 
 
+# PARTIAL-P2/B3-4: two witnesses that would both dissolve to the same
+# underlying fact are not two witnesses - they are one fact, cited twice.
+def _witness_identity(citation: str) -> tuple[str, str]:
+    """(kind, resolved-target) used only to test whether two citations name
+    the same underlying artifact - never to test whether either resolves.
+
+    Same kind AND same target means "the same witness": a `file:` target
+    drops any `#L...` line locator, so `file:pin.py#L10` and
+    `file:pin.py#L40` are the same file read twice, not two independent
+    reads. Every other kind's target is its citation text verbatim after
+    the prefix, so `cmd:python check.py a.txt` and `cmd:python check.py
+    b.txt` are two distinct artifacts (different resolved targets) even
+    though both are `cmd:`, while two copies of the exact same `cmd:`
+    string collapse to one. A different kind is always independent of
+    every other kind, regardless of target - a `file:` and a `cmd:`
+    citation are never "the same witness" just because they happen to
+    concern the same subject.
+    """
+    kind, sep, rest = citation.partition(":")
+    if not sep:
+        return "", citation
+    if kind == "file":
+        rest = rest.split("#", 1)[0]
+    return kind, rest
+
+
+def _independent_witness_count(citations: list[str]) -> int:
+    """How many DISTINCT underlying artifacts `citations` names.
+
+    Simple by design (documented, not tuned): the count of unique
+    `_witness_identity` pairs. Two copies of one witness count once;
+    anything genuinely different - kind or target - counts again.
+    """
+    return len({_witness_identity(str(c)) for c in citations})
+
+
 def record_claim(
     archive: Chronicle,
     project: Path,
@@ -1221,6 +1268,7 @@ def record_claim(
     cites: list[str] | None = None,
     external: bool = False,
     timeline: dict[str, Any] | None = None,
+    blast_radius: str | None = None,
 ) -> dict[str, Any]:
     """Persist a claim, downgrading it when its citations do not resolve.
 
@@ -1237,9 +1285,25 @@ def record_claim(
     a timeline is supplied and shows no red-before-green for any cited
     command, the claim downgrades. `timeline=None` (no transcript available)
     skips the check entirely - absence of the instrument is never a penalty.
+
+    `blast_radius` (PARTIAL-P2/B3-4) is opt-in and defaults to unset: a
+    claim that does not declare one is graded exactly as before this field
+    existed. Declared as one of `BLAST_RADIUS_KINDS` (an ops-directed
+    action, a sticky/persisting side effect, or a checksum-class guard), it
+    raises the evidence bar for a `verified` grade past mere citation
+    resolution - the claim needs `_BLAST_RADIUS_MIN_WITNESSES` INDEPENDENT
+    witnesses (see `_witness_identity`), not that many citations. Two
+    citations that both resolve to the same file, or two copies of the same
+    `cmd:` string, are one witness said twice and downgrade exactly like too
+    few citations at all, naming the bar in the reason.
     """
     if grade not in GRADES:
         raise ArchiveError(f"Unknown claim grade '{grade}'; expected one of {', '.join(GRADES)}")
+    if blast_radius is not None and blast_radius not in BLAST_RADIUS_KINDS:
+        raise ArchiveError(
+            f"Unknown blast_radius '{blast_radius}'; expected one of "
+            f"{', '.join(BLAST_RADIUS_KINDS)}"
+        )
     citations = cites or []
     # Detected as well as declared: the check protected whoever remembered to
     # pass the flag, which is not the person who needs it.
@@ -1257,7 +1321,7 @@ def record_claim(
                 "claim", text[:120],
                 {"text": text, "grade": "hypothesis", "claimed_grade": grade,
                  "session": session, "downgraded": True, "unresolved": [],
-                 "operator_asserted": [],
+                 "operator_asserted": [], "blast_radius": blast_radius,
                  "reason": differential_reason},
                 evidence=citations,
             )
@@ -1272,7 +1336,7 @@ def record_claim(
                 "claim", text[:120],
                 {"text": text, "grade": "hypothesis", "claimed_grade": grade,
                  "session": session, "downgraded": True, "unresolved": [],
-                 "operator_asserted": [],
+                 "operator_asserted": [], "blast_radius": blast_radius,
                  "reason": metric_reason},
                 evidence=citations,
             )
@@ -1282,7 +1346,7 @@ def record_claim(
             record = archive.append(
                 "claim", text[:120],
                 {"text": text, "grade": "hypothesis", "claimed_grade": grade, "session": session,
-                 "downgraded": True, "unresolved": [],
+                 "downgraded": True, "unresolved": [], "blast_radius": blast_radius,
                  "reason": "external claim without a primary source read this session; "
                            "cite doc:<path> or url:<address> from a source actually opened"},
                 evidence=citations,
@@ -1325,6 +1389,20 @@ def record_claim(
                 suggestion = near_miss(unresolved[0], known_citations(archive))
                 if suggestion:
                     reason += f"; did you mean {suggestion!r}"
+        elif blast_radius is not None and (
+            witness_count := _independent_witness_count(citations)
+        ) < _BLAST_RADIUS_MIN_WITNESSES:
+            # PARTIAL-P2/B3-4: every citation resolved (checked above), but a
+            # blast_radius claim needs INDEPENDENT witnesses, not just enough
+            # citations - two citations that both name the same file, or two
+            # copies of the same cmd:, are one fact said twice.
+            effective, reason = (
+                "hypothesis",
+                f"blast_radius={blast_radius!r} needs >={_BLAST_RADIUS_MIN_WITNESSES} "
+                "independent witnesses (distinct citation kinds or distinct "
+                f"resolved artifacts); found {witness_count} distinct among "
+                f"{len(citations)} citation(s)",
+            )
         elif fix_claim and timeline is not None and cmd_citations:
             # U-T2: the citation resolves (checked above), but a fix claim
             # needs more than a citation - it needs the command to have been
@@ -1394,6 +1472,11 @@ def record_claim(
             "downgraded": effective != grade,
             "reason": reason,
             "advisories": advisories,
+            # PARTIAL-P2/B3-4: stored even when unset (None) so every claim
+            # record carries the same field set - a reader never has to
+            # guess whether an absent key means "not declared" or "not yet
+            # this schema version".
+            "blast_radius": blast_radius,
             # Named rather than implied: a later reader can see which part of
             # the support was machine-checked and which was taken on the
             # author's word, instead of reading one uniform "verified".

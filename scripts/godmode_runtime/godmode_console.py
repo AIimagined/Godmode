@@ -30,6 +30,7 @@ from .godmode_attest import (
     record_step,
     register_metric_contract,
 )
+from .godmode_attest import BLAST_RADIUS_KINDS
 from .godmode_assess import assess as assess_project
 from .godmode_assess import assurance_case
 from .godmode_assess import selftest as run_selftest
@@ -705,6 +706,7 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         cites=args.cite,
         external=args.external,
         timeline=_load_timeline(getattr(args, "transcript", None)),
+        blast_radius=getattr(args, "blast_radius", None),
     )
     data = record["data"]
     # A downgrade is a finding, so it must be visible in the exit status too.
@@ -712,6 +714,7 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         {"claim": data["text"], "grade": data["grade"], "claimed": data["claimed_grade"],
          "downgraded": data["downgraded"], "reason": data.get("reason", ""),
          "unresolved": data["unresolved"], "unsupported": data.get("unsupported", []),
+         "blast_radius": data.get("blast_radius"),
          "advisories": data.get("advisories", [])},
         exit_code=1 if data["downgraded"] else 0,
     )
@@ -2675,6 +2678,10 @@ def _build_parser() -> argparse.ArgumentParser:
     claim.add_argument("--transcript",
                        help="This session's transcript path; enables the U-T2 red-before-green "
                             "check on a fix claim citing cmd:<command>")
+    claim.add_argument("--blast-radius", dest="blast_radius", choices=list(BLAST_RADIUS_KINDS),
+                       help="PARTIAL-P2: opt in to the scaled evidence bar - a 'verified' grade "
+                            "then needs >=2 INDEPENDENT --cite witnesses (distinct citation "
+                            "kinds or distinct resolved artifacts), not just >=1 that resolves")
     claim.add_argument("--session")
     claim.set_defaults(handler=cmd_claim)
 
