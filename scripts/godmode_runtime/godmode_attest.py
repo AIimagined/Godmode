@@ -998,7 +998,7 @@ def _temporal_violation(timeline: dict[str, Any], cmd_citations: list[str]) -> s
     return TEMPORAL_REASON
 
 
-# E4/[private]: state what passing looks like before doing the work, so the
+# E4: state what passing looks like before doing the work, so the
 # criterion judges the work rather than the work retrofitting the criterion.
 _WEAK_VERBS = re.compile(
     r"(?i)\b(?:improve[sd]?|clean(?:ed|s|ing)?(?:\s+up)?|better|nicer"

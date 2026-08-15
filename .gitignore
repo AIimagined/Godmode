@@ -10,7 +10,6 @@
 .evidence/
 .decisions/
 .lessons/
-/[private]
 /v*r*j.md
 
 # Defensive private-record patterns.

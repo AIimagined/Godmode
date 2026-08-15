@@ -2769,7 +2769,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     criterion = sub.add_parser(
         "criterion",
-        help="Record what passing looks like, before the work it judges (E4/[private])",
+        help="Record what passing looks like, before the work it judges (E4)",
     )
     criterion.add_argument("--task", required=True, type=subject_text,
                            help="Slug identifying the work this criterion judges")
