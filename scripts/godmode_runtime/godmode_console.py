@@ -68,6 +68,7 @@ from .godmode_fence import (
     BOUNDARY_CONFIG, audit_changes, declared_design, propose_design,
     unaccepted_completions,
 )
+from .godmode_fence import deletion_verdict, record_deletion_precheck
 from .godmode_requests import digest as request_digest, review_requests
 from .godmode_census import census, render as render_census
 from .godmode_census import uncaptured_corrections
@@ -1347,6 +1348,28 @@ def cmd_fence_acceptance(args: argparse.Namespace, runtime: Runtime) -> CommandR
     return CommandResult(report, exit_code=1 if report["findings"] else 0)
 
 
+def cmd_fence_delete_check(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """B3-6: whether a deletion the fence would otherwise allow may proceed."""
+    _require_archive(runtime)
+    verdict = deletion_verdict(runtime.archive, args.path,
+                               project_root=Path(runtime.anchor.project_root))
+    return CommandResult(verdict, exit_code=0 if verdict["allowed"] else 1)
+
+
+def cmd_fence_delete_precheck(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """B3-6: attest the provenance pre-check, reusing C-16's reverse-impact
+    traversal, before a tracked file may be deleted."""
+    _require_archive(runtime)
+    project = Path(runtime.anchor.project_root)
+    affected = build_atlas(project).affected(args.path)
+    record_deletion_precheck(
+        runtime.archive, project, args.path,
+        history_read=args.history_read, sole_carrier=args.sole_carrier, affected=affected,
+    )
+    verdict = deletion_verdict(runtime.archive, args.path, project_root=project)
+    return CommandResult(verdict, exit_code=0 if verdict["allowed"] else 1)
+
+
 def cmd_precheck(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     """Was this already built, and was it already refused.
 
@@ -2368,6 +2391,22 @@ def _build_parser() -> argparse.ArgumentParser:
     fence_sub.add_parser(
         "acceptance", help="Completions that cite no acceptance"
     ).set_defaults(handler=cmd_fence_acceptance)
+    fence_delete_check = fence_sub.add_parser(
+        "delete-check",
+        help="B3-6: whether a deletion the fence would otherwise allow may proceed")
+    fence_delete_check.add_argument("--path", required=True)
+    fence_delete_check.set_defaults(handler=cmd_fence_delete_check)
+    fence_delete_precheck = fence_sub.add_parser(
+        "delete-precheck",
+        help="B3-6: attest the provenance pre-check before a tracked file is deleted")
+    fence_delete_precheck.add_argument("--path", required=True)
+    fence_delete_precheck.add_argument(
+        "--history-read", required=True,
+        help="What the file's git history showed")
+    fence_delete_precheck.add_argument(
+        "--sole-carrier", required=True,
+        help="Whether this file is the sole carrier of a still-open obligation")
+    fence_delete_precheck.set_defaults(handler=cmd_fence_delete_precheck)
 
     precheck_parser = sub.add_parser(
         "precheck", help="Whether this was already built or already refused")
