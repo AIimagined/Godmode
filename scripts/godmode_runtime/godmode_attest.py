@@ -780,8 +780,8 @@ def looks_like_root_cause(text: str) -> tuple[bool, str]:
     return (True, f"asserts a cause: {match.group(0)}") if match else (False, "")
 
 
-# U-E3: differential-evidence detector - diff before theory (varunraj-kinetiq
-# §4.8a / L-267). The rule above fires on any root-cause phrasing; this is the
+# U-E3: differential-evidence detector - diff before theory.
+# The rule above fires on any root-cause phrasing; this is the
 # more precise instrument it was missing - it only holds a claim to needing
 # the *diff* once the archive actually holds two comparable states to diff,
 # so a project with nothing to compare yet pays no friction for it.
