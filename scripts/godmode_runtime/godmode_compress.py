@@ -34,6 +34,7 @@ MASKS: dict[str, tuple[str, ...]] = {
     "plan": ("state",),
     "refusal": ("tool", "tier", "category"),
     "sprint": ("state", "title"),
+    "upstream-diff": ("target", "verdict", "resolved"),
     "verdict": ("disposition", "run_state", "acquitted_by"),
 }
 _DEFAULT_KEEP: tuple[str, ...] = ("status", "state")
