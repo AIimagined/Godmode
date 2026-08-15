@@ -157,5 +157,25 @@ class ThisRepositoryTests(unittest.TestCase):
         self.assertEqual(report["findings"], [], report["findings"][:5])
 
 
+# U-S4 - the charter prose linter rides in `lint_docs`'s report without
+# joining its blocking findings. Full coverage (all three checks, red and
+# green) lives in tests/test_prose_lint.py; this is the seam between the two
+# modules, kept here since it is `lint_docs`'s own contract being extended.
+class ProseAdvisoriesSeamTests(unittest.TestCase):
+    def test_the_report_carries_a_prose_advisories_key(self) -> None:
+        report = lint_docs(PLUGIN_ROOT)
+        self.assertIn("prose_advisories", report)
+
+    def test_prose_advisories_cannot_change_the_verdict_or_exit_code(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / "GODMODE.md").write_text(
+                "# Feel\n- The interface must feel premium.\n", encoding="utf-8")
+            report = lint_docs(project)
+        self.assertTrue(report["prose_advisories"])
+        self.assertEqual(report["findings"], [])
+        self.assertEqual(report["verdict"], "clean")
+
+
 if __name__ == "__main__":
     unittest.main()
