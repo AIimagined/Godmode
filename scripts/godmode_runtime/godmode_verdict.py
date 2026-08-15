@@ -35,13 +35,13 @@ closed rule, never a score:
   otherwise-unanimous verdict, and it never manufactures a judgment out of
   checkers that could not run either.
 
-Three invariants are enforced INNATELY at the archive seam - `Chronicle.append`
+Four invariants are enforced INNATELY at the archive seam - `Chronicle.append`
 consults a `KIND_INVARIANTS` registry that `godmode_chronicle.py` seeds from
 `godmode_invariants.py` at its OWN import, not as a side effect of this
 module being imported - so a future caller that builds a `verdict` record
 via a raw `archive.append(...)` (the experiment ledger among them) is held
 to the same rules as `record_verdict`/`attest_run_state`, whether or not
-that caller ever imports this module. The three rules (owned by
+that caller ever imports this module. The four rules (owned by
 `godmode_invariants._verdict_invariants`, not duplicated here):
 
 - Drive-vs-acquit: `acquitted_by: "self"` may attest execution completeness
@@ -53,6 +53,11 @@ that caller ever imports this module. The three rules (owned by
 - Fold-vs-check: a `disposition: "confirmed"` fold can never carry a
   `checks` entry whose own disposition is `refuted` - that combination is
   not "confirmed", it is a fold that lied about a dissent it is holding.
+- Tool-error-vs-ack (PARTIAL-P3/B3-7): a `disposition: "confirmed"` fold
+  whose own `tool_error_findings` is non-empty (a checker's captured output
+  matched a DECLARED tool error pattern, see `register_error_pattern` and
+  `TOOL_ERROR_ACK` below) needs a valid `tool_error_ack` - a tool's own
+  declared error severity cannot ship as a silent "confirmed".
 
 `verdict:<seq>` citations resolve only when that verdict's disposition is
 `confirmed` (`godmode_attest._citation_resolves`) - `contested` is refused
@@ -63,6 +68,7 @@ by that same rule with no separate code path, the same way `refuted` and
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -70,12 +76,23 @@ from typing import Any
 
 from .godmode_chronicle import Chronicle
 from .godmode_errors import ArchiveError
+from .godmode_sentinel import find_secret_shapes
 
 DISPOSITIONS = ("confirmed", "refuted", "witness-malformed", "contested")
 RUN_STATES = ("terminated", "truncated")
 ACQUITTED_BY = ("independent", "self")
 
 _SUBJECT_CAP = 120
+
+# PARTIAL-P3/B3-7: the closed acknowledgement vocabulary a `confirmed`
+# verdict needs when its own checker output matched a declared tool error
+# pattern - kept in sync BY HAND with `godmode_invariants.py`'s copy (that
+# module stays import-free of this one on purpose, see its own module
+# docstring), the same way `_REGISTER_STATES` there is kept in sync with
+# `godmode_register.STATES`. `tests.test_tool_error_gate` asserts the two
+# patterns agree.
+TOOL_ERROR_ACK = re.compile(r"^acknowledged-remediated$|^acknowledged-deferred: .+$")
+_TOOL_ERROR_EXCERPT_CAP = 160
 
 
 def _split_command(command: str) -> list[str]:
@@ -124,20 +141,24 @@ def _witness_readable(project: Path, archive: Chronicle, kind: str, value: str) 
 
 def _run_checker(
     checker_cmd: str, project: Path, timeout: int
-) -> tuple[str, str | None, int | None]:
+) -> tuple[str, str | None, int | None, str]:
     """Launch the checker; every failure to even judge lands on witness-malformed.
 
-    Returns (disposition, malformed_reason, checker_exit). malformed_reason
-    is None whenever disposition is confirmed/refuted - it names WHY the
-    checker could not judge, so the record explains the gap instead of
-    silently folding "could not run" into "false".
+    Returns (disposition, malformed_reason, checker_exit, output).
+    malformed_reason is None whenever disposition is confirmed/refuted - it
+    names WHY the checker could not judge, so the record explains the gap
+    instead of silently folding "could not run" into "false". `output` is
+    the checker's own combined stdout+stderr, used ONLY as the input to the
+    PARTIAL-P3/B3-7 tool-error-pattern match below - it is never itself
+    persisted to the archive, so a checker's output is not a new place for
+    secrets to leak into the record.
     """
     try:
         argv = _split_command(checker_cmd)
     except ValueError:
-        return "witness-malformed", "checker-unparseable", None
+        return "witness-malformed", "checker-unparseable", None, ""
     if not argv:
-        return "witness-malformed", "checker-empty", None
+        return "witness-malformed", "checker-empty", None, ""
     try:
         completed = subprocess.run(
             argv,
@@ -149,18 +170,95 @@ def _run_checker(
             errors="replace",
         )
     except FileNotFoundError:
-        return "witness-malformed", "checker-not-found", None
+        return "witness-malformed", "checker-not-found", None, ""
     except subprocess.TimeoutExpired:
-        return "witness-malformed", "checker-timeout", None
+        return "witness-malformed", "checker-timeout", None, ""
     except OSError:
         # Covers platform-specific launch failures shlex's own tokenizing
         # cannot catch - an empty or otherwise unusable argv reaching the OS
         # (WinError 87 on Windows for `subprocess.run([])`; other launch
         # failures elsewhere). Still "could not judge", not "judged false".
-        return "witness-malformed", "checker-unlaunchable", None
+        return "witness-malformed", "checker-unlaunchable", None, ""
     checker_exit = completed.returncode
     disposition = "confirmed" if checker_exit == 0 else "refuted"
-    return disposition, None, checker_exit
+    output = (completed.stdout or "") + (completed.stderr or "")
+    return disposition, None, checker_exit, output
+
+
+def _tool_named_in(tool: str, checker_cmd: str) -> bool:
+    """Fix-round-1 (review I2): whether `tool` appears as a whole TOKEN of
+    `checker_cmd`, not merely as a substring.
+
+    A plain `in` check made a declared tool named `"lint"` match
+    `"python unlinted_check.py"` - "lint" is a real substring of "unlinted",
+    with no relationship between the two beyond spelling. `\\b...\\b` anchors
+    the match to a word boundary on both sides: `unlinted_check.py` has no
+    boundary immediately before or after the embedded "lint" (both
+    neighbours - "n" before, "e" after - are word characters, and the
+    underscore in "unlinted_check" is also a word character), so it no
+    longer matches; `"lint --fix"` and `"python -m lint"` both have real
+    boundaries around "lint" (whitespace or string edges) and still match.
+    `tool` is escaped since it may carry regex metacharacters that are
+    otherwise ordinary characters in a tool name (`eslint.config`,
+    `media-lint`).
+    """
+    return re.search(rf"\b{re.escape(tool)}\b", checker_cmd, re.IGNORECASE) is not None
+
+
+_REDACTED_EXCERPT = "[redacted: secret-shaped content]"
+
+
+def _tool_error_findings(
+    declared: dict[str, str], checker_cmd: str, output: str
+) -> list[dict[str, str]]:
+    """PARTIAL-P3/B3-7: which declared tool error-patterns this ONE checker's
+    OWN captured output matched.
+
+    A tool is "in play" for a checker only when the declared tool name
+    appears as a whole token of that checker's own command text (see
+    `_tool_named_in`) - the checker literally invokes the tool being
+    watched. This is the exact shape L-173 named: a tool that logs its own
+    declared error severity and still exits 0, invisible to the exit-code
+    fold alone, because the fold only ever asked "did it exit clean," never
+    "what did it say." `declared` empty (no tool ever registered via
+    `register_error_pattern`) short-circuits to nothing checked at all - the
+    undeclared-tool fast path every existing caller of `record_verdict`
+    takes.
+
+    Fix-round-1 (review M3): the matched excerpt is itself persisted into
+    the archive (`data["tool_error_findings"]`, denormalised in
+    `_append_verdict`) even though the FULL captured output never is - an
+    operator-authored pattern with a wide capture (not just `\\berror\\b`
+    but something greedier) could otherwise pull a secret-shaped fragment
+    out of a checker's own stdout/stderr into a permanent record. Every
+    excerpt is run through the project's existing secret-shape scanner
+    (`godmode_sentinel.find_secret_shapes`, the same one `godmode_egress`
+    and `godmode_trust` already use) before archiving; a hit replaces the
+    excerpt with a fixed redaction marker rather than the matched text -
+    the same whole-value redaction convention `godmode_egress.manifest`
+    already uses for a secret-bearing file (no partial masking, no
+    per-character leak of how much of the value was sensitive).
+    """
+    if not declared or not output:
+        return []
+    found: list[dict[str, str]] = []
+    for tool, pattern in declared.items():
+        if not tool or not _tool_named_in(tool, checker_cmd):
+            continue
+        try:
+            match = re.search(pattern, output)
+        except re.error:
+            # A pattern this malformed should have been refused at
+            # registration (`register_error_pattern` compiles it first) -
+            # if one slipped through anyway, "could not match" is the
+            # honest read, not a crash mid-fold.
+            continue
+        if match:
+            excerpt = match.group(0)[:_TOOL_ERROR_EXCERPT_CAP]
+            if find_secret_shapes(excerpt):
+                excerpt = _REDACTED_EXCERPT
+            found.append({"tool": tool, "excerpt": excerpt})
+    return found
 
 
 def _fold_panel(checks: list[dict[str, Any]]) -> str:
@@ -193,6 +291,8 @@ def _append_verdict(
     disposition: str | None,
     run_state: str,
     acquitted_by: str,
+    tool_error_findings: list[dict[str, str]] | None = None,
+    tool_error_ack: str = "",
 ) -> dict[str, Any]:
     single = len(checks) == 1
     evidence: list[str] = []
@@ -216,6 +316,15 @@ def _append_verdict(
         "disposition": disposition,
         "run_state": run_state,
         "acquitted_by": acquitted_by,
+        # PARTIAL-P3/B3-7: stored even when empty/unset, same reasoning as
+        # `record_claim`'s `blast_radius` field - a reader never has to
+        # guess whether an absent key means "no tool declared" or "not yet
+        # this schema version". Denormalised here (not recomputed at read
+        # time) so `godmode_invariants._verdict_invariants` can hold a RAW
+        # `archive.append(...)` to the same rule from `data` alone, without
+        # needing archive access itself - see that module's docstring.
+        "tool_error_findings": tool_error_findings or [],
+        "tool_error_ack": tool_error_ack or None,
     }
     subject = (claim or "verdict")[:_SUBJECT_CAP]
     # The forbidden combinations are checked inside archive.append() itself
@@ -237,6 +346,7 @@ def record_verdict(
     run_state: str = "terminated",
     acquitted_by: str = "independent",
     timeout: int = 300,
+    tool_error_ack: str = "",
 ) -> dict[str, Any]:
     """Run one or more independent checkers against a witness, fold, record.
 
@@ -256,6 +366,17 @@ def record_verdict(
     docstring; every individual checker's own exit/disposition/gap-reason is
     still recorded verbatim in `data["checks"]`, so a downgrade to
     `contested` never hides which checker dissented.
+
+    PARTIAL-P3/B3-7: after the fold, every checker's OWN captured output is
+    tested against whatever tool error-patterns `register_error_pattern`
+    has declared (undeclared tool -> nothing tested, no behaviour change at
+    all). If the fold lands on `confirmed` AND a declared pattern matched,
+    `tool_error_ack` must be `"acknowledged-remediated"` or
+    `"acknowledged-deferred: <reason>"` - anything else, including the
+    default empty string, refuses the write outright: a tool's own declared
+    error severity cannot ship as a silent `confirmed`. `contested`/
+    `refuted`/`witness-malformed` folds are never gated by this - only a
+    `confirmed` claims the checker's output was clean enough to trust.
     """
     if run_state not in RUN_STATES:
         raise ArchiveError(
@@ -264,6 +385,20 @@ def record_verdict(
     if acquitted_by not in ACQUITTED_BY:
         raise ArchiveError(
             f"Unknown acquitted_by '{acquitted_by}'; expected one of {', '.join(ACQUITTED_BY)}"
+        )
+    # Fix-round-1 (review M1): stripped before validation (and before it is
+    # stored below) so a whitespace-only "reason" - "acknowledged-deferred:
+    # " with nothing but spaces after the colon - collapses to
+    # "acknowledged-deferred:" with no reason left at all, which the
+    # (unchanged) TOOL_ERROR_ACK pattern correctly refuses to match, the
+    # same as if no reason had been typed. A reason's whitespace can only
+    # ever trail the value in this format, so stripping the whole string is
+    # exact, not an approximation.
+    tool_error_ack = tool_error_ack.strip()
+    if tool_error_ack and not TOOL_ERROR_ACK.match(tool_error_ack):
+        raise ArchiveError(
+            f"Unknown tool_error_ack {tool_error_ack!r}; expected "
+            "'acknowledged-remediated' or 'acknowledged-deferred: <reason>'"
         )
 
     checkers = [checker_cmd] if isinstance(checker_cmd, str) else list(checker_cmd)
@@ -275,26 +410,46 @@ def record_verdict(
     else:
         witness_kind, witness_value = "unknown", witness_ref
 
+    # Local import: avoids a module-level cycle risk (`godmode_attest`
+    # currently has no reason to import `godmode_verdict`, but a
+    # module-level import here would be the first thread tying the two
+    # together for good; a function-scoped import costs nothing extra since
+    # `record_verdict` is not a hot loop).
+    from .godmode_attest import declared_error_patterns
+
+    declared = declared_error_patterns(archive)
+
     witness_ok = _witness_readable(project, archive, witness_kind, witness_value)
     checks: list[dict[str, Any]] = []
+    tool_error_findings: list[dict[str, str]] = []
     for cmd in checkers:
         if not witness_ok:
-            disposition, reason, checker_exit = (
-                "witness-malformed", "witness-unreadable", None,
+            disposition, reason, checker_exit, output = (
+                "witness-malformed", "witness-unreadable", None, "",
             )
         else:
-            disposition, reason, checker_exit = _run_checker(cmd, project, timeout)
+            disposition, reason, checker_exit, output = _run_checker(cmd, project, timeout)
         entry: dict[str, Any] = {
             "checker": cmd, "exit": checker_exit, "disposition": disposition,
         }
         if reason is not None:
             entry["reason"] = reason
         checks.append(entry)
+        tool_error_findings.extend(_tool_error_findings(declared, cmd, output))
 
     folded = _fold_panel(checks)
+    if folded == "confirmed" and tool_error_findings and not tool_error_ack:
+        tools = ", ".join(sorted({f["tool"] for f in tool_error_findings}))
+        raise ArchiveError(
+            f"checker output matched a declared error pattern for: {tools}; a "
+            "'confirmed' disposition needs tool_error_ack="
+            "'acknowledged-remediated' or 'acknowledged-deferred: <reason>' "
+            "- the tool's own declared error severity cannot ship unacknowledged"
+        )
     return _append_verdict(
         archive, claim, claimed_value, witness_kind, witness_value, checks,
         folded, run_state, acquitted_by,
+        tool_error_findings=tool_error_findings, tool_error_ack=tool_error_ack,
     )
 
 

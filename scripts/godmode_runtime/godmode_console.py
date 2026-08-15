@@ -28,8 +28,10 @@ from .godmode_attest import (
     record_criterion,
     record_differential,
     record_step,
+    register_error_pattern,
     register_metric_contract,
 )
+from .godmode_attest import BLAST_RADIUS_KINDS
 from .godmode_assess import assess as assess_project
 from .godmode_assess import assurance_case
 from .godmode_assess import selftest as run_selftest
@@ -72,7 +74,7 @@ from .godmode_docslint import lint_docs
 from .godmode_trust import scan_agent_configuration
 from .godmode_obligations import review_obligations
 from .godmode_atlas import speculative_seams, unfollowed_dependents
-from .godmode_precheck import precheck as run_precheck
+from .godmode_precheck import declare_paired_artifact, precheck as run_precheck
 from .godmode_fence import (
     BOUNDARY_CONFIG, audit_changes, completion_audit, declared_design, propose_design,
     unaccepted_completions,
@@ -97,6 +99,9 @@ from .godmode_roi import roi_report
 # handler), same pattern as the U-R2 loop-ready block above.
 from .godmode_recurrence import DEFAULT_THRESHOLD as RECURRENCE_DEFAULT_THRESHOLD
 from .godmode_recurrence import mine_recurring_asks, render as render_recurrence
+# B3-1 (GAP-1) - minimal isolated block (one import line, one subcommand,
+# one handler), same pattern as the U-E10 recurring-ask block above.
+from .godmode_upstream import record_upstream_diff
 from .godmode_stages import advance as stage_advance
 from .godmode_stages import skip_stage, sop_attest, sop_status, stage_gate
 from .godmode_index import IndexStale
@@ -127,6 +132,11 @@ from .godmode_egress import notice as egress_notice
 from .godmode_egress import scan_project as scan_untrusted
 from .godmode_egress import scan_staged
 from .godmode_scope import minimality
+# B3-3 - minimal isolated block (one import line, one subcommand, one
+# handler): the silent/swallowed-error scanner, same pattern as the U-E10
+# block above.
+from .godmode_swallow import scan_project as scan_swallow
+from .godmode_swallow import update_baseline as update_swallow_baseline
 from .godmode_errors import ArchiveError, GodmodeError
 from .godmode_verdict import record_verdict, verdict_for
 # U-V2 disposition register - a minimal, isolated block (imports, two
@@ -707,6 +717,7 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         cites=args.cite,
         external=args.external,
         timeline=_load_timeline(getattr(args, "transcript", None)),
+        blast_radius=getattr(args, "blast_radius", None),
     )
     data = record["data"]
     # A downgrade is a finding, so it must be visible in the exit status too.
@@ -714,6 +725,7 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         {"claim": data["text"], "grade": data["grade"], "claimed": data["claimed_grade"],
          "downgraded": data["downgraded"], "reason": data.get("reason", ""),
          "unresolved": data["unresolved"], "unsupported": data.get("unsupported", []),
+         "blast_radius": data.get("blast_radius"),
          "advisories": data.get("advisories", [])},
         exit_code=1 if data["downgraded"] else 0,
     )
@@ -749,6 +761,18 @@ def cmd_metric_contract_register(args: argparse.Namespace, runtime: Runtime) -> 
     )
 
 
+def cmd_error_pattern_register(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    record = register_error_pattern(
+        runtime.archive, _session(runtime, args.session), args.tool, args.pattern,
+    )
+    data = record["data"]
+    return CommandResult(
+        {"sequence": record["sequence"], "tool": data["tool"], "pattern": data["pattern"]},
+        exit_code=0,
+    )
+
+
 # U-E3 differential-evidence - minimal isolated block, mirrors the `register`
 # block below.
 def cmd_differential_record(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -777,12 +801,14 @@ def cmd_verdict_record(args: argparse.Namespace, runtime: Runtime) -> CommandRes
         run_state=args.run_state,
         acquitted_by=args.acquitted_by,
         timeout=args.timeout,
+        tool_error_ack=getattr(args, "tool_error_ack", "") or "",
     )
     data = record["data"]
     return CommandResult(
         {"sequence": record["sequence"], "claim": data["claim"],
          "disposition": data["disposition"], "run_state": data["run_state"],
-         "acquitted_by": data["acquitted_by"]},
+         "acquitted_by": data["acquitted_by"],
+         "tool_error_findings": data.get("tool_error_findings", [])},
         exit_code=0 if data["disposition"] == "confirmed" else 1,
     )
 
@@ -1292,6 +1318,28 @@ def cmd_untrusted(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult(report, exit_code=1 if warned else 0)
 
 
+def cmd_swallow(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    project = Path(runtime.anchor.project_root)
+    report = scan_swallow(project)
+    # RULING B3-3-2: a live regression fails EVERY invocation, including
+    # `--update-baseline` - `update_baseline`'s min() protection genuinely
+    # holds the ceiling and never baselines the regression away, but an exit
+    # code that reads 0 regardless would collapse "regression" and
+    # "regression, not rescued" into one observable - the exact silent-
+    # failure shape this scanner exists to catch in OTHER code. A truncated
+    # sweep is a claim about a population that was never fully read, so it
+    # fails the same way; advisory findings alone do not (see module
+    # docstring).
+    warned = bool(report["regressions"]) or report["truncated"]
+    if getattr(args, "update_baseline", False):
+        written = update_swallow_baseline(project, report["counts"])
+        return CommandResult(
+            {"baseline_written": written, "counts": report["counts"]},
+            exit_code=1 if warned else 0,
+        )
+    return CommandResult(report, exit_code=1 if warned else 0)
+
+
 def cmd_bindings(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     project = Path(runtime.anchor.project_root)
     if args.write:
@@ -1742,12 +1790,40 @@ def cmd_precheck(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     Both answers were already in the archive and nothing read either. The one
     moment they are worth having is before the work starts, which is the one
     moment nobody thinks to ask.
+
+    GAP-2's paired-artifact question rides along on the same diff-listing
+    default `fence audit` already uses (`--changed`, or the working tree)
+    - precheck already runs before work starts, which is also the moment a
+    one-sided diff against a declared pair is still cheap to fix.
     """
     _require_archive(runtime)
-    report = run_precheck(Path(runtime.anchor.project_root), runtime.archive, args.about)
+    project = Path(runtime.anchor.project_root)
+    changed = list(args.changed) if args.changed else _working_tree_changes(project)
+    report = run_precheck(project, runtime.archive, args.about, changed_files=changed)
     # Non-zero on a hit so a script can stop, but the payload is a question and
     # never a refusal: prior work is a reason to look, not grounds to decline.
+    # A paired-artifact hit never contributes to this exit code either - v1
+    # is advisory only, same as every other question this command asks.
     return CommandResult(report, exit_code=1 if report["verdict"] == "prior-work-found" else 0)
+
+
+def cmd_precheck_declare_pair(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """Declare "these two artifacts change together" (GAP-2).
+
+    Writes once; every later `precheck` (and `--changed` sweep) checks
+    every diff against it from then on. `--label` names the pair for
+    later re-declaration or lookup - it is not free text, it is the key.
+    """
+    _require_archive(runtime)
+    record = declare_paired_artifact(
+        runtime.archive, args.label, args.a, args.b, args.reason or "",
+    )
+    data = record["data"]
+    return CommandResult(
+        {"sequence": record["sequence"], "label": args.label,
+         "a": data["a"], "b": data["b"], "reason": data["reason"]},
+        exit_code=0,
+    )
 
 
 def cmd_boundaries_propose_ui(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -2089,6 +2165,37 @@ def cmd_recurring(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     if getattr(args, "json", False):
         return CommandResult(report)
     return CommandResult({"report": render_recurrence(report)})
+
+
+def cmd_upstream(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """B3-1 (GAP-1): one `upstream-diff` record per run - a named package's
+    (or, via `--path`, a forked/fully-copied external repo's) shipped
+    surface diffed against this project's own equivalents. Each `--dispose
+    SYMBOL=DISPOSITION:BEHAVIOR_VERDICT` supplies the paired import+behavior
+    verdicts for one unmatched symbol; a disposition given with no
+    behavior_verdict is refused before the archive is ever touched."""
+    _require_archive(runtime)
+    dispositions: dict[str, dict[str, str | None]] = {}
+    for raw in args.dispose:
+        if "=" not in raw:
+            raise ArchiveError(
+                f"--dispose must be SYMBOL=DISPOSITION:BEHAVIOR_VERDICT, got {raw!r}")
+        symbol, _, rest = raw.partition("=")
+        disposition, _, behavior_verdict = rest.partition(":")
+        dispositions[symbol.strip()] = {
+            "disposition": disposition.strip() or None,
+            "behavior_verdict": behavior_verdict.strip() or None,
+        }
+    outcome = record_upstream_diff(
+        runtime.archive, Path(runtime.anchor.project_root),
+        package=args.diff, path=args.path, language=args.language,
+        dispositions=dispositions, evidence=args.evidence,
+    )
+    report = outcome["report"]
+    exit_code = 1 if report["verdict"] == "stated-gap" or report["undispositioned"] else 0
+    if getattr(args, "json", False):
+        return CommandResult(report, exit_code=exit_code)
+    return CommandResult({"upstream_diff": report}, exit_code=exit_code)
 
 
 def cmd_expunge(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -2716,12 +2823,16 @@ def _build_parser() -> argparse.ArgumentParser:
     claim.add_argument("--transcript",
                        help="This session's transcript path; enables the U-T2 red-before-green "
                             "check on a fix claim citing cmd:<command>")
+    claim.add_argument("--blast-radius", dest="blast_radius", choices=list(BLAST_RADIUS_KINDS),
+                       help="PARTIAL-P2: opt in to the scaled evidence bar - a 'verified' grade "
+                            "then needs >=2 INDEPENDENT --cite witnesses (distinct citation "
+                            "kinds or distinct resolved artifacts), not just >=1 that resolves")
     claim.add_argument("--session")
     claim.set_defaults(handler=cmd_claim)
 
     criterion = sub.add_parser(
         "criterion",
-        help="Record what passing looks like, before the work it judges (E4/[private])",
+        help="Record what passing looks like, before the work it judges (E4)",
     )
     criterion.add_argument("--task", required=True, type=subject_text,
                            help="Slug identifying the work this criterion judges")
@@ -2751,6 +2862,25 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Regex the cited line:<name>:<value> evidence must match")
     metric_contract_register.add_argument("--session")
     metric_contract_register.set_defaults(handler=cmd_metric_contract_register)
+
+    # PARTIAL-P3/B3-7 declared tool error-severity patterns - minimal
+    # isolated block, mirrors the `metric-contract` block just above.
+    error_pattern = sub.add_parser(
+        "error-pattern",
+        help="Declare a third-party tool's error-severity vocabulary; "
+             "gates 'verdict record --checker' confirming past it unacknowledged",
+    )
+    error_pattern_sub = error_pattern.add_subparsers(
+        dest="error_pattern_command", required=True)
+    error_pattern_register = error_pattern_sub.add_parser(
+        "register", help="Declare the tool + pattern a checker's own output is matched against")
+    error_pattern_register.add_argument("--tool", required=True,
+                                        help="Name as it appears in the checker command, e.g. pytest")
+    error_pattern_register.add_argument(
+        "--pattern", required=True,
+        help="Regex matched against the checker's own captured stdout+stderr")
+    error_pattern_register.add_argument("--session")
+    error_pattern_register.set_defaults(handler=cmd_error_pattern_register)
 
     # U-E3 differential-evidence - minimal isolated block, mirrors the
     # `register` block below.
@@ -2793,6 +2923,11 @@ def _build_parser() -> argparse.ArgumentParser:
     verdict_record.add_argument("--run-state", choices=list(("terminated", "truncated")), default="terminated")
     verdict_record.add_argument("--acquitted-by", choices=list(("independent", "self")), default="independent")
     verdict_record.add_argument("--timeout", type=int, default=300)
+    verdict_record.add_argument(
+        "--tool-error-ack", dest="tool_error_ack", default="",
+        help="PARTIAL-P3: required for 'confirmed' when a checker's own output "
+             "matched a declared error-pattern (see 'error-pattern register') - "
+             "'acknowledged-remediated' or 'acknowledged-deferred: <reason>'")
     verdict_record.set_defaults(handler=cmd_verdict_record)
     verdict_show = verdict_sub.add_parser("show", help="Read back a verdict record by sequence")
     verdict_show.add_argument("--seq", type=int, required=True)
@@ -2981,6 +3116,13 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("untrusted", help="Report repository text shaped like an instruction").set_defaults(
         handler=cmd_untrusted
     )
+
+    swallow = sub.add_parser(
+        "swallow", help="Scan for silent/swallowed-error shapes; ratchets a per-file baseline"
+    )
+    swallow.add_argument("--update-baseline", action="store_true",
+                         help="Tighten the stored baseline to current counts; never raises it")
+    swallow.set_defaults(handler=cmd_swallow)
 
     sub.add_parser("assurance", help="Emit an assurance case generated from live probes").set_defaults(
         handler=cmd_assurance
@@ -3193,7 +3335,29 @@ def _build_parser() -> argparse.ArgumentParser:
         "precheck", help="Whether this was already built or already refused")
     precheck_parser.add_argument("--about", required=True,
                                  help="The task, in the words you would describe it")
+    precheck_parser.add_argument("--changed", nargs="+", default=None,
+                                 help="Changed paths, for the paired-artifact check "
+                                      "(GAP-2); defaults to the working tree")
     precheck_parser.set_defaults(handler=cmd_precheck)
+
+    # A sibling top-level command, not a `precheck` subcommand: `precheck`
+    # already ships as a flat leaf (`--about` required directly, no
+    # subcommand) and is named in released docs that way - nesting a
+    # subcommand under it would make `--about` a required argument of
+    # `declare-pair` too and break that documented surface for no reason.
+    paired_artifact = sub.add_parser(
+        "paired-artifact", help="Artifacts declared to change together (GAP-2)")
+    paired_artifact_sub = paired_artifact.add_subparsers(
+        dest="paired_artifact_command", required=True)
+    paired_artifact_declare = paired_artifact_sub.add_parser(
+        "declare", help="Declare two artifacts that must change together")
+    paired_artifact_declare.add_argument("--label", required=True,
+                                         help="Unique name for this pair")
+    paired_artifact_declare.add_argument("--a", required=True, help="First artifact's path")
+    paired_artifact_declare.add_argument("--b", required=True, help="Second artifact's path")
+    paired_artifact_declare.add_argument("--reason", default="",
+                                         help="Why these two must change together")
+    paired_artifact_declare.set_defaults(handler=cmd_precheck_declare_pair)
 
     boundaries = sub.add_parser("boundaries", help="Design surfaces this project protects")
     boundaries_sub = boundaries.add_subparsers(dest="boundaries_command", required=True)
@@ -3442,6 +3606,32 @@ def _build_parser() -> argparse.ArgumentParser:
              f"(default: {RECURRENCE_DEFAULT_THRESHOLD})",
     )
     recurring_parser.set_defaults(handler=cmd_recurring)
+
+    upstream_parser = sub.add_parser(
+        "upstream",
+        help="B3-1: diff a named package's (or a forked/copied tree's) shipped "
+             "surface against this project's own equivalents - GAP-1",
+    )
+    upstream_target = upstream_parser.add_mutually_exclusive_group(required=True)
+    upstream_target.add_argument(
+        "--diff", metavar="PACKAGE",
+        help="Installed package name to resolve and diff (Python first-class; "
+             "Node best-effort with --language node)")
+    upstream_target.add_argument(
+        "--path", metavar="VENDORED_TREE",
+        help="Local path to a forked/fully-copied external repo - carries the "
+             "same diff-against-upstream duty as a lockfile dependency")
+    upstream_parser.add_argument(
+        "--language", choices=("python", "node"), default="python",
+        help="Resolution language for --diff (default: python)")
+    upstream_parser.add_argument(
+        "--dispose", action="append", default=[],
+        metavar="SYMBOL=DISPOSITION:BEHAVIOR_VERDICT",
+        help="Record adopt/extend/diverge-deliberately/n-slash-a-different-surface "
+             "paired with confirmed-we-have-it/confirmed-we-dont/unverified for "
+             "one unmatched symbol; repeatable")
+    _evidence(upstream_parser)
+    upstream_parser.set_defaults(handler=cmd_upstream)
 
     expunge_parser = sub.add_parser(
         "expunge",
