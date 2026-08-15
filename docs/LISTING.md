@@ -3,8 +3,10 @@
 Copy-ready listing text per marketplace, sourced from the shipped manifests
 and this repository's own doctrine (no comparisons, no unverified claims,
 numbers cite the command that reproduces them). A manifest audit closes
-the document: what each manifest already carries and what a follow-up task
-needs to add.
+the document: what each manifest carries, the one gap this document could
+verify and close (a missing keyword, added via `packaging/hosts.json` and
+`godmode bindings --write`), and what stays a stated gap because no
+in-repo or published schema could verify it.
 
 ## Claude Code (plugin marketplace)
 
@@ -25,16 +27,22 @@ needs to add.
 > leaves the machine: no telemetry, no network calls, no runtime
 > dependencies.
 
-**Keywords**: `context-continuity`, `evidence-governance`, `local-first`,
-`developer-tools`, `governance gate for coding agents` (new: the bare
+**Keywords**: `claude-code-plugin`, `context-continuity`,
+`evidence-governance`, `local-first`, `developer-tools`,
+`governance gate for coding agents` (the bare
 `governance` and `evidence-governance` terms are crowded, and this phrase
-is the disambiguating addition, not yet in the shipped manifest).
+is the disambiguating addition; added to the shipped manifest in this fix
+round via `packaging/hosts.json`'s shared `identity.keywords` plus
+`godmode bindings --write`, so all three manifests carry it identically).
 
 **Category**: Productivity / Developer Tools.
 
 **Logo / assets**: `assets/godmode-logo.png` (icon), `assets/godmode-social-preview.jpg`
-(social card). Neither is referenced from `.claude-plugin/plugin.json` today;
-see the manifest audit below.
+(social card). Neither is referenced from `.claude-plugin/plugin.json`;
+confirmed against the manifest's own `$schema`
+(`https://json.schemastore.org/claude-code-plugin-manifest.json`) that no
+icon/logo property exists at any level of this format, so nothing was
+added here. See the manifest audit below.
 
 **Submission steps**:
 
@@ -57,9 +65,20 @@ see the manifest audit below.
 
 ## Codex (OpenAI plugin ecosystem)
 
-**Short description** (one line, from `.codex-plugin/plugin.json`):
+**Short description** (one line, from `.codex-plugin/plugin.json`'s
+top-level `description` field, distinct from the nested
+`interface.shortDescription` the same manifest also carries; see the note
+below):
 
 > Local-first context continuity and evidence-governance skills for coding agents.
+
+Note: `.codex-plugin/plugin.json` carries a second, shorter description
+under `interface.shortDescription` ("Local continuity and guarded coding
+workflows."). Which field Codex's own marketplace UI actually renders as
+the listing's short description is not established here; the quote above
+is the top-level `description` verbatim, picked because it is the field
+every other host's manifest also carries under that exact name. Confirm
+against Codex's current listing UI before treating this as final copy.
 
 **Long description** (from the manifest's own `interface.longDescription`,
 already doctrine-compliant, reused verbatim rather than rewritten):
@@ -71,13 +90,17 @@ already doctrine-compliant, reused verbatim rather than rewritten):
 
 **Keywords**: `codex-plugin`, `skill-authoring`, `context-continuity`,
 `evidence-governance`, `local-first`, `developer-tools`,
-`governance gate for coding agents` (new, same rationale as the Claude row).
+`governance gate for coding agents` (added in this fix round, same
+mechanism as the Claude row).
 
 **Category**: Productivity (`interface.category` in the manifest).
 
 **Logo / assets**: `interface.logo` already points at
 `./assets/godmode-logo.png`, the one manifest of the three that carries a
-logo pointer today.
+logo pointer today. Codex's own manifest schema is not published or
+otherwise verifiable in this repository, so whether it supports a
+top-level `icon` field as well can't be confirmed; the existing nested
+pointer is left as-is rather than moved without evidence.
 
 **Submission steps**:
 
@@ -109,13 +132,16 @@ logo pointer today.
 > dependencies.
 
 **Keywords**: `context-continuity`, `evidence-governance`, `local-first`,
-`developer-tools`, `governance gate for coding agents` (new, same rationale
-as the other two rows).
+`developer-tools`, `governance gate for coding agents` (added in this fix
+round, same mechanism as the other two rows).
 
 **Category**: `productivity` (top-level `category` field in the manifest).
 
 **Logo / assets**: `assets/godmode-logo.png` is not referenced from
-`.grok-plugin/plugin.json` today; see the manifest audit below.
+`.grok-plugin/plugin.json`. This manifest carries no `$schema` pointer
+(Claude's does), and no published schema for it was found; a field name
+can't be verified, so none was invented and none was added. See the
+manifest audit below.
 
 **Submission steps**:
 
@@ -136,25 +162,29 @@ as the other two rows).
 
 Checklist against the five fields this task asked for: `name`,
 `description`, `version` (expected `0.2.12`), an icon/logo path, and
-`keywords`. Read-only: these gaps are a follow-up task, not fixed here.
+`keywords`.
 
 | Manifest | `name` | `description` | `version` | icon/logo path | `keywords` |
 |---|---|---|---|---|---|
-| `.claude-plugin/plugin.json` | present (`godmode`) | present | present (`0.2.12`) | **missing**, no `icon` or `logo` field despite `assets/godmode-logo.png` shipping | present (5 entries) |
-| `.codex-plugin/plugin.json` | present (`godmode`) | present | present (`0.2.12`) | present, but nested under `interface.logo`, not a top-level field | present (6 entries) |
-| `.grok-plugin/plugin.json` | present (`godmode`) | present | present (`0.2.12`) | **missing**, no `icon` or `logo` field | present (4 entries) |
+| `.claude-plugin/plugin.json` | present (`godmode`) | present | present (`0.2.12`) | **confirmed absent from the format**: the manifest's own `$schema` (`https://json.schemastore.org/claude-code-plugin-manifest.json`) defines no icon/logo property at any level | present (6 entries, includes `governance gate for coding agents`) |
+| `.codex-plugin/plugin.json` | present (`godmode`) | present | present (`0.2.12`) | present, nested under `interface.logo`; whether a top-level field is also supported is unverified (no published schema found) | present (7 entries, includes `governance gate for coding agents`) |
+| `.grok-plugin/plugin.json` | present (`godmode`) | present | present (`0.2.12`) | **unverified**: no `$schema` pointer and no published schema found, so no field name could be confirmed and none was added | present (5 entries, includes `governance gate for coding agents`) |
 
-Two follow-ups this audit surfaces, neither actioned here because this
-task's manifests are read-only:
+What this fix round changed and what it deliberately left alone:
 
-1. Claude's and Grok's manifests carry no pointer to `assets/godmode-logo.png`
-   at all; Codex's pointer is nested under `interface.logo` rather than a
-   field a generic manifest reader would look for at the top level. Whether
-   `packaging/hosts.json` (the one source `godmode bindings --write`
-   regenerates every manifest from) should gain a shared top-level `icon`
-   field is a design decision for that follow-up, not this one.
-2. None of the three manifests yet carries the
-   `governance gate for coding agents` keyword this document recommends
-   above. Adding it is a `packaging/hosts.json` edit plus a
-   `godmode bindings --write` regeneration, the same path every other
-   manifest field change already takes.
+1. **Closed**: all three manifests now carry `governance gate for coding
+   agents` in `keywords`, added once to `packaging/hosts.json`'s shared
+   `identity.keywords` and propagated by `godmode bindings --write`
+   (verified: `godmode bindings` reports `"verdict": "current"` for all
+   three afterward, meaning the manifests and the source agree).
+2. **Confirmed, not a gap**: Claude's plugin manifest format has no
+   icon/logo field at any level, checked directly against the schema its
+   own `$schema` key names. Adding one to `packaging/hosts.json` would
+   invent a key the format doesn't define, so nothing was added.
+3. **Still a stated gap**: Codex's manifest already carries a working
+   nested `interface.logo` pointer; whether its schema also accepts a
+   top-level field is unverified, so it stays where it is. Grok's manifest
+   carries no schema reference at all, published or otherwise found, so no
+   icon/logo field was added there either. Both are gaps for whoever can
+   check against each host's actual current documentation, not decisions
+   made here without evidence.

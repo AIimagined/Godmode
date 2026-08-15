@@ -22,10 +22,6 @@ the agent included, can point to where it came from. A `git push` gets
 approved because the message sounds confident, not because anything checked
 what the command itself does.
 
-Godmode is a local, deterministic runtime that checks each of those from a
-tamper-evident record of what actually happened, computed into exit codes
-an agent cannot argue past.
-
 ## Install
 
 ```text
@@ -34,18 +30,32 @@ an agent cannot argue past.
 /reload-plugins
 ```
 
-That installs Godmode for Claude Code. Codex and Grok carry the same
-plugin package (`.codex-plugin/`, `.grok-plugin/`) through their own
-marketplace flow. [Host support](#host-support) states exactly what each
-host enforces before you rely on it.
+That installs Godmode for Claude Code. Every `godmode ...` command shown
+below runs through Claude Code's own Bash tool: installing a plugin adds
+its `bin/` directory to that tool's PATH for the session, so pasting a
+command into a Claude Code conversation, or asking Claude to run it,
+works with no setup. Outside Claude Code, in your own terminal, call the
+installed copy directly once you know its cached version directory
+(`ls ~/.claude/plugins/cache/aiimagined/godmode/` lists it):
+
+```console
+$ python ~/.claude/plugins/cache/aiimagined/godmode/<version>/scripts/godmode.py init
+```
+
+Codex and Grok carry the same plugin package (`.codex-plugin/`,
+`.grok-plugin/`) through their own marketplace flow. [Host support](#host-support)
+states exactly what each host enforces, and what's verified about its own
+`bin/` exposure, before you rely on it.
 
 Next: run it for a week before you trust it for anything.
 
 ## Try it with no risk: observe mode
 
-Enforcement is opt-in and reversible. In observe mode, every gate that
-would deny or ask instead records what it *would* have done and lets the
-command through.
+Godmode is a local, deterministic runtime that checks each of the three
+problems above from a tamper-evident record of what actually happened,
+computed into exit codes an agent cannot argue past. Enforcement is
+opt-in and reversible: in observe mode, every gate that would deny or ask
+instead records what it *would* have done and lets the command through.
 
 1. Initialize the project once:
 
@@ -69,8 +79,10 @@ command through.
 
 Every line in that digest is a would-have-denied or would-have-asked count,
 by category, with the sessions it happened in. None of it merges with real
-enforcement numbers, because none of these events were blocked. Delete the
-`gate_mode` line to turn enforcement on for real.
+enforcement numbers, because none of these events were blocked. Delete
+`.godmode-authorization-policy.json` (or remove its `gate_mode` key; an
+empty `{}` file and no file at all are treated identically) to turn
+enforcement on for real.
 
 Next: pick a starting profile before you do.
 
@@ -209,8 +221,8 @@ calling the gate and honoring its exit code.
 | Host | What's shipped | What's tested |
 |---|---|---|
 | **Claude Code** | Plugin, hooks (`SessionStart`, `PreToolUse`, `UserPromptSubmit`) | Live: the pre-tool gate and session hook run under this host every session this repository is worked in. |
-| **Codex** | Same plugin package (`.codex-plugin/plugin.json`), same hooks convention | Packaged and unit-tested against the classifier; not independently live-probed under Codex itself. |
-| **Grok** | Same plugin package (`.grok-plugin/plugin.json`), same hooks convention | Packaged, same as Codex: not independently live-probed. |
+| **Codex** | Same plugin package (`.codex-plugin/plugin.json`), same hooks convention | Packaged and unit-tested against the classifier; not independently live-probed under Codex itself. Whether Codex's own tool sandbox adds `bin/` to a command's PATH the way Claude Code's does isn't established here. |
+| **Grok** | Same plugin package (`.grok-plugin/plugin.json`), same hooks convention | Packaged, same as Codex: not independently live-probed, `bin/` exposure unconfirmed. |
 | **OpenCode, Cursor, Gemini CLI** | Instruction-file adapters ([`adapters/`](./adapters/README.md)), no plugin system | Attestation, claim-downgrade, and plan-gate controls run through the host-independent CLI and hold; `tool_call_interception` is declared `UNAVAILABLE` on all three, because none of them exposes a pre-tool boundary the adapter can call into. |
 | **CI (GitHub Action)** | `action.yml`, integrity and changelog gates | Runs the same CLI the rows above do; no hook boundary involved. |
 
