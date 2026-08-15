@@ -89,6 +89,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.metadata as metadata
+import inspect
 import json
 import re
 from pathlib import Path
@@ -175,22 +176,39 @@ def resolve_python_package(name: str) -> dict[str, Any]:
             "symbols": [], "symbols_full_count": 0, "truncated": False,
         }
 
-    symbols, full_count = _enumerate_module_exports(module)
+    symbols, full_count, symbol_kinds = _enumerate_module_exports(module)
     return {
         "resolved": True, "target": name, "language": "python", "version": version,
         "module_import": True, "module_name": module_name_used,
         "entry_points": entry_points,
         "symbols": symbols, "symbols_full_count": full_count,
         "truncated": full_count > MAX_SYMBOLS_ENUMERATED,
+        # Round-1 review Minor #1: the module docstring's constants-never-match
+        # boundary was invisible in actual output. Classifying each enumerated
+        # name here (cheap - the module is already imported) lets
+        # `diff_against_project` attach a per-finding note when the reason a
+        # symbol is unmatched may be this known boundary rather than a genuine
+        # gap, instead of leaving that only in source a JSON consumer never reads.
+        "symbol_kinds": symbol_kinds,
     }
 
 
-def _enumerate_module_exports(module: Any) -> tuple[list[str], int]:
+def _enumerate_module_exports(module: Any) -> tuple[list[str], int, dict[str, str]]:
     declared = getattr(module, "__all__", None)
     names = sorted(set(declared)) if declared else sorted(
         n for n in dir(module) if not n.startswith("_")
     )
-    return names[:MAX_SYMBOLS_ENUMERATED], len(names)
+    capped = names[:MAX_SYMBOLS_ENUMERATED]
+    kinds: dict[str, str] = {}
+    for name in capped:
+        value = getattr(module, name, None)
+        if inspect.isclass(value):
+            kinds[name] = "class"
+        elif inspect.isroutine(value):
+            kinds[name] = "function"
+        else:
+            kinds[name] = "value"
+    return capped, len(names), kinds
 
 
 def resolve_node_package(name: str, project: Path) -> dict[str, Any]:
@@ -287,6 +305,18 @@ def diff_against_project(upstream: dict[str, Any], project: Path) -> dict[str, A
     match a project symbol through this comparison - it always becomes a
     `finding`, asking a human for a disposition rather than a name-match
     silently deciding "we have this" for a value nobody actually compared.
+    When `upstream["symbol_kinds"]` says a finding's symbol is a non-callable
+    `"value"` (only known for Python-resolved packages - see
+    `_enumerate_module_exports`), the finding carries its own `note` saying
+    so, rather than leaving that boundary discoverable only by reading this
+    docstring.
+
+    The converse risk runs the other way and is NOT caught by anything here:
+    a project symbol with the same name as an upstream one but different
+    behavior reads as `matched` by name-shingle similarity alone, and
+    matching stops there - it is never diffed further, so a same-named,
+    differently-behaving pair is indistinguishable from a genuine match in
+    this report.
     """
     target = upstream.get("target")
     if not upstream.get("resolved"):
@@ -298,6 +328,7 @@ def diff_against_project(upstream: dict[str, Any], project: Path) -> dict[str, A
         }
 
     upstream_symbols: list[str] = list(upstream.get("symbols") or [])
+    symbol_kinds: dict[str, str] = upstream.get("symbol_kinds") or {}
     project_atlas = build_atlas(Path(project))
     project_names = sorted({
         symbol.name for symbol in project_atlas.symbols
@@ -321,13 +352,29 @@ def diff_against_project(upstream: dict[str, Any], project: Path) -> dict[str, A
                 "similarity": round(best_score, 3),
             })
         else:
-            findings.append({
+            finding: dict[str, Any] = {
                 "upstream_symbol": symbol,
                 "closest_project_symbol": best_name,
                 "closest_similarity": round(best_score, 3),
                 "disposition": None,
                 "behavior_verdict": None,
-            })
+            }
+            kind = symbol_kinds.get(symbol)
+            if kind is not None:
+                finding["upstream_symbol_kind"] = kind
+            if kind == "value":
+                # Round-1 review Minor #1: surface the constants-never-match
+                # boundary on the affected finding itself, not only in the
+                # module docstring - see diff_against_project's docstring.
+                finding["note"] = (
+                    "this upstream symbol is a non-callable value (e.g. a "
+                    "constant), not a function/class; project-side matching "
+                    "only compares against function/class symbols, so this "
+                    "finding may already be covered by a same-purpose "
+                    "constant or other non-callable equivalent this diff "
+                    "cannot see"
+                )
+            findings.append(finding)
 
     return {
         "verdict": "findings-present" if findings else "fully-covered",
@@ -561,7 +608,8 @@ def _self_check() -> None:
         (distinfo / "entry_points.txt").write_text(
             "[console_scripts]\nselfcheck-cli = selfcheckpkg:main\n", encoding="utf-8")
         (site_dir / "selfcheckpkg.py").write_text(
-            "__all__ = ['rotate_widget', 'WidgetStore']\n"
+            "__all__ = ['rotate_widget', 'WidgetStore', 'DEFAULT_TIMEOUT']\n"
+            "DEFAULT_TIMEOUT = 30\n"
             "def rotate_widget():\n    return 1\n"
             "class WidgetStore:\n    pass\n"
             "def main():\n    pass\n",
@@ -575,6 +623,9 @@ def _self_check() -> None:
             assert resolved["version"] == "1.0.0", resolved
             assert "rotate_widget" in resolved["symbols"], resolved
             assert "selfcheck-cli" in resolved["entry_points"], resolved
+            assert resolved["symbol_kinds"]["rotate_widget"] == "function", resolved
+            assert resolved["symbol_kinds"]["WidgetStore"] == "class", resolved
+            assert resolved["symbol_kinds"]["DEFAULT_TIMEOUT"] == "value", resolved
 
             missing = resolve_python_package("definitely-not-installed-xyz")
             assert not missing["resolved"] and missing["reason"], missing
@@ -589,6 +640,13 @@ def _self_check() -> None:
             found_names = {f["upstream_symbol"] for f in diff["findings"]}
             assert "rotate_widget" in matched_names, diff
             assert "WidgetStore" in found_names, diff
+            timeout_finding = next(
+                f for f in diff["findings"] if f["upstream_symbol"] == "DEFAULT_TIMEOUT")
+            assert timeout_finding["upstream_symbol_kind"] == "value", timeout_finding
+            assert "non-callable value" in timeout_finding["note"], timeout_finding
+            widget_finding = next(
+                f for f in diff["findings"] if f["upstream_symbol"] == "WidgetStore")
+            assert "note" not in widget_finding, widget_finding
 
             gap_diff = diff_against_project(missing, project)
             assert gap_diff["verdict"] == "stated-gap", gap_diff
@@ -634,8 +692,11 @@ def _self_check() -> None:
 
             outcome = record_upstream_diff(
                 fake, project, package="selfcheckpkg",
-                dispositions={"WidgetStore": {"disposition": "adopt",
-                                              "behavior_verdict": "unverified"}},
+                dispositions={
+                    "WidgetStore": {"disposition": "adopt", "behavior_verdict": "unverified"},
+                    "DEFAULT_TIMEOUT": {"disposition": "n/a-different-surface",
+                                        "behavior_verdict": "unverified"},
+                },
             )
             assert outcome["report"]["verdict"] == "findings-present", outcome
             written = next(f for f in outcome["report"]["findings"]
