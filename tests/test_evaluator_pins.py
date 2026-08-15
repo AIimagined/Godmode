@@ -222,6 +222,57 @@ class MoveCopyTests(unittest.TestCase):
             self.assertTrue(verdict["protected"])
             self.assertEqual(verdict["tier"], "R5")
 
+    def test_copying_a_pinned_file_as_source_is_ordinary_not_denied(self) -> None:
+        """Fix-round-2 (re-review, Important): `cp` does not remove the
+        source the way `mv` does - the pinned file is untouched at its own
+        path - so `cp evaluator.py backup.py` is an ordinary read, the same
+        act as `cat evaluator.py > backup.py` (already unprotected). Red
+        before fix-round-2: this used to be denied at R5, over-broadly
+        applying the rename-away rationale to a shape that never renames
+        anything away."""
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            _write_evaluator(project)
+            pin_evaluator(archive, project, "evaluator.py")
+            verdict = classify_action(
+                "cp evaluator.py backup.py", project_root=project, archive=archive)
+            self.assertFalse(verdict["protected"])
+            self.assertEqual(verdict["category"], "worktree-file-mutation")
+            # Matches the redirect equivalent exactly - same category, same
+            # `protected`, not merely "both happen to be false".
+            redirect_verdict = classify_action(
+                "cat evaluator.py > backup.py", project_root=project, archive=archive)
+            self.assertEqual(verdict["category"], redirect_verdict["category"])
+            self.assertEqual(verdict["protected"], redirect_verdict["protected"])
+
+    def test_the_mv_cp_asymmetry_is_real_not_a_coincidence(self) -> None:
+        """The exact same source-as-a-pinned-file shape, spelled two ways -
+        one still denies (mv removes the source), one now allows (cp does
+        not) - proven side by side so a future edit that accidentally
+        widens or narrows the check trips one half of this pair."""
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            _write_evaluator(project)
+            pin_evaluator(archive, project, "evaluator.py")
+            mv_verdict = classify_action(
+                "mv evaluator.py elsewhere.py", project_root=project, archive=archive)
+            cp_verdict = classify_action(
+                "cp evaluator.py elsewhere.py", project_root=project, archive=archive)
+            self.assertTrue(mv_verdict["protected"])
+            self.assertEqual(mv_verdict["category"], "pinned-evaluator-mutation")
+            self.assertFalse(cp_verdict["protected"])
+            self.assertEqual(cp_verdict["category"], "worktree-file-mutation")
+
+    def test_copy_item_from_a_pinned_file_is_ordinary_too(self) -> None:
+        """The PowerShell spelling follows the same asymmetry as `cp`."""
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            _write_evaluator(project)
+            pin_evaluator(archive, project, "evaluator.py")
+            verdict = classify_action(
+                "Copy-Item evaluator.py backup.py", project_root=project, archive=archive)
+            self.assertFalse(verdict["protected"])
+
     def test_overwriting_a_pinned_file_via_mv_is_the_pin_denial(self) -> None:
         with isolated_project() as (project, _s, _a, archive):
             archive.initialize()
@@ -466,6 +517,15 @@ class HookDenialTests(unittest.TestCase):
                 decision, reason = self._decide_bash(command)
                 self.assertIn(decision, ("deny", "ask"), command)
                 self.assertIn("pinned evaluator", reason, command)
+
+    def test_copying_from_a_pinned_file_allows_through_the_real_hook(self) -> None:
+        """Fix-round-2, red-first, through the real hook subprocess: before
+        this fix, `cp evaluator.py backup.py` denied at R5 alongside the
+        genuine attacks above - it should not have, since it never removes
+        the pinned file from its own path."""
+        self._pin("evaluator.py")
+        decision, _reason = self._decide_bash("cp evaluator.py backup.py")
+        self.assertEqual(decision, "allow")
 
     def test_a_pin_outranks_an_otherwise_allowing_fence(self) -> None:
         """An approved plan whose editable set covers the pinned file would
