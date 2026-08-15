@@ -426,14 +426,59 @@ _CLAUSE_BOUNDARY_WORDS = frozenset({
     "without", "unless", "until", "before", "after", "if", "and", "or", "but",
 })
 
+# Controller ruling follow-up (review of 1cfe854): the exemption above
+# covers the prohibition's HEAD - opener, verb, object - and was silently
+# excusing the whole sentence, including a tail that never earned it. A
+# reviewer-constructed slip made the gap concrete: "Never touch code
+# without avoiding what is not clear and not appropriate." named a clean
+# object ("code") and was therefore exempt outright, despite its own tail
+# being exactly the vague, positive-verb-free negation soup this check
+# exists to catch. The fix scopes the exemption to the head PLUS its
+# immediate "without <condition>" clause only - not the rest of the
+# sentence. `_CONDITION_CLAUSE` stops consuming the condition at the first
+# sign it is not a simple, concrete condition: a clause boundary
+# (;/,/and/or/but) or another negation token. That stopping point is
+# exactly where "without avoiding what is" gives way to "not clear and not
+# appropriate" - the tail after it is handed back to the ordinary
+# negation-heavy scan below, same as it always was for non-exempt text.
+_CONDITION_CLAUSE = re.compile(
+    r"\s+without\s+"
+    r"(?:(?!;|,|\band\b|\bor\b|\bbut\b|\bnot\b|\bnever\b|\bno\b|\bnone\b|"
+    r"\bcannot\b|\bcan't\b|\bwon't\b|\bdon't\b|\bdoesn't\b|\bdidn't\b|"
+    r"\bisn't\b|\baren't\b|\bwithout\b|\bforbidden\b|\bprohibited\b|"
+    r"\bdisallow\w*\b|\brefus\w*\b).)*",
+    re.IGNORECASE,
+)
+
+
+def _prohibition_remainder(text: str) -> str | None:
+    """The text after a named prohibition's exempt head, or `None` when
+    `text` does not open with one at all (see the doctrine comment above).
+
+    Only the head - opener + verb + object, plus its immediate "without
+    <condition>" clause - is exempt; whatever follows it still goes through
+    `negation_heavy`'s ordinary scan. An empty-string return (a bare "never
+    <verb> <object> without <condition>." and nothing else) is a fully
+    exempt rule, same as before this fix; a non-empty return is text that
+    still has to earn its own way past the negation-heavy check.
+    """
+    stripped = text.strip()
+    match = _PROHIBITION_OPENER.match(stripped)
+    if not match:
+        return None
+    obj = match.group("object").lower()
+    if obj in _VAGUE_OBJECTS or obj in _CLAUSE_BOUNDARY_WORDS:
+        return None
+    end = match.end()
+    condition = _CONDITION_CLAUSE.match(stripped, end)
+    if condition:
+        end = condition.end()
+    return stripped[end:]
+
 
 def _named_prohibition(text: str) -> bool:
     """Whether `text` opens with a negation naming a concrete object."""
-    match = _PROHIBITION_OPENER.match(text.strip())
-    if not match:
-        return False
-    obj = match.group("object").lower()
-    return obj not in _VAGUE_OBJECTS and obj not in _CLAUSE_BOUNDARY_WORDS
+    return _prohibition_remainder(text) is not None
 
 
 def negation_heavy(text: str) -> bool:
@@ -446,16 +491,20 @@ def negation_heavy(text: str) -> bool:
     checkable rule; it is the rule with nothing but prohibitions that reads
     as an instruction in how to do the forbidden thing.
 
-    A named prohibition (see `_named_prohibition`) is exempted outright,
-    regardless of the count/positive-verb shape above: for a rule already
-    stated as "never <verb> <concrete object>", restating it positively is
-    the wrong fix, not a better one.
+    A named prohibition's head (see `_prohibition_remainder`) is exempted
+    outright: for a rule already stated as "never <verb> <concrete object>
+    without <condition>", restating it positively is the wrong fix, not a
+    better one. Only the head is exempt, though - anything past the
+    immediate condition clause is scanned exactly as it would be for any
+    other rule, so a vague or negation-heavy tail still flags.
     """
-    if _named_prohibition(text):
+    remainder = _prohibition_remainder(text)
+    if remainder is not None and not remainder.strip():
         return False
+    scanned = text if remainder is None else remainder
     return (
-        len(_NEGATION_TOKENS.findall(text)) >= 2
-        and not _POSITIVE_VERBS.search(text)
+        len(_NEGATION_TOKENS.findall(scanned)) >= 2
+        and not _POSITIVE_VERBS.search(scanned)
     )
 
 
