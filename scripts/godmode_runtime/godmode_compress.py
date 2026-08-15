@@ -26,6 +26,7 @@ MASKS: dict[str, tuple[str, ...]] = {
     "checkpoint": ("status", "next"),
     "change": ("files", "plan"),
     "decision": ("status",),
+    "differential": ("subject", "method"),
     "invariant": ("status",),
     "lesson": ("status", "generalized_guard"),
     "metric": ("measured", "turns"),

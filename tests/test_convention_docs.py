@@ -29,7 +29,13 @@ if str(Path(__file__).parent) not in sys.path:
 from test_godmode_runtime import isolated_project  # noqa: E402
 
 PREFIXES = ("searched:", "control:", "second:", "scanned:", "population:",
-           "file:", "cmd:", "rec:")
+           "file:", "cmd:", "rec:",
+           # Pre-existed the docs research this file's docstring describes,
+           # but was never taught in claim --help either - closed alongside
+           # the U-T3/U-E3 review round that noticed diff:/line: were also
+           # undocumented (a fix-round finding, not part of the original
+           # docs research).
+           "verdict:", "diff:", "line:")
 
 
 class ConventionDocsTests(unittest.TestCase):

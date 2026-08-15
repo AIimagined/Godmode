@@ -26,7 +26,9 @@ from .godmode_attest import (
     opening_handshake,
     record_claim,
     record_criterion,
+    record_differential,
     record_step,
+    register_metric_contract,
 )
 from .godmode_assess import assess as assess_project
 from .godmode_assess import assurance_case
@@ -708,6 +710,34 @@ def cmd_criterion(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         {"task": data["task"], "text": data["text"], "late": data["late"],
          "advisories": data["advisories"]},
         exit_code=1 if data["late"] else 0,
+    )
+
+
+def cmd_metric_contract_register(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    record = register_metric_contract(
+        runtime.archive, _session(runtime, args.session), args.name, args.anchor,
+    )
+    data = record["data"]
+    return CommandResult(
+        {"sequence": record["sequence"], "name": args.name, "anchor": data["anchor"]},
+        exit_code=0,
+    )
+
+
+# U-E3 differential-evidence - minimal isolated block, mirrors the `register`
+# block below.
+def cmd_differential_record(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    record = record_differential(
+        runtime.archive, args.subject, args.a, args.b, args.delta, args.method,
+    )
+    data = record["data"]
+    return CommandResult(
+        {"sequence": record["sequence"], "subject": data["subject"],
+         "a_ref": data["a_ref"], "b_ref": data["b_ref"], "delta": data["delta"],
+         "method": data["method"]},
+        exit_code=0,
     )
 
 
@@ -2429,6 +2459,14 @@ def _build_parser() -> argparse.ArgumentParser:
             "  rec:<hash>            an archive record, cited by its hash prefix\n"
             "  file:<path>#L<n>      a line this session actually read\n"
             "  cmd:<command>         a command an attestation on THIS session ran\n"
+            "  verdict:<seq>         a CONFIRMED verdict record (U-V1) - refuted or\n"
+            "                        malformed does not resolve\n"
+            "  diff:<seq>            a differential record (U-E3) whose own a_ref/\n"
+            "                        b_ref also resolve - what a root-cause claim\n"
+            "                        needs once the archive holds two comparable\n"
+            "                        states to diff\n"
+            "  line:<name>:<value>   an output line matching a registered metric's\n"
+            "                        own anchor (U-T3, `metric-contract register`)\n"
             "  doc:<ref> / url:<ref> a source outside the worktree (declared, not\n"
             "                        locally verifiable - required for --external)\n"
             "  searched:<query>      the sweep behind an absence or a count claim\n"
@@ -2481,6 +2519,46 @@ def _build_parser() -> argparse.ArgumentParser:
                                 "(a criterion recorded after work has started)")
     criterion.add_argument("--session")
     criterion.set_defaults(handler=cmd_criterion)
+
+    # U-T3 anchored-metric contracts - minimal isolated block, mirrors the
+    # `register` block below.
+    metric_contract = sub.add_parser(
+        "metric-contract",
+        help="Anchored-metric citation contracts: a numeric claim must cite "
+             "the registered line shape (U-T3)",
+    )
+    metric_contract_sub = metric_contract.add_subparsers(
+        dest="metric_contract_command", required=True)
+    metric_contract_register = metric_contract_sub.add_parser(
+        "register", help="Declare the anchor a claim about this metric must cite")
+    metric_contract_register.add_argument("--name", required=True, type=subject_text)
+    metric_contract_register.add_argument(
+        "--anchor", required=True,
+        help="Regex the cited line:<name>:<value> evidence must match")
+    metric_contract_register.add_argument("--session")
+    metric_contract_register.set_defaults(handler=cmd_metric_contract_register)
+
+    # U-E3 differential-evidence - minimal isolated block, mirrors the
+    # `register` block below.
+    differential = sub.add_parser(
+        "differential",
+        help="Record a comparison of two archived states; a root-cause claim "
+             "cites it (U-E3)",
+    )
+    differential_sub = differential.add_subparsers(dest="differential_command", required=True)
+    differential_record = differential_sub.add_parser(
+        "record", help="Record the comparison")
+    differential_record.add_argument("--subject", required=True, type=subject_text)
+    differential_record.add_argument(
+        "--a", dest="a", required=True, help="seq:<n>, file:<path>, or cmd:<...>")
+    differential_record.add_argument(
+        "--b", dest="b", required=True, help="seq:<n>, file:<path>, or cmd:<...>")
+    differential_record.add_argument(
+        "--delta", action="append", default=[],
+        help="One observed difference; repeatable, up to 20 entries")
+    differential_record.add_argument(
+        "--method", required=True, help="cmd:<command run to compare> or 'read'")
+    differential_record.set_defaults(handler=cmd_differential_record)
 
     verdict = sub.add_parser(
         "verdict",
