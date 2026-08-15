@@ -96,6 +96,9 @@ from .godmode_roi import roi_report
 # handler), same pattern as the U-R2 loop-ready block above.
 from .godmode_recurrence import DEFAULT_THRESHOLD as RECURRENCE_DEFAULT_THRESHOLD
 from .godmode_recurrence import mine_recurring_asks, render as render_recurrence
+# B3-1 (GAP-1) - minimal isolated block (one import line, one subcommand,
+# one handler), same pattern as the U-E10 recurring-ask block above.
+from .godmode_upstream import record_upstream_diff
 from .godmode_stages import advance as stage_advance
 from .godmode_stages import skip_stage, sop_attest, sop_status, stage_gate
 from .godmode_index import IndexStale
@@ -2078,6 +2081,37 @@ def cmd_recurring(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult({"report": render_recurrence(report)})
 
 
+def cmd_upstream(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """B3-1 (GAP-1): one `upstream-diff` record per run - a named package's
+    (or, via `--path`, a forked/fully-copied external repo's) shipped
+    surface diffed against this project's own equivalents. Each `--dispose
+    SYMBOL=DISPOSITION:BEHAVIOR_VERDICT` supplies the paired import+behavior
+    verdicts for one unmatched symbol; a disposition given with no
+    behavior_verdict is refused before the archive is ever touched."""
+    _require_archive(runtime)
+    dispositions: dict[str, dict[str, str | None]] = {}
+    for raw in args.dispose:
+        if "=" not in raw:
+            raise ArchiveError(
+                f"--dispose must be SYMBOL=DISPOSITION:BEHAVIOR_VERDICT, got {raw!r}")
+        symbol, _, rest = raw.partition("=")
+        disposition, _, behavior_verdict = rest.partition(":")
+        dispositions[symbol.strip()] = {
+            "disposition": disposition.strip() or None,
+            "behavior_verdict": behavior_verdict.strip() or None,
+        }
+    outcome = record_upstream_diff(
+        runtime.archive, Path(runtime.anchor.project_root),
+        package=args.diff, path=args.path, language=args.language,
+        dispositions=dispositions, evidence=args.evidence,
+    )
+    report = outcome["report"]
+    exit_code = 1 if report["verdict"] == "stated-gap" or report["undispositioned"] else 0
+    if getattr(args, "json", False):
+        return CommandResult(report, exit_code=exit_code)
+    return CommandResult({"upstream_diff": report}, exit_code=exit_code)
+
+
 def cmd_expunge(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     return CommandResult(runtime.archive.expunge(args.sequence, args.reason))
@@ -3418,6 +3452,32 @@ def _build_parser() -> argparse.ArgumentParser:
              f"(default: {RECURRENCE_DEFAULT_THRESHOLD})",
     )
     recurring_parser.set_defaults(handler=cmd_recurring)
+
+    upstream_parser = sub.add_parser(
+        "upstream",
+        help="B3-1: diff a named package's (or a forked/copied tree's) shipped "
+             "surface against this project's own equivalents - GAP-1",
+    )
+    upstream_target = upstream_parser.add_mutually_exclusive_group(required=True)
+    upstream_target.add_argument(
+        "--diff", metavar="PACKAGE",
+        help="Installed package name to resolve and diff (Python first-class; "
+             "Node best-effort with --language node)")
+    upstream_target.add_argument(
+        "--path", metavar="VENDORED_TREE",
+        help="Local path to a forked/fully-copied external repo - carries the "
+             "same diff-against-upstream duty as a lockfile dependency")
+    upstream_parser.add_argument(
+        "--language", choices=("python", "node"), default="python",
+        help="Resolution language for --diff (default: python)")
+    upstream_parser.add_argument(
+        "--dispose", action="append", default=[],
+        metavar="SYMBOL=DISPOSITION:BEHAVIOR_VERDICT",
+        help="Record adopt/extend/diverge-deliberately/n-slash-a-different-surface "
+             "paired with confirmed-we-have-it/confirmed-we-dont/unverified for "
+             "one unmatched symbol; repeatable")
+    _evidence(upstream_parser)
+    upstream_parser.set_defaults(handler=cmd_upstream)
 
     expunge_parser = sub.add_parser(
         "expunge",
