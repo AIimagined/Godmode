@@ -17,7 +17,8 @@
     "scripts/godmode_runtime/godmode_scenarios.py": 1,
     "scripts/godmode_runtime/godmode_sentinel.py": 1,
     "scripts/godmode_runtime/godmode_status.py": 1,
-    "scripts/godmode_runtime/godmode_stop.py": 2
+    "scripts/godmode_runtime/godmode_stop.py": 2,
+    "scripts/godmode_runtime/godmode_upstream.py": 1
   },
-  "runtime_version": "0.2.11"
+  "runtime_version": "0.2.13"
 }
