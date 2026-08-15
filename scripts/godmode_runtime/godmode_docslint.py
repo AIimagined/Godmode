@@ -26,10 +26,15 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import os
 import re
+import subprocess
 from pathlib import Path
 
+from .godmode_charter import ADVISORY, HARD, compile_charter, negation_heavy
 from .godmode_constants import RUNTIME_VERSION
+from .godmode_errors import GodmodeError
+from .godmode_precheck import _terms
 from typing import Any
 
 CONFIG_FILENAME = ".godmode-docslint.json"
@@ -130,6 +135,46 @@ def _is_public(path: Path, project: Path) -> bool:
     except ValueError:
         return False
     return not any(part in _PRIVATE_PARTS for part in relative.parts)
+
+
+def _git_ignored_relatives(project: Path, relatives: list[str]) -> frozenset[str]:
+    """Which of these project-relative paths git would ignore.
+
+    A scratch orchestration doc under a gitignored directory (task reports,
+    progress notes) is working material the same as anything under
+    `_PRIVATE_PARTS` - the `.gitignore` already says so, and the linter should
+    not need a second, hand-maintained list that drifts from it. Batched into
+    one `check-ignore --stdin` call rather than one process per file. Fails
+    open (nothing excluded) when there is no git repository or no git binary,
+    so a non-git project lints exactly as it did before this existed.
+    """
+    if not relatives:
+        return frozenset()
+    environment = os.environ.copy()
+    environment["GIT_OPTIONAL_LOCKS"] = "0"
+    environment["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        # Bytes in, bytes out: `text=True` runs stdin through universal-newline
+        # translation, which turns "\n" into "\r\n" on Windows - git then reads
+        # a trailing \r as part of the filename and echoes it back C-quoted, so
+        # nothing ever matches. Encoding by hand keeps the exact bytes git sees.
+        result = subprocess.run(
+            ["git", "-C", str(project), "check-ignore", "--stdin"],
+            input="\n".join(relatives).encode("utf-8"),
+            check=False,
+            capture_output=True,
+            timeout=5,
+            env=environment,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return frozenset()
+    # 0 = some input paths are ignored, 1 = none are - both are ordinary
+    # outcomes. Anything else (128: no git repository, etc.) is a git failure
+    # unrelated to any one file, so exclude nothing rather than guess.
+    if result.returncode not in (0, 1):
+        return frozenset()
+    stdout = result.stdout.decode("utf-8", errors="replace")
+    return frozenset(line for line in stdout.splitlines() if line)
 
 
 def lint_text(path: str, text: str, ignore: tuple[str, ...] = ()) -> list[dict[str, Any]]:
@@ -398,6 +443,216 @@ def _figure_findings(relative: str, text: str, project: Path) -> list[dict[str, 
     return findings
 
 
+# U-S4 charter prose linter. Extends the negative-check half of this module
+# to the operating guidance the runtime already compiles into rules
+# (`godmode_charter.compile_charter`), rather than raw document text - a
+# charter rule can be well-formed and still read badly, or point at nothing
+# a machine can check, or say twice what it should say once. Every finding
+# here carries `severity: "advisory"`, which `lint_docs`' own `high_severity`
+# count and exit code never look at: this is prose feedback, not a gate, and
+# it never blocks a commit or downgrades the charter's own HARD enforcement.
+def _normalize_directive(text: str) -> str:
+    """A directive reduced to what it says, not how it is formatted."""
+    return re.sub(r"\s+", " ", text.lower()).strip(" .")
+
+
+def _rule_location(rule: dict[str, Any]) -> tuple[str, int]:
+    path, _, line = str(rule.get("source", "")).rpartition(":")
+    try:
+        return path, int(line)
+    except ValueError:
+        return path, 1
+
+
+def _duplicated_directive_findings(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The same directive bound into two role documents.
+
+    Two documents stating the same rule is not redundancy that helps a
+    reader - it is two sources of truth that can drift apart the first time
+    only one of them is edited. Grouped by role/path pair rather than by
+    role alone: two rules in the same document repeating themselves is an
+    editing accident the author can see by reading the file; this check is
+    for the copy nobody notices because it lives in a different file.
+    """
+    by_text: dict[str, list[dict[str, Any]]] = {}
+    for rule in rules:
+        by_text.setdefault(_normalize_directive(rule["text"]), []).append(rule)
+    findings: list[dict[str, Any]] = []
+    for group in by_text.values():
+        paths = sorted({_rule_location(rule)[0] for rule in group})
+        if len(paths) < 2:
+            continue
+        first = group[0]
+        path, line = _rule_location(first)
+        findings.append({
+            "path": path, "line": line, "check": "duplicated-source",
+            "severity": "advisory", "rule_id": first["id"],
+            "why": f"the same directive is also bound from {', '.join(p for p in paths if p != path)}",
+            "remedy": "keep one source of truth for this directive; have the "
+                      "other role document point at it instead of restating it",
+            "excerpt": first["text"][:160],
+        })
+    return findings
+
+
+def lint_charter_prose(charter: dict[str, Any]) -> dict[str, Any]:
+    """Advisory findings over a project's own compiled charter rules.
+
+    Three checks, none of them blocking:
+
+    * `negation-heavy-rule` - a HARD rule with two or more negation tokens
+      ("never", "without", "not"...) and no positive verb anywhere in it:
+      the shape a rule takes when it states only what must not happen, which
+      puts the forbidden behaviour in the reader's head first.
+    * `no-done-criterion` - a rule the charter itself could not map to any
+      checkable shape (`enforcement == ADVISORY`, `verify == "none"`): it
+      names no command and no assertable token, so nothing here says what
+      passing or failing would look like.
+    * `duplicated-source` - the same normalized directive bound from two
+      different role documents.
+    """
+    rules = charter.get("compiled") or []
+    findings: list[dict[str, Any]] = []
+    for rule in rules:
+        path, line = _rule_location(rule)
+        if rule.get("enforcement") == HARD and negation_heavy(rule["text"]):
+            findings.append({
+                "path": path, "line": line, "check": "negation-heavy-rule",
+                "severity": "advisory", "rule_id": rule["id"],
+                "why": "a HARD rule stated only as prohibitions names the "
+                       "forbidden behaviour and never the one to do instead",
+                "remedy": "restate positively: say what to do, not only what "
+                          "not to do",
+                "excerpt": rule["text"][:160],
+            })
+        if rule.get("enforcement") == ADVISORY:
+            findings.append({
+                "path": path, "line": line, "check": "no-done-criterion",
+                "severity": "advisory", "rule_id": rule["id"],
+                "why": "no command or assertable token in this directive - "
+                       "nothing here says what passing or failing looks like",
+                "remedy": "name a command, a file, or a checkable token; "
+                          "otherwise this stays prose, not a gate",
+                "excerpt": rule["text"][:160],
+            })
+    findings.extend(_duplicated_directive_findings(rules))
+    return {"findings": findings, "checked": len(rules)}
+
+
+# U-E11 doc-freshness advisories. Two shapes absorbed from lessons this
+# project's own history produced: a plan doc can say "pending" the day it is
+# written and still say "pending" a year later with nobody the wiser, and a
+# living doc can be drafted to replace another without either one saying so,
+# leaving a reader unable to tell which is current. Neither is the kind of
+# defect `unfinished-marker` or the contract checks already catch - a
+# shipped TODO is wrong the moment it ships, but "pending" dated the day it
+# was written is an honest status, not a leak. Both land in
+# `prose_advisories` beside the charter-prose checks for the same reason
+# those do: worth a reader's attention, never a reason `docs --lint` exits
+# non-zero.
+def _fence_mask(lines: list[str]) -> list[bool]:
+    """True for a line that is fenced content, or a fence delimiter itself -
+    the same toggle `lint_text` and `_headings` already use, factored out so
+    a third check does not re-derive it a third time."""
+    fenced = False
+    mask: list[bool] = []
+    for line in lines:
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            mask.append(True)
+        else:
+            mask.append(fenced)
+    return mask
+
+
+# A small, closed, documented tuple - not every English use of these words
+# names an open item ("in progress" describing a download bar would be noise
+# everywhere), but this is the vocabulary a status line or a plan actually
+# uses to say "not done yet". Word-bounded so "pendingness" or "topology"
+# cannot match.
+_OPEN_MARKER = re.compile(
+    r"(?i)\b(?:pending|todo|open item|not started|in progress)\b")
+_DATED_ANNOTATION = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+
+
+def _stale_open_marker_findings(relative: str, text: str) -> list[dict[str, Any]]:
+    """An open-status marker with no dated check on its own or a neighboring
+    line. The date does not have to prove the item is closed - only that a
+    human looked at it recently enough to say so; that is the cheapest
+    signal that distinguishes a status from a fossil."""
+    lines = text.splitlines()
+    mask = _fence_mask(lines)
+    findings: list[dict[str, Any]] = []
+    for index, line in enumerate(lines):
+        if mask[index] or not _OPEN_MARKER.search(line):
+            continue
+        neighborhood = [line]
+        if index > 0:
+            neighborhood.append(lines[index - 1])
+        if index + 1 < len(lines):
+            neighborhood.append(lines[index + 1])
+        if any(_DATED_ANNOTATION.search(candidate) for candidate in neighborhood):
+            continue
+        findings.append({
+            "path": relative, "line": index + 1, "check": "stale-open-marker",
+            "severity": "advisory",
+            "why": "open marker without a dated check",
+            "remedy": "add a YYYY-MM-DD verification date on this line or the "
+                      "next, or close the item",
+            "excerpt": line.strip()[:160],
+        })
+    return findings
+
+
+# The two shapes a document points at the one it replaces, or the one that
+# replaces it - "keep v1 simple" means exactly these two, not a synonym
+# search. A doc carrying either is telling the reader the collision is known
+# and intentional, so the advisory has nothing left to say.
+_SUPERSEDES_POINTER = re.compile(r"(?i)\bsupersed(?:es|ed[- ]by)\b")
+
+
+def _title_collision_findings(documents: list[tuple[str, str]]) -> list[dict[str, Any]]:
+    """LIVING docs - the same ones `lint_docs` already scanned - whose first
+    heading normalizes to the same term set, with none of them pointing at
+    which one is current.
+
+    Normalization reuses `godmode_precheck._terms` rather than duplicating
+    it: two titles are "the same" here by exactly the test the rest of the
+    runtime already uses to decide two pieces of text are about the same
+    thing. Archive/changelog dirs are exempt via `_HISTORICAL`, the same
+    pattern the figure and self-pin checks already use to exclude a
+    historical record - a shipped changelog entry cannot point forward to
+    whatever superseded it.
+    """
+    groups: dict[frozenset[str], list[tuple[str, str]]] = {}
+    for relative, text in documents:
+        if _HISTORICAL.search(relative):
+            continue
+        headings = _headings(text)
+        if not headings:
+            continue
+        terms = frozenset(_terms(headings[0][0]))
+        if not terms:
+            continue
+        groups.setdefault(terms, []).append((relative, text))
+    findings: list[dict[str, Any]] = []
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        if any(_SUPERSEDES_POINTER.search(text) for _, text in group):
+            continue
+        paths = sorted(relative for relative, _ in group)
+        findings.append({
+            "path": paths[0], "line": 1, "check": "title-collision",
+            "severity": "advisory",
+            "why": f"the same normalized title also appears in {', '.join(paths[1:])}",
+            "remedy": "rename one, or add a `Supersedes`/`Superseded by` "
+                      "pointer naming the other",
+            "paths": paths,
+        })
+    return findings
+
+
 def lint_docs(project: Path) -> dict[str, Any]:
     """Lint every public document in the project.
 
@@ -410,22 +665,41 @@ def lint_docs(project: Path) -> dict[str, Any]:
     config = _config(project)
     ignore = tuple(config.get("ignore_checks") or ())
     contracts, findings = _declared_contracts(config)
+    candidates = [path for path in sorted(project.rglob("*"))
+                  if path.is_file() and _is_public(path, project)]
+    relatives = {path: path.relative_to(project).as_posix() for path in candidates}
+    ignored = _git_ignored_relatives(project, list(relatives.values()))
     scanned = 0
-    for path in sorted(project.rglob("*")):
-        if not path.is_file() or not _is_public(path, project):
+    living_documents: list[tuple[str, str]] = []
+    prose_advisories: list[dict[str, Any]] = []
+    for path in candidates:
+        relative = relatives[path]
+        if relative in ignored:
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         scanned += 1
-        relative = path.relative_to(project).as_posix()
+        living_documents.append((relative, text))
         findings.extend(lint_text(relative, text, ignore=ignore))
         if contracts:
             findings.extend(_contract_findings(relative, text, contracts))
         findings.extend(_figure_findings(relative, text, project))
         findings.extend(_self_pin_findings(relative, text, RUNTIME_VERSION))
+        prose_advisories.extend(_stale_open_marker_findings(relative, text))
+    prose_advisories.extend(_title_collision_findings(living_documents))
     high = [f for f in findings if f["severity"] == "high"]
+    # Advisory only, kept out of `findings`/`high_severity`/`verdict` on
+    # purpose: a badly-phrased charter rule is feedback for the operator, not
+    # a reason `docs --lint` should exit non-zero or read "findings" instead
+    # of "clean". A project whose charter compilation fails (unreadable
+    # `.godmode-roles.json`, an unreachable bound document) gets an empty
+    # list here rather than taking the whole lint command down with it.
+    try:
+        prose_advisories.extend(lint_charter_prose(compile_charter(project))["findings"])
+    except GodmodeError:
+        pass
     return {
         "documents_scanned": scanned,
         "findings": findings,
@@ -434,5 +708,6 @@ def lint_docs(project: Path) -> dict[str, Any]:
         # Stated so a report cannot be read as "checked against a contract"
         # when none was declared.
         "contracts_applied": sorted(contracts),
+        "prose_advisories": prose_advisories,
         "verdict": "clean" if not findings else "findings",
     }

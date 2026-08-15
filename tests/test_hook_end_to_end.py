@@ -46,8 +46,8 @@ MUST_ALLOW = (
     # Everything v0.2.5 unblocked, asserted where the host will hit it rather
     # than only against the classifier. Each of these was refused by a shipped
     # build while the suite of the day reported green.
-    ("stage changes", "Bash", {"command": "git add -A"}),
-    ("commit", "Bash", {"command": "git commit -m 'a message'"}),
+    # ("stage changes" / "commit" moved to GIT_ASK_NOW below, U-G1c: they
+    # now ask rather than run silently - see GitAskPolicyTests.)
     ("name a protected command in an argument", "Bash",
      {"command": 'grep "git push" CHANGELOG.md'}),
     ("input redirect", "Bash", {"command": "wc -l < README.md"}),
@@ -69,6 +69,15 @@ MUST_DENY = (
     ("a substitution that destroys", "Bash", {"command": "echo $(rm -rf build)"}),
     ("a redirect out of the tree", "Bash", {"command": "echo x > ../outside.txt"}),
     ("discarding working changes", "Bash", {"command": "git checkout -- ."}),
+)
+
+# U-G1c (Controller Ruling 1): local, reversible git worktree operations ask
+# rather than either running silently or stopping dead - staging and
+# committing join the sibling operations (`checkout --`, `restore`, `mv`,
+# `stash`, `switch`) that already asked.
+GIT_ASK_NOW = (
+    ("stage changes", "Bash", {"command": "git add -A"}),
+    ("commit", "Bash", {"command": "git commit -m 'a message'"}),
 )
 
 
@@ -98,6 +107,18 @@ class WorkingSessionTests(unittest.TestCase):
         blocked = [label for label, tool, payload in MUST_ALLOW
                    if _decide(tool, payload)[0] != "allow"]
         self.assertEqual(blocked, [], f"the gate would stop a working session: {blocked}")
+
+
+class GitAskPolicyTests(unittest.TestCase):
+    """Staging and committing ask now, driven through the real hook payload
+    rather than only against `classify_action` - the same reason this whole
+    file exists (see the module docstring)."""
+
+    def test_staging_and_committing_ask_rather_than_run_silently_or_stop_dead(self) -> None:
+        for label, tool, payload in GIT_ASK_NOW:
+            with self.subTest(label=label):
+                decision, _reason = _decide(tool, payload)
+                self.assertEqual(decision, "ask", label)
 
 
 class ProtectedOperationTests(unittest.TestCase):
@@ -182,6 +203,61 @@ class RefusalMessageTests(unittest.TestCase):
         the worst, and it was offered because the real remedy went unmentioned."""
         _decision, reason = _decide("Bash", {"command": "rm -rf build"})
         self.assertNotIn("disable the plugin", reason)
+
+
+class ApprovalRequiredHookTests(unittest.TestCase):
+    """U-S4 GAP fix: `.godmode-authorization-policy.json`'s
+    `approval_required` driven through the real hook payload path, not just
+    against `classify_action` directly - the whole reason this module
+    exists (see its docstring). Before this fix the policy was parsed and
+    validated but never reached the hook's own `classify_action` call, so a
+    declared category had no effect on an actual tool call.
+
+    A short branch name is used deliberately: the hook's own reason string
+    truncates combined impact text to 160 characters, and a long operation
+    string here would be clipped before the assertion below could see it -
+    that is a property of the hook's message formatting, not of this
+    feature, so the test avoids it rather than encoding it as a limit.
+    """
+
+    POLICY = PLUGIN_ROOT / ".godmode-authorization-policy.json"
+    OPERATION = "git checkout -b demo-branch"
+
+    def setUp(self) -> None:
+        self._backup = (
+            self.POLICY.read_text(encoding="utf-8") if self.POLICY.exists() else None
+        )
+
+    def tearDown(self) -> None:
+        if self._backup is None:
+            self.POLICY.unlink(missing_ok=True)
+        else:
+            self.POLICY.write_text(self._backup, encoding="utf-8")
+
+    def test_a_declared_category_asks_with_the_exact_operation_named(self) -> None:
+        self.POLICY.write_text(
+            json.dumps({"approval_required": ["git-branch-create"]}),
+            encoding="utf-8",
+        )
+        decision, reason = _decide("Bash", {"command": self.OPERATION})
+        self.assertEqual(decision, "ask")
+        self.assertIn(self.OPERATION, reason)
+        self.assertIn("git-branch-create", reason)
+
+    def test_without_the_policy_the_same_operation_is_unaffected(self) -> None:
+        self.POLICY.unlink(missing_ok=True)
+        decision, _reason = _decide("Bash", {"command": self.OPERATION})
+        self.assertEqual(decision, "allow")
+
+    def test_a_malformed_policy_file_degrades_this_call_not_the_whole_gate(self) -> None:
+        # The broad GodmodeError handler around the hook's whole decision
+        # degrades to *allow* - so a malformed policy file must never reach
+        # it; a still-dangerous operation (force push) has to keep denying
+        # even while the malformed policy makes password_required/
+        # approval_required unavailable for this one call.
+        self.POLICY.write_text("{not valid json", encoding="utf-8")
+        decision, _reason = _decide("Bash", {"command": "git push --force origin main"})
+        self.assertEqual(decision, "deny")
 
 
 if __name__ == "__main__":

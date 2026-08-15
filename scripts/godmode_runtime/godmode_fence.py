@@ -34,12 +34,37 @@ from .godmode_anchor import run_git
 from .godmode_chronicle import Chronicle
 from .godmode_constants import IGNORED_DIRECTORY_NAMES
 from .godmode_errors import ArchiveError
+from .godmode_loop import _git
 from .godmode_plan import APPROVED
-from .godmode_sentinel import POLICY_FILENAME
+from .godmode_sentinel import POLICY_FILENAME, _pinned_evaluator_hit
 
 # Patterns are separated by commas or newlines so a contract field can be
 # written either way round without the author having to know which.
 _SEPARATORS = re.compile(r"[,\n]")
+
+# A path pattern and an instrumentation-tag pattern live in the same
+# free-text field, told apart by this prefix - one declaration, not a second
+# config surface next to it that a plan would have to remember to fill in
+# too. See `declared_tag_patterns`.
+_TAG_PREFIX = "tag:"
+
+
+def _latest_approved_editable(archive: Chronicle) -> str | None:
+    """Raw `editable` text of the most recent approved plan, or `None`.
+
+    Shared by `declared_fence` and `declared_tag_patterns` so there is one
+    place that decides which plan's declaration is current - stopping at the
+    first approved plan found scanning backwards, same as before this was
+    split out, and an empty string on that plan reads as "declared nothing"
+    rather than "keep looking further back".
+    """
+    for record in reversed(archive.select(kind="plan", limit=500)):
+        data = record.get("data") or {}
+        if data.get("state") != APPROVED:
+            continue
+        raw = str((data.get("contract") or {}).get("editable", "")).strip()
+        return raw or None
+    return None
 
 
 def declared_fence(archive: Chronicle) -> list[str] | None:
@@ -49,16 +74,45 @@ def declared_fence(archive: Chronicle) -> list[str] | None:
     proposal would let the agent fence itself in - or out - by writing a plan
     nobody agreed to.
     """
-    for record in reversed(archive.select(kind="plan", limit=500)):
-        data = record.get("data") or {}
-        if data.get("state") != APPROVED:
+    raw = _latest_approved_editable(archive)
+    if raw is None:
+        return None
+    patterns = [
+        part.strip() for part in _SEPARATORS.split(raw)
+        if part.strip() and not part.strip().lower().startswith(_TAG_PREFIX)
+    ]
+    return patterns or None
+
+
+# What the debug-tag sweep looks for when a plan adds nothing of its own.
+# Small on purpose: guessing a project's instrumentation vocabulary would be
+# the auto-detection this project refuses everywhere else, so the default
+# covers the one shape this codebase itself uses and a plan extends it
+# explicitly rather than the sweep growing silently more aggressive.
+_DEFAULT_TAG_PATTERNS: tuple[str, ...] = ("[DEBUG-",)
+
+
+def declared_tag_patterns(archive: Chronicle) -> tuple[str, ...]:
+    """Instrumentation-tag substrings the completion sweep flags.
+
+    Always includes the default tuple; a plan adds to it, never replaces it,
+    by writing `tag:<pattern>` into the same editable field a fence already
+    reads - `declared_fence` reads the same source and skips these entries,
+    so one field carries both declarations without either misreading the
+    other's.
+    """
+    raw = _latest_approved_editable(archive)
+    if not raw:
+        return _DEFAULT_TAG_PATTERNS
+    extra: list[str] = []
+    for part in _SEPARATORS.split(raw):
+        stripped = part.strip()
+        if not stripped.lower().startswith(_TAG_PREFIX):
             continue
-        raw = str((data.get("contract") or {}).get("editable", "")).strip()
-        if not raw:
-            return None
-        patterns = [part.strip() for part in _SEPARATORS.split(raw) if part.strip()]
-        return patterns or None
-    return None
+        tag = stripped[len(_TAG_PREFIX):].strip()
+        if tag and tag not in _DEFAULT_TAG_PATTERNS and tag not in extra:
+            extra.append(tag)
+    return _DEFAULT_TAG_PATTERNS + tuple(extra)
 
 
 def _relative(path: str, project_root: Path) -> str | None:
@@ -365,40 +419,31 @@ def fence_verdict(archive: Chronicle, path: str, *,
 # already builds (`atlas.build(project).affected(path)` - reused here, not
 # rebuilt), and said whether it is the sole carrier of a still-open
 # obligation. Requirement-driven like B3-5: undeclared, this stays advisory;
-# declared, it blocks. A pin always denies, whatever the policy says.
+# declared, it blocks.
+#
+# "A pin always denies" means the SHIPPED U-B2 evaluator-pin store
+# (`godmode_sentinel.pinned_evaluators`/`_pinned_evaluator_hit`), not a
+# second one invented here - an earlier draft of this gate shipped its own
+# `.godmode-pins.json`, which would have been a second, independently
+# maintained pin mechanism sitting beside the one U-B2 already landed
+# (GAP-2's own duplicate-authority drift). There is exactly one pin store in
+# this runtime; this gate reads it, the same way the edit/redirect/mv
+# branches in `_categorize` already do.
 # -----------------------------------------------------------------------
-
-PIN_CONFIG = ".godmode-pins.json"
-
-
-def declared_pins(project_root: Path | str) -> list[str]:
-    """Globs that may never be deleted, however this gate's policy reads.
-
-    Its own small file rather than a section of BOUNDARY_CONFIG: a pin is a
-    standing fact about a file, not a per-task fence or a UI surface, and
-    folding it into either would make one file answer two unrelated
-    questions - the drift GAP-2 names.
-    """
-    config = Path(project_root) / PIN_CONFIG
-    if not config.exists():
-        return []
-    payload = json.loads(config.read_text(encoding="utf-8"))
-    return [str(p).strip() for p in (payload or {}).get("pinned", []) if str(p).strip()]
-
-
-def is_pinned(project_root: Path | str, path: str) -> bool:
-    relative = _relative(path, Path(project_root))
-    if relative is None:
-        return False
-    return any(_matches(relative, pattern) for pattern in declared_pins(project_root))
 
 
 def _deletion_gate_declared(project_root: Path | str) -> bool:
     """Whether the operator's policy declares the deletion-provenance gate.
 
     Reuses sentinel's own tighten-only `POLICY_FILENAME` rather than adding a
-    fourth small config file for one more operator-declared fact - the same
+    third small config file for one more operator-declared fact - the same
     choice B3-5 made for the license gate, and for the same reason.
+    `CapabilityBroker._policy()`/`local_authorization_policy()` validate a
+    fixed whitelist of keys (`password_required`, `approval_required`,
+    `capability_ttl_seconds`, `gate_mode`) and would silently drop this one,
+    so it is read directly here rather than through either - unknown keys in
+    the same file are ignored by that whitelist, not rejected, so the two
+    readers coexist over one file without conflict.
     """
     path = Path(project_root) / POLICY_FILENAME
     try:
@@ -461,19 +506,27 @@ def deletion_verdict(archive: Chronicle, path: str, *, project_root: Path | str)
     scratch file is unaffected whatever the policy says, because nothing here
     has a provenance obligation to check. The pin check runs first and
     nothing below it can override its refusal - "the pin store outranks
-    everything."
+    everything" means the one shipped in U-B2
+    (`godmode_sentinel.pinned_evaluators`), read here with the same
+    `_pinned_evaluator_hit(path, project_root, archive)` helper the edit/mv/
+    redirect branches of `_categorize` already call, so a path pinned there
+    is denied here too rather than needing its own, second-guessable notion
+    of "pinned".
     """
     root = Path(project_root)
     relative = _relative(path, root)
     if relative is None:
         return {"allowed": True, "gate": "outside-project", "path": str(path),
                 "detail": "outside the project; this gate is a statement about this project"}
-    if is_pinned(root, relative):
+    pinned = _pinned_evaluator_hit(relative, root, archive)
+    if pinned is not None:
         return {
             "allowed": False, "gate": "pinned", "path": relative,
-            "detail": f"'{relative}' is pinned; pinned files stay denied regardless of "
-                      "what any policy declares",
-            "remedy": f"unpin it deliberately in {PIN_CONFIG} before deleting",
+            "detail": f"'{relative}' is a pinned evaluator; pinned files stay denied for "
+                      "deletion regardless of what any policy declares",
+            "remedy": "unpin explicitly with the password (`godmode protect --unpin "
+                      f"{relative}`) before deleting, or the numbers it produced stop "
+                      "meaning anything",
         }
     if not _is_tracked(root, relative):
         return {"allowed": True, "gate": "untracked", "path": relative,
@@ -499,3 +552,195 @@ def deletion_verdict(archive: Chronicle, path: str, *, project_root: Path | str)
                       f"{relative!r} --history-read \"...\" --sole-carrier \"...\"`",
         }
     return {"allowed": True, "gate": "attested", "path": relative, "precheck": attested}
+# --- Surgical-diff completion gate (U-B1) -----------------------------------
+#
+# `fence_verdict` answers "may this edit happen" at the moment a tool
+# announces a `file_path`, which is a boundary every other route around it
+# slips past: a shell command that rewrites a file in passing, an edit made
+# before the plan was approved, work done while the hook was disabled. The
+# boundary check cannot see any of that; only the diff that resulted can.
+#
+# So `completion_audit` asks the same fence three separate questions of the
+# diff itself, once `git diff --unified=0 HEAD` has been parsed into hunks:
+# does this hunk land inside the declared set; if not, does it only remove
+# lines (someone else's code is not the finder's to delete); and, regardless
+# of the fence entirely, does an added line carry an instrumentation tag that
+# should not survive to a claim of done.
+
+_HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+# `git diff --unified=0` never emits a `@@ ... @@` header for a binary file -
+# only this line, with the two path spellings the create/modify/delete cases
+# each use in place of `---`/`+++`. Without matching it, a binary change is
+# invisible to every check below it: not "clean", just never seen.
+_BINARY_HEADER = re.compile(r"^Binary files (.+) and (.+) differ$")
+
+
+def _diff_path(spelled: str) -> str | None:
+    """A `---`/`+++` path as `declared_fence` would spell it, or `None` for
+    `/dev/null` (the added or removed side of a create/delete diff)."""
+    spelled = spelled.strip().split("\t", 1)[0]
+    if spelled == "/dev/null":
+        return None
+    if spelled.startswith(("a/", "b/")):
+        spelled = spelled[2:]
+    return spelled.replace("\\", "/")
+
+
+def _diff_hunks(diff_text: str) -> dict[str, list[dict[str, Any]]]:
+    """`git diff --unified=0 HEAD` output, parsed into hunks per file.
+
+    Pure stdlib text parsing - no `git diff --numstat` shortcut exists that
+    hands back per-hunk line numbers, and those are what every question this
+    gate asks needs: which lines were removed with nothing added back, and
+    which added line a residue finding has to name by file and line.
+
+    A binary file gets one hunk-less entry marked `"binary": True` - it never
+    has `@@ ... @@` hunks of its own, but omitting it from `files` entirely
+    would make an out-of-fence binary write invisible rather than clean.
+    """
+    files: dict[str, list[dict[str, Any]]] = {}
+    old_side: str | None = None
+    hunks: list[dict[str, Any]] | None = None
+    current: dict[str, Any] | None = None
+    for line in diff_text.splitlines():
+        if line.startswith("diff --git "):
+            old_side = None
+            hunks = None
+            current = None
+            continue
+        if line.startswith("--- "):
+            old_side = _diff_path(line[4:])
+            continue
+        if line.startswith("+++ "):
+            path = _diff_path(line[4:]) or old_side
+            hunks = files.setdefault(path, []) if path else None
+            current = None
+            continue
+        binary = _BINARY_HEADER.match(line)
+        if binary:
+            path = _diff_path(binary.group(2)) or _diff_path(binary.group(1))
+            if path:
+                files.setdefault(path, []).append({
+                    "old_start": 0, "new_start": 0, "added": [], "removed": [],
+                    "binary": True,
+                })
+            current = None
+            continue
+        match = _HUNK_HEADER.match(line)
+        if match and hunks is not None:
+            current = {
+                "old_start": int(match.group(1)),
+                "new_start": int(match.group(2)),
+                "added": [],
+                "removed": [],
+            }
+            hunks.append(current)
+            continue
+        if current is None:
+            continue
+        if line.startswith("+"):
+            current["added"].append((current["new_start"] + len(current["added"]), line[1:]))
+        elif line.startswith("-"):
+            current["removed"].append((current["old_start"] + len(current["removed"]), line[1:]))
+    return files
+
+
+def _working_diff(project_root: Path) -> str:
+    return _git(Path(project_root), "diff", "--unified=0", "HEAD")
+
+
+def completion_audit(archive: Chronicle, project_root: Path | str) -> dict[str, Any]:
+    """Every hunk in the working diff, traced to the fence that authorised it.
+
+    Three finding kinds, asked of the same parsed diff:
+
+    * `out-of-fence-hunk` - a hunk that adds or changes lines in a file the
+      declared set does not cover, or a binary file changed outside it (`git
+      diff` carries no hunk header for binary content, so its `hunks` field
+      reads `"binary"` rather than a count);
+    * `unauthorized-deletion` - a hunk that only removes lines, in a file the
+      declared set does not cover: pre-existing code outside the plan's own
+      scope is not the plan's to remove, whatever the reason;
+    * `instrumentation-residue` - an added line carrying a registered debug
+      tag, checked against every file regardless of the fence, because a
+      stray trace print left in a completed change is not made acceptable by
+      landing somewhere the plan was allowed to touch.
+
+    Undeclared means unenforced, same as `fence_verdict`: with no approved
+    plan's editable set to check a hunk against, the first two kinds report
+    nothing rather than refusing every project that predates this gate.
+    """
+    root = Path(project_root)
+    patterns = declared_fence(archive)
+    files = _diff_hunks(_working_diff(root))
+    tag_patterns = declared_tag_patterns(archive)
+
+    findings: list[dict[str, Any]] = []
+
+    if patterns is not None:
+        for path, hunks in files.items():
+            verdict = fence_verdict(archive, path, project_root=root)
+            if verdict["allowed"]:
+                continue
+            binary = [h for h in hunks if h.get("binary")]
+            text_hunks = [h for h in hunks if not h.get("binary")]
+            deletion_only = [h for h in text_hunks if h["removed"] and not h["added"]]
+            other = [h for h in text_hunks if h["added"]]
+            if deletion_only:
+                findings.append({
+                    "kind": "unauthorized-deletion",
+                    "path": path,
+                    "hunks": len(deletion_only),
+                    "detail": f"'{path}' has {len(deletion_only)} hunk(s) that only remove "
+                              "lines, and the plan's editable set does not cover it",
+                    "remedy": "mention, don't delete: pre-existing code outside the "
+                              "declared set is not yours to remove - restore it, or widen "
+                              "the fence deliberately and say why the removal was needed",
+                })
+            if other:
+                findings.append({
+                    "kind": "out-of-fence-hunk",
+                    "path": path,
+                    "hunks": len(other),
+                    "detail": f"'{path}' changed ({len(other)} hunk(s)) but the plan's "
+                              f"editable set ({', '.join(patterns)}) does not cover it",
+                    "remedy": verdict["remedy"],
+                })
+            if binary:
+                # No hunk count exists to report - a binary diff carries no
+                # `@@ ... @@` header at all - so the count itself says what
+                # kind of change this was rather than pretending to a number.
+                findings.append({
+                    "kind": "out-of-fence-hunk",
+                    "path": path,
+                    "hunks": "binary",
+                    "detail": f"'{path}' changed (binary) but the plan's editable set "
+                              f"({', '.join(patterns)}) does not cover it",
+                    "remedy": verdict["remedy"],
+                })
+
+    for path, hunks in files.items():
+        for hunk in hunks:
+            for line_no, text in hunk["added"]:
+                hit = next((tag for tag in tag_patterns if tag in text), None)
+                if hit is None:
+                    continue
+                findings.append({
+                    "kind": "instrumentation-residue",
+                    "path": path,
+                    "line": line_no,
+                    "tag": hit,
+                    "detail": f"{path}:{line_no} adds a line carrying '{hit}' - "
+                              "instrumentation left behind in a change claimed complete",
+                    "remedy": f"remove the '{hit}' line at {path}:{line_no}, or if it "
+                              "belongs, register the tag deliberately rather than "
+                              "leaving it as a stray marker",
+                })
+
+    return {
+        "findings": findings,
+        "changes_examined": len(files),
+        "fence": patterns,
+        "verdict": "every-hunk-traces" if not findings else "surgical-diff-findings",
+    }

@@ -9,6 +9,14 @@
         34
       ],
       [
+        "docs/FIXED-REGISTRY.md",
+        1
+      ],
+      [
+        "OPERATOR.md",
+        1
+      ],
+      [
         "GODMODE.md",
         1
       ],
@@ -31,6 +39,10 @@
         7
       ],
       [
+        "docs/FIXED-REGISTRY.md",
+        1
+      ],
+      [
         "GODMODE.md",
         34
       ],
@@ -43,14 +55,30 @@
         23
       ],
       [
+        "OPERATOR.md",
+        1
+      ],
+      [
         "GODMODE.md",
         42
       ]
     ],
     "prepare a release: changelog, version surfaces, and docs": [
       [
+        "OPERATOR.md",
+        1
+      ],
+      [
+        "docs/RELEASE-CHECKLIST.md",
+        1
+      ],
+      [
         "GODMODE.md",
         34
+      ],
+      [
+        "docs/FIXED-REGISTRY.md",
+        1
       ],
       [
         "GODMODE.md",
@@ -63,10 +91,6 @@
       [
         "GODMODE.md",
         42
-      ],
-      [
-        "GODMODE.md",
-        23
       ]
     ]
   }

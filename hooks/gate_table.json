@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "generated_from": "3236f0b560bc",
+  "floor": {
+    "claude-code": [
+      "git status",
+      "git log",
+      "git diff",
+      "git show",
+      "git branch",
+      "git ls-files",
+      "git rev-parse",
+      "git rev-list",
+      "git remote -v",
+      "git shortlog",
+      "git describe",
+      "git blame"
+    ]
+  },
+  "read_heads": [
+    "ls",
+    "cat",
+    "head",
+    "tail",
+    "wc",
+    "grep",
+    "rg",
+    "find",
+    "pwd",
+    "which",
+    "echo",
+    "sort",
+    "uniq",
+    "cut",
+    "tr",
+    "file",
+    "stat",
+    "du",
+    "df"
+  ],
+  "mutation_heads": {
+    "filesystem-mutation": [
+      "rm",
+      "rmdir",
+      "rd",
+      "del",
+      "remove-item",
+      "new-item",
+      "set-content",
+      "add-content",
+      "out-file",
+      "clear-content",
+      "rename-item"
+    ],
+    "process-control": [
+      "kill",
+      "killall",
+      "pkill",
+      "taskkill",
+      "stop-process",
+      "stop-service"
+    ]
+  },
+  "db_clients": [
+    "psql",
+    "mysql",
+    "sqlite3",
+    "redis-cli",
+    "mongosh",
+    "mariadb",
+    "pg_dump",
+    "pg_restore"
+  ],
+  "git_ask": [
+    "git push",
+    "git merge",
+    "git rebase",
+    "git reset",
+    "git clean",
+    "git tag v1.0",
+    "git checkout main",
+    "git switch feature",
+    "git branch -d old",
+    "git worktree remove wt",
+    "git worktree prune",
+    "git worktree move wt new",
+    "git stash drop",
+    "git stash pop",
+    "git stash clear",
+    "git stash apply",
+    "git stash push",
+    "git stash save",
+    "git stash branch name",
+    "git stash create",
+    "git stash store abc",
+    "git remote add name url",
+    "git remote remove name",
+    "git remote rm name",
+    "git remote rename old new",
+    "git remote set-url name url",
+    "git remote set-head name branch",
+    "git remote set-branches name branch",
+    "git remote prune name",
+    "git remote update",
+    "git restore file",
+    "git add file",
+    "git commit -m msg"
+  ],
+  "git_refuse": [
+    "git push --force",
+    "git push --force-with-lease",
+    "git reset --hard",
+    "git clean --force",
+    "git branch -D old"
+  ],
+  "find_mutation_flags": [
+    "-delete",
+    "-exec",
+    "-execdir",
+    "-ok",
+    "-okdir"
+  ],
+  "flag_denylist": {
+    "git log": [
+      "--output",
+      "-o"
+    ],
+    "git diff": [
+      "--output",
+      "-o"
+    ],
+    "git show": [
+      "--output",
+      "-o"
+    ]
+  },
+  "output_flags_by_head": {
+    "git": [
+      "--output"
+    ],
+    "sort": [
+      "-o",
+      "--output"
+    ]
+  }
+}

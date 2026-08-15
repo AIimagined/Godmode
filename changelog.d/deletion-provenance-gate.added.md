@@ -13,7 +13,10 @@ the file's deletion is refused until `godmode fence delete-precheck --path
 reverse-impact traversal (`atlas.build(project).affected(path)`) rather than
 rebuilding it, so the record carries what traversal actually found.
 
-A new `.godmode-pins.json` names files that stay denied for deletion
-regardless of policy or attestation - the pin store outranks everything
-else this gate checks. Deleting an untracked scratch file is unaffected
-either way: nothing about it carries a provenance obligation to check.
+The shipped U-B2 evaluator-pin store (`godmode_sentinel.pinned_evaluators`)
+outranks this gate entirely: a pinned file's deletion stays denied
+regardless of policy or attestation, checked via the same
+`_pinned_evaluator_hit` helper the edit/mv/redirect branches of the
+classifier already use - not a second, independently maintained pin
+mechanism. Deleting an untracked scratch file is unaffected either way:
+nothing about it carries a provenance obligation to check.

@@ -6,6 +6,891 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.2.12] - 2026-08-15
+
+### Added
+
+- Anchored-metric citation contracts (E9, U-T3): `register_metric_contract`/`godmode metric-contract register --name <name> --anchor <regex>` declares the one output shape a numeric claim about `<name>` may cite, stored as a `decision` record under `metric-contract:<name>`. `_citation_resolves` gains a `line:<name>:<value>` citation kind, resolving only when a contract is registered for `<name>` and the reconstructed `"<name>:<value>"` text matches its anchor. `record_claim` cross-checks any registered metric name appearing in the (markdown-emphasis-stripped) claim text against the first number in that text: a `line:` citation whose value disagrees downgrades naming both numbers ("the cited line says X, the claim says Y"); an unregistered metric name gets no friction from this at all.
+
+  Anchor validation is two independent layers, not one. Registration checks `re.compile` succeeds, a 200-character length cap, and (fix round 1) a scan for the named nested-quantifier shapes (`(X+)+`, `(X*)+`, `(X+)*`, `(X*)*`, and the `{m,n}` forms) that risk catastrophic backtracking - a review round demonstrated `(a+)+b` compiles fine and clears the length cap, yet hangs the interpreter once matched against a crafted `line:` value at grading time, because the length cap bounds the anchor's own length, not the length of the text later matched against it. The second, independent layer closes that gap directly: the matched VALUE half of a `line:` citation is capped at 64 characters before any regex runs at grading time, holding even for a shape the registration-time scan misses.
+- Capability coverage matrix (13c) and this repository's own dogfooding
+  (U-S3). `docs/CAPABILITY-COVERAGE.md` ships one table naming eight
+  capability classes in godmode's own vocabulary - session continuity, claim
+  admissibility, process discipline, minimality pressure, approval gating,
+  content trust, session burn measurement, and prose-restyling/token-burn
+  reduction as an explicit non-claim - with honest statuses: `covered` only
+  where surface pointers resolve to shipped code and tests, `partial` where
+  part of the class is mechanized and the rest is a stated boundary,
+  `not-claimed` where it is a scope boundary rather than a gap.
+  `godmode_reconcile.reconcile_capability_coverage` holds every row to the
+  same both-directions discipline as the capability register.
+
+  Dogfooding: all five of this repository's live HARD charter rules are now
+  provably planted (`godmode capability register` archive state,
+  `assess.hard_unplanted == []`), each against the specific test that already
+  exercised the guarded line rather than an inferred break. `init --roles`
+  scaffolded the eight missing authority-document roles; every stub now
+  carries a real paragraph about this repository's own state, decisions,
+  invariants, inventory, lessons, operator profile, sprint truth, and release
+  checklist (`assess.missing_roles == []`). Four of the eight role documents
+  (state, decisions, lessons, sprint-truth) are gitignored by this
+  repository's existing proprietary-content convention, so `missing_roles`
+  and the eval charter/ranking snapshots are, honestly, machine-local facts
+  here - the charter/ranking snapshots in `evals/fixtures/` are re-baselined
+  against the committed-only role documents so a fresh clone still reads
+  `routing-sound`.
+- Capability register reconciled to code (U-S2): `capabilities.json` at the
+  repository root enumerates every capability id from the private sprint
+  ledger (`C-01`…`C-81`, ids and neutral one-line statements only, honest
+  gaps recorded where a numbered id has no retrievable statement) with a
+  status (`built`/`partial`/`unbuilt`/`rejected`) and, for `built`/`partial`
+  entries, the `file:`/`test:` pointers that back the claim.
+
+  `godmode_reconcile.reconcile_capabilities` holds the register to the same
+  both-directions discipline as the existing guard-citation reconciler: a
+  `built` entry whose pointer no longer resolves is dead, and an
+  `unbuilt`/`rejected` entry whose pointer DOES resolve is a status that went
+  stale the moment the code landed. `godmode assess` now surfaces the
+  `unbuilt` ids as `capability_debt`, and `godmode capabilities --reconcile`
+  runs the check directly, exiting non-zero on drift.
+- Two-minute terminal demo script (U-E9): `docs/DEMO.md` walks five real
+  commands in order - `godmode scenarios --brief` (23 staged attack/failure
+  shapes, live), the 142-command regression corpus story
+  (`tests/fixtures/gate_corpus.json` +
+  `tests.test_gate_corpus.GateCorpus.test_every_entry_matches_expected`),
+  the measured gate numbers quoted verbatim from
+  `docs/releases/RELEASE_NOTES_v0.2.11.md` with each figure's own basis
+  named beside it, one `godmode verdict record` walk-through showing a
+  confirmed and a refuted disposition against the same witness, and
+  `godmode init --detect` on a fixture repo. Every command shown is a real
+  CLI surface, pinned by `tests/test_demo_doc.py`, which parses the doc's
+  fenced commands and asserts each `godmode <subcommand>` resolves in the
+  console parser. No causal language ("saves", "prevents") and no session
+  provenance beyond neutral "real sessions" - the same discipline U-E1's
+  denylist already holds ROI output to.
+- Differential-evidence detector (U-E3): mechanizes a private-ledger lesson (§4.8a/L-267) - when two comparable states exist, a root-cause claim without the differential is inadmissible. New record kind `differential` (`{subject, a_ref, b_ref, delta, method}`, `delta` capped at 20 items of 160 characters each at append) via `record_differential`/`godmode differential record --subject ... --a <ref> --b <ref> --delta ... --method read|cmd:<...>`; a `diff:<seq>` citation resolves iff the record exists AND both `a_ref`/`b_ref` also resolve, so a deleted record or a dangling ref stops the citation resolving. `record_claim`'s detector fires only when root-cause vocabulary (`ROOT_CAUSE_VOCAB`, plus the pre-existing recognizer) is found OUTSIDE quotes and code spans, and only once the archive holds two or more comparable-state records (`checkpoint`/`verdict`/`metric`) sharing the claim's salient terms; it then requires a RESOLVING `diff:` or `verdict:` citation, downgrading and naming the comparable sequences otherwise. No comparable states leaves the claim untouched - absence of the instrument is a stated gap, never a penalty, the same discipline U-T2 already applies to the red-before-green check.
+- Disposition register with superseded states and rejection precedent (U-V2):
+  a closed-enumeration register (`established`, `superseded`, `refuted`,
+  `worse-than-baseline`, `matched-baseline`, `rejected-precedent`, `open`) over
+  `decision` records whose subject is `reg:<domain>:<key>`. The register is a
+  derived view, never a stored second copy - `register_view()` folds every
+  record for a domain into latest-state-per-key with full lineage, and an
+  unlisted key reads as the explicit named default `open`, not an error and
+  not `None`.
+
+  Every non-open entry needs at least one `witness:`/`verdict:`/`file:`
+  evidence citation, refused at `set_state()` and again at the archive seam
+  itself (`godmode_invariants._register_invariants`, seeded eagerly into
+  `Chronicle.append()`'s `KIND_INVARIANTS`) so a raw append that bypasses this
+  module cannot slip an unevidenced or unlisted-state entry past either.
+  Transitions are legal-only: `open` reaches anything; every closed
+  disposition's only way back to `established` is a record naming
+  `supersedes:<seq>` that cites the exact record it replaces -
+  `established -> superseded` and `rejected-precedent -> established` both
+  need it. `set_state()` refuses an illegal or wrongly-cited transition at
+  write time; `conflict_findings()` detects the same violations at read time
+  for a hand-appended record that skipped `set_state()` - a HARD halt finding,
+  never a silent latest-wins.
+
+  `precheck` now consults `rejected_precedents()`: a task whose normalized
+  terms name a `rejected-precedent` key across any domain is told the
+  precedent's sequence and the way through - cite it and supersede it, or drop
+  the work. `godmode register set|supersede|show`.
+- Two docs-lint advisories, absorbed from two lessons (U-E11): `stale-open-marker`
+  flags a scanned doc line carrying an open-status marker (`pending`, a bare
+  to-do marker, `open item`, `not started`, `in progress` - a small closed
+  tuple, word-bounded) with no `YYYY-MM-DD` verification date on the same or an
+  adjacent line, exempt inside fenced code blocks. `title-collision` flags two or more LIVING docs
+  whose first heading normalizes to the same term set (via
+  `godmode_precheck._terms`, reused rather than duplicated) with neither
+  carrying a `supersedes`/`superseded by` pointer, naming every colliding path;
+  archive/changelog docs are exempt through the same `_HISTORICAL` pattern the
+  figure and self-pin checks already use.
+
+  Both ride `lint_docs`'s `prose_advisories` seam alongside the charter-prose
+  checks: `severity: "advisory"`, never joining `findings`/`high_severity`/
+  `verdict`, so neither can fail `docs --lint`.
+
+  Population sweep on this repository surfaced real, honest advisories rather
+  than a clean scan, all accepted rather than fixed (out of this unit's file
+  scope): twelve `stale-open-marker` hits - ten in historical prose
+  (`CHANGELOG.md`, `docs/releases/RELEASE_NOTES_v0.2.10.md` and `.../v0.2.11.md`)
+  or SKILL.md example/behavior text (`skills/godmode-repair/SKILL.md`,
+  `skills/godmode-continuity/SKILL.md`) using the marker words as vocabulary,
+  not as literal open items, and two self-referential ones right here in this
+  fragment's own description of the marker tuple; and one `title-collision`
+  group - `GODMODE.md`, `llms.txt`, `locales/hi/GODMODE.md`, and
+  `skills/godmode/SKILL.md` all title themselves plainly "Godmode" - a
+  translation, an SEO summary, and a skill entry point sharing one common
+  word, not a stale duplicate needing a supersedes pointer. `docs --lint`'s
+  blocking verdict on this repository remains `clean` (exit 0) either way,
+  since both checks are advisory only.
+- Versioned eval registry + grader vocabulary (U-S1).
+
+  Scenario coverage (`godmode_scenarios.py`) never named which version of a
+  staging function produced a "caught" result, so an edited scenario and an
+  untouched one looked identical in the report. Every scenario now carries a
+  `name.local.vN` id and a content digest (`sha256` of the staging function's
+  own source, via `inspect.getsource`) recorded alongside its outcome. A
+  pinned registry (`SCENARIO_DIGEST_REGISTRY`) freezes the digest each id was
+  last reviewed at; a scenario whose body changed with its version left alone
+  surfaces as a `digest-drift` blocking finding in `run()`'s `registry` field
+  - caught by planting exactly that edit and watching the finding appear. The
+  registry's population is grows-only in both directions: a scenario with no
+  registry entry (`unregistered-scenario`) and a registry entry naming a
+  scenario no longer in `SCENARIOS` (`orphaned-registry-entry`) are both
+  blocking findings too, so a scenario can neither join unchecked nor leave a
+  stale pin behind. `godmode scenarios --brief` - the literal CI gate - now
+  exits nonzero on any blocking registry finding, not only on a missed catch.
+
+  `godmode_graders.py` is new: a closed vocabulary of deterministic
+  comparators (`match` with prefix/any-of, `includes`, `fuzzy` containment in
+  either direction after normalisation, `json_match`) that eval definitions
+  can name instead of re-inventing string comparisons per skill. `json_match`
+  fails closed - invalid JSON on either side never matches, even when both
+  sides are byte-identical malformed input. `godmode_evals.py`'s
+  behaviour-assertion checks can now declare a `grader` field to use this
+  vocabulary directly, and a new `compare_eval_results` refuses to diff two
+  result records that carry different ids: "scores are comparable only within
+  an id."
+- Protected-evaluator hash pins (U-B2): `godmode protect --pin <path>` freezes a file - normally the evaluator/grader a change is judged against - so the measuring instrument can never be optimized along with the code it measures. Pin records live in the archive (hash-chained, `kind="pin"`, shape-checked by a new `godmode_invariants` validator), which is authoritative; `.godmode-protected.json` is a convenience view nothing ever reads back to decide anything. `_categorize`'s edit branch (`godmode_sentinel.py`) checks pins before returning a category at all - an Edit/Write payload (or a shell redirect) at a pinned path is a HARD `pinned-evaluator-mutation` finding at R5, denied outright at the hook and checked before the scope fence even runs, so a pin always outranks a fence allowance. Unpinning is the one operation that can defeat the mechanism and is gated the same way a forced push is: `godmode protect --unpin <path>` classifies as `evaluator-unpin` (R5), refused without a capability, and honours a staged one the same way every other refusal does (`godmode authorize stage --operation "godmode protect --unpin <path>"`). `godmode_integrity.pin_drift` catches what the hook cannot see: a pinned file mutated out of band (a plain filesystem write, a shell command the hook never gated) is a blocking finding naming the pin, and a hand-edit of `.godmode-protected.json` - adding, removing, or altering a pin outside `protect` - is caught the same way, since the view is regenerated byte-for-byte on every real pin/unpin and the monitor compares against what the archive's current pin set would write. `godmode protect --list` reports the current pin set. Fix-round-1 (task-7 review): `mv`/`cp`/`Move-Item`/`Copy-Item` were entirely absent from the sentinel's mutation vocabulary and silently overwrote (or renamed away) a pinned evaluator with zero confirmation - they now write their DESTINATION argument (source arguments are checked for a pin hit too, since renaming a pinned path away defeats the mechanism the same way overwriting it does; sources get no other write-style check, reading is ordinary), escalating rather than guessing for a `-t`/`--target-directory` form. `CapabilityBroker.issue` (reached through `stage`) now also resolves against the broker's own project rather than the process's cwd, closing the same gap `_classify` was fixed for but that `issue`'s own direct `classify_action` call had kept open. `pin_evaluator`/`pin_drift` cap and stream their hash the same way `godmode_lens.py`'s inventory sweep already does (`MAX_HASH_BYTES`), rather than loading a pinned file whole into memory.
+- Commit-linked experiment ledger with epsilon adjudication (U-R3): each
+  `run_experiment()` call is one cycle, and a next cycle is now REFUSED
+  until the one before it has a `verdict` record (verdict-before-next-cycle,
+  enforced at the API; `godmode_loop.unadjudicated_experiment_cycles` is the
+  read-time half, for a raw append that bypasses `run_experiment` entirely -
+  wired into `analyze()`). New `godmode_guardrails.record_experiment_verdict`
+  adjudicates a cycle from `{metric, before, after, epsilon}`: improvement
+  `>= epsilon` keeps, short of that discards, unless the result is exactly
+  flat AND declared `simpler=True` (`keep-simpler`) - a regression is never
+  rescued by "simpler" alone. Every verdict is commit-linked (`run_git
+  rev-parse HEAD`, `run_git` from `godmode_anchor`). A declared `max_cycles`
+  in `.godmode-experiment.json` bounds the series itself: exhausting it with
+  no explicit completion claim on record writes a closing `verdict` with
+  `run_state: "truncated"` and refuses to run again - loop exhaustion is
+  never read as completion (E78's positive completion sentinel); a
+  completion claim, once made, is audited by U-V1's own unmodified
+  citation-grading (`godmode_attest._citation_resolves`), not reimplemented
+  here. `acquitted_by="self"` (the default) never sets `disposition`, so a
+  self-graded cycle can never trip the archive-seam invariant; a caller
+  asserting `acquitted_by="independent"` is held to the same
+  `godmode_invariants._verdict_invariants` rules as every other verdict kind
+  - a truncated (exhausted or budget-cut) cycle can still never be recorded
+  "confirmed". CLI: `godmode experiment` is now `experiment run` /
+  `experiment verdict` (was a single flat command).
+- Fabrication-pattern detector catalog and a minimality report (13b).
+  `capabilities.json` gains a `detectors` section: every live mistake-class
+  detector in `godmode_mistakes.py` (`M1`, `M2`, `M6`, `M8`, `M13`-`M22` -
+  the sparse numbering is real; M3, M4, M5, M7, M9-M12 were never
+  implemented, and the catalog records that gap rather than hiding it) with
+  its function, version, and the fabrication family it targets.
+  `godmode_reconcile.reconcile_detectors` checks each id resolves to a real
+  function and a real guard test; a detector added to the source without a
+  matching catalog entry fails the population check.
+
+  `godmode minimality` is new: one command aggregating four existing surfaces
+  - atlas duplicate/orphan symbols, atlas speculative seams, census
+  unexercised surfaces, and charter decay - into a single ranked report with
+  counts and file pointers. Aggregation only; no new analysis.
+- Graduated starting profiles (U-E8): `godmode init --profile novice|standard|strict` sets a STARTING posture on the existing tighten-only authorization ratchet, never a different one. `novice` widens `.godmode-authorization-policy.json`'s `approval_required` to `git-branch-create` and `worktree-file-mutation`, so an ordinary file edit or new branch asks instead of proceeding silently. `standard` manages no policy key at all and writes nothing - a pinned no-op, identical on disk to omitting `--profile`. `strict` widens `approval_required` to `release-or-external-write` and prints a `password_required` suggestion for the same category without ever writing it, the same detect-then-promote split `init --detect` already uses. Every changed line is emitted with its provenance (`"(profile: novice)"`) so the operator sees exactly what was set. No profile application may remove an `approval_required` category already explicit in the policy file, whether a prior profile or a hand edit put it there: `godmode_profile.apply_profile` refuses, naming the category, rather than silently loosening it.
+- Observe mode + ROI digest (U-E7): a policy-file posture (`"gate_mode": "observe"` in `.godmode-authorization-policy.json`, read through the existing `local_authorization_policy` seam and validated to that exact spelling - any other value refuses loudly rather than being silently ignored or silently entered by typo) under which the full hook (`godmode_session_hook.py`) still classifies every operation exactly as it always did - ceilings, the watchdog, the classifier's ask/deny split, the design boundary, the scope fence - but converts every resulting deny/ask into an archive record (the existing `refusal` kind, with `observed: true` and `would_have: "deny"|"ask"` added) plus a `systemMessage` advisory, and never a `permissionDecision`. Fail-open is unaffected: a malformed or unreadable `gate_mode` degrades to enforcement, the same way `password_required`/`approval_required` already do. The fast gate (`godmode_gate_fast.py`) is untouched - its allow path was already silent, and every escalation reaches the full hook, where this conversion already applies. Entry has exactly one door: a deliberate policy-file edit. `init --profile` (U-E8) stays enforcement-only and never touches `gate_mode`. The session-start brief announces observe mode explicitly ("gate in OBSERVE mode - nothing will be blocked") whenever it is active, and `godmode assess` surfaces the posture as a stated `gate_mode` field plus a `medium` finding.
+
+  `godmode roi --digest` renders the would-have-caught view: `would_have_denied`/`would_have_asked` counts by category, folded from observed refusal records only, with `seq:` basis references - same causal-denylist discipline as U-E1's `roi_report` (`render_digest` is checked against `CAUSAL_DENYLIST` too). `roi_report`'s `gate.denied` excludes observed refusals on purpose - that bucket counts real enforcement outcomes, and an event that was never actually blocked must not inflate it.
+
+  Decision, documented and pinned by test: `stage_from_refusal` never stages an `observed: true` refusal by default - nothing was actually blocked when it was written, so there is no live escalation for a staged capability to answer; `--nth` skips past observed records to the nearest real one.
+- Cross-project precedent exchange, file-carried and opt-in (U-E2): `godmode
+  precedent export --domain <d> --out <file>` writes one project's
+  `reg:<domain>:*` register entries (key, state, evidence collapsed to bounded
+  statements) plus an origin fingerprint (`sha256(project-root basename +
+  archive genesis hash)[:16]`) as one self-verifying JSON file, whole-file
+  `content_hash` computed over canonical JSON. The operator carries the file -
+  that IS the transport; no network, no daemon.
+
+  `godmode precedent import <file>` verifies the content hash before writing
+  anything, then appends the entries into a SEPARATE namespace
+  (`reg-foreign:<origin-fp>:<key>`), never `reg:<domain>:<key>` itself. A hash
+  mismatch or malformed file is refused with nothing partially imported, and
+  `binding` is force-set to `False` on every imported record regardless of
+  what the file claims - a foreign precedent can never arrive binding, even
+  from a hand-crafted file whose own hash is genuinely valid.
+
+  Foreign precedents are advisory everywhere: `register(archive, domain,
+  foreign=True)` reads them separately from the local, binding
+  `register_view()`; `conflict_findings()` never scans the foreign namespace;
+  and `precheck()` surfaces a matching foreign entry in its own
+  `foreign_precedents` section, labeled `foreign precedent (from <fp8>)`,
+  which never joins `already_rejected`/`rejected_precedents` and never flips
+  `verdict` to blocking. `godmode precedent adopt --domain <d> --key <k>` is
+  the one explicit, human-triggered promotion to a local, binding record,
+  citing the foreign entry as evidence.
+- Charter prose linter + assumption gate + declared approval categories
+  (U-S4), three small units closing E6/E4/E56:
+  - **Prose linter** (advisory, never blocking) - `godmode_charter.negation_heavy`
+    flags a HARD rule with two or more negation tokens ("never"/"without"/
+    "not"...) and no positive verb: the shape a rule takes when it states
+    only what must not happen. `godmode_docslint.lint_charter_prose` runs
+    this plus two more checks over a project's own compiled charter
+    (`compile_charter`): `no-done-criterion` for a rule the charter could
+    not map to any checkable shape (`enforcement == ADVISORY`), and
+    `duplicated-source` for the same normalized directive bound from two
+    different role documents. `lint_docs` now carries the result as a
+    separate `prose_advisories` key that never joins `findings`/
+    `high_severity`/`verdict` - `docs --lint` cannot be failed by a
+    prose-quality note. Doctrine exemption (controller ruling): a HARD rule
+    phrased as a *named* prohibition ("never mutate production", "never
+    claim verified" - a negation opening the sentence and naming a concrete
+    object, articles skipped) is exempt outright, never rewritten - safety
+    prohibitions keep their prohibition form; a placeholder object ("do not
+    do things") or a verb with nothing named before the clause boundary
+    ("never push without...") still flags. Population sweep: this repo's own
+    two "never X without Y" HARD gates in `GODMODE.md` resolve as named
+    prohibitions and stay exactly as written; the 3 ADVISORY sentence-fragment
+    rules are accepted as-is (already reviewed - see
+    `tests/test_charter_checkability.py`'s `AdvisoryReviewRepoTests`).
+  - **Assumption gate** [E4] - new `assumption` record kind
+    (`remember --kind assumption`); `godmode_attest.assumption_gate` is a
+    SOFT `before_approach` advisory, "state assumptions or state that there
+    are none", firing once per session for an R3+ session with zero
+    `assumption` records. Reuses U-T2's R3+ tier proxy (fix-vocabulary
+    claims + Edit/Write mutation turns) rather than a second definition;
+    `godmode gate --trigger before_approach [--transcript PATH]` now surfaces
+    it via `Verdict.advisories`, which never affects `allowed`.
+  - **Approval declarations** [E56] -
+    `.godmode-authorization-policy.json` gains `approval_required:
+    [<category>...]`; `classify_action(..., require_approval=...)` widens an
+    otherwise-unprotected operation in a declared category to ask-tier, with
+    the exact operation named in the reason. Tighten-only by construction:
+    the risk tier is computed from category/command text alone and never
+    reads the `protected` flag this widens, so a declared category can never
+    soften an existing R5 refusal to an ask. Wired live:
+    `hooks/godmode_session_hook.py`'s pre-tool `classify_action` call now
+    sources `password_required`/`approval_required` from the policy file
+    (new `godmode_sentinel.local_authorization_policy`), read in its own
+    fail-safe `try/except` so a malformed policy degrades one call rather
+    than the whole gate - previously both fields were parsed and validated
+    but never reached the hook's own decision.
+- Recurring-ask mining (U-E10): `godmode recurring [--threshold N] [--json]` folds the request ledger (`godmode_requests`, written live by the user-prompt hook) into charter-rule proposals - a normalized term set (via the same `_terms` helper `precheck` uses, imported rather than reimplemented) that recurred in at least `--threshold` distinct sessions (default 3) is reported as `asked in K sessions - SOFT rule candidate`, with `seq:` references as basis. Same shape as `init --detect`: candidates only, nothing is auto-written to the charter. A cluster's basis is its normalized term set and session refs alone - the original request wording is read only long enough to compute terms and never reaches the report. A ledger with fewer distinct sessions than the threshold reports `insufficient-data` and states the session count, rather than an empty candidate list a reader could mistake for "checked, found nothing".
+- Red-before-green temporal verification + criterion pre-registration (E4 R4/E6 tdd, U-T2): `godmode_session_log.session_timeline`/`command_timeline` extend the U-T1 transcript parse with a per-command outcome timeline (`cmd_digest -> [(turn, exit_code)]`, digests only) and mutation turns (Edit/Write/NotebookEdit tool_use), deriving red/green from a `tool_result` block's `is_error` flag - the real transcript shape carries no structured exit code, only that boolean (recorded in the module docstring). `record_claim` gains an optional `timeline` param: a fix-vocabulary claim citing `cmd:<command>` is checked for a nonzero-exit observation before the last mutation and a zero-exit after; missing that shape downgrades with "cited test was never seen failing (red) before the fix"; no timeline supplied is untouched (a stated gap, never a penalty). New `record_criterion`/`godmode criterion` records what passing looks like under `criterion:<task>`, cited back from a claim (`_citation_resolves` gains `criterion:` support); a weak-criterion (no `cmd:` citation, only vague verbs) and a criterion recorded after the session's first mutation both surface as advisories, never downgrades - a fix claim citing no criterion when one exists this session is likewise advisory-only.
+  - Plan artifacts carry executable acceptance (E62, Task 4b): the plan contract gains `accept: ["cmd:<command>", ...]`, a list of executable acceptance commands distinct from the prose `acceptance` field; `planmode approve` refuses a plan with no `accept` entry (surfaced in `gaps`/`missing`, same discipline as every other mandatory field); `close_session` (before_completion) now also refuses while any `accept` command lacks a this-session attestation (`unattested_accept_commands`), via `godmode_plan.unattested_accept_commands`. CLI: `planmode start --accept cmd:<command>` (repeatable).
+- Counts-only ROI report (U-E1): `godmode roi [--sessions N] [--json]` folds `metric` records (C-79/U-T1 token measurements), `verdict` records (U-V1 dispositions), and gate/precedent/fence `action` records into one report - `sessions`, `tokens{in,out,measured_sessions,unmeasured_sessions}`, `gate{denied,asked,advisories}`, `verdicts{confirmed,refuted,contested}`, `precedent_hits`, `fence_findings`, and a `basis` of `seq:` references so every number can be checked against the record that produced it. A session with no measurement record is stated as `unmeasured_sessions`, never interpolated as a token count. The report shows what gate activity happened beside burn and leaves the reader to judge what it was worth; a REFUTED verdict is labeled `rework-candidate-caught` - what the event was, not a claim about what would have happened otherwise. A denylist test checks the rendered text against a closed list of attribution words and is itself proven to catch a planted regression, not merely asserted by construction.
+- Counts-only session measurement (C-79/U-T1): `godmode_session_log.measure` streams the host's own transcript (`json.loads` per line, never the whole file) and tallies tool calls, commands, test runs, and token usage; `record_measurement` writes it as a new `metric` archive record - counts and a closed enum of names only, every stored string capped at 80 characters, proven against a planted sentinel string that never reaches the archive. Wired at session-end in `hooks/godmode_session_hook.py`, wrapped in `try`/`except` so a measurement failure never costs the checkpoint; a missing or unreadable transcript is recorded as a stated gap rather than an error.
+- Trust now reads skill, command, and agent content as untrusted input.
+
+  `godmode trust` scanned settings and MCP JSON only. A cloned repository's
+  `.claude/skills/**/SKILL.md`, `.claude/commands/**/*.md`, and
+  `.claude/agents/**/*.md` files are prose a host loads and follows the moment
+  a session starts, and nothing scanned them.
+
+  `scan_agent_configuration` now enumerates those files, capped at 400 with the
+  cap reported, and routes each through the same untrusted-content and secret
+  checks the repository sweep already applies. A line shaped like an
+  instruction produces a `skill-directive` finding naming the file, the line,
+  and the kind. A secret-shaped value produces a `skill-secret` finding. A
+  settings hook whose command classifies at R4 or above now also produces a
+  `hook-command-tier` finding, naming the tier, because a hook fires with no
+  per-call confirmation from the action gate.
+
+  Godmode's own six shipped skills are the population check: their SKILL.md
+  content runs through the new scan as part of the test suite and returns no
+  findings.
+- `godmode authorize stage --from-last-refusal [--nth N]` (U-E5): the gate's
+  own R5 refusal now records itself (kind `refusal`: bounded operation, tool,
+  tier, category), and staging reads that record back instead of asking the
+  operator to retype the command a refusal already printed verbatim. Nothing
+  about the trust model changes - the password is still required, the
+  capability is still spent once, it still expires - only the typing does.
+  `--nth 2` reaches a refusal before the latest one; with none on record the
+  command refuses with "nothing to stage" rather than staging something
+  stale. The staged operation is echoed back before the password is checked,
+  so a wrong `--nth` is caught by eye. The refusal reason itself gains one
+  literal line, `! godmode authorize stage --from-last-refusal`, so a hosted
+  session can run it without leaving the conversation.
+- Graduated stall escalation - redirect at 2, human at 4 (U-R2):
+  `godmode_loop.analyze` gains `stall_escalation`, an empty-round counter
+  joining the existing oscillation/spent-hypothesis detectors. A round
+  closes at each checkpoint; it is empty when no change, attestation, or
+  verdict was recorded since the previous one. Two consecutive empty rounds
+  produce a blocking `stall-redirect` finding ("record what you'll do
+  differently"); four produce a governance `stall-escalation` halt ("human
+  escalation required"), cleared only by an operator-sourced record
+  (`data.source == "stated"` on a `request`/`decision`) - an agent's own
+  inference does not count. `godmode watchdog` gains a matching freshness
+  check (`state_freshness`): a loop that claims activity (`--loop-active`)
+  but has not touched the archive within the age ceiling routes to the same
+  `human-escalation` verdict as a stall streak.
+
+  Task 10b (amendment): a loop/experiment declaration now states `maturity:
+  "report-only"|"assisted"`; `"unattended"` is refused by name, not silently
+  downgraded - nothing here reads a cycle's output before the next one
+  starts. `godmode loop --preflight` audits `.godmode-loop.json` before
+  cycle one via `loop_ready`: a declared stop contract (U-R1), a positive
+  `budget_s`, a named `verdict_path`, and sane escalation thresholds
+  (`n1 < n2`, both positive) are all required, each missing piece its own
+  blocking finding.
+- Surgical-diff completion gate (U-B1), extending the existing scope fence
+  rather than adding a second one: `fence audit --complete` parses `git diff
+  --unified=0 HEAD` into hunks - stdlib text, no dependency on a diff library -
+  and partitions them by the same `fence_verdict` a plan's editable set already
+  answers with, so three questions get asked of one parse instead of one.
+
+  A hunk that adds or changes lines in a file outside the declared set is an
+  `out-of-fence-hunk` finding naming the file and how many hunks landed there.
+  A hunk that only removes lines in such a file is told apart as
+  `unauthorized-deletion` - pre-existing code outside the plan's own scope is
+  not the plan's to remove, whatever the reason, and the remedy says so:
+  mention, don't delete. A deletion inside a file the plan does own passes
+  either way. And every added line, in any file, is checked against a small
+  default instrumentation-tag tuple (`[DEBUG-` to start) for an
+  `instrumentation-residue` finding naming the exact `file:line` - the one
+  check here that is not fence-scoped at all, because a stray trace print left
+  in a change claimed complete is not made acceptable by landing somewhere the
+  plan was allowed to touch.
+
+  Undeclared still means unenforced: with no approved plan's editable set to
+  check a hunk against, the fence-shaped findings stay silent, the same
+  fail-open contract `fence_verdict` already keeps for every project that
+  predates this gate. A plan extends the tag tuple through the same editable
+  field a fence already reads, by writing `tag:<pattern>` alongside its globs -
+  one declaration, not a second config surface next to it.
+- Composable termination algebra with fail-loud lifecycle (U-R1): new
+  `godmode_stop.py` - `Stop` predicates (`MaxRecords(n)`, `MaxWall(seconds)`,
+  `OperatorStop(flag_path)`, `MetricPlateau(name, eps, patience)`) consulted
+  over the record-delta since the last call, so cost stays O(new) regardless
+  of run length. Compose with `&`/`|`; a composed reason names WHICH leaf
+  fired. A fired `Stop` is spent - consulting it again without `reset()`
+  raises `SpentStopError` rather than quietly re-answering. `attempt(budget_s)`
+  bounds one subprocess attempt: overrun kills the process outright and the
+  result carries `run_state: "truncated"` (U-V1's vocabulary), so feeding a
+  truncated result into a `disposition: "confirmed"` verdict hits the
+  existing archive-seam refusal in `godmode_invariants._verdict_invariants` -
+  budget exhaustion cannot impersonate completion. `godmode watchdog`
+  consumes an `OperatorStop` flag (`.godmode-stop`) so an operator can
+  interrupt the boundary scan regardless of the skip pattern; `godmode
+  experiment` gains an optional `--budget-s` wall-time bound over the whole
+  bounded series, independent of `max_runs`.
+- `verdict` panels (U-E4): `record_verdict`'s `--checker` is now repeatable
+  (1..N; a single command still works unchanged - every caller from before
+  panels existed is unaffected). Each checker runs independently against the
+  same witness, never invoking the producer, and its own
+  `{checker, exit, disposition}` is recorded verbatim in `checks`. The panel
+  folds to one disposition by a closed rule, never a score: all confirmed ->
+  `confirmed`; any refuted -> `contested` when at least one other checker
+  confirmed, else `refuted` outright; a checker that could not judge is
+  recorded as a stated gap and excluded from the fold, unless none of them
+  judged anything, in which case the whole panel is `witness-malformed`.
+  `contested` joins the disposition enum. The archive-seam invariant now
+  also refuses a `confirmed` fold whose own `checks` carry a refuting entry,
+  whether that record comes from `record_verdict` or a raw append. A
+  `verdict:<seq>` citation still resolves only on `confirmed` - `contested`
+  is refused by that same existing rule, with no separate code path needed.
+  `godmode verdict record --checker <cmd> [--checker <cmd> ...]`.
+- `verdict` record kind (U-V1): a claim of "fixed X" becomes admissible only
+  as a claimed value plus a data-only witness plus an independent checker
+  that recomputes from the witness alone and asserts against the claim.
+  Three dispositions, never two - `confirmed`, `refuted`, `witness-malformed`
+  - with the witness validated structurally before the checker ever runs, so
+  a missing witness or a checker that cannot start/finish is stored as
+  "never judged," not silently folded into "judged false." Two invariants
+  are refused at append time: a self-acquitted `confirmed` (quality needs an
+  independent checker), and a `confirmed` on a `truncated` run (a budget
+  cutoff cannot impersonate completion). `godmode verdict record|show`; a
+  `--grade verified` claim citing `verdict:<seq>` resolves only when that
+  verdict's disposition is `confirmed`.
+
+### Fixed
+
+- This repo's own charter advisory rules are fully reviewed, and the review
+  test is portable. 16 of 19 committed ADVISORY charter rules (added by the
+  capability-register/coverage/minimality/checklist docs) had never been run
+  through `charter --review-advisory`; each now carries a real, rule-specific
+  decision record (`charter-advisory-reviewed:<id>`) - most are documentary
+  sentence fragments or topic sentences the charter compiler's per-line
+  chunking produced (not imperative directives), a few describe behaviour
+  that is genuinely already mechanically enforced elsewhere
+  (`capabilities --reconcile`, `changelog check`) but not in a shape the
+  charter compiler's checkable-shape table recognises. One rule was
+  genuinely wrong rather than merely unreviewed:
+  `docs/RELEASE-CHECKLIST.md` read "Before this sprint's commits land",
+  contradicting the doc's own "Standing verification rows" framing by naming
+  one already-landed sprint - reworded to "this repository's commits" so the
+  checklist reads as reusable.
+
+  Separately, `tests/test_charter_checkability.py`'s
+  `AdvisoryReviewRepoTests` read this machine's live, gitignored archive
+  unconditionally and could never pass on a fresh clone or CI, where no
+  `charter-advisory-reviewed` decision exists yet. Restructured to the same
+  degrade pattern the role-doc and private-ledger tests already use: it
+  skips with an explicit message when the local archive holds no review
+  records, and asserts `advisory_unexplained == []` fully once real ones
+  exist.
+- `untrusted` no longer claims a clean sweep over files it never read.
+
+  `godmode_egress.scan_project` capped its walk at 400 files and stayed silent
+  about it: once the repository grew past that count, a file sorting later in
+  the tree - `docs/falsification-probe.md`, planted by the falsifiability
+  harness itself - fell outside the window, was never opened, and the scan
+  still reported `"data-only"`. `untrusted --brief` stayed green over an
+  injection it had never scanned.
+
+  `scan_project` now counts every candidate file before applying the cap. When
+  candidates exceed the limit, the report carries `candidates` (the true
+  count) and `truncated: true`, and the verdict becomes `"truncated"` rather
+  than `"data-only"` - a scanned-and-clean claim is impossible to state
+  honestly over a population that was only partly read. A real finding inside
+  the scanned window still reports as `"instruction-shaped-content"`;
+  truncation never softens a positive hit. `cmd_untrusted` now exits nonzero on
+  either condition, not just on a finding.
+
+  The default cap moves from 400 to 2048: this repository's own walk currently
+  returns 592 candidates, and 2048 is the next power of two at or above 2x
+  that, giving headroom before the gap reopens. The cap itself stays - an
+  unbounded walk is worse - but hitting it is loud now, not silent.
+- Non-git context ranking no longer depends on copy/checkout timing, within
+  the non-git mode. `godmode_corpus.rank`'s freshness ordering fell back to
+  raw filesystem mtime for a project with no `.git` directory - mtime there
+  is assigned by whatever copied or checked the files out, not by their
+  content, so two copies of an identical non-git project could disagree on
+  file order purely from copy timing (`tests/test_gate_falsifiability`'s own
+  then-git-stripped project copy surfaced a `ranking-changed` verdict against
+  the pinned `evals/fixtures/ranking.json` snapshot, which was investigated
+  further and turned out to be a *cross-mode* mismatch - see below - not this
+  within-mode one). Non-git freshness ordering now degrades to a
+  deterministic path sort - the same secondary key the git-log fix already
+  uses for ties - instead of comparing mtime magnitudes across files; mtime
+  itself remains the freshness value `_freshness_stamp` returns for a
+  non-git/untracked path (unchanged). A new test constructs two non-git
+  copies with deliberately shuffled mtimes and asserts identical ranking.
+
+  Scope: this closes copy/checkout-timing drift *within* the non-git mode
+  only. Path sort and the companion git-log commit-time instrument (see
+  `ranking-checkout-order.fixed.md`) are not promised to agree with each
+  other on tie order for the same content, so a ranking computed without
+  `.git` is not guaranteed to match one computed with it. A snapshot must be
+  generated and compared in the same mode it will be evaluated in - see
+  `godmode_corpus.rank`'s docstring for the cross-mode boundary. The
+  falsifiability harness now keeps `.git` in its project copy so it evaluates
+  in the same mode `evals/fixtures/ranking.json` was generated in.
+- Context ranking within a git checkout no longer depends on checkout order.
+  `godmode_corpus.rank`'s freshness tie-break read filesystem mtime, which
+  `git clone`/`git checkout` do not preserve from commit time - two clones of
+  the identical commit could disagree on file order, and this task's own
+  `evals/fixtures/ranking.json` update exposed the fragility (a live
+  fresh-clone reproduction found `ranking-changed` even with a charter-stable
+  snapshot). Freshness for a git-tracked project now reads the file's last
+  commit timestamp via `git log`, which is part of the commit object every
+  clone already has and so agrees regardless of checkout order; non-git
+  projects are unaffected (mtime remains correct there, since there is no
+  separate checkout step to reorder against). A new test constructs a git
+  fixture where on-disk mtime order is the exact opposite of commit order and
+  asserts ranking is unaffected.
+
+  Scope: this closes checkout-order drift *within* the git-tracked mode only.
+  It does not claim, and does not make true, that a git-mode ranking agrees
+  with a non-git-mode ranking of the same content - git-log commit time and
+  the non-git path-sort fallback (see the companion
+  `non-git-ranking-order.fixed.md` fragment) are different instruments, free
+  to order equal-relevance ties differently. A snapshot must still be
+  generated and compared in the same mode; see `godmode_corpus.rank`'s
+  docstring for the cross-mode boundary.
+- `godmode roi` now counts real denials. `godmode_roi.roi_report` folded only
+  `kind="action"` records carrying `data.roi_event == "gate:denied"` into
+  `gate.denied` - a convention no shipped writer has ever emitted a record
+  for. `godmode_session_hook.py` has, since the stage-from-refusal unit,
+  written a real `kind="refusal"` record at every R5 deny (`stage_from_refusal`
+  reads them back the same way), and `roi` never read that kind at all: this
+  repo's own archive holds hundreds of real refusals, all reported as
+  `gate.denied=0`. `gate.denied` now folds `kind="refusal"` records
+  unconditionally - every refusal record IS a denial, since the hook's `ask`
+  branch never appends one - alongside the pre-existing `action`/`roi_event`
+  convention, which stays as an additional source; the two are disjoint by
+  kind, so no dedupe is needed between them.
+
+## [0.2.11] - 2026-08-15
+
+### Added
+
+- Ten new detectors and three hardened surfaces for evidence discipline:
+
+  - `evidence_pipe_advisory` (sentinel + hook): a verdict-bearing test/gate run piped through a truncating filter is advised against before it destroys its own evidence.
+  - `scripted-source-edit` category (sentinel): `sed -i`/`perl -i`/`awk -i inplace` named and asked about instead of failing closed as unclassified.
+  - Guard-erosion monitors (integrity): `assertion-free-test`, `silent-catch-in-test`, `fixed-slice-anchor` join the guard-quality pass, population-validated against this repo's own suite.
+  - Mistake detectors M19-M22 (mistakes): `carried-status-unverified` (a pending list is not evidence), `remedy-on-hypothesis` (no fix built on an unconfirmed root), `absence-without-control` (an absence claim needs a control probe), `class-claim-single-file` (an "every caller" fix that diffs one file cites its sweep or narrows its claim).
+  - Markdown normalisation before every prose matcher (mistakes): models bold exactly the keywords a matcher anchors on.
+  - `guard_citations_resolve` (reconcile): guard-bearing records with dead or absent file citations are reported in both drift directions.
+  - `upstream_verdicts` (parity): a version-range bump closes only when every enumerated item carries an import verdict AND a behaviour verdict, confirmed-* with its proving line.
+  - Push disclosure (sentinel): `git push` names the push-triggered workflows it would fire, because a push to a deploy-wired branch is a deploy action.
+  - Overwrite disclosure (sentinel): a declared Write onto an existing filename names the overwrite instead of implying a blank slate.
+  - Truncation-honest compression (compress): a subject the cap clipped carries `subject_truncated_at` in its mask, ending the short-record/shortened-record ambiguity the module's own docstring condemns.
+- The evidence-prefix vocabulary the M18-M22 detectors read (searched:, control:, second:, scanned:, population:) is taught where operators and agents actually look: `claim --help` epilog (with a worked example), the investigation skill's new "Absence protocol" section, and the governance skill's new "Absorption verdicts" section - a detector whose input convention nobody knows is a dead gate.
+
+  Researching this surfaced a real bug the docs would otherwise have shipped false: `_citation_resolves`'s fallback was a bare `return False`, so citing `searched:`/`control:`/`second:` - the exact vocabulary now being taught - silently downgraded a `--grade verified` claim to `hypothesis`, punishing the evidence discipline the detectors exist to reward. Fixed the same way `doc:`/`url:` already work (resolves as a declared citation, same plausibility floor).
+
+  Also documented honestly rather than pretended: `godmode mistakes`' absence detectors (M18/M21) and the claim-grading pipeline's own stricter absence gate (`_probed_twice`/`_cites_a_search`, which needs two distinct `cmd:` citations) are two separate, unintegrated mechanisms - citing `control:`/`second:` satisfies the former, not the latter. And `upstream_verdicts` (the dual-verdict absorption reader) has no CLI verb writing its record shape yet - `remember --kind decision` stores one free-text value, not two separate verdict fields. Both gaps are named in the skill docs, not silently implied solved.
+- A stdlib-only fast gate (`hooks/godmode_gate_fast.py`) now sits in front of the
+  full pre-tool hook. It answers exactly one question - is this command's head
+  on a vetted, conservative read-only floor (`hooks/gate_table.json`), with no
+  redirect and no `-exec`/`-delete` - and only ever returns `allow` (skip the
+  full hook, silently, no archive I/O) or `escalate` (run the full hook,
+  unchanged, output and exit code mirrored verbatim). Every ambiguous or
+  malformed input escalates; nothing is ever guessed into an allow. The
+  equivalence held against the 142-command real-denial corpus is one-directional
+  by design: every command the fast gate allows, the full sentinel also allows -
+  never the converse - so the fast path stays correct as the full classifier
+  continues to change under it.
+
+  `hooks/gate_table.json` ships as a PROVISIONAL, hand-built fixture (Task 5's
+  generated decision table replaces its contents, not its shape): the floor
+  holds only the host-parity read-only set named for this plan (`git
+  status/log/diff/show/branch/ls-files/rev-parse/rev-list/remote -v/shortlog/
+  describe/blame` plus `ls/cat/head/tail/wc/grep/rg/find/pwd/which/echo/sort/
+  uniq/cut/file/stat/du/df`) - one deliberate omission from that list: `tr` is
+  excluded because the full sentinel does not yet recognise a bare `tr` as
+  read-only (a stream-tool gap this same plan charters a later task to close),
+  so including it here would let the fast gate allow what the full hook still
+  asks about. `git branch` and `git remote -v` require an exact match with no
+  trailing token - both are the one shape on this floor where a bare positional
+  argument, not a flag, performs a real mutation (branch create/delete/rename).
+
+  `hooks/hooks.json`'s `PreToolUse` command now points at the fast gate
+  (`godmode_gate_fast.py`, no arguments) with its timeout dropped from 10s to 3s;
+  `SessionStart`/`UserPromptSubmit` are unchanged.
+
+  Measured on this machine (`git status`, 7-spawn median, matching
+  `scripts/dev/hook-probe.ps1`'s own methodology): fast path 196ms vs full hook
+  542.7ms - a bare `python -c "pass"` spawn alone measures 102ms here, so
+  interpreter-startup overhead dominates both numbers on Windows and the fast
+  gate's own logic adds roughly 94ms of that 196ms, not the full hook's several
+  hundred. The in-process verdict itself is far cheaper still: 1000 calls to
+  `fast_verdict` complete in under 1 second (well over 1000/sec), and the allow
+  path opens zero files (proven by an instrumented `open()` count in
+  `tests/test_gate_fast.py`). The escalate path (fast gate spawns the full hook
+  as a second process) measured 441.3ms median for `git push --force`, 7-spawn
+  median - comfortably inside the 3s `hooks.json` timeout even with the extra
+  spawn.
+
+  **Fix round 1 (post-review):** two Critical findings, both live-reproduced
+  fast-allows of a full-sentinel refusal/ask, both fixed and table-driven so
+  Task 5's generator can own the values: (1) the `find` mutation-flag check
+  covered only `-exec`/`-delete`, missing `-execdir`/`-ok`/`-okdir` from
+  `godmode_sentinel._FIND_MUTATION`'s own five-flag set - now read from
+  `gate_table.json["find_mutation_flags"]`, with a drift-guard test parsing
+  `_FIND_MUTATION`'s compiled regex directly so a sixth flag added there later
+  fails this suite instead of silently reopening the gap; (2) `git log/diff/show
+  --output=<file>` (and the equivalent bare `-o`/`--output <file>` forms) wrote
+  a file with no shell redirect involved, invisible to the fast gate's
+  redirect check - now blocked by a per-phrase `gate_table.json["flag_denylist"]`
+  check, while ordinary formatting flags (`--oneline`, `--stat`, a trailing
+  pathspec) stay fast-allowed. **Note:** the full sentinel's own `--output=`
+  gap this exposed is real and unfixed by this change (the fast gate now
+  refuses to fast-allow it, but the full hook it escalates to still classifies
+  it R0 today) - that gap is being closed separately in the sentinel lane, not
+  by this task.
+- `hooks/gate_table.json` is now generated, not hand-built: a new
+  `scripts/dev/build_decision_table.py` reads `godmode_sentinel.py`'s own vocab
+  tables - `DB_CLIENTS`, `_FIND_MUTATION`'s compiled flag alternation,
+  `_OUTPUT_FLAGS_BY_HEAD`'s git write-flag entry - and re-verifies every floor
+  phrase, read head, git-ask/git-refuse candidate, and mutation head against
+  `classify_action` at generation time, so a sentinel change that moves one of
+  them to a different tier breaks the build instead of shipping a table that
+  silently disagrees with the classifier it was built from. `generated_from`
+  is a 12-hex sha256 prefix of `godmode_sentinel.py`'s own bytes;
+  `tests/test_gate_parity.py` asserts regenerating the table (`--stdout`)
+  reproduces the checked-in file exactly, plus a plant test proving that
+  check would actually fail on a dropped floor entry.
+
+  The provisional table's one deliberate omission is reversed: `tr` was left
+  off the floor because the sentinel did not yet classify a bare `tr` as
+  read-only when that fixture was hand-built. Re-verified live against
+  today's sentinel (`classify_action("tr a b")` is R0), `tr` now belongs on
+  the floor and the fast gate fast-allows it like every other read head
+  (`tests/test_gate_fast.py::KnownShapes::test_bare_tr_is_on_the_floor`).
+
+  `git_ask`/`git_refuse` and `mutation_heads` are populated for the first
+  time - curated candidate lists, each classified through `classify_action` at
+  build time and asserted into the bucket its own verdict names, rather than
+  retyped by hand disconnected from the classifier.
+
+  Deferred-minor fix, red-first: `hooks/godmode_gate_fast.py`'s `flag_denylist`
+  matching compared each trailing token to a denylisted flag by exact string
+  (after stripping any `=value`), which caught `-o /tmp/x` and `-o=x` but not
+  git's own glued short-flag spelling - `git log -o/tmp/x`, one token, no
+  separator at all - fast-allowing a real, unrecorded write. A short
+  (single-dash, single-character) denylisted flag is now prefix-matched
+  against each trailing token as well as compared for equality; a long flag
+  (`--output`) is never prefix-matched, since gluing a value onto it with no
+  `=` is not a form git itself accepts.
+- Task premise checked and found not to hold, per the plan's own "read first" step: godmode_bindings.py declares packaging/marketplace metadata only (name, version, license, author) - it has no per-host HARD/SOFT/UNAVAILABLE control concept to compare for drift. The real control logic (`host_capabilities()`) computes ONE shared table from environment facts (GODMODE_PRETOOL_GATE, GODMODE_MODEL, stdin TTY), never from the host label, and is never independently duplicated per host - so cross-host control "parity" holds by construction, not by convention that could drift, and a comparison test would have been vacuous.
+
+  Built instead: tests locking in the actual guarantee (the control table is identical across claude/codex/grok/any host label) and the actual variance (tool_call_interception genuinely varies, but by GODMODE_PRETOOL_GATE, never by which host string is set) - plus a guard that the packaged host set stays exactly {claude, codex, grok}, so a fourth host prompts re-examining this premise rather than silently assuming it still holds.
+- `godmode init --detect` writes a starter charter from what a repo already proves about itself, instead of leaving a new project staring at an empty one.
+
+  It reads manifests (`package.json` scripts, `pyproject.toml`, `go.mod`, `Cargo.toml`), CI workflow `run:` lines, lint/format configs, `.gitignore` build markers, a migrations directory, and the default branch - all pure reads, stdlib-only, capped at 400 files with the cap always reported. Every candidate it writes is SOFT with its provenance named inline (`(detected: package.json scripts.test)`); the emitter hard-refuses to write anything else, because a wrong guess must never become a blocking gate uninspected - promotion stays a human decision made in the charter document itself.
+
+  Tighten-only: a project with an existing authority document gets a report of detected candidates and nothing is overwritten. A repo with no signal at all still gets an honest minimal stub instead of silence.
+- `godmode init --roles` scaffolds one purpose-line stub per genuinely unbound authority role (checklist, decisions, invariants, inventory, lessons, operating-guide, operator-profile, sprint-truth, state), never overwrites an existing file, and skips glob-shaped candidate patterns rather than guessing a filename.
+
+  Fixed a pre-existing bug found while building this: `assess`'s `missing_roles` read a role's candidate patterns that failed to match as if they meant the role itself was unbound - `operating-guide` binds fine through GODMODE.md while its other three candidates (OPERATING-GUIDE.md/AGENTS.md/CLAUDE.md) all fail to match, and the old computation still listed it as missing. `missing_roles` now subtracts roles that have at least one binding; `init --roles` needed the correct set or it would have scaffolded a role that already has a home.
+- `godmode guide` - a one-page, ≤60-line orientation (five day-one commands, what runs silently vs asks vs needs the password, where state lives) printed directly rather than routed through the CommandResult/JSON pipeline every data-bearing command uses, since it names nothing about any specific project. `godmode --help` now says "Start here: godmode guide" instead of opening on eighty flat subcommands with no entry point. `init`'s JSON payload gains a `next` field (inspect / resume / guide) for the ordinary case - kept inside the existing JSON contract, unlike guide, because init's output is real per-project data a caller may parse.
+- `assess` reports `charter.hard_unplanted`: every HARD rule with no `plant`-proven attestation on record, archive-wide (not session-scoped, unlike `gate()`'s per-session attested_rule_ids - this is a lifetime fact about whether the guard mechanism has ever been observed catching a violation). Matches `plant_and_observe`'s real shape: an attestation with subject `guard:<name>`, status "ran" only when the green-red-green sequence proved out, `data.rule_ids` naming which HARD rules it covers. A "blocked" plant (never went red, or didn't return to green) does not clear a rule - proven with a negative-control test.
+
+  Honest, not silently closed: this repo's own 5 HARD rules are all currently `hard_unplanted` (verified live via `godmode assess`). Closing that gap means planting each - a genuine file+command+violation per rule - which is separate, larger work than reporting the gap; left as a named follow-up rather than done hastily or hidden.
+- Two formerly host-only failure scenarios are staged locally and counted (21 -> 23 caught, NEEDS_A_HOST 4 -> 2): `tool-call-interception` drives `hooks/godmode_session_hook.py` as a real subprocess with a genuine PreToolUse-shaped payload (the same entrypoint this project's own hook-latency work drove directly all session) and checks its printed decision, not an internal function's return value; `concurrent-agent-collision` races 5 threads against one archive and proves the chain stays valid (Chronicle's write_lock exists exactly for this). Neither actually needed a live host - the scenario file had just never driven the real entrypoint instead of the function it wraps.
+
+  Both carry their own negative control: the pre-tool boundary swapped for a stub that never refuses (correctly reports not-caught), and write_lock disabled (correctly corrupts the chain and reports not-caught with "sequence is not contiguous"). The remaining 2 host-only scenarios (opaque-model-egress, cross-agent-resume) stay named rather than counted.
+
+  Found and fixed during this work: the collision scenario's first draft conflated two different properties - chain INTEGRITY (what write_lock actually guarantees) with every writer completing within a 5s lock timeout under 10-way contention (an unrelated liveness property that legitimately degrades under real system load, and did - one CI-adjacent run genuinely saw a writer back off). Reduced to 5 threads and asserted on chain validity alone; a writer correctly backing off under contention is the lock working as designed, not a collision. The negative control (disabled lock -> real corruption) still catches the actual defect class this scenario exists for.
+- scripts/dev/run-suite.ps1 shards the unittest suite across 4 parallel PowerShell jobs, each writing its own full log file (never piped through a filter, per the evidence-pipe rule). Verified against the serial baseline (939 tests, exact match, no silent drops) and negative-control proven: a planted failing test in one shard correctly produced exit 1 and VERDICT=FAILED naming the right shard, then was reverted.
+
+### Changed
+
+- resolve_anchor() no longer shells to git six times on every call (rev-parse --show-toplevel, rev-parse --git-common-dir, branch --show-current, rev-parse HEAD, remote, remote get-url): the result is cached keyed on the git reflog's (.git/logs/HEAD) identity (mtime_ns, size) - the file that reliably appends on both a commit AND a checkout, unlike .git/HEAD itself which measurably does NOT change across commits on the same branch (verified empirically before choosing the key). A commit, checkout, or branch switch invalidates the cache on the very next call; no TTL guessed. Falls back to .git/HEAD identity when no reflog exists (fresh repo before its first commit). Handles worktrees by following the `gitdir:` indirection file. Named ceiling: `remote_hashes` can go stale between a `git remote add` and the next commit/checkout, since remote changes don't touch the reflog - narrower and rarer than the branch/head class this cache targets.
+
+  Measured: hook median 700.1ms -> 295-333ms (scripts/dev/hook-probe.ps1, two clean runs after discarding one 851ms outlier attributable to OS-level noise, not this change - cProfile of the same invocation shows zero resolve_anchor/git subprocess calls post-fix, versus six pre-fix). This was the dominant cost the original P1 import-deferral estimate missed entirely - found by profiling the correctly-invoked hook after the initial baseline turned out to measure an argparse error path (the hook's required positional `event` argument was omitted from every prior measurement).
+- Capability tokens default to 300s (180 measured expiring under an agent's ordinary retry latency - a slow tool round-trip plus one retry could outlast it; 300 stays one short conversation, not an open-ended window). `authorize setup`/`issue` carry real help text (both `authorize --help`'s subcommand listing and their own standalone `--help`, which needed `description=` too since `help=` alone only reaches the parent listing). The irreversible-operation refusal now tells hosted-session users they can type the staging command with a leading `!` to run it from the prompt without leaving the conversation.
+
+  A pre-existing test hardcoded the old TTL as a bare literal (180); updated to assert against `_DEFAULT_TTL_SECONDS` so a future deliberate tune can't silently desync the test from what ships.
+- `godmode charter --review-advisory RULE_ID --reason "..."` records why a mechanical check cannot decide an ADVISORY rule, as a `decision` record (subject `charter-advisory-reviewed:<rule-id>`). `assess` cross-references every currently-compiled ADVISORY rule against reviewed decisions and reports `advisory_unexplained` - a rule with no enforcement is a wish; one with no enforcement AND no stated reason is a wish nobody has examined.
+
+  Inspecting this repo's own 3 advisory rules (checkable_share 0.625) found they are sentence-fragment artifacts: GODMODE.md's descriptive prose wraps mid-sentence, and the line-based directive scanner catches half-sentences containing words like "require"/"never"/"before" that name no real directive. Manufacturing a detection shape for them would be false enforcement - the charter module's own docstring warns against exactly this. All three are now reviewed via the new command (dogfooded against the real repo, not just tested in isolation); `advisory_unexplained` is `[]` here. `checkable_share` stays 0.625 by design - reviewing names the reason, it does not fake a check.
+- Archive reads are memoized in-process: `Chronicle.read_events()` caches the parsed record list keyed on a hash of every event file's (mtime_ns, size) - not just the newest file, which a tamper-evidence test caught directly (mutating an OLDER record's bytes in place left the newest file and record count unchanged, so a newest-only key would have let `verify()` pass on tampered disk content). `accepted_keys()` gets its own cache keyed on the config file's own stat, fixing a pre-existing inefficiency the events-cache work exposed: `verify()` calls `accepted_keys()` once PER RECORD, and an uncached read re-parsed the same rarely-changing config file that many times per verify pass - traced live at 384 total `_read_json` calls from one hook invocation on a 96-record archive (288 of them redundant config re-reads, only 96 real event-file reads). `watchdog()` now windows its attestation scan to the current session's own records (found via the `session` record whose hash produced the session id) instead of the last 1000 attestations across every session this archive has ever held.
+
+  Hash-chain re-verification itself is deliberately NOT cached - `verify()` always re-checks every record's hash on every call, cache hit or miss, because that is the tamper-evidence guarantee the whole data structure exists for. The cache only removes redundant disk reads and JSON parsing, never the integrity check.
+
+  Measured at this repo's current size (96 records), the net wall-clock effect is within noise (~295-390ms across repeated hook-probe runs, matching the anchor-cache commit's numbers). The real win scales with archive size and call repetition, both verified directly rather than assumed: at a synthetic 1000-record archive, the identity check costs 69.9ms against a 327.4ms full parse (~4.7x cheaper), and three repeated `read_events()` calls - the exact pattern one `pre-action` hook invocation performs (latest_session, watchdog's window lookup, watchdog's own scan) - cost 719ms warm versus an estimated ~1371ms cold, a ~1.9x speedup that widens as records accumulate.
+- `git add`/`git commit` now ask instead of running silently. Both were left unprotected on the reasoning that a commit is local and reversible, and gating it made committing impossible in a session where the gate could only ever refuse a protected call outright - no host tool call carries a field a capability could travel in. That premise stopped being true once the host started asking rather than only refusing: asking *is* an in-session approval, and the sibling worktree operations that carry the same reversibility (`checkout --`, `restore`, `mv`, `stash`, `switch`) already asked. `add`/`commit` sitting on the allowed side of that line was never a decision, just the one git rule this classifier had not yet been given (Controller Ruling 1).
+
+  `git checkout -b <branch>` (and `-B`) no longer asks. It matched the same pattern as `checkout --`/pathspec history-rewriting forms, which is the wrong shape for it: creating a local branch discards nothing and leaves the machine no differently than `git branch <name>` already does. Category `git-branch-create`, R1 - the same tier ordinary local computation sits at.
+
+  Protected-path reads (`ls`/`cat`/`grep`/`head`/`tail`/`wc`/`stat`/`file`/`find` of a directory inside this gate's own runtime) were already R0 - confirmed with regression tests (`tests/test_sentinel_policy.py`) rather than left as an accident of `_SAFE_SHELL_READS` not looking at arguments at all, since a corpus of real denials had already found zero surviving instances of this failing.
+- Hook hot path defers cold imports to the branches that actually use them: CapabilityBroker (secrets/getpass/hmac), the fence module (design_verdict/fence_verdict), and six event-scoped modules (charter, corpus, drift's compare, lens, requests, contribution) that `pre-action` never touches but were previously imported unconditionally on every tool call. Also moved `godmode_anchor`'s `secrets` import (which transitively pulls in `hmac`) into its once-per-device salt-creation path. PreToolUse median latency 807.5ms -> 700.1ms measured by scripts/dev/hook-probe.ps1 (7-spawn median, corrected probe — the original baseline had omitted the hook's required positional `event` argument and was timing an argparse-error path, not real hook logic).
+
+### Fixed
+
+- Two real gaps found by an adversarial "test the detectors on novel phrasing, not their own fixtures" pass, both fixed:
+
+  - `evidence_pipe_advisory`'s verdict-runner regex covered `godmode verify/gates/attest/precheck` but missed `selftest/scenarios/mistakes/assess` - every one of them equally verdict-bearing and equally truncatable by the same pipe pattern (`godmode selftest | Select-Object -Last 5` sailed through unflagged). All four added; non-verdict subcommands (`capabilities`, `inspect`) confirmed to stay clean.
+  - The M18/M21 absence-claim detectors' `_ABSENCE` regex covered "nothing found" but not the reversed word order - "the search turned up nothing", "the query came back empty", "the scan yielded nothing" all passed through both detectors completely undetected. Extended the pattern; verified against three realistic phrasings plus two negative controls.
+
+  Also probed and found NOT gaps, documented as known ceilings rather than silently fixed: a DROP TABLE hidden inside a backtick command substitution (`psql -c \`echo 'DROP TABLE orders'\``) is under-classified as `unclassified-mutation` R3 instead of `database-mutation` R5, because the classifier evaluates a substitution's own behavior (echoing text) rather than simulating how its output is consumed by the outer command - it still fails closed (asks before running), it just doesn't earn the stronger tier. The same shape applies to git aliases renaming a destructive operation to an arbitrary word. Both are inherent limits of static-regex classification without executing or parsing `.git/config`, not regressions from today's work.
+- Three more gaps found by an adversarial pass over detector families the previous sweep had not touched (prompt injection, secret shapes, environment classification), all fixed with negative controls and population checks:
+
+  - **Environment classifier read a production database as development.** `\bproduction\b` does not match `production_backup` - `_` is a word character, so no boundary exists between them - and `localhost:5432/production_backup` therefore classified as *development*, the one tier where `mutation_allowed_without_capability` is True. A production database reachable on localhost was mutable without a capability, through a hostname anyone might really use. Boundaries widened to any non-alphanumeric edge; `prd` added as a real-world abbreviation. The negative that makes this safe rather than merely stricter is pinned: `my-product-catalog` must never read as production just because `product` starts with `prod`.
+
+  - **Two secret scanners disagreed about what a secret is.** The sentinel's archive gate (blocks credential-shaped payloads from being stored) and the egress staged-file scan (names the kind, masks the value) each covered shapes the other missed - connection strings caught by one, `ghp_`/`sk-` prefixes by the other, JWTs and Slack tokens by neither. Both rule sets extended to a common set, and a new seam test pins every canonical shape against BOTH scanners so they cannot silently diverge again.
+
+  - **Injection detection missed three real shapes**: a possessive override ("disregard *your* earlier guidance" - `earlier` was absent from the alternation entirely), a verification bypass whose object was the test suite rather than a "gate", and a decode-then-execute frame carrying its instruction as an encoded payload. All three added.
+
+  The gate-bypass widening initially cost a false positive on this repo's own README - the row *describing* the monitor that blocks skips read as an instruction to skip - caught by a population sweep against the shipped docs (0 findings before, 1 after). Bounded the verb-to-object distance so the verb must govern the object rather than merely share a line with it; population sweep back to 0.
+
+  Also probed and found sound, no changes needed: the capability broker refused all four attacks (replay of a spent token, tampered payload with an intact signature, a token spent on a different operation, a token minted in another project); archive integrity refused both a middle-record hash tamper and a truncated record at 400 records.
+- `classify_action` no longer lets argument text convict a command. Two real false-positive shapes from a 50-session denial harvest, both a vocabulary check searching the whole line instead of the command's own words:
+
+  - A `>`/`>>` found anywhere in the raw text was read as a shell redirect even when the only `>` on the line sat inside a quoted argument - `node -e "console.log(1 >>> 2)"` (a JS bitshift) and `node -e "const f = l=>l.trim()"` (an arrow function) both misread as an empty-target write outside the working tree, refusing an ordinary local computation. Redirect detection is now gated on a quote-aware scan first: an operator is only trusted when it survives the same quote-blanking already used for the mutation patterns.
+  - A bare word inside an unquoted file path argument - `docs/RELEASE-CHECKLIST.md` read by `grep`/`tail` - matched the `release-or-external-write` vocabulary the same as if it named the verb. Vocabulary matching now runs on each segment's command-position text: the head (kept even when it is a relative path, so `./deploy.sh` is still a deploy) plus every word after it that is not itself path-shaped.
+
+  New public interface for later gate work: `split_segments(operation) -> list[Segment]`, where `Segment` carries `head`, `subcommand`, `tokens` (quoted text excluded) and `has_redirect` per piece of a compound command - Tasks 3-4 build the remaining fixes (unknown-command vocabulary, stream-tool safe reads, git-subcommand scoping, protected-path reads) on top of this rather than re-deriving tokenization.
+
+  Also fixed, found first and unblocking this: the docs linter's file walk did not honor `.gitignore`, so scratch orchestration reports under a gitignored directory were held to the shipped-docs standard and could fail `tests.test_docs_lint` for reasons unrelated to any shipped document.
+- `classify_action` no longer refuses a command for the sole reason that it has no vocabulary entry. A 50-session denial corpus showed the fail-closed `unclassified-mutation` bucket - meant for a genuinely unknown state - catching mostly harmless, unrecognised commands (`rev`, `cp` into the tree, a `curl`/`Invoke-WebRequest` status probe, bare `sed`/`tr` in a pipeline, several PowerShell constructs) alongside the rare real gap. A segment with no recognised vocabulary and no evidence it mutates anything - no real redirect, no named write flag - now reads at R0 instead of asking or refusing for ignorance.
+
+  "No evidence" is narrower than "unrecognised," on purpose:
+
+  - A real redirect, or a quote left open (which blanks everything after it, including a mutation verb that was sitting there in the original text - a malformed-input case a fuzzer found), still asks - named `unknown-command`, reason names the head, never the old uninformative `unclassified-mutation`.
+  - `git` and `gh` already have enumerated safe/read forms; an invocation that misses all of them stays on the ask side rather than defaulting open just because this particular subcommand went unnamed.
+  - `curl`/`wget`/`Invoke-WebRequest`/`Invoke-RestMethod` can send data out, not just fetch it in, so they stay named exceptions - a narrow, explicit status-probe shape (discarded output, no method/body/output-file flags) reads; every other form still asks. `ssh`/`scp`/`rsync`/`sftp`/`ftp`/`nc`/`ncat`/`telnet` join the same family, unconditionally - a remote shell or a remote copy is not a local read of anything.
+  - `export`/`unset` of a variable that changes what runs (`PATH`, `LD_PRELOAD`, ...) was already excluded from the safe-bookkeeping allowance; it now stays excluded from the open default too, rather than falling through it.
+  - `bash -c`/`sh -c`/`eval` hand an interpreter a whole script as one opaque argument, and `ForEach-Object { ... }` runs whatever its block contains - both keep asking regardless of how harmless a specific instance's content looks, the same principle `find -exec`/`-delete` already uses.
+
+  Also scoped, in the same pass: a database client's own head (`psql`, `mysql`, `sqlite3`, `redis-cli`, `mongosh`, `mariadb`, `pg_dump`, `pg_restore`) is now protected on invocation alone, not only when a migration/reset verb is visible - the verb is usually inside a quoted statement (`psql -c 'drop table users'`), which blanks it before any verb-anchored pattern runs.
+
+  Found while widening this: `_SAFE_INSPECTION_PATTERNS`/`_GIT_LOCAL_CHANGE` matched on a command's own verb and returned before anything looked at its arguments, so a real `>` redirect past one of them was never inspected (`git log --oneline > /etc/hosts` classified as a plain read) - and the same was true of a per-command output-file flag doing the redirect's job without spelling the operator (`git log --output=/tmp/x`, `sort -o out.txt`). Both are now judged by their target the same way an ordinary redirect already is, via a small per-command flag table (`_OUTPUT_FLAGS_BY_HEAD`) rather than a one-off regex per command. `find -execdir`/`-ok`/`-okdir` were already covered by the existing `_FIND_MUTATION` pattern; pinned with tests rather than left unverified.
+
+## [0.2.10] - 2026-08-11
+
+### Added
+
+- A statement about a population, made from a sample, that omits the sample.
+
+  Third member of the family the previous two entries belong to — a value correct
+  in its own frame and wrong in the reader's — and the one with the widest reach,
+  because it needs no second system to go wrong in. One query with a filter and a
+  limit is enough.
+
+  Two shapes, one remedy, so one check.
+
+  An absence. "Nothing found", "no evidence", "it is not referenced" — true of the
+  search that ran, asserted about the world. Two searches that miss inside a
+  document holding the answer produce exactly that sentence, and it reads as a
+  conclusion rather than as the description of a search. An absence claim needs
+  the search that would have disproved it, which is the standard `precheck`
+  already holds itself to when it reports where it looked; nothing held the agent
+  to it.
+
+  A count. A bare total carries its query's filter and cap invisibly. A number
+  from a call with a category filter and a silent limit is not the log, it is a
+  slice of one, and nothing about the number says so — the reader cannot tell a
+  complete count from a truncated one. Stating the denominator clears it, and so
+  does naming what was examined in evidence.
+
+  `precheck` gained the third question. It answered "was this already built" from
+  the tree and "was this already refused" from decisions and removals, and had
+  nothing for the case in between: a thing already FILED and still open. An
+  incident, a standing obligation, an ask nobody closed — matched neither reader
+  and stayed invisible, so an open item describing the same symptom as the case
+  in hand could be listed twice in one session and never connected to it. Open
+  items are now reported first, because they carry what is already known.
+
+  Its own truncated list now says it is truncated. The symbol list was capped at
+  ten and silent about it, which is the defect this release reports twice
+  elsewhere; it does not get to commit it.
+
+  And the guard-breadth check no longer reports a ruling that was later corrected.
+  The archive is append-only, so a record cannot go back and mark itself
+  superseded — the correction carries the status and the record being corrected
+  never does. Reading each record's own status settled nothing, so using the
+  documented lifecycle produced a permanent finding. A later settlement on the
+  same subject now retires the earlier ruling; an earlier one does not pre-clear
+  a ruling written after it. Found by writing a lesson, correcting it, and
+  watching the original keep firing.
+- An analysis that reverses every pass, and the sentence that carries it.
+
+  The failure this answers is not being wrong once. It is being wrong
+  *unstably*: a root cause is published as soon as a story fits, the next pass
+  reads one more file and overturns both the root and the fix, and the reader is
+  left holding a moving target with no pass safe to act on. Every reversal was
+  purchasable in advance by reading code that was already there.
+
+  Two checks, neither needing anything the agent is not already doing.
+
+  A named root cause must cite a line of the program it indicts. A mechanism that
+  explains the symptom is a hypothesis; it becomes a finding when a file says so.
+  The check reads the vocabulary of attribution rather than description, because
+  a claim that reports an observation is not making this mistake. Citing another
+  record does not satisfy it — pointing at a prior claim is how an unexamined
+  theory travels between passes, gaining standing at every hop without ever
+  touching the program. Grading the claim `hypothesis` clears it, which is the
+  honest alternative and the point.
+
+  The same question answered twice, differently, with neither answer withdrawn.
+  Revising an answer is ordinary; revising it silently leaves two live roots for
+  one subject and no record of which was abandoned. Two live answers are
+  reported, three block — one revision can be an honest correction mid-
+  investigation, while a subject on its third live root is not converging, and
+  another pass at the same depth will produce a fourth. The remedy is to mark the
+  superseded claim, using the lifecycle the contradiction check already reads.
+
+  That word list now has one owner rather than two. Two readers asking whether a
+  record is still in force, from two copies of the same four words, is a
+  disagreement waiting for a release to expose it.
+
+  What is deliberately not built: nothing counts how many times an answer changed
+  inside a single pass. That would need the agent to volunteer its own reversals,
+  and an agent that reliably reported them would not be the one this exists for.
+- A time quoted to a person without saying which clock it came from.
+
+  Every store this project writes is UTC. Every surface a person reads renders in
+  their own zone. Both are internally correct, which is the whole difficulty — a
+  bare number copied from one into a sentence about the other is wrong by the
+  reader's offset, uniformly, so it survives every consistency check the archive
+  already runs and reads as plausible.
+
+  Nothing here could catch it before. Claim binding asks whether a citation
+  resolves; the citation resolved, the cited record held the right instant, and
+  what went missing was the frame, dropped in transcription. The archive checked
+  that a claim was supported and never that it was commensurable with the
+  sentence carrying it.
+
+  The check reads records written to be read by a person and reports a wall clock
+  with no frame after it — no `UTC`, no `IST`, no offset, and not a duration.
+  Blocking on a claim, which is the kind that gets published; reported without
+  blocking on a lesson or a decision, because those may legitimately mention a
+  schedule and a release refused over a cron expression teaches an operator to
+  route around the check.
+
+  Two things it deliberately does not do. It does not convert, because it cannot
+  know the reader's zone. And it does not read code, so a bucket keyed on the
+  first ten characters of a UTC timestamp is still a UTC day whatever the label
+  above it says.
+
+### Fixed
+
+- The changelog gate refused a release for spending its own fragments.
+
+  A fragment is a staging area. The artifact it exists to produce is a CHANGELOG
+  entry, and `changelog merge` consumes every fragment to write one. So a commit
+  that merges fragments and ships code in the same breath has changed code, has
+  recorded the note the gate protects, and carries no fragment — because it spent
+  them. The gate read that as an unnoted change and failed the release.
+
+  It was right about the fragments and wrong about the question. What it exists to
+  guarantee is that a change is written down, not that a particular staging file
+  survives to be counted.
+
+  Splitting a release into two commits avoids this, and this repository had always
+  done that by habit. Habit is not a check: a gate that passes only when somebody
+  remembers the customary commit order refuses a correct release the first time
+  somebody does it in one, and does so in CI, after the push.
+
+  A diff that adds entries to CHANGELOG.md now satisfies the gate. The count is of
+  *net* bullets and version headings, not added ones — an edited bullet appears in
+  a diff as one addition and one deletion, so counting additions alone would read a
+  corrected typo in a released entry as a note for today's code, leaving the gate
+  on in name and off in effect. A code change with no note anywhere is refused
+  exactly as before.
+
+  The report now names which of the two answers let it through, so a reader seeing
+  `satisfied` beside an empty fragment list does not have to guess why.
+- A timestamp that had lost its offset was read on two different clocks.
+
+  Every instant this project writes carries `+00:00`. The ones that do not are
+  the interesting ones: a record written by hand, or one carried over from a
+  schema that stored a bare clock. Two readers disagreed about what such a value
+  meant, and neither disagreed loudly.
+
+  The health check crashed on it. `_parse_time` caught `ValueError`, so a
+  malformed string returned nothing and the check carried on — but a well-formed
+  string with no offset parsed cleanly into a naive instant, and subtracting that
+  from an aware one raises `TypeError`, which nothing caught. One unlabelled
+  timestamp anywhere in the archive took down the whole context report rather
+  than ageing a single baseline wrongly.
+
+  The staleness guard answered wrongly instead, which is worse for being quiet.
+  It read the file's modification time on whatever clock the start time carried,
+  so an unlabelled start time meant `tz=None` — the host's local clock — while
+  the start time itself was meant as UTC. The comparison then ran between two
+  different clocks and was wrong by the host's offset. Measured on a `+05:30`
+  host: a process started two hours after the newest source reported `stale`, and
+  the guard blocked a diagnosis that should have proceeded. West of UTC it fails
+  the other way and clears a process that really is dead.
+
+  Neither timestamp was wrong in its own frame, which is exactly why it read as
+  plausible and why no self-consistency check could have found it. Both readers
+  now pin to UTC, an unlabelled value is documented as UTC where it is parsed
+  rather than assumed separately at each call site, and the reported modification
+  time states its offset so the next reader cannot repeat the mistake by eye.
+- Retiring an invariant was reported as contradicting it.
+
+  The contradiction detector collected every invariant record ever written for a
+  subject and called two values a conflict. Retiring an invariant means writing a
+  new record, with a new value, carrying a retired status — so using the
+  documented lifecycle produced an error by construction, and `doctor` reported
+  the archive unhealthy for doing the right thing.
+
+  Found by retiring a real invariant once a release closed the condition it
+  described. The record was correct, the retirement was correct, and the health
+  check called the pair a defect.
+
+  Records whose status puts them out of force — retired, superseded, withdrawn,
+  revoked — no longer take part in the comparison. A value that no longer binds
+  cannot contradict one that does.
+
+  Three things deliberately unchanged. Two live invariants that disagree are still
+  an error, which is the case the check exists for. A retired record sitting
+  beside a live pair does not excuse that pair. And an invariant with no status at
+  all still counts as live, because records written before status was recorded
+  must keep being checked — exempting them would retire the detector rather than
+  the record.
+
 ## [0.2.9] - 2026-08-10
 
 ### Added

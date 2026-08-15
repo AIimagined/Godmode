@@ -9,7 +9,10 @@ lower-weighted document, and the order never depends on input order.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -75,6 +78,154 @@ class RankContractTests(unittest.TestCase):
                         _segment("fresh.md", 1.0, "token rotation notes")]
             ordered = [s.path for s, _ in rank(segments, "token rotation", project=project)]
             self.assertEqual(ordered[0], "fresh.md")
+
+
+def _git(project: Path, *args: str, env: dict[str, str] | None = None) -> None:
+    full_env = dict(os.environ)
+    if env:
+        full_env.update(env)
+    subprocess.run(["git", "-C", str(project), *args], check=True,
+                   capture_output=True, text=True, env=full_env)
+
+
+class GitCheckoutOrderIndependenceTests(unittest.TestCase):
+    """Fix round 1 (adjudication a): freshness must not depend on filesystem
+    mtime for a git project. `git clone`/`git checkout` do not preserve
+    historical mtimes, so two clones of the identical commit disagreed on
+    file order purely from checkout timing - the concrete failure was
+    `evals/fixtures/ranking.json` drifting between two clones of one
+    commit. Freshness now reads `git log`'s commit timestamp, which is part
+    of the commit object every clone already has, so it agrees regardless
+    of when or in what order the working tree was written to disk.
+
+    This determinism guarantee is scoped to COMMITTED files only. An
+    untracked file, or one staged but never committed, has no `git log`
+    entry to read at all, so there is no commit object for a clone to
+    agree on - mtime is the only signal that exists for it, exactly as for
+    a non-git project, and fix round 2 covers that boundary case below.
+    """
+
+    def test_ranking_is_identical_regardless_of_on_disk_mtime_order(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            _git(project, "init", "-q")
+            _git(project, "config", "user.email", "test@example.com")
+            _git(project, "config", "user.name", "Test")
+
+            (project / "older.md").write_text("token rotation notes", encoding="utf-8")
+            _git(project, "add", "older.md")
+            _git(project, "commit", "-q", "-m", "older", env={
+                "GIT_AUTHOR_DATE": "2020-01-01T00:00:00", "GIT_COMMITTER_DATE": "2020-01-01T00:00:00"})
+
+            (project / "newer.md").write_text("token rotation notes", encoding="utf-8")
+            _git(project, "add", "newer.md")
+            _git(project, "commit", "-q", "-m", "newer", env={
+                "GIT_AUTHOR_DATE": "2024-01-01T00:00:00", "GIT_COMMITTER_DATE": "2024-01-01T00:00:00"})
+
+            segments = [_segment("older.md", 1.0, "token rotation notes"),
+                        _segment("newer.md", 1.0, "token rotation notes")]
+
+            baseline = [s.path for s, _ in rank(segments, "token rotation", project=project)]
+            # By git history, "newer.md" is the more recently committed file -
+            # freshness should favour it regardless of what the filesystem says.
+            self.assertEqual(baseline[0], "newer.md")
+
+            # Shuffle on-disk mtimes to the OPPOSITE of commit order - exactly
+            # what a real checkout can do (checkout writes files in whatever
+            # order the filesystem layer chooses, not commit order). A
+            # mtime-driven scorer would flip; a git-log-driven one must not.
+            now = 1_700_000_000.0
+            os.utime(project / "older.md", (now + 1000, now + 1000))
+            os.utime(project / "newer.md", (now, now))
+
+            shuffled = [s.path for s, _ in rank(segments, "token rotation", project=project)]
+            self.assertEqual(shuffled, baseline)
+            self.assertEqual(shuffled[0], "newer.md")
+
+    def test_an_untracked_file_falls_back_to_mtime_instead_of_stamping_zero(self) -> None:
+        """Fix round 2: `git log` has no entry for an untracked (or
+        staged-but-uncommitted) file - that must not read as "this project
+        has no git history for anything" and stamp the oldest possible
+        value. A file written a minute ago has to outrank a six-year-old
+        COMMITTED sibling on a freshness tie, or the feature runs backwards
+        for every file nobody has committed yet, which in practice is most
+        of a session's live edits.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            _git(project, "init", "-q")
+            _git(project, "config", "user.email", "test@example.com")
+            _git(project, "config", "user.name", "Test")
+
+            (project / "ancient.md").write_text("token rotation notes", encoding="utf-8")
+            _git(project, "add", "ancient.md")
+            _git(project, "commit", "-q", "-m", "ancient", env={
+                "GIT_AUTHOR_DATE": "2018-01-01T00:00:00", "GIT_COMMITTER_DATE": "2018-01-01T00:00:00"})
+
+            # Written just now, never `git add`-ed: no git log entry exists.
+            (project / "just_written.md").write_text("token rotation notes", encoding="utf-8")
+
+            segments = [_segment("ancient.md", 1.0, "token rotation notes"),
+                        _segment("just_written.md", 1.0, "token rotation notes")]
+            ordered = [s.path for s, _ in rank(segments, "token rotation", project=project)]
+            self.assertEqual(
+                ordered[0], "just_written.md",
+                "an untracked file must not stamp 0 (oldest possible) and lose a "
+                "freshness tie to a years-old committed file")
+
+            # Staged but not yet committed hits the same code path (`git log`
+            # still has nothing for it) and must resolve the same way.
+            _git(project, "add", "just_written.md")
+            staged_ordered = [s.path for s, _ in rank(segments, "token rotation", project=project)]
+            self.assertEqual(staged_ordered[0], "just_written.md")
+
+
+class NonGitCopyOrderIndependenceTests(unittest.TestCase):
+    """Fix round 3: a NON-git project has no commit object either, so the
+    git-log fix above does not reach it - freshness there fell all the way
+    back to raw filesystem mtime, and mtime is assigned by whatever copied
+    or checked out the files, not by their content. Two copies of the exact
+    same project can end up with their files' mtimes in a different
+    relative order purely from copy timing (`tests/test_gate_falsifiability`
+    copies this very repo with `.git` stripped, exposing it as a real
+    `evals --brief` failure: `ranking-changed` even though the copy is
+    byte-identical to the tree the fixture was pinned against). Mtime
+    remains the freshness *value* `_freshness_stamp` returns for a non-git
+    path - that fallback (fix round 2) stays - but a non-git project has no
+    signal that agrees across copies the way a commit timestamp does, so
+    ordering among its files must not be driven by comparing raw mtime
+    magnitudes across copies. It degrades to the same deterministic
+    instrument the git path already uses as its secondary key: path.
+    """
+
+    def test_ranking_is_identical_across_non_git_copies_with_shuffled_mtimes(self) -> None:
+        segments = [_segment("alpha.md", 1.0, "token rotation notes"),
+                    _segment("beta.md", 1.0, "token rotation notes"),
+                    _segment("gamma.md", 1.0, "token rotation notes")]
+
+        def _make_copy(order: list[str]) -> Path:
+            project = Path(tempfile.mkdtemp())
+            self.addCleanup(shutil.rmtree, project, ignore_errors=True)
+            for name in ("alpha.md", "beta.md", "gamma.md"):
+                (project / name).write_text("token rotation notes", encoding="utf-8")
+            # Assign mtimes in a different relative order per copy - exactly
+            # what independent copy operations can do despite identical
+            # content, with no `.git` present to anchor freshness on.
+            base = 1_700_000_000.0
+            for position, name in enumerate(order):
+                stamp = base + position
+                os.utime(project / name, (stamp, stamp))
+            return project
+
+        copy_one = _make_copy(["alpha.md", "beta.md", "gamma.md"])
+        copy_two = _make_copy(["gamma.md", "alpha.md", "beta.md"])
+
+        ordered_one = [s.path for s, _ in rank(segments, "token rotation", project=copy_one)]
+        ordered_two = [s.path for s, _ in rank(segments, "token rotation", project=copy_two)]
+        self.assertEqual(
+            ordered_one, ordered_two,
+            "identical non-git copies must rank identically regardless of "
+            "which file the copy operation happened to timestamp newest")
 
 
 class BriefEquivalenceTests(unittest.TestCase):

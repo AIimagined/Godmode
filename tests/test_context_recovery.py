@@ -136,6 +136,70 @@ class RepoStateTests(unittest.TestCase):
             self.assertNotIn("repo-in-progress-operation", codes)
 
 
+class RetiredInvariantTests(unittest.TestCase):
+    """Retiring an invariant is the lifecycle, not a contradiction.
+
+    The detector compared every invariant record ever written for a subject and
+    called two values a conflict. Retiring one means writing a new record with a
+    new value and `status: retired` — so using the documented lifecycle produced
+    an error by construction, and `doctor` reported the archive unhealthy for
+    doing the right thing.
+
+    Found by retiring a real invariant after a release closed the condition it
+    described.
+    """
+
+    def _issues(self, archive, anchor):
+        return {issue["code"] for issue in
+                detect_context_issues(anchor, archive.read_events(), None)}
+
+    def test_a_retired_invariant_is_not_a_contradiction(self) -> None:
+        with isolated_git_project() as (_project, archive, anchor, _git):
+            archive.append("invariant", "the release is held",
+                           {"value": "one failure is expected", "status": "active"})
+            archive.append("invariant", "the release is held",
+                           {"value": "RETIRED; the tag was cut", "status": "retired"})
+            self.assertNotIn("contradictory-invariants", self._issues(archive, anchor))
+
+    def test_a_superseded_invariant_is_not_a_contradiction_either(self) -> None:
+        with isolated_git_project() as (_project, archive, anchor, _git):
+            archive.append("invariant", "the release is held",
+                           {"value": "one failure is expected", "status": "active"})
+            archive.append("invariant", "the release is held",
+                           {"value": "replaced by the tag", "status": "superseded"})
+            self.assertNotIn("contradictory-invariants", self._issues(archive, anchor))
+
+    def test_two_live_invariants_that_disagree_are_still_a_contradiction(self) -> None:
+        """The check must not be weakened into never firing. This is the case
+        it exists for."""
+        with isolated_git_project() as (_project, archive, anchor, _git):
+            archive.append("invariant", "the gate refuses on unknown",
+                           {"value": "it fails closed", "status": "active"})
+            archive.append("invariant", "the gate refuses on unknown",
+                           {"value": "it fails open", "status": "active"})
+            self.assertIn("contradictory-invariants", self._issues(archive, anchor))
+
+    def test_retiring_one_of_three_still_leaves_the_live_pair_conflicting(self) -> None:
+        with isolated_git_project() as (_project, archive, anchor, _git):
+            archive.append("invariant", "the gate refuses on unknown",
+                           {"value": "it fails closed", "status": "active"})
+            archive.append("invariant", "the gate refuses on unknown",
+                           {"value": "it fails open", "status": "active"})
+            archive.append("invariant", "the gate refuses on unknown",
+                           {"value": "an old wording", "status": "retired"})
+            self.assertIn("contradictory-invariants", self._issues(archive, anchor))
+
+    def test_an_invariant_with_no_status_is_treated_as_live(self) -> None:
+        """Records written before status was recorded must keep being checked;
+        silently exempting them would retire the detector, not the record."""
+        with isolated_git_project() as (_project, archive, anchor, _git):
+            archive.append("invariant", "the gate refuses on unknown",
+                           {"value": "it fails closed"})
+            archive.append("invariant", "the gate refuses on unknown",
+                           {"value": "it fails open"})
+            self.assertIn("contradictory-invariants", self._issues(archive, anchor))
+
+
 class HandshakeCrisisTests(unittest.TestCase):
     def test_handshake_carries_repo_state_and_warning_under_crisis(self) -> None:
         with isolated_git_project() as (project, archive, anchor, git):

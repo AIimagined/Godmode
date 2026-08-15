@@ -9,6 +9,7 @@ reported so a reviewer sees the shape of the change, not just its colour.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 from typing import Any, Callable
@@ -16,6 +17,9 @@ from typing import Any, Callable
 from .godmode_anchor import run_git
 from .godmode_chronicle import Chronicle
 from .godmode_errors import ArchiveError
+from .godmode_sentinel import (
+    PIN_POLICY_FILENAME, pin_file_digest, pin_view_sha256, pinned_evaluators,
+)
 
 _TEST_PATH = re.compile(
     r"(^|/)(tests?|__tests__)(/|$)|(^|/)test_[^/]+$|_test\.[^/.]+$|\.(test|spec)\.[^/.]+$"
@@ -211,6 +215,92 @@ def _protected_test_gate(ctx: dict[str, Any]) -> list[dict[str, Any]]:
     ) for path in ctx["changed_tests"] if path in ctx["protected"] and path not in approved]
 
 
+# --- U-B2: protected-evaluator pin drift ------------------------------------
+#
+# Every other monitor in this module reads a diff - it can only ever see a
+# change that reached the tree through Git. A plain filesystem write to a
+# pinned evaluator (a script running outside any host tool, a shell redirect
+# the sentinel hook never saw, an edit made while the hook was disabled)
+# leaves no diff any of them would read differently. This is the other half
+# of U-B2's guarantee: not "was this edit permitted" (the hook's question,
+# answered before the write happens) but "does the file on disk still match
+# what was pinned" (this monitor's question, answered after).
+def pin_drift(archive: Chronicle, project: Path) -> list[dict[str, Any]]:
+    """Every pinned evaluator, checked against what the archive actually
+    pinned - plus the convenience view file, checked against what the
+    archive would write for it right now.
+
+    Two independent drifts, both blocking:
+
+    * a pinned file's live content no longer hashes to what was pinned - the
+      measuring instrument moved, whether an agent's own tool reached it
+      through a route the hook does not gate, or a human edited it by hand;
+    * `.godmode-protected.json` no longer matches the canonical view the
+      archive's current pin set would produce - which is what a hand-edit
+      of that file (adding, removing, or altering a pin outside `protect`)
+      looks like, since the console rewrites it byte-for-byte on every real
+      pin/unpin. The view is never read to decide anything (see the module
+      docstring in `godmode_sentinel.py`'s U-B2 section) - this is the one
+      place its drift is even noticed.
+    """
+    findings: list[dict[str, Any]] = []
+    pins = pinned_evaluators(archive)
+    if not pins:
+        return findings
+
+    for path, expected in pins.items():
+        target = Path(project) / path
+        if not target.is_file():
+            findings.append(_finding(
+                "pin-drift", path,
+                f"pinned evaluator '{path}' no longer exists on disk; a pin "
+                "outlived the file it protects",
+                True))
+            continue
+        # Streamed and size-capped (fix-round-1, Minor 3) - the same cap
+        # `godmode_lens.py`'s own inventory hashing uses, mirrored via
+        # `pin_file_digest` rather than an unconditional `read_bytes()`
+        # loading a large pinned file whole into memory.
+        actual = pin_file_digest(target)
+        if actual is None:
+            findings.append(_finding(
+                "pin-drift", path,
+                f"pinned evaluator '{path}' could not be hashed (unreadable, "
+                "or larger than the size cap this monitor hashes at) - "
+                "drift cannot be verified, which is not the same as clean",
+                True))
+        elif actual != expected:
+            findings.append(_finding(
+                "pin-drift", path,
+                f"pinned evaluator '{path}' changed outside the guarded edit "
+                f"path: recorded {expected[:12]}, now {actual[:12]} - the "
+                "measuring instrument moved",
+                True))
+
+    view_path = Path(project) / PIN_POLICY_FILENAME
+    expected_view_hash = pin_view_sha256(pins)
+    if not view_path.is_file():
+        findings.append(_finding(
+            "pin-drift", PIN_POLICY_FILENAME,
+            f"{PIN_POLICY_FILENAME} is missing; the archive still pins "
+            f"{len(pins)} file(s) but the convenience view was deleted",
+            True))
+    else:
+        try:
+            current_view_hash = hashlib.sha256(view_path.read_bytes()).hexdigest()
+        except OSError:
+            current_view_hash = None
+        if current_view_hash != expected_view_hash:
+            findings.append(_finding(
+                "pin-drift", PIN_POLICY_FILENAME,
+                f"{PIN_POLICY_FILENAME} does not match what `protect` would "
+                "write for the archive's current pin set; a hand-edit "
+                "changed the protected-evaluator list outside the archive "
+                "that is authoritative for it",
+                True))
+    return findings
+
+
 MONITORS: dict[str, Callable[[dict[str, Any]], list[dict[str, Any]]]] = {
     "assertion-diff": _assertion_diff,
     "skip-quarantine": _skip_quarantine,
@@ -246,6 +336,10 @@ def analyze(archive: Chronicle, project: Path, base: str = "HEAD") -> dict[str, 
     # and this asks the earlier question of whether the write arrived intact at
     # all. A file that no longer parses cannot be reasoned about by any of them.
     findings.extend(source_damage(project, base))
+    # Also unconditional, and diff-independent (see `pin_drift`'s own
+    # docstring): a pinned evaluator mutated out of band leaves no diff any
+    # monitor above would read differently.
+    findings.extend(pin_drift(archive, project))
     blocking = [f for f in findings if f["blocking"]]
     return {
         "base": base,
@@ -420,6 +514,25 @@ _WRITE_CALL = re.compile(
 _TEMPORARY = re.compile(
     r"tmp_path|tmpdir|TemporaryDirectory|mkdtemp|gettempdir|NamedTemporaryFile"
     r"|isolated_project|_project\(|holder\.|self\.project|/tmp/")
+# Anything that can make a test red. A body with none of these is a guard
+# whose planted violation could never reach an assertion - it passes because
+# nothing in it can fail, which reads identically to passing because the code
+# is right. Helpers that assert internally are accepted by the call heuristic:
+# a body that only calls things cannot be told apart cheaply, so the finding
+# stays non-blocking.
+_ASSERTISH = re.compile(
+    r"\bassert\b|\.assert[A-Z]|assertRaises|pytest\.raises|\braise\b"
+    r"|\bself\.fail\b|\bunittest\.skip")
+# An except arm that swallows without reporting. Inside a test this deletes
+# the only path by which the failure it guards could surface; the suite stays
+# green while the covered defect is live.
+_SILENT_CATCH = re.compile(
+    r"except[^:\n]*:\s*(?:#[^\n]*)?\n\s*pass\b")
+# A source file read through a fixed numeric slice. The guard covers the
+# first N characters of a file that grows, so it silently stops covering the
+# code it was written for - the anchor must be syntactic, not positional.
+_FIXED_SLICE = re.compile(
+    r"\.read(?:_text|_bytes)?\([^)]*\)[^\n]*\[\s*:\s*\d{3,}\s*\]")
 
 
 def guard_quality(project: Path, base: str = "HEAD") -> list[dict[str, Any]]:
@@ -455,6 +568,29 @@ def guard_quality(project: Path, base: str = "HEAD") -> list[dict[str, Any]]:
                     f"`{name}` writes to a path that is not temporary: "
                     f"{writes[0].strip()[:70]} - a write-endpoint test aimed at "
                     "real data destroys what it was verifying",
+                    False))
+            if not _ASSERTISH.search(body):
+                findings.append(_finding(
+                    "assertion-free-test", relative,
+                    f"`{name}` contains nothing that can fail - no assert, no "
+                    "raise, no expected exception; a guard whose planted "
+                    "violation cannot reach an assertion passes for the wrong "
+                    "reason",
+                    False))
+            if _SILENT_CATCH.search(body):
+                findings.append(_finding(
+                    "silent-catch-in-test", relative,
+                    f"`{name}` swallows an exception with a bare pass; the one "
+                    "path by which its failure could surface is deleted, so "
+                    "the suite stays green while the covered defect is live",
+                    False))
+            if _FIXED_SLICE.search(body):
+                findings.append(_finding(
+                    "fixed-slice-anchor", relative,
+                    f"`{name}` reads a file through a fixed numeric slice; the "
+                    "guard covers the first N characters of a file that grows "
+                    "and silently stops covering the code it was written for - "
+                    "anchor on syntax, not position",
                     False))
     return findings
 

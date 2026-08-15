@@ -26,11 +26,16 @@ MASKS: dict[str, tuple[str, ...]] = {
     "checkpoint": ("status", "next"),
     "change": ("files", "plan"),
     "decision": ("status",),
+    "differential": ("subject", "method"),
     "invariant": ("status",),
     "lesson": ("status", "generalized_guard"),
+    "metric": ("measured", "turns"),
     "obligation": ("status",),
     "plan": ("state",),
+    "refusal": ("tool", "tier", "category"),
     "sprint": ("state", "title"),
+    "upstream-diff": ("target", "verdict", "resolved"),
+    "verdict": ("disposition", "run_state", "acquitted_by"),
 }
 _DEFAULT_KEEP: tuple[str, ...] = ("status", "state")
 _TEXT_CAP = 120
@@ -41,16 +46,27 @@ def compress_record(record: dict[str, Any]) -> dict[str, Any]:
     data = record["data"]
     kept = {field: data[field] for field in keep if field in data}
     removed = sorted(set(data) - set(kept))
+    # The subject cap must say when it bit. A 120-character subject and a
+    # 300-character subject clipped to 120 were byte-identical in the view,
+    # which is the uniform-truncation lie the docstring above condemns - and
+    # a head-only clip deletes exactly the tail where a long subject keeps
+    # its distinguishing part. The mask states the cut, same as it states
+    # every removed field.
+    subject = str(record["subject"])
+    clipped = len(subject) > _TEXT_CAP
+    mask: dict[str, Any] = {
+        "kept": sorted(kept),
+        "removed": removed,
+        "reconstruct": f"seq:{record['sequence']}",
+    }
+    if clipped:
+        mask["subject_truncated_at"] = _TEXT_CAP
     return {
         "kind": record["kind"],
-        "subject": str(record["subject"])[:_TEXT_CAP],
+        "subject": subject[:_TEXT_CAP],
         "sequence": record["sequence"],
         "data": kept,
-        "mask": {
-            "kept": sorted(kept),
-            "removed": removed,
-            "reconstruct": f"seq:{record['sequence']}",
-        },
+        "mask": mask,
     }
 
 

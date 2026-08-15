@@ -8,8 +8,10 @@ file), an attested pre-check: C-16's reverse-impact traversal
 statement covering git-history-read and sole-carrier-of-open-obligation.
 
 Requirement-driven, like B3-5: undeclared stays advisory; declared blocks. A
-pin always denies, whatever the policy says. Untracked scratch files are
-unaffected either way.
+pin always denies, whatever the policy says - the SHIPPED U-B2 evaluator-pin
+store (`godmode_sentinel.pinned_evaluators`/`pin_evaluator`), not a second
+one: this gate reads that store rather than inventing its own. Untracked
+scratch files are unaffected either way.
 """
 
 from __future__ import annotations
@@ -34,12 +36,14 @@ from godmode_runtime.godmode_atlas import build as build_atlas  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_runtime.godmode_errors import ArchiveError  # noqa: E402
 from godmode_runtime.godmode_fence import (  # noqa: E402
-    PIN_CONFIG,
     deletion_verdict,
-    is_pinned,
     record_deletion_precheck,
 )
-from godmode_runtime.godmode_sentinel import POLICY_FILENAME  # noqa: E402
+from godmode_runtime.godmode_sentinel import (  # noqa: E402
+    POLICY_FILENAME,
+    pin_evaluator,
+    unpin_evaluator,
+)
 
 
 @contextmanager
@@ -75,8 +79,8 @@ def _declare_gate(project: Path) -> None:
     )
 
 
-def _pin(project: Path, *patterns: str) -> None:
-    (project / PIN_CONFIG).write_text(json.dumps({"pinned": list(patterns)}), encoding="utf-8")
+def _pin(archive, project: Path, path: str) -> None:
+    pin_evaluator(archive, project, path)
 
 
 class UntrackedScratchTests(unittest.TestCase):
@@ -164,11 +168,13 @@ class PrecheckRecordingTests(unittest.TestCase):
 
 class PinTests(unittest.TestCase):
     """The pin store outranks everything else: pinned files stay denied
-    regardless of policy."""
+    regardless of policy. This is the shipped U-B2 evaluator-pin store -
+    `godmode_sentinel.pinned_evaluators`/`pin_evaluator` - read by this gate
+    rather than a second, independently maintained one."""
 
     def test_a_pinned_file_is_denied_even_undeclared(self) -> None:
         with isolated_git_project() as (project, archive):
-            _pin(project, "tracked.py")
+            _pin(archive, project, "tracked.py")
             verdict = deletion_verdict(archive, "tracked.py", project_root=project)
         self.assertFalse(verdict["allowed"])
         self.assertEqual(verdict["gate"], "pinned")
@@ -178,7 +184,7 @@ class PinTests(unittest.TestCase):
         the whole point of ranking it first."""
         with isolated_git_project() as (project, archive):
             _declare_gate(project)
-            _pin(project, "tracked.py")
+            _pin(archive, project, "tracked.py")
             record_deletion_precheck(
                 archive, project, "tracked.py",
                 history_read="one commit", sole_carrier="not the sole carrier",
@@ -187,16 +193,22 @@ class PinTests(unittest.TestCase):
         self.assertFalse(verdict["allowed"])
         self.assertEqual(verdict["gate"], "pinned")
 
-    def test_is_pinned_matches_a_glob(self) -> None:
-        with isolated_git_project() as (project, _archive):
-            _pin(project, "secrets/**")
-            (project / "secrets").mkdir()
-            self.assertTrue(is_pinned(project, "secrets/keys.json"))
-            self.assertFalse(is_pinned(project, "tracked.py"))
+    def test_unpinning_lifts_the_deletion_denial(self) -> None:
+        """The pin, not this gate, is what is being consulted - proven by
+        showing the denial follows the pin's own state, in both directions."""
+        with isolated_git_project() as (project, archive):
+            _pin(archive, project, "tracked.py")
+            denied = deletion_verdict(archive, "tracked.py", project_root=project)
+            unpin_evaluator(archive, project, "tracked.py")
+            lifted = deletion_verdict(archive, "tracked.py", project_root=project)
+        self.assertFalse(denied["allowed"])
+        self.assertTrue(lifted["allowed"])
+        self.assertNotEqual(lifted["gate"], "pinned")
 
-    def test_no_pin_file_pins_nothing(self) -> None:
-        with isolated_git_project() as (project, _archive):
-            self.assertFalse(is_pinned(project, "tracked.py"))
+    def test_no_pin_pins_nothing(self) -> None:
+        with isolated_git_project() as (project, archive):
+            verdict = deletion_verdict(archive, "tracked.py", project_root=project)
+        self.assertNotEqual(verdict["gate"], "pinned")
 
 
 class OutsideProjectTests(unittest.TestCase):

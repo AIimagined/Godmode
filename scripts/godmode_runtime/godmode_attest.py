@@ -20,12 +20,28 @@ from typing import Any
 
 from .godmode_chronicle import Chronicle
 from .godmode_errors import ArchiveError
+from .godmode_session_log import command_digest
 
 STATUSES = ("ran", "empty", "skipped", "blocked")
 GRADES = ("observed", "hypothesis", "verified", "unknown")
 
 _FILE_CITE = re.compile(r"^file:(?P<path>[^#]+)(?:#L(?P<start>\d+)(?:-L?(?P<end>\d+))?)?$")
 _RECORD_CITE = re.compile(r"^rec:(?P<digest>[0-9a-f]{6,64})$")
+_VERDICT_CITE = re.compile(r"^verdict:(?P<sequence>\d+)$")
+# U-E3: what a differential's a_ref/b_ref name when they point at an archived
+# state rather than a file or a command, and the differential citation itself.
+_SEQ_CITE = re.compile(r"^seq:(?P<sequence>\d+)$")
+_DIFF_CITE = re.compile(r"^diff:(?P<sequence>\d+)$")
+# U-T3: the one output shape a numeric claim about a registered metric may
+# cite - reconstructed as "<name>:<value>" and checked against the metric's
+# own registered anchor pattern.
+_LINE_CITE = re.compile(r"^line:(?P<name>[^:]+):(?P<value>.+)$")
+# The cap `line:`'s value half is held to before it is ever matched against
+# an anchor (see `_citation_resolves`'s `line:` handling) - a metric value
+# never legitimately needs more than this many characters, and the length
+# cap on the anchor itself (`_ANCHOR_MAX_LEN`) bounds the wrong side of the
+# match: it says nothing about how long the TEXT matched against it may be.
+_MAX_METRIC_VALUE_LEN = 64
 
 # Named because naming them is the intervention. Each entry is a thought that has
 # preceded a skipped step, mapped to the gate it predicts. Surfaced on a block so the
@@ -46,6 +62,9 @@ class Verdict:
     allowed: bool
     trigger: str
     missing: tuple[dict[str, Any], ...]
+    # SOFT findings that ride alongside a gate check without affecting
+    # `allowed` - currently just the assumption gate (U-S4), below.
+    advisories: tuple[str, ...] = ()
 
     def view(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -53,6 +72,8 @@ class Verdict:
             "allowed": self.allowed,
             "missing": list(self.missing),
         }
+        if self.advisories:
+            payload["advisories"] = list(self.advisories)
         if not self.allowed:
             payload["watch_for"] = [
                 text for text, trigger in RATIONALIZATIONS if trigger == self.trigger
@@ -371,8 +392,17 @@ def attested_rule_ids(archive: Chronicle, session: str) -> set[str]:
     return covered
 
 
-def gate(archive: Chronicle, session: str, charter: dict[str, Any], trigger: str) -> Verdict:
-    """Block when a HARD rule for this trigger has no attestation in this session."""
+def gate(
+    archive: Chronicle, session: str, charter: dict[str, Any], trigger: str,
+    timeline: dict[str, Any] | None = None,
+) -> Verdict:
+    """Block when a HARD rule for this trigger has no attestation in this session.
+
+    `timeline` is optional and only read for `before_approach` (U-S4's
+    assumption gate, below); every other trigger ignores it, and its
+    absence never blocks anything - a SOFT advisory degrades to silent
+    when the instrument that would confirm it is not available.
+    """
     covered = attested_rule_ids(archive, session)
     missing = tuple(
         {"id": rule["id"], "text": rule["text"], "source": rule["source"], "verify": rule["verify"]}
@@ -381,7 +411,52 @@ def gate(archive: Chronicle, session: str, charter: dict[str, Any], trigger: str
         and rule["enforcement"] == "HARD"
         and rule["id"] not in covered
     )
-    return Verdict(allowed=not missing, trigger=trigger, missing=missing)
+    advisories: tuple[str, ...] = ()
+    if trigger == "before_approach":
+        note = assumption_gate(archive, session, timeline)
+        if note:
+            advisories = (note,)
+    return Verdict(allowed=not missing, trigger=trigger, missing=missing, advisories=advisories)
+
+
+# U-S4 assumption gate [E4]. R3+ tier proxy: fix-vocabulary claims + Edit/Write
+# mutation turns stand in for sentinel risk tiers (out of scope here) - the
+# same proxy U-T2's temporal check and `record_criterion`'s late-ordering
+# check already use (see their comments above); reused rather than reinvented
+# so "R3+ work happened this session" means the same thing everywhere it is
+# asked. Known gap carried forward unchanged: non-file-mutating R3+ commands
+# (`git branch -D`) are not counted as mutations.
+ASSUMPTION_GATE_ADVISORY = "state assumptions or state that there are none"
+
+
+def assumption_gate(
+    archive: Chronicle, session: str, timeline: dict[str, Any] | None = None,
+) -> str | None:
+    """The advisory once, for a session doing R3+ work with no assumption record.
+
+    Cleared by any `assumption` record on this session - including one whose
+    value literally says there were none; the gate asks the question, it does
+    not grade the answer. Recomputed fresh from the archive on every call
+    (the same idiom `gate()`'s own HARD-rule check already uses), so it reads
+    as one standing fact about the session rather than a counter that could
+    fall out of sync with it: call it once or a hundred times before the
+    first assumption record lands and it names the same session-level gap
+    every time, not once per call.
+    """
+    engaged = bool(timeline is not None and timeline.get("mutation_turns"))
+    if not engaged:
+        engaged = any(
+            record["data"].get("session") == session
+            and looks_like_fix_claim(str(record["data"].get("text", "")))[0]
+            for record in archive.select(kind="claim", limit=500)
+        )
+    if not engaged:
+        return None
+    has_assumption = any(
+        record["data"].get("session") == session
+        for record in archive.select(kind="assumption", limit=500)
+    )
+    return None if has_assumption else ASSUMPTION_GATE_ADVISORY
 
 
 # Words too common to corroborate anything. A claim whose only overlap with the
@@ -477,6 +552,73 @@ def _citation_resolves(project: Path, archive: Chronicle, citation: str,
             record["record_hash"].startswith(digest) and record["kind"] != "claim"
             for record in archive.select(limit=2000)
         )
+    match = _VERDICT_CITE.match(citation)
+    if match:
+        # Existence is not enough here: a claim standing on a refuted or
+        # malformed verdict is the false-claim class this whole mechanism
+        # exists to catch, so only a confirmed disposition resolves.
+        sequence = int(match.group("sequence"))
+        return any(
+            record["sequence"] == sequence and record["data"].get("disposition") == "confirmed"
+            for record in archive.select(kind="verdict", limit=2000)
+        )
+    match = _SEQ_CITE.match(citation)
+    if match:
+        # U-E3: a differential's a_ref/b_ref pointing at an archived state -
+        # existence in the chain is enough here; the differential's own
+        # record is what vouches for the comparison, this only vouches the
+        # state being compared exists.
+        sequence = int(match.group("sequence"))
+        return any(record["sequence"] == sequence for record in archive.select(limit=2000))
+    match = _DIFF_CITE.match(citation)
+    if match:
+        # U-E3: a differential resolves only when its own record exists AND
+        # both sides of the comparison it names also resolve - pointing at
+        # one side of a comparison is reading the artefact, not diffing it,
+        # so a dangling a_ref/b_ref (or a deleted differential record) must
+        # not resolve either.
+        sequence = int(match.group("sequence"))
+        for record in archive.select(kind="differential", limit=2000):
+            if record["sequence"] == sequence:
+                data = record["data"]
+                return (
+                    _citation_resolves(project, archive, str(data.get("a_ref", "")), session)
+                    and _citation_resolves(project, archive, str(data.get("b_ref", "")), session)
+                )
+        return False
+    match = _LINE_CITE.match(citation)
+    if match:
+        # U-T3: resolves only against a metric contract registered for this
+        # exact name, and only when the reconstructed "name:value" text
+        # matches the anchor that contract declared at registration - an
+        # unregistered metric name resolves nothing, by design.
+        anchor = _registered_anchor(archive, match.group("name"))
+        if anchor is None:
+            return False
+        value = match.group("value")
+        # Layer 2 of 2 against catastrophic backtracking (layer 1 is the
+        # registration-time shape refusal in `register_metric_contract`):
+        # `value` is an agent-supplied citation string, matched against an
+        # anchor at GRADING time - untrusted input reaching a regex the
+        # length cap on the anchor itself never bounded. A metric value
+        # never legitimately needs more than this many characters, so
+        # anything longer is refused outright, before the regex engine
+        # ever sees it - holds even for a pattern layer 1's heuristic
+        # missed.
+        if len(value) > _MAX_METRIC_VALUE_LEN:
+            return False
+        try:
+            return re.match(anchor, f"{match.group('name')}:{value}") is not None
+        except re.error:
+            return False
+    if citation.startswith("criterion:"):
+        # U-T2: resolves when a criterion record exists under that exact
+        # subject - the citation string and the subject are the same text,
+        # so no separate parsing is needed to compare them.
+        return any(
+            record["subject"] == citation
+            for record in archive.select(kind="criterion", limit=500)
+        )
     match = _FILE_CITE.match(citation)
     if match:
         target = project / match.group("path")
@@ -499,6 +641,16 @@ def _citation_resolves(project: Path, archive: Chronicle, citation: str,
     # about the outside world could never be recorded as verified whatever the
     # author had actually read.
     if citation.startswith(("doc:", "url:")):
+        return _is_plausible_source_reference(citation.split(":", 1)[1])
+    # Same reasoning as doc:/url: - nothing local can mechanically confirm a
+    # search was exhaustive, a population was fully scanned, or a control
+    # probe actually ran; these resolve as the operator's declaration, same
+    # plausibility floor. Without this, the mistake-class detectors that
+    # read this exact vocabulary (M18 claim-from-a-sample, M21
+    # absence-without-control) would teach an operator to cite it, then
+    # silently downgrade every claim that did - punishing the evidence
+    # discipline the detectors exist to reward.
+    if citation.startswith(("searched:", "scanned:", "population:", "control:", "second:")):
         return _is_plausible_source_reference(citation.split(":", 1)[1])
     return False
 
@@ -621,11 +773,6 @@ _ROOT_CAUSE = re.compile(
     r"(?i)\broot cause\b|\bcaused by\b|\bbecause\b|\bthe reason\b|\bdue to\b"
     r"|\bwhat (?:broke|caused) it\b")
 
-# What a differential looks like in the record: a command that was run, or a
-# comparison named as one. A file citation is not enough - pointing at one side
-# of a comparison is what the ledger calls reading the artefact, not diffing it.
-_DIFFERENTIAL = re.compile(r"(?i)^(?:cmd:|diff:)")
-
 
 def looks_like_root_cause(text: str) -> tuple[bool, str]:
     """Whether a claim asserts why something happened."""
@@ -633,8 +780,436 @@ def looks_like_root_cause(text: str) -> tuple[bool, str]:
     return (True, f"asserts a cause: {match.group(0)}") if match else (False, "")
 
 
-def cites_a_differential(citations: list[str]) -> bool:
-    return any(_DIFFERENTIAL.match(str(citation)) for citation in citations)
+# U-E3: differential-evidence detector - diff before theory.
+# The rule above fires on any root-cause phrasing; this is the
+# more precise instrument it was missing - it only holds a claim to needing
+# the *diff* once the archive actually holds two comparable states to diff,
+# so a project with nothing to compare yet pays no friction for it.
+#
+# The vocabulary is a public constant (part of this detector's declared
+# interface) rather than folded into `_ROOT_CAUSE`, because the two phrases
+# they do not share ("the mechanism", "the root is") are new here and the
+# recognizer above stays exactly as it was - callers and tests that already
+# depend on `looks_like_root_cause` see no change in what it matches.
+ROOT_CAUSE_VOCAB = ("root cause", "the mechanism", "caused by", "the root is")
+
+# Gate v2 learned this the same way for shell vocabulary
+# (`godmode_sentinel.split_segments`'s quote-aware tokenizing): a word found
+# only inside quoted text or a code span was not said by the speaker, it was
+# reported by them. "the user said 'the root cause is y'" is not itself
+# asserting a mechanism. The prose variant lives here, beside `_prose`-style
+# markdown handling, rather than importing the shell-command tokenizer,
+# which parses a different grammar entirely.
+_QUOTED_SPAN = re.compile(r"`[^`\n]{0,200}`|\"[^\"\n]{0,200}\"|'[^'\n]{0,200}'")
+
+
+def _strip_quoted(text: str) -> str:
+    return _QUOTED_SPAN.sub(" ", text)
+
+
+def _asserts_a_cause(text: str) -> tuple[bool, str]:
+    """The union of the old recognizer and U-E3's own vocabulary.
+
+    `looks_like_root_cause` itself is left untouched (see the constant's
+    docstring above); this is the trigger the differential gate actually
+    uses, so a claim written with either vocabulary is held to the same
+    comparable-states discipline.
+    """
+    asserted, why = looks_like_root_cause(text)
+    if asserted:
+        return asserted, why
+    lowered = text.lower()
+    for phrase in ROOT_CAUSE_VOCAB:
+        if phrase in lowered:
+            return True, f"asserts a cause: {phrase}"
+    return False, ""
+
+
+# Record kinds that represent a measured or archived STATE a differential can
+# compare - checkpoints, verdicts, metric readings. Deliberately excludes the
+# day-to-day bookkeeping kinds (session, attestation, claim, criterion,
+# decision...) that would otherwise make nearly every claim look like it had
+# two comparable states purely by sharing an archive with them.
+_COMPARABLE_KINDS = ("checkpoint", "verdict", "metric")
+
+
+def _comparable_states(archive: Chronicle, terms: set[str]) -> list[int]:
+    """Sequence numbers of recorded states sharing a salient term with the claim."""
+    if not terms:
+        return []
+    found: list[int] = []
+    for kind in _COMPARABLE_KINDS:
+        for record in archive.select(kind=kind, limit=500):
+            if _salient(str(record["subject"])) & terms:
+                found.append(record["sequence"])
+    return found
+
+
+def _differential_reason(
+    project: Path,
+    archive: Chronicle,
+    session: str | None,
+    text: str,
+    citations: list[str],
+) -> str | None:
+    """U-E3: the downgrade reason when a root-cause claim needs the diff, or
+    `None` when the claim should be left alone.
+
+    Fires on root-cause vocabulary found OUTSIDE quotes and code spans, and
+    only once the archive holds two or more comparable-state records sharing
+    a salient term with the claim - absence of that instrument is a stated
+    gap, never a penalty (same discipline as U-T2). Once it fires, a bare
+    `cmd:` no longer satisfies it: the claim must cite a RESOLVING `diff:` or
+    `verdict:`, naming what was actually compared rather than just that
+    something ran.
+    """
+    stripped = _strip_quoted(text)
+    asserted, why = _asserts_a_cause(stripped)
+    if not asserted:
+        return None
+    comparable = sorted(set(_comparable_states(archive, _salient(stripped))))
+    if len(comparable) < 2:
+        return None
+    for citation in citations:
+        citation = str(citation)
+        if citation.startswith(("diff:", "verdict:")) and _citation_resolves(
+            project, archive, citation, session
+        ):
+            return None
+    named = ", ".join(f"seq:{s}" for s in comparable[:2])
+    return (
+        f"two comparable states exist ({named}) - the root cause claim needs "
+        f"the differential that confirmed it ({why}); cite diff:<what you "
+        "compared> or verdict:<the confirmed check>, not just that something ran"
+    )
+
+
+_DELTA_MAX_ITEMS = 20
+_DELTA_MAX_CHARS = 160
+
+
+def record_differential(
+    archive: Chronicle,
+    subject: str,
+    a_ref: str,
+    b_ref: str,
+    delta: list[str],
+    method: str,
+) -> dict[str, Any]:
+    """U-E3: record a comparison of two archived states.
+
+    `a_ref`/`b_ref` are citation strings (`seq:<n>`, `file:<path>`, `cmd:...`)
+    naming the two states compared - stored as given, NOT validated to
+    resolve here. That is deliberate: a differential recorded against a ref
+    that later stops resolving (the state was deleted, the file moved) must
+    still be constructible, so `diff:<seq>` citing it can be observed
+    failing to resolve rather than the write being refused and the failure
+    mode going untested. Neither ref may itself be a `diff:` citation - a
+    differential compares two states, not two other differentials, and
+    allowing that would open unbounded recursion in `_citation_resolves`.
+    """
+    subject = subject.strip()
+    if not subject:
+        raise ArchiveError("A differential needs a non-empty subject")
+    a_ref, b_ref = str(a_ref), str(b_ref)
+    if not a_ref or not b_ref:
+        raise ArchiveError("A differential needs both a_ref and b_ref")
+    if a_ref.startswith("diff:") or b_ref.startswith("diff:"):
+        raise ArchiveError(
+            "A differential's a_ref/b_ref must name an archived state, not another differential"
+        )
+    if method != "read" and not method.startswith("cmd:"):
+        raise ArchiveError("A differential's method must be 'read' or 'cmd:<command>'")
+    if len(delta) > _DELTA_MAX_ITEMS:
+        raise ArchiveError(
+            f"A differential's delta is capped at {_DELTA_MAX_ITEMS} items; got {len(delta)}"
+        )
+    bounded_delta = [str(item)[:_DELTA_MAX_CHARS] for item in delta]
+    data = {
+        "subject": subject,
+        "a_ref": a_ref,
+        "b_ref": b_ref,
+        "delta": bounded_delta,
+        "method": method,
+    }
+    return archive.append("differential", subject, data, evidence=[a_ref, b_ref])
+
+
+# U-T2: a claim that a broken thing now works. Narrow on purpose - the
+# red-before-green rule below is a real burden (it demands the cited command
+# was actually run failing, not merely cited), and holding every verified
+# claim to it would be the over-gating that gets a check switched off. Only
+# claims using this vocabulary are held to the temporal shape.
+_FIX_VOCAB = re.compile(
+    r"(?i)\bfix(?:e[sd]|ing)?\b|\bresolv(?:e[sd]?|ing)\b|\brepair(?:ed|s|ing)?\b"
+    r"|\bpatch(?:ed|es|ing)?\b|\bcorrect(?:ed|s|ing)?\b|\bnow pass(?:es|ing)?\b"
+    r"|\bbug is (?:fixed|gone)\b"
+)
+
+
+def looks_like_fix_claim(text: str) -> tuple[bool, str]:
+    """Whether a claim asserts that something broken now works."""
+    match = _FIX_VOCAB.search(text)
+    return (True, f"asserts a fix: {match.group(0)}") if match else (False, "")
+
+
+# E4 R4 / E6 tdd, superpowers-class: a completion claim citing a test command
+# is admissible only when the SAME command is observed failing before the
+# fix-edit and passing after - the temporal shape, not just the citation.
+# One reason text for every way the shape can be missing (green-only,
+# red-only, or absent): the point is the missing shape, not which half of it
+# is missing.
+TEMPORAL_REASON = (
+    "cited test was never seen failing (red) before the fix - run it red, "
+    "fix, run it green"
+)
+
+
+def _temporal_violation(timeline: dict[str, Any], cmd_citations: list[str]) -> str | None:
+    """Whether none of the cited commands show red-before-green.
+
+    Returns the downgrade reason when the shape is missing; `None` when at
+    least one cited command was observed failing before the last mutating
+    turn and passing after it. A command absent from the timeline entirely
+    (never observed running) is treated the same as one with no matching
+    outcome - it cannot show a shape it was never seen having.
+    """
+    commands = timeline.get("commands") or {}
+    mutations = timeline.get("mutation_turns") or []
+    last_mutation = max(mutations) if mutations else None
+
+    for citation in cmd_citations:
+        command_text = str(citation)[len("cmd:"):]
+        observations = commands.get(command_digest(command_text), [])
+        if not observations:
+            continue
+        reds = [turn for turn, exit_code in observations if exit_code != 0]
+        greens = [turn for turn, exit_code in observations if exit_code == 0]
+        if not reds or not greens:
+            continue
+        if last_mutation is not None:
+            if any(r < last_mutation for r in reds) and any(g > last_mutation for g in greens):
+                return None
+        # No mutation recorded in the timeline at all (unusual for a fix
+        # claim, but not this check's business to refuse) - fall back to the
+        # ordering the rule is really about: seen failing, then seen passing.
+        elif min(reds) < max(greens):
+            return None
+    return TEMPORAL_REASON
+
+
+# E4: state what passing looks like before doing the work, so the
+# criterion judges the work rather than the work retrofitting the criterion.
+_WEAK_VERBS = re.compile(
+    r"(?i)\b(?:improve[sd]?|clean(?:ed|s|ing)?(?:\s+up)?|better|nicer"
+    r"|enhance[sd]?|polish(?:ed|ing)?)\b"
+)
+
+LATE_CRITERION_FINDING = "criterion must precede the work it judges"
+
+
+# U-T3: anchored-metric contracts. A numeric claim about a registered metric
+# must cite an output line matching the anchor declared for it, never a
+# paraphrase - and when it does cite one, the value on that line must be the
+# number the claim states, or the two are said out loud.
+_ANCHOR_MAX_LEN = 200
+
+# A quantified group ((X+), (X*), (X{m,n})) immediately followed by another
+# quantifier - (X+)+, (X*)+, (X+)*, (X*)*, and the {m,n} forms - is the
+# textbook catastrophic-backtracking shape: the same run of input characters
+# can be partitioned between the two quantifiers exponentially many ways
+# before the engine gives up, so a short anchor and a short(ish) matched
+# value are enough to hang. `re.compile("(a+)+b").match("a" * 28)` on this
+# codebase's own interpreter does not return in under 8 seconds - the length
+# cap above bounds the ANCHOR's length, which says nothing about that.
+#
+# This is a text scan for the named shapes, not a full regex parser - it
+# will not catch every pathological pattern, but it catches these by name,
+# at registration time, before an agent-supplied value is ever matched
+# against the anchor. `_MAX_METRIC_VALUE_LEN` (grading time, see
+# `_citation_resolves`'s `line:` handling) is the second, independent layer:
+# it holds even for a shape this heuristic misses.
+_QUANT = r"(?:[+*]|\{\d+,\d*\})"
+_CATASTROPHIC_SHAPE = re.compile(r"\((?:[^()]*" + _QUANT + r"[^()]*)\)" + _QUANT)
+
+
+def _catastrophic_shape(pattern: str) -> str | None:
+    """The nested-quantifier substring that risks exponential backtracking."""
+    match = _CATASTROPHIC_SHAPE.search(pattern)
+    return match.group(0) if match else None
+
+
+def _registered_anchor(archive: Chronicle, name: str) -> str | None:
+    """The anchor most recently registered for `name`, or `None` if never."""
+    subject = f"metric-contract:{name}"
+    anchor: str | None = None
+    for record in archive.select(kind="decision", limit=500):
+        if record["subject"] == subject:
+            anchor = record["data"].get("anchor")
+    return anchor
+
+
+def _registered_metric_names(archive: Chronicle) -> set[str]:
+    return {
+        record["subject"][len("metric-contract:"):]
+        for record in archive.select(kind="decision", limit=500)
+        if record["subject"].startswith("metric-contract:")
+    }
+
+
+def register_metric_contract(
+    archive: Chronicle, session: str, name: str, anchor: str
+) -> dict[str, Any]:
+    """Declare the one output shape a numeric claim about `name` may cite.
+
+    Validated at registration, before the anchor can ever gate a claim, in
+    three steps: it must compile as a regex; it is length-capped; and it is
+    scanned for the named catastrophic-backtracking shapes (`(X+)+`, `(X*)+`,
+    `(X+)*`, `(X*)*`, and the `{m,n}` forms - see `_catastrophic_shape`).
+    `re.compile` plus a length cap alone is NOT the whole defense - a review
+    round demonstrated `(a+)+b` compiles fine, is well under the length cap,
+    and hangs the interpreter once matched against a crafted `line:` value at
+    grading time, because the length cap bounds the anchor's own length, not
+    the length of the text later matched against it (see
+    `_MAX_METRIC_VALUE_LEN`, the second, independent layer against the same
+    class of pattern). The shape scan is a heuristic text match, not a full
+    regex parser, so this runs once over a short pattern an operator
+    declares by hand - not a claim that every pathological pattern is caught.
+    """
+    name = name.strip()
+    if not name:
+        raise ArchiveError("A metric contract needs a non-empty name")
+    if not anchor or len(anchor) > _ANCHOR_MAX_LEN:
+        raise ArchiveError(f"A metric anchor must be 1-{_ANCHOR_MAX_LEN} characters")
+    try:
+        re.compile(anchor)
+    except re.error as exc:
+        raise ArchiveError(f"Metric anchor {anchor!r} is not a valid pattern: {exc}") from exc
+    shape = _catastrophic_shape(anchor)
+    if shape:
+        raise ArchiveError(
+            f"Metric anchor {anchor!r} contains a nested-quantifier shape "
+            f"({shape!r}) that risks catastrophic backtracking - simplify it"
+        )
+    return archive.append(
+        "decision", f"metric-contract:{name}",
+        {"anchor": anchor, "session": session},
+        evidence=[],
+    )
+
+
+# Markdown emphasis stripped before the metric-name search runs, so
+# "**val_bpb** improved to 3.21" still names the metric it bolded. Bare `*`
+# and `` ` `` only - NOT `_`, because a metric name is exactly the kind of
+# identifier that carries underscores itself (`val_bpb`), and stripping every
+# underscore in the text would delete the very thing this is searching for.
+_EMPHASIS = re.compile(r"[*`]")
+_NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
+
+
+def _strip_emphasis(text: str) -> str:
+    return _EMPHASIS.sub("", text)
+
+
+def _metric_line_citations(name: str, citations: list[str]) -> list[tuple[str, str]]:
+    """(citation, cited_value) pairs among `citations` naming this metric."""
+    found: list[tuple[str, str]] = []
+    for citation in citations:
+        match = _LINE_CITE.match(str(citation))
+        if match and match.group("name") == name:
+            found.append((str(citation), match.group("value")))
+    return found
+
+
+def _numbers_differ(cited: str, claimed: str) -> bool:
+    try:
+        return float(cited) != float(claimed)
+    except ValueError:
+        return cited != claimed
+
+
+def _metric_contract_reason(archive: Chronicle, text: str, citations: list[str]) -> str | None:
+    """U-T3: the downgrade reason when a claimed number contradicts its
+    cited anchored line, or `None` when the claim should be left alone.
+
+    Only fires when a registered metric's name literally appears in the
+    (emphasis-stripped) claim text - an unregistered metric name gets no
+    friction from this at all. Only the FIRST number in the claim text is
+    compared against each mentioned metric's cited value: a single claim
+    naming two metrics with two different numbers each is a known scale
+    limit of this check, not a silent skip - the common case this contract
+    targets (one metric, one number) is exact.
+    """
+    names = _registered_metric_names(archive)
+    if not names:
+        return None
+    normalized = _strip_emphasis(text)
+    mentioned = [name for name in names if re.search(rf"\b{re.escape(name)}\b", normalized)]
+    if not mentioned:
+        return None
+    numbers = _NUMBER.findall(normalized)
+    if not numbers:
+        return None
+    claimed = numbers[0]
+    for name in mentioned:
+        for citation, cited_value in _metric_line_citations(name, citations):
+            if _numbers_differ(cited_value, claimed):
+                return (
+                    f"the cited line says {name}:{cited_value}, the claim says "
+                    f"{claimed} ({citation} does not match)"
+                )
+    return None
+
+
+def record_criterion(
+    archive: Chronicle,
+    session: str,
+    task: str,
+    text: str,
+    cites: list[str] | None = None,
+    timeline: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Record what passing looks like, under subject `criterion:<task>`.
+
+    A later claim cites it back by that same string (`criterion:<task>`,
+    resolved in `_citation_resolves`). Two checks here, both advisory - they
+    inform the record, they never block writing the criterion:
+
+    * Weak-criterion lint: no `cmd:` citation and only vague verbs
+      (improve/clean/better) in the text - nothing an outside reader could
+      check pass/fail against.
+    * Ordering: when `timeline` is supplied (a transcript was available) and
+      it already shows a mutation turn, the criterion is being written after
+      work has already started, and cannot have judged that work. `timeline`
+      absent is a stated gap, not a violation - the ordering simply cannot
+      be checked without an instrument.
+    """
+    if not task.strip():
+        raise ArchiveError("A criterion needs a non-empty task slug")
+    citations = cites or []
+    has_command = any(str(c).startswith("cmd:") for c in citations)
+    advisories: list[str] = []
+    if not has_command and _WEAK_VERBS.search(text):
+        advisories.append(
+            "weak criterion: no command citation and only vague verbs "
+            "(improve/clean/better) - state what passing looks like, "
+            "ideally citing cmd:<the check that will judge it>"
+        )
+    late = bool(timeline is not None and timeline.get("mutation_turns"))
+    if late:
+        advisories.append(LATE_CRITERION_FINDING)
+    return archive.append(
+        "criterion",
+        f"criterion:{task.strip()}",
+        {
+            "task": task.strip(),
+            "text": text,
+            "session": session,
+            "late": late,
+            "advisories": advisories,
+        },
+        evidence=citations,
+    )
 
 
 def record_claim(
@@ -645,6 +1220,7 @@ def record_claim(
     grade: str,
     cites: list[str] | None = None,
     external: bool = False,
+    timeline: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Persist a claim, downgrading it when its citations do not resolve.
 
@@ -654,6 +1230,13 @@ def record_claim(
     A claim about an external API or library (`external=True`) must cite a
     primary source read this session (`doc:` or `url:` citation) - memory of a
     library is a hypothesis about a version that may no longer exist.
+
+    `timeline` (U-T2, from `godmode_session_log.session_timeline`) is the
+    optional per-command red/green shape from this session's transcript. A
+    fix-vocabulary claim citing `cmd:<command>` is checked against it: when
+    a timeline is supplied and shows no red-before-green for any cited
+    command, the claim downgrades. `timeline=None` (no transcript available)
+    skips the check entirely - absence of the instrument is never a penalty.
     """
     if grade not in GRADES:
         raise ArchiveError(f"Unknown claim grade '{grade}'; expected one of {', '.join(GRADES)}")
@@ -665,18 +1248,32 @@ def record_claim(
     # A cause is a claim about a mechanism, and the ledger this rule comes from
     # is a record of mechanisms asserted from the nearest anomaly. Checked
     # before the external gate so a root cause about a third-party system is
-    # held to both.
+    # held to both. U-E3: only bites once the archive holds two comparable
+    # states to diff - see `_differential_reason`.
     if grade == "verified":
-        asserted, why = looks_like_root_cause(text)
-        if asserted and not cites_a_differential(citations):
+        differential_reason = _differential_reason(project, archive, session, text, citations)
+        if differential_reason:
             return archive.append(
                 "claim", text[:120],
-                {"text": text, "grade": "hypothesis", "requested": grade,
+                {"text": text, "grade": "hypothesis", "claimed_grade": grade,
                  "session": session, "downgraded": True, "unresolved": [],
                  "operator_asserted": [],
-                 "reason": "a root cause needs the differential that confirmed it; "
-                           f"{why}, and nothing cited was run to check it - cite "
-                           "cmd:<the comparison you ran> or diff:<what you compared>"},
+                 "reason": differential_reason},
+                evidence=citations,
+            )
+    # U-T3: a claimed number that contradicts the value on its own cited
+    # anchored line - checked before the external gate for the same reason
+    # as the root-cause check above: a claim can be held to more than one
+    # discipline at once.
+    if grade == "verified":
+        metric_reason = _metric_contract_reason(archive, text, citations)
+        if metric_reason:
+            return archive.append(
+                "claim", text[:120],
+                {"text": text, "grade": "hypothesis", "claimed_grade": grade,
+                 "session": session, "downgraded": True, "unresolved": [],
+                 "operator_asserted": [],
+                 "reason": metric_reason},
                 evidence=citations,
             )
     if external and grade == "verified":
@@ -684,7 +1281,7 @@ def record_claim(
         if not primary:
             record = archive.append(
                 "claim", text[:120],
-                {"text": text, "grade": "hypothesis", "requested": grade, "session": session,
+                {"text": text, "grade": "hypothesis", "claimed_grade": grade, "session": session,
                  "downgraded": True, "unresolved": [],
                  "reason": "external claim without a primary source read this session; "
                            "cite doc:<path> or url:<address> from a source actually opened"},
@@ -703,6 +1300,8 @@ def record_claim(
         if citation not in unresolved
         and _position_support(project, citation, text) == "unsupported"
     ]
+    fix_claim, _fix_why = looks_like_fix_claim(text)
+    cmd_citations = [c for c in citations if str(c).startswith("cmd:")]
     effective = grade
     reason = ""
     absence = is_absence_claim(text)
@@ -726,6 +1325,19 @@ def record_claim(
                 suggestion = near_miss(unresolved[0], known_citations(archive))
                 if suggestion:
                     reason += f"; did you mean {suggestion!r}"
+        elif fix_claim and timeline is not None and cmd_citations:
+            # U-T2: the citation resolves (checked above), but a fix claim
+            # needs more than a citation - it needs the command to have been
+            # observed failing before the fix and passing after.
+            #
+            # R3+ tier proxy: fix-vocabulary claims + Edit/Write mutation turns
+            # stand in for sentinel risk tiers (out of scope here); known gap:
+            # non-file-mutating R3+ commands (git branch -D) are not counted
+            # as mutations. Wire to classify_action tiers when a task owns
+            # the sentinel.
+            temporal_reason = _temporal_violation(timeline, cmd_citations)
+            if temporal_reason:
+                effective, reason = "hypothesis", temporal_reason
         elif absence and not _probed_twice(archive, citations):
             # One probe that found nothing is evidence about where it looked.
             # A second, different probe is what turns that into a fact about
@@ -746,6 +1358,29 @@ def record_claim(
             )
         elif unsupported:
             effective, reason = "hypothesis", "cited location does not support the claim"
+
+    # Criterion pre-registration [E4]: advisory only - it informs a fix claim
+    # that a criterion exists and was not cited, it never downgrades one. A
+    # project that never records criteria gets no friction from this at all.
+    #
+    # R3+ tier proxy: fix-vocabulary claims + Edit/Write mutation turns stand
+    # in for sentinel risk tiers (out of scope here); known gap: non-file-
+    # mutating R3+ commands (git branch -D) are not counted as mutations.
+    # Wire to classify_action tiers when a task owns the sentinel.
+    advisories: list[str] = []
+    if grade == "verified" and fix_claim:
+        session_has_criterion = any(
+            record["data"].get("session") == session
+            for record in archive.select(kind="criterion", limit=500)
+        )
+        if session_has_criterion and not any(
+            str(c).startswith("criterion:") for c in citations
+        ):
+            advisories.append(
+                "no criterion citation: cite criterion:<task> naming what "
+                "you judged success by"
+            )
+
     record = archive.append(
         "claim",
         text[:120],
@@ -758,6 +1393,7 @@ def record_claim(
             "unsupported": unsupported,
             "downgraded": effective != grade,
             "reason": reason,
+            "advisories": advisories,
             # Named rather than implied: a later reader can see which part of
             # the support was machine-checked and which was taken on the
             # author's word, instead of reading one uniform "verified".
@@ -926,13 +1562,20 @@ def close_session(archive: Chronicle, session: str, charter: dict[str, Any]) -> 
         if record["data"].get("session") == session and record["data"].get("downgraded")
     ]
     half_done = half_done_pairs(archive, session, charter)
-    allowed = not unattested and not downgraded and not half_done
+    # E62 (Task 4b): each `accept: cmd:...` entry on the active plan needs a
+    # this-session attestation before completion - the same discipline as an
+    # unattested HARD rule, applied to a plan's own executable acceptance.
+    from .godmode_plan import unattested_accept_commands
+
+    unattested_accept = unattested_accept_commands(archive, session)
+    allowed = not unattested and not downgraded and not half_done and not unattested_accept
     verdict: dict[str, Any] = {
         "session": session,
         "closed": allowed,
         "unattested_hard_rules": unattested,
         "downgraded_claims": downgraded,
         "half_done_pairs": half_done,
+        "unattested_accept_commands": unattested_accept,
         "watch_for": [] if allowed else [text for text, _ in RATIONALIZATIONS],
     }
     if allowed and not charter.get("compiled"):

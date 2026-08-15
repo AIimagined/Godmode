@@ -462,6 +462,77 @@ def absorption_check(archive: Chronicle, path: str) -> dict[str, Any]:
     }
 
 
+# The two verdicts an upstream item owes before a bump is called absorbed.
+# "N/A - different surface" answers CAN WE IMPORT IT, never HAVE THEY SOLVED
+# A PROBLEM WE ALSO HAVE: an import verdict alone closed upstream items on a
+# reimplemented surface while the shared defect stayed live. A behaviour
+# verdict of confirmed-* is a claim about code and needs its proving line;
+# `unverified` is the honest third state and needs nothing but the word.
+_IMPORT_VERDICTS = frozenset({"adopt", "extend", "diverge", "skip", "n-a"})
+_BEHAVIOUR_VERDICTS = frozenset({"confirmed-have", "confirmed-dont", "unverified"})
+
+
+def upstream_verdicts(archive: Chronicle, items: list[str]) -> dict[str, Any]:
+    """Every enumerated upstream item carries BOTH verdicts, or the bump is open.
+
+    A multi-version bump absorbs the RANGE: each item between the pinned and
+    target versions gets a written verdict, including N/A - because
+    triaged-and-irrelevant must be distinguishable from never-read. And each
+    verdict has two halves: import (adopt/extend/diverge/skip/n-a) and
+    behaviour (confirmed-have/confirmed-dont with a `file:` proving line, or
+    an honest `unverified`). "We're ahead" needs the same evidence as
+    "we're behind".
+    """
+    by_subject: dict[str, dict[str, Any]] = {}
+    for record in archive.read_events():
+        if record["kind"] not in ("decision", "claim"):
+            continue
+        subject = record.get("subject", "")
+        if subject.startswith("absorb:"):
+            by_subject[subject[len("absorb:"):]] = record
+
+    verdicted: list[dict[str, Any]] = []
+    half: list[dict[str, Any]] = []
+    unread: list[str] = []
+    for item in items:
+        record = by_subject.get(item)
+        if record is None:
+            unread.append(item)
+            continue
+        data = record.get("data") or {}
+        import_verdict = str(data.get("import_verdict", "")).lower()
+        behaviour_verdict = str(data.get("behaviour_verdict", "")).lower()
+        problems: list[str] = []
+        if import_verdict not in _IMPORT_VERDICTS:
+            problems.append(
+                f"import verdict missing or unknown ({import_verdict or 'absent'})")
+        if behaviour_verdict not in _BEHAVIOUR_VERDICTS:
+            problems.append(
+                f"behaviour verdict missing or unknown ({behaviour_verdict or 'absent'})"
+                " - n-a answers importability, never whether the same defect "
+                "lives in our reimplementation")
+        elif behaviour_verdict.startswith("confirmed") and not any(
+                e.startswith("file:") for e in record.get("evidence", [])):
+            problems.append(
+                f"'{behaviour_verdict}' is a claim about code with no file: "
+                "proving line; cite it or grade the item unverified")
+        entry = {"item": item, "sequence": record["sequence"],
+                 "import_verdict": import_verdict or None,
+                 "behaviour_verdict": behaviour_verdict or None}
+        if problems:
+            entry["problems"] = problems
+            half.append(entry)
+        else:
+            verdicted.append(entry)
+    return {
+        "items": len(items),
+        "verdicted": verdicted,
+        "half_verdicted": half,
+        "unread": unread,
+        "verdict": "absorbed" if not half and not unread else "absorption-open",
+    }
+
+
 def _tokens(text: str | None) -> set[str]:
     if not text:
         return set()

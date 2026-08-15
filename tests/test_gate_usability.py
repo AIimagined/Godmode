@@ -148,7 +148,18 @@ WINDOWS_STILL_PROTECTED = (
     "New-Item -ItemType Directory build",
     "Clear-Content log.txt",
     "Rename-Item a.txt b.txt",
-    "Move-Item a.txt b.txt",
+    # U-B2 fix-round-1 (task-7 review, Critical): `Move-Item`/`Copy-Item`
+    # (and their POSIX `mv`/`cp` counterparts) are no longer protected
+    # unconditionally by name - they write their DESTINATION argument, and
+    # an ordinary in-tree rename between two relative filenames is now
+    # ordinary work, unprotected, the same as an in-tree `Write`/`Edit`
+    # already is (see tests/test_evaluator_pins.py::MoveCopyTests for the
+    # full contract, including why a PINNED destination still refuses
+    # outright). What stays protected is a destination this classifier
+    # cannot place inside the project - exercised here instead of the old
+    # `Move-Item a.txt b.txt` entry, which this design change intentionally
+    # moved out of "always protected."
+    "Move-Item a.txt C:\\Windows\\System32\\evil.dll",
     "Stop-Process -Name python -Force",
     "del build\\out.txt",
     "rd /s /q build",
@@ -219,7 +230,13 @@ class WindowsCommandTests(unittest.TestCase):
         purpose, so a cmdlet nobody enumerated is denied rather than allowed."""
         verdict = classify_action("Invoke-WebRequest https://example.com")
         self.assertTrue(verdict["protected"])
-        self.assertEqual(verdict["category"], "unclassified-mutation")
+        # Renamed by U-G1b: a genuinely unrecognised command with no evidence
+        # of mutation is now read (see WindowsCommandTests below and
+        # test_sentinel_scoping.py), and `unclassified-mutation`'s fail-
+        # closed-for-ignorance default went with it - but a network fetcher
+        # is one of the named exceptions that still asks, by name, precisely
+        # because "unrecognised cmdlet" is not the risk here.
+        self.assertEqual(verdict["category"], "unknown-command")
 
 
 class DangerousCommandTests(unittest.TestCase):
@@ -235,10 +252,30 @@ class DangerousCommandTests(unittest.TestCase):
         self.assertTrue(verdict["protected"])
         self.assertEqual(verdict["tier"], "R5")
 
-    def test_an_unknown_command_still_fails_closed(self) -> None:
+    def test_an_unknown_command_with_no_evidence_is_now_read(self) -> None:
+        """U-G1b: `unclassified-mutation` was the fail-closed bucket for a
+        genuinely unknown state, applied instead to any command this
+        classifier simply had no vocabulary for - a corpus of real denials
+        showed most of those were harmless (`rev`, `cp` into the tree, a
+        PowerShell assignment...). A made-up command with nothing pointing at
+        a mutation - no redirect, no named write flag - is read now; what
+        still asks by name is covered below and in test_sentinel_scoping.py."""
         verdict = classify_action("frobnicate --all")
+        self.assertFalse(verdict["protected"])
+        self.assertEqual(verdict["tier"], "R0")
+
+    def test_an_unknown_command_with_evidence_still_asks(self) -> None:
+        verdict = classify_action("frobnicate --all > important.txt")
         self.assertTrue(verdict["protected"])
-        self.assertEqual(verdict["category"], "unclassified-mutation")
+        self.assertEqual(verdict["category"], "unknown-command")
+
+    def test_quoting_an_opaque_script_still_fails_closed(self) -> None:
+        """The named exception `ExecutablePositionTests` below already pins:
+        an unrecognised interpreter handed a whole script as one opaque
+        argument is not "no evidence" in the same sense a plain unrecognised
+        reporting tool is."""
+        verdict = classify_action('bash -c "frobnicate --all"')
+        self.assertTrue(verdict["protected"])
 
 
 class ShellControlFlowTests(unittest.TestCase):
@@ -337,17 +374,23 @@ class ExecutablePositionTests(unittest.TestCase):
 class LocalGitTests(unittest.TestCase):
     """Committing is the work; pushing is the consequence.
 
-    A commit is local and reversible, and gating it made committing impossible
-    in a session where no capability can be attached to a tool call. What
-    deserves the interruption is the operation that leaves the machine or
-    destroys work.
+    A commit is local and reversible. It was once left unprotected on that
+    reasoning (`godmode_session_hook.py`'s own history: the gate could only
+    ever refuse a protected call outright, no host tool call carries a field
+    a capability could travel in, so "protected" meant "blocked" and gating
+    committing made a session unusable). That is no longer true - the host
+    can ask, and asking is an in-session approval - so `add`/`commit` now
+    join the sibling worktree operations (`checkout --`, `restore`, `mv`,
+    `stash`, `switch`) that already ask rather than being the one git rule
+    left on the other side of that line (U-G1c, Controller Ruling 1).
     """
 
-    def test_committing_and_staging_are_not_protected(self) -> None:
+    def test_committing_and_staging_now_ask_rather_than_run_silently(self) -> None:
         for operation in ("git add -A", "git add scripts/",
                           "git commit -m 'a message'",
                           "git commit"):
-            self.assertFalse(classify_action(operation)["protected"], operation)
+            self.assertTrue(classify_action(operation)["protected"], operation)
+            self.assertEqual(classify_action(operation)["tier"], "R2", operation)
 
     def test_what_leaves_the_machine_or_destroys_work_is_still_protected(self) -> None:
         for operation in ("git push origin main", "git push --force",
