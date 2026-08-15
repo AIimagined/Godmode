@@ -124,6 +124,14 @@ from .godmode_register import (
     register_view,
     set_state,
 )
+# U-E2 cross-project precedent exchange - same minimal, isolated-block
+# convention as the register import directly above: its own imports, its
+# own handlers, its own subparser.
+from .godmode_register import (
+    adopt_precedent,
+    export_precedents,
+    import_precedents,
+)
 from .godmode_forge import SkillProposal, forge_skill, validate_skill
 from .godmode_lens import (
     build_context_brief,
@@ -766,6 +774,39 @@ def cmd_register_show(args: argparse.Namespace, runtime: Runtime) -> CommandResu
     return CommandResult(
         {"domain": args.domain, "register": view, "conflicts": findings},
         exit_code=1 if findings else 0,
+    )
+
+
+# U-E2 cross-project precedent exchange - file-carried, advisory-foreign.
+# `export`/`import` do the file I/O here (console is the only layer that
+# touches stdin/stdout/the filesystem path a human names on the command
+# line); the module itself only ever takes and returns strings/dicts, so it
+# stays testable without a filesystem.
+def cmd_precedent_export(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    blob = export_precedents(runtime.archive, args.domain)
+    out_path = Path(args.out)
+    out_path.write_text(blob, encoding="utf-8")
+    return CommandResult(
+        {"domain": args.domain, "out": str(out_path), "bytes": len(blob)}, exit_code=0
+    )
+
+
+def cmd_precedent_import(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    blob = Path(args.file).read_text(encoding="utf-8")
+    result = import_precedents(runtime.archive, blob)
+    return CommandResult(result, exit_code=0)
+
+
+def cmd_precedent_adopt(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    record = adopt_precedent(runtime.archive, args.domain, args.key)
+    data = record["data"]
+    return CommandResult(
+        {"sequence": record["sequence"], "domain": data["register_domain"],
+         "key": data["register_key"], "state": data["state"]},
+        exit_code=0,
     )
 
 
@@ -2467,6 +2508,28 @@ def _build_parser() -> argparse.ArgumentParser:
     register_show.add_argument("--domain", required=True)
     register_show.add_argument("--key", default=None)
     register_show.set_defaults(handler=cmd_register_show)
+
+    # U-E2 cross-project precedent exchange - minimal, isolated block, same
+    # convention as the register block directly above.
+    precedent = sub.add_parser(
+        "precedent",
+        help="Cross-project precedent exchange: file-carried, advisory-foreign",
+    )
+    precedent_sub = precedent.add_subparsers(dest="precedent_command", required=True)
+    precedent_export = precedent_sub.add_parser(
+        "export", help="Write this project's register entries for one domain to a file")
+    precedent_export.add_argument("--domain", required=True)
+    precedent_export.add_argument("--out", required=True, help="Path to write the export file")
+    precedent_export.set_defaults(handler=cmd_precedent_export)
+    precedent_import = precedent_sub.add_parser(
+        "import", help="Verify and append another project's exported precedents, as foreign/advisory")
+    precedent_import.add_argument("file", help="Path to a file written by `precedent export`")
+    precedent_import.set_defaults(handler=cmd_precedent_import)
+    precedent_adopt = precedent_sub.add_parser(
+        "adopt", help="Promote one imported foreign precedent to a local, binding one")
+    precedent_adopt.add_argument("--domain", required=True)
+    precedent_adopt.add_argument("--key", required=True)
+    precedent_adopt.set_defaults(handler=cmd_precedent_adopt)
 
     method = sub.add_parser("method", help="Select an analysis method from the evidence shape")
     method.add_argument("--reports", type=int, default=1)
