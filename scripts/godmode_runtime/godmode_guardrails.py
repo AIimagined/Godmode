@@ -21,10 +21,17 @@ from typing import Any
 
 from .godmode_chronicle import Chronicle
 from .godmode_errors import ArchiveError
+from .godmode_stop import OperatorStop
 
 CEILINGS_FILENAME = ".godmode-ceilings.json"
 DEFAULT_CEILINGS = {"tokens": 0, "tool_calls": 0, "seconds": 0}  # 0 = no ceiling
 METER_FILENAME = "godmode-meter.json"
+# The operator's own escape hatch (U-R1): presence, not content, stops a
+# watchdog-boundary run regardless of what the skip-pattern scan finds.
+OPERATOR_STOP_FLAG = ".godmode-stop"
+# U-R2's freshness watchdog: a loop that claims activity but has not
+# touched the archive in this many seconds is not running, it is hung.
+DEFAULT_MAX_STATE_AGE_S = 900
 
 
 def declared_ceilings(project: Path) -> dict[str, int]:
@@ -174,12 +181,59 @@ def _session_start_sequence(archive: Chronicle, session: str) -> int:
     return 0
 
 
-def watchdog(archive: Chronicle, session: str, skip_threshold: int = 3) -> dict[str, Any]:
+def state_freshness(
+    archive: Chronicle, active: bool, max_age_s: int = DEFAULT_MAX_STATE_AGE_S
+) -> dict[str, Any]:
+    """U-R2's freshness watchdog: a loop-active claim needs a fresh archive.
+
+    A loop that claims to be running produces records; one that has not in
+    `max_age_s` seconds is not running, it is hung - and hung reads as
+    active from the outside, which is exactly the gap this closes by
+    routing to the same `human-escalation` verdict a stall streak reaches
+    (`godmode_loop.stall_escalation`), so a caller does not need two
+    different words for the same "a human needs to look" state.
+    """
+    if not active:
+        return {
+            "active": False, "stale": False, "verdict": "not-active",
+            "detail": "no loop claims activity; freshness is not evaluated",
+        }
+    head = archive.head
+    if not head.is_file():
+        return {
+            "active": True, "stale": False, "verdict": "nominal",
+            "detail": "no archive activity recorded yet",
+        }
+    age = time.time() - head.stat().st_mtime
+    stale = age > max_age_s
+    return {
+        "active": True,
+        "age_seconds": round(age, 1),
+        "max_age_seconds": max_age_s,
+        "stale": stale,
+        "verdict": "human-escalation" if stale else "nominal",
+        "detail": (
+            f"loop claims activity but the archive has not been touched in "
+            f"{round(age)}s (over {max_age_s}s); treat as hung, not running - "
+            "escalate the same as a stall streak"
+            if stale else "archive activity is current with the loop's claim"
+        ),
+    }
+
+
+def watchdog(
+    archive: Chronicle, session: str, skip_threshold: int = 3,
+    *, loop_active: bool = False, max_state_age_s: int = DEFAULT_MAX_STATE_AGE_S,
+) -> dict[str, Any]:
     """Anomaly scan for the current session, cheap enough for every boundary.
 
     Three mandatory steps skipped in one run is a pattern, not three incidents;
     the scan turns it into an interrupt at the next boundary instead of a
-    post-hoc note.
+    post-hoc note. Two more sources of interrupt, both opt-in so a caller
+    that never sets them sees the original behaviour unchanged: an
+    `OperatorStop` flag (U-R1) - presence alone ends the run regardless of
+    what the skip scan found - and, when `loop_active` says a loop believes
+    itself running, the U-R2 freshness check above.
     """
     skipped: list[dict[str, str]] = []
     blocked: list[str] = []
@@ -200,16 +254,30 @@ def watchdog(archive: Chronicle, session: str, skip_threshold: int = 3) -> dict[
                             "reason": str(data.get("reason", ""))[:120]})
         if data.get("status") == "blocked":
             blocked.append(record["subject"])
-    anomaly = len(skipped) >= skip_threshold
+    operator_reason = OperatorStop(
+        Path(archive.anchor.project_root) / OPERATOR_STOP_FLAG
+    )([])
+    freshness = state_freshness(archive, loop_active, max_state_age_s)
+    skip_anomaly = len(skipped) >= skip_threshold
+    anomaly = skip_anomaly or operator_reason is not None or freshness["stale"]
+    if operator_reason is not None:
+        detail = operator_reason
+    elif freshness["stale"]:
+        detail = freshness["detail"]
+    elif skip_anomaly:
+        detail = (f"{len(skipped)} mandated steps skipped this session; stop and "
+                  "resolve the pattern before the next step")
+    else:
+        detail = "no skip pattern this session"
     return {
         "session": session,
         "skipped": skipped,
         "blocked_steps": blocked,
+        "operator_stop": operator_reason,
+        "freshness": freshness,
         "anomaly": anomaly,
         "verdict": "interrupt" if anomaly else "nominal",
-        "detail": (f"{len(skipped)} mandated steps skipped this session; stop and "
-                   "resolve the pattern before the next step" if anomaly
-                   else "no skip pattern this session"),
+        "detail": detail,
     }
 
 
@@ -254,16 +322,42 @@ def rewind_preview(archive: Chronicle, to_sequence: int) -> dict[str, Any]:
 EXPERIMENT_FILENAME = ".godmode-experiment.json"
 
 
-def run_experiment(archive: Chronicle, project: Path, timeout: int = 300) -> dict[str, Any]:
+def run_experiment(
+    archive: Chronicle, project: Path, timeout: int = 300, *, budget_s: float | None = None
+) -> dict[str, Any]:
     """S27-04/S8-03: the bounded experiment loop as one declarative file.
 
     `.godmode-experiment.json` declares hypothesis, command, success_exit and
     max_runs. The loop runs until success or the bound - never past it - and
     every run is recorded, so "I tried a few times" becomes a numbered series
     with outcomes.
+
+    `budget_s` (U-R1) is a second, independent bound over the whole series:
+    `max_runs` caps *how many* attempts happen, `budget_s` caps *how long*
+    they may take together. Optional, and off by default, so a caller that
+    never passes it sees exactly the prior behaviour - only wall time cuts
+    the series short early, and when it does the recorded action carries
+    `run_state: "truncated"` rather than pretending the bound was reached on
+    its own terms. Each individual attempt is bounded by whichever ceiling
+    is TIGHTER - the per-run `timeout` or what remains of `budget_s` - so a
+    single long-running attempt cannot itself blow past a declared budget
+    unkilled; only the loop noticing *afterward* that the series ran long
+    is not enough (review fix, U-R1).
+
+    Task 10b (review fix): a `maturity` field in the spec is validated by
+    `godmode_loop.declare_maturity`, which RAISES on an illegal value
+    ("unattended" included) before cycle one - the same refusal the loop
+    path gives, named the same way. A spec with no `maturity` at all is not
+    gated (every pre-existing `.godmode-experiment.json` keeps working
+    unchanged); the instant one declares a maturity, `experiment_ready`'s
+    findings (stop contract present via the `max_runs` already required
+    above, budget declared) become a real gate - blocking findings refuse
+    the run before cycle one, not just report on it afterward.
     """
     import shlex
-    import subprocess
+
+    from .godmode_loop import experiment_ready
+    from .godmode_stop import AttemptHandle
 
     path = project / EXPERIMENT_FILENAME
     if not path.is_file():
@@ -272,37 +366,65 @@ def run_experiment(archive: Chronicle, project: Path, timeout: int = 300) -> dic
     for field in ("hypothesis", "command", "max_runs"):
         if field not in spec:
             raise ArchiveError(f"{EXPERIMENT_FILENAME}: $.{field} is required")
+    preflight = experiment_ready(spec)  # raises on an illegal declared maturity
+    if preflight["gated"] and preflight["blocking"]:
+        reasons = "; ".join(f["detail"] for f in preflight["findings"])
+        raise ArchiveError(
+            f"{EXPERIMENT_FILENAME} declares a maturity but is not pre-flight "
+            f"ready: {reasons}"
+        )
     success_exit = int(spec.get("success_exit", 0))
     max_runs = max(1, min(int(spec["max_runs"]), 20))  # deliberate ceiling: hard cap 20; raise if a real program needs more
     command = shlex.split(str(spec["command"]))
 
     runs: list[dict[str, Any]] = []
     succeeded = False
-    for attempt in range(1, max_runs + 1):
+    truncated = False
+    series_deadline = time.monotonic() + float(budget_s) if budget_s else None
+    for attempt_number in range(1, max_runs + 1):
+        remaining = (series_deadline - time.monotonic()) if series_deadline is not None else None
+        if remaining is not None and remaining <= 0:
+            truncated = True
+            break
+        attempt_budget = min(timeout, remaining) if remaining is not None else timeout
+        handle = AttemptHandle(deadline=time.monotonic() + attempt_budget)
         try:
-            done = subprocess.run(command, cwd=str(project), capture_output=True,
-                                  text=True, encoding="utf-8", errors="replace", timeout=timeout)
-            code = done.returncode
+            result = handle.run(command, cwd=str(project))
+            code = result["returncode"]
         except FileNotFoundError:
             code = 127
-        except subprocess.TimeoutExpired:
-            code = 124
-        runs.append({"attempt": attempt, "exit": code})
+            result = {"run_state": "terminated"}
+        runs.append({"attempt": attempt_number, "exit": code})
+        if result["run_state"] == "truncated":
+            # Cut off by the series budget, not merely the unrelated per-run
+            # `timeout` ceiling: only when the budget was the tighter bound
+            # does the SERIES itself count as truncated, not just this attempt.
+            if remaining is not None and attempt_budget < timeout:
+                truncated = True
+            break
         if code == success_exit:
             succeeded = True
             break
+    run_state = "truncated" if truncated else "terminated"
     archive.append(
         "action", f"experiment:{str(spec['hypothesis'])[:80]}",
-        {"runs": runs, "succeeded": succeeded, "bound": max_runs},
+        {"runs": runs, "succeeded": succeeded, "bound": max_runs, "run_state": run_state},
     )
+    if truncated:
+        verdict = f"budget-exhausted: {len(runs)} of {max_runs} runs completed within budget_s"
+    elif succeeded:
+        verdict = "hypothesis-supported"
+    else:
+        verdict = (f"bound-reached: {len(runs)} runs without exit {success_exit}; "
+                   "revise the hypothesis rather than raising the bound")
     return {
         "hypothesis": spec["hypothesis"],
         "runs": runs,
         "succeeded": succeeded,
         "bound": max_runs,
-        "verdict": ("hypothesis-supported" if succeeded else
-                    f"bound-reached: {len(runs)} runs without exit {success_exit}; "
-                    "revise the hypothesis rather than raising the bound"),
+        "run_state": run_state,
+        "preflight": preflight,
+        "verdict": verdict,
     }
 
 
