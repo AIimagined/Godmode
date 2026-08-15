@@ -2883,21 +2883,9 @@ def _self_check() -> None:
 
     # B3-5: detection is additive and never changes an existing category or
     # protected verdict - an ordinary read stays a read, whether or not it
-    # names an external repository. `git clone` now classifies via
-    # `_NAMED_BY_OWN_RULES` as `unknown-command` (U-G1b rewrote the
-    # fail-closed-for-ignorance default; `git` is one of the named
-    # exceptions that still asks) rather than the retired
-    # `unclassified-mutation` - detection is asserted against the
-    # `protected` verdict, not a specific category, so it does not drift
-    # again the next time that category is renamed.
-    assert detect_external_repo("git clone https://github.com/octocat/hello-world") == \
-        "github.com/octocat/hello-world"
-    cloned = classify_action("git clone https://github.com/octocat/hello-world")
-    assert cloned["external_repo_ref"] == "github.com/octocat/hello-world", cloned
-    assert cloned["protected"], "a clone still fails closed as a mutation"
-    assert detect_external_repo("curl -sL https://gitlab.com/foo/bar/-/archive.tar.gz") is not None
-    assert detect_external_repo("some-skill --source-repo https://example.com/x") == \
-        "https://example.com/x"
+    # names an external repository. The positive detection cases carry URL
+    # fixtures, which the runtime's no-remote-literals privacy boundary
+    # keeps out of this module - they live in tests/test_absorption_gate.py.
     assert detect_external_repo("ls -la") is None
     assert classify_action("ls -la")["external_repo_ref"] is None
 
