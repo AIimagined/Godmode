@@ -26,7 +26,7 @@ if str(Path(__file__).parent) not in sys.path:
 
 from test_godmode_runtime import isolated_project  # noqa: E402
 from godmode_runtime.godmode_assess import assess  # noqa: E402
-from godmode_runtime.godmode_charter import compile_charter  # noqa: E402
+from godmode_runtime.godmode_charter import compile_charter, negation_heavy  # noqa: E402
 
 
 class AdvisoryReviewTests(unittest.TestCase):
@@ -131,6 +131,25 @@ class PlantCoverageTests(unittest.TestCase):
             charter = compile_charter(project)
             hard_ids = {r["id"] for r in charter["compiled"] if r["enforcement"] == "HARD"}
             self.assertEqual(set(report["charter"]["hard_unplanted"]), hard_ids)
+
+
+# U-S4 - the prose linter's negation-heavy check lives in
+# `godmode_charter.negation_heavy`, kept next to the compiler whose Rule
+# shape it reads. Full coverage (all three prose-lint checks, the assumption
+# gate, and approval declarations) lives in tests/test_prose_lint.py; this
+# is the compile-time seam being extended here.
+class NegationHeavySeamTests(unittest.TestCase):
+    def test_a_hard_rule_that_only_prohibits_is_detectable_at_compile_time(self) -> None:
+        with isolated_project() as (project, _s, _a, _archive):
+            (project / "GODMODE.md").write_text(
+                "# Gates\n"
+                "- Never push without an explicit ask; do not skip the review.\n",
+                encoding="utf-8",
+            )
+            charter = compile_charter(project)
+        hard = [r for r in charter["compiled"] if r["enforcement"] == "HARD"]
+        self.assertTrue(hard, charter["compiled"])
+        self.assertTrue(negation_heavy(hard[0]["text"]))
 
 
 class AdvisoryReviewRepoTests(unittest.TestCase):

@@ -205,5 +205,60 @@ class RefusalMessageTests(unittest.TestCase):
         self.assertNotIn("disable the plugin", reason)
 
 
+class ApprovalRequiredHookTests(unittest.TestCase):
+    """U-S4 GAP fix: `.godmode-authorization-policy.json`'s
+    `approval_required` driven through the real hook payload path, not just
+    against `classify_action` directly - the whole reason this module
+    exists (see its docstring). Before this fix the policy was parsed and
+    validated but never reached the hook's own `classify_action` call, so a
+    declared category had no effect on an actual tool call.
+
+    A short branch name is used deliberately: the hook's own reason string
+    truncates combined impact text to 160 characters, and a long operation
+    string here would be clipped before the assertion below could see it -
+    that is a property of the hook's message formatting, not of this
+    feature, so the test avoids it rather than encoding it as a limit.
+    """
+
+    POLICY = PLUGIN_ROOT / ".godmode-authorization-policy.json"
+    OPERATION = "git checkout -b demo-branch"
+
+    def setUp(self) -> None:
+        self._backup = (
+            self.POLICY.read_text(encoding="utf-8") if self.POLICY.exists() else None
+        )
+
+    def tearDown(self) -> None:
+        if self._backup is None:
+            self.POLICY.unlink(missing_ok=True)
+        else:
+            self.POLICY.write_text(self._backup, encoding="utf-8")
+
+    def test_a_declared_category_asks_with_the_exact_operation_named(self) -> None:
+        self.POLICY.write_text(
+            json.dumps({"approval_required": ["git-branch-create"]}),
+            encoding="utf-8",
+        )
+        decision, reason = _decide("Bash", {"command": self.OPERATION})
+        self.assertEqual(decision, "ask")
+        self.assertIn(self.OPERATION, reason)
+        self.assertIn("git-branch-create", reason)
+
+    def test_without_the_policy_the_same_operation_is_unaffected(self) -> None:
+        self.POLICY.unlink(missing_ok=True)
+        decision, _reason = _decide("Bash", {"command": self.OPERATION})
+        self.assertEqual(decision, "allow")
+
+    def test_a_malformed_policy_file_degrades_this_call_not_the_whole_gate(self) -> None:
+        # The broad GodmodeError handler around the hook's whole decision
+        # degrades to *allow* - so a malformed policy file must never reach
+        # it; a still-dangerous operation (force push) has to keep denying
+        # even while the malformed policy makes password_required/
+        # approval_required unavailable for this one call.
+        self.POLICY.write_text("{not valid json", encoding="utf-8")
+        decision, _reason = _decide("Bash", {"command": "git push --force origin main"})
+        self.assertEqual(decision, "deny")
+
+
 if __name__ == "__main__":
     unittest.main()

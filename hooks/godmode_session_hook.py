@@ -26,7 +26,7 @@ from godmode_runtime.godmode_attest import attested_rule_ids, latest_session  # 
 from godmode_runtime.godmode_guardrails import check_ceilings  # noqa: E402
 from godmode_runtime.godmode_guardrails import meter_tool_call, tool_operation, watchdog  # noqa: E402
 from godmode_runtime.godmode_sentinel import (  # noqa: E402
-    classify_action, evidence_pipe_advisory)
+    classify_action, evidence_pipe_advisory, local_authorization_policy)
 
 
 CLAUDE_CONTEXT_LIMIT = 9_000
@@ -361,6 +361,20 @@ def main(argv: list[str] | None = None) -> int:
                     "session; resolve the pattern before the next tool call"
                 )
 
+        # U-S4 approval-declarations - minimal isolated block. The local
+        # policy's `password_required`/`approval_required` widen the
+        # protected set (godmode_sentinel.classify_action's own
+        # `extra_protected`/`require_approval`); read here, right before the
+        # call that needs it, so this preview is what a declared category
+        # actually gets rather than the un-widened default it silently fell
+        # back to before. A malformed policy file is its own failure, not
+        # this gate's: caught locally and treated as "no widening this call"
+        # rather than left to propagate into the broad GodmodeError handler
+        # around this whole function, which degrades to allowing everything.
+        try:
+            policy = local_authorization_policy(archive) if operation else {}
+        except GodmodeError:
+            policy = {}
         # The root is passed, not inferred: containment decides whether an edit
         # is ordinary work, and without it every edit the host sends - always
         # an absolute path - was judged to be outside the tree and refused.
@@ -370,7 +384,10 @@ def main(argv: list[str] | None = None) -> int:
         # store, and this is the one call site that has it in scope.
         preview = classify_action(
             operation, project_root=Path(anchor.project_root),
-            archive=archive) if operation else {
+            archive=archive,
+            extra_protected=policy.get("password_required", ()),
+            require_approval=policy.get("approval_required", ()),
+        ) if operation else {
             "protected": True, "category": "unclassified-mutation",
             "impact": ["no operation described"]}
         preview["executes_operation"] = False

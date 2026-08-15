@@ -654,7 +654,10 @@ def cmd_plant(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 def cmd_gate(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
-    verdict = gate(runtime.archive, _session(runtime, args.session), _charter(runtime), args.trigger)
+    verdict = gate(
+        runtime.archive, _session(runtime, args.session), _charter(runtime), args.trigger,
+        timeline=_load_timeline(getattr(args, "transcript", None)),
+    )
     return CommandResult(verdict.view(), exit_code=0 if verdict.allowed else 1)
 
 
@@ -1576,6 +1579,12 @@ def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     data: dict[str, Any] = {"value": args.value, "status": status}
     if args.kind == "lesson":
         data["generalized_guard"] = args.guard
+    if args.kind == "assumption":
+        # U-S4 assumption gate (`godmode_attest.assumption_gate`) matches
+        # records to the session they were stated in; the generic path
+        # below stores no session field for any other kind, but this kind
+        # exists specifically so the gate has something to find.
+        data["session"] = _session(runtime, args.session)
     if args.kind == "request":
         # The digest is what the closure path matches on, and a request written
         # by hand had none - so `--kind request --status closed` closed nothing
@@ -2554,6 +2563,9 @@ def _build_parser() -> argparse.ArgumentParser:
     gate_parser = sub.add_parser("gate", help="Check a trigger; exit non-zero when a HARD rule is unattested")
     gate_parser.add_argument("--trigger", choices=list(TRIGGERS), required=True)
     gate_parser.add_argument("--session")
+    gate_parser.add_argument("--transcript",
+                             help="This session's transcript path; enables the U-S4 "
+                                  "assumption-gate advisory on --trigger before_approach")
     gate_parser.set_defaults(handler=cmd_gate)
 
     claim = sub.add_parser(
@@ -3012,8 +3024,16 @@ def _build_parser() -> argparse.ArgumentParser:
     _evidence(checklist_update)
     checklist_update.set_defaults(handler=cmd_checklist_update)
 
-    remember = sub.add_parser("remember", help="Record a decision, invariant, lesson, obligation, or request")
-    remember.add_argument("--kind", choices=["decision", "invariant", "lesson", "obligation", "request"], required=True)
+    remember = sub.add_parser(
+        "remember",
+        help="Record a decision, invariant, lesson, obligation, assumption, or request")
+    remember.add_argument(
+        "--kind",
+        # U-S4 - "assumption" added for the assumption gate
+        # (`godmode_attest.assumption_gate`); the record kind itself lives
+        # in EVENT_KINDS (godmode_constants.py).
+        choices=["decision", "invariant", "lesson", "obligation", "assumption", "request"],
+        required=True)
     remember.add_argument("--subject", required=True, type=subject_text)
     remember.add_argument("--value", required=True)
     remember.add_argument("--status", default=None,
@@ -3022,6 +3042,11 @@ def _build_parser() -> argparse.ArgumentParser:
     remember.add_argument("--source", choices=["stated", "inferred"], default="stated",
                           help="Requests only: whether the operator stated this ask "
                                "or the agent inferred it on their behalf")
+    # U-S4 - assumption records only; every other kind is session-agnostic
+    # and leaves this unused. Falls back to the latest open session, same as
+    # `claim`/`criterion`/`gate`.
+    remember.add_argument("--session",
+                          help="Assumption records only: defaults to the latest open session")
     _evidence(remember)
     remember.set_defaults(handler=cmd_remember)
 

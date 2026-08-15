@@ -1937,7 +1937,9 @@ def _risk_tier(category: str, normalized: str) -> tuple[str, bool]:
 
 def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                     project_root: Path | None = None,
-                    archive: Any = None) -> dict[str, Any]:
+                    archive: Any = None,
+                    # U-S4 approval-declarations - minimal isolated block.
+                    require_approval: tuple[str, ...] = ()) -> dict[str, Any]:
     """Deterministic preview of what an operation would touch.
 
     A compound command is classified part by part and takes the risk of its
@@ -1969,6 +1971,14 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     can only be enforced where its ledger is reachable. The hook passes the
     real archive it already opened, so - the same way `project_root`
     already works - the security-relevant path never rests on this default.
+
+    `require_approval` (U-S4) does the same for a category the policy wants
+    to always ask about, even when nothing above calls it protected -
+    `.godmode-authorization-policy.json`'s `approval_required`. Applied only
+    when the category was not already protected, so it can never soften an
+    R5 refusal to an ask: the risk tier below is computed from the category
+    and command text alone and never reads `protected`, which is what keeps
+    this addition tighten-only in the same way `extra_protected` already is.
     """
     normalized = operation.strip()
     if not normalized:
@@ -1979,8 +1989,8 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     inner = substituted_commands(normalized)
     if inner:
         stripped = _SUBSTITUTION.sub(" ", normalized).strip() or "echo"
-        parts = [classify_action(stripped, extra_protected, project_root, archive)]
-        parts += [classify_action(one, extra_protected, project_root, archive)
+        parts = [classify_action(stripped, extra_protected, project_root, archive, require_approval)]
+        parts += [classify_action(one, extra_protected, project_root, archive, require_approval)
                   for one in inner]
         worst = max(parts, key=lambda v: (v["protected"], v["tier"]))
         worst["impact"] = sorted({item for v in parts for item in v["impact"]})
@@ -1992,7 +2002,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     if len(segments) > 1:
         # The worst part decides, ranked by tier, so `git status && git push
         # --force` is a force push rather than a status call.
-        verdicts = [classify_action(segment, extra_protected, project_root, archive)
+        verdicts = [classify_action(segment, extra_protected, project_root, archive, require_approval)
                     for segment in segments]
         worst = max(verdicts, key=lambda v: (v["protected"], v["tier"]))
         worst["impact"] = sorted({item for v in verdicts for item in v["impact"]})
@@ -2004,6 +2014,16 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     if not protected and category in tuple(extra_protected):
         protected = True
         impact = list(impact) + ["protection extended by local authorization policy"]
+    # U-S4 approval-declarations - minimal isolated block. Names the exact
+    # operation in the reason (not just the category), since this ask exists
+    # because the operator declared the category, not because the text
+    # matched a known-dangerous shape - the reader has less other context to
+    # place it in.
+    if not protected and category in tuple(require_approval):
+        protected = True
+        impact = list(impact) + [
+            f"approval required by policy for category {category!r}: {normalized[:200]}"
+        ]
     # A push names the automation it engages. The approver reading "touches a
     # remote" and the approver reading "touches a remote AND fires deploy.yml"
     # are approving two different operations; only one of them knows it.
@@ -2105,6 +2125,22 @@ class CapabilityBroker:
             ):
                 raise AuthorizationError("password_required must be a list of category names")
             policy["password_required"] = tuple(required)
+        # U-S4 approval-declarations - minimal isolated block: a second,
+        # separate category list. `password_required` widens which
+        # categories need a *capability* to issue; `approval_required`
+        # widens which categories must *ask* even when the classifier would
+        # otherwise call them safe - no password, just a stated category the
+        # operator wants named and confirmed. Kept as its own key rather than
+        # merged into `password_required` so the two obligations (mint a
+        # capability vs. simply ask) stay distinguishable in the file an
+        # operator actually reads.
+        approval = raw.get("approval_required")
+        if approval is not None:
+            if not isinstance(approval, list) or not all(
+                isinstance(name, str) for name in approval
+            ):
+                raise AuthorizationError("approval_required must be a list of category names")
+            policy["approval_required"] = tuple(approval)
         return policy
 
     def _classify(self, operation: str) -> dict[str, Any]:
@@ -2118,10 +2154,13 @@ class CapabilityBroker:
         """
         anchor = getattr(self.archive, "anchor", None)
         root = getattr(anchor, "project_root", None)
+        policy = self._policy()
         return classify_action(
-            operation, extra_protected=self._policy().get("password_required", ()),
+            operation, extra_protected=policy.get("password_required", ()),
             project_root=Path(root) if root else None,
             archive=self.archive,
+            # U-S4 approval-declarations - minimal isolated block.
+            require_approval=policy.get("approval_required", ()),
         )
 
     def _mint_context(self) -> dict[str, str]:
@@ -2510,6 +2549,19 @@ class CapabilityBroker:
             evidence=[],
         )
         return classification
+
+
+# U-S4 approval-declarations - minimal isolated block. A public accessor for
+# the same policy `CapabilityBroker._policy()` already reads, for a caller
+# (the pre-tool hook) that needs `password_required`/`approval_required` to
+# widen its own `classify_action` call but has no reason to construct a
+# broker, mint capabilities, or import anything `CapabilityBroker`'s other
+# methods pull in locally. Raises the same `AuthorizationError` `_policy()`
+# does on a malformed file - deliberately not swallowed here, so a caller
+# with different failure-mode needs (fail-safe vs. fail-loud) decides for
+# itself rather than this function silently picking one for every caller.
+def local_authorization_policy(archive: Any) -> dict[str, Any]:
+    return CapabilityBroker(archive)._policy()  # noqa: SLF001
 
 
 def stage_from_refusal(archive: Any, nth: int = 1) -> str:
