@@ -2262,7 +2262,7 @@ def cmd_lessons(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult(report, exit_code=0)
 
 
-def cmd_experiment(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+def cmd_experiment_run(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     from .godmode_guardrails import run_experiment
 
@@ -2270,6 +2270,32 @@ def cmd_experiment(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         runtime.archive, Path(runtime.anchor.project_root), budget_s=args.budget_s
     )
     return CommandResult(report, exit_code=0 if report["succeeded"] else 1)
+
+
+def cmd_experiment_verdict(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """U-R3: adjudicate one experiment cycle - keep/discard/keep-simpler,
+    computed from {metric, before, after, epsilon}, commit-linked."""
+    _require_archive(runtime)
+    from .godmode_guardrails import record_experiment_verdict
+
+    record = record_experiment_verdict(
+        runtime.archive,
+        Path(runtime.anchor.project_root),
+        metric=args.metric,
+        before=args.before,
+        after=args.after,
+        epsilon=args.epsilon,
+        cycle_seq=args.cycle_seq,
+        simpler=args.simpler,
+        acquitted_by=args.acquitted_by,
+    )
+    data = record["data"]
+    return CommandResult(
+        {"sequence": record["sequence"], "cycle_seq": data["cycle_seq"],
+         "adjudication": data["adjudication"], "improvement": data["improvement"],
+         "commit": data["commit"], "run_state": data["run_state"]},
+        exit_code=0 if data["adjudication"] in ("keep", "keep-simpler") else 1,
+    )
 
 
 def cmd_skill_validate(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -2395,12 +2421,37 @@ def _build_parser() -> argparse.ArgumentParser:
     lessons.set_defaults(handler=cmd_lessons)
 
     experiment = sub.add_parser(
-        "experiment", help="Run the declared bounded experiment loop from .godmode-experiment.json"
+        "experiment",
+        help="The declarative bounded experiment loop from .godmode-experiment.json, "
+             "cycle-ledgered with epsilon adjudication (U-R3)",
     )
-    experiment.add_argument("--budget-s", type=float, default=None, dest="budget_s",
-                            help="U-R1 wall-time budget over the whole series; overrun "
-                                 "truncates early and records run_state=truncated")
-    experiment.set_defaults(handler=cmd_experiment)
+    experiment_sub = experiment.add_subparsers(dest="experiment_command", required=True)
+    experiment_run = experiment_sub.add_parser(
+        "run", help="Run one experiment cycle"
+    )
+    experiment_run.add_argument("--budget-s", type=float, default=None, dest="budget_s",
+                                help="U-R1 wall-time budget over this cycle's attempts; overrun "
+                                     "truncates early and records run_state=truncated")
+    experiment_run.set_defaults(handler=cmd_experiment_run)
+    experiment_verdict = experiment_sub.add_parser(
+        "verdict",
+        help="Adjudicate an experiment cycle: keep/discard/keep-simpler, computed "
+             "from --metric/--before/--after/--epsilon, commit-linked",
+    )
+    experiment_verdict.add_argument("--metric", required=True, help="Name of the measured metric")
+    experiment_verdict.add_argument("--before", type=float, required=True)
+    experiment_verdict.add_argument("--after", type=float, required=True)
+    experiment_verdict.add_argument("--epsilon", type=float, required=True,
+                                    help="improvement >= epsilon keeps; short of that discards "
+                                         "(a flat, equal result with --simpler is the one exception)")
+    experiment_verdict.add_argument("--cycle", type=int, default=None, dest="cycle_seq",
+                                    help="seq of the cycle to adjudicate; defaults to the latest recorded cycle")
+    experiment_verdict.add_argument("--simpler", action="store_true",
+                                    help="Declare the change simpler despite a flat (equal) measurement")
+    experiment_verdict.add_argument("--acquitted-by", choices=("independent", "self"), default="self",
+                                    help="'self' (default) never grades 'confirmed' (U-V1 drive-vs-acquit); "
+                                         "'independent' does, and is held to the same archive-seam rules")
+    experiment_verdict.set_defaults(handler=cmd_experiment_verdict)
 
     config = sub.add_parser("config", help="Validate every .godmode-*.json config file")
     config_sub = config.add_subparsers(dest="config_command", required=True)

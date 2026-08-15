@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .godmode_anchor import run_git
 from .godmode_chronicle import Chronicle
 from .godmode_errors import ArchiveError
 from .godmode_stop import OperatorStop
@@ -321,6 +322,176 @@ def rewind_preview(archive: Chronicle, to_sequence: int) -> dict[str, Any]:
 
 EXPERIMENT_FILENAME = ".godmode-experiment.json"
 
+# Every cycle's `action` record is filed under this subject prefix (locked by
+# tests.test_tooling_failures's census check, predating U-R3) - the ledger
+# functions below key off it rather than a separate counter, so a cycle
+# recorded through `run_experiment` is indistinguishable from the ledger's
+# point of view whether U-R3 exists or not.
+EXPERIMENT_CYCLE_PREFIX = "experiment:"
+
+
+def _experiment_cycles(archive: Chronicle) -> list[dict[str, Any]]:
+    """Every recorded experiment cycle, oldest first - one per past
+    `run_experiment` call, identified the same way the pre-existing
+    census test already relies on (kind=action, `experiment:` subject)."""
+    return [
+        record for record in archive.read_events()
+        if record["kind"] == "action" and record["subject"].startswith(EXPERIMENT_CYCLE_PREFIX)
+    ]
+
+
+def _latest_experiment_cycle(archive: Chronicle) -> dict[str, Any] | None:
+    cycles = _experiment_cycles(archive)
+    return cycles[-1] if cycles else None
+
+
+def _experiment_verdict_for_cycle(archive: Chronicle, cycle_seq: int) -> dict[str, Any] | None:
+    for record in archive.select(kind="verdict", limit=2000):
+        if record["data"].get("cycle_seq") == cycle_seq:
+            return record
+    return None
+
+
+def _experiment_completion_claimed(archive: Chronicle, verdict_seq: int) -> bool:
+    """Whether an explicit completion claim citing this cycle's verdict was
+    ever recorded (U-R3's positive completion sentinel, E78) - existence
+    only. Termination is a claim, not an inference this function draws: it
+    does not judge whether the claim actually RESOLVES as confirmed - that
+    is `godmode_attest._citation_resolves`'s job, unmodified and untouched
+    here, run whenever anything downstream reads the claim.
+    """
+    citation = f"verdict:{verdict_seq}"
+    return any(
+        record["kind"] == "claim" and citation in record.get("evidence", [])
+        for record in archive.read_events()
+    )
+
+
+def _resolve_experiment_cycle(archive: Chronicle, cycle_seq: int | None) -> dict[str, Any]:
+    if cycle_seq is None:
+        cycle = _latest_experiment_cycle(archive)
+        if cycle is None:
+            raise ArchiveError(
+                "no experiment cycle recorded yet; run `experiment run` before "
+                "recording a verdict"
+            )
+        return cycle
+    for record in _experiment_cycles(archive):
+        if record["sequence"] == cycle_seq:
+            return record
+    raise ArchiveError(f"seq:{cycle_seq} is not a recorded experiment cycle")
+
+
+def record_experiment_verdict(
+    archive: Chronicle,
+    project: Path,
+    *,
+    metric: str,
+    before: float,
+    after: float,
+    epsilon: float,
+    cycle_seq: int | None = None,
+    simpler: bool = False,
+    acquitted_by: str = "self",
+) -> dict[str, Any]:
+    """U-R3: epsilon adjudication for one experiment cycle - computed, not
+    asserted, from `{metric, before, after, epsilon}`.
+
+    `improvement = after - before`: the caller orients `before`/`after` so
+    higher is better for the metric named (a latency or error-rate metric
+    is handed in already sign-flipped) - this function does no per-metric
+    interpretation of its own. `improvement >= epsilon` keeps the
+    change; short of that it discards, UNLESS `before == after` exactly (a
+    genuinely flat result, not merely small) AND the caller declares
+    `simpler=True` - a change that measures no worse and is plainly simpler
+    is worth keeping even without a measured gain, but only that flat case;
+    a change that measures WORSE never gets rescued by "simpler" alone.
+
+    One verdict per cycle (repeat calls for an already-verdicted cycle are
+    refused), and this is the write half of verdict-before-next-cycle:
+    `run_experiment` will not start another cycle until the record this
+    function writes exists for the one before it.
+
+    `acquitted_by` defaults to `"self"`: before/after are numbers the SAME
+    caller supplied, so grading their own arithmetic is honest
+    self-attestation of the *comparison*, exactly `godmode_verdict.
+    attest_run_state`'s existing convention for execution facts - `disposition`
+    therefore stays unset here, so a claim later citing this record as
+    `verdict:<seq>` will NOT resolve "confirmed" through
+    `godmode_attest._citation_resolves` (U-R3's own audit hook: termination is
+    a claim needing independent confirmation, not an inference this
+    self-graded arithmetic gets to make on its own). A caller with genuine
+    independent standing may pass `acquitted_by="independent"`, which lets
+    `disposition` become confirmed/refuted - and then the SAME archive-seam
+    invariants every other verdict kind is held to
+    (`godmode_invariants._verdict_invariants`) apply here too, unmodified: a
+    cycle that never reached an explicit success (loop exhaustion - see
+    `run_state` below) can still never be recorded "confirmed" through this
+    path either.
+
+    The commit digest (`run_git rev-parse HEAD`) is captured at adjudication
+    time and stored on the record - a cycle is commit-linked by carrying the
+    digest of the tree it judged, not by inference from timing.
+    """
+    cycle = _resolve_experiment_cycle(archive, cycle_seq)
+    cycle_seq = cycle["sequence"]
+    if _experiment_verdict_for_cycle(archive, cycle_seq) is not None:
+        raise ArchiveError(f"seq:{cycle_seq} already has a verdict; one verdict per experiment cycle")
+    if acquitted_by not in ("independent", "self"):
+        raise ArchiveError(f"Unknown acquitted_by '{acquitted_by}'; expected 'independent' or 'self'")
+    eps = float(epsilon)
+    if not eps > 0:
+        raise ArchiveError("epsilon must be a positive number; a non-positive epsilon adjudicates nothing")
+
+    before_v, after_v = float(before), float(after)
+    improvement = after_v - before_v
+    if improvement >= eps:
+        adjudication = "keep"
+    elif before_v == after_v and simpler:
+        adjudication = "keep-simpler"
+    else:
+        adjudication = "discard"
+
+    # Loop exhaustion without an explicit completion claim (U-R3/E78): a
+    # cycle that was itself budget-cut, or that ran every attempt without
+    # ever hitting its declared `success_exit`, never produced an explicit
+    # positive signal - its verdict is truncated, never a completion,
+    # regardless of what the epsilon math alone says about the metric.
+    cycle_data = cycle["data"]
+    exhausted = cycle_data.get("run_state") == "truncated" or not cycle_data.get("succeeded", False)
+    run_state = "truncated" if exhausted else "terminated"
+
+    disposition = None
+    if acquitted_by == "independent":
+        disposition = "confirmed" if adjudication in ("keep", "keep-simpler") else "refuted"
+
+    commit = run_git(project, "rev-parse", "HEAD")
+
+    data = {
+        "cycle_seq": cycle_seq,
+        "metric": metric,
+        "before": before_v,
+        "after": after_v,
+        "epsilon": eps,
+        "improvement": improvement,
+        "adjudication": adjudication,
+        "simpler": bool(simpler),
+        "commit": commit,
+        "run_state": run_state,
+        "acquitted_by": acquitted_by,
+        "disposition": disposition,
+    }
+    subject = f"experiment-verdict:cycle-{cycle_seq}:{metric}"[:200]
+    evidence = [f"seq:{cycle_seq}"]
+    if commit:
+        evidence.append(f"commit:{commit}")
+    # The forbidden disposition/run_state/acquitted_by combinations are
+    # enforced INSIDE archive.append() itself
+    # (godmode_invariants._verdict_invariants, seeded at godmode_chronicle's
+    # own import) - not duplicated here, and binding regardless of whether
+    # this function is the caller.
+    return archive.append("verdict", subject, data, evidence=evidence)
+
 
 def run_experiment(
     archive: Chronicle, project: Path, timeout: int = 300, *, budget_s: float | None = None
@@ -353,11 +524,26 @@ def run_experiment(
     findings (stop contract present via the `max_runs` already required
     above, budget declared) become a real gate - blocking findings refuse
     the run before cycle one, not just report on it afterward.
+
+    Task 11/U-R3: each call is one CYCLE of a commit-linked experiment
+    ledger. Before running anything, the previous cycle (if any) must
+    already carry a verdict (`record_experiment_verdict`) - verdict-before-
+    next-cycle, refused here at the API rather than only detected later
+    (`godmode_loop.unadjudicated_experiment_cycles` is the read-time half,
+    for a raw append that bypasses this function entirely). An optional
+    declared `max_cycles` in the spec bounds the SERIES of cycles (distinct
+    from `max_runs`, which bounds attempts WITHIN one cycle): once reached
+    with no explicit completion claim on record for the last cycle's
+    verdict, the series is exhaustED, not complete - a closing `verdict`
+    record is written with `run_state: "truncated"` and the call is refused,
+    the positive-completion-sentinel half of E78 (a completion claim, once
+    made, is audited by U-V1's own unmodified citation-grading, not this
+    function).
     """
     import shlex
 
     from .godmode_loop import experiment_ready
-    from .godmode_stop import AttemptHandle
+    from .godmode_stop import AttemptHandle, MaxRecords
 
     path = project / EXPERIMENT_FILENAME
     if not path.is_file():
@@ -373,6 +559,63 @@ def run_experiment(
             f"{EXPERIMENT_FILENAME} declares a maturity but is not pre-flight "
             f"ready: {reasons}"
         )
+
+    prior_cycle = _latest_experiment_cycle(archive)
+    if prior_cycle is not None and _experiment_verdict_for_cycle(archive, prior_cycle["sequence"]) is None:
+        raise ArchiveError(
+            f"cycle refused: seq:{prior_cycle['sequence']} (the previous experiment "
+            "cycle) has no verdict yet - adjudicate it (`experiment verdict`) before "
+            "running another cycle; verdict-before-next-cycle"
+        )
+
+    max_cycles = spec.get("max_cycles")
+    if isinstance(max_cycles, int) and not isinstance(max_cycles, bool) and max_cycles > 0:
+        # U-R1's own Stop algebra bounds the SERIES, not a synthetic count:
+        # a fresh MaxRecords(max_cycles) fed the REAL delta of every cycle
+        # recorded so far (one call, not ticked incrementally - there is no
+        # long-lived process across separate `run_experiment` invocations to
+        # tick it in) fires exactly at the declared boundary, the same
+        # `>= n` semantics `MaxRecords` is already pinned to elsewhere.
+        prior_cycles = _experiment_cycles(archive)
+        prior_count = len(prior_cycles)
+        if MaxRecords(max_cycles)(prior_cycles) is not None:
+            prior_verdict = (
+                _experiment_verdict_for_cycle(archive, prior_cycle["sequence"])
+                if prior_cycle is not None else None
+            )
+            if prior_verdict is not None and _experiment_completion_claimed(archive, prior_verdict["sequence"]):
+                raise ArchiveError(
+                    f"experiment series already complete: an explicit completion "
+                    f"claim cites verdict seq:{prior_verdict['sequence']}; no further "
+                    "cycles run"
+                )
+            closing = archive.append(
+                "verdict",
+                f"experiment-series-exhausted:{str(spec['hypothesis'])[:80]}"[:200],
+                {
+                    # `last_cycle_seq`, not `cycle_seq`: this record closes the
+                    # SERIES, not one more adjudication of that cycle - naming
+                    # it `cycle_seq` would make `_experiment_verdict_for_cycle`
+                    # treat it as a second verdict for a cycle that already has
+                    # its own (the real one is why this code path was even
+                    # reachable at all; verdict-before-next-cycle above ran first).
+                    "last_cycle_seq": prior_cycle["sequence"] if prior_cycle is not None else None,
+                    "cycles": prior_count,
+                    "max_cycles": max_cycles,
+                    "run_state": "truncated",
+                    "disposition": None,
+                    "acquitted_by": "self",
+                    "adjudication": None,
+                    "reason": "cycle bound reached with no completion claim on record",
+                },
+            )
+            raise ArchiveError(
+                f"experiment series exhausted at {prior_count} cycles (max_cycles="
+                f"{max_cycles}) with no completion claim recorded; seq:{closing['sequence']} "
+                "records run_state=truncated - loop exhaustion is not completion. "
+                "Record a completion claim citing a confirmed verdict, or raise max_cycles"
+            )
+
     success_exit = int(spec.get("success_exit", 0))
     max_runs = max(1, min(int(spec["max_runs"]), 20))  # deliberate ceiling: hard cap 20; raise if a real program needs more
     command = shlex.split(str(spec["command"]))
@@ -406,7 +649,7 @@ def run_experiment(
             succeeded = True
             break
     run_state = "truncated" if truncated else "terminated"
-    archive.append(
+    cycle_record = archive.append(
         "action", f"experiment:{str(spec['hypothesis'])[:80]}",
         {"runs": runs, "succeeded": succeeded, "bound": max_runs, "run_state": run_state},
     )
@@ -425,6 +668,7 @@ def run_experiment(
         "run_state": run_state,
         "preflight": preflight,
         "verdict": verdict,
+        "cycle_seq": cycle_record["sequence"],
     }
 
 

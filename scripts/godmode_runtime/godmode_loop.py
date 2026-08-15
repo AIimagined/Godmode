@@ -436,6 +436,56 @@ def experiment_ready(declaration: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def unadjudicated_experiment_cycles(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """U-R3's read-time half of verdict-before-next-cycle.
+
+    `godmode_guardrails.run_experiment` refuses a next cycle at WRITE time
+    when the one before it lacks a verdict - but that refusal only binds
+    callers going through it. A raw `archive.append("action",
+    "experiment:...", ...)` bypasses it exactly the way a raw
+    `archive.append("decision", "reg:...", ...)` bypasses
+    `godmode_register.set_state()`'s own legality checks
+    (`godmode_register.conflict_findings` exists for that same reason - this
+    mirrors it). The cross-record check ("does an earlier record exist with
+    no verdict, and does a later cycle exist anyway") needs the archive's
+    own history to answer, which is exactly what a single-record
+    `godmode_invariants` hook structurally cannot see (it is handed one
+    record's `data` and nothing else) - so, like the register's transition
+    legality, this lives here as a read-time detector, not there.
+
+    Every recorded cycle EXCEPT the latest must have a verdict citing it
+    (`data.cycle_seq` on a `verdict` record); the latest alone is allowed to
+    be mid-flight unadjudicated - that is the normal, expected state right
+    after a cycle finishes and before its verdict is recorded. A second
+    cycle stacked on top of an unadjudicated one could only have reached the
+    archive by skipping `run_experiment`'s own guard.
+    """
+    cycles = [
+        r for r in records
+        if r["kind"] == "action" and r["subject"].startswith("experiment:")
+    ]
+    if len(cycles) < 2:
+        return []
+    verdicted_cycle_seqs = {
+        r["data"].get("cycle_seq")
+        for r in records
+        if r["kind"] == "verdict" and r["data"].get("cycle_seq") is not None
+    }
+    findings = []
+    for cycle in cycles[:-1]:  # every cycle except the latest
+        if cycle["sequence"] not in verdicted_cycle_seqs:
+            findings.append(_finding(
+                "unadjudicated-experiment-cycle",
+                f"experiment cycle seq:{cycle['sequence']} ('{cycle['subject']}') has "
+                "no verdict recorded, and a later cycle exists anyway - this could "
+                "only happen through a raw append that skipped run_experiment's own "
+                "verdict-before-next-cycle refusal; record the missing verdict "
+                "(`experiment verdict`) before trusting anything after it",
+                True, [cycle["sequence"]],
+            ))
+    return findings
+
+
 def model_blame_allowed(records: list[dict[str, Any]], session: str | None = None) -> dict[str, Any]:
     """Blaming the model requires a non-model control: the same input through a
     path with no model in it. Without one, the blame is a hypothesis.
@@ -494,6 +544,7 @@ def analyze(archive: Chronicle) -> dict[str, Any]:
         + _silent_success(records)
         + hypothesis_reset_required(records, threshold)
         + stall_escalation(records)
+        + unadjudicated_experiment_cycles(records)
         # Read from history rather than from the records, because every
         # detector above needs a failure somebody chose to write down.
         + repeated_repairs(Path(archive.anchor.project_root))
