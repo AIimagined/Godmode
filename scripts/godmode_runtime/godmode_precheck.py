@@ -40,13 +40,33 @@ is - matched by the key's own terms, never by fuzzy free-text overlap - but
 it never joins `already_rejected`, never contributes to `findings`/`verdict`,
 and is labeled distinctly (`foreign precedent (from <fp8>)`) so a reader can
 never mistake it for something this project's own archive adjudicated.
+
+**Paired-artifact is a sixth question, GAP-2's other half, also advisory.**
+`godmode_minimality.duplicate_authority_findings` catches an *undeclared*
+pair drifting apart by *auto-detected* member overlap; this is the
+declared, explicit counterpart - a project states "these two artifacts
+change together" once, and every later diff is checked against that
+statement rather than against a similarity score. Declaring is writing a
+`decision` record whose subject is `paired-artifact:<label>` - the same
+"reuse an existing kind, namespace the subject" house pattern `removal`
+above and `reg:`/`reg-foreign:` in `godmode_register.py` already use. A
+paired-artifact charter is project *policy* that a session writes,
+revises, and can retire - the same evolving, evidenced, append-only shape
+`reg:` decisions already have, not a generated inventory snapshot
+regenerated from source the way a static declared-config file
+(`capabilities.json`'s shape) is. It is checked here, in `precheck`, and
+not in `godmode_fence.completion_audit` (which owns this unit's excluded
+scope): `precheck` is the seam an agent already consults *before* touching
+files, so a one-sided diff is caught while there is still time to add the
+other half, not after the commit already landed. Never blocking: v1 is a
+question, same as everything else in this module.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Iterable
 
 from .godmode_chronicle import Chronicle
 from .godmode_constants import SETTLED_STATUSES
@@ -54,6 +74,11 @@ from .godmode_register import FOREIGN_SUBJECT_PREFIX
 from .godmode_register import foreign_precedents as foreign_register_precedents
 from .godmode_register import rejected_precedents
 from .godmode_requests import closure_reason
+
+# Subject prefix that marks a `decision` record as a paired-artifact
+# declaration, mirroring `removal:`'s own prefix-on-an-existing-kind
+# convention rather than opening a new EVENT_KINDS entry for it.
+PAIRED_ARTIFACT_PREFIX = "paired-artifact:"
 
 # Kinds that can carry a "we decided against this" meaning. There is no
 # `removal` kind: `godmode removal record` writes a `decision` whose subject is
@@ -100,7 +125,85 @@ def _overlap(terms: set[str], text: str) -> int:
     return sum(1 for term in terms if term in haystack)
 
 
-def precheck(project_root: Path | str, archive: Chronicle, task: str) -> dict[str, Any]:
+def _norm(path: str) -> str:
+    return str(path).replace("\\", "/")
+
+
+def declare_paired_artifact(archive: Chronicle, label: str, a: str, b: str,
+                            reason: str) -> dict[str, Any]:
+    """Record "`a` and `b` change together" as a `decision` (see the module
+    docstring for why this reuses that kind rather than a config file or a
+    new EVENT_KINDS entry). `label` names the pair for later reference
+    (`paired-artifact:<label>` becomes the record's subject) and must be
+    unique per pair the same way a `removal:` subject is.
+    """
+    return archive.append(
+        "decision", f"{PAIRED_ARTIFACT_PREFIX}{label}",
+        {"a": _norm(a), "b": _norm(b), "reason": reason, "status": "active"},
+    )
+
+
+def declared_paired_artifacts(archive: Chronicle) -> list[dict[str, Any]]:
+    """Every declared "these change together" pair, latest record per label
+    only - a later declaration of the same label supersedes the last one
+    the same way a plain `decision` naturally does when nothing folds it."""
+    if not archive.initialized():
+        return []
+    latest: dict[str, dict[str, Any]] = {}
+    for record in archive.read_events():
+        if record.get("kind") != "decision":
+            continue
+        subject = str(record.get("subject", ""))
+        if not subject.startswith(PAIRED_ARTIFACT_PREFIX):
+            continue
+        data = record.get("data") or {}
+        a, b = data.get("a"), data.get("b")
+        if not a or not b:
+            continue
+        label = subject[len(PAIRED_ARTIFACT_PREFIX):]
+        latest[label] = {
+            "label": label, "a": _norm(a), "b": _norm(b),
+            "reason": str(data.get("reason", "")),
+            "sequence": record.get("sequence"),
+        }
+    return [latest[label] for label in sorted(latest)]
+
+
+def paired_artifact_findings(archive: Chronicle, changed_files: Iterable[str]) -> dict[str, Any]:
+    """A declared pair where this diff touches exactly one half.
+
+    Advisory only (GAP-2, v1): the finding is a question, never a refusal -
+    `godmode_fence.py` owns actually blocking a commit, and this module has
+    never done that for any of its other five questions either.
+    """
+    changed = {_norm(path) for path in changed_files}
+    pairs = declared_paired_artifacts(archive)
+    findings: list[dict[str, Any]] = []
+    for pair in pairs:
+        a_touched, b_touched = pair["a"] in changed, pair["b"] in changed
+        if a_touched == b_touched:  # both, or neither - nothing to flag
+            continue
+        touched, untouched = (pair["a"], pair["b"]) if a_touched else (pair["b"], pair["a"])
+        findings.append({
+            "label": pair["label"],
+            "touched": touched,
+            "untouched": untouched,
+            "reason": pair["reason"],
+            "where": f"seq:{pair['sequence']}",
+            "question": f"'{touched}' changed but its declared pair '{untouched}' did not"
+                        + (f" ({pair['reason']})" if pair["reason"] else "")
+                        + " - was the omission deliberate, or is the other half owed an edit too?",
+        })
+    return {
+        "changed_files": sorted(changed),
+        "declared_pairs": len(pairs),
+        "findings": findings,
+        "verdict": "one-sided-change" if findings else "paired-or-clean",
+    }
+
+
+def precheck(project_root: Path | str, archive: Chronicle, task: str,
+            changed_files: Iterable[str] | None = None) -> dict[str, Any]:
     """What already exists and what was already refused, for this task.
 
     Matching is by term overlap rather than by wording, because a request is
@@ -249,7 +352,7 @@ def precheck(project_root: Path | str, archive: Chronicle, task: str) -> dict[st
     # found" on its own.
     findings = bool(already_built or already_rejected or already_reported
                     or rejected_precedent_hits)
-    return {
+    report = {
         "task": task,
         "already_built": already_built,
         "already_rejected": already_rejected,
@@ -263,6 +366,12 @@ def precheck(project_root: Path | str, archive: Chronicle, task: str) -> dict[st
         "records_examined": len(records),
         "verdict": "prior-work-found" if findings else "no-prior-work-found",
     }
+    if changed_files is not None:
+        # Same advisory-everywhere rule as `foreign_precedents`: a one-sided
+        # paired-artifact diff never joins `findings`/`verdict` above, no
+        # matter how confident the hit - GAP-2 v1 is a question, not a gate.
+        report["paired_artifacts"] = paired_artifact_findings(archive, changed_files)
+    return report
 
 
 def render(report: dict[str, Any]) -> str:
@@ -280,6 +389,7 @@ def render(report: dict[str, Any]) -> str:
                 f"  [foreign precedent (from {hit['origin'][:8]})] {hit['domain']}:{hit['key']} "
                 f"state={hit['state']} ({hit['where']}) - advisory only, not a local finding"
             )
+        lines.extend(_paired_artifact_lines(report))
         return "\n".join(lines)
     lines = [f"Prior work touching '{report['task'][:60]}':"]
     # Precedent first: a closed-enumeration refusal the archive itself
@@ -314,4 +424,16 @@ def render(report: dict[str, Any]) -> str:
         lines.append(f"  ... and {len(report['already_built']) - len(shown)} more existing "
                      "symbols, not shown")
     lines.append("None of these is a refusal. Check whether the reason still holds.")
+    lines.extend(_paired_artifact_lines(report))
     return "\n".join(lines)
+
+
+def _paired_artifact_lines(report: dict[str, Any]) -> list[str]:
+    """Paired-artifact hits, rendered the same in either verdict branch: a
+    clean precheck for the *task* can still sit on top of a one-sided diff
+    against a *declared* pair, and the two questions are independent."""
+    hits = report.get("paired_artifacts", {}).get("findings", [])
+    return [
+        f"  [paired-artifact, advisory] {hit['question']} ({hit['where']})"
+        for hit in hits
+    ]
