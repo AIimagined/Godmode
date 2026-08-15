@@ -41,13 +41,26 @@ so a caller never loses its result over a write failure) for a hard block
 on every hit to be usable. Each finding carries `severity: "advisory"`
 instead. What DOES fail loudly is the ratchet: a `.godmode-swallow-baseline.json`
 file at the project root stores a per-file count of un-exempted findings,
-and that ceiling may only shrink. A file whose count grows past its stored
-baseline is a `regression` - the one hard signal this scanner produces -
-independent of how many advisory findings exist elsewhere. `--update-baseline`
-tightens the file to the current counts but can never raise a stored
-ceiling: a file whose count grew keeps its old (lower) entry, so a real
-regression cannot be baselined away by re-running the command that is
-supposed to accept fixes.
+and that ceiling may only shrink, never grow. A file whose count exceeds
+its stored ceiling is a `regression` - the one hard signal this scanner
+produces - independent of how many advisory findings exist elsewhere, and
+the CLI (`godmode swallow`, `godmode_console.cmd_swallow`) exits nonzero on
+a live regression from EVERY invocation, `--update-baseline` included:
+an exit code that reads "clean" over an un-rescued regression would be
+exactly the collapsed observable this scanner exists to catch elsewhere.
+
+Shrinking never needs an operator's act (RULING B3-3-1): an ordinary
+`godmode swallow` auto-tightens each already-tracked file's ceiling down to
+its observed count right when it sees the improvement, before regressions
+are even computed (`_auto_tighten`). This closes a creep-back window a
+count-only-grows ratchet would otherwise leave open - fix one of two sites
+in a file without ever running `--update-baseline`, and the very next scan
+already re-measures that file's ceiling at 1, so a later, unrelated third
+site cannot hide inside the first fix's old headroom. `--update-baseline`
+stays initialize-only: it creates the baseline file the first time
+(the population sweep) and, for a file already tracked, only ever tightens
+or holds - never raises - a stored ceiling; a real regression survives
+being re-baselined.
 
 Legitimate suppression gets an explicit escape, never a silent one: a
 `# godmode: swallow-ok <reason>` (Python) or `// godmode: swallow-ok
@@ -365,11 +378,23 @@ def _load_baseline(project: Path) -> tuple[dict[str, int] | None, str | None]:
     return counts, None
 
 
+def _write_baseline_file(project: Path, counts: dict[str, int]) -> None:
+    payload = {"counts": counts, "runtime_version": RUNTIME_VERSION}
+    (Path(project) / BASELINE_FILENAME).write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
 def update_baseline(project: Path, current_counts: dict[str, int]) -> dict[str, int]:
-    """Write a tightened baseline: a file's stored ceiling only ever shrinks
-    or holds. A file whose count grew keeps its OLD (lower) entry, so a real
-    regression cannot be baselined away by re-running this command - only by
-    fixing the site or annotating it."""
+    """Initialize-only: creates the baseline file if none exists yet (the
+    population sweep), and for a file already tracked, only ever tightens
+    or holds its ceiling - never raises it. A file whose count grew keeps
+    its OLD (lower) entry, so a real regression cannot be baselined away by
+    re-running this command - only by fixing the site or annotating it. A
+    file not yet tracked is initialized at its current count (that is how a
+    newly-scanned file first enters the baseline at all); that is an
+    initialization, not a raise, because no prior ceiling existed to raise.
+    """
     existing, _ = _load_baseline(project)
     existing = existing or {}
     merged: dict[str, int] = {}
@@ -377,11 +402,38 @@ def update_baseline(project: Path, current_counts: dict[str, int]) -> dict[str, 
         if count <= 0:
             continue
         merged[relative] = min(count, existing[relative]) if relative in existing else count
-    payload = {"counts": merged, "runtime_version": RUNTIME_VERSION}
-    (Path(project) / BASELINE_FILENAME).write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    _write_baseline_file(project, merged)
     return merged
+
+
+def _auto_tighten(baseline: dict[str, int], counts: dict[str, int]) -> tuple[dict[str, int], bool]:
+    """The baseline a plain scan should show, and whether it changed.
+
+    RULING B3-3-1 (creep-back): shrinking a stored ceiling never needs an
+    operator's act - if the observed count for an already-tracked file is
+    lower than its ceiling, the ceiling drops to match, right here, on an
+    ordinary scan. Only an EXISTING per-file ceiling can move, and only
+    downward: a path absent from the baseline stays absent, so a plain scan
+    can never quietly adopt a brand-new, never-reviewed site as though it
+    had always been budgeted - that site keeps reading as a `regression`.
+    Fixing one site in a file that also carries a second, unrelated
+    defect no longer leaves the second defect's old headroom lying around
+    to absorb a THIRD, later site: the ceiling is re-measured on every scan,
+    not just on an explicit `--update-baseline`.
+    """
+    changed = False
+    tightened: dict[str, int] = {}
+    for relative, ceiling in baseline.items():
+        observed = counts.get(relative, 0)
+        if observed <= 0:
+            changed = True  # every site in this file was fixed; drop it
+            continue
+        if observed < ceiling:
+            tightened[relative] = observed
+            changed = True
+        else:
+            tightened[relative] = ceiling
+    return tightened, changed
 
 
 def scan_project(project: Path, limit: int = DEFAULT_SCAN_LIMIT) -> dict[str, Any]:
@@ -433,6 +485,16 @@ def scan_project(project: Path, limit: int = DEFAULT_SCAN_LIMIT) -> dict[str, An
     baseline, baseline_error = _load_baseline(project)
     baseline_exists = baseline is not None
     baseline_map = baseline or {}
+    if baseline_exists:
+        # RULING B3-3-1: an ordinary scan tightens the stored ceiling
+        # wherever it safely can, before regressions are even computed - see
+        # `_auto_tighten`. Regressions are then read off the TIGHTENED map,
+        # not the on-disk one, so a fix that just shrank a file's ceiling
+        # cannot leave stale headroom for an unrelated new site to spend.
+        baseline_map, changed = _auto_tighten(baseline_map, counts)
+        if changed:
+            _write_baseline_file(project, baseline_map)
+
     regressions: list[dict[str, Any]] = []
     if baseline_exists:
         for relative, count in counts.items():
@@ -449,6 +511,12 @@ def scan_project(project: Path, limit: int = DEFAULT_SCAN_LIMIT) -> dict[str, An
         verdict = "findings"
     else:
         verdict = "clean"
+    if unparsed:
+        # Folded into the verdict string itself, not left as a sibling field
+        # a caller could check `verdict` without ever reading: a population
+        # that was partly unreadable is not fully described by whatever the
+        # readable part looked like.
+        verdict = f"{verdict}, {len(unparsed)} files unparsed"
 
     return {
         "scanned": scanned,

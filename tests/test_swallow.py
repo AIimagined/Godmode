@@ -23,6 +23,8 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = PLUGIN_ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
+if str(Path(__file__).parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).parent))
 
 from godmode_runtime.godmode_swallow import (  # noqa: E402
     BASELINE_FILENAME,
@@ -31,6 +33,7 @@ from godmode_runtime.godmode_swallow import (  # noqa: E402
     scan_project,
     update_baseline,
 )
+from test_godmode_runtime import isolated_project  # noqa: E402
 
 
 @contextmanager
@@ -376,6 +379,89 @@ class ScanProjectAndRatchetTests(unittest.TestCase):
             still = scan_project(project)
             self.assertEqual(still["verdict"], "regression")
 
+    def test_plain_scan_auto_tightens_the_ceiling_downward(self) -> None:
+        """RULING B3-3-1: shrinking never needs `--update-baseline`."""
+        with temp_project() as project:
+            (project / "a.py").write_text(
+                "try:\n    do_thing()\nexcept Exception:\n    pass\n"
+                "try:\n    do_other()\nexcept Exception:\n    pass\n",
+                encoding="utf-8",
+            )
+            update_baseline(project, scan_project(project)["counts"])  # ceiling {a.py: 2}
+            # Fix one of the two sites, WITHOUT running --update-baseline.
+            (project / "a.py").write_text(
+                "try:\n    do_thing()\nexcept Exception:\n    pass\n"
+                "try:\n    do_other()\nexcept Exception:\n    cleanup()\n",
+                encoding="utf-8",
+            )
+            after_fix = scan_project(project)
+            self.assertEqual(after_fix["counts"], {"a.py": 1})
+            self.assertEqual(after_fix["verdict"], "findings")
+            # The plain scan itself wrote the ceiling down - no operator act.
+            self.assertEqual(after_fix["baseline"], {"a.py": 1})
+            # Persisted to disk, not just returned in-memory: a fresh scan
+            # (no code change in between) still reports the tightened value.
+            self.assertEqual(scan_project(project)["baseline"], {"a.py": 1})
+
+    def test_creep_back_is_closed_the_reviewers_exact_probe(self) -> None:
+        """RULING B3-3-1's own falsification probe: fix one of two sites
+        with no `--update-baseline`, then land a brand-new, unrelated third
+        site in the same file. Before the fix, this passed through
+        completely undetected (`verdict: "findings"`, `regressions: []`) -
+        the auto-tightened ceiling from the first fix must not leave the
+        old count's headroom lying around for the new site to spend."""
+        with temp_project() as project:
+            (project / "a.py").write_text(
+                "try:\n    do_thing()\nexcept Exception:\n    pass\n"
+                "try:\n    do_other()\nexcept Exception:\n    pass\n",
+                encoding="utf-8",
+            )
+            update_baseline(project, scan_project(project)["counts"])  # ceiling {a.py: 2}
+            # Fix one site (count drops to 1); no --update-baseline run.
+            (project / "a.py").write_text(
+                "try:\n    do_thing()\nexcept Exception:\n    pass\n"
+                "try:\n    do_other()\nexcept Exception:\n    cleanup()\n",
+                encoding="utf-8",
+            )
+            scan_project(project)  # the plain scan that auto-tightens to 1
+            # A brand-new, unrelated third site lands in the same file,
+            # bringing the count back to the OLD ceiling (2).
+            (project / "a.py").write_text(
+                "try:\n    do_thing()\nexcept Exception:\n    pass\n"
+                "try:\n    do_other()\nexcept Exception:\n    cleanup()\n"
+                "try:\n    do_third()\nexcept Exception:\n    pass\n",
+                encoding="utf-8",
+            )
+            report = scan_project(project)
+            self.assertEqual(report["verdict"], "regression")
+            self.assertEqual(
+                report["regressions"],
+                [{"path": "a.py", "current": 2, "baseline": 1}],
+            )
+
+    def test_new_unbaselined_site_is_never_auto_adopted_by_a_plain_scan(self) -> None:
+        """Auto-tightening only ever moves an EXISTING ceiling down; it must
+        never add a path that was never in the baseline at all - that would
+        let a plain scan quietly adopt a brand-new defect as though it had
+        always been budgeted."""
+        with temp_project() as project:
+            (project / "a.py").write_text(
+                "try:\n    do_thing()\nexcept Exception:\n    pass\n",
+                encoding="utf-8",
+            )
+            update_baseline(project, scan_project(project)["counts"])  # {a.py: 1}
+            (project / "b.py").write_text(
+                "try:\n    do_new()\nexcept Exception:\n    pass\n",
+                encoding="utf-8",
+            )
+            report = scan_project(project)
+            self.assertEqual(report["verdict"], "regression")
+            self.assertEqual(
+                report["regressions"],
+                [{"path": "b.py", "current": 1, "baseline": 0}],
+            )
+            self.assertNotIn("b.py", report["baseline"])
+
     def test_baseline_shrinks_when_a_site_is_fixed(self) -> None:
         with temp_project() as project:
             (project / "a.py").write_text(
@@ -410,6 +496,13 @@ class ScanProjectAndRatchetTests(unittest.TestCase):
                 report["exemptions"][0]["reason"], "best-effort logging path"
             )
 
+    def test_unparsed_files_are_named_in_the_verdict_not_only_the_sibling_field(self) -> None:
+        with temp_project() as project:
+            (project / "broken.py").write_text("def (:\n", encoding="utf-8")
+            report = scan_project(project)
+            self.assertEqual(len(report["unparsed"]), 1)
+            self.assertEqual(report["verdict"], "clean, 1 files unparsed")
+
     def test_malformed_baseline_file_is_reported_not_silently_ignored(self) -> None:
         with temp_project() as project:
             (project / "a.py").write_text("def add(a, b):\n    return a + b\n",
@@ -441,6 +534,41 @@ class ScanProjectAndRatchetTests(unittest.TestCase):
             report = scan_project(project)
             self.assertEqual(report["scanned"], 0)
             self.assertEqual(report["verdict"], "clean")
+
+
+class CliExitCodeTests(unittest.TestCase):
+    """Against the real CLI (`godmode_console.main`), not just `scan_project`
+    - RULING B3-3-2 is a `cmd_swallow` defect, not a module-level one."""
+
+    def test_a_live_regression_fails_every_invocation_including_update_baseline(self) -> None:
+        from godmode_runtime.godmode_console import main
+
+        with isolated_project() as (project, _state, _anchor, _archive):
+            (project / "a.py").write_text(
+                "try:\n    do_thing()\nexcept Exception:\n    pass\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                main(["--project", str(project), "--json", "swallow", "--update-baseline"]),
+                0,
+            )
+            # Regress: a second, unrelated site lands in the same file.
+            (project / "a.py").write_text(
+                "try:\n    do_thing()\nexcept Exception:\n    pass\n"
+                "try:\n    do_other()\nexcept Exception:\n    pass\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(main(["--project", str(project), "--json", "swallow"]), 1)
+            # The reviewer's exact probe: --update-baseline right after an
+            # un-rescued regression must ALSO exit nonzero. The min()
+            # protection genuinely holds the ceiling at 1 (not baselined
+            # away), but a 0 exit code here would say "clean" over a live
+            # regression - the collapsed observable this scanner exists to
+            # catch elsewhere in the codebase.
+            self.assertEqual(
+                main(["--project", str(project), "--json", "swallow", "--update-baseline"]),
+                1,
+            )
 
 
 if __name__ == "__main__":
