@@ -20,7 +20,8 @@ from typing import Any
 from .godmode_atlas import build as build_atlas
 from .godmode_charter import ADVISORY, HARD, SOFT, compile_charter
 from .godmode_corpus import resolve_roles, segment_document
-from .godmode_errors import GodmodeError
+from .godmode_errors import ArchiveError, GodmodeError
+from .godmode_reconcile import reconcile_capabilities
 from .godmode_status import authority_claims
 
 # What an agent will realistically spend reading rules before starting work.
@@ -181,6 +182,25 @@ def assess(project: Path, budget: int = TYPICAL_COLD_START_TOKENS,
             ))
     except GodmodeError as exc:
         report["charter"] = {"unavailable": str(exc)[:160]}
+
+    # U-S2: capability register debt, surfaced instead of hidden in a
+    # separate command nobody remembers to run. A project with no
+    # capabilities.json (every project but this one, today) reports an
+    # empty debt list rather than an error - the register is Godmode's own
+    # claim about itself, not a requirement it imposes on every project.
+    try:
+        capability_reconcile = reconcile_capabilities(project)
+        report["capability_debt"] = capability_reconcile["capability_debt"]
+        if capability_reconcile["verdict"] != "reconciled":
+            findings.append(_finding(
+                "high", "capability-drift",
+                f"{len(capability_reconcile['dead_pointers'])} dead pointer(s) and "
+                f"{len(capability_reconcile['stale_status'])} stale status label(s) in "
+                "capabilities.json.",
+                "Run `godmode capabilities --reconcile` and fix each dead or stale entry.",
+            ))
+    except ArchiveError:
+        report["capability_debt"] = []
 
     atlas = build_atlas(project)
     diagnosis = atlas.diagnose()
