@@ -29,6 +29,7 @@ exists.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from contextlib import contextmanager
@@ -258,18 +259,34 @@ class AttemptHandle:
         vocabulary for a budget or timeout cutoff, so a caller recording
         this as `confirmed` meets the archive-seam refusal instead of a
         truncated run impersonating a completed one.
+
+        The kill reaches the whole process TREE, not just this leaf PID: a
+        command that forks (a shell wrapper, a test runner, a script that
+        backgrounds work) must not leave a grandchild running past the
+        budget that killed its parent - `process.kill()` alone only signals
+        the one PID it was given and a detached descendant survives it
+        untouched. `_kill_tree` below is the fix.
         """
         started = time.monotonic()
         kwargs.setdefault("stdout", subprocess.PIPE)
         kwargs.setdefault("stderr", subprocess.PIPE)
         kwargs.setdefault("text", True)
+        # POSIX: make this process the leader of its own session/process
+        # group, so a killpg() aimed at that group reaches every descendant
+        # it spawns (which inherit the same group unless they start their
+        # own). Windows has no equivalent for arbitrary descendants without
+        # pywin32 job objects, so no flag is set here - `_kill_tree` uses
+        # `taskkill /T` instead, which walks the OS's own parent-PID
+        # lineage and needs no special launch flag to do it.
+        if os.name != "nt":
+            kwargs.setdefault("start_new_session", True)
         process = subprocess.Popen(argv, **kwargs)
         timeout = self.remaining()
         try:
             stdout, stderr = process.communicate(timeout=timeout)
             run_state = "terminated"
         except subprocess.TimeoutExpired:
-            process.kill()
+            self._kill_tree(process)
             stdout, stderr = process.communicate()
             run_state = "truncated"
             self.truncated = True
@@ -280,6 +297,43 @@ class AttemptHandle:
             "run_state": run_state,
             "elapsed_s": round(time.monotonic() - started, 3),
         }
+
+    @staticmethod
+    def _kill_tree(process: "subprocess.Popen[Any]") -> None:
+        """Kill `process` and everything it spawned - stdlib-only, per
+        platform, because the two platforms have no shared primitive for
+        this.
+
+        POSIX: `os.killpg` on the process GROUP `run()` placed this process
+        at the head of (via `start_new_session=True` above) reaches every
+        descendant in it, unlike `process.kill()`'s single PID. Signal `9`
+        is used as a literal (SIGKILL's numeric value) rather than
+        `signal.SIGKILL`, because that name does not exist in the `signal`
+        module on Windows - referencing it would raise `AttributeError` the
+        instant this file is imported there, on a branch that only ever
+        runs on POSIX.
+
+        Windows: no process-group primitive reaches arbitrary descendants
+        without pywin32 job objects, which is a dependency this stdlib-only
+        module does not take on. `taskkill /PID <pid> /T /F` is itself just
+        another subprocess call - stdlib-reachable - and its own `/T` (tree)
+        flag walks the OS-recorded parent-PID lineage to kill the whole
+        tree, which is exactly the guarantee needed here.
+        """
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                capture_output=True,
+            )
+        else:
+            try:
+                os.killpg(os.getpgid(process.pid), 9)
+            except (ProcessLookupError, PermissionError):
+                pass  # already gone, or never got its own group - fall through
+        try:
+            process.kill()  # belt-and-braces: reaches the leaf even if the above no-ops
+        except OSError:
+            pass
 
 
 @contextmanager

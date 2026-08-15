@@ -390,6 +390,52 @@ def loop_ready(declaration: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def experiment_ready(declaration: dict[str, Any]) -> dict[str, Any]:
+    """Task 10b's pre-flight audit for the OTHER declaration type the brief
+    names alongside loops: `.godmode-experiment.json`. Narrower than
+    `loop_ready` on purpose - an experiment has no escalation ladder and no
+    separate verdict_path to name, so only what an experiment actually has
+    is checked: its stop contract (`max_runs`, already this file's own
+    termination bound - `run_experiment` requires it unconditionally before
+    this ever runs) and a declared `budget_s`.
+
+    `maturity` is optional here, unlike the loop path, so a declaration
+    that never mentions it is not gated at all - the behaviour every
+    `.godmode-experiment.json` predating this function relies on
+    (`gated: False` below says so explicitly). The instant one DOES declare
+    a maturity, `declare_maturity` runs first and RAISES on an illegal
+    value ("unattended" included) exactly like the loop path, and the
+    findings become a real gate the caller is expected to enforce, not a
+    courtesy report - `run_experiment` does exactly that.
+    """
+    maturity = declaration.get("maturity")
+    if maturity is not None:
+        declare_maturity(maturity)
+
+    findings: list[dict[str, Any]] = []
+    if not declaration.get("max_runs"):
+        findings.append({
+            "check": "stop-contract", "blocking": True,
+            "detail": "no max_runs declared; an experiment with no bound "
+                      "has no way to end on purpose",
+        })
+    budget = declaration.get("budget_s")
+    if isinstance(budget, bool) or not isinstance(budget, (int, float)) or budget <= 0:
+        findings.append({
+            "check": "budget", "blocking": True,
+            "detail": "no positive budget_s declared; an unbounded series "
+                      "spends without a ceiling to report against",
+        })
+    blocking = any(finding["blocking"] for finding in findings)
+    return {
+        "maturity": maturity,
+        "gated": maturity is not None,
+        "findings": findings,
+        "blocking": blocking,
+        "verdict": "not-ready" if blocking else "ready",
+    }
+
+
 def model_blame_allowed(records: list[dict[str, Any]], session: str | None = None) -> dict[str, Any]:
     """Blaming the model requires a non-model control: the same input through a
     path with no model in it. Without one, the blame is a hypothesis.

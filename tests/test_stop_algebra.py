@@ -11,6 +11,7 @@ here).
 from __future__ import annotations
 
 from contextlib import contextmanager
+import json
 import os
 from pathlib import Path
 import sys
@@ -257,6 +258,169 @@ class WatchdogConsumesOperatorStopTests(unittest.TestCase):
             verdict = watchdog(archive, session)
             self.assertEqual(verdict["verdict"], "interrupt")
             self.assertIsNotNone(verdict["operator_stop"])
+
+
+class ExperimentBudgetBoundsEachAttemptTests(unittest.TestCase):
+    """Review fix #1: `budget_s` must bound the RUNNING attempt, not just
+    the gap between attempts - a single long-running attempt must be
+    killed near the budget, not left to finish and marked truncated only
+    after the fact."""
+
+    def test_a_single_long_attempt_is_killed_near_the_budget(self) -> None:
+        from godmode_runtime.godmode_guardrails import run_experiment
+
+        with isolated_archive() as (project, archive):
+            (project / ".godmode-experiment.json").write_text(json.dumps({
+                "hypothesis": "this command never finishes in time",
+                "command": f"{json.dumps(sys.executable)[1:-1]} -c "
+                           "\"import time; time.sleep(3)\"",
+                "success_exit": 0,
+                "max_runs": 3,
+            }), encoding="utf-8")
+            started = time.monotonic()
+            report = run_experiment(archive, project, timeout=60, budget_s=0.5)
+            elapsed = time.monotonic() - started
+        self.assertEqual(report["run_state"], "truncated")
+        self.assertIn("budget-exhausted", report["verdict"])
+        self.assertEqual(len(report["runs"]), 1)  # the one attempt that got cut off
+        # Loose, as specified: proves the RUNNING attempt was killed near its
+        # budget, not left to run its full 3s before the series noticed
+        # only afterward that time had run out.
+        self.assertLess(elapsed, 1.5)
+
+
+class ProcessTreeKillTests(unittest.TestCase):
+    """Review fix #2: `AttemptHandle`'s kill must reach the whole process
+    TREE, not just the leaf PID - a grandchild the leaf spawns must not
+    survive the kill."""
+
+    def test_grandchild_does_not_survive_the_kill(self) -> None:
+        # Exercised for real on this platform (Windows: taskkill /T /F).
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            marker = tmp / "marker.txt"
+            child = tmp / "child.py"
+            child.write_text(
+                "import pathlib, sys, time\n"
+                "time.sleep(2)\n"
+                "pathlib.Path(sys.argv[1]).write_text('done', encoding='utf-8')\n",
+                encoding="utf-8",
+            )
+            parent = tmp / "parent.py"
+            parent.write_text(
+                "import subprocess, sys, time\n"
+                "subprocess.Popen([sys.executable, sys.argv[1], sys.argv[2]])\n"
+                "time.sleep(10)\n",
+                encoding="utf-8",
+            )
+            with attempt(1.0) as handle:
+                handle.run([sys.executable, str(parent), str(child), str(marker)])
+            # The grandchild's own 2s sleep, plus margin, if it survived.
+            time.sleep(2.5)
+            self.assertFalse(
+                marker.is_file(),
+                "the grandchild survived the kill and wrote its marker",
+            )
+
+    def test_normal_completion_is_unaffected_by_the_tree_isolation(self) -> None:
+        # Green control for the plant above: process-group isolation must
+        # not change ordinary, non-overrun behaviour.
+        with attempt(5.0) as handle:
+            result = handle.run([sys.executable, "-c", "print('ok')"])
+        self.assertEqual(result["run_state"], "terminated")
+        self.assertEqual(result["returncode"], 0)
+
+    def test_posix_kill_path_uses_the_process_group_not_the_bare_pid(self) -> None:
+        # Pinned by call args, not executed for real: this session is
+        # Windows, so the POSIX branch (os.killpg) cannot be exercised live
+        # here - test_grandchild_does_not_survive_the_kill above IS a live
+        # exercise of the Windows branch (taskkill /T /F).
+        import subprocess as _subprocess
+
+        from godmode_runtime import godmode_stop
+
+        handle = godmode_stop.AttemptHandle(deadline=time.monotonic() - 1)  # already overrun
+        fake_process = mock.Mock()
+        fake_process.pid = 4321
+        fake_process.communicate.side_effect = [
+            _subprocess.TimeoutExpired(cmd="x", timeout=0),
+            ("", ""),
+        ]
+        with mock.patch.object(godmode_stop.os, "name", "posix"), \
+             mock.patch.object(godmode_stop.os, "getpgid", create=True,
+                               return_value=999) as fake_getpgid, \
+             mock.patch.object(godmode_stop.os, "killpg", create=True) as fake_killpg, \
+             mock.patch.object(godmode_stop.subprocess, "Popen",
+                               return_value=fake_process) as fake_popen:
+            handle.run(["ignored"])
+        fake_popen.assert_called_once()
+        self.assertTrue(fake_popen.call_args.kwargs.get("start_new_session"))
+        fake_getpgid.assert_called_once_with(4321)
+        fake_killpg.assert_called_once_with(999, 9)  # 9 == SIGKILL, by number (see docstring)
+
+
+class ExperimentMaturityPreflightTests(unittest.TestCase):
+    """Review fix #3: 10b's maturity/pre-flight enforcement must also cover
+    the experiment declaration path the brief and changelog both name, not
+    only the loop."""
+
+    @staticmethod
+    def _write_spec(project: Path, **overrides: object) -> None:
+        spec = {
+            "hypothesis": "h",
+            "command": f"{json.dumps(sys.executable)[1:-1]} -c \"pass\"",
+            "success_exit": 0,
+            "max_runs": 1,
+        }
+        spec.update(overrides)
+        (project / ".godmode-experiment.json").write_text(json.dumps(spec), encoding="utf-8")
+
+    def test_declaring_unattended_is_refused_and_names_the_policy(self) -> None:
+        from godmode_runtime.godmode_guardrails import run_experiment
+
+        with isolated_archive() as (project, archive):
+            self._write_spec(project, maturity="unattended")
+            with self.assertRaises(ArchiveError) as ctx:
+                run_experiment(archive, project)
+        message = str(ctx.exception).lower()
+        self.assertIn("unattended", message)
+        self.assertIn("refused", message)
+
+    def test_declared_maturity_without_a_budget_is_a_preflight_refusal(self) -> None:
+        from godmode_runtime.godmode_guardrails import run_experiment
+
+        with isolated_archive() as (project, archive):
+            self._write_spec(project, maturity="assisted")  # no budget_s declared
+            with self.assertRaises(ArchiveError) as ctx:
+                run_experiment(archive, project)
+        self.assertIn("pre-flight", str(ctx.exception))
+
+    def test_a_fully_declared_experiment_runs_normally(self) -> None:
+        from godmode_runtime.godmode_guardrails import run_experiment
+
+        with isolated_archive() as (project, archive):
+            self._write_spec(project, maturity="assisted", budget_s=30)
+            report = run_experiment(archive, project)
+        self.assertTrue(report["succeeded"])
+        self.assertEqual(report["preflight"]["verdict"], "ready")
+
+    def test_a_legacy_spec_with_no_maturity_is_not_gated(self) -> None:
+        # Backward compatibility: every .godmode-experiment.json predating
+        # this fix declares no maturity and must keep working unchanged.
+        from godmode_runtime.godmode_guardrails import run_experiment
+
+        with isolated_archive() as (project, archive):
+            self._write_spec(project)  # no maturity, no budget_s
+            report = run_experiment(archive, project)
+        self.assertTrue(report["succeeded"])
+        self.assertFalse(report["preflight"]["gated"])
+
+    def test_experiment_ready_reports_a_blocking_budget_finding(self) -> None:
+        from godmode_runtime.godmode_loop import experiment_ready
+
+        verdict = experiment_ready({"maturity": "assisted", "max_runs": 3})
+        self.assertTrue(verdict["blocking"])
+        self.assertTrue([f for f in verdict["findings"] if f["check"] == "budget"])
 
 
 if __name__ == "__main__":
