@@ -15,11 +15,13 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import sys
 import tempfile
 import time
 from typing import Any
 
+from .godmode_constants import MAX_HASH_BYTES
 from .godmode_errors import AuthorizationError, PrivacyError
 
 
@@ -846,6 +848,34 @@ def _write_pin_view(project_root: Path, pins: dict[str, str]) -> str:
     return pin_view_sha256(pins)
 
 
+def pin_file_digest(target: Path) -> str | None:
+    """sha256 of `target`'s content, or `None` when it is unreadable or
+    larger than `MAX_HASH_BYTES` (fix-round-1, Minor 2): `pin_evaluator`
+    and `godmode_integrity.pin_drift` both hash a pinned file, and both
+    previously did it with an unconditional `read_bytes()` - the same
+    operation `godmode_lens.py`'s inventory sweep already caps and streams
+    for exactly this reason (a multi-gigabyte file loaded whole rather than
+    in chunks). Mirrored here rather than reused directly: `godmode_lens.py`
+    also stats-and-skips symlinks and out-of-root targets, checks this
+    module's callers already make in their own way (`_contained`,
+    `target.is_file()`), and pulling in its whole inventory-walk contract
+    for one hashing helper would be the wrong kind of reuse.
+    """
+    try:
+        if target.stat().st_size > MAX_HASH_BYTES:
+            return None
+    except OSError:
+        return None
+    hasher = hashlib.sha256()
+    try:
+        with target.open("rb") as handle:
+            while chunk := handle.read(128 * 1024):
+                hasher.update(chunk)
+    except OSError:
+        return None
+    return hasher.hexdigest()
+
+
 def pin_evaluator(archive: Any, project_root: Path | str, path: str) -> dict[str, Any]:
     """Add `path` to the protected-evaluator set.
 
@@ -861,7 +891,12 @@ def pin_evaluator(archive: Any, project_root: Path | str, path: str) -> dict[str
     target = root / key
     if not target.is_file():
         raise AuthorizationError(f"'{key}' does not exist; pin an existing evaluator file")
-    digest = hashlib.sha256(target.read_bytes()).hexdigest()
+    digest = pin_file_digest(target)
+    if digest is None:
+        raise AuthorizationError(
+            f"'{key}' could not be hashed - larger than {MAX_HASH_BYTES} bytes "
+            "or unreadable; pin a file this size can actually be measured for"
+        )
     pins = pinned_evaluators(archive)
     pins[key] = digest
     policy_view_sha256 = _write_pin_view(root, pins)
@@ -926,6 +961,97 @@ def _pinned_evaluator_hit(path: str, project_root: Path | None, archive: Any) ->
     if key is None:
         return None
     return key if key in pinned_evaluators(archive) else None
+
+
+def _write_verdict(path: str, project_root: Path | None, archive: Any) -> tuple[str, bool, list[str]]:
+    """Whether writing `path` is protected, and why - the pin/sensitivity/
+    containment decision the `_TOOL_FILE_EDIT` edit branch, the shell-
+    redirect branch, and the `mv`/`cp` destination branch (below) each ask
+    of a path they are about to overwrite. Fix-round-1 (task-7 review,
+    Critical): `mv malicious.py evaluator.py` and `cp malicious.py
+    evaluator.py` reached neither of the first two branches - `mv`/`cp`
+    were never in this module's mutation vocabulary at all, so they fell
+    through to the unrecognised-command default and read as R0, silently
+    overwriting a pinned evaluator's content with zero confirmation. Kept
+    here as one function rather than duplicated a third time so the three
+    write routes can never quietly disagree about what protects a path.
+    """
+    pinned = _pinned_evaluator_hit(path, project_root, archive)
+    if pinned is not None:
+        return ("pinned-evaluator-mutation", True,
+                [f"this file is a pinned evaluator: {pinned}",
+                 "unpin explicitly with the password, or the numbers it "
+                 "produces stop meaning anything"])
+    if _SENSITIVE_EDIT.search(path):
+        return ("worktree-file-mutation", True,
+                [f"not an ordinary working file: {path[:80]}"])
+    if not _contained(path, project_root) and not _is_scratch(Path(path), project_root):
+        return ("worktree-file-mutation", True,
+                [f"outside the working tree: {path[:80]}"])
+    return "worktree-file-mutation", False, ["a file in the working tree"]
+
+
+# `mv`/`cp` (and PowerShell's Move-Item/Copy-Item) write their DESTINATION
+# argument, not their head - the one filesystem-mutation shape this module
+# cannot protect unconditionally by name alone the way `rm`/`Remove-Item`
+# already are: renaming or copying a pair of unrelated files is ordinary
+# work, and a pinned evaluator is reached through the destination argument
+# exactly the way an Edit/Write or a shell redirect already reaches it
+# (U-B2). Recognised here, with its own argument-extraction logic, rather
+# than folded into `_ACTION_PATTERNS`'s bare-word table - every entry there
+# is protected unconditionally by name, and these two are not.
+_MOVE_COPY_HEAD = re.compile(r"(?i)^\s*(?:mv|cp|move-item|copy-item)\b")
+
+# GNU/BusyBox coreutils' `-t DIR`/`--target-directory=DIR` moves the
+# destination out of its usual trailing position (`mv -t DIR src1 src2 ...`)
+# - real syntax, not a hypothetical. This module does not attempt to
+# compute which file inside DIR each source would land on; a command
+# carrying either flag escalates instead (`_move_copy_arguments` returns
+# `None`), the same "ask rather than guess" shape an unrecognised head with
+# a real write already gets, below.
+_MOVE_COPY_TARGET_FLAG = re.compile(r"(?i)(?:^|\s)(?:-t\b|--target-directory\b)")
+
+
+def _move_copy_arguments(segment: "Segment") -> tuple[list[str], str] | None:
+    """`(sources, destination)` for an `mv`/`cp`-shaped segment, or `None`
+    when this cannot be read with confidence - a `-t`/`--target-directory`
+    form, fewer than two real positional arguments, or text `shlex` cannot
+    tokenize at all (an unbalanced quote). `None` means "ask about it by
+    name", never "read as safe": the caller treats it the same way an
+    unrecognised command with a real write already is.
+
+    Fix-round-1: a source is checked for a pin hit too, not only the
+    destination - `mv evaluator.py elsewhere.py` renames a pinned path
+    away exactly as effectively as overwriting it does (`pin_drift` would
+    later report the pinned path as "no longer exists", but the hook's own
+    preventive half is what this exists to restore). It gets none of the
+    destination's OTHER checks (sensitivity, containment) - reading FROM
+    any path, pinned or not, inside the tree or out, is ordinary; only
+    "does this move a pinned evaluator's content away from its pinned
+    path" is a pin question at all.
+
+    Tokenized from `segment.text` (the untouched original, quotes intact)
+    via `shlex.split(..., posix=False)` rather than `segment.tokens`
+    (quote-BLANKED by `_executable_text` - a quoted argument containing a
+    space would vanish from that list entirely rather than survive as one
+    token, which would silently let the wrong argument be read as "last").
+    Non-POSIX mode is deliberate: POSIX mode treats a backslash as an
+    escape character, which mangles every Windows path this module has to
+    read correctly elsewhere (`C:\\Users\\...`); non-POSIX mode leaves
+    backslashes alone and only wraps a token in its original quote
+    characters, stripped below the same way `_TOOL_FILE_EDIT`'s own path
+    extraction already strips them.
+    """
+    if _MOVE_COPY_TARGET_FLAG.search(segment.text):
+        return None
+    try:
+        words = shlex.split(segment.text.strip(), posix=False)
+    except ValueError:
+        return None
+    positional = [word.strip("\"'") for word in words[1:] if word and not word.startswith("-")]
+    if len(positional) < 2:
+        return None
+    return positional[:-1], positional[-1]
 
 
 # Shell control flow is structure, not a command. `for`, `do` and `done` are
@@ -1587,6 +1713,39 @@ def _categorize(normalized: str, project_root: Path | None = None,
     # a file, and the flag excuses the first half only.
     asks_for_help = bool(_HELP_FLAG.search(command_position))
     if not asks_for_help:
+        # U-B2 fix-round-1 (Critical), checked before `_ACTION_PATTERNS`:
+        # `move-item` already sits in that table's blanket filesystem-
+        # mutation entry (protected unconditionally by name, no destination
+        # read), and that entry matching first would return before this
+        # branch ever ran - silently keeping `Move-Item malicious.py
+        # evaluator.py` at the generic tier instead of naming the pin. `mv`/
+        # `cp` write their destination argument, not their head, so neither
+        # can be a plain `_ACTION_PATTERNS` entry the way `rm` is - see
+        # `_write_verdict`'s own docstring for what was silently allowed
+        # (R0, not even that generic tier) before this branch existed.
+        if _MOVE_COPY_HEAD.match(normalized):
+            arguments = _move_copy_arguments(segment)
+            if arguments is None:
+                return ("unknown-command", True,
+                        [f"{segment.head} without arguments this classifier "
+                         "can read with confidence (a -t/--target-directory "
+                         "form, a flag where a path was expected, or fewer "
+                         "than two paths)"])
+            sources, destination = arguments
+            # A pinned evaluator renamed away is the same defeat as one
+            # overwritten - the numbers it produces stop meaning anything
+            # either way. Sources get only this one check, never the
+            # destination's containment/sensitivity checks: reading FROM a
+            # path is not itself a mutation.
+            for source in sources:
+                pinned = _pinned_evaluator_hit(source, project_root, archive)
+                if pinned is not None:
+                    return ("pinned-evaluator-mutation", True,
+                            [f"this file is a pinned evaluator: {pinned}",
+                             "unpin explicitly with the password, or the "
+                             "numbers it produces stop meaning anything"])
+            category, protected, impact = _write_verdict(destination, project_root, archive)
+            return category, protected, list(impact)
         for category, pattern, impact in _ACTION_PATTERNS:
             if pattern.search(command_position):
                 return category, True, list(impact)
@@ -2029,9 +2188,15 @@ class CapabilityBroker:
         import hmac
         import secrets
         policy = self._policy()
-        classification = classify_action(
-            operation, extra_protected=policy.get("password_required", ())
-        )
+        # `self._classify` (not a raw `classify_action` call) - fix-round-1,
+        # Minor 2: this used to classify without `project_root`/`archive`,
+        # the same cwd-instead-of-project gap `_classify` itself was fixed
+        # for, reachable through this method alone (`stage` calls `issue`,
+        # so staging a capability for an operation only `_classify` could
+        # correctly see as protected - a pinned-path edit judged from
+        # somewhere other than the project's own directory - used to fail
+        # to mint one at all).
+        classification = self._classify(operation)
         if not classification["protected"]:
             raise AuthorizationError("Read-only inspection does not need a capability")
         if ttl_seconds is None:

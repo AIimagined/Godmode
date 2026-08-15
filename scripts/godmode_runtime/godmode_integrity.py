@@ -17,7 +17,9 @@ from typing import Any, Callable
 from .godmode_anchor import run_git
 from .godmode_chronicle import Chronicle
 from .godmode_errors import ArchiveError
-from .godmode_sentinel import PIN_POLICY_FILENAME, pin_view_sha256, pinned_evaluators
+from .godmode_sentinel import (
+    PIN_POLICY_FILENAME, pin_file_digest, pin_view_sha256, pinned_evaluators,
+)
 
 _TEST_PATH = re.compile(
     r"(^|/)(tests?|__tests__)(/|$)|(^|/)test_[^/]+$|_test\.[^/.]+$|\.(test|spec)\.[^/.]+$"
@@ -255,8 +257,19 @@ def pin_drift(archive: Chronicle, project: Path) -> list[dict[str, Any]]:
                 "outlived the file it protects",
                 True))
             continue
-        actual = hashlib.sha256(target.read_bytes()).hexdigest()
-        if actual != expected:
+        # Streamed and size-capped (fix-round-1, Minor 3) - the same cap
+        # `godmode_lens.py`'s own inventory hashing uses, mirrored via
+        # `pin_file_digest` rather than an unconditional `read_bytes()`
+        # loading a large pinned file whole into memory.
+        actual = pin_file_digest(target)
+        if actual is None:
+            findings.append(_finding(
+                "pin-drift", path,
+                f"pinned evaluator '{path}' could not be hashed (unreadable, "
+                "or larger than the size cap this monitor hashes at) - "
+                "drift cannot be verified, which is not the same as clean",
+                True))
+        elif actual != expected:
             findings.append(_finding(
                 "pin-drift", path,
                 f"pinned evaluator '{path}' changed outside the guarded edit "
