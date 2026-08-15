@@ -79,6 +79,7 @@ from .godmode_fence import (
     BOUNDARY_CONFIG, audit_changes, completion_audit, declared_design, propose_design,
     unaccepted_completions,
 )
+from .godmode_fence import deletion_verdict, record_deletion_precheck
 from .godmode_requests import digest as request_digest, review_requests
 from .godmode_census import census, render as render_census
 from .godmode_census import uncaptured_corrections
@@ -180,6 +181,7 @@ from .godmode_sentinel import (
     unpin_evaluator,
     unpin_operation_text,
 )
+from .godmode_sentinel import LICENSE_CLASSIFICATIONS, license_verdict, record_license_attestation
 
 
 MAX_SUBJECT = 200
@@ -1760,6 +1762,28 @@ def cmd_fence_acceptance(args: argparse.Namespace, runtime: Runtime) -> CommandR
     return CommandResult(report, exit_code=1 if report["findings"] else 0)
 
 
+def cmd_fence_delete_check(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """B3-6: whether a deletion the fence would otherwise allow may proceed."""
+    _require_archive(runtime)
+    verdict = deletion_verdict(runtime.archive, args.path,
+                               project_root=Path(runtime.anchor.project_root))
+    return CommandResult(verdict, exit_code=0 if verdict["allowed"] else 1)
+
+
+def cmd_fence_delete_precheck(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """B3-6: attest the provenance pre-check, reusing C-16's reverse-impact
+    traversal, before a tracked file may be deleted."""
+    _require_archive(runtime)
+    project = Path(runtime.anchor.project_root)
+    affected = build_atlas(project).affected(args.path)
+    record_deletion_precheck(
+        runtime.archive, project, args.path,
+        history_read=args.history_read, sole_carrier=args.sole_carrier, affected=affected,
+    )
+    verdict = deletion_verdict(runtime.archive, args.path, project_root=project)
+    return CommandResult(verdict, exit_code=0 if verdict["allowed"] else 1)
+
+
 def cmd_precheck(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     """Was this already built, and was it already refused.
 
@@ -1870,6 +1894,23 @@ def cmd_guard(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     preview["authorized"] = True
     preview["capability_consumed"] = True
     return CommandResult(preview)
+
+
+def cmd_license_check(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """B3-5: whether an operation naming an external repo may proceed."""
+    _require_archive(runtime)
+    verdict = license_verdict(runtime.archive, Path(runtime.anchor.project_root),
+                              args.operation)
+    return CommandResult(verdict, exit_code=0 if verdict["allowed"] else 1)
+
+
+def cmd_license_attest(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """B3-5: record a license classification for a repository read or absorbed."""
+    _require_archive(runtime)
+    record = record_license_attestation(
+        runtime.archive, args.repo, args.classification, args.clean_room_note or ""
+    )
+    return CommandResult({"record": _event_view(record)})
 
 
 def cmd_protect(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -3273,6 +3314,22 @@ def _build_parser() -> argparse.ArgumentParser:
     fence_sub.add_parser(
         "acceptance", help="Completions that cite no acceptance"
     ).set_defaults(handler=cmd_fence_acceptance)
+    fence_delete_check = fence_sub.add_parser(
+        "delete-check",
+        help="B3-6: whether a deletion the fence would otherwise allow may proceed")
+    fence_delete_check.add_argument("--path", required=True)
+    fence_delete_check.set_defaults(handler=cmd_fence_delete_check)
+    fence_delete_precheck = fence_sub.add_parser(
+        "delete-precheck",
+        help="B3-6: attest the provenance pre-check before a tracked file is deleted")
+    fence_delete_precheck.add_argument("--path", required=True)
+    fence_delete_precheck.add_argument(
+        "--history-read", required=True,
+        help="What the file's git history showed")
+    fence_delete_precheck.add_argument(
+        "--sole-carrier", required=True,
+        help="Whether this file is the sole carrier of a still-open obligation")
+    fence_delete_precheck.set_defaults(handler=cmd_fence_delete_precheck)
 
     precheck_parser = sub.add_parser(
         "precheck", help="Whether this was already built or already refused")
@@ -3390,6 +3447,23 @@ def _build_parser() -> argparse.ArgumentParser:
     guard.add_argument("--operation", required=True)
     guard.add_argument("--capability")
     guard.set_defaults(handler=cmd_guard)
+
+    license_parser = sub.add_parser(
+        "license", help="B3-5: license/provenance gate for external-repo interaction")
+    license_sub = license_parser.add_subparsers(dest="license_command", required=True)
+    license_check = license_sub.add_parser(
+        "check", help="Whether an operation naming an external repo may proceed")
+    license_check.add_argument("--operation", required=True)
+    license_check.set_defaults(handler=cmd_license_check)
+    license_attest = license_sub.add_parser(
+        "attest", help="Record a license classification for a repository read or absorbed")
+    license_attest.add_argument("--repo", required=True, help="The repository reference")
+    license_attest.add_argument("--classification", required=True,
+                                choices=LICENSE_CLASSIFICATIONS)
+    license_attest.add_argument(
+        "--clean-room-note", default="",
+        help="Required for anything other than 'permissive': what was read versus written")
+    license_attest.set_defaults(handler=cmd_license_attest)
 
     protect = sub.add_parser(
         "protect", help="Pin, unpin, or list protected evaluator files (U-B2)")

@@ -30,10 +30,13 @@ from pathlib import Path
 import re
 from typing import Any
 
+from .godmode_anchor import run_git
 from .godmode_chronicle import Chronicle
 from .godmode_constants import IGNORED_DIRECTORY_NAMES
+from .godmode_errors import ArchiveError
 from .godmode_loop import _git
 from .godmode_plan import APPROVED
+from .godmode_sentinel import POLICY_FILENAME, _pinned_evaluator_hit, declared_gate_ratchet
 
 # Patterns are separated by commas or newlines so a contract field can be
 # written either way round without the author having to know which.
@@ -404,6 +407,152 @@ def fence_verdict(archive: Chronicle, path: str, *,
     }
 
 
+# -----------------------------------------------------------------------
+# B3-6: provenance-before-deletion gate (PARTIAL-P1, lessons sweep
+# 2026-08-15).
+#
+# `fence_verdict` above answers "is this file one this piece of work said it
+# would touch" - and an rm or an archive-move of a file inside the declared
+# set, or with no fence declared at all, is something it would allow. This
+# adds the mirror `removal.py` never asked: *before* that deletion lands, has
+# anyone read the file's git history, run the reverse-impact traversal C-16
+# already builds (`atlas.build(project).affected(path)` - reused here, not
+# rebuilt), and said whether it is the sole carrier of a still-open
+# obligation. Requirement-driven like B3-5: undeclared, this stays advisory;
+# declared, it blocks.
+#
+# "A pin always denies" means the SHIPPED U-B2 evaluator-pin store
+# (`godmode_sentinel.pinned_evaluators`/`_pinned_evaluator_hit`), not a
+# second one invented here - an earlier draft of this gate shipped its own
+# `.godmode-pins.json`, which would have been a second, independently
+# maintained pin mechanism sitting beside the one U-B2 already landed
+# (GAP-2's own duplicate-authority drift). There is exactly one pin store in
+# this runtime; this gate reads it, the same way the edit/redirect/mv
+# branches in `_categorize` already do.
+# -----------------------------------------------------------------------
+
+
+# Fix-round (review Critical-1): a live re-read was not tighten-only - see
+# `declared_gate_ratchet`'s own docstring in godmode_sentinel.py for the
+# exact failure this closes. B3-6 reuses that one shared ratchet rather than
+# a second copy of the same logic.
+def _deletion_gate_declared(archive: Chronicle, project_root: Path | str) -> bool:
+    """Whether the operator's policy declares the deletion-provenance gate.
+
+    Reuses sentinel's own tighten-only `POLICY_FILENAME` rather than adding a
+    third small config file for one more operator-declared fact - the same
+    choice B3-5 made for the license gate, and for the same reason.
+    `CapabilityBroker._policy()`/`local_authorization_policy()` validate a
+    fixed whitelist of keys (`password_required`, `approval_required`,
+    `capability_ttl_seconds`, `gate_mode`) and would silently drop this one,
+    so it is read directly here rather than through either - unknown keys in
+    the same file are ignored by that whitelist, not rejected, so the two
+    readers coexist over one file without conflict. Ratcheted via
+    `declared_gate_ratchet`: once observed declared, stays declared even if
+    the key is later removed or edited away.
+    """
+    return declared_gate_ratchet(archive, Path(project_root), "deletion_provenance_gate")
+
+
+def _is_tracked(project_root: Path | str, relative: str) -> bool:
+    """Whether git already knows this file - a scratch file never will."""
+    return run_git(Path(project_root), "ls-files", "--error-unmatch", "--", relative) is not None
+
+
+def record_deletion_precheck(
+    archive: Chronicle, project_root: Path | str, path: str, *,
+    history_read: str, sole_carrier: str, affected: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Attest the pre-check this gate demands before a tracked file is deleted.
+
+    `affected` is the caller's own `atlas.build(project).affected(path)`
+    result - C-16's reverse-impact traversal, reused rather than rebuilt - so
+    the record carries what traversal actually found, not a promise that
+    something was checked.
+    """
+    relative = _relative(path, Path(project_root)) or str(path).replace("\\", "/")
+    if not history_read.strip():
+        raise ArchiveError(
+            "a deletion pre-check needs a statement of what the file's git history showed"
+        )
+    if not sole_carrier.strip():
+        raise ArchiveError(
+            "a deletion pre-check needs a statement of whether this file is the sole "
+            "carrier of a still-open obligation"
+        )
+    affected = affected or {}
+    return archive.append(
+        "action",
+        f"deletion-precheck:{relative}"[:200],
+        {
+            "path": relative,
+            "history_read": history_read.strip(),
+            "sole_carrier": sole_carrier.strip(),
+            "affected_count": int(affected.get("count", 0)),
+            "affected_dependents": [d.get("id") for d in affected.get("dependents", [])][:20],
+        },
+        evidence=[],
+    )
+
+
+def _latest_deletion_precheck(archive: Chronicle, relative: str) -> dict[str, Any] | None:
+    matches = archive.select(kind="action", subject=f"deletion-precheck:{relative}"[:200], limit=50)
+    return matches[-1]["data"] if matches else None
+
+
+def deletion_verdict(archive: Chronicle, path: str, *, project_root: Path | str) -> dict[str, Any]:
+    """Whether a deletion the fence would otherwise allow may proceed.
+
+    Green control: an attested pre-check passes; deleting an untracked
+    scratch file is unaffected whatever the policy says, because nothing here
+    has a provenance obligation to check. The pin check runs first and
+    nothing below it can override its refusal - "the pin store outranks
+    everything" means the one shipped in U-B2
+    (`godmode_sentinel.pinned_evaluators`), read here with the same
+    `_pinned_evaluator_hit(path, project_root, archive)` helper the edit/mv/
+    redirect branches of `_categorize` already call, so a path pinned there
+    is denied here too rather than needing its own, second-guessable notion
+    of "pinned".
+    """
+    root = Path(project_root)
+    relative = _relative(path, root)
+    if relative is None:
+        return {"allowed": True, "gate": "outside-project", "path": str(path),
+                "detail": "outside the project; this gate is a statement about this project"}
+    pinned = _pinned_evaluator_hit(relative, root, archive)
+    if pinned is not None:
+        return {
+            "allowed": False, "gate": "pinned", "path": relative,
+            "detail": f"'{relative}' is a pinned evaluator; pinned files stay denied for "
+                      "deletion regardless of what any policy declares",
+            "remedy": "unpin explicitly with the password (`godmode protect --unpin "
+                      f"{relative}`) before deleting, or the numbers it produced stop "
+                      "meaning anything",
+        }
+    if not _is_tracked(root, relative):
+        return {"allowed": True, "gate": "untracked", "path": relative,
+                "detail": "untracked scratch file; deletion provenance does not apply"}
+    if not _deletion_gate_declared(archive, root):
+        archive.append(
+            "action", f"deletion-precheck-advisory:{relative}"[:200],
+            {"path": relative,
+             "detail": "no policy declares the deletion-provenance gate; recorded what a "
+                       "pre-check would have covered: git-history-read, C-16's "
+                       "reverse-impact traversal, and sole-carrier-of-open-obligation"},
+            evidence=[],
+        )
+        return {"allowed": True, "gate": "advisory", "path": relative,
+                "detail": "no policy declares the deletion-provenance gate"}
+    attested = _latest_deletion_precheck(archive, relative)
+    if attested is None:
+        return {
+            "allowed": False, "gate": "declared", "path": relative,
+            "detail": f"policy declares the deletion-provenance gate and '{relative}' has "
+                      "no recorded pre-check",
+            "remedy": "record one: `godmode fence delete-precheck --path "
+                      f"{relative!r} --history-read \"...\" --sole-carrier \"...\"`",
+        }
+    return {"allowed": True, "gate": "attested", "path": relative, "precheck": attested}
 # --- Surgical-diff completion gate (U-B1) -----------------------------------
 #
 # `fence_verdict` answers "may this edit happen" at the moment a tool
