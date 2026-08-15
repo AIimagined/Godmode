@@ -126,6 +126,13 @@ class NamedProhibitionDoctrineExemptionTests(unittest.TestCase):
     two of GODMODE.md's own gates. The exemption is scoped to a *named*
     object: a placeholder ("do not do things") or a verb with nothing named
     before the clause boundary ("never push without...") still flags.
+
+    Review of the first pass (1cfe854) found the exemption was scoped too
+    wide: it excused the whole sentence once the head matched, so a clean
+    head ("never touch code") could hide a genuinely vague, negation-heavy
+    tail. The exemption now covers only the head plus its immediate
+    "without <condition>" clause - the tail past that still goes through the
+    ordinary scan, which the last four tests below exercise directly.
     """
 
     def test_the_two_real_godmode_gates_produce_zero_findings(self) -> None:
@@ -177,6 +184,40 @@ class NamedProhibitionDoctrineExemptionTests(unittest.TestCase):
         # it is the shape the check still exists to catch.
         self.assertTrue(negation_heavy(
             "Never push without an explicit ask; do not skip the review."))
+
+    def test_a_vague_tail_past_the_condition_clause_still_flags(self) -> None:
+        # Reviewer-constructed slip (review of 1cfe854): a clean head
+        # ("never touch code") used to exempt the WHOLE sentence, including
+        # a tail that never earned it. The exemption now covers only the
+        # head + its immediate "without <condition>" clause; the condition
+        # here turns vague at "avoiding what is", which is exactly where
+        # `_CONDITION_CLAUSE` stops - the rest goes through the ordinary
+        # scan and still flags.
+        text = ("Never touch code without avoiding what is not clear and "
+                "not appropriate.")
+        self.assertTrue(negation_heavy(text))
+
+    def test_the_reviewer_slip_still_flags_through_the_full_hard_pipeline(self) -> None:
+        with isolated_project() as (project, _s, _a, _archive):
+            (project / "GODMODE.md").write_text(
+                "# Gates\n- Never touch code without avoiding what is not "
+                "clear and not appropriate.\n",
+                encoding="utf-8",
+            )
+            charter = compile_charter(project)
+            hard = [r for r in charter["compiled"] if r["enforcement"] == "HARD"]
+            self.assertTrue(hard, charter["compiled"])
+            report = lint_charter_prose(charter)
+        self.assertIn("negation-heavy-rule", _codes(report))
+
+    def test_the_condition_clause_stops_at_a_semicolon_not_the_whole_tail(self) -> None:
+        # A real rule's remainder after the condition clause must still be
+        # scanned and found clean - the fix must not overcorrect into
+        # scanning nothing, or into scanning so little that a genuine
+        # multi-clause rule gets false-flagged.
+        text = ("Never claim verified without a citation that resolves; an "
+                "absence claim requires the search that would disprove it.")
+        self.assertFalse(negation_heavy(text))
 
 
 class NoDoneCriterionTests(unittest.TestCase):
