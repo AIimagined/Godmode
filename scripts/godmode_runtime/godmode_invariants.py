@@ -26,11 +26,20 @@ module, where it would just reproduce this same import-order gap.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
 from .godmode_errors import ArchiveError
 
 KindInvariant = Callable[[dict[str, Any]], None]
+
+# PARTIAL-P3/B3-7: kept in sync BY HAND with `godmode_verdict.TOOL_ERROR_ACK`
+# - this module stays dependency-free of the archive-owning modules on
+# purpose (see the module docstring above), so it cannot import the other
+# copy; `tests.test_tool_error_gate` asserts the two patterns agree, the
+# same discipline `_REGISTER_STATES` below already uses against
+# `godmode_register.STATES`.
+_TOOL_ERROR_ACK = re.compile(r"^acknowledged-remediated$|^acknowledged-deferred: .+$")
 
 
 def _verdict_invariants(data: dict[str, Any]) -> None:
@@ -48,6 +57,14 @@ def _verdict_invariants(data: dict[str, Any]) -> None:
     this exactly as `record_verdict`'s own fold is (`godmode_verdict._fold_panel`
     can never itself produce it, but a raw append bypasses the fold, which is
     the whole reason this needs to be enforced here too).
+    Tool-error-vs-ack (PARTIAL-P3/B3-7): a "confirmed" fold whose own
+    `tool_error_findings` is non-empty (a checker's captured output matched
+    a DECLARED tool error pattern - `godmode_verdict.record_verdict`
+    computes and denormalises this at write time so it is checkable here
+    from `data` alone, without this module needing archive access) needs a
+    valid `tool_error_ack`. Empty `tool_error_findings` (the common case:
+    no tool declared, or a declared tool's pattern never matched) costs
+    this check nothing - it is skipped entirely.
     """
     if data.get("disposition") != "confirmed":
         return
@@ -69,6 +86,20 @@ def _verdict_invariants(data: dict[str, Any]) -> None:
             "'refuted'; a panel with any refuting check is 'contested' at "
             "best, never 'confirmed' - this combination is refused outright"
         )
+    if data.get("tool_error_findings"):
+        ack = data.get("tool_error_ack")
+        # Fix-round-1 (review M1): stripped before matching, same reasoning
+        # as `godmode_verdict.record_verdict`'s own copy of this check - a
+        # whitespace-only "reason" must refuse here too, for a raw append
+        # that never went through record_verdict's own stripping.
+        if not (isinstance(ack, str) and _TOOL_ERROR_ACK.match(ack.strip())):
+            raise ArchiveError(
+                "a 'confirmed' verdict whose checker output matched a "
+                "declared tool error pattern needs tool_error_ack="
+                "'acknowledged-remediated' or 'acknowledged-deferred: "
+                "<reason>' - a raw append is held to the same rule "
+                "record_verdict enforces"
+            )
 
 
 # U-V2's register/evidence disconnect - kept in sync with
