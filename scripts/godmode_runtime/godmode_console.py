@@ -28,6 +28,7 @@ from .godmode_attest import (
     record_criterion,
     record_differential,
     record_step,
+    register_error_pattern,
     register_metric_contract,
 )
 from .godmode_attest import BLAST_RADIUS_KINDS
@@ -750,6 +751,18 @@ def cmd_metric_contract_register(args: argparse.Namespace, runtime: Runtime) -> 
     )
 
 
+def cmd_error_pattern_register(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    record = register_error_pattern(
+        runtime.archive, _session(runtime, args.session), args.tool, args.pattern,
+    )
+    data = record["data"]
+    return CommandResult(
+        {"sequence": record["sequence"], "tool": data["tool"], "pattern": data["pattern"]},
+        exit_code=0,
+    )
+
+
 # U-E3 differential-evidence - minimal isolated block, mirrors the `register`
 # block below.
 def cmd_differential_record(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -778,12 +791,14 @@ def cmd_verdict_record(args: argparse.Namespace, runtime: Runtime) -> CommandRes
         run_state=args.run_state,
         acquitted_by=args.acquitted_by,
         timeout=args.timeout,
+        tool_error_ack=getattr(args, "tool_error_ack", "") or "",
     )
     data = record["data"]
     return CommandResult(
         {"sequence": record["sequence"], "claim": data["claim"],
          "disposition": data["disposition"], "run_state": data["run_state"],
-         "acquitted_by": data["acquitted_by"]},
+         "acquitted_by": data["acquitted_by"],
+         "tool_error_findings": data.get("tool_error_findings", [])},
         exit_code=0 if data["disposition"] == "confirmed" else 1,
     )
 
@@ -2718,6 +2733,25 @@ def _build_parser() -> argparse.ArgumentParser:
     metric_contract_register.add_argument("--session")
     metric_contract_register.set_defaults(handler=cmd_metric_contract_register)
 
+    # PARTIAL-P3/B3-7 declared tool error-severity patterns - minimal
+    # isolated block, mirrors the `metric-contract` block just above.
+    error_pattern = sub.add_parser(
+        "error-pattern",
+        help="Declare a third-party tool's error-severity vocabulary; "
+             "gates 'verdict record --checker' confirming past it unacknowledged",
+    )
+    error_pattern_sub = error_pattern.add_subparsers(
+        dest="error_pattern_command", required=True)
+    error_pattern_register = error_pattern_sub.add_parser(
+        "register", help="Declare the tool + pattern a checker's own output is matched against")
+    error_pattern_register.add_argument("--tool", required=True,
+                                        help="Name as it appears in the checker command, e.g. pytest")
+    error_pattern_register.add_argument(
+        "--pattern", required=True,
+        help="Regex matched against the checker's own captured stdout+stderr")
+    error_pattern_register.add_argument("--session")
+    error_pattern_register.set_defaults(handler=cmd_error_pattern_register)
+
     # U-E3 differential-evidence - minimal isolated block, mirrors the
     # `register` block below.
     differential = sub.add_parser(
@@ -2759,6 +2793,11 @@ def _build_parser() -> argparse.ArgumentParser:
     verdict_record.add_argument("--run-state", choices=list(("terminated", "truncated")), default="terminated")
     verdict_record.add_argument("--acquitted-by", choices=list(("independent", "self")), default="independent")
     verdict_record.add_argument("--timeout", type=int, default=300)
+    verdict_record.add_argument(
+        "--tool-error-ack", dest="tool_error_ack", default="",
+        help="PARTIAL-P3: required for 'confirmed' when a checker's own output "
+             "matched a declared error-pattern (see 'error-pattern register') - "
+             "'acknowledged-remediated' or 'acknowledged-deferred: <reason>'")
     verdict_record.set_defaults(handler=cmd_verdict_record)
     verdict_show = verdict_sub.add_parser("show", help="Read back a verdict record by sequence")
     verdict_show.add_argument("--seq", type=int, required=True)
