@@ -88,7 +88,11 @@ def _verdict_invariants(data: dict[str, Any]) -> None:
         )
     if data.get("tool_error_findings"):
         ack = data.get("tool_error_ack")
-        if not (isinstance(ack, str) and _TOOL_ERROR_ACK.match(ack)):
+        # Fix-round-1 (review M1): stripped before matching, same reasoning
+        # as `godmode_verdict.record_verdict`'s own copy of this check - a
+        # whitespace-only "reason" must refuse here too, for a raw append
+        # that never went through record_verdict's own stripping.
+        if not (isinstance(ack, str) and _TOOL_ERROR_ACK.match(ack.strip())):
             raise ArchiveError(
                 "a 'confirmed' verdict whose checker output matched a "
                 "declared tool error pattern needs tool_error_ack="

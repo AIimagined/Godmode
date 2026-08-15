@@ -71,6 +71,34 @@ class WitnessIdentityTests(unittest.TestCase):
             _independent_witness_count(["file:lib/a.py", "cmd:lib/a.py"]), 2
         )
 
+    # Fix-round-1 (review I1): a bare path comparison let cosmetic spelling
+    # alone launder one read of one file into two "independent" witnesses.
+    # The reviewer's own exact repro is the first assertion below.
+
+    def test_reviewers_exact_repro_dot_slash_prefix_is_one_witness(self) -> None:
+        self.assertEqual(_independent_witness_count(["file:x", "file:./x"]), 1)
+
+    def test_dot_dot_traversal_back_to_the_same_file_is_one_witness(self) -> None:
+        self.assertEqual(_independent_witness_count(["file:x", "file:a/../x"]), 1)
+        self.assertEqual(_independent_witness_count(["file:x", "file:x/../x"]), 1)
+
+    def test_windows_case_insensitive_spelling_is_one_witness(self) -> None:
+        # Casefolded only on a case-insensitive host (os.name == "nt"); this
+        # suite runs on Windows, where file:X and file:x name the same file
+        # on disk and must collapse to one witness.
+        import os
+
+        self.assertEqual(os.name, "nt", "this probe assumes the Windows CI host")
+        self.assertEqual(_independent_witness_count(["file:X", "file:x"]), 1)
+
+    def test_normalization_does_not_collapse_genuinely_different_files(self) -> None:
+        # The fix must not overcorrect into treating every file: pair as one
+        # witness - two real, distinct files stay two witnesses.
+        self.assertEqual(_independent_witness_count(["file:a.py", "file:b.py"]), 2)
+        self.assertEqual(
+            _independent_witness_count(["file:sub/a.py", "file:sub/b.py"]), 2
+        )
+
 
 class BlastRadiusValidationTests(unittest.TestCase):
     def test_unknown_blast_radius_is_refused(self) -> None:

@@ -76,6 +76,7 @@ from typing import Any
 
 from .godmode_chronicle import Chronicle
 from .godmode_errors import ArchiveError
+from .godmode_sentinel import find_secret_shapes
 
 DISPOSITIONS = ("confirmed", "refuted", "witness-malformed", "contested")
 RUN_STATES = ("terminated", "truncated")
@@ -184,6 +185,29 @@ def _run_checker(
     return disposition, None, checker_exit, output
 
 
+def _tool_named_in(tool: str, checker_cmd: str) -> bool:
+    """Fix-round-1 (review I2): whether `tool` appears as a whole TOKEN of
+    `checker_cmd`, not merely as a substring.
+
+    A plain `in` check made a declared tool named `"lint"` match
+    `"python unlinted_check.py"` - "lint" is a real substring of "unlinted",
+    with no relationship between the two beyond spelling. `\\b...\\b` anchors
+    the match to a word boundary on both sides: `unlinted_check.py` has no
+    boundary immediately before or after the embedded "lint" (both
+    neighbours - "n" before, "e" after - are word characters, and the
+    underscore in "unlinted_check" is also a word character), so it no
+    longer matches; `"lint --fix"` and `"python -m lint"` both have real
+    boundaries around "lint" (whitespace or string edges) and still match.
+    `tool` is escaped since it may carry regex metacharacters that are
+    otherwise ordinary characters in a tool name (`eslint.config`,
+    `media-lint`).
+    """
+    return re.search(rf"\b{re.escape(tool)}\b", checker_cmd, re.IGNORECASE) is not None
+
+
+_REDACTED_EXCERPT = "[redacted: secret-shaped content]"
+
+
 def _tool_error_findings(
     declared: dict[str, str], checker_cmd: str, output: str
 ) -> list[dict[str, str]]:
@@ -191,21 +215,35 @@ def _tool_error_findings(
     OWN captured output matched.
 
     A tool is "in play" for a checker only when the declared tool name
-    appears in that checker's own command text - the checker literally
-    invokes the tool being watched. This is the exact shape L-173 named: a
-    tool that logs its own declared error severity and still exits 0,
-    invisible to the exit-code fold alone, because the fold only ever asked
-    "did it exit clean," never "what did it say." `declared` empty (no
-    tool ever registered via `register_error_pattern`) short-circuits to
-    nothing checked at all - the undeclared-tool fast path every existing
-    caller of `record_verdict` takes.
+    appears as a whole token of that checker's own command text (see
+    `_tool_named_in`) - the checker literally invokes the tool being
+    watched. This is the exact shape L-173 named: a tool that logs its own
+    declared error severity and still exits 0, invisible to the exit-code
+    fold alone, because the fold only ever asked "did it exit clean," never
+    "what did it say." `declared` empty (no tool ever registered via
+    `register_error_pattern`) short-circuits to nothing checked at all - the
+    undeclared-tool fast path every existing caller of `record_verdict`
+    takes.
+
+    Fix-round-1 (review M3): the matched excerpt is itself persisted into
+    the archive (`data["tool_error_findings"]`, denormalised in
+    `_append_verdict`) even though the FULL captured output never is - an
+    operator-authored pattern with a wide capture (not just `\\berror\\b`
+    but something greedier) could otherwise pull a secret-shaped fragment
+    out of a checker's own stdout/stderr into a permanent record. Every
+    excerpt is run through the project's existing secret-shape scanner
+    (`godmode_sentinel.find_secret_shapes`, the same one `godmode_egress`
+    and `godmode_trust` already use) before archiving; a hit replaces the
+    excerpt with a fixed redaction marker rather than the matched text -
+    the same whole-value redaction convention `godmode_egress.manifest`
+    already uses for a secret-bearing file (no partial masking, no
+    per-character leak of how much of the value was sensitive).
     """
     if not declared or not output:
         return []
-    lowered_cmd = checker_cmd.lower()
     found: list[dict[str, str]] = []
     for tool, pattern in declared.items():
-        if not tool or tool.lower() not in lowered_cmd:
+        if not tool or not _tool_named_in(tool, checker_cmd):
             continue
         try:
             match = re.search(pattern, output)
@@ -216,7 +254,10 @@ def _tool_error_findings(
             # honest read, not a crash mid-fold.
             continue
         if match:
-            found.append({"tool": tool, "excerpt": match.group(0)[:_TOOL_ERROR_EXCERPT_CAP]})
+            excerpt = match.group(0)[:_TOOL_ERROR_EXCERPT_CAP]
+            if find_secret_shapes(excerpt):
+                excerpt = _REDACTED_EXCERPT
+            found.append({"tool": tool, "excerpt": excerpt})
     return found
 
 
@@ -345,6 +386,15 @@ def record_verdict(
         raise ArchiveError(
             f"Unknown acquitted_by '{acquitted_by}'; expected one of {', '.join(ACQUITTED_BY)}"
         )
+    # Fix-round-1 (review M1): stripped before validation (and before it is
+    # stored below) so a whitespace-only "reason" - "acknowledged-deferred:
+    # " with nothing but spaces after the colon - collapses to
+    # "acknowledged-deferred:" with no reason left at all, which the
+    # (unchanged) TOOL_ERROR_ACK pattern correctly refuses to match, the
+    # same as if no reason had been typed. A reason's whitespace can only
+    # ever trail the value in this format, so stripping the whole string is
+    # exact, not an approximation.
+    tool_error_ack = tool_error_ack.strip()
     if tool_error_ack and not TOOL_ERROR_ACK.match(tool_error_ack):
         raise ArchiveError(
             f"Unknown tool_error_ack {tool_error_ack!r}; expected "
