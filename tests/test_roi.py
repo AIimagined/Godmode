@@ -156,9 +156,9 @@ class ContentFree(unittest.TestCase):
 
 class ContestedDispositionAbsent(unittest.TestCase):
     def test_contested_counts_zero_without_a_writer(self) -> None:
-        """No disposition value 'contested' ships yet (godmode_verdict.DISPOSITIONS
-        has only confirmed/refuted/witness-malformed) - the report must count
-        what exists rather than crash on a disposition that has not shipped."""
+        """The report counts what exists: an archive holding no contested
+        verdicts reports zero, never crashes. ('contested' ships as a real
+        disposition since the verdict-panels unit; this pins the zero case.)"""
         with isolated_project() as (project, _state, _anchor, archive):
             _verdict(archive, "confirmed")
             r = roi_report(archive, sessions=None)
