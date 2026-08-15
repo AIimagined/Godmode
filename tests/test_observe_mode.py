@@ -32,6 +32,7 @@ if str(Path(__file__).parent) not in sys.path:
 
 from godmode_runtime.godmode_assess import assess  # noqa: E402
 from godmode_runtime.godmode_errors import AuthorizationError  # noqa: E402
+from godmode_runtime.godmode_plan import CONTRACT_FIELDS, approve, specify, start  # noqa: E402
 from godmode_runtime.godmode_profile import PROFILE_NAMES, apply_profile  # noqa: E402
 from godmode_runtime.godmode_roi import (  # noqa: E402
     CAUSAL_DENYLIST, render_digest, render_roi, roi_digest, roi_report,
@@ -45,6 +46,20 @@ from test_hook_end_to_end import GIT_ASK_NOW, MUST_DENY  # noqa: E402
 
 FORCE_PUSH = "git push --force origin main"
 ASK_TIER = "rm -rf build"
+
+SPEC = {"objective": "o", "outcome": "u", "acceptance": "a", "non_goals": "n"}
+
+
+def _approved_plan(archive, editable: str) -> None:
+    """Same shape `tests/test_scope_fence.py` uses: an approved plan whose
+    contract declares an editable set, the only thing that makes a fence
+    exist at all (undeclared means unenforced)."""
+    specify(archive, "S-1", "narrow the fix", SPEC)
+    contract = {field: "x" for field in CONTRACT_FIELDS if field != "editable"}
+    contract["accept"] = "cmd:x"
+    contract["editable"] = editable
+    start(archive, "S-1", "narrow the fix", contract)
+    approve(archive, "S-1")
 
 
 def _enable_observe(project: Path) -> None:
@@ -177,6 +192,125 @@ class PlantEveryBlockedCommandInTheCorpusConvertsUnderObserve(unittest.TestCase)
                     leaked.append((label, result["decision"]))
             self.assertEqual(leaked, [],
                              f"a blocking decision reached the host under observe: {leaked}")
+
+
+class GovernanceBlockConvertsUnderObserve(unittest.TestCase):
+    """A ceiling breach is not the classifier's ask/deny split - it is
+    `blocked_reason`/`governance_block`, set before the classifier's verdict
+    is even consulted. Pinned separately because the corpus plant above
+    never exercises this path: MUST_DENY/GIT_ASK_NOW are all classifier
+    verdicts, and a ceiling breach denies regardless of what the operation
+    itself would have scored."""
+
+    def _breach_ceiling(self, project: Path) -> None:
+        (project / ".godmode-ceilings.json").write_text(
+            json.dumps({"tool_calls": 1}), encoding="utf-8")
+
+    def test_a_ceiling_breach_denies_in_normal_mode(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            self._breach_ceiling(project)
+            _decide(project, "Bash", {"command": "git status"})  # spends the 1st call
+            result = _decide(project, "Bash", {"command": "git status"})  # breaches it
+            self.assertEqual(result["decision"], "deny")
+            self.assertIn("ceiling reached", result["reason"])
+
+    def test_a_ceiling_breach_is_advisory_under_observe(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            self._breach_ceiling(project)
+            _enable_observe(project)
+            _decide(project, "Bash", {"command": "git status"})
+            result = _decide(project, "Bash", {"command": "git status"})
+
+            self.assertEqual(result["decision"], "allow")
+            self.assertIsNotNone(result["system_message"])
+            self.assertIn("OBSERVE MODE", result["system_message"])
+            self.assertIn("ceiling reached", result["system_message"])
+
+            records = archive.select(kind="refusal", limit=10)
+            self.assertEqual(len(records), 1)
+            data = records[0]["data"]
+            self.assertIs(data["observed"], True)
+            self.assertEqual(data["would_have"], "deny")
+
+
+class DeclaredFenceBlockConvertsUnderObserve(unittest.TestCase):
+    """A declared-fence block is an `ask` the classifier's own verdict never
+    produced on its own - `fence_verdict` downgrades an otherwise-allowed
+    edit after the classifier already said yes. Pinned separately for the
+    same reason as the governance case: the corpus plant never opens a
+    plan, so this path is untouched by it."""
+
+    def _fence_target(self, project: Path) -> dict:
+        outside = project / "other" / "file.txt"
+        return {"file_path": str(outside)}
+
+    def test_an_edit_outside_the_fence_asks_in_normal_mode(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _approved_plan(archive, "src/**")
+            result = _decide(project, "Edit", self._fence_target(project))
+            self.assertEqual(result["decision"], "ask")
+            self.assertIn("editable set", result["reason"])
+
+    def test_an_edit_outside_the_fence_is_advisory_under_observe(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _approved_plan(archive, "src/**")
+            _enable_observe(project)
+            result = _decide(project, "Edit", self._fence_target(project))
+
+            self.assertEqual(result["decision"], "allow")
+            self.assertIsNotNone(result["system_message"])
+            self.assertIn("OBSERVE MODE", result["system_message"])
+            self.assertIn("editable set", result["system_message"])
+
+            records = archive.select(kind="refusal", limit=10)
+            self.assertEqual(len(records), 1)
+            data = records[0]["data"]
+            self.assertIs(data["observed"], True)
+            self.assertEqual(data["would_have"], "ask")
+
+
+class DesignBoundaryBlockConvertsUnderObserve(unittest.TestCase):
+    """A design-boundary block is a hard deny the classifier's own verdict
+    never produced either - `design_verdict` refuses outright, ahead of the
+    scope fence, on a surface the operator froze in project configuration
+    rather than a plan. A third path the corpus plant does not open."""
+
+    def _declare_boundary(self, project: Path) -> None:
+        (project / ".godmode-boundaries.json").write_text(
+            json.dumps({"ui": {"declared": ["ui/**"]}}), encoding="utf-8")
+
+    def _boundary_target(self, project: Path) -> dict:
+        return {"file_path": str(project / "ui" / "Button.tsx")}
+
+    def test_an_edit_inside_the_design_boundary_denies_in_normal_mode(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            self._declare_boundary(project)
+            result = _decide(project, "Edit", self._boundary_target(project))
+            self.assertEqual(result["decision"], "deny")
+            self.assertIn("design surface", result["reason"])
+
+    def test_an_edit_inside_the_design_boundary_is_advisory_under_observe(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            self._declare_boundary(project)
+            _enable_observe(project)
+            result = _decide(project, "Edit", self._boundary_target(project))
+
+            self.assertEqual(result["decision"], "allow")
+            self.assertIsNotNone(result["system_message"])
+            self.assertIn("OBSERVE MODE", result["system_message"])
+            self.assertIn("design surface", result["system_message"])
+
+            records = archive.select(kind="refusal", limit=10)
+            self.assertEqual(len(records), 1)
+            data = records[0]["data"]
+            self.assertIs(data["observed"], True)
+            self.assertEqual(data["would_have"], "deny")
 
 
 class ObserveEntryAnnouncedAtSessionStart(unittest.TestCase):
