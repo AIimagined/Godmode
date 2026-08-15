@@ -203,6 +203,67 @@ class TightenOnlyRatchet(unittest.TestCase):
             self.assertIn("database-mutation", str(ctx.exception))
 
 
+class MalformedApprovalRequired(unittest.TestCase):
+    """Fix round 1: a hand-malformed `approval_required` must refuse loudly
+    and typed, never crash with a bare Python exception - the same shape
+    `CapabilityBroker._policy()` (`godmode_sentinel.py:2138-2143`) already
+    enforces on the identical field."""
+
+    def test_scalar_approval_required_is_refused_not_a_bare_typeerror(self) -> None:
+        with isolated_project() as (project, _state, _anchor, _archive):
+            (project / POLICY_FILENAME).write_text(
+                json.dumps({"approval_required": 5}), encoding="utf-8"
+            )
+            with self.assertRaises(AuthorizationError) as ctx:
+                apply_profile(project, "novice")
+            message = str(ctx.exception)
+            self.assertIn("approval_required", message)
+            self.assertIn("int", message)
+
+    def test_scalar_approval_required_through_the_real_cli_is_a_clean_exit_2(self) -> None:
+        """Reproduced through the actual entrypoint: before the fix this
+        propagated an unhandled TypeError past `main()`'s `except
+        GodmodeError` - a raw traceback instead of a JSON error and exit 2."""
+        with isolated_project() as (project, _state, _anchor, _archive):
+            (project / POLICY_FILENAME).write_text(
+                json.dumps({"approval_required": True}), encoding="utf-8"
+            )
+            from contextlib import redirect_stderr
+
+            from godmode_runtime.godmode_console import main
+
+            buffer = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(buffer):
+                exit_code = main(["--project", str(project), "init", "--profile", "novice"])
+            self.assertEqual(exit_code, 2)
+            payload = json.loads(buffer.getvalue())
+            self.assertEqual(payload["error"], "AuthorizationError")
+            self.assertIn("approval_required", payload["message"])
+
+    def test_dict_shaped_approval_required_is_refused_not_silently_repaired(self) -> None:
+        with isolated_project() as (project, _state, _anchor, _archive):
+            (project / POLICY_FILENAME).write_text(
+                json.dumps({"approval_required": {"git-branch-create": 1}}), encoding="utf-8"
+            )
+            before = (project / POLICY_FILENAME).read_text(encoding="utf-8")
+            with self.assertRaises(AuthorizationError) as ctx:
+                apply_profile(project, "novice")
+            message = str(ctx.exception)
+            self.assertIn("approval_required", message)
+            self.assertIn("dict", message)
+            # Refused, not "repaired" into a rewritten valid list.
+            self.assertEqual((project / POLICY_FILENAME).read_text(encoding="utf-8"), before)
+
+    def test_list_with_a_non_string_item_is_refused(self) -> None:
+        with isolated_project() as (project, _state, _anchor, _archive):
+            (project / POLICY_FILENAME).write_text(
+                json.dumps({"approval_required": ["git-branch-create", 3]}), encoding="utf-8"
+            )
+            with self.assertRaises(AuthorizationError) as ctx:
+                apply_profile(project, "novice")
+            self.assertIn("approval_required", str(ctx.exception))
+
+
 class UnknownProfile(unittest.TestCase):
     def test_apply_profile_rejects_a_name_outside_the_closed_set(self) -> None:
         with isolated_project() as (project, _state, _anchor, _archive):

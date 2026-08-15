@@ -76,6 +76,23 @@ def _read_policy(project: Path) -> dict[str, Any]:
         ) from exc
     if not isinstance(raw, dict):
         raise GodmodeError(f"{POLICY_FILENAME} must contain a JSON object")
+    # Same shape check `CapabilityBroker._policy()` already runs on this
+    # exact field (`godmode_sentinel.py:2138-2143`) - a fix-round-1 gap: a
+    # hand-malformed file (`approval_required: 5`, a bool, a dict) used to
+    # reach `set()` unvalidated and either crash with an untyped `TypeError`
+    # (a scalar - `set()` needs an iterable) or be silently accepted and
+    # "repaired" into a well-formed list (a dict - `set()` iterates its
+    # keys), neither of which is what the strict reader would do with the
+    # same bytes. Named here, once, before anything downstream ever sees
+    # the value, so both failure modes close together.
+    approval = raw.get("approval_required")
+    if approval is not None and (
+        not isinstance(approval, list) or not all(isinstance(item, str) for item in approval)
+    ):
+        raise AuthorizationError(
+            f"{POLICY_FILENAME}'s approval_required must be a list of strings, "
+            f"not {type(approval).__name__}"
+        )
     return raw
 
 
@@ -106,6 +123,19 @@ def apply_profile(project: Path, profile: str) -> dict[str, Any]:
     would drop an `approval_required` entry already on record - see the
     module docstring for why that check is per-key and `standard` never
     triggers it.
+
+    Profiles do not compose: each application is checked tighten-only
+    against the file exactly as it stands, whatever profile (or hand edit)
+    put it there, never against "the profile that logically preceded this
+    one." `novice` then `strict` refuses for the same reason `strict` then
+    `novice` does - `novice`'s two categories are not in `strict`'s own
+    target set, so writing `strict`'s value would drop them - even though
+    the union of both would have been a lossless tightening. This is a
+    deliberate simplicity trade: refusing a technically-safe union costs an
+    operator one hand edit; silently unioning would need this function to
+    reconstruct "which categories were profile-authored vs. hand-authored"
+    from a file that carries no such provenance, which is exactly the
+    ambiguity the tighten-only check exists to never guess at.
     """
     if profile not in PROFILE_NAMES:
         raise GodmodeError(
