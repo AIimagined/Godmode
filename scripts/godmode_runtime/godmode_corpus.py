@@ -430,6 +430,20 @@ def rank(
     tens of segments across three signals, where it collapsed into ties broken
     alphabetically. It also contradicts a deliberate property - role authority is
     *meant* to dominate - which fusion exists to prevent.
+
+    Determinism boundary: within one freshness mode, tie order is guaranteed
+    stable - git-tracked projects always order by commit time (ties broken by
+    path), non-git projects always order by path sort, and either mode
+    reproduces the identical ranking for identical project state regardless of
+    when or how the project was checked out or copied. Cross-mode equality is
+    NOT guaranteed and is out of contract: git-log commit time and path sort
+    are different instruments free to disagree on the tie order for equal-
+    relevance segments, so a snapshot generated against a git checkout is not
+    promised to match a ranking computed against a `.git`-stripped copy of the
+    same content, and vice versa. A snapshot (such as
+    `evals/fixtures/ranking.json`) must be generated and compared in the same
+    mode it will be evaluated in - never generated in one mode and asserted
+    against the other.
     """
     terms = _terms(task)
     raw: dict[int, float] = {}
