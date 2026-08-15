@@ -141,8 +141,8 @@
  },
  {
   "operation": "node packages/render-headless/frames.js --frames 12 2>&1 | tail -5 && cp out/frame-hashes.json /tmp/seq.json 2>/dev/null || cp out/frame-hashes.json \"$TEMP/seq.json\"; echo \"SEQ SAVED\"",
-  "expected": "allow",
-  "class": "FP2"
+  "expected": "ask",
+  "class": "by-design"
  },
  {
   "operation": "time node packages/render-headless/frames.js --composition packages/bench/results/render-workload.json 2>&1 | tail -3",
@@ -356,7 +356,7 @@
  },
  {
   "operation": "cd PATH\ncp .godmode-docslint.json /tmp/gm-docslint.bak 2>/dev/null || cp .godmode-docslint.json \"$LOCALAPPDATA/Temp/gm-docslint.bak\"\nprintf '{\"ignore\": [ \"unterminated' > .godmode-docslint.json\npython scripts/godmode.py --project . config check 2>&1 | tail -14; echo \"exit=$?\"\ncp \"$LOCALAPPDATA/Temp/gm-docslint.bak\" .godmode-docslint.json 2>/dev/null || cp /tmp/gm-docslint.bak .godmode-docslint.json\necho \"--- restored:\"; python -c \"BODY\"",
-  "expected": "allow",
+  "expected": "ask",
   "class": "by-design"
  },
  {
@@ -521,8 +521,8 @@
  },
  {
   "operation": "S=\"$LOCALAPPDATA/Temp/claude/PROJDIR/SESSIONID/scratchpad\"; node packages/render-headless/frames.js --composition \"$S/demo-v2.json\" --pipe --quality good 2>&1 | tail -3 && cp out/app-demo.mp4 \"$S/app-demo-1080p.mp4\" && cp out/frame-hashes.json \"$S/v2-hashes.json\" && echo COPIED",
-  "expected": "allow",
-  "class": "FP2"
+  "expected": "ask",
+  "class": "by-design"
  },
  {
   "operation": "S=\"$LOCALAPPDATA/Temp/claude/PROJDIR/SESSIONID/scratchpad\"; time node packages/render-headless/frames.js --composition \"$S/demo-v2.json\" --frames 40 --pipe 2>&1 | grep -E \"frames:\"",
@@ -531,8 +531,8 @@
  },
  {
   "operation": "S=\"$LOCALAPPDATA/Temp/claude/PROJDIR/SESSIONID/scratchpad\"; node packages/render-headless/frames.js --composition \"$S/demo-v2.json\" --frames 300 --pipe --quality good 2>&1 | grep -E \"frames:\" ; cp out/app-demo.mp4 \"$S/demo-1080p-part1.mp4\"; cp out/frame-hashes.json \"$S/v2-part1-hashes.json\"; ls -la \"$S/demo-1080p-part1.mp4\" | awk '{print $5}'",
-  "expected": "allow",
-  "class": "FP2"
+  "expected": "ask",
+  "class": "by-design"
  },
  {
   "operation": "S=\"$LOCALAPPDATA/Temp/claude/PROJDIR/SESSIONID/scratchpad\"; for f in 40 96 200; do ffmpeg -y -loglevel error -i \"$S/demo-1080p-part1.mp4\" -vf \"select=eq(n\\,$f)\" -vframes 1 \"$S/still-$f.png\"; done; ls \"$S\"/still-*.png | wc -l",

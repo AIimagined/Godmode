@@ -148,7 +148,18 @@ WINDOWS_STILL_PROTECTED = (
     "New-Item -ItemType Directory build",
     "Clear-Content log.txt",
     "Rename-Item a.txt b.txt",
-    "Move-Item a.txt b.txt",
+    # U-B2 fix-round-1 (task-7 review, Critical): `Move-Item`/`Copy-Item`
+    # (and their POSIX `mv`/`cp` counterparts) are no longer protected
+    # unconditionally by name - they write their DESTINATION argument, and
+    # an ordinary in-tree rename between two relative filenames is now
+    # ordinary work, unprotected, the same as an in-tree `Write`/`Edit`
+    # already is (see tests/test_evaluator_pins.py::MoveCopyTests for the
+    # full contract, including why a PINNED destination still refuses
+    # outright). What stays protected is a destination this classifier
+    # cannot place inside the project - exercised here instead of the old
+    # `Move-Item a.txt b.txt` entry, which this design change intentionally
+    # moved out of "always protected."
+    "Move-Item a.txt C:\\Windows\\System32\\evil.dll",
     "Stop-Process -Name python -Force",
     "del build\\out.txt",
     "rd /s /q build",
