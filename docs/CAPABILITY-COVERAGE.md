@@ -28,6 +28,13 @@ someone updates the row.
 | Recurring-ask surfacing | covered | Request-ledger clusters repeated asks across sessions into SOFT charter-rule proposals; term display is redaction-guarded, promotion is human-only (`file:scripts/godmode_runtime/godmode_recurrence.py`, `test:tests/test_recurrence.py`) |
 | Doc freshness advisories | covered | Advisory-only lint for open markers without a dated check and living-doc title collisions without a supersedes pointer (`file:scripts/godmode_runtime/godmode_docslint.py`, `test:tests/test_docs_lint.py`) |
 | Demonstration script | covered | A two-minute terminal walk-through whose commands are pinned against the real CLI parser (`file:docs/DEMO.md`, `test:tests/test_demo_doc.py`) |
+| Upstream drift detection | covered | When a project tracks, forks, or vendors an external codebase, paired verdicts compare what was imported against how it now behaves; requirement-driven, advisory unless a tracking policy is declared (`file:scripts/godmode_runtime/godmode_upstream.py`, `test:tests/test_upstream.py`) |
+| Duplicate-authority detection | covered | Flags two in-repo sources of truth for the same decision and requires a paired-artifact declaration naming the winner (`file:scripts/godmode_runtime/godmode_minimality.py`, `test:tests/test_minimality.py`) |
+| Error-handler regression detection | covered | AST scan for exception handlers that silence failures; baseline ceilings auto-tighten downward on every scan and a live regression fails every invocation (`file:scripts/godmode_runtime/godmode_swallow.py`, `test:tests/test_swallow.py`) |
+| Blast-radius evidence bar | covered | Operations-directed claims need independent witnesses; cosmetically distinct citations of one witness never count twice (`file:scripts/godmode_runtime/godmode_attest.py`, `test:tests/test_blast_radius.py`) |
+| External-tool error severity | covered | A verdict citing a declared tool's run is gated on that run's errors being acknowledged, not silently passed over; undeclared tools are unaffected (`file:scripts/godmode_runtime/godmode_verdict.py`, `test:tests/test_tool_error_gate.py`) |
+| External-repo absorption gate | covered | Any clone, vendor, or copy of an external repository is gated behind a declared license policy; undeclared stays advisory, declarations ratchet tighten-only (`file:scripts/godmode_runtime/godmode_sentinel.py`, `test:tests/test_absorption_gate.py`) |
+| Deletion provenance | covered | A tracked file's deletion requires a provenance pre-check under a declared policy, and a pinned evaluator's deletion is denied regardless (`file:scripts/godmode_runtime/godmode_fence.py`, `test:tests/test_deletion_provenance.py`) |
 
 ## Regenerating this table
 
