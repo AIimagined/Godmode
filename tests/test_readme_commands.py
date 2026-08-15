@@ -19,6 +19,7 @@ exists to keep honest.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 from pathlib import Path
 import sys
@@ -33,6 +34,13 @@ from godmode_runtime.godmode_console import _build_parser  # noqa: E402
 from godmode_runtime.godmode_profile import PROFILE_NAMES  # noqa: E402
 
 README = PLUGIN_ROOT / "README.md"
+CLAUDE_MARKETPLACE = PLUGIN_ROOT / ".claude-plugin" / "marketplace.json"
+
+# The zero-PATH-setup fallback command (fix round I1): `python
+# .../scripts/godmode.py <subcommand> ...`. Captures the subcommand chain
+# so it can be walked through the parser the same way a bare `godmode ...`
+# line is.
+_PYTHON_GODMODE_PY = re.compile(r"python\s+\S*scripts/godmode\.py\s+(.*)$")
 
 # A leading run of bare identifier tokens (letters/digits/hyphen) - the
 # shape every subcommand name in this project's parser takes. Stops at the
@@ -83,16 +91,33 @@ def _strip_trailing_comment(command: str) -> str:
     return command if marker == -1 else command[:marker].rstrip()
 
 
-def _godmode_subcommand_tokens(command: str) -> list[str]:
-    """Bare tokens right after `godmode`, up to the first flag/placeholder/quoted arg."""
-    if not command.startswith("godmode "):
-        return []
+def _bare_subcommand_tokens(remainder: str) -> list[str]:
+    """Bare tokens from the start of `remainder`, stopping at the first
+    flag, placeholder (`<...>`), or quoted arg - exactly where a subcommand
+    chain ends and the command's own arguments begin."""
     tokens: list[str] = []
-    for token in command[len("godmode "):].split():
+    for token in remainder.split():
         if not _BARE_TOKEN.match(token):
             break
         tokens.append(token)
     return tokens
+
+
+def _godmode_subcommand_tokens(command: str) -> list[str]:
+    """Bare tokens right after `godmode`, up to the first flag/placeholder/quoted arg."""
+    if not command.startswith("godmode "):
+        return []
+    return _bare_subcommand_tokens(command[len("godmode "):])
+
+
+def _python_scripts_godmode_subcommand_tokens(command: str) -> list[str]:
+    """Bare tokens after `python <anything>scripts/godmode.py`, same shape
+    as `_godmode_subcommand_tokens` but for the zero-PATH-setup fallback
+    form the Install section shows (fix round I1)."""
+    match = _PYTHON_GODMODE_PY.match(command)
+    if not match:
+        return []
+    return _bare_subcommand_tokens(match.group(1))
 
 
 def _subparsers_action(parser: argparse.ArgumentParser):
@@ -156,6 +181,53 @@ class ReadmeCommandsTests(unittest.TestCase):
         ]
         self.assertTrue(profile_actions, "'--profile' must be a real flag on 'godmode init'")
         self.assertEqual(tuple(profile_actions[0].choices), PROFILE_NAMES)
+
+    def test_the_zero_path_setup_fallback_command_resolves(self) -> None:
+        # Fix round I1: the Install section's `python .../scripts/godmode.py
+        # init` fallback (for a terminal outside Claude Code's own Bash
+        # tool) must resolve against the real parser tree too, not just the
+        # bare `godmode ...` form.
+        text = README.read_text(encoding="utf-8")
+        commands = [
+            command
+            for block in _fenced_console_blocks(text)
+            for command in _shell_commands(block)
+            if _PYTHON_GODMODE_PY.match(command)
+        ]
+        self.assertTrue(
+            commands,
+            "expected at least one fenced 'python .../scripts/godmode.py ...' "
+            "line in README.md (the zero-PATH-setup fallback)",
+        )
+        for command in commands:
+            tokens = _python_scripts_godmode_subcommand_tokens(command)
+            self.assertTrue(tokens, f"no bare subcommand token parsed from: {command!r}")
+            with self.subTest(command=command):
+                resolve_subcommand_chain(tokens)
+
+    def test_the_cache_path_names_the_real_marketplace_and_plugin(self) -> None:
+        # The Install section's cache-path fallback
+        # (~/.claude/plugins/cache/<marketplace>/<plugin>/...) hardcodes
+        # "aiimagined" and "godmode" as literal path segments, per Claude
+        # Code's documented `~/.claude/plugins/cache/{marketplace}/{plugin}/{version}/`
+        # layout. Pin both segments against the real marketplace manifest
+        # so a marketplace or plugin rename doesn't leave a silently wrong
+        # path in the README.
+        self.assertTrue(CLAUDE_MARKETPLACE.is_file(), f"{CLAUDE_MARKETPLACE} must exist")
+        marketplace = json.loads(CLAUDE_MARKETPLACE.read_text(encoding="utf-8"))
+        marketplace_name = marketplace["name"]
+        plugin_name = marketplace["plugins"][0]["name"]
+
+        text = README.read_text(encoding="utf-8")
+        expected_prefix = f"~/.claude/plugins/cache/{marketplace_name}/{plugin_name}/"
+        self.assertIn(
+            expected_prefix, text,
+            f"README.md's cache-path fallback must use the real marketplace "
+            f"('{marketplace_name}') and plugin ('{plugin_name}') names from "
+            f"{CLAUDE_MARKETPLACE}",
+        )
+        # And the install snippet's `@aiimagined` suffix names the same marketplace.
+        self.assertIn(f"@{marketplace_name}", text)
 
     def test_the_project_flag_and_global_flags_readme_relies_on_are_real(self) -> None:
         # --brief and --digest/--host-independent flags are exercised by the
