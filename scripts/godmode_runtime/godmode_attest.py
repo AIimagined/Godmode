@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import posixpath
 import sys
 import re
 from typing import Any
@@ -1309,27 +1310,48 @@ def record_criterion(
 
 # PARTIAL-P2/B3-4: two witnesses that would both dissolve to the same
 # underlying fact are not two witnesses - they are one fact, cited twice.
+# Fix-round-1 (review I1): a `file:` target compared as raw text let cosmetic
+# spelling alone launder a single read into two witnesses - `file:x` and
+# `file:./x` name the identical on-disk file but partitioned to different
+# strings. Slash direction is canonicalised to `/` FIRST so `posixpath`'s own
+# `.`/`..` collapsing (which only understands `/`) works the same whether the
+# citation was written with a Windows backslash or not - this is deliberately
+# "ntpath-safe" by normalizing away the platform difference up front rather
+# than delegating to `ntpath` itself, which would accept a bare `x` as a
+# relative-to-current-drive path and complicate the comparison for no benefit
+# here (this is never used to touch the filesystem, only to compare two
+# citation strings). Casefolded only on a case-insensitive host (`os.name ==
+# "nt"`): POSIX filesystems are case-sensitive by default, so `file:X` and
+# `file:x` legitimately name different files there and must NOT collapse.
+def _normalize_file_target(path: str) -> str:
+    normalized = posixpath.normpath(path.replace("\\", "/"))
+    if os.name == "nt":
+        normalized = normalized.casefold()
+    return normalized
+
+
 def _witness_identity(citation: str) -> tuple[str, str]:
     """(kind, resolved-target) used only to test whether two citations name
     the same underlying artifact - never to test whether either resolves.
 
     Same kind AND same target means "the same witness": a `file:` target
-    drops any `#L...` line locator, so `file:pin.py#L10` and
-    `file:pin.py#L40` are the same file read twice, not two independent
-    reads. Every other kind's target is its citation text verbatim after
-    the prefix, so `cmd:python check.py a.txt` and `cmd:python check.py
-    b.txt` are two distinct artifacts (different resolved targets) even
-    though both are `cmd:`, while two copies of the exact same `cmd:`
-    string collapse to one. A different kind is always independent of
-    every other kind, regardless of target - a `file:` and a `cmd:`
-    citation are never "the same witness" just because they happen to
+    drops any `#L...` line locator AND is normalized (see
+    `_normalize_file_target`) before comparison, so `file:pin.py#L10`,
+    `file:./pin.py#L40`, and `file:sub/../pin.py` are all the same file read
+    more than once, not independent reads. Every other kind's target is its
+    citation text verbatim after the prefix, so `cmd:python check.py a.txt`
+    and `cmd:python check.py b.txt` are two distinct artifacts (different
+    resolved targets) even though both are `cmd:`, while two copies of the
+    exact same `cmd:` string collapse to one. A different kind is always
+    independent of every other kind, regardless of target - a `file:` and a
+    `cmd:` citation are never "the same witness" just because they happen to
     concern the same subject.
     """
     kind, sep, rest = citation.partition(":")
     if not sep:
         return "", citation
     if kind == "file":
-        rest = rest.split("#", 1)[0]
+        rest = _normalize_file_target(rest.split("#", 1)[0])
     return kind, rest
 
 
