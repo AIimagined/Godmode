@@ -211,6 +211,58 @@ class PinTests(unittest.TestCase):
         self.assertNotEqual(verdict["gate"], "pinned")
 
 
+class TightenOnlyRatchetTests(unittest.TestCase):
+    """Review Critical-1's exact repro: declare, get refused, then remove
+    the key - the gate must keep refusing, not silently revert to advisory.
+
+    Live repro this reproduces (scratch project, reviewer's own commands):
+        $ echo '{"deletion_provenance_gate": true}' > .godmode-authorization-policy.json
+        $ godmode fence delete-check --path third.py
+        {"allowed": false, "gate": "declared", ...}            # correctly refused
+        $ echo '{}' > .godmode-authorization-policy.json
+        $ godmode fence delete-check --path third.py
+        {"allowed": true, "gate": "advisory", ...}             # was: silently allowed
+    """
+
+    def test_removing_the_key_after_a_refusal_does_not_reopen_the_gate(self) -> None:
+        with isolated_git_project() as (project, archive):
+            _declare_gate(project)
+            first = deletion_verdict(archive, "tracked.py", project_root=project)
+            self.assertFalse(first["allowed"], first)
+            self.assertEqual(first["gate"], "declared")
+
+            # The "loosening" edit: undeclare by removing the key entirely.
+            (project / POLICY_FILENAME).write_text(json.dumps({}), encoding="utf-8")
+
+            second = deletion_verdict(archive, "tracked.py", project_root=project)
+        self.assertEqual(second["gate"], "declared", second)
+        self.assertFalse(second["allowed"], second)
+
+    def test_deleting_the_whole_policy_file_after_a_refusal_does_not_reopen_the_gate(self) -> None:
+        with isolated_git_project() as (project, archive):
+            _declare_gate(project)
+            deletion_verdict(archive, "tracked.py", project_root=project)
+            (project / POLICY_FILENAME).unlink()
+            second = deletion_verdict(archive, "tracked.py", project_root=project)
+        self.assertEqual(second["gate"], "declared", second)
+        self.assertFalse(second["allowed"], second)
+
+    def test_a_fresh_project_that_never_declared_stays_advisory(self) -> None:
+        """Green control: the ratchet only ever engages on an observed live
+        True - a project that never declared must not be caught by it."""
+        with isolated_git_project() as (project, archive):
+            verdict = deletion_verdict(archive, "tracked.py", project_root=project)
+        self.assertEqual(verdict["gate"], "advisory", verdict)
+        self.assertTrue(verdict["allowed"])
+
+    def test_the_ratchet_is_recorded_durably_in_the_archive(self) -> None:
+        with isolated_git_project() as (project, archive):
+            _declare_gate(project)
+            deletion_verdict(archive, "tracked.py", project_root=project)
+            subjects = [r["subject"] for r in archive.select(kind="action", limit=50)]
+        self.assertIn("policy-declared:deletion_provenance_gate", subjects, subjects)
+
+
 class OutsideProjectTests(unittest.TestCase):
     def test_a_path_outside_the_project_is_allowed_by_this_gate(self) -> None:
         """This gate is a statement about this project; a path that escapes

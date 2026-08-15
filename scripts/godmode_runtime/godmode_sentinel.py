@@ -1586,25 +1586,58 @@ def detect_external_repo(operation: str) -> str | None:
     return host.group(0) if host else None
 
 
-def _absorption_policy_declared(project_root: Path | None) -> bool:
+# Fix-round (review Critical-1): a live re-read of the policy file is not
+# tighten-only by itself - declare the gate, let it refuse an operation, then
+# delete the key (or the whole file), and the very next call silently read
+# "undeclared" again, with no refusal and no error. `declared_gate_ratchet`
+# closes that: the first live read that finds a key true is appended to the
+# archive as a durable, hash-chained fact - the same append-only-precedent
+# shape `pin`/`unpin` already use for the evaluator-pin store - and every
+# call after that is the live value OR that recorded high-water mark,
+# whichever is stronger. One shared function rather than one per gate,
+# because B3-5 and B3-6 need the identical ratchet over the identical file
+# and a second copy would be exactly the duplicate-authority drift this
+# sweep's own GAP-2 finding warns about.
+def declared_gate_ratchet(archive: Any, project_root: Path | None, key: str) -> bool:
+    """Whether boolean policy key `key` is in force, tighten-only.
+
+    `archive=None` reads the live file only, with no ratchet to consult or
+    record into - narrower than before (a live True is still True), never
+    wider: nothing here can report `key` as declared that the live file
+    itself does not also currently say, except via the archive's own
+    recorded history, which only ever grows by a live True being observed.
+    """
+    live = False
+    if project_root is not None:
+        path = Path(project_root) / POLICY_FILENAME
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            live = isinstance(raw, dict) and bool(raw.get(key))
+        except FileNotFoundError:
+            live = False
+        except (OSError, json.JSONDecodeError):
+            live = False
+    if archive is None:
+        return live
+    subject = f"policy-declared:{key}"[:200]
+    recorded = bool(archive.select(kind="action", subject=subject, limit=1))
+    if live and not recorded:
+        archive.append("action", subject, {"gate": key}, evidence=[])
+        recorded = True
+    return live or recorded
+
+
+def _absorption_policy_declared(archive: Any, project_root: Path | None) -> bool:
     """Whether this project's operator declared the external-absorption gate.
 
     Reuses the same tighten-only `POLICY_FILENAME` the capability broker
     already reads rather than adding a second small file for one more fact an
     operator may declare - the DUPDRIFT lesson this very sweep names.
     Undeclared means advisory-only: nothing here becomes a hard gate by
-    default.
+    default. Ratcheted via `declared_gate_ratchet`: once observed declared,
+    stays declared even if the key is later removed or edited away.
     """
-    if project_root is None:
-        return False
-    path = Path(project_root) / POLICY_FILENAME
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return False
-    except (OSError, json.JSONDecodeError):
-        return False
-    return isinstance(raw, dict) and bool(raw.get("external_absorption_gate"))
+    return declared_gate_ratchet(archive, project_root, "external_absorption_gate")
 
 
 def record_license_attestation(
@@ -1655,7 +1688,7 @@ def license_verdict(archive: Any, project_root: Path | None, operation: str) -> 
     repo_ref = detect_external_repo(operation)
     if repo_ref is None:
         return {"applicable": False, "allowed": True}
-    declared = _absorption_policy_declared(project_root)
+    declared = _absorption_policy_declared(archive, project_root)
     if not declared:
         if archive is not None:
             archive.append(
