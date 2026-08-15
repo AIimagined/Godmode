@@ -213,6 +213,70 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(verdict["classification"], "permissive")
 
 
+class TightenOnlyRatchetTests(unittest.TestCase):
+    """Review Critical-1's exact repro: declare, get refused, then remove
+    the key - the gate must keep refusing, not silently revert to advisory.
+
+    Live repro this reproduces (scratch project, reviewer's own commands):
+        $ echo '{"external_absorption_gate": true}' > .godmode-authorization-policy.json
+        $ godmode license check --operation "git clone https://github.com/octocat/hello-world"
+        {"allowed": false, "gate": "declared", ...}          # correctly refused
+        $ echo '{}' > .godmode-authorization-policy.json      # "loosening" edit
+        $ godmode license check --operation "git clone https://github.com/example/new-repo"
+        {"allowed": true, "gate": "advisory", ...}            # was: silently allowed, no refusal
+    """
+
+    def test_removing_the_key_after_a_refusal_does_not_reopen_the_gate(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            _declare_gate(project)
+            first = license_verdict(
+                archive, project, "git clone https://github.com/octocat/hello-world"
+            )
+            self.assertFalse(first["allowed"], first)
+            self.assertEqual(first["gate"], "declared")
+
+            # The "loosening" edit: undeclare by removing the key entirely.
+            (project / POLICY_FILENAME).write_text(json.dumps({}), encoding="utf-8")
+
+            second = license_verdict(
+                archive, project, "git clone https://github.com/example/new-repo"
+            )
+        self.assertEqual(second["gate"], "declared", second)
+        self.assertFalse(second["allowed"], second)
+
+    def test_deleting_the_whole_policy_file_after_a_refusal_does_not_reopen_the_gate(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            _declare_gate(project)
+            license_verdict(archive, project, "git clone https://github.com/octocat/hello-world")
+            (project / POLICY_FILENAME).unlink()
+            second = license_verdict(
+                archive, project, "git clone https://github.com/example/new-repo"
+            )
+        self.assertEqual(second["gate"], "declared", second)
+        self.assertFalse(second["allowed"], second)
+
+    def test_a_fresh_project_that_never_declared_stays_advisory(self) -> None:
+        """Green control: the ratchet only ever engages on an observed live
+        True - a project that never declared must not be caught by it."""
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            verdict = license_verdict(
+                archive, project, "git clone https://github.com/octocat/hello-world"
+            )
+        self.assertEqual(verdict["gate"], "advisory", verdict)
+        self.assertTrue(verdict["allowed"])
+
+    def test_the_ratchet_is_recorded_durably_in_the_archive(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            _declare_gate(project)
+            license_verdict(archive, project, "git clone https://github.com/octocat/hello-world")
+            subjects = [r["subject"] for r in archive.select(kind="action", limit=50)]
+        self.assertIn("policy-declared:external_absorption_gate", subjects, subjects)
+
+
 class CLITests(unittest.TestCase):
     """The command surface the remedy message actually names."""
 

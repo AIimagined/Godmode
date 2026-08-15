@@ -36,7 +36,7 @@ from .godmode_constants import IGNORED_DIRECTORY_NAMES
 from .godmode_errors import ArchiveError
 from .godmode_loop import _git
 from .godmode_plan import APPROVED
-from .godmode_sentinel import POLICY_FILENAME, _pinned_evaluator_hit
+from .godmode_sentinel import POLICY_FILENAME, _pinned_evaluator_hit, declared_gate_ratchet
 
 # Patterns are separated by commas or newlines so a contract field can be
 # written either way round without the author having to know which.
@@ -432,7 +432,11 @@ def fence_verdict(archive: Chronicle, path: str, *,
 # -----------------------------------------------------------------------
 
 
-def _deletion_gate_declared(project_root: Path | str) -> bool:
+# Fix-round (review Critical-1): a live re-read was not tighten-only - see
+# `declared_gate_ratchet`'s own docstring in godmode_sentinel.py for the
+# exact failure this closes. B3-6 reuses that one shared ratchet rather than
+# a second copy of the same logic.
+def _deletion_gate_declared(archive: Chronicle, project_root: Path | str) -> bool:
     """Whether the operator's policy declares the deletion-provenance gate.
 
     Reuses sentinel's own tighten-only `POLICY_FILENAME` rather than adding a
@@ -443,14 +447,11 @@ def _deletion_gate_declared(project_root: Path | str) -> bool:
     `capability_ttl_seconds`, `gate_mode`) and would silently drop this one,
     so it is read directly here rather than through either - unknown keys in
     the same file are ignored by that whitelist, not rejected, so the two
-    readers coexist over one file without conflict.
+    readers coexist over one file without conflict. Ratcheted via
+    `declared_gate_ratchet`: once observed declared, stays declared even if
+    the key is later removed or edited away.
     """
-    path = Path(project_root) / POLICY_FILENAME
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, json.JSONDecodeError):
-        return False
-    return isinstance(raw, dict) and bool(raw.get("deletion_provenance_gate"))
+    return declared_gate_ratchet(archive, Path(project_root), "deletion_provenance_gate")
 
 
 def _is_tracked(project_root: Path | str, relative: str) -> bool:
@@ -531,7 +532,7 @@ def deletion_verdict(archive: Chronicle, path: str, *, project_root: Path | str)
     if not _is_tracked(root, relative):
         return {"allowed": True, "gate": "untracked", "path": relative,
                 "detail": "untracked scratch file; deletion provenance does not apply"}
-    if not _deletion_gate_declared(root):
+    if not _deletion_gate_declared(archive, root):
         archive.append(
             "action", f"deletion-precheck-advisory:{relative}"[:200],
             {"path": relative,
