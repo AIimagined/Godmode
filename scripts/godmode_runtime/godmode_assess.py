@@ -22,6 +22,7 @@ from .godmode_charter import ADVISORY, HARD, SOFT, compile_charter
 from .godmode_corpus import resolve_roles, segment_document
 from .godmode_errors import ArchiveError, GodmodeError
 from .godmode_reconcile import reconcile_capabilities
+from .godmode_sentinel import GATE_MODE_OBSERVE, local_authorization_policy
 from .godmode_status import authority_claims
 
 # What an agent will realistically spend reading rules before starting work.
@@ -95,6 +96,33 @@ def assess(project: Path, budget: int = TYPICAL_COLD_START_TOKENS,
     """Measure whether this project's own guidance can be complied with."""
     findings: list[dict[str, str]] = []
     report: dict[str, Any] = {"project": project.name, "budget": budget}
+
+    # U-E7: observe mode is a loosening of enforcement, and the operator
+    # directive requires it stay explicit and loud - `assess` is where an
+    # operator checks a project's posture, so it states this one always,
+    # not only when something else is already wrong. Same seam every other
+    # observe-mode reader uses (`local_authorization_policy`); a malformed
+    # or unreadable policy degrades to "enforce" here exactly as it does in
+    # the hook, never to a crashed `assess` run. `archive=None` (assess run
+    # without one) also reads as "enforce": the policy file's `gate_mode`
+    # is unreachable without an archive to root the read against.
+    gate_mode = "enforce"
+    if archive is not None:
+        try:
+            if local_authorization_policy(archive).get("gate_mode") == GATE_MODE_OBSERVE:
+                gate_mode = GATE_MODE_OBSERVE
+        except GodmodeError:
+            gate_mode = "enforce"
+    report["gate_mode"] = gate_mode
+    if gate_mode == GATE_MODE_OBSERVE:
+        findings.append(_finding(
+            "medium", "gate-observe-mode",
+            "gate_mode is 'observe' in .godmode-authorization-policy.json: every "
+            "deny/ask this project's gate would otherwise produce is recorded as "
+            "an advisory refusal instead - nothing is blocked.",
+            "Read the would-have-caught counts with `godmode roi --digest`; "
+            "remove gate_mode from the policy file to return to enforcement.",
+        ))
 
     resolution = resolve_roles(project)
     segments = []

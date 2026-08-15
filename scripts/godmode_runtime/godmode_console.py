@@ -88,7 +88,9 @@ from .godmode_contribution import render_line as render_contribution
 from .godmode_fuzz import fuzz as run_fuzz
 from .godmode_metrics import metrics as product_metrics
 from .godmode_metrics import render_markdown as render_metrics
+from .godmode_roi import render_digest as render_roi_digest
 from .godmode_roi import render_roi
+from .godmode_roi import roi_digest
 from .godmode_roi import roi_report
 # U-E10 - minimal isolated block (one import line, one subcommand, one
 # handler), same pattern as the U-R2 loop-ready block above.
@@ -2023,8 +2025,16 @@ def cmd_metrics(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 
 def cmd_roi(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
-    """U-E1: counts-only ROI report. JSON with --json, prose otherwise."""
+    """U-E1: counts-only ROI report. U-E7's `--digest` renders the
+    would-have-caught view over gate_mode=observe records instead - a
+    separate fold (`roi_digest`), never merged into the real-denial counts
+    above. JSON with --json, prose otherwise, either way."""
     _require_archive(runtime)
+    if getattr(args, "digest", False):
+        digest = roi_digest(runtime.archive, sessions=args.sessions)
+        if getattr(args, "json", False):
+            return CommandResult(digest)
+        return CommandResult({"report": render_roi_digest(digest)})
     report = roi_report(runtime.archive, sessions=args.sessions)
     if getattr(args, "json", False):
         return CommandResult(report)
@@ -3340,6 +3350,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "roi", help="Counts-only ROI report: burn beside gate activity, no causal claims")
     roi_parser.add_argument("--sessions", type=int, default=None,
                             help="Limit the fold to the most recent N sessions")
+    roi_parser.add_argument(
+        "--digest", action="store_true",
+        help="U-E7: would-have-caught view over gate_mode=observe records only "
+             "(would-have-denied/would-have-asked by category), never merged "
+             "with the real denial counts above")
     roi_parser.set_defaults(handler=cmd_roi)
 
     recurring_parser = sub.add_parser(
