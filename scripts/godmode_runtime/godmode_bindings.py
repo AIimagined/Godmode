@@ -249,19 +249,38 @@ def registration_report(project: Path | None = None) -> dict[str, Any]:
 # Codex's REAL `~/.codex/config.toml` schema (this repo's own build machine
 # carries one - read directly, not guessed): a `[hooks.state]` table whose
 # keys are `"<identifier>:<manifest-relative-path>:<event-name>:<n>:<n>"`
-# (the identifier varies - a plugin id like `godmode@aiimagined` for a
-# marketplace install, or a bare filesystem path for a project-local
-# `.codex/hooks.json` - but the manifest-relative-path/event-name/index
-# suffix is stable), each holding a sub-table with `trusted_hash` always
-# present and `enabled` present ONLY sometimes (this build's own godmode
-# entry, `hooks/hooks.json:session_start:0:0`, has no `enabled` field at
-# all - only `trusted_hash`). Matched on the `hooks/hooks.json:<event>:`
-# substring rather than a fixed identifier prefix, since the identifier
-# segment is whatever marketplace/path name an install happens to use.
-_CODEX_STATE_KEY = re.compile(r"hooks/hooks\.json:([A-Za-z_][A-Za-z0-9_]*):\d+:\d+$")
+# (a plugin id like `godmode@aiimagined` for a marketplace install, or a
+# bare filesystem path for a project-local `.codex/hooks.json` - but the
+# manifest-relative-path/event-name/index suffix is stable), each holding a
+# sub-table with `trusted_hash` always present and `enabled` present ONLY
+# sometimes (this build's own godmode entry,
+# `godmode@aiimagined:hooks/hooks.json:session_start:0:0`, has no `enabled`
+# field at all - only `trusted_hash`).
+#
+# Fix round 1 (I1, review Important): the prior revision matched on the
+# `hooks/hooks.json:<event>:<n>:<n>` SUFFIX alone, with no identifier check
+# at all - a DECOY entry from any unrelated plugin that happens to also
+# ship a file at that same conventional relative path, registered under an
+# unrelated identifier, was silently credited to GODMODE's own registration
+# state (the reviewer's live repro: a
+# `some-other-plugin@evil:hooks/hooks.json:...` entry forced a false
+# `"verified"`). The match is now anchored to the IDENTIFIER too: it must
+# start with `<plugin-name>@` - the exact shape this build's own real state
+# uses. `plugin_name` is read from `packaging/hosts.json`'s own
+# `identity.name` at the call site, never a second, independently-typed
+# "godmode" literal here, so this can never quietly drift from the name the
+# rest of the package uses. A key whose identifier does not start with
+# `<plugin-name>@` is SKIPPED entirely - not counted toward `registered`,
+# not counted toward `missing` either (it says nothing about godmode's own
+# state) - so a file with ZERO matching identifiers returns an empty dict,
+# which `install_verify` then reports as every declared event missing
+# (`"partial"`), never a false `"verified"` from unrelated evidence.
+def _codex_state_key_pattern(plugin_name: str) -> re.Pattern[str]:
+    escaped = re.escape(plugin_name)
+    return re.compile(rf"^{escaped}@[^:]*:hooks/hooks\.json:([A-Za-z_][A-Za-z0-9_]*):\d+:\d+$")
 
 
-def _read_codex_state(state_path: Path) -> dict[str, bool] | None:
+def _read_codex_state(state_path: Path, plugin_name: str) -> dict[str, bool] | None:
     """Best-effort read of a Codex config file this process can find.
 
     `state_path` (an operator-supplied path, the conventional
@@ -272,12 +291,14 @@ def _read_codex_state(state_path: Path) -> dict[str, bool] | None:
     guessed positive OR negative for an event this function does not
     understand the file well enough to judge.
 
-    A key's own PRESENCE under `hooks.state` is read as "Codex discovered
-    and recorded this hook event" - true regardless of whether that entry
-    also carries an explicit `enabled` field (this build's own real state
-    shows an entry can exist with `trusted_hash` alone, no `enabled` key at
-    all, and that is still a real, live registration - not "unverifiable").
-    An explicit `enabled = false`, when present, overrides that to `False`.
+    A key's own PRESENCE under `hooks.state`, ANCHORED TO THIS PLUGIN'S OWN
+    IDENTITY (`_codex_state_key_pattern`, fix round 1 I1), is read as
+    "Codex discovered and recorded this hook event for godmode" - true
+    regardless of whether that entry also carries an explicit `enabled`
+    field (this build's own real state shows an entry can exist with
+    `trusted_hash` alone, no `enabled` key at all, and that is still a
+    real, live registration - not "unverifiable"). An explicit
+    `enabled = false`, when present, overrides that to `False`.
     """
     if not state_path.is_file():
         return None
@@ -293,9 +314,10 @@ def _read_codex_state(state_path: Path) -> dict[str, bool] | None:
     state = hooks.get("state")
     if not isinstance(state, dict):
         return None
+    pattern = _codex_state_key_pattern(plugin_name)
     registered: dict[str, bool] = {}
     for key, value in state.items():
-        match = _CODEX_STATE_KEY.search(str(key))
+        match = pattern.match(str(key))
         if not match:
             continue
         event = match.group(1)
@@ -303,7 +325,15 @@ def _read_codex_state(state_path: Path) -> dict[str, bool] | None:
         if isinstance(value, dict) and "enabled" in value:
             enabled = bool(value["enabled"])
         registered[event] = registered.get(event, False) or enabled
-    return registered
+    # Fix round 1 (I1): ZERO identity-anchored matches means this file says
+    # NOTHING about godmode specifically - whether because it is a decoy
+    # (the reviewer's repro: only unrelated-plugin entries present) or a
+    # genuinely unrelated config - and the caller's job (`install_verify`)
+    # is to read that as "unverifiable", the same as a file that had no
+    # `[hooks.state]` table at all, never as `"partial"` (which would imply
+    # positive evidence about godmode's OWN state that this file does not
+    # actually contain).
+    return registered or None
 
 
 def _read_grok_state(state_path: Path | None) -> dict[str, Any] | None:
@@ -404,13 +434,14 @@ def install_verify(
     result: dict[str, Any] = {"host": host, "declared_events": sorted(declared)}
 
     if host == "codex":
+        plugin_name = str(source["identity"]["name"])
         candidates = [state_path] if state_path else [
             Path.home() / ".codex" / "config.toml",
         ]
         state = None
         for candidate in candidates:
             if candidate is not None:
-                state = _read_codex_state(candidate)
+                state = _read_codex_state(candidate, plugin_name)
             if state is not None:
                 break
         if state is None:

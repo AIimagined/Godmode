@@ -112,6 +112,42 @@ GROK_MATCHER = "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|run_terminal_c
 # gate at all - built FROM `hostevent.CODEX_TOOLS`, never re-typed.
 CODEX_MATCHER = "|".join(sorted(hostevent.CODEX_TOOLS))
 
+# Fix round 1 (C2, review Critical): Addendum 5's own documented tool-type
+# vocabulary for Cursor matchers is a CLOSED list - "Matchers by tool type
+# (Shell, Read, Write, Grep, Delete, Task, MCP:<name>)", verbatim - and
+# `"Edit"` is not in it (the prior revision emitted it anyway, untraceable
+# and unflagged). `preToolUse`'s matcher is narrowed to the MUTATING subset
+# of that documented list the fast gate actually handles: `Shell` (shell
+# commands), `Write` (file writes), `Delete` (filesystem removals). `Read`
+# and `Grep` are excluded deliberately - they are non-mutating, so gating
+# them would cost latency for no protection the fast path exists to add.
+# `Task` and `MCP:<name>` are excluded because this manifest's gate script
+# (`godmode_gate_fast.py`) has no logic for either shape - matching a tool
+# type this module cannot classify would be worse than not matching it at
+# all, the same over-trigger-never-under-trigger asymmetry documented at
+# `CURSOR_SHELL_TEXT_MATCHER`/`GEMINI_TOOL_MATCHER` below, applied in the
+# OTHER direction here (narrow to what is both DOCUMENTED and HANDLED,
+# rather than wildcard-matching everything).
+CURSOR_PRETOOLUSE_MATCHER = "Shell|Write|Delete"
+
+# Addendum 5's own documented tool-type vocabulary, verbatim, as a CLOSED
+# set: "Matchers by tool type (Shell, Read, Write, Grep, Delete, Task,
+# MCP:<name>)". `MCP:<name>` is a named PATTERN (one entry per configured
+# MCP server), not a literal token, so it is tracked separately and never
+# belongs in a literal-name set like this one - no MCP server ships with
+# this manifest, so it is never emitted regardless.
+CURSOR_DOCUMENTED_TOOL_TYPES = frozenset({"Shell", "Read", "Write", "Grep", "Delete", "Task"})
+
+
+def cursor_pretooluse_matcher_tools() -> frozenset[str]:
+    """The literal tool-type tokens `CURSOR_PRETOOLUSE_MATCHER` emits, split
+    on `|` - what a test checks against `CURSOR_DOCUMENTED_TOOL_TYPES`
+    (traceability: every emitted name must be documented) and against the
+    deliberately narrowed mutating subset this module actually emits
+    (fix round 1, C2's own binding instruction: `Shell|Write|Delete`).
+    """
+    return frozenset(CURSOR_PRETOOLUSE_MATCHER.split("|"))
+
 # The task's binding instruction: Cursor's `beforeShellExecution` matches on
 # COMMAND TEXT via regex (Addendum 5), not a tool-name union - and no tool
 # vocabulary or command-shape allowlist is documented for Cursor to match
@@ -276,8 +312,11 @@ def build_cursor_manifest() -> dict[str, Any]:
     client that spec's PORTABLE (non-hook) components already reach "at zero
     extra cost" - but the spec explicitly excludes hooks from v1
     ("V1 HAS NO HOOKS"), so whether Cursor's OWN hook loader expands this
-    placeholder is UNVERIFIED. `hooks status`/`hooks install --host cursor`
-    must report this specific gap; it is never asserted as a confirmed fact.
+    placeholder is UNVERIFIED. This exact gap is also carried on
+    `HOOK_ARTIFACTS["cursor"]["gap"]` (fix round 1, I2) so `hooks status`'s
+    structured `gap` field surfaces it the same way it already does for
+    Gemini's fragment-only gap - never only in a docstring a status read
+    cannot see.
     """
     root = "${PLUGIN_ROOT}"
     return {
@@ -288,7 +327,7 @@ def build_cursor_manifest() -> dict[str, Any]:
             ],
             "preToolUse": [
                 {
-                    "matcher": "Shell|Write|Edit|Delete",
+                    "matcher": CURSOR_PRETOOLUSE_MATCHER,
                     "failClosed": True,
                     "hooks": [_claude_style_entry(root, GATE_FAST_HOOK, timeout=3)],
                 },
@@ -437,6 +476,18 @@ HOOK_ARTIFACTS: dict[str, dict[str, Any]] = {
         "build": build_cursor_manifest,
         "emitted": cursor_emitted_events,
         "allowed_events": CURSOR_HOOK_EVENTS,
+        # Fix round 1, I2 (review Important): this gap was previously only
+        # documented in `build_cursor_manifest`'s own docstring, invisible
+        # to `hooks status`'s structured `gap` field - asymmetric with
+        # Gemini's entry below, and a live violation of this module's own
+        # governing rule that a gap is surfaced honestly, not silently
+        # shipped as if confirmed.
+        "gap": "plugin-root variable (${PLUGIN_ROOT}) is a best-effort choice "
+               "for the hooks loader specifically - Addendum 5 names no "
+               "plugin-root variable at all, and the Agent Plugins "
+               "Specification v1.0.0 (the source of ${PLUGIN_ROOT}) "
+               "explicitly excludes hooks from v1; unverified until a live "
+               "probe confirms Cursor's hook loader expands it",
     },
     "gemini": {
         "mode": "dedicated",
