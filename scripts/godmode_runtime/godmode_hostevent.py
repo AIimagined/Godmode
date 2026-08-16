@@ -100,6 +100,7 @@ import hashlib
 import os
 import re
 from typing import Any
+import unicodedata
 
 SCHEMA = 1
 
@@ -462,18 +463,71 @@ _APPLY_PATCH_STRICT = (_APPLY_PATCH_ADD, _APPLY_PATCH_DELETE,
 # Fix round 1, C1 (review Critical): a LOOSE detector, deliberately not
 # anchored and deliberately case-insensitive - the strict regexes above
 # require column-0, single-space, exact-case text; this one exists purely
-# to catch a line that LOOKS like a directive (the `***` marker plus an
-# Add/Update/Delete File or Move to keyword, ANY leading whitespace, ANY
-# spacing around the marker/keyword/colon, ANY case) but does not match
-# them. Reviewer's live repro: "*** Add File: harmless.txt" alongside
+# to catch a line that LOOKS like a directive but does not match them.
+# Reviewer's live repro: "*** Add File: harmless.txt" alongside
 # "  *** Add File: /etc/passwd" (two-space indent) used to silently keep
-# only the first - `_malformed_directive_lines` below is what makes the
-# whole call fail closed instead. Defense-in-depth, not precision-matching
-# Codex's own grammar: a false positive here (an ordinary content line that
-# happens to contain this text) costs one fail-closed call; a false
-# negative costs a silently-dropped mutation target.
-_DIRECTIVE_LOOKALIKE = re.compile(
-    r"\*\*\*\s*(?:Add File|Update File|Delete File|Move to)\s*:", re.IGNORECASE)
+# only the first - `has_malformed_directive` below is what makes the whole
+# call fail closed instead.
+#
+# Fix round 2 (re-review adversarial extension): round 1's version matched
+# literal `***` + keyword + colon, which two smuggling vectors defeated -
+# a Unicode zero-width character breaking the literal `***` run (`**<ZWSP>*
+# Add File: /etc/passwd`), and a directive keyword with no trailing colon
+# (`*** Add File /etc/passwd`). Both used to read as ordinary content (no
+# lookalike match => not malformed => not a recognised target either =>
+# silently dropped, call proceeds on whatever DID parse). Fixed two ways:
+#
+# 1. `_normalize_for_lookalike` strips every Unicode category-Cf character
+#    (zero-width space/joiner/non-joiner, BOM anywhere in the line, LRM/
+#    RLM, and any other "format" character Unicode ever defines - looked
+#    up by `unicodedata.category`, never a hardcoded partial list of code
+#    points) and folds whitespace runs, BEFORE lookalike matching only.
+#    The STRICT grammar above still parses the ORIGINAL, un-normalized
+#    line - this normalization exists purely to make the loose detector at
+#    least as permissive as any plausible host parser, never to change
+#    what counts as a valid directive.
+# 2. The colon requirement is dropped: `_looks_directive_like` now asks
+#    only "does a run of 2+ asterisks appear, followed somewhere later in
+#    the (normalized) line by a directive keyword" - `Add|Update|Delete|
+#    Rename` + `File`, or `Move` + `to`/`File`. `Rename` is included even
+#    though this repo's own strict grammar only ever emits `rename` via a
+#    `Move to` pairing - the detector's job is to be broader than what we
+#    parse, not equal to it.
+#
+# The detector's job is to OVER-TRIGGER, not to precision-match Codex's
+# grammar: a false positive here costs one fail-closed `apply_patch` call
+# (recoverable - ask/deny, staged capability, or the operator running it
+# themselves); a false negative is a silently-dropped scope-fence bypass.
+# If the real Codex parser turns out to be stricter than this detector on
+# any axis, over-triggering here is harmless - the call simply fails closed
+# on text the real tool would have rejected anyway.
+_STAR_RUN = re.compile(r"\*{2,}")
+_DIRECTIVE_KEYWORD = re.compile(
+    r"(?:Add|Update|Delete|Rename)\s*File\b|Move\s*(?:to|File)\b", re.IGNORECASE)
+
+
+def _normalize_for_lookalike(line: str) -> str:
+    """Detection-only normalization - never applied to the line the STRICT
+    grammar parses. Strips Unicode category-Cf ("format") characters by
+    category lookup (not a hardcoded list: BOM/ZWSP/ZWJ/ZWNJ/LRM/RLM and
+    anything else Unicode ever classifies as Cf), then folds every run of
+    whitespace (including whatever whitespace a stripped format character
+    left behind) down to a single space.
+    """
+    without_format_chars = "".join(
+        ch for ch in line if unicodedata.category(ch) != "Cf")
+    return re.sub(r"\s+", " ", without_format_chars)
+
+
+def _looks_directive_like(normalized_line: str) -> bool:
+    """`True` iff a run of 2+ asterisks appears, followed somewhere later
+    in the line by a directive keyword - colon optional, spacing
+    irrelevant (already folded by `_normalize_for_lookalike`).
+    """
+    star = _STAR_RUN.search(normalized_line)
+    if star is None:
+        return False
+    return _DIRECTIVE_KEYWORD.search(normalized_line, star.end()) is not None
 
 # Field names tried, in order, for the patch body and the shell command
 # text. Codex's exact hook-payload field names are not published (spec's
@@ -528,18 +582,23 @@ def apply_patch_targets(patch_text: str) -> list[tuple[str, str]]:
 
 
 def has_malformed_directive(patch_text: str) -> bool:
-    """Fix round 1, C1: `True` iff any line in `patch_text` LOOKS like a
-    patch directive (`_DIRECTIVE_LOOKALIKE`) but does not match one of the
-    four STRICT grammars `apply_patch_targets` requires. The caller's job
-    is to fail the WHOLE call closed when this is `True` - never to trust
-    `apply_patch_targets`'s output as "the complete picture" once any line
-    in the body looked directive-shaped and failed to parse. Ordinary patch
-    content (`+`/`-` diff lines, `*** Begin Patch`/`*** End Patch`) never
-    matches the lookalike pattern at all, so a normal, fully well-formed
-    patch never trips this.
+    """Fix round 1, C1 (widened in fix round 2): `True` iff any line in
+    `patch_text` LOOKS like a patch directive - after Unicode-format-
+    character stripping and whitespace folding (`_normalize_for_lookalike`,
+    fix round 2), a 2+-asterisk run followed by a directive keyword,
+    colon optional (`_looks_directive_like`) - but the ORIGINAL,
+    un-normalized line does not match one of the four STRICT grammars
+    `apply_patch_targets` requires. The caller's job is to fail the WHOLE
+    call closed when this is `True` - never to trust `apply_patch_targets`'s
+    output as "the complete picture" once any line in the body looked
+    directive-shaped and failed to parse. Ordinary patch content (`+`/`-`
+    diff lines, `*** Begin Patch`/`*** End Patch`, a markdown `**bold**`
+    line with no directive keyword after the asterisks) never matches the
+    lookalike pattern at all, so a normal, fully well-formed patch never
+    trips this.
     """
     for line in patch_text.splitlines():
-        if not _DIRECTIVE_LOOKALIKE.search(line):
+        if not _looks_directive_like(_normalize_for_lookalike(line)):
             continue
         if any(pattern.match(line) for pattern in _APPLY_PATCH_STRICT):
             continue

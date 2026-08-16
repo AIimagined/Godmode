@@ -267,6 +267,16 @@ class ApplyPatchMalformedDirectiveTests(unittest.TestCase):
     """Fix round 1, C1 (review Critical): a patch mixing one well-formed
     directive with one malformed/indented one must fail the WHOLE call
     closed - partial recognition is never allowed to shrink the target set.
+
+    Fix round 2 (re-review adversarial extension) widened the detector
+    itself: two smuggling vectors used to defeat round 1's lookalike regex
+    outright - a Unicode zero-width character breaking the literal `***`
+    run, and a directive keyword with no trailing colon - both read as
+    ordinary content (not a recognised target, not flagged malformed) and
+    were silently dropped while the call proceeded on whatever DID parse.
+    `UnicodeAndColonlessDirectiveTests` below is the reviewer's own
+    adversarial repro, plus the additional Cf characters and the negative
+    markdown control the round-2 order named explicitly.
     """
 
     def test_has_malformed_directive_detects_the_reviewers_exact_repro(self) -> None:
@@ -327,6 +337,75 @@ class ApplyPatchMalformedDirectiveTests(unittest.TestCase):
         self.assertEqual(kind, "refusal")
         self.assertEqual(subject, "apply-patch-malformed-directive")
         self.assertEqual(data["host"], "codex")
+
+
+class UnicodeAndColonlessDirectiveTests(unittest.TestCase):
+    """Fix round 2 (re-review adversarial extension, both reviewer vectors
+    plus the additional cases the round-2 order named): a directive line
+    must be caught as malformed (never silently dropped as ordinary
+    content) whether it is disguised with an invisible Unicode character
+    or missing its colon. Every Unicode character below is spelled as an
+    explicit `\\uXXXX` escape - never a literal invisible glyph pasted into
+    source - so the exact code point under test is unambiguous on read.
+    """
+
+    ZWSP = "\u200b"             # ZERO WIDTH SPACE (Cf)
+    FEFF = "\ufeff"             # ZERO WIDTH NO-BREAK SPACE / BOM (Cf)
+    ZWJ = "\u200d"              # ZERO WIDTH JOINER (Cf)
+    RLM = "\u200f"              # RIGHT-TO-LEFT MARK (Cf)
+    INVISIBLE_TIMES = "\u2062"  # Cf, unrelated to any named vector
+
+    def test_zero_width_space_inside_the_star_run_is_still_caught(self) -> None:
+        # Reviewer's exact adversarial repro: a ZWSP breaks the literal
+        # `***` run round 1's detector required.
+        malformed = f"**{self.ZWSP}* Add File: /etc/passwd\n+pwned\n"
+        patch = "*** Add File: harmless.txt\n+hi\n" + malformed
+        self.assertTrue(he.has_malformed_directive(patch))
+
+    def test_a_directive_keyword_with_no_colon_is_still_caught(self) -> None:
+        # Reviewer's exact second adversarial repro.
+        patch = "*** Add File: harmless.txt\n+hi\n*** Add File /etc/passwd\n+pwned\n"
+        self.assertTrue(he.has_malformed_directive(patch))
+
+    def test_u_feff_mid_line_is_still_caught(self) -> None:
+        patch = f"*** Add{self.FEFF} File: /etc/passwd\n+pwned\n"
+        self.assertTrue(he.has_malformed_directive(patch))
+
+    def test_zero_width_joiner_is_still_caught(self) -> None:
+        patch = f"**{self.ZWJ}* Add File: /etc/passwd\n+pwned\n"
+        self.assertTrue(he.has_malformed_directive(patch))
+
+    def test_leading_bom_on_the_directive_line_itself_is_still_caught(self) -> None:
+        patch = f"{self.FEFF}*** Add File /etc/passwd\n+pwned\n"
+        self.assertTrue(he.has_malformed_directive(patch))
+
+    def test_right_to_left_mark_inside_the_keyword_is_still_caught(self) -> None:
+        patch = (f"*** Add File: harmless.txt\n+hi\n"
+                 f"*** Delete{self.RLM} File: /etc/passwd\n")
+        self.assertTrue(he.has_malformed_directive(patch))
+
+    def test_the_green_control_still_allows_a_well_formed_multi_target_patch(self) -> None:
+        patch = "*** Add File: a.py\n+x\n*** Add File: b.py\n+y\n"
+        self.assertFalse(he.has_malformed_directive(patch))
+
+    def test_innocuous_markdown_bold_never_trips_the_widened_detector(self) -> None:
+        # Negative control the round-2 order named explicitly: two
+        # asterisks with no directive keyword after them must never
+        # false-positive, even though the widened detector no longer
+        # requires a colon.
+        patch = "+See the **bold** text in the README for details.\n"
+        self.assertFalse(he.has_malformed_directive(patch))
+
+    def test_normalize_strips_every_cf_category_character_not_a_hardcoded_list(self) -> None:
+        # Category lookup, not an enumerated set: an arbitrary Cf character
+        # unrelated to any of the named vectors is stripped the same way.
+        self.assertEqual(
+            he._normalize_for_lookalike(f"a{self.INVISIBLE_TIMES}b"), "ab")
+
+    def test_normalize_folds_whitespace_runs_left_behind_by_stripping(self) -> None:
+        self.assertEqual(
+            he._normalize_for_lookalike(f"Add{self.ZWSP}{self.ZWSP}  File"),
+            "Add File")
 
 
 class GrokAdapterTests(unittest.TestCase):
