@@ -18,6 +18,7 @@
     "governance gate for coding agents"
   ],
   "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
   "interface": {
     "displayName": "Godmode",
     "shortDescription": "Local continuity and guarded coding workflows.",

@@ -13,9 +13,9 @@ continuity without placing operational memory in tracked project files.
 ## Entry sequence
 
 1. Identify the project root and read its active instructions.
-2. Resolve the bundled `scripts/godmode.py` from the plugin root. In Claude Code, the
-   plugin root is two directories above `${CLAUDE_SKILL_DIR}`; in another host, use the
-   equivalent loaded-skill location. Do not assume the user's project contains this script.
+2. Resolve the bundled `scripts/godmode.py` from the plugin root: use `$GROK_PLUGIN_ROOT`
+   if set, else `$CLAUDE_PLUGIN_ROOT` if set, else the directory two levels above this
+   skill file. Do not assume the user's project contains this script.
 3. If Godmode is initialized, run `python <plugin-root>/scripts/godmode.py --project <root> context status`.
 4. For a new or uncertain session, use `resume --refresh`; otherwise use `resume`.
 5. Separate observed facts, declared intent, assumptions, conflicts, and open obligations.

@@ -33,6 +33,12 @@
         "claude-code": ".claude-plugin/plugin.json",
         "codex": ".codex-plugin/plugin.json",
         "grok": ".grok-plugin/plugin.json"
+      },
+      "host_hook_manifests": {
+        "codex": "hooks/hooks.json",
+        "grok": ".grok-plugin/hooks.json",
+        "cursor": ".cursor-plugin/hooks.json",
+        "gemini": ".gemini-plugin/hooks-fragment.json"
       }
     }
   }
