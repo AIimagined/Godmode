@@ -278,13 +278,29 @@ def resolve_anchor(project: str | Path) -> ProjectAnchor:
 def current_host() -> str:
     """The host label this process believes it is running under.
 
-    Declared, not detected: `GODMODE_HOST` is the explicit override; a host
-    that sets `CLAUDE_CODE_ENTRYPOINT` (Claude Code always does) is read from
-    that one fact instead. Neither present reads as "unknown" rather than a
-    guess - the same "an unknown is reported, not assumed" discipline
-    `host_capabilities` applies to every control it names.
+    Declared, not detected: `GODMODE_HOST` is the explicit override. Absent
+    that, `GROK_AGENT`'s mere presence (Grok sessions set it - CX-2, Addendum
+    6) reads as `"grok"`, and `CLAUDE_CODE_ENTRYPOINT`'s mere presence (Claude
+    Code always sets it) reads as `"claude"` - the FACT of either variable
+    being set is the signal, not its content, matching
+    `godmode_hostevent.detect_host`'s identical env-var chain
+    (`GODMODE_HOST || GROK_AGENT || CLAUDE_CODE_ENTRYPOINT || ...`) so the two
+    modules can never disagree about which host a proof record or a decision
+    envelope was produced for. (Pre-CX-2 this returned
+    `CLAUDE_CODE_ENTRYPOINT`'s raw value, e.g. `"cli"`, rather than the
+    literal `"claude"` - nothing pinned that passthrough in a test, and it
+    could never have matched a host label any adapter dispatches on.) Nothing
+    present reads as "unknown" rather than a guess - the same "an unknown is
+    reported, not assumed" discipline `host_capabilities` applies to every
+    control it names.
     """
-    return os.environ.get("GODMODE_HOST") or os.environ.get("CLAUDE_CODE_ENTRYPOINT") or "unknown"
+    if os.environ.get("GODMODE_HOST"):
+        return os.environ["GODMODE_HOST"]
+    if os.environ.get("GROK_AGENT"):
+        return "grok"
+    if os.environ.get("CLAUDE_CODE_ENTRYPOINT"):
+        return "claude"
+    return "unknown"
 
 
 def host_capabilities(*, tool_call_interception: str | None = None) -> dict[str, Any]:

@@ -98,8 +98,10 @@ class ToolOperationTests(unittest.TestCase):
             tool_operation("Write", {"file_path": "src/app.py"}), "write file src/app.py")
         self.assertEqual(
             tool_operation("Edit", {"file_path": "src/app.py"}), "edit file src/app.py")
-        # An unknown tool still yields something the classifier can fail closed on.
-        self.assertIn("Unknown", tool_operation("Unknown", {"x": 1}))
+        # CX-2: the old generic "<tool> tool invocation" fallback is gone.
+        # An unknown tool now returns None; the caller (godmode_hostevent.py's
+        # adapters) routes that to its own fail-closed unrecognized-tool path.
+        self.assertIsNone(tool_operation("Unknown", {"x": 1}))
 
 
 class PreToolGateTests(unittest.TestCase):
