@@ -18,7 +18,7 @@
     ],
     "preToolUse": [
       {
-        "matcher": "Shell|Write|Edit|Delete",
+        "matcher": "Shell|Write|Delete",
         "failClosed": true,
         "hooks": [
           {

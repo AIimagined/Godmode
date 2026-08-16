@@ -104,10 +104,17 @@ class NewSurfaceTests(unittest.TestCase):
             str(event).lower()
             for event in (declared.get("hooks") or {}).keys()
         }
-        # Map the host's event names onto the surfaces named above.
+        # Map the host's event names onto the surfaces named above. CX-3
+        # merged Codex's own native, snake_case event keys into this same
+        # shared file (`session_start`, `pre_tool_use`) alongside Claude's
+        # CamelCase ones - they invoke the exact same CLI branches
+        # (`session-start`/the fast gate) as their Claude-cased aliases, so
+        # they map onto the SAME already-registered surfaces, not new ones.
         known = {
             "pretooluse": "pre-tool gate",
+            "pre_tool_use": "pre-tool gate",
             "sessionstart": "session-start hook",
+            "session_start": "session-start hook",
             "userpromptsubmit": "user-prompt hook",
             "precompact": "pre-compact hook",
             "sessionend": "session-end hook",

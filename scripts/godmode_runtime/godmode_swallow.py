@@ -446,9 +446,24 @@ def _is_under_claude_worktrees(parts: tuple[str, ...]) -> bool:
     scan time. `IGNORED_DIRECTORY_NAMES` (a flat name set) cannot express
     this: `"worktrees"` alone would also skip an unrelated directory
     legitimately named that anywhere else in a project, and `".claude"`
-    alone would skip real project configuration that happens to live there.
+    alone would skip real project configuration that happens to live here.
     Only the exact ADJACENT pair - a `.claude` component immediately
     followed by a `worktrees` component - is excluded.
+
+    Fix round 1 (C1, review Critical): `parts` MUST be the path's components
+    RELATIVE TO THE SCAN ROOT, never the raw absolute path - the caller
+    (`scan_project`) is the one that enforces this, via
+    `path.relative_to(project).parts`. Every task in this project runs
+    inside a `.claude/worktrees/<agent-id>/` checkout by the project's own
+    operating model, so the scan ROOT'S OWN ancestry (an absolute path like
+    `C:\\...\\godmode\\.claude\\worktrees\\agent-x\\scripts\\foo.py`) contains
+    this exact adjacent pair for every single file in the project - passing
+    the absolute path here excluded 100% of the tree and reported a false
+    `"clean"` verdict for any scan run the normal way this project runs
+    tasks. Only a `.claude/worktrees` pair NESTED INSIDE the scanned tree
+    (a real other-agent checkout sitting under this project) is the actual
+    double-counting bug this function exists to fix; the root's own
+    ancestry is irrelevant and must never reach this check.
     """
     for index in range(len(parts) - 1):
         if parts[index] == ".claude" and parts[index + 1] == "worktrees":
@@ -475,7 +490,12 @@ def scan_project(project: Path, limit: int = DEFAULT_SCAN_LIMIT) -> dict[str, An
             continue
         if any(part in IGNORED_DIRECTORY_NAMES for part in path.parts):
             continue
-        if _is_under_claude_worktrees(path.parts):
+        # Fix round 1 (C1): relative to the scan root, never the absolute
+        # path - see `_is_under_claude_worktrees`'s own docstring for why.
+        # `rglob` always yields a `path` under `project`, so `relative_to`
+        # never raises here in practice; the `project.rglob` contract is the
+        # guarantee, not a try/except this code needs to hedge with.
+        if _is_under_claude_worktrees(path.relative_to(project).parts):
             continue
         candidates.append(path)
 

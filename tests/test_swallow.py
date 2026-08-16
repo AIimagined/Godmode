@@ -607,6 +607,53 @@ class WorktreeExclusionTests(unittest.TestCase):
             report = scan_project(project)
             self.assertEqual(_checks(report["findings"]), ["empty-except"])
 
+    def test_a_scan_root_that_is_itself_nested_under_claude_worktrees_scans_normally(
+        self,
+    ) -> None:
+        """Fix round 1 (C1, review Critical): the exclusion must be computed
+        RELATIVE to the scan root, never against the root's own absolute
+        path - the mirror image of the bug this rider originally fixed.
+        Every task in this project runs from inside a
+        `.claude/worktrees/<agent-id>/` checkout by the project's own
+        operating model; a project whose OWN root happens to sit under that
+        exact adjacent pair (fabricated here, since `temp_project()` never
+        does this on its own) must scan its own real files, not read as a
+        0-candidate false "clean" the way the pre-fix absolute-path check
+        did (191 -> 0 files, live repro in the review)."""
+        with temp_project() as outer:
+            project = outer / ".claude" / "worktrees" / "agent-x" / "repo"
+            project.mkdir(parents=True)
+            (project / "a.py").write_text(
+                "try:\n    do_thing()\nexcept Exception:\n    pass\n", encoding="utf-8",
+            )
+            report = scan_project(project)
+            self.assertGreater(report["candidates"], 0, report)
+            self.assertEqual(_checks(report["findings"]), ["empty-except"])
+
+    def test_a_worktrees_dir_nested_inside_the_project_stays_excluded_even_when_the_root_itself_is_nested(
+        self,
+    ) -> None:
+        """Both halves of the path-segment-safety requirement at once: the
+        scan ROOT sits under `.claude/worktrees/` (must scan normally, per
+        the test above) AND the project ALSO contains its own nested
+        `.claude/worktrees/` copy (must still be excluded) - the relative
+        check must get both right simultaneously, not trade one bug for the
+        other."""
+        with temp_project() as outer:
+            project = outer / ".claude" / "worktrees" / "agent-x" / "repo"
+            project.mkdir(parents=True)
+            (project / "a.py").write_text(
+                "try:\n    do_thing()\nexcept Exception:\n    pass\n", encoding="utf-8",
+            )
+            nested = project / ".claude" / "worktrees" / "agent-y"
+            nested.mkdir(parents=True)
+            (nested / "b.py").write_text(
+                "try:\n    do_other()\nexcept Exception:\n    pass\n", encoding="utf-8",
+            )
+            report = scan_project(project)
+            self.assertEqual(_checks(report["findings"]), ["empty-except"])
+            self.assertEqual(report["candidates"], 1, report)
+
 
 if __name__ == "__main__":
     unittest.main()
