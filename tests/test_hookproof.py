@@ -276,6 +276,20 @@ class HostRegistrationGradeTests(unittest.TestCase):
         ):
             self.assertEqual(_auto_registration_grade("codex"), "soft")
 
+    def test_cursor_and_gemini_grade_partial_against_the_real_shipped_manifests(self) -> None:
+        # CX final review F2: CX-3 shipped real pre-tool hook manifests for
+        # both (`.cursor-plugin/hooks.json`, `.gemini-plugin/hooks-
+        # fragment.json`), so the structural grade against the ACTUAL
+        # shipped package root (no override, no mock) is `"partial"` -
+        # README.md's Host support table must not claim a flat
+        # `UNAVAILABLE` with a rationale ("neither exposes a pre-tool
+        # boundary") these two now contradict.
+        self.assertEqual(_auto_registration_grade("cursor"), "partial")
+        self.assertEqual(_auto_registration_grade("gemini"), "partial")
+        # OpenCode ships no manifest and stays the deliberate `"soft"` (or
+        # `"none"`) case - the row split is honest, not a blanket upgrade.
+        self.assertIn(_auto_registration_grade("opencode"), ("soft", "none"))
+
     def test_a_genuine_read_failure_still_grades_none_against_the_real_package_root(self) -> None:
         # Same repro, against a MOCK that raises instead of an empty
         # directory - confirms the fix is in the exception branch itself,

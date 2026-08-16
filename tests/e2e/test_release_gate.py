@@ -291,17 +291,30 @@ class CombinedRowMisattributionTests(unittest.TestCase):
         marker = _HOST_TO_E2E_MARKER.get("OpenCode")
         self.assertIsNone(marker, "OpenCode structurally cannot back a HARD claim")
 
-    def test_the_real_shipped_combined_row_is_read_correctly_today(self) -> None:
-        """The REAL `README.md` row this fix must parse correctly (review's
-        own citation, `README.md:237`, unchanged by this fix round) -
-        confirms the fix against the actual shipped file, not only a
-        synthetic one."""
+    def test_the_real_shipped_host_rows_split_opencode_from_cursor_and_gemini(self) -> None:
+        """CX final review F2: the old three-host combined row
+        (`"OpenCode, Cursor, Gemini CLI"`) went stale after CX-3 shipped
+        Cursor's and Gemini's own pre-tool hook manifests - grouping all
+        three under one `UNAVAILABLE` rationale no longer matched what
+        `_auto_registration_grade` actually returns for `cursor`/`gemini`
+        (`"partial"`, not `"none"`). The row is now split: OpenCode alone
+        (still no shipped manifest, still `UNAVAILABLE`), Cursor and Gemini
+        CLI together (both ship a manifest, both `PARTIAL`-when-declared,
+        `UNAVAILABLE` by default). Confirms the split against the actual
+        shipped file, not only a synthetic one - and that neither new row
+        drops a host or reintroduces an overclaim."""
         rows = _host_table_rows(README)
-        hosts_in_combined_row = {
-            host for host, row in rows
-            if "OpenCode" in row and "Cursor" in row and "Gemini CLI" in row
-        }
-        self.assertEqual(hosts_in_combined_row, {"OpenCode", "Cursor", "Gemini CLI"})
+        by_host = dict(rows)
+        for host in ("OpenCode", "Cursor", "Gemini CLI"):
+            self.assertIn(host, by_host, f"{host} row missing from README's host table")
+        # OpenCode is its own row now - it names neither Cursor nor Gemini
+        # CLI, unlike the old combined cell.
+        self.assertNotIn("Cursor", by_host["OpenCode"])
+        self.assertNotIn("Gemini CLI", by_host["OpenCode"])
+        # Cursor and Gemini CLI still share one row (the shared rationale:
+        # both ship a manifest, neither is live-probed).
+        self.assertEqual(by_host["Cursor"], by_host["Gemini CLI"])
+        self.assertNotIn("OpenCode", by_host["Cursor"])
 
 
 if __name__ == "__main__":
