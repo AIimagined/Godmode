@@ -200,16 +200,50 @@ class PreToolGateTests(unittest.TestCase):
 
 
 class CapabilityReportingTests(unittest.TestCase):
-    def test_interception_is_reported_hard_when_the_gate_is_installed(self) -> None:
+    """CX-1: the env-var sniff is gone. See tests/test_hookproof.py for the full
+    live-proof contract this exercises; this class only guards the specific
+    regression that motivated the change - an operator exporting
+    GODMODE_PRETOOL_GATE by hand used to fake HARD with no hook involved."""
+
+    def test_the_env_var_alone_never_fakes_hard(self) -> None:
         from godmode_runtime.godmode_anchor import host_capabilities
+        from godmode_runtime.godmode_hookproof import interception_state
 
         with mock.patch.dict(os.environ, {"GODMODE_PRETOOL_GATE": "1"}, clear=False):
-            self.assertEqual(
-                host_capabilities()["controls"]["tool_call_interception"], "HARD")
-        environment = {k: v for k, v in os.environ.items() if k != "GODMODE_PRETOOL_GATE"}
-        with mock.patch.dict(os.environ, environment, clear=True):
+            # No interception evidence passed at all: the same honest
+            # UNAVAILABLE as no proof existing.
             self.assertEqual(
                 host_capabilities()["controls"]["tool_call_interception"], "UNAVAILABLE")
+            with isolated_project() as (_project, archive):
+                # An archive with no proof record: still UNAVAILABLE, even
+                # with the variable set.
+                state = interception_state(archive, "claude")
+                self.assertEqual(
+                    host_capabilities(tool_call_interception=state)
+                    ["controls"]["tool_call_interception"],
+                    "UNAVAILABLE",
+                )
+
+    def test_interception_is_reported_hard_only_from_a_real_proof(self) -> None:
+        from godmode_runtime.godmode_anchor import current_host, host_capabilities
+        from godmode_runtime.godmode_hookproof import (
+            interception_state, record_interception_proof)
+
+        environment = {k: v for k, v in os.environ.items() if k != "GODMODE_PRETOOL_GATE"}
+        with mock.patch.dict(os.environ, environment, clear=True):
+            with isolated_project() as (_project, archive):
+                host = current_host()
+                self.assertEqual(
+                    host_capabilities(tool_call_interception=interception_state(archive, host))
+                    ["controls"]["tool_call_interception"],
+                    "UNAVAILABLE",
+                )
+                record_interception_proof(archive, host=host, tool="Bash", request_id="n1")
+                self.assertEqual(
+                    host_capabilities(tool_call_interception=interception_state(archive, host))
+                    ["controls"]["tool_call_interception"],
+                    "HARD",
+                )
 
 
 if __name__ == "__main__":

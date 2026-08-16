@@ -115,7 +115,8 @@ def opening_handshake(archive: Chronicle, anchor: Any, project: Path) -> dict[st
     instead of a difference in style. Includes the enforcement table, so the
     contract degrades honestly on hosts that cannot hold every control.
     """
-    from .godmode_anchor import host_capabilities, run_git
+    from .godmode_anchor import current_host, host_capabilities, run_git
+    from .godmode_hookproof import interception_state
     from .godmode_lens import repo_state
     from .godmode_plan import active_plan
 
@@ -155,7 +156,8 @@ def opening_handshake(archive: Chronicle, anchor: Any, project: Path) -> dict[st
             "read": 0,
             "statement": f"read 0 of {sources_total} required sources",
         },
-        "enforcement": host_capabilities()["controls"],
+        "enforcement": host_capabilities(
+            tool_call_interception=interception_state(archive, current_host()))["controls"],
         "agent": agent_fingerprint(),
     }
     if state["crisis"]:
