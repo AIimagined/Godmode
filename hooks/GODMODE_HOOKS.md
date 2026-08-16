@@ -69,3 +69,70 @@ gate must not brick a session.
 The remaining events are not registered automatically because enforcement guarantees
 vary by host. The adapter creates no listener, watcher, daemon, or background process.
 A host must invoke a gate event and honor its exit code for enforcement to exist.
+
+## The git-hook backstop (host-independent)
+
+Every boundary above only fires while a specific host is driving the terminal.
+`godmode hooks install --git` writes real, project-local git hooks
+(`pre-commit`, `pre-push`, `pre-rebase`, `post-checkout`) that call
+`python "<resolved godmode.py>" guard --git-hook <name> --json` and fail
+closed on a protected verdict — a second boundary at git's own chokepoint,
+independent of whatever (or nothing) invoked git. It is opt-in: install
+refuses unless the project has declared `{"git_backstop": true}` in
+`.godmode-authorization-policy.json`, and the declaration is tighten-only
+once observed (`declared_gate_ratchet`). A pre-existing, non-godmode hook is
+never overwritten — install skips it and reports it as `skipped_foreign`.
+
+**What each hook can and cannot see, stated plainly:**
+
+- `pre-push` reads the ref-update lines git writes to its stdin and can run
+  `git merge-base --is-ancestor` on the shas it was given. It cannot see the
+  `--force`/`--force-with-lease` flag itself — git never passes it. A
+  non-fast-forward update is treated as the force-push surrogate this hook
+  can honestly detect. Stdin that cannot be read, or that contains a line
+  that fails strict 4-field parsing, is never folded into "nothing to
+  push": under declared policy it fails closed (blocked, chronicled);
+  undeclared it stays advisory-only — a genuinely empty stdin, with no
+  lines at all, is the single case this hook treats as "no ref updates."
+- `pre-commit` sees only the staged file-name list, never diff content. It
+  can detect a pinned evaluator about to be committed, nothing else.
+- `pre-rebase` receives at most an upstream ref and a branch name and cannot
+  tell whether the commits it would rewrite were already pushed anywhere, so
+  every rebase is treated as protected, uniformly, rather than guessed at.
+- `post-checkout` runs AFTER git has already switched the working tree — a
+  nonzero exit here can never prevent the checkout, only report a problem
+  loudly (a pinned evaluator's on-disk content no longer matches its pinned
+  hash). `hooks status --git` states this boundary explicitly, per hook.
+
+A protected verdict under declared policy still honors a one-use capability
+staged with `godmode authorize stage` — the same escape valve every other
+R5-shaped refusal in this product already answers through, never a second,
+unconditional wall. `godmode hooks status --git` distinguishes a real
+godmode hook from an absent one, a git `.sample` template (never counted),
+and a foreign hook (never overwritten) — and, for a hook it does own,
+`godmode` (content matches what was installed) from `godmode-modified`
+(edited since). That match is computed by re-hashing the file's actual,
+current on-disk body (everything except its own digest header line) and
+comparing it against what that same header line claims, every time status
+runs — never by recomputing an independent "ideal" hash from the hook's
+name and path alone, which would (and once did) miss a hand-edit entirely
+as long as the header line itself was left untouched.
+`godmode hooks verify --git` proves the mechanism live: it builds a
+throwaway bare-remote-plus-working-repo pair, installs the real `pre-push`
+hook into that scratch repo alone, attempts an ordinary unauthorized push,
+and only on a confirmed block (exit code AND unchanged remote ref, never
+inferred from silence) records a CX-1 proof record with `host="git"`.
+Uninstalling (`hooks install --git --uninstall`) removes only the hooks this
+module owns and is itself a chronicled, counts-only event; the
+`git_backstop` declaration stays visible in `hooks status --git` regardless,
+via the same tighten-only ratchet.
+
+**Known, disclosed bypass.** `git push --no-verify` (and any client that
+skips or reroutes hooks, e.g. `git -c core.hooksPath=<elsewhere>`) skips
+every client-side hook including this one — git's own documented escape
+hatch, not a defect here. The git backstop raises the floor for the
+default/cooperative path; it is **not** an unbypassable wall for a caller
+with ordinary git-CLI access. Only host-level interception (the CX-1/CX-2/
+CX-3 adapters, where one exists for the host in use) closes that specific
+gap. `godmode hooks status --git`'s own output states this same fact
+(`known_bypass`) rather than leaving it only in this document.
