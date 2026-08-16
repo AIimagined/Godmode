@@ -1,0 +1,616 @@
+"""CX-4: git-hook enforcement backstop - a second boundary, host-independent.
+
+CX-1/CX-2/CX-3 all enforce at a HOST's own boundary (Claude's PreToolUse,
+Codex's pre_tool_use, ...). Every one of them shares the same weakness: they
+only fire while that host is the thing driving the terminal. A human running
+`git push --force` by hand, or an agent shelling out from a host this project
+has no adapter for yet, never touches any of them.
+
+This module writes real, project-local git hooks
+(`pre-commit`/`pre-push`/`pre-rebase`/`post-checkout`) that call back into
+this exact CLI (`godmode guard --git-hook <name> --json`) and fail closed on
+a protected verdict - at git's own chokepoint, independent of whatever host
+(or no host at all) invoked git. It is opt-in, tighten-only, and honest about
+a hard structural limit: **each hook only sees what git itself hands it**.
+
+**What each hook can and cannot see (stated once, read everywhere):**
+
+- `pre-push` reads the ref-update lines git writes to its stdin
+  (`<local-ref> <local-sha> <remote-ref> <remote-sha>`, one per updated ref)
+  and can run `git merge-base --is-ancestor` against the shas it was given.
+  It CANNOT see the `--force`/`--force-with-lease` flag itself - git does not
+  pass it. A non-fast-forward update (the remote sha is not an ancestor of
+  the local sha) is treated as the force-push surrogate this boundary can
+  honestly detect; every push is protected regardless (see `_decide` - a
+  plain `git push` is already protected under the interactive gate this
+  reuses), so a non-fast-forward push is not treated as a *different*
+  category, only reported with what evidence produced its operation text.
+- `pre-commit` sees only the staged file-name list (`git diff --cached
+  --name-only`), never diff content. It can detect a pinned evaluator about
+  to be committed; it cannot see WHAT changed in any file.
+- `pre-rebase` receives at most an upstream ref and a branch name, and
+  cannot determine whether the commits about to be rewritten were already
+  pushed anywhere. Every rebase is treated as protected, uniformly, rather
+  than guessing which ones are "safe" from information this hook does not
+  have.
+- `post-checkout` runs AFTER git has already switched the working tree - a
+  nonzero exit here can never prevent the checkout, only report a problem
+  loudly (specifically: a pinned evaluator's on-disk content no longer
+  matches its pinned hash). `hooks status --git` and this module's own
+  verdict payload both say so explicitly rather than implying a boundary
+  that does not exist.
+
+**Enforcement gate.** Install refuses unless the project has declared
+`{"git_backstop": true}` in `.godmode-authorization-policy.json`, read
+through `declared_gate_ratchet` (tighten-only, the same mechanism U-B3-5's
+absorption gate already uses) - so once observed declared, the declaration
+stays visible even if the key is later edited away. `guard --git-hook`
+re-checks the SAME declaration at run time (not merely at install time): a
+foreign process running an installed hook file after the policy was
+declared-then-removed still honors the ratchet's high-water mark, and a hook
+file that somehow survives without ever having been installed under a
+declared policy enforces nothing.
+
+**Capability escape valve.** A protected verdict under declared policy is
+not an unconditional wall: exactly like the interactive gate, a matching
+one-use capability staged with `godmode authorize stage --operation <exact
+text>` is consumed silently first (`CapabilityBroker.consume_staged`, the
+same broker every other R5-shaped refusal in this codebase already answers
+through). Only a protected operation with nothing staged actually blocks.
+
+**Never overwritten: foreign hooks.** A hook file already present that does
+not carry this module's own marker comment is left untouched, always -
+`install` reports it as `skipped_foreign` rather than clobbering someone
+else's pre-existing hook. `.sample` files (git's own uninstalled templates)
+are never even looked at: this module only ever reads/writes the exact hook
+filename, never anything with a suffix.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import subprocess
+import tempfile
+import uuid
+from pathlib import Path
+from typing import Any
+
+from .godmode_hookproof import SUBJECT_UNINSTALLED, SUBJECT_PROBE_FAILED, record_interception_proof
+from .godmode_sentinel import (
+    POLICY_FILENAME,
+    CapabilityBroker,
+    classify_action,
+    declared_gate_ratchet,
+    pin_file_digest,
+    pinned_evaluators,
+)
+
+# The four client-side git hooks this backstop writes. Every other client
+# hook git supports is left alone: these four are the ones whose exit code
+# can plausibly stop (pre-commit/pre-push/pre-rebase) or at least loudly
+# flag (post-checkout) the operation classes this product already governs.
+HOOK_NAMES: tuple[str, ...] = ("pre-commit", "pre-push", "pre-rebase", "post-checkout")
+
+# The one policy key this whole boundary rides. Riding `declared_gate_ratchet`
+# (godmode_sentinel.py) rather than inventing a second small policy file -
+# the exact DUPDRIFT lesson that function's own docstring already names.
+POLICY_KEY = "git_backstop"
+
+MARKER_PREFIX = "# godmode-git-hook:"
+HASH_PREFIX = "# godmode-hook-hash:"
+
+_ZERO_SHA = re.compile(r"^0+$")
+
+# scripts/godmode_runtime/godmode_githooks.py -> parents[2] is the package
+# root - the same __file__-relative resolution `godmode_hookproof.py` and
+# `godmode_host_manifests.py` already use, never `${CLAUDE_PLUGIN_ROOT}` or
+# any other host-specific variable a git hook has no way to expand anyway.
+_PACKAGE_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _resolved_godmode_py() -> Path:
+    return _PACKAGE_ROOT / "scripts" / "godmode.py"
+
+
+def _git(*args: str, cwd: Path, timeout: int = 15) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(cwd), *args], capture_output=True, text=True, timeout=timeout
+    )
+
+
+def _git_hooks_dir(project_root: Path) -> Path | None:
+    """The real hooks directory git itself would use, worktree-correct.
+
+    `git rev-parse --git-path hooks` (not a hand-assembled `.git/hooks`) so a
+    linked worktree, whose hooks live under the MAIN repository's common git
+    dir rather than the worktree's own `.git` file, still resolves to the one
+    directory git actually consults.
+    """
+    result = _git("rev-parse", "--git-path", "hooks", cwd=project_root)
+    if result.returncode != 0:
+        return None
+    raw = result.stdout.strip()
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_absolute():
+        path = Path(project_root) / path
+    try:
+        return path.resolve()
+    except OSError:
+        return path
+
+
+def _hook_script(name: str, godmode_py: Path) -> str:
+    """The full sh-compatible hook file body, marker + hash header included.
+
+    Forward-slashed and quoted: Windows Python accepts forward slashes in a
+    path unconditionally, and a quoted path with either slash style survives
+    POSIX `sh` unchanged - resolving the path once, at install time, into a
+    form that is safe on both interpreters, rather than trying to detect the
+    running platform inside the hook script itself.
+
+    `python3` is tried before `python` (`command -v`, POSIX-portable);
+    neither found fails closed with a message on stderr and a nonzero exit,
+    rather than silently letting the git operation through un-checked.
+    """
+    python_path = str(godmode_py).replace("\\", "/")
+    logic = (
+        "if command -v python3 >/dev/null 2>&1; then\n"
+        "    PYTHON=python3\n"
+        "elif command -v python >/dev/null 2>&1; then\n"
+        "    PYTHON=python\n"
+        "else\n"
+        "    echo \"godmode: no python3 or python found on PATH; git-hook backstop "
+        "cannot run (failing closed)\" >&2\n"
+        "    exit 1\n"
+        "fi\n"
+        f'"$PYTHON" "{python_path}" guard --git-hook {name} --json\n'
+        "exit $?\n"
+    )
+    digest = hashlib.sha256(f"{name}\n{logic}".encode("utf-8")).hexdigest()
+    header = (
+        "#!/bin/sh\n"
+        f"{MARKER_PREFIX} {name}\n"
+        f"{HASH_PREFIX} {digest}\n"
+        "# Generated by `godmode hooks install --git`; reinstall to update this file,\n"
+        "# never hand-edit it - a hand-edit stops matching its own recorded hash and\n"
+        "# `hooks status --git` reports it as godmode-modified rather than current.\n"
+        "# pre-push forwards stdin unchanged (git writes ref-update lines to it);\n"
+        "# every other hook name here is invoked with none read.\n"
+    )
+    return header + logic
+
+
+def _extract_marker(text: str) -> tuple[str | None, str | None]:
+    name = None
+    digest = None
+    for line in text.splitlines()[:8]:
+        if name is None and line.startswith(MARKER_PREFIX):
+            name = line[len(MARKER_PREFIX):].strip()
+        elif digest is None and line.startswith(HASH_PREFIX):
+            digest = line[len(HASH_PREFIX):].strip()
+    return name, digest
+
+
+def _hook_file_state(path: Path, expected_name: str, godmode_py: Path) -> dict[str, Any]:
+    """`absent` / `foreign` / `unreadable` / `godmode` / `godmode-modified`.
+
+    `foreign` covers both "no marker at all" and "a marker for a different
+    hook name" - a file this module would never itself have written under
+    THIS name, either way, and therefore never safe to overwrite blindly.
+    `.sample` files are never reached here: callers only ever pass the exact
+    hook filename, never a suffixed one.
+    """
+    if not path.is_file():
+        return {"state": "absent"}
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {"state": "unreadable"}
+    marker_name, digest = _extract_marker(text)
+    if marker_name is None or marker_name != expected_name:
+        return {"state": "foreign"}
+    expected_digest = _extract_marker(_hook_script(expected_name, godmode_py))[1]
+    if digest == expected_digest:
+        return {"state": "godmode", "hash": digest}
+    return {"state": "godmode-modified", "hash": digest}
+
+
+# --------------------------------------------------------------------------
+# install / status / uninstall
+# --------------------------------------------------------------------------
+
+
+def git_hooks_install(archive: Any, project_root: Path) -> dict[str, Any]:
+    """Write the four hooks under declared policy; refuse otherwise.
+
+    Never overwrites a foreign hook (`skipped_foreign`, never a silent
+    clobber). Re-running this after an earlier install is an ordinary
+    reinstall/update for any hook this module already owns.
+    """
+    declared = declared_gate_ratchet(archive, project_root, POLICY_KEY)
+    if not declared:
+        return {
+            "declared": False,
+            "installed": [],
+            "skipped_foreign": [],
+            "reason": (
+                f'install refused: declare {{"{POLICY_KEY}": true}} in {POLICY_FILENAME} '
+                "first (tighten-only - once observed declared, it stays declared even if "
+                "the key is later removed or edited away)"
+            ),
+        }
+    hooks_dir = _git_hooks_dir(project_root)
+    if hooks_dir is None:
+        return {
+            "declared": True,
+            "installed": [],
+            "skipped_foreign": [],
+            "reason": "not resolvable as a git repository (`git rev-parse --git-path "
+                      "hooks` failed); nothing to install into",
+        }
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    godmode_py = _resolved_godmode_py()
+    installed: list[str] = []
+    foreign: list[str] = []
+    for name in HOOK_NAMES:
+        path = hooks_dir / name
+        state = _hook_file_state(path, name, godmode_py)["state"]
+        if state in ("foreign", "unreadable"):
+            foreign.append(name)
+            continue
+        content = _hook_script(name, godmode_py)
+        path.write_bytes(content.encode("utf-8"))
+        try:
+            path.chmod(path.stat().st_mode | 0o111)
+        except OSError:
+            pass
+        installed.append(name)
+    if installed:
+        archive.append(
+            "action", "git-hooks-installed",
+            {"host": "git", "installed_count": len(installed), "foreign_count": len(foreign)},
+            evidence=[],
+        )
+    return {
+        "declared": True, "installed": installed, "skipped_foreign": foreign,
+        "hooks_dir": str(hooks_dir),
+    }
+
+
+def git_hooks_uninstall(archive: Any, project_root: Path) -> dict[str, Any]:
+    """Remove every godmode-owned hook; a foreign hook is left exactly alone.
+
+    Chronicled (counts only, per privacy doctrine - never the hook names)
+    via the SAME `hook-uninstalled` subject CX-1's `interception_state`
+    already treats as supersession, so an uninstalled git backstop also
+    correctly stops contributing to any HARD claim that record's freshness
+    logic reads. The `git_backstop` declaration itself is untouched: the
+    ratchet (`declared_gate_ratchet`) keeps it visible regardless.
+    """
+    hooks_dir = _git_hooks_dir(project_root)
+    removed: list[str] = []
+    if hooks_dir is not None:
+        godmode_py = _resolved_godmode_py()
+        for name in HOOK_NAMES:
+            path = hooks_dir / name
+            state = _hook_file_state(path, name, godmode_py)["state"]
+            if state not in ("godmode", "godmode-modified"):
+                continue
+            try:
+                path.unlink()
+            except OSError:
+                continue
+            removed.append(name)
+    record = archive.append(
+        "action", SUBJECT_UNINSTALLED,
+        {"host": "git", "removed_count": len(removed)}, evidence=[],
+    )
+    return {
+        "removed_count": len(removed),
+        "record_sequence": record["sequence"],
+        "declared_still_visible": declared_gate_ratchet(archive, project_root, POLICY_KEY),
+    }
+
+
+_BOUNDARY_NOTES: dict[str, str] = {
+    "pre-push": "reads stdin ref-update lines and `git merge-base --is-ancestor` on the "
+                "shas git hands it; CANNOT see the --force/--force-with-lease flag itself, "
+                "only its non-fast-forward sha-level consequence",
+    "pre-commit": "sees the staged file-name list only (`git diff --cached --name-only`); "
+                  "detects a pinned evaluator about to be committed, nothing about content",
+    "pre-rebase": "sees only that a rebase is starting, never whether the commits it would "
+                  "rewrite were already pushed anywhere; treats every rebase as protected, "
+                  "uniformly, rather than guessing",
+    "post-checkout": "runs AFTER the checkout already happened; a nonzero exit here reports "
+                     "a problem (a pinned evaluator's content changed) and cannot undo it",
+}
+
+
+def git_hooks_status(archive: Any, project_root: Path) -> dict[str, Any]:
+    """Per-hook state, the declared policy, and the honesty notes for each boundary."""
+    declared = declared_gate_ratchet(archive, project_root, POLICY_KEY)
+    hooks_dir = _git_hooks_dir(project_root)
+    if hooks_dir is None:
+        return {
+            "declared": declared, "hooks_dir": None,
+            "hooks": {name: {"state": "no-git"} for name in HOOK_NAMES},
+            "boundary_notes": dict(_BOUNDARY_NOTES),
+        }
+    godmode_py = _resolved_godmode_py()
+    hooks = {name: _hook_file_state(hooks_dir / name, name, godmode_py) for name in HOOK_NAMES}
+    return {
+        "declared": declared, "hooks_dir": str(hooks_dir), "hooks": hooks,
+        "boundary_notes": dict(_BOUNDARY_NOTES),
+    }
+
+
+# --------------------------------------------------------------------------
+# guard --git-hook evaluation
+# --------------------------------------------------------------------------
+
+
+def _decide(archive: Any, project_root: Path, hook_name: str, operation: str) -> dict[str, Any]:
+    """Classify one synthesized operation and decide allow/block.
+
+    Reuses the exact classifier and capability broker the interactive gate
+    already answers through - a plain `git push` is already protected there
+    (`git-history-or-remote`), so this backstop's "protected" set is not a
+    second, independently-tuned list to keep in sync with the first.
+    """
+    declared = declared_gate_ratchet(archive, project_root, POLICY_KEY)
+    verdict = classify_action(operation, project_root=project_root, archive=archive)
+    result: dict[str, Any] = {
+        "git_hook": hook_name,
+        "category": verdict["category"],
+        "tier": verdict["tier"],
+        "protected": verdict["protected"],
+        "policy_declared": declared,
+        "operation_digest": verdict["operation_digest"],
+    }
+    if not verdict["protected"]:
+        result["verdict"] = "allow"
+        return result
+    if not declared:
+        result["verdict"] = "allow"
+        result["reason"] = (
+            f"protected under the interactive gate, but {POLICY_KEY!r} is not declared in "
+            f"{POLICY_FILENAME}; the git backstop stays advisory-only until it is"
+        )
+        return result
+    consumed = CapabilityBroker(archive).consume_staged(operation)
+    if consumed is not None:
+        result["verdict"] = "allow"
+        result["capability_consumed"] = True
+        return result
+    result["verdict"] = "block"
+    result["reason"] = (
+        "refused by the declared git_backstop policy; stage a one-use capability for "
+        f"this exact operation first: `godmode authorize stage --operation {operation!r}`"
+    )
+    return result
+
+
+def _parse_pre_push_refs(stdin_text: str) -> list[tuple[str, str, str, str]]:
+    updates: list[tuple[str, str, str, str]] = []
+    for line in stdin_text.splitlines():
+        parts = line.split()
+        if len(parts) == 4:
+            updates.append((parts[0], parts[1], parts[2], parts[3]))
+    return updates
+
+
+def _is_fast_forward(project_root: Path, ancestor_sha: str, descendant_sha: str) -> bool:
+    result = _git(
+        "merge-base", "--is-ancestor", ancestor_sha, descendant_sha,
+        cwd=project_root, timeout=15,
+    )
+    return result.returncode == 0
+
+
+def _evaluate_pre_push(archive: Any, project_root: Path, stdin_text: str) -> dict[str, Any]:
+    updates = _parse_pre_push_refs(stdin_text)
+    if not updates:
+        return {
+            "git_hook": "pre-push", "verdict": "allow", "ref_updates": 0,
+            "reason": "no ref-update lines read from stdin (nothing to push, or stdin "
+                      "unavailable)",
+        }
+    results = []
+    for local_ref, local_sha, remote_ref, remote_sha in updates:
+        if _ZERO_SHA.match(local_sha):
+            operation = f"git push --delete origin {remote_ref}"
+        elif _ZERO_SHA.match(remote_sha):
+            operation = f"git push origin {local_ref}:{remote_ref}"
+        elif not _is_fast_forward(project_root, remote_sha, local_sha):
+            # The force-push surrogate this hook can honestly detect: it did
+            # not see a --force flag, it saw history that could only have
+            # reached this state THROUGH one.
+            operation = f"git push --force origin {local_ref}:{remote_ref}"
+        else:
+            operation = f"git push origin {local_ref}:{remote_ref}"
+        results.append(_decide(archive, project_root, "pre-push", operation))
+    blocking = next((r for r in results if r["verdict"] == "block"), None)
+    result = dict(blocking if blocking is not None else results[-1])
+    result["ref_updates"] = len(updates)
+    result["detects"] = _BOUNDARY_NOTES["pre-push"]
+    return result
+
+
+def _staged_paths(project_root: Path) -> list[str]:
+    result = _git("diff", "--cached", "--name-only", cwd=project_root, timeout=10)
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _evaluate_pre_commit(archive: Any, project_root: Path) -> dict[str, Any]:
+    staged = _staged_paths(project_root)
+    if not staged:
+        return {
+            "git_hook": "pre-commit", "verdict": "allow", "staged_files": 0,
+            "reason": "no staged changes visible to pre-commit",
+        }
+    results = [_decide(archive, project_root, "pre-commit", f"edit file {path}")
+               for path in staged]
+    blocking = next((r for r in results if r["verdict"] == "block"), None)
+    result = dict(blocking if blocking is not None else results[-1])
+    result["staged_files"] = len(staged)
+    result["detects"] = _BOUNDARY_NOTES["pre-commit"]
+    return result
+
+
+def _evaluate_pre_rebase(archive: Any, project_root: Path) -> dict[str, Any]:
+    # One coarse operation text for every rebase: pre-rebase's own visibility
+    # cannot distinguish which upstream/branch is "safe", so a staged
+    # capability here is a one-time "allow the next rebase", not "allow
+    # rebasing THIS branch onto THAT upstream" - stated, not implied.
+    result = _decide(archive, project_root, "pre-rebase", "git rebase")
+    result["detects"] = _BOUNDARY_NOTES["pre-rebase"]
+    return result
+
+
+def _evaluate_post_checkout(archive: Any, project_root: Path) -> dict[str, Any]:
+    declared = declared_gate_ratchet(archive, project_root, POLICY_KEY)
+    pins = pinned_evaluators(archive)
+    tampered = []
+    for path, expected_hash in pins.items():
+        target = Path(project_root) / path
+        actual = pin_file_digest(target) if target.is_file() else None
+        if actual != expected_hash:
+            tampered.append(path)
+    base = {
+        "git_hook": "post-checkout", "pinned_checked": len(pins),
+        "policy_declared": declared, "detects": _BOUNDARY_NOTES["post-checkout"],
+    }
+    if not tampered or not declared:
+        base["verdict"] = "allow"
+        if tampered:
+            base["reason"] = (
+                f"{len(tampered)} pinned evaluator(s) changed via this checkout, but "
+                f"{POLICY_KEY!r} is not declared; reported, not enforced"
+            )
+        return base
+    base.update({
+        "verdict": "block", "protected": True, "category": "pinned-evaluator-mutation",
+        "tampered_pinned_count": len(tampered),
+        "reason": "a pinned evaluator's content changed via this checkout; the checkout "
+                  "already happened - this only reports it loudly (see 'detects')",
+    })
+    return base
+
+
+def evaluate_git_hook(
+    archive: Any, project_root: Path, name: str, stdin_text: str = ""
+) -> dict[str, Any]:
+    if name == "pre-push":
+        return _evaluate_pre_push(archive, project_root, stdin_text)
+    if name == "pre-commit":
+        return _evaluate_pre_commit(archive, project_root)
+    if name == "pre-rebase":
+        return _evaluate_pre_rebase(archive, project_root)
+    if name == "post-checkout":
+        return _evaluate_post_checkout(archive, project_root)
+    raise ValueError(f"unknown git hook name {name!r}; expected one of {HOOK_NAMES}")
+
+
+# --------------------------------------------------------------------------
+# verify --git
+# --------------------------------------------------------------------------
+
+
+def run_git_verify(archive: Any, *, host: str = "git", timeout: int = 30) -> dict[str, Any]:
+    """CX-4's own live proof, mirroring `godmode_hookproof.run_probe`.
+
+    Builds a fully throwaway bare-remote + working-repo pair, declares the
+    policy and installs the real `pre-push` hook INSIDE that scratch repo
+    only (an isolated, temporary godmode state - `GODMODE_STATE_HOME`
+    pointed at a directory inside the same temp dir, restored in `finally`
+    regardless of outcome), then attempts an ordinary, unauthorized
+    `git push`. A plain push is already protected under the interactive
+    gate this backstop reuses, so this does not need to manufacture a
+    non-fast-forward scenario to prove the mechanism actually blocks
+    something real: exit code AND unchanged remote ref are both checked
+    (never inferred from silence).
+
+    Only on a confirmed block does this write a CX-1 proof record - into the
+    CALLER's real archive, `host="git"` - via
+    `godmode_hookproof.record_interception_proof`. A failed attempt writes
+    `SUBJECT_PROBE_FAILED` (host="git") instead, so a later, verify-less
+    `hooks status --git`/`hooks status` read via `interception_state`
+    reflects the failure too, not only this one response.
+    """
+    nonce = uuid.uuid4().hex[:12]
+    result: dict[str, Any] = {"host": host, "nonce": nonce, "state": "UNAVAILABLE"}
+
+    def _fail(detail: str) -> dict[str, Any]:
+        result["detail"] = detail[:200]
+        try:
+            archive.append(
+                "action", SUBJECT_PROBE_FAILED,
+                {"host": host, "reason": "git-verify-failed"}, evidence=[],
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return result
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="godmode-git-verify-") as raw:
+            base = Path(raw)
+            remote = base / "remote.git"
+            work = base / "work"
+            for command in (["init", "-q", "--bare", str(remote)], ["init", "-q", str(work)]):
+                completed = _git(*command, cwd=base, timeout=timeout)
+                if completed.returncode != 0:
+                    return _fail(f"scratch git setup failed: {completed.stderr.strip()}")
+            _git("config", "user.email", "godmode-verify@example.invalid", cwd=work, timeout=timeout)
+            _git("config", "user.name", "godmode-verify", cwd=work, timeout=timeout)
+            _git("checkout", "-q", "-b", "main", cwd=work, timeout=timeout)
+            (work / "README.md").write_text("verify\n", encoding="utf-8")
+            _git("add", "README.md", cwd=work, timeout=timeout)
+            committed = _git("commit", "-q", "-m", "initial", cwd=work, timeout=timeout)
+            if committed.returncode != 0:
+                return _fail(f"scratch commit failed: {committed.stderr.strip()}")
+            _git("remote", "add", "origin", str(remote), cwd=work, timeout=timeout)
+
+            previous_state_home = os.environ.get("GODMODE_STATE_HOME")
+            os.environ["GODMODE_STATE_HOME"] = str(base / "state")
+            try:
+                from .godmode_anchor import resolve_anchor
+                from .godmode_chronicle import Chronicle
+
+                scratch_archive = Chronicle(resolve_anchor(work))
+                scratch_archive.initialize()
+                (work / POLICY_FILENAME).write_text(
+                    json.dumps({POLICY_KEY: True}), encoding="utf-8")
+                install_report = git_hooks_install(scratch_archive, work)
+                if "pre-push" not in install_report.get("installed", []):
+                    return _fail(
+                        f"scratch install did not write pre-push: {install_report}")
+                pushed = _git("push", "origin", "main", cwd=work, timeout=timeout)
+            finally:
+                if previous_state_home is None:
+                    os.environ.pop("GODMODE_STATE_HOME", None)
+                else:
+                    os.environ["GODMODE_STATE_HOME"] = previous_state_home
+
+            remote_ref = _git(
+                "rev-parse", "--verify", "-q", "refs/heads/main", cwd=remote, timeout=timeout)
+            blocked = pushed.returncode != 0 and remote_ref.returncode != 0
+            if not blocked:
+                return _fail(
+                    "the installed pre-push hook did not block an unauthorized push "
+                    f"(push_exit={pushed.returncode}, remote_ref_exists="
+                    f"{remote_ref.returncode == 0})"
+                )
+    except (OSError, subprocess.TimeoutExpired) as exc:  # noqa: BLE001
+        return _fail(f"scratch git verify raised: {exc}")
+
+    proof = record_interception_proof(archive, host=host, tool="git-push", request_id=nonce)
+    result["state"] = "HARD"
+    result["proof_sequence"] = proof["sequence"]
+    return result
