@@ -202,7 +202,11 @@ class RiskTierTests(unittest.TestCase):
 class CapabilityScopeTests(unittest.TestCase):
     def test_capability_refuses_consume_under_another_context(self) -> None:
         operation = "git push origin main"
-        here = {"project_key": "aaa111", "worktree": "w" * 64, "head": "abc123"}
+        # CX-5: "branch" joins the checked context fields - two branches can
+        # share the same HEAD commit (a branch just cut, or a pointer-style
+        # branch), so `head` alone cannot always tell them apart.
+        here = {"project_key": "aaa111", "worktree": "w" * 64, "head": "abc123",
+                "branch": "main"}
         with isolated_project() as (_project, _state, _anchor, archive):
             archive.initialize()
             broker = CapabilityBroker(archive)
@@ -211,6 +215,7 @@ class CapabilityScopeTests(unittest.TestCase):
                 ("project_key", "repository"),
                 ("worktree", "worktree"),
                 ("head", "HEAD"),
+                ("branch", "branch"),
             ):
                 token = broker.issue(operation, PASSWORD, ttl_seconds=60, context=here)
                 elsewhere = dict(here)

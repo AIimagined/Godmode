@@ -301,6 +301,28 @@ def _action_invariants(data: dict[str, Any]) -> None:
                 "an archived proof with a blank field enforces nothing while "
                 "claiming to"
             )
+    # CX-5: enrichment fields are OPTIONAL (a pre-CX-5 minimal record must
+    # still validate - see godmode_hookproof.py's own backward-compatibility
+    # note) - so nothing here is required. When one IS present, though, its
+    # SHAPE is checked, additively, alongside the CX-1 checks above rather
+    # than replacing them: a proof claiming an `expiry`/`hook_version`/hash
+    # that is not even a string proves nothing while claiming to, exactly
+    # the same failure the three required fields above already refuse.
+    for field in (
+        "hook_version", "project_identity_hash", "trusted_hook_hash",
+        "nonce_hash", "observed_decision", "expiry",
+    ):
+        if field in data and data[field] is not None and not isinstance(data[field], str):
+            raise ArchiveError(
+                f"a hook-interception-proof record's '{field}', when present, must be "
+                "a string"
+            )
+    if "host_acknowledgement" in data and data["host_acknowledgement"] is not None \
+            and not isinstance(data["host_acknowledgement"], bool):
+        raise ArchiveError(
+            "a hook-interception-proof record's 'host_acknowledgement', when present, "
+            "must be a boolean or null"
+        )
 
 
 # kind -> validator. Every entry here is enforced unconditionally the moment

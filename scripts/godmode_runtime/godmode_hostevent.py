@@ -126,6 +126,21 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "cwd": ("workspaceRoot", "workspace_root", "cwd"),
     "request_id": ("requestId", "request_id", "toolUseId", "tool_use_id"),
     "actor": ("agentId", "agent_id", "subagentType", "subagent_type"),
+    # CX-5: Codex's sandbox-approval metadata field name is NOT documented
+    # anywhere in-repo or in the addenda (the spec's own CONFIRMED/ACCEPTED
+    # findings note Codex's exact hook-payload field names are unpublished).
+    # These four spellings are this module's own best-effort guess at the
+    # convention every OTHER dual-cased field here follows - never trusted
+    # for anything beyond RECORDING (see `HostEvent.approval_context`'s own
+    # docstring): a guessed field name that turns out wrong costs nothing
+    # (the field stays `None`, exactly as if no sandbox metadata existed at
+    # all); a guessed field name that turns out right costs nothing either,
+    # since nothing anywhere in this codebase ever lets its presence or
+    # content skip godmode's own authorization. verify-before-trust, not
+    # verify-before-emit, applies here - recording an unverified field is
+    # safe; ACTING on one would not be.
+    "approval_context": ("approvalContext", "approval_context",
+                        "sandboxApproval", "sandbox_approval"),
 }
 
 
@@ -188,6 +203,17 @@ class HostEvent:
     cwd: str
     request_id: str
     tool_kind: str | None = None
+    # CX-5: the host's OWN sandbox/approval metadata (e.g. Codex's sandbox
+    # approval state), when the payload carries one under any alias in
+    # `_ALIASES["approval_context"]`. RECORDED ONLY - see
+    # `godmode_hookproof.py`'s module docstring and CX-5's mode table:
+    # godmode authorization and a host's own sandbox approval are two
+    # SEPARATE boundaries, and neither ever satisfies the other. Nothing in
+    # this codebase reads this field to decide allow/ask/deny; it exists so
+    # a chronicle record or a future audit can see what the host claimed
+    # about its own approval state alongside what godmode independently
+    # decided, never so that claim can substitute for godmode's own
+    # decision.
     approval_context: dict[str, Any] | None = None
     actor: str | None = None
 
@@ -847,6 +873,15 @@ def parse_host_payload(raw: Any) -> HostEvent:
     actor = field(raw, "actor")
     if actor is not None:
         event.actor = str(actor)
+    # CX-5: recorded verbatim when the payload carries a dict-shaped
+    # approval_context - never coerced, never inspected for a "truthy"
+    # value to act on. A non-dict value under one of the aliases (a host
+    # that spells the field differently than guessed, or an unrelated
+    # payload that happens to collide with an alias) is left as `None`
+    # rather than stored malformed.
+    approval_context = field(raw, "approval_context")
+    if isinstance(approval_context, dict):
+        event.approval_context = approval_context
     return event
 
 

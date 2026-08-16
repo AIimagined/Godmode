@@ -217,9 +217,14 @@ class CapabilityReportingTests(unittest.TestCase):
             self.assertEqual(
                 host_capabilities()["controls"]["tool_call_interception"], "UNAVAILABLE")
             with isolated_project() as (_project, archive):
-                # An archive with no proof record: still UNAVAILABLE, even
-                # with the variable set.
-                state = interception_state(archive, "claude")
+                # An archive with no proof record and no registration
+                # evidence: still UNAVAILABLE, even with the variable set.
+                # CX-5: `registration="none"` isolates this from this repo's
+                # own shipped hooks.json, which would otherwise grade
+                # "claude" PARTIAL by structural evidence alone - the point
+                # here is that the ENV VAR contributes nothing either way,
+                # not the registration floor (covered in test_hookproof.py).
+                state = interception_state(archive, "claude", registration="none")
                 self.assertEqual(
                     host_capabilities(tool_call_interception=state)
                     ["controls"]["tool_call_interception"],
@@ -235,14 +240,20 @@ class CapabilityReportingTests(unittest.TestCase):
         with mock.patch.dict(os.environ, environment, clear=True):
             with isolated_project() as (_project, archive):
                 host = current_host()
+                # CX-5: registration="none" isolates this proof-based check
+                # from this repo's own shipped hooks.json (see
+                # test_hookproof.py's HostRegistrationGradeTests for that
+                # floor on its own).
                 self.assertEqual(
-                    host_capabilities(tool_call_interception=interception_state(archive, host))
+                    host_capabilities(tool_call_interception=interception_state(
+                        archive, host, registration="none"))
                     ["controls"]["tool_call_interception"],
                     "UNAVAILABLE",
                 )
                 record_interception_proof(archive, host=host, tool="Bash", request_id="n1")
                 self.assertEqual(
-                    host_capabilities(tool_call_interception=interception_state(archive, host))
+                    host_capabilities(tool_call_interception=interception_state(
+                        archive, host, registration="none"))
                     ["controls"]["tool_call_interception"],
                     "HARD",
                 )

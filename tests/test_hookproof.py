@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -77,15 +78,41 @@ def isolated_project():
 
 class RecordProofTests(unittest.TestCase):
     def test_record_interception_proof_is_content_free(self) -> None:
+        # CX-5: enriched with hashes/counts/version/expiry, never content -
+        # every key here is a hash, a bounded enum string, a version string
+        # this project already ships publicly, or an ISO timestamp; none is
+        # a command, a path, or any other free text.
         with isolated_project() as (_project, archive):
             record = record_interception_proof(
                 archive, host="claude", tool="Bash", request_id="abc123")
             self.assertEqual(record["kind"], "action")
             self.assertEqual(record["subject"], "hook-interception-proof")
+            data = record["data"]
+            self.assertEqual(data["host"], "claude")
+            self.assertEqual(data["tool"], "Bash")
+            self.assertEqual(data["request_id"], "abc123")
+            self.assertIs(data["proof"], True)
+            self.assertIsInstance(data["hook_version"], str)
+            self.assertIsInstance(data["project_identity_hash"], str)
             self.assertEqual(
-                record["data"],
-                {"host": "claude", "tool": "Bash", "request_id": "abc123", "proof": True},
+                data["nonce_hash"],
+                hashlib.sha256(b"abc123").hexdigest(),
             )
+            self.assertEqual(data["observed_decision"], "deny")
+            self.assertIsNone(data["host_acknowledgement"])
+            self.assertIsInstance(data["expiry"], str)
+            # No trusted_hook_hash without an explicit hook_script - never a
+            # guessed or blank hash.
+            self.assertNotIn("trusted_hook_hash", data)
+
+    def test_record_interception_proof_hashes_the_given_hook_script(self) -> None:
+        with isolated_project() as (_project, archive):
+            script = Path(__file__)  # any real, readable file stands in
+            record = record_interception_proof(
+                archive, host="claude", tool="Bash", request_id="n1",
+                hook_script=script)
+            expected = hashlib.sha256(script.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
+            self.assertEqual(record["data"]["trusted_hook_hash"], expected)
 
     def test_last_proof_returns_newest_matching_host(self) -> None:
         with isolated_project() as (_project, archive):
@@ -115,45 +142,98 @@ class RecordProofTests(unittest.TestCase):
 
 
 class InterceptionStateTests(unittest.TestCase):
+    """CX-5: the five-level scale. `registration="none"` is passed explicitly
+    throughout this class to isolate the PROOF-based grading logic from this
+    repo's own shipped `hooks/hooks.json` (which structurally wires
+    Claude's PreToolUse for real, and would otherwise grade every no-proof
+    case PARTIAL rather than UNAVAILABLE here) - `HostRegistrationGradeTests`
+    below covers the registration-driven floor on its own.
+    """
+
     def test_no_proof_is_unavailable(self) -> None:
         with isolated_project() as (_project, archive):
-            self.assertEqual(interception_state(archive, "claude"), "UNAVAILABLE")
+            self.assertEqual(
+                interception_state(archive, "claude", registration="none"), "UNAVAILABLE")
 
     def test_fresh_proof_is_hard(self) -> None:
         with isolated_project() as (_project, archive):
             record_interception_proof(archive, host="claude", tool="Bash", request_id="n1")
-            self.assertEqual(interception_state(archive, "claude"), "HARD")
+            self.assertEqual(
+                interception_state(archive, "claude", registration="none"), "HARD")
 
-    def test_proof_from_a_prior_session_goes_stale_when_a_new_session_opens(self) -> None:
+    def test_proof_from_a_prior_session_goes_stale_to_partial_when_a_new_session_opens(
+        self,
+    ) -> None:
+        # CX-5: a real proof, just not fresh for THIS session, is stronger
+        # evidence than bare registration - never worse than PARTIAL, even
+        # with registration="none".
         with isolated_project() as (_project, archive):
             open_session(archive, "s1")
             record_interception_proof(archive, host="claude", tool="Bash", request_id="n1")
-            self.assertEqual(interception_state(archive, "claude"), "HARD")
+            self.assertEqual(
+                interception_state(archive, "claude", registration="none"), "HARD")
             open_session(archive, "s2")
-            self.assertEqual(interception_state(archive, "claude"), "UNAVAILABLE")
+            self.assertEqual(
+                interception_state(archive, "claude", registration="none"), "PARTIAL")
 
-    def test_hook_uninstalled_after_proof_supersedes_it(self) -> None:
+    def test_hook_uninstalled_after_proof_supersedes_it_to_degraded(self) -> None:
+        # CX-5: "previously HARD, now superseded" is DEGRADED, not
+        # UNAVAILABLE - a boundary that demonstrably worked and then came
+        # down is a different, worse-to-hide fact than one that was never
+        # proven at all.
         with isolated_project() as (_project, archive):
             record_interception_proof(archive, host="claude", tool="Bash", request_id="n1")
             archive.append("action", SUBJECT_UNINSTALLED, {"host": "claude"}, evidence=[])
-            self.assertEqual(interception_state(archive, "claude"), "UNAVAILABLE")
+            self.assertEqual(
+                interception_state(archive, "claude", registration="none"), "DEGRADED")
 
-    def test_probe_failed_after_proof_supersedes_it(self) -> None:
+    def test_probe_failed_after_proof_supersedes_it_to_degraded(self) -> None:
         with isolated_project() as (_project, archive):
             record_interception_proof(archive, host="claude", tool="Bash", request_id="n1")
             archive.append("action", SUBJECT_PROBE_FAILED, {"host": "claude"}, evidence=[])
-            self.assertEqual(interception_state(archive, "claude"), "UNAVAILABLE")
+            self.assertEqual(
+                interception_state(archive, "claude", registration="none"), "DEGRADED")
 
     def test_env_var_plays_no_role(self) -> None:
         # The whole defect this unit fixes: the sniff is gone, so exporting
         # the variable by hand must not fake anything, in either direction.
         with isolated_project() as (_project, archive):
             with mock.patch.dict(os.environ, {"GODMODE_PRETOOL_GATE": "1"}, clear=False):
-                self.assertEqual(interception_state(archive, "claude"), "UNAVAILABLE")
+                self.assertEqual(
+                    interception_state(archive, "claude", registration="none"), "UNAVAILABLE")
             record_interception_proof(archive, host="claude", tool="Bash", request_id="n1")
             environment = {k: v for k, v in os.environ.items() if k != "GODMODE_PRETOOL_GATE"}
             with mock.patch.dict(os.environ, environment, clear=True):
-                self.assertEqual(interception_state(archive, "claude"), "HARD")
+                self.assertEqual(
+                    interception_state(archive, "claude", registration="none"), "HARD")
+
+
+class HostRegistrationGradeTests(unittest.TestCase):
+    """CX-5: the registration-driven floor, with no proof on record at all."""
+
+    def test_claudes_own_shipped_manifest_grades_partial_with_no_proof(self) -> None:
+        # This repository's own `hooks/hooks.json` wires Claude's
+        # PreToolUse for real (confirmed directly by `CLIHooksTests` below,
+        # which asserts `pretool_hook_seen` True) - the honest answer for
+        # "no proof yet, but the hook IS structurally registered" is
+        # PARTIAL, not UNAVAILABLE.
+        with isolated_project() as (_project, archive):
+            self.assertEqual(interception_state(archive, "claude"), "PARTIAL")
+
+    def test_an_unrecognised_host_grades_unavailable_with_no_registration_evidence(self) -> None:
+        with isolated_project() as (_project, archive):
+            self.assertEqual(
+                interception_state(archive, "some-future-host"), "UNAVAILABLE")
+
+    def test_explicit_soft_registration_reports_soft(self) -> None:
+        with isolated_project() as (_project, archive):
+            self.assertEqual(
+                interception_state(archive, "gemini", registration="soft"), "SOFT")
+
+    def test_explicit_partial_registration_reports_partial(self) -> None:
+        with isolated_project() as (_project, archive):
+            self.assertEqual(
+                interception_state(archive, "cursor", registration="partial"), "PARTIAL")
 
 
 class HostCapabilitiesTests(unittest.TestCase):
@@ -177,7 +257,8 @@ class HostCapabilitiesTests(unittest.TestCase):
             environment = {k: v for k, v in os.environ.items() if k != "GODMODE_PRETOOL_GATE"}
             environment["GODMODE_PRETOOL_GATE"] = "1"
             with mock.patch.dict(os.environ, environment, clear=True):
-                state = interception_state(archive, "claude")
+                state = interception_state(archive, "claude", registration="none")
+                self.assertNotEqual(state, "HARD")
                 self.assertEqual(
                     host_capabilities(tool_call_interception=state)
                     ["controls"]["tool_call_interception"],
@@ -284,18 +365,30 @@ class CLIHooksTests(unittest.TestCase):
             [sys.executable, str(GODMODE_CLI), "--project", str(self.project), "--json", *args],
             capture_output=True, text=True, env=os.environ)
 
-    def test_status_reports_unavailable_before_any_probe(self) -> None:
+    def test_status_reports_partial_before_any_probe(self) -> None:
+        # CX-5: this repository's own shipped hooks.json wires Claude's
+        # PreToolUse for real, so "structurally registered, no fresh proof
+        # yet" is the honest PARTIAL - not the old binary UNAVAILABLE.
         done = self._cli("hooks", "status")
         self.assertEqual(done.returncode, 0, done.stderr)
         payload = json.loads(done.stdout)
         for field in ("plugin_installed", "session_hook_seen", "pretool_hook_seen",
-                      "host_registration", "last_proof", "verdict"):
+                      "host_registration", "last_proof", "verdict",
+                      "matched", "invoked", "honored", "version", "degraded_reason",
+                      "latency", "fail_open_host"):
             self.assertIn(field, payload)
-        self.assertEqual(payload["verdict"], "UNAVAILABLE")
+        self.assertEqual(payload["verdict"], "PARTIAL")
         self.assertIsNone(payload["last_proof"])
         self.assertTrue(payload["plugin_installed"])
         self.assertTrue(payload["session_hook_seen"])
         self.assertTrue(payload["pretool_hook_seen"])
+        self.assertTrue(payload["matched"])
+        self.assertFalse(payload["invoked"])
+        self.assertEqual(payload["honored"], "unknown")
+        self.assertEqual(payload["version"], "unknown")
+        self.assertIsNone(payload["degraded_reason"])
+        self.assertIsNone(payload["latency"])
+        self.assertFalse(payload["fail_open_host"])
 
     def test_probe_flips_status_to_hard_and_exits_zero(self) -> None:
         probe = self._cli("hooks", "probe")
@@ -375,7 +468,9 @@ class RunProbeVerdictTests(unittest.TestCase):
             # Required shipped behavior, not test-only: a silently-degraded
             # hook must flip the STANDING state too, so a later `hooks
             # status`/`capabilities` call (no new probe) also reads it.
-            self.assertEqual(interception_state(archive, host), "UNAVAILABLE")
+            # CX-5: "previously HARD, now superseded" grades DEGRADED, not
+            # UNAVAILABLE.
+            self.assertEqual(interception_state(archive, host), "DEGRADED")
 
     def test_cmd_hooks_probe_exits_nonzero_on_a_failed_attempt_despite_prior_history(
         self,
@@ -456,14 +551,17 @@ class AutomaticSessionAnchorTests(unittest.TestCase):
             archive = self._archive(project, state)
             anchors = archive.select(kind="action", subject=SUBJECT_ANCHOR, limit=10)
             self.assertEqual(len(anchors), 2)
-            self.assertEqual(interception_state(archive, "claude"), "UNAVAILABLE")
+            # CX-5: a real proof from a prior session, not superseded, never
+            # grades worse than PARTIAL - stronger evidence than bare
+            # registration, just not fresh for THIS session.
+            self.assertEqual(interception_state(archive, "claude"), "PARTIAL")
 
             status = subprocess.run(
                 [sys.executable, str(GODMODE_CLI), "--project", str(project), "--json",
                  "hooks", "status"],
                 capture_output=True, text=True,
                 env={**os.environ, "GODMODE_STATE_HOME": str(state), "GODMODE_HOST": "claude"})
-            self.assertEqual(json.loads(status.stdout)["verdict"], "UNAVAILABLE")
+            self.assertEqual(json.loads(status.stdout)["verdict"], "PARTIAL")
 
 
 class SessionAnchorReconciliationTests(unittest.TestCase):
@@ -474,13 +572,15 @@ class SessionAnchorReconciliationTests(unittest.TestCase):
             record_interception_proof(archive, host="claude", tool="Bash", request_id="n1")
             self.assertEqual(interception_state(archive, "claude"), "HARD")
 
+            # CX-5: a real, non-superseded, merely-stale proof never grades
+            # worse than PARTIAL.
             record_session_anchor(archive, "claude")
-            self.assertEqual(interception_state(archive, "claude"), "UNAVAILABLE")
+            self.assertEqual(interception_state(archive, "claude"), "PARTIAL")
 
             # The explicit CLI form, arriving after the automatic anchor,
             # must not resurrect the now-stale proof.
             open_session(archive, "explicit work session")
-            self.assertEqual(interception_state(archive, "claude"), "UNAVAILABLE")
+            self.assertEqual(interception_state(archive, "claude"), "PARTIAL")
 
             # A fresh proof recorded after BOTH anchor kinds is HARD again,
             # regardless of which kind is newer.
