@@ -215,8 +215,11 @@ Next: what holds here depends on the host running it.
 
 Enforcement tier is computed from what the running environment proves,
 never from the host's name. `godmode capabilities` reports `HARD` for
-`tool_call_interception` only when a host sets `GODMODE_PRETOOL_GATE` by
-calling the gate and honoring its exit code.
+`tool_call_interception` only from a live, chronicled proof: `godmode hooks
+probe` sends a marker operation through the real pre-tool hook, the hook
+denies it and records the denial, and `godmode hooks status` reads that
+record back. No proof, or a proof the hook has since disowned, reports
+`UNAVAILABLE`.
 
 | Host | What's shipped | What's tested |
 |---|---|---|

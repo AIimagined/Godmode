@@ -274,6 +274,35 @@ def _pin_invariants(data: dict[str, Any]) -> None:
         )
 
 
+def _action_invariants(data: dict[str, Any]) -> None:
+    """CX-1: only the `hook-interception-proof` shape is checked here.
+
+    `action` is the busiest kind in the archive - deletion-prechecks,
+    license-checks, experiment cycles, pin/unpin all use it with entirely
+    different `data` shapes, and this validator runs on every one of them.
+    It refuses to become a second, drifting home for their invariants, so it
+    recognises exactly one shape (`data["proof"] is True`, the marker
+    `record_interception_proof` always sets) and is a no-op on everything
+    else - which is every `action` record this codebase already writes.
+
+    A malformed proof record - missing host, tool, or the nonce that ties it
+    back to the probe that produced it - would sit in the archive claiming
+    interception is provable while proving nothing, the same failure
+    `_pin_invariants` above refuses for a pin with no digest. Refused here,
+    at the same seam a raw `archive.append()` cannot route around.
+    """
+    if data.get("proof") is not True:
+        return
+    for field in ("host", "tool", "request_id"):
+        value = data.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise ArchiveError(
+                f"a hook-interception-proof record must carry a non-empty '{field}'; "
+                "an archived proof with a blank field enforces nothing while "
+                "claiming to"
+            )
+
+
 # kind -> validator. Every entry here is enforced unconditionally the moment
 # godmode_chronicle.py is imported - see KIND_INVARIANTS in that module,
 # which is seeded from this dict at chronicle module load, not populated
@@ -283,4 +312,5 @@ KIND_VALIDATORS: dict[str, KindInvariant] = {
     "decision": _register_invariants,
     "pin": _pin_invariants,
     "upstream-diff": _upstream_diff_invariants,
+    "action": _action_invariants,
 }

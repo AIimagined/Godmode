@@ -43,9 +43,11 @@ refuse:
 3. a skip pattern — three mandated steps skipped this session.
 
 This is the boundary that makes `tool_call_interception` real. The control
-reports `HARD` only when `GODMODE_PRETOOL_GATE` is set, which the installed hook
-sets; without a host calling the gate it reports `UNAVAILABLE`, because a control
-nobody invokes is not a control.
+reports `HARD` only from a live, chronicled proof: `godmode hooks probe` sends a
+marker operation through this exact path, this hook denies it unconditionally,
+and records the denial (`godmode_hookproof.py`). `godmode hooks status` reads
+that record back; without a fresh, unsuperseded proof the control reports
+`UNAVAILABLE`, because a control nobody has demonstrated is not a control.
 
 **Costs and limits, stated.** `hooks.json` sets a 3s timeout on `PreToolUse`
 (`SessionStart` gets 10s, `UserPromptSubmit` gets 30s). Measured directly

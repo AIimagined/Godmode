@@ -19,12 +19,14 @@ sys.path.insert(0, str(SCRIPTS))
 # session_log, and the capability broker's secrets/getpass/hmac chain) are
 # imported inside the branch that actually uses them, below, instead of
 # paying for seven modules a mutating tool call never touches.
-from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
+from godmode_runtime.godmode_anchor import current_host, resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_runtime.godmode_errors import GodmodeError  # noqa: E402
 from godmode_runtime.godmode_attest import attested_rule_ids, latest_session  # noqa: E402
 from godmode_runtime.godmode_guardrails import check_ceilings  # noqa: E402
 from godmode_runtime.godmode_guardrails import meter_tool_call, tool_operation, watchdog  # noqa: E402
+from godmode_runtime.godmode_hookproof import (  # noqa: E402
+    PROBE_PREFIX, interception_state, record_interception_proof)
 from godmode_runtime.godmode_sentinel import (  # noqa: E402
     GATE_MODE_OBSERVE, classify_action, evidence_pipe_advisory,
     local_authorization_policy)
@@ -147,7 +149,8 @@ def _session_obligations(anchor: Any, archive: Chronicle) -> dict[str, Any]:
     except GodmodeError as exc:
         obligations["drift"] = {"unavailable": str(exc)[:160]}
 
-    surface = host_capabilities()
+    surface = host_capabilities(
+        tool_call_interception=interception_state(archive, current_host()))
     obligations["enforcement"] = {
         "host": surface["host"],
         "unavailable": surface["unavailable"],
@@ -431,6 +434,55 @@ def main(argv: list[str] | None = None) -> int:
             operation = tool_operation(tool, submitted.get("tool_input"))
         else:
             operation = str(submitted.get("operation", "")).strip()
+
+        # CX-1: `godmode hooks probe` sends this exact marker through this
+        # exact path to prove the boundary is reachable, not to test whether
+        # anything should be allowed. It is denied unconditionally - before
+        # ceilings, staged capabilities, or observe mode get a say, none of
+        # which may ever turn a probe into an allow, or the proof it writes
+        # below would attest to a denial that never actually happened. The
+        # denial IS the proof: nothing about a probe the boundary never
+        # received could reach this branch to record one.
+        if operation.startswith(PROBE_PREFIX):
+            host = current_host()
+            try:
+                archive.append(
+                    "refusal", "hook-interception-probe",
+                    {
+                        "operation": operation[:500],
+                        "tool": tool or "operation",
+                        "tier": "R5",
+                        "category": "hook-interception-probe",
+                    },
+                    evidence=[],
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                record_interception_proof(
+                    archive, host=host, tool=tool or "operation",
+                    request_id=operation[len(PROBE_PREFIX):][:200],
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            reason = (
+                "refused: hook-interception-probe (R5) - this operation exists only "
+                "to prove the pre-tool boundary is reachable; it is always denied."
+            )
+            if pretool:
+                print(json.dumps({
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": reason,
+                    }
+                }, ensure_ascii=False))
+                return 0
+            print(json.dumps({
+                "protected": True, "allow": False, "category": "hook-interception-probe",
+                "tier": "R5", "reason": reason,
+            }))
+            return 3
 
         session = latest_session(archive)
         blocked_reason = None
