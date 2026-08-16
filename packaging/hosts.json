@@ -58,6 +58,7 @@
         "license",
         "keywords",
         "skills",
+        "hooks",
         "interface"
       ],
       "extra": {
@@ -67,6 +68,7 @@
         ],
         "author_url": false,
         "description": "Local-first context continuity and evidence-governance skills for coding agents.",
+        "hooks": "./hooks/hooks.json",
         "interface": {
           "displayName": "Godmode",
           "shortDescription": "Local continuity and guarded coding workflows.",
@@ -107,6 +109,13 @@
       "extra": {},
       "note": "same hooks convention as claude"
     }
+  },
+  "hook_manifests": {
+    "_comment": "CX-3: per-host HOOK artifacts (distinct from the identity manifests above). Content is built by scripts/godmode_runtime/godmode_host_manifests.py's HOOK_ARTIFACTS registry - this section supplies only the PATH each host's artifact is written to, the same division of labour `hosts` above already uses (path here, content generation in code). `godmode bindings --write`/`--check` drive both sections from one command. Codex's own build doc names ./hooks/hooks.json as its manifest-referenced hooks path (spec Addendum 2) - the SAME file Claude's plugin.json loads by convention - so codex's native event keys are merged into that shared file rather than writing a second one; grok/cursor/gemini get their own dedicated file per spec Addendum 3's 'host dirs' recommendation, since their command/decision-contract shapes are incompatible with the shared file's Claude-authored array format.",
+    "codex": {"path": "hooks/hooks.json", "mode": "merge-into-shared"},
+    "grok": {"path": ".grok-plugin/hooks.json", "mode": "dedicated"},
+    "cursor": {"path": ".cursor-plugin/hooks.json", "mode": "dedicated"},
+    "gemini": {"path": ".gemini-plugin/hooks-fragment.json", "mode": "dedicated"}
   },
   "adapters": {
     "_comment": "Instruction-file adapters for hosts without a plugin manifest. Controls state what each host can actually hold; the adapter docs must match this matrix (tests enforce agreement).",

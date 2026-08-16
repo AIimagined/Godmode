@@ -32,7 +32,9 @@
       "host_manifests": {
         "claude-code": ".claude-plugin/plugin.json",
         "codex": ".codex-plugin/plugin.json",
-        "grok": ".grok-plugin/plugin.json"
+        "grok": ".grok-plugin/plugin.json",
+        "cursor": ".cursor-plugin/hooks.json",
+        "gemini": ".gemini-plugin/hooks-fragment.json"
       }
     }
   }
