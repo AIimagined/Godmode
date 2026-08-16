@@ -4,8 +4,17 @@ Every case here is red-first against the requirements named in
 `docs/superpowers/plans/2026-08-16-codex-compat.md` (Task CX-2 + Plan
 amendments 1-4) and `docs/superpowers/specs/2026-08-16-codex-compat-design.md`
 (CX-2 unit + Addenda 2/6): field dual-casing, the host detection chain,
-per-host tool maps, unrecognized-tool fail-closed behaviour, gate-exactly-
-once, the payload-capture probe, and multi-host response rendering.
+per-host tool maps, unrecognized-tool fail-closed behaviour, the
+payload-capture probe, and multi-host response rendering.
+
+**Fix round 1** (`.superpowers/sdd/2026-08-16-cx/task-cx2-review.md`) added:
+`ApplyPatchMalformedDirectiveTests` (C1 - a patch mixing one well-formed
+directive with one malformed one must fail the WHOLE call closed, never
+just drop the malformed one), `NoDedupTests` (C2/I1 - gate-exactly-once was
+removed entirely; replaces the deleted `GateExactlyOnceTests`),
+`FirstAliasWinsTests` (I3 - camelCase-over-snake_case is a pinned, tested
+security property), and `EmptyToolNameTests` (M2 - a present-but-empty
+`tool_name` is `unrecognized-tool`, not the bare-operation path).
 """
 
 from __future__ import annotations
@@ -163,7 +172,7 @@ class ClaudeAdapterTests(unittest.TestCase):
         event = he.parse_host_payload({
             "hook_event_name": "PreToolUse", "tool_name": "SomeFutureTool",
             "tool_input": {"x": 1},
-        }, seen=set())
+        })
         # Payload-shape detection cannot place an unknown tool name under any
         # host - it stays "unknown", never guessed into "claude" just
         # because the event name looked like Claude's.
@@ -254,6 +263,72 @@ class CodexAdapterTests(unittest.TestCase):
         self.assertEqual(event.tool, "functions.exec")
 
 
+class ApplyPatchMalformedDirectiveTests(unittest.TestCase):
+    """Fix round 1, C1 (review Critical): a patch mixing one well-formed
+    directive with one malformed/indented one must fail the WHOLE call
+    closed - partial recognition is never allowed to shrink the target set.
+    """
+
+    def test_has_malformed_directive_detects_the_reviewers_exact_repro(self) -> None:
+        patch = "*** Add File: harmless.txt\n+hello\n  *** Add File: /etc/passwd\n+pwned\n"
+        self.assertTrue(he.has_malformed_directive(patch))
+
+    def test_a_tab_prefixed_directive_is_detected(self) -> None:
+        patch = "*** Add File: harmless.txt\n+hello\n\t*** Delete File: secret.env\n"
+        self.assertTrue(he.has_malformed_directive(patch))
+
+    def test_a_doubled_space_directive_is_detected(self) -> None:
+        patch = "***  Add File:  harmless.txt\n+hello\n"
+        self.assertTrue(he.has_malformed_directive(patch))
+
+    def test_the_malformed_line_first_is_still_caught_mixed_order(self) -> None:
+        # Order-independence: the malformed line does not have to come
+        # after the well-formed one to be caught.
+        patch = "  *** Add File: /etc/passwd\n+pwned\n*** Delete File: harmless.txt\n"
+        self.assertTrue(he.has_malformed_directive(patch))
+
+    def test_a_fully_well_formed_patch_is_never_flagged(self) -> None:
+        patch = "*** Add File: a.py\n+x\n*** Delete File: b.py\n"
+        self.assertFalse(he.has_malformed_directive(patch))
+
+    def test_ordinary_diff_content_never_trips_the_lookalike(self) -> None:
+        patch = ("*** Begin Patch\n*** Add File: a.py\n"
+                 "+# adds a File: marker in a comment, not a directive\n"
+                 "*** End Patch\n")
+        self.assertFalse(he.has_malformed_directive(patch))
+
+    def test_the_adapter_fails_the_whole_call_closed_never_the_benign_target_alone(self) -> None:
+        with mock.patch.dict(os.environ, {"GODMODE_HOST": "codex"}, clear=False):
+            event = he.parse_host_payload({
+                "hook_event_name": "PreToolUse", "tool_name": "apply_patch",
+                "tool_input": {
+                    "input": ("*** Add File: harmless.txt\n+hello\n"
+                              "  *** Add File: /etc/passwd\n+pwned\n"),
+                },
+            })
+        self.assertEqual(event.tool_kind, he.TOOL_KIND_MALFORMED)
+        self.assertEqual(event.targets, [])
+        self.assertEqual(event.operation, "")
+        # The reviewer's exact regression: harmless.txt must NOT reach the
+        # fence alone while /etc/passwd is silently dropped.
+        self.assertNotIn("harmless.txt", str(event.targets))
+
+    def test_malformed_preview_names_the_real_cause_not_unmapped_tool(self) -> None:
+        preview = he.malformed_apply_patch_preview("apply_patch")
+        self.assertTrue(preview["protected"])
+        self.assertEqual(preview["category"], "apply-patch-malformed-directive")
+        self.assertTrue(preview["_chronicled_miss"])
+
+    def test_malformed_record_is_counts_only(self) -> None:
+        archive = _FakeArchive()
+        he.record_malformed_apply_patch(archive, "codex", "apply_patch")
+        self.assertEqual(len(archive.records), 1)
+        kind, subject, data = archive.records[0]
+        self.assertEqual(kind, "refusal")
+        self.assertEqual(subject, "apply-patch-malformed-directive")
+        self.assertEqual(data["host"], "codex")
+
+
 class GrokAdapterTests(unittest.TestCase):
     """Addendum 6, verbatim tool map."""
 
@@ -315,50 +390,46 @@ class UnrecognizedToolTests(unittest.TestCase):
         he.record_unrecognized_tool(archive, "grok", "mystery_tool")  # must not raise
 
 
-class GateExactlyOnceTests(unittest.TestCase):
-    def test_a_repeated_request_id_is_marked_duplicate_not_reclassified(self) -> None:
-        seen: set[str] = set()
-        payload = {
+class NoDedupTests(unittest.TestCase):
+    """Fix round 1, C2/I1 (review Critical + Important): gate-exactly-once
+    dedup was removed entirely - `parse_host_payload` takes no `seen`
+    argument and every call classifies fully, regardless of `request_id`
+    repetition. This replaces the deleted `GateExactlyOnceTests`, whose own
+    tests asserted the defect this round fixes (dedup-by-id-alone silently
+    allowed a second, different operation under a reused id)."""
+
+    def test_parse_host_payload_no_longer_accepts_a_seen_argument(self) -> None:
+        import inspect
+        parameters = inspect.signature(he.parse_host_payload).parameters
+        self.assertNotIn("seen", parameters)
+
+    def test_tool_kind_duplicate_no_longer_exists(self) -> None:
+        self.assertFalse(hasattr(he, "TOOL_KIND_DUPLICATE"))
+
+    def test_a_reused_request_id_with_a_different_operation_still_classifies_fully(self) -> None:
+        """The reviewer's exact C2 repro: a force-push riding a request id
+        already seen for an ordinary read must still be classified and
+        still reach the R5 force-push tier, never silently pass through."""
+        p1 = {"hook_event_name": "PreToolUse", "tool_name": "Bash",
+              "tool_input": {"command": "git status"}, "requestId": "req-X"}
+        p2 = {"hook_event_name": "PreToolUse", "tool_name": "Bash",
+              "tool_input": {"command": "git push --force origin main"},
+              "requestId": "req-X"}
+        first = he.parse_host_payload(p1)
+        second = he.parse_host_payload(p2)
+        self.assertEqual(first.tool_kind, he.TOOL_KIND_SHELL)
+        self.assertEqual(first.operation, "git status")
+        # Fully classified, not silently allowed: this is exactly the
+        # force-push operation text the classifier gates.
+        self.assertEqual(second.tool_kind, he.TOOL_KIND_SHELL)
+        self.assertEqual(second.operation, "git push --force origin main")
+
+    def test_request_id_still_travels_on_the_event(self) -> None:
+        event = he.parse_host_payload({
             "hook_event_name": "PreToolUse", "tool_name": "Bash",
             "tool_input": {"command": "git status"}, "requestId": "req-1",
-        }
-        first = he.parse_host_payload(payload, seen=seen)
-        second = he.parse_host_payload(payload, seen=seen)
-        self.assertEqual(first.tool_kind, he.TOOL_KIND_SHELL)
-        self.assertEqual(second.tool_kind, he.TOOL_KIND_DUPLICATE)
-
-    def test_no_seen_set_means_no_dedup_at_all(self) -> None:
-        payload = {
-            "hook_event_name": "PreToolUse", "tool_name": "Bash",
-            "tool_input": {"command": "git status"}, "requestId": "req-1",
-        }
-        first = he.parse_host_payload(payload)
-        second = he.parse_host_payload(payload)
-        self.assertEqual(first.tool_kind, he.TOOL_KIND_SHELL)
-        self.assertEqual(second.tool_kind, he.TOOL_KIND_SHELL)
-
-    def test_dedup_is_scoped_to_the_caller_owned_set_not_global_state(self) -> None:
-        """Two independent `seen` sets (as two separate hook process
-        invocations would each have) never see each other's request ids."""
-        payload = {
-            "hook_event_name": "PreToolUse", "tool_name": "Bash",
-            "tool_input": {"command": "git status"}, "requestId": "req-shared",
-        }
-        seen_a: set[str] = set()
-        seen_b: set[str] = set()
-        first = he.parse_host_payload(payload, seen=seen_a)
-        second = he.parse_host_payload(payload, seen=seen_b)
-        self.assertEqual(first.tool_kind, he.TOOL_KIND_SHELL)
-        self.assertEqual(second.tool_kind, he.TOOL_KIND_SHELL)
-
-    def test_a_blank_request_id_is_never_deduplicated(self) -> None:
-        seen: set[str] = set()
-        payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash",
-                   "tool_input": {"command": "git status"}}
-        first = he.parse_host_payload(payload, seen=seen)
-        second = he.parse_host_payload(payload, seen=seen)
-        self.assertEqual(first.tool_kind, he.TOOL_KIND_SHELL)
-        self.assertEqual(second.tool_kind, he.TOOL_KIND_SHELL)
+        })
+        self.assertEqual(event.request_id, "req-1")
 
 
 class PayloadCaptureProbeTests(unittest.TestCase):
@@ -458,6 +529,70 @@ class ActorFieldTests(unittest.TestCase):
             "tool_input": {"command": "git status"},
         })
         self.assertIsNone(event.actor)
+
+
+class FirstAliasWinsTests(unittest.TestCase):
+    """Fix round 1, I3: camelCase-over-snake_case precedence is a pinned
+    security property, not incidental dict-literal ordering - checked here
+    at the `parse_host_payload` level (the reviewer's own cross-call-site
+    check compared `field()`, the fast gate's local lookup, and the hook's
+    `host_field` shortcut directly; this pins the same precedence at the
+    adapter's own public entry point) across event, tool, and input fields.
+    """
+
+    def test_tool_name_camelcase_wins_over_snake_case(self) -> None:
+        event = he.parse_host_payload({
+            "hook_event_name": "PreToolUse",
+            "toolName": "Read", "tool_name": "Bash",
+            "toolInput": {"file_path": "a.py"}, "tool_input": {"command": "rm -rf /"},
+        })
+        self.assertEqual(event.tool, "Read")
+        self.assertEqual(event.tool_kind, he.TOOL_KIND_READ)
+
+    def test_tool_input_camelcase_wins_over_snake_case(self) -> None:
+        event = he.parse_host_payload({
+            "hook_event_name": "PreToolUse", "tool_name": "Bash",
+            "toolInput": {"command": "git status"},
+            "tool_input": {"command": "git push --force origin main"},
+        })
+        self.assertEqual(event.operation, "git status")
+
+    def test_hook_event_name_camelcase_wins_over_snake_case(self) -> None:
+        self.assertTrue(he.is_pretool_event(
+            {"hookEventName": "PreToolUse", "hook_event_name": "SessionStart"}))
+
+    def test_field_helper_itself_agrees(self) -> None:
+        self.assertEqual(
+            he.field({"toolName": "Read", "tool_name": "Bash"}, "tool_name"), "Read")
+
+
+class EmptyToolNameTests(unittest.TestCase):
+    """Fix round 1, M2: `tool_name` PRESENT but empty/whitespace is
+    `unrecognized-tool` - distinct from no `tool_name` field at all, which
+    stays the bare-operation shape."""
+
+    def test_empty_string_tool_name_is_unrecognized_not_bare(self) -> None:
+        event = he.parse_host_payload({
+            "hook_event_name": "PreToolUse", "tool_name": "",
+            "tool_input": {"anything": 1},
+        })
+        self.assertEqual(event.tool_kind, he.TOOL_KIND_UNRECOGNIZED)
+
+    def test_whitespace_only_tool_name_is_unrecognized_not_bare(self) -> None:
+        event = he.parse_host_payload({
+            "hook_event_name": "PreToolUse", "tool_name": "   ",
+            "tool_input": {},
+        })
+        self.assertEqual(event.tool_kind, he.TOOL_KIND_UNRECOGNIZED)
+
+    def test_a_missing_tool_name_field_is_still_the_bare_shape(self) -> None:
+        event = he.parse_host_payload({"operation": "git status"})
+        self.assertIsNone(event.tool_kind)
+
+    def test_field_present_distinguishes_empty_from_absent(self) -> None:
+        self.assertTrue(he.field_present({"tool_name": ""}, "tool_name"))
+        self.assertFalse(he.field_present({}, "tool_name"))
+        self.assertFalse(he.field_present({"operation": "x"}, "tool_name"))
 
 
 if __name__ == "__main__":

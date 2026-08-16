@@ -19,6 +19,14 @@ the Plan's amendments:
 - Codex `shell_command` force-push reaches R5; `apply_patch` targets reach
   the scope fence.
 - Host detection: `GROK_AGENT=1` present -> host `grok`.
+
+**Fix round 1** (`.superpowers/sdd/2026-08-16-cx/task-cx2-review.md`) added
+`CodexApplyPatchMalformedDirectiveTests` (C1 - the reviewer's live repro,
+replayed through the real hook subprocess: a patch mixing one well-formed
+target with one malformed one must fail the WHOLE call closed, and the
+well-formed target must never reach the fence alone) and
+`ChronicleOnceTests` (M1 - a single unrecognized-tool/malformed-apply_patch
+miss writes exactly one chronicle record, not two).
 """
 
 from __future__ import annotations
@@ -74,6 +82,15 @@ def _run(payload: dict, project: Path, state: Path, *, extra_env: dict | None = 
         input=json.dumps(payload), capture_output=True, text=True,
         encoding="utf-8", timeout=120, env=environment,
     )
+
+
+def _read_events(project: Path, state: Path) -> list[dict]:
+    """Re-open the SAME on-disk archive the subprocess just wrote to, so a
+    test can count what actually landed in the chronicle - not what the
+    hook's stdout claimed."""
+    with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(state)}, clear=False):
+        archive = Chronicle(resolve_anchor(project))
+        return archive.read_events()
 
 
 class GrokForcePushTests(unittest.TestCase):
@@ -280,6 +297,90 @@ class UnrecognizedToolAcrossHostsTests(unittest.TestCase):
         body = json.loads(done.stdout)
         self.assertIn(body["hookSpecificOutput"]["permissionDecision"], ("ask", "deny"))
         self.assertIn("unrecognized-tool", body["hookSpecificOutput"]["permissionDecisionReason"])
+
+
+class CodexApplyPatchMalformedDirectiveTests(unittest.TestCase):
+    """Fix round 1, C1 (review Critical) - the reviewer's own live repro,
+    replayed through the real hook subprocess and against a real scope
+    fence: a well-formed target beside a malformed one must never reach the
+    fence alone."""
+
+    def test_the_reviewers_repro_fails_the_whole_call_closed(self) -> None:
+        with _hosted() as (project, state):
+            harmless = project / "harmless.txt"
+            patch = (f"*** Add File: {harmless}\n+hello\n"
+                     f"  *** Add File: /etc/passwd\n+pwned\n")
+            done = _run(
+                {"hook_event_name": "PreToolUse", "tool_name": "apply_patch",
+                 "tool_input": {"input": patch}},
+                project, state, extra_env={"GODMODE_HOST": "codex"},
+            )
+        body = json.loads(done.stdout)
+        decision = body["hookSpecificOutput"]["permissionDecision"]
+        # Malformed-directive fails closed at R3 (ask/deny, recoverable) -
+        # never "allow", which is the exact bypass the review caught.
+        self.assertIn(decision, ("ask", "deny"))
+        self.assertIn("apply-patch-malformed-directive",
+                      body["hookSpecificOutput"]["permissionDecisionReason"])
+
+    def test_a_tab_prefixed_malformed_directive_also_fails_closed(self) -> None:
+        with _hosted() as (project, state):
+            patch = f"*** Add File: {project / 'a.py'}\n+x\n\t*** Delete File: b.py\n"
+            done = _run(
+                {"hook_event_name": "PreToolUse", "tool_name": "apply_patch",
+                 "tool_input": {"input": patch}},
+                project, state, extra_env={"GODMODE_HOST": "codex"},
+            )
+        body = json.loads(done.stdout)
+        self.assertIn(body["hookSpecificOutput"]["permissionDecision"], ("ask", "deny"))
+
+    def test_a_fully_well_formed_multi_target_patch_still_reaches_the_fence_normally(self) -> None:
+        """Green control: the C1 fix must not make an ORDINARY multi-target
+        patch fail closed - only a genuinely malformed directive line does.
+        Both targets are `Add File` (not `Delete File`, which is always
+        protected regardless of C1 - `rm <path>` is R4 filesystem-mutation
+        in the full sentinel, independent of this fix) so a silent allow is
+        the correct baseline to compare the malformed case against."""
+        with _hosted() as (project, state):
+            patch = (f"*** Add File: {project / 'a.py'}\n+x\n"
+                     f"*** Add File: {project / 'b.py'}\n+y\n")
+            done = _run(
+                {"hook_event_name": "PreToolUse", "tool_name": "apply_patch",
+                 "tool_input": {"input": patch}},
+                project, state, extra_env={"GODMODE_HOST": "codex"},
+            )
+        self.assertEqual(done.returncode, 0, done.stdout)
+        self.assertEqual(done.stdout.strip(), "")
+
+
+class ChronicleOnceTests(unittest.TestCase):
+    """Fix round 1, M1: an unrecognized-tool or malformed-apply_patch miss
+    writes exactly ONE chronicle record for that miss, not two."""
+
+    def test_an_unrecognized_tool_miss_is_chronicled_exactly_once(self) -> None:
+        with _hosted() as (project, state):
+            _run(
+                {"hook_event_name": "PreToolUse", "tool_name": "some_future_tool",
+                 "tool_input": {}},
+                project, state,
+            )
+            events = _read_events(project, state)
+        misses = [e for e in events if e["kind"] == "refusal"
+                 and e["data"].get("category") == "unrecognized-tool"]
+        self.assertEqual(len(misses), 1, misses)
+
+    def test_a_malformed_apply_patch_miss_is_chronicled_exactly_once(self) -> None:
+        with _hosted() as (project, state):
+            patch = f"*** Add File: {project / 'a.py'}\n+x\n  *** Add File: b.py\n"
+            _run(
+                {"hook_event_name": "PreToolUse", "tool_name": "apply_patch",
+                 "tool_input": {"input": patch}},
+                project, state, extra_env={"GODMODE_HOST": "codex"},
+            )
+            events = _read_events(project, state)
+        misses = [e for e in events if e["kind"] == "refusal"
+                 and e["data"].get("category") == "apply-patch-malformed-directive"]
+        self.assertEqual(len(misses), 1, misses)
 
 
 if __name__ == "__main__":
