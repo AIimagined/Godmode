@@ -1,24 +1,26 @@
 {
-  "counts": {
-    "hooks/godmode_session_hook.py": 4,
-    "scripts/godmode_runtime/godmode_anchor.py": 2,
-    "scripts/godmode_runtime/godmode_attest.py": 1,
-    "scripts/godmode_runtime/godmode_bindings.py": 1,
-    "scripts/godmode_runtime/godmode_chronicle.py": 4,
-    "scripts/godmode_runtime/godmode_console.py": 1,
-    "scripts/godmode_runtime/godmode_docslint.py": 1,
-    "scripts/godmode_runtime/godmode_fuzz.py": 1,
-    "scripts/godmode_runtime/godmode_graders.py": 1,
-    "scripts/godmode_runtime/godmode_guardrails.py": 2,
-    "scripts/godmode_runtime/godmode_index.py": 1,
-    "scripts/godmode_runtime/godmode_metrics.py": 1,
-    "scripts/godmode_runtime/godmode_plan.py": 1,
-    "scripts/godmode_runtime/godmode_reconcile.py": 1,
-    "scripts/godmode_runtime/godmode_scenarios.py": 1,
-    "scripts/godmode_runtime/godmode_sentinel.py": 1,
-    "scripts/godmode_runtime/godmode_status.py": 1,
-    "scripts/godmode_runtime/godmode_stop.py": 2,
-    "scripts/godmode_runtime/godmode_upstream.py": 1
-  },
-  "runtime_version": "0.2.13"
+ "counts": {
+  "hooks/godmode_session_hook.py": 7,
+  "scripts/godmode_runtime/godmode_anchor.py": 2,
+  "scripts/godmode_runtime/godmode_attest.py": 1,
+  "scripts/godmode_runtime/godmode_bindings.py": 1,
+  "scripts/godmode_runtime/godmode_chronicle.py": 4,
+  "scripts/godmode_runtime/godmode_console.py": 1,
+  "scripts/godmode_runtime/godmode_docslint.py": 1,
+  "scripts/godmode_runtime/godmode_fuzz.py": 1,
+  "scripts/godmode_runtime/godmode_graders.py": 1,
+  "scripts/godmode_runtime/godmode_guardrails.py": 2,
+  "scripts/godmode_runtime/godmode_hookproof.py": 1,
+  "scripts/godmode_runtime/godmode_hostevent.py": 3,
+  "scripts/godmode_runtime/godmode_index.py": 1,
+  "scripts/godmode_runtime/godmode_metrics.py": 1,
+  "scripts/godmode_runtime/godmode_plan.py": 1,
+  "scripts/godmode_runtime/godmode_reconcile.py": 1,
+  "scripts/godmode_runtime/godmode_scenarios.py": 1,
+  "scripts/godmode_runtime/godmode_sentinel.py": 1,
+  "scripts/godmode_runtime/godmode_status.py": 1,
+  "scripts/godmode_runtime/godmode_stop.py": 2,
+  "scripts/godmode_runtime/godmode_upstream.py": 1
+ },
+ "runtime_version": "0.2.13"
 }
