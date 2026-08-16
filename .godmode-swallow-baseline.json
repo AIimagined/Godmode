@@ -1,6 +1,6 @@
 {
  "counts": {
-  "hooks/godmode_session_hook.py": 7,
+  "hooks/godmode_session_hook.py": 8,
   "scripts/godmode_runtime/godmode_anchor.py": 2,
   "scripts/godmode_runtime/godmode_attest.py": 1,
   "scripts/godmode_runtime/godmode_bindings.py": 1,
@@ -8,9 +8,10 @@
   "scripts/godmode_runtime/godmode_console.py": 1,
   "scripts/godmode_runtime/godmode_docslint.py": 1,
   "scripts/godmode_runtime/godmode_fuzz.py": 1,
+  "scripts/godmode_runtime/godmode_githooks.py": 3,
   "scripts/godmode_runtime/godmode_graders.py": 1,
   "scripts/godmode_runtime/godmode_guardrails.py": 2,
-  "scripts/godmode_runtime/godmode_hookproof.py": 1,
+  "scripts/godmode_runtime/godmode_hookproof.py": 2,
   "scripts/godmode_runtime/godmode_hostevent.py": 3,
   "scripts/godmode_runtime/godmode_index.py": 1,
   "scripts/godmode_runtime/godmode_metrics.py": 1,
