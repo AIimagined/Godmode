@@ -13,6 +13,7 @@ newer says the hook came down.
 
 from __future__ import annotations
 
+import argparse
 from contextlib import contextmanager
 import json
 import os
@@ -31,18 +32,34 @@ if str(SCRIPTS) not in sys.path:
 from godmode_runtime.godmode_anchor import host_capabilities, resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_attest import open_session  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
+from godmode_runtime.godmode_console import Runtime, cmd_hooks  # noqa: E402
 from godmode_runtime.godmode_errors import ArchiveError  # noqa: E402
 from godmode_runtime.godmode_hookproof import (  # noqa: E402
     PROBE_PREFIX,
+    SUBJECT_ANCHOR,
     SUBJECT_PROBE_FAILED,
     SUBJECT_UNINSTALLED,
     interception_state,
     last_proof,
     record_interception_proof,
+    record_session_anchor,
+    run_probe,
 )
 
 HOOK = PLUGIN_ROOT / "hooks" / "godmode_session_hook.py"
 GODMODE_CLI = PLUGIN_ROOT / "scripts" / "godmode.py"
+
+
+def _no_denial_response() -> subprocess.CompletedProcess:
+    # The reviewer's own live repro: a hook subprocess that returns 0 but
+    # never emits a deny decision at all - a crashed, renamed, or silently
+    # degraded hook, indistinguishable at the JSON layer from "this call
+    # was never protected".
+    return subprocess.CompletedProcess(
+        args=[], returncode=0,
+        stdout=json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse"}}),
+        stderr="",
+    )
 
 
 @contextmanager
@@ -297,6 +314,173 @@ class CLIHooksTests(unittest.TestCase):
                  "hooks", "probe"],
                 capture_output=True, text=True, env=os.environ)
             self.assertNotEqual(done.returncode, 0)
+
+
+class RunProbeVerdictTests(unittest.TestCase):
+    """Fix round 1, Critical-1: run_probe verdicts THIS attempt only.
+
+    Reviewer's live repro, reproduced as a red test: a project already
+    holding a valid, fresh proof from an earlier successful probe must not
+    let that history answer for a probe attempt whose own denial was never
+    observed.
+    """
+
+    def test_a_failed_probe_does_not_inherit_an_earlier_valid_proof(self) -> None:
+        with isolated_project() as (project, archive):
+            host = "claude"
+            first = run_probe(project, archive, host)
+            self.assertEqual(first["state"], "HARD")
+            self.assertTrue(first["denied"])
+            self.assertTrue(first["proof_recorded"])
+
+            with mock.patch(
+                "godmode_runtime.godmode_hookproof.subprocess.run",
+                return_value=_no_denial_response(),
+            ):
+                second = run_probe(project, archive, host)
+
+            self.assertFalse(second["denied"])
+            self.assertFalse(second["proof_recorded"])
+            # The binding constraint: state and exit code derive ONLY from
+            # THIS attempt's denied/proof_recorded - never HARD here, no
+            # matter what the prior proof said.
+            self.assertNotEqual(second["state"], "HARD")
+            self.assertEqual(second["state"], "UNAVAILABLE")
+            # Historical context is visible in its own field, never folded
+            # into this attempt's own verdict.
+            self.assertIsNotNone(second["last_proof"])
+            self.assertEqual(second["last_proof"]["data"]["request_id"], first["nonce"])
+
+    def test_a_failed_probe_writes_a_probe_failed_record_and_downgrades_standing_state(
+        self,
+    ) -> None:
+        with isolated_project() as (project, archive):
+            host = "claude"
+            run_probe(project, archive, host)
+            self.assertEqual(interception_state(archive, host), "HARD")
+
+            with mock.patch(
+                "godmode_runtime.godmode_hookproof.subprocess.run",
+                return_value=_no_denial_response(),
+            ):
+                run_probe(project, archive, host)
+
+            failures = archive.select(kind="action", subject=SUBJECT_PROBE_FAILED, limit=10)
+            self.assertEqual(len(failures), 1)
+            # Required shipped behavior, not test-only: a silently-degraded
+            # hook must flip the STANDING state too, so a later `hooks
+            # status`/`capabilities` call (no new probe) also reads it.
+            self.assertEqual(interception_state(archive, host), "UNAVAILABLE")
+
+    def test_cmd_hooks_probe_exits_nonzero_on_a_failed_attempt_despite_prior_history(
+        self,
+    ) -> None:
+        with isolated_project() as (project, archive):
+            host = "claude"
+            run_probe(project, archive, host)  # a real, valid, prior proof on record
+            runtime = Runtime(anchor=archive.anchor, archive=archive)
+            args = argparse.Namespace(hooks_command="probe", host=host)
+
+            with mock.patch(
+                "godmode_runtime.godmode_hookproof.subprocess.run",
+                return_value=_no_denial_response(),
+            ):
+                result = cmd_hooks(args, runtime)
+
+            self.assertNotEqual(result.exit_code, 0)
+            self.assertNotEqual(result.payload["state"], "HARD")
+
+
+class AutomaticSessionAnchorTests(unittest.TestCase):
+    """Fix round 1, Critical-2: session-start writes a real freshness anchor.
+
+    Reviewer's live repro: init, probe, status, capabilities over the
+    shipped Claude Code hook lifecycle never wrote a `kind="session"`
+    record, so `_session_anchor_sequence` was always 0 and every proof read
+    as fresh forever. This drives the REAL `session-start` hook subprocess
+    (not a direct function call) across two sessions and checks staleness
+    actually occurs on the second.
+    """
+
+    def _session_start(self, project: Path, state: Path, host: str = "claude") -> None:
+        environment = dict(os.environ)
+        environment["GODMODE_STATE_HOME"] = str(state)
+        environment["GODMODE_HOST"] = host
+        done = subprocess.run(
+            [sys.executable, str(HOOK), "session-start", "--project", str(project)],
+            input=json.dumps({"hook_event_name": "SessionStart"}),
+            capture_output=True, text=True, encoding="utf-8", timeout=60, env=environment,
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+    def _archive(self, project: Path, state: Path) -> Chronicle:
+        with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(state)}, clear=False):
+            return Chronicle(resolve_anchor(project))
+
+    def test_a_real_claude_session_lifecycle_writes_an_anchor_and_stales_a_prior_proof(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project = base / "project"
+            project.mkdir()
+            state = base / "state"
+            with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(state)}, clear=False):
+                Chronicle(resolve_anchor(project)).initialize()
+
+            # Session 1: the automatic hook lifecycle an operator never
+            # touches by hand - session-start, then a probe.
+            self._session_start(project, state)
+            archive = self._archive(project, state)
+            anchors = archive.select(kind="action", subject=SUBJECT_ANCHOR, limit=10)
+            self.assertEqual(len(anchors), 1)
+
+            probe = subprocess.run(
+                [sys.executable, str(GODMODE_CLI), "--project", str(project), "--json",
+                 "hooks", "probe"],
+                capture_output=True, text=True,
+                env={**os.environ, "GODMODE_STATE_HOME": str(state), "GODMODE_HOST": "claude"})
+            self.assertEqual(probe.returncode, 0, probe.stderr or probe.stdout)
+            self.assertEqual(json.loads(probe.stdout)["state"], "HARD")
+            self.assertEqual(interception_state(self._archive(project, state), "claude"), "HARD")
+
+            # Session 2: a brand new Claude Code session opens. No new probe
+            # runs - the proof is real, but it is now about a PRIOR
+            # session's hook, not this one's.
+            self._session_start(project, state)
+            archive = self._archive(project, state)
+            anchors = archive.select(kind="action", subject=SUBJECT_ANCHOR, limit=10)
+            self.assertEqual(len(anchors), 2)
+            self.assertEqual(interception_state(archive, "claude"), "UNAVAILABLE")
+
+            status = subprocess.run(
+                [sys.executable, str(GODMODE_CLI), "--project", str(project), "--json",
+                 "hooks", "status"],
+                capture_output=True, text=True,
+                env={**os.environ, "GODMODE_STATE_HOME": str(state), "GODMODE_HOST": "claude"})
+            self.assertEqual(json.loads(status.stdout)["verdict"], "UNAVAILABLE")
+
+
+class SessionAnchorReconciliationTests(unittest.TestCase):
+    """Fix round 1: the automatic anchor and `godmode session open` never fight."""
+
+    def test_the_newer_of_either_anchor_kind_governs_freshness(self) -> None:
+        with isolated_project() as (_project, archive):
+            record_interception_proof(archive, host="claude", tool="Bash", request_id="n1")
+            self.assertEqual(interception_state(archive, "claude"), "HARD")
+
+            record_session_anchor(archive, "claude")
+            self.assertEqual(interception_state(archive, "claude"), "UNAVAILABLE")
+
+            # The explicit CLI form, arriving after the automatic anchor,
+            # must not resurrect the now-stale proof.
+            open_session(archive, "explicit work session")
+            self.assertEqual(interception_state(archive, "claude"), "UNAVAILABLE")
+
+            # A fresh proof recorded after BOTH anchor kinds is HARD again,
+            # regardless of which kind is newer.
+            record_interception_proof(archive, host="claude", tool="Bash", request_id="n2")
+            self.assertEqual(interception_state(archive, "claude"), "HARD")
 
 
 if __name__ == "__main__":
