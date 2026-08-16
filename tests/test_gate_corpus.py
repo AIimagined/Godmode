@@ -435,6 +435,16 @@ class GateCorpus(unittest.TestCase):
     `ask` now; the two of those still classified as ordinary local-repository
     changes - bare `add`/`commit` - fail red until Task 4 lands `GIT_ASK`,
     which is also by-design, not a mislabel).
+
+    SEC-A / C1 (external audit, 2026-08-17): 22 of the 142 entries were
+    relabelled `allow` -> `ask` - every one that names an interpreter
+    handed a whole program as one opaque `-c`/`-e`/`-m`/heredoc payload,
+    directly or anywhere in a compound command (worst-segment-wins). This
+    is the audit's own repro generalised, not a mislabel: those entries
+    were harvested from a machine's own `python -m unittest`/`node -e`
+    work, i.e. real evidence of how often the C1 friction lands - roughly
+    1 in 7 of this window's denied commands, in a corpus that already
+    skews toward calls the classifier once refused.
     """
 
     def test_every_entry_matches_expected(self) -> None:

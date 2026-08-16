@@ -39,9 +39,14 @@ EVERYDAY_READ_ONLY = (
     "git log --oneline -5",
     "git diff --stat",
     "git show HEAD --stat",
-    "python -m unittest discover -s tests",
+    # `python -m unittest ...`/`python -c "print(1)"` moved to
+    # INTERPRETER_INLINE_NOW_ASKS below (C1, external audit, 2026-08-17):
+    # an interpreter's opaque `-c`/`-m`/`-e` payload is no longer on this
+    # list at all - it now asks once, deliberately, and belongs beside the
+    # rest of that list's own read/tier assertions rather than diluting
+    # this one. A SCRIPT FILE stays here unaffected - the shape the fix's
+    # own scope statement keeps at R1.
     "python scripts/godmode.py --project . selftest --brief",
-    "python -c \"print(1)\"",
     # Compound and piped forms: a pipeline of read-only parts is read-only.
     "ls scripts/godmode_runtime | head -3",
     "grep -rn TODO scripts | wc -l",
@@ -109,11 +114,11 @@ REDIRECTION_AND_SUBSTITUTION = (
     "wc -l < README.md",
     "cat < input.txt",
     "sort < names.txt",
-    "python -m unittest discover -s tests < /dev/null",
+    "python scripts/godmode.py --project . selftest --brief < /dev/null",
     # `2>&1` duplicates a file descriptor. Making a bare `&` a separator so
     # `ls & rm` could not launder split this at the `&`, leaving a bare `1`
     # that classified as an unknown mutation.
-    "python -m unittest discover -s tests 2>&1",
+    "python scripts/godmode.py --project . selftest --brief 2>&1",
     "make build 1>&2",
     "grep -rn TODO scripts 2>&1 | head -20",
     # A substitution is a command; it is classified, not refused on sight.
@@ -191,16 +196,56 @@ class EverydayCommandTests(unittest.TestCase):
         self.assertEqual(blocked, [], f"the gate would stop ordinary work: {blocked}")
 
     def test_everyday_commands_sit_at_the_two_lowest_tiers(self) -> None:
-        """Reading is R0; running an interpreter is R1, because executing code
-        is not reading it — the tier says so even though neither is gated."""
+        """Reading is R0; running a script FILE is R1, because executing
+        code is not reading it — the tier says so even though neither is
+        gated."""
         for command in EVERYDAY_READ_ONLY:
             self.assertIn(classify_action(command)["tier"], ("R0", "R1"), command)
 
-    def test_running_code_is_recorded_as_compute_not_as_a_read(self) -> None:
-        verdict = classify_action("python -m unittest discover -s tests")
+    def test_running_a_script_file_is_recorded_as_compute_not_as_a_read(self) -> None:
+        verdict = classify_action("python scripts/godmode.py --project . selftest --brief")
         self.assertFalse(verdict["protected"])
         self.assertEqual(verdict["tier"], "R1")
         self.assertEqual(verdict["category"], "local-compute-or-state")
+
+
+# C1 (external audit, 2026-08-17): an interpreter handed a whole program as
+# one opaque `-c`/`-m`/`-e` string used to sit on EVERYDAY_READ_ONLY, R1,
+# unprotected - the exact universal bypass the audit's own two repros
+# exploited. It now asks once - never silently, and never a hard stop for
+# the common case - which is the friction this fix pays, deliberately, and
+# names honestly here rather than folding back into "everyday work."
+INTERPRETER_INLINE_NOW_ASKS = (
+    "python -m unittest discover -s tests",
+    "python -c \"print(1)\"",
+)
+
+
+class InterpreterOpaqueInlineTests(unittest.TestCase):
+    def test_interpreter_inline_payloads_ask_not_allow(self) -> None:
+        for command in INTERPRETER_INLINE_NOW_ASKS:
+            with self.subTest(command=command):
+                verdict = classify_action(command)
+                self.assertTrue(verdict["protected"], command)
+                self.assertEqual(verdict["tier"], "R2", command)
+
+    def test_running_code_inline_is_recorded_as_compute_not_as_a_read(self) -> None:
+        """The category is unchanged - still `interpreter-opaque-inline`'s
+        own local-compute framing, not a mutation category - only
+        `protected` moved, from False to True."""
+        verdict = classify_action("python -m unittest discover -s tests")
+        self.assertTrue(verdict["protected"])
+        self.assertEqual(verdict["tier"], "R2")
+        self.assertEqual(verdict["category"], "interpreter-opaque-inline")
+
+    def test_a_script_file_is_unaffected(self) -> None:
+        """The fix's own scope boundary, pinned here beside the flag forms
+        it deliberately does not touch."""
+        for command in ("python script.py", "node build.mjs"):
+            with self.subTest(command=command):
+                verdict = classify_action(command)
+                self.assertFalse(verdict["protected"], command)
+                self.assertEqual(verdict["tier"], "R1", command)
 
 
 class WindowsCommandTests(unittest.TestCase):
@@ -545,7 +590,10 @@ class AssignmentTests(unittest.TestCase):
         self.assertEqual(verdict["tier"], "R0")
 
     def test_an_assignment_is_judged_on_the_command_it_prefixes(self) -> None:
-        self.assertFalse(classify_action("GODMODE_STATE_HOME=/tmp/s python -m unittest")["protected"])
+        # A script FILE, not an inline `-c`/`-m` payload (C1) - the point of
+        # this test is the assignment-stripping recursion, not the
+        # interpreter's own opacity rule.
+        self.assertFalse(classify_action("GODMODE_STATE_HOME=/tmp/s python script.py")["protected"])
         self.assertTrue(classify_action("FOO=bar rm -rf /tmp/x")["protected"])
 
 

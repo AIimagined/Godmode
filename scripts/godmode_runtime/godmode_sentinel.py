@@ -439,10 +439,17 @@ def _output_flag_target(segment: Segment) -> str | None:
 # script as one opaque, usually-quoted argument - `ExecutablePositionTests`
 # already pins `bash -c "rm -rf /"` as protected specifically because
 # quoting must not launder an unrecognised executable. This is the same
-# construct `node -e`/`python -c` are (an interpreter fed a string), except
-# those two are pinned open by `_self_check` and this plan is not chartered
-# to revisit interpreter policy (task-2-report.md, addendum 2) - `bash`/`sh`
-# were never on that allowance and are not added to it here.
+# construct `node -e`/`python -c` are (an interpreter fed a string) -
+# UPDATE (C1, external audit, 2026-08-17): those two WERE pinned open by
+# `_self_check` on the reasoning that this plan was not chartered to
+# revisit interpreter policy (task-2-report.md, addendum 2). The audit
+# proved that allowance was the universal gate bypass: `python -c
+# "subprocess.run(['git','push','--force', ...])"` walked around every
+# tier through exactly this gap. `_OPAQUE_INTERPRETER_INLINE` (below) now
+# closes it for every interpreter that accepts a whole-program flag
+# (`-c`/`-m`/`-e`/`-Command`), and this table's own `bash`/`sh`/`eval`
+# heads are routed through the same evidence-aware verdict rather than a
+# flat, unescalating `unknown-command` - see `_opaque_inline_verdict`.
 _UNKNOWABLE_BODY_HEADS = re.compile(
     r"(?i)^\s*ForEach-Object\b|"
     r"^\s*(?:bash|sh|zsh|ksh|dash)\b[^;|&]*\s-c\b|"
@@ -683,6 +690,144 @@ _SENSITIVE_EDIT = re.compile(
     r"(?i)(?:^|[/\\])\.git[/\\]|(?:^|[/\\])\.env\b|credential|\bid_rsa\b|"
     r"\.pem$|\.key$|(?:^|[/\\])" + re.escape(POLICY_FILENAME) + r"$"
 )
+
+# ---------------------------------------------------------------------------
+# C1 (external audit, 2026-08-17): an interpreter handed a whole program as
+# one string argument matched `_LOCAL_COMPUTE` on its bare name alone -
+# `python -c "subprocess.run(['git','push','--force', ...])"` and `python -c
+# "<writes .godmode-authorization-policy.json>"` both classified as R1 local
+# compute, unprotected, before this module ever looked past the word
+# "python". `bash -c`/`eval` were already named opaque (`_UNKNOWABLE_BODY_
+# HEADS`, above); this closes the same hole for every interpreter that takes
+# a whole program as one opaque string.
+#
+# RULING (audit's, adopted): do not attempt to read the string. A string-
+# built command name, `getattr`/reflection, and unquoted-heredoc shell
+# expansion each defeat static analysis of an interpreter body, so a
+# per-language read-only allowlist would be unsound - the direction is
+# TIGHTENING (opaque => protected), never a parser that tries to prove a
+# payload safe. What IS done: a coarse, best-effort scan of the same string
+# for VISIBLE evidence of a protected-class operation (a forced push, a
+# history rewrite, a write naming the authorization policy file), which may
+# only RAISE the tier above the floor below - absence of evidence never
+# lowers it.
+#
+# Scope is deliberately narrow (product requirement: godmode must never be
+# an unwanted blocker). Running a SCRIPT FILE (`python app.py`, `node
+# build.mjs`) is untouched - `_LOCAL_COMPUTE` still matches it exactly as
+# before, R1, unprotected - because the file is project content already
+# under other governance, and gating every test/build invocation would be
+# the same failure this module's own `_LOCAL_COMPUTE` comment already warns
+# against. Only the shapes below - an inline-code flag, or a heredoc feeding
+# the interpreter's stdin - are opaque payloads with nothing else governing
+# them.
+_OPAQUE_INTERPRETER_INLINE = re.compile(
+    r"(?i)^\s*(?:python[\d.]*|py)\b(?=[^;|&\n]*\s(?:-c|-m)\b)|"
+    r"^\s*(?:node|deno|bun)\b(?=[^;|&\n]*\s(?:-e|--eval)\b)|"
+    r"^\s*ruby\b(?=[^;|&\n]*\s-e\b)|"
+    r"^\s*perl\b(?=[^;|&\n]*\s-e\b)|"
+    r"^\s*(?:pwsh|powershell)(?:\.exe)?\b(?=[^;|&\n]*\s-(?:[Cc]ommand|c)\b)"
+)
+
+# The heredoc form of the same shape (`python <<EOF` / `node <<'EOF'`),
+# matched on the invocation LINE only - the body itself is recovered
+# separately by `_first_heredoc_interpreter`, below, before this module's own
+# `_without_heredoc_bodies` would otherwise discard it unread for every other
+# command's classification.
+_OPAQUE_HEREDOC_HEAD = re.compile(
+    r"(?i)^\s*(?:python[\d.]*|py|node|deno|bun|ruby|perl|"
+    r"bash|sh|zsh|ksh|dash|pwsh|powershell(?:\.exe)?)\b"
+)
+
+# Visible evidence inside an opaque payload that still raises its tier.
+# Matched with generous, non-greedy gaps (`.{0,40}`) rather than the strict
+# `git\s+push` this module uses for a real shell line, because the audit's
+# own repro spells the same act as `subprocess.run(['git','push','--force',
+# ...])` - the words are real and adjacent in intent, not in whitespace, and
+# a strict adjacency match would miss exactly the case this exists to catch.
+# The cost of the wide gap is a false escalation inside an already-protected
+# payload (one extra confirmation on text that was going to ask anyway);
+# the cost of a narrow one is silence on the audit's own repro, which is not
+# a trade this module makes.
+_OPAQUE_R5_EVIDENCE = re.compile(
+    r"(?is)"
+    r"\bgit\b.{0,40}\bpush\b.{0,40}(?:--force(?:-with-lease)?\b|-f\b|\bforce\b)|"
+    r"\bgit\b.{0,40}\breset\b.{0,40}--hard\b|"
+    r"\bgit\b.{0,40}\bclean\b.{0,40}(?:--force\b|-f\b)|"
+    r"\bgit\b.{0,40}\bbranch\b.{0,40}-[A-Za-z]*D[A-Za-z]*\b|"
+    r"\bdrop\s+(?:table|database|schema|index|view|user)\b|\btruncate\b|"
+    r"\brm\b.{0,20}-[a-z]*r[a-z]*f[a-z]*\b.{0,20}(?:/|~|\$\{?HOME\}?|\bHOME\b)"
+)
+
+# The one write this module already protects through every OTHER route
+# (a governed Edit/Write, a shell redirect - see `_SENSITIVE_EDIT`, above);
+# an interpreter payload naming the file is never trusted to only be
+# reading it, so it gets the SAME tier those routes already carry rather
+# than a new, inconsistent one.
+_OPAQUE_POLICY_WRITE_EVIDENCE = re.compile(re.escape(POLICY_FILENAME))
+
+
+def _opaque_inline_verdict(payload: str) -> tuple[str, bool, list[str]]:
+    """category/protected/impact for an opaque interpreter payload this
+    module does not and must not try to parse. Always protected; the only
+    open question is which tier, decided by `_OPAQUE_R5_EVIDENCE`/
+    `_OPAQUE_POLICY_WRITE_EVIDENCE` scanning `payload` for visible evidence.
+    Called from two sites: `_categorize` (the `-c`/`-e`/`-m`/`-Command`
+    flag shape, `payload` is the whole normalized segment) and
+    `classify_action` (the heredoc shape, `payload` is the recovered body,
+    or the header line alone when the body could not be read)."""
+    if _OPAQUE_POLICY_WRITE_EVIDENCE.search(payload):
+        return ("worktree-file-mutation", True,
+                [f"an interpreter payload names {POLICY_FILENAME}; opaque "
+                 "code is never trusted to only be reading it"])
+    if _OPAQUE_R5_EVIDENCE.search(payload):
+        return ("interpreter-opaque-inline", True,
+                ["an interpreter payload; visible evidence of a "
+                 "protected-class operation inside it (a forced push, a "
+                 "history rewrite, or a schema drop)"])
+    return ("interpreter-opaque-inline", True,
+            ["an interpreter payload this classifier does not read; opaque "
+             "code is protected regardless of visible content"])
+
+
+def _first_heredoc_interpreter(operation: str) -> tuple[str, str, str] | None:
+    """`(header line, body text, remainder)` when `operation`'s FIRST line
+    invokes a known interpreter and feeds it a heredoc, else `None`.
+    `remainder` is every line after the delimiter line, still real command
+    text - `python <<'PY'\\n...\\nPY\\nrm -rf /` names a genuine second
+    command on that last line, and it must keep being judged as one rather
+    than going unread because the heredoc it follows already decided the
+    whole call's fate. Empty when nothing follows (including an
+    unterminated heredoc, which consumes the rest of `operation` as body).
+
+    Walks the lines itself rather than reusing `_without_heredoc_bodies`:
+    that function's entire job is to DISCARD the body for the rest of this
+    module's classification, and this one's job is the opposite - read it,
+    once, for `_opaque_inline_verdict`'s evidence scan. Anchored to the
+    first line on purpose: `echo hi; python <<EOF` does not start with the
+    interpreter, and is left to the existing segment-by-segment pipeline
+    rather than guessed at here.
+    """
+    lines = operation.splitlines()
+    if not lines:
+        return None
+    header = lines[0]
+    if not _OPAQUE_HEREDOC_HEAD.match(header):
+        return None
+    match = _HEREDOC.search(header)
+    if not match:
+        return None
+    delimiter = match.group("delim")
+    body_lines: list[str] = []
+    index = 1
+    while index < len(lines) and lines[index].strip() != delimiter:
+        body_lines.append(lines[index])
+        index += 1
+    remainder = "\n".join(lines[index + 1:]) if index < len(lines) else ""
+    return header, "\n".join(body_lines), remainder
+
+
+# ---------------------------------------------------------------------------
 
 # A path the shell will expand and this process will not. `~/.bashrc` has no
 # leading slash and no drive letter, so it was joined to the project root,
@@ -1498,6 +1643,11 @@ _TIER_BY_CATEGORY = {
     # Recorded at the same tier as a file edit: it changes local state and
     # nothing leaves the machine.
     "local-repository-change": "R2",
+    # C1 (external audit): an interpreter's opaque inline payload - the
+    # floor is R2 (an ask, never a silent R1 allow) whether or not the
+    # scan below finds anything; `_R5_ESCALATIONS` raises it further when
+    # the payload shows visible evidence of something worse.
+    "interpreter-opaque-inline": "R2",
     "git-branch-mutation": "R3",
     "git-history-or-remote": "R3",
     "worktree-discard": "R3",
@@ -1565,6 +1715,12 @@ _R5_ESCALATIONS: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"(?:[\\/]?\*?\s*)(?:$|[\s;|&])"
         ),
     ),
+    # C1 (external audit): the same escalation `_opaque_inline_verdict`
+    # already computed for an interpreter's opaque payload, wired through
+    # this table so `_risk_tier` (the single place a category becomes a
+    # tier) is still the only thing that ever produces R5 - no second,
+    # independently-maintained tier decision for this category.
+    ("interpreter-opaque-inline", _OPAQUE_R5_EVIDENCE),
 )
 
 
@@ -2050,6 +2206,18 @@ def _categorize(normalized: str, project_root: Path | None = None,
     if _ENV_BINDING.match(normalized):
         return ("local-compute-or-state", False,
                 ["a value for later commands in this shell"])
+    # C1 (external audit): checked before `_LOCAL_COMPUTE` - `pwsh`/
+    # `powershell` never match that pattern at all (nothing routed them
+    # anywhere but the unrecognised-command fallback below, R0, before this
+    # existed), and `python`/`node`/`ruby`/`perl` DO match it on their bare
+    # name alone, which is exactly the C1 hole: `_LOCAL_COMPUTE` would
+    # return R1 here before this function ever noticed a `-c`/`-e`/`-m`/
+    # `-Command` flag handing the interpreter an opaque program. A plain
+    # `python script.py` has no such flag - `_OPAQUE_INTERPRETER_INLINE`
+    # does not match it - and falls through unchanged to `_LOCAL_COMPUTE`
+    # below, R1, exactly as before.
+    if _OPAQUE_INTERPRETER_INLINE.match(normalized):
+        return _opaque_inline_verdict(normalized)
     if _LOCAL_COMPUTE.match(normalized):
         return "local-compute-or-state", False, ["local computation; no protected surface named"]
     # Nothing above recognised this command, and nothing above found evidence
@@ -2074,8 +2242,14 @@ def _categorize(normalized: str, project_root: Path | None = None,
                        f"{(segment.subcommand or '').strip() or '(none)'}")
         return ("unknown-command", True, [detail])
     if _UNKNOWABLE_BODY_HEADS.match(normalized):
-        return ("unknown-command", True,
-                [f"{segment.head} runs a body this classifier does not read"])
+        # C1 (external audit): `bash -c`/`eval`/`ForEach-Object` were
+        # already protected here, but flatly, at whatever `unknown-command`
+        # defaults to (R3) - never lower, but never raised either, even
+        # when the opaque body plainly names a forced push. Routed through
+        # the same evidence-aware verdict an interpreter's `-c` flag gets,
+        # so `sh -c "git push --force"` and `python -c "..."` are judged by
+        # the same rule instead of two independently-drifting ones.
+        return _opaque_inline_verdict(normalized)
     if _NETWORK_FETCH_HEADS.match(normalized) and not _SAFE_NETWORK_PROBE.match(normalized):
         return ("unknown-command", True,
                 [f"a network request: {segment.head}",
@@ -2188,6 +2362,46 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     # substitution without needing its own branch in the recursion below, so
     # it is computed once and carried onto whichever dict this call returns.
     external_repo_ref = detect_external_repo(normalized)
+
+    # C1 (external audit): the heredoc form of an opaque interpreter payload
+    # (`python <<EOF` / `node <<'EOF'`) - checked before `shell_segments`
+    # ever runs, because that function's own `_without_heredoc_bodies` (by
+    # design, for every OTHER command) discards the body unread, and a
+    # newline inside it is one of `_SEPARATORS`, so the header and the
+    # delimiter would otherwise become two segments classified apart with
+    # the body gone from both. Recovered and scanned here instead, once,
+    # before either of those things happens.
+    heredoc = _first_heredoc_interpreter(normalized)
+    if heredoc is not None:
+        header, body, remainder = heredoc
+        category, protected, impact = _opaque_inline_verdict(body or header)
+        tier, second_confirmation = _risk_tier(category, normalized)
+        digest = hashlib.sha256(normalized.encode()).hexdigest()
+        heredoc_verdict: dict[str, Any] = {
+            "protected": protected, "category": category,
+            "operation_digest": digest, "impact": impact, "tier": tier,
+            "second_confirmation_required": second_confirmation,
+            "external_repo_ref": external_repo_ref,
+        }
+        if not remainder.strip():
+            return heredoc_verdict
+        # A real second command sat on the line(s) after the heredoc's own
+        # delimiter (`...\nPY\nrm -rf /`) - the pre-existing behaviour for
+        # every other heredoc-bearing command already judges that text via
+        # the ordinary segment pipeline (a newline is one of `_SEPARATORS`),
+        # and this fix must not silently stop reading it just because the
+        # heredoc itself already decided the call is protected. Worst of
+        # the two wins, exactly like every other multi-part operation below.
+        remainder_verdict = classify_action(
+            remainder, extra_protected, project_root, archive, require_approval)
+        worst = max((heredoc_verdict, remainder_verdict),
+                    key=lambda v: (v["protected"], v["tier"]))
+        worst = dict(worst)
+        worst["impact"] = sorted({item for v in (heredoc_verdict, remainder_verdict)
+                                  for item in v["impact"]})
+        worst["operation_digest"] = digest
+        worst["external_repo_ref"] = external_repo_ref
+        return worst
 
     # What a substitution runs is a command like any other, judged alongside
     # the line that contains it rather than taken on trust or refused on sight.
@@ -2942,7 +3156,10 @@ def _self_check() -> None:
         "ls", "ls scripts | head -3", "git status --short",
         "cat README.md", "grep -rn TODO scripts | wc -l",
         "Get-ChildItem -Recurse", "Get-Content README.md | Measure-Object -Line",
-        "python -m unittest discover -s tests", "write file README.md",
+        # A script FILE, not an inline `-c`/`-m`/`-e` payload (C1) - see the
+        # `protected` half below for that shape's own, now-opposite pin.
+        "python scripts/godmode.py --project . selftest --brief",
+        "write file README.md",
         # Reads the corpus of this project's own commands found refused.
         "git -C /repo log --oneline -1", "git rev-list --count v1..HEAD",
         "git merge-base main HEAD", "gh auth status", "gh --help",
@@ -2977,6 +3194,13 @@ def _self_check() -> None:
         # unrecognised `git` subcommand still asks rather than reading R0.
         'bash -c "rm -rf /"', "psql -c 'drop table users'", "git mv a.txt b.txt",
         "ForEach-Object { Remove-Item x }",
+        # C1 (external audit, 2026-08-17): an interpreter's opaque inline
+        # payload is protected unconditionally now - the shape both of the
+        # audit's own repros used to walk around every gate through.
+        "python -c \"print(1)\"", "python -m unittest discover -s tests",
+        "node -e \"1\"", "ruby -e \"1\"", "perl -e \"1\"",
+        'pwsh -Command "Get-ChildItem"',
+        "python <<'PY'\nprint(1)\nPY",
     )
     for operation in protected:
         verdict = classify_action(operation)
@@ -2984,7 +3208,18 @@ def _self_check() -> None:
 
     assert classify_action("git push --force origin main")["tier"] == "R5"
     assert classify_action("ls")["tier"] == "R0"
-    assert classify_action("python -c 'print(1)'")["tier"] == "R1"
+    # C1: an interpreter's opaque payload is never silently R1 again - `_self_
+    # check` used to pin the OLD, vulnerable reading here (`_UNKNOWABLE_BODY_
+    # HEADS`'s own comment named this exact assertion as the reason `bash`/
+    # `sh` were never widened to match); the floor is now R2, and the audit's
+    # own force-push repro through the same shape escalates all the way to R5.
+    assert classify_action("python -c 'print(1)'")["tier"] == "R2"
+    assert classify_action(
+        "python -c \"import subprocess; "
+        "subprocess.run(['git','push','--force','origin','main'])\""
+    )["tier"] == "R5"
+    # A script FILE stays R1, unaffected - the fix's own scope boundary.
+    assert classify_action("python script.py")["tier"] == "R1"
     assert shell_segments("ls | head -3 && git status; cat x") == [
         "ls", "head -3", "git status", "cat x"]
     assert shell_segments("grep 'a|b' file") == ["grep 'a|b' file"]

@@ -190,6 +190,57 @@ class InstallRefusalTests(unittest.TestCase):
             self.assertTrue(still["declared"])
 
 
+class InstallFailureReportingTests(unittest.TestCase):
+    """M6 (external audit): `declared: True` used to be the CLI's only exit
+    -code signal, so an unresolvable hooks directory or a swallowed `chmod`
+    failure both reported success (`declared: True`, exit 0) with nothing
+    actually installed or executable."""
+
+    def test_an_unresolvable_hooks_directory_reports_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw)
+            project = base / "not-a-git-repo"
+            project.mkdir()
+            with mock.patch.dict(
+                os.environ, {"GODMODE_STATE_HOME": str(base / "state")}, clear=False
+            ):
+                anchor = resolve_anchor(project)
+                archive = Chronicle(anchor)
+                archive.initialize()
+                _declare_policy(project)
+                report = git_hooks_install(archive, project)
+        self.assertTrue(report["declared"])
+        self.assertFalse(report["ok"],
+                         "an unresolvable hooks directory reported success")
+        self.assertEqual(report["installed"], [])
+
+    def test_the_cli_exits_nonzero_on_an_unresolvable_hooks_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw)
+            project = base / "not-a-git-repo"
+            project.mkdir()
+            state_home = base / "state"
+            _cli(project, state_home, "init")
+            _declare_policy(project)
+            result = _cli(project, state_home, "hooks", "install", "--git")
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["declared"])
+        self.assertFalse(payload["ok"])
+
+    def test_a_swallowed_chmod_failure_is_reported_not_hidden(self) -> None:
+        with isolated_git_project() as (project, archive):
+            _declare_policy(project)
+            with mock.patch.object(Path, "chmod", side_effect=OSError("denied")):
+                report = git_hooks_install(archive, project)
+        self.assertFalse(report["ok"], "a chmod failure was silently reported as success")
+        self.assertEqual(set(report["chmod_failed"]), set(HOOK_NAMES))
+        # Still written to disk - the file itself is not lost, only not yet
+        # executable - `installed` still names it so a caller can tell
+        # "written, not executable" apart from "never written at all".
+        self.assertEqual(set(report["installed"]), set(HOOK_NAMES))
+
+
 class InstallWritesHooksTests(unittest.TestCase):
     def test_install_writes_all_four_hooks_with_marker_and_executable(self) -> None:
         with isolated_git_project() as (project, archive):
@@ -552,6 +603,66 @@ class MalformedStdinTests(unittest.TestCase):
             payload = json.loads(result.stdout)
             self.assertEqual(payload["verdict"], "block")
             self.assertEqual(payload["category"], "malformed-git-hook-input")
+
+
+class PreCommitInspectionFailureTests(unittest.TestCase):
+    """H2 (external audit, missed by CX-4's own review): `godmode_githooks.
+    _staged_paths` converted a nonzero `git diff --cached --name-only` into
+    `[]`, which `_evaluate_pre_commit` then read as "no staged changes" -
+    allow, exit 0, every pinned-file check and capability consumption
+    skipped, on a commit this hook never actually inspected."""
+
+    @staticmethod
+    def _corrupt_index(project: Path) -> None:
+        # The audit's own reproducible shape: `git diff --cached --name-
+        # only` failing for a real, git-verifiable reason (not a mock) - a
+        # truncated index file git refuses to read.
+        (project / "a.txt").write_text("x", encoding="utf-8")
+        _git("add", "a.txt", cwd=project)
+        (project / ".git" / "index").write_bytes(b"garbage-not-an-index")
+
+    def test_a_corrupted_index_fails_closed_under_declared_policy(self) -> None:
+        with isolated_git_project() as (project, archive):
+            self._corrupt_index(project)
+            _declare_policy(project)
+            report = evaluate_git_hook(archive, project, "pre-commit", "")
+            self.assertEqual(report["verdict"], "block")
+            self.assertEqual(report["category"], "inspection-failed")
+
+    def test_a_corrupted_index_without_declared_policy_is_advisory_allow(self) -> None:
+        with isolated_git_project() as (project, archive):
+            self._corrupt_index(project)
+            # Policy NOT declared.
+            report = evaluate_git_hook(archive, project, "pre-commit", "")
+            self.assertEqual(report["verdict"], "allow")
+            self.assertFalse(report["policy_declared"])
+            self.assertIn("inspection-failed", report["reason"])
+            self.assertIn("advisory-only", report["reason"])
+
+    def test_inspection_failure_is_chronicled_counts_only(self) -> None:
+        with isolated_git_project() as (project, archive):
+            self._corrupt_index(project)
+            _declare_policy(project)
+            evaluate_git_hook(archive, project, "pre-commit", "")
+            records = archive.select(
+                kind="action", subject="git-hook-inspection-failed", limit=10)
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["data"]["host"], "git")
+
+    def test_cli_guard_git_hook_refuses_a_corrupted_index_under_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw)
+            project = base / "proj"
+            state_home = base / "state"
+            _init_repo(project)
+            _cli(project, state_home, "init")
+            self._corrupt_index(project)
+            _declare_policy(project)
+            result = _cli(project, state_home, "guard", "--git-hook", "pre-commit")
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["verdict"], "block")
+            self.assertEqual(payload["category"], "inspection-failed")
 
 
 class PreCommitPreRebasePostCheckoutTests(unittest.TestCase):
