@@ -571,5 +571,42 @@ class CliExitCodeTests(unittest.TestCase):
             )
 
 
+class WorktreeExclusionTests(unittest.TestCase):
+    """CX-3 rider (release-night finding): `.claude/worktrees/` holds other
+    agents' full nested checkouts of this same repository - a raw `rglob`
+    walk that does not exclude it double-(or N-)counts every finding in
+    those copies alongside the real tree's own."""
+
+    def test_a_defect_only_under_claude_worktrees_is_not_counted(self) -> None:
+        with temp_project() as project:
+            nested = project / ".claude" / "worktrees" / "agent-x"
+            nested.mkdir(parents=True)
+            (nested / "a.py").write_text(
+                "try:\n    do_thing()\nexcept Exception:\n    pass\n", encoding="utf-8",
+            )
+            report = scan_project(project)
+            self.assertEqual(report["findings"], [])
+
+    def test_the_same_defect_outside_worktrees_is_still_counted(self) -> None:
+        with temp_project() as project:
+            (project / "a.py").write_text(
+                "try:\n    do_thing()\nexcept Exception:\n    pass\n", encoding="utf-8",
+            )
+            report = scan_project(project)
+            self.assertEqual(_checks(report["findings"]), ["empty-except"])
+
+    def test_an_unrelated_directory_literally_named_worktrees_is_not_excluded(self) -> None:
+        """Only the exact `.claude/worktrees` ADJACENT pair is excluded - a
+        directory named `worktrees` anywhere else stays scanned."""
+        with temp_project() as project:
+            other = project / "worktrees"
+            other.mkdir()
+            (other / "a.py").write_text(
+                "try:\n    do_thing()\nexcept Exception:\n    pass\n", encoding="utf-8",
+            )
+            report = scan_project(project)
+            self.assertEqual(_checks(report["findings"]), ["empty-except"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "${PLUGIN_ROOT}/hooks/godmode_session_hook.py",
+              "session-start"
+            ],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "preToolUse": [
+      {
+        "matcher": "Shell|Write|Edit|Delete",
+        "failClosed": true,
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "${PLUGIN_ROOT}/hooks/godmode_gate_fast.py"
+            ],
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "matcher": ".*",
+        "failClosed": true,
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "${PLUGIN_ROOT}/hooks/godmode_gate_fast.py"
+            ],
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

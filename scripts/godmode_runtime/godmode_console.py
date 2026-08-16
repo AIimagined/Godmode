@@ -41,6 +41,8 @@ from .godmode_atlas import load_index, save_index, slice_file
 from .godmode_attest import GRADES, STATUSES, plant_and_observe, recurrences, reflect, run_check
 from .godmode_bindings import check as bindings_check
 from .godmode_bindings import dependency_gate, release_checksums, sbom_cyclonedx, sbom_spdx
+from .godmode_bindings import install_verify as hooks_install_verify
+from .godmode_bindings import registration_report as hooks_registration_report
 from .godmode_bindings import sbom as build_sbom
 from .godmode_bindings import write as bindings_write
 from .godmode_charter import ADVISORY, TRIGGERS, applicable_rules, bootstrap_rules, compile_charter, traits_of
@@ -1261,11 +1263,11 @@ def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             "plugin_installed": manifest["plugin_installed"],
             "session_hook_seen": manifest["session_hook_seen"],
             "pretool_hook_seen": manifest["pretool_hook_seen"],
-            # Neither true nor false: whether the HOST's own runtime state
-            # shows this hook enabled is not something this process can
-            # inspect yet (CX-3's install-verify closes that gap per host).
-            # Honesty here means naming the unknown, never guessing it.
-            "host_registration": "unverified",
+            # CX-3: per-host STRUCTURAL detail (manifest present, matches the
+            # generator, which events it declares) - never a live host-state
+            # read (that stays `hooks install --host <name>`'s job, an
+            # explicit action, not a `status` side effect).
+            "host_registration": hooks_registration_report(),
             "last_proof": last_proof(runtime.archive, host),
             "verdict": interception_state(runtime.archive, host),
         })
@@ -1280,6 +1282,13 @@ def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             )
         report = run_probe(Path(runtime.anchor.project_root), runtime.archive, host)
         return CommandResult(report, exit_code=0 if report["state"] == "HARD" else 1)
+    if args.hooks_command == "install":
+        state_path = Path(args.state_path) if args.state_path else None
+        report = hooks_install_verify(None, host, state_path=state_path)
+        # "unverifiable"/"verified" both exit 0 - an honest unknown is not a
+        # failure. Only "partial" (some declared hook confirmed missing from
+        # the host's own state) fails loudly, per CX-3's binding instruction.
+        return CommandResult(report, exit_code=1 if report["verdict"] == "partial" else 0)
     raise ArchiveError(f"Unknown hooks subcommand {args.hooks_command!r}")
 
 
@@ -2616,7 +2625,18 @@ def cmd_skill_forge(args: argparse.Namespace, runtime: Runtime) -> CommandResult
         negative_triggers=tuple(args.negative),
         assertions=tuple(args.assertion),
     )
-    created = forge_skill(args.destination, proposal)
+    # CX-3 (Addendum 6's roster-gap fix): Grok's own skill roster looks under
+    # `.grok/skills/`, distinct from the project-root `skills/` every other
+    # host shares - an explicit `--destination` always wins; only the
+    # DEFAULT differs by host.
+    destination = args.destination
+    if destination is None:
+        project_root = Path(runtime.anchor.project_root)
+        if current_host() == "grok":
+            destination = str(project_root / ".grok" / "skills")
+        else:
+            destination = str(project_root / "skills")
+    created = forge_skill(destination, proposal)
     runtime.archive.append(
         "decision",
         f"skill-created:{args.name}",
@@ -3255,6 +3275,18 @@ def _build_parser() -> argparse.ArgumentParser:
     hooks_probe.add_argument(
         "--host", help="Host label to record the proof under (default: detected)")
     hooks_probe.set_defaults(handler=cmd_hooks)
+    hooks_install = hooks_sub.add_parser(
+        "install",
+        help="Verify each declared hook for one host appears in that host's own runtime "
+             "state, where inspectable; fails loudly on partial registration")
+    hooks_install.add_argument(
+        "--host", required=True,
+        help="Host to verify: claude, codex, grok, cursor, or gemini")
+    hooks_install.add_argument(
+        "--state-path",
+        help="A captured/fixture copy of the host's own state (Codex's config.toml, "
+             "or a `grok inspect --json` capture) instead of auto-discovering one")
+    hooks_install.set_defaults(handler=cmd_hooks)
     minimality_parser = sub.add_parser(
         "minimality", help="Rank existing duplicate/orphan/seam/decay surfaces into one report")
     minimality_parser.set_defaults(handler=cmd_minimality)
@@ -3796,7 +3828,10 @@ def _build_parser() -> argparse.ArgumentParser:
     skill_validate.add_argument("--path", required=True)
     skill_validate.set_defaults(handler=cmd_skill_validate)
     skill_forge = skill_sub.add_parser("forge")
-    skill_forge.add_argument("--destination", required=True)
+    skill_forge.add_argument(
+        "--destination", default=None,
+        help="Skill output directory. Default: .grok/skills/ on Grok (CX-3, Addendum 6's "
+             "roster-gap fix), else skills/ under the project root.")
     skill_forge.add_argument("--name", required=True)
     skill_forge.add_argument("--purpose", required=True)
     skill_forge.add_argument("--gap-evidence", required=True)

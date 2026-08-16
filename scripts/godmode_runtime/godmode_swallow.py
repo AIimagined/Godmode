@@ -436,6 +436,26 @@ def _auto_tighten(baseline: dict[str, int], counts: dict[str, int]) -> tuple[dic
     return tightened, changed
 
 
+def _is_under_claude_worktrees(parts: tuple[str, ...]) -> bool:
+    """Release-night finding (CX-3 rider): a scan launched from inside a
+    `.claude/worktrees/<agent-id>/` checkout used to also walk every OTHER
+    agent's nested worktree copy of this same repository - each one a full,
+    independent source tree the raw `rglob` sweep above has no reason to
+    tell apart from the real one, so a single scan's finding count silently
+    multiplied by however many concurrent worktrees happened to exist at
+    scan time. `IGNORED_DIRECTORY_NAMES` (a flat name set) cannot express
+    this: `"worktrees"` alone would also skip an unrelated directory
+    legitimately named that anywhere else in a project, and `".claude"`
+    alone would skip real project configuration that happens to live there.
+    Only the exact ADJACENT pair - a `.claude` component immediately
+    followed by a `worktrees` component - is excluded.
+    """
+    for index in range(len(parts) - 1):
+        if parts[index] == ".claude" and parts[index + 1] == "worktrees":
+            return True
+    return False
+
+
 def scan_project(project: Path, limit: int = DEFAULT_SCAN_LIMIT) -> dict[str, Any]:
     """Sweep Python and JS/TS source for silent-failure shapes, and ratchet
     the result against the stored baseline.
@@ -454,6 +474,8 @@ def scan_project(project: Path, limit: int = DEFAULT_SCAN_LIMIT) -> dict[str, An
         if suffix != ".py" and suffix not in JS_SUFFIXES:
             continue
         if any(part in IGNORED_DIRECTORY_NAMES for part in path.parts):
+            continue
+        if _is_under_claude_worktrees(path.parts):
             continue
         candidates.append(path)
 
