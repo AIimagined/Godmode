@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 from typing import Any
@@ -24,13 +25,32 @@ from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_runtime.godmode_errors import GodmodeError  # noqa: E402
 from godmode_runtime.godmode_attest import attested_rule_ids, latest_session  # noqa: E402
 from godmode_runtime.godmode_guardrails import check_ceilings  # noqa: E402
-from godmode_runtime.godmode_guardrails import meter_tool_call, tool_operation, watchdog  # noqa: E402
+from godmode_runtime.godmode_guardrails import meter_tool_call, watchdog  # noqa: E402
 from godmode_runtime.godmode_hookproof import (  # noqa: E402
     PROBE_PREFIX, interception_state, record_interception_proof,
     record_session_anchor)
+from godmode_runtime.godmode_hostevent import (  # noqa: E402
+    HOSTS_WITH_ASK, TOOL_KIND_DUPLICATE, TOOL_KIND_UNRECOGNIZED,
+    capture_payload_probe, field as host_field, is_pretool_event,
+    parse_host_payload, record_unrecognized_tool, render_decision,
+    unrecognized_tool_preview)
 from godmode_runtime.godmode_sentinel import (  # noqa: E402
     GATE_MODE_OBSERVE, classify_action, evidence_pipe_advisory,
     local_authorization_policy)
+
+# CX-2 gate-exactly-once: request ids seen so far in THIS process. A fresh
+# hook subprocess gets a fresh, empty set every real host tool call, so this
+# is documented as an in-process guard only - see
+# `godmode_hostevent.py`'s module docstring for the cross-invocation
+# boundary this deliberately does not claim to close.
+_SEEN_REQUEST_IDS: set[str] = set()
+
+# CX-2 payload-capture probe: counts-only capture of an unrecognized host
+# shape (event/tool names, sorted input field names, request-id/cwd hashes -
+# never a value), for building future host fixtures. Off unless explicitly
+# requested - either the env var (set once for a whole session) or
+# `--capture-payload` (this invocation only).
+CAPTURE_PAYLOAD_ENV = "GODMODE_CAPTURE_HOST_PAYLOADS"
 
 
 CLAUDE_CONTEXT_LIMIT = 9_000
@@ -39,12 +59,13 @@ CLAUDE_CONTEXT_LIMIT = 9_000
 # from this set is treated as capable of mutation and pays the full check.
 _READ_ONLY_TOOLS = frozenset({"Read", "Glob", "Grep", "WebFetch", "WebSearch", "TodoWrite"})
 
-# Tools that name the file they change in `file_path`, which is what the scope
-# fence is written against. A shell command that edits a file in passing is not
-# covered here - it is covered by the classifier, which reads commands - and
-# pretending otherwise would put a fence on the tools that announce their
-# target while leaving the ones that do not.
-_FENCED_TOOLS = frozenset({"Write", "Edit", "NotebookEdit"})
+# CX-2: which tools name the file(s) they change - Claude's Write/Edit/
+# NotebookEdit, Codex's apply_patch (one to several) - is now an adapter
+# decision (`godmode_hostevent.py`), surfaced as `HostEvent.targets`. A
+# shell command that edits a file in passing is still not covered here - it
+# is covered by the classifier, which reads commands - and pretending
+# otherwise would put a fence on the tools that announce their target while
+# leaving the ones that do not.
 
 
 def _input() -> dict[str, Any]:
@@ -309,7 +330,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("event", choices=["session-start", "pre-compact", "session-end",
                                           "pre-action", "user-prompt"])
     parser.add_argument("--project")
+    parser.add_argument("--capture-payload", action="store_true",
+                        help="CX-2: record this call's structural shape (names/hashes "
+                             "only, never values) for building a future host fixture")
     args = parser.parse_args(argv)
+    capture_payload = args.capture_payload or bool(os.environ.get(CAPTURE_PAYLOAD_ENV))
     submitted = _input()
     claude_session = _is_claude_session(submitted)
     project = args.project or str(submitted.get("cwd") or ".")
@@ -319,7 +344,7 @@ def main(argv: list[str] | None = None) -> int:
     # mutation and not worth paying before a file read - and the shipped matcher
     # already limits this hook to mutating tools, so this only protects a host
     # that widened it.
-    if args.event == "pre-action" and str(submitted.get("tool_name", "")) in _READ_ONLY_TOOLS:
+    if args.event == "pre-action" and str(host_field(submitted, "tool_name") or "") in _READ_ONLY_TOOLS:
         return 0
     try:
         anchor = resolve_anchor(project)
@@ -439,16 +464,21 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(payload, ensure_ascii=False))
             return 0
 
-        # Pre-tool boundary. Two callers, one decision: a host passing its own
-        # PreToolUse payload (tool_name/tool_input), and anything passing a bare
-        # operation string. The host form answers in the host's contract so the
-        # decision is enforced rather than advised.
-        pretool = submitted.get("hook_event_name") == "PreToolUse"
-        tool = str(submitted.get("tool_name", "")).strip()
-        if tool:
-            operation = tool_operation(tool, submitted.get("tool_input"))
-        else:
-            operation = str(submitted.get("operation", "")).strip()
+        # Pre-tool boundary. CX-2: every payload - a host's own tool-call
+        # shape in any documented dialect, or a bare `{"operation": ...}`
+        # string - is translated ONCE into one canonical `HostEvent` here;
+        # everything below reads `event.tool`/`event.operation`/
+        # `event.targets`, never the raw payload again.
+        pretool = is_pretool_event(submitted)
+        event = parse_host_payload(submitted, seen=_SEEN_REQUEST_IDS)
+        if event.tool_kind == TOOL_KIND_DUPLICATE:
+            # Gate-exactly-once: this request id already reached the gate
+            # once THIS process (an orchestration wrapper that unwrapped to
+            # the same call twice, for example) - it was already decided,
+            # so nothing further runs a second time for it.
+            return 0
+        tool = event.tool
+        operation = event.operation
 
         # CX-1: `godmode hooks probe` sends this exact marker through this
         # exact path to prove the boundary is reachable, not to test whether
@@ -485,19 +515,20 @@ def main(argv: list[str] | None = None) -> int:
                 "to prove the pre-tool boundary is reachable; it is always denied."
             )
             if pretool:
-                print(json.dumps({
-                    "hookSpecificOutput": {
-                        "hookEventName": "PreToolUse",
-                        "permissionDecision": "deny",
-                        "permissionDecisionReason": reason,
-                    }
-                }, ensure_ascii=False))
+                body, _code = render_decision(event.host, event.event, "deny", reason)
+                print(json.dumps(body, ensure_ascii=False))
                 return 0
             print(json.dumps({
                 "protected": True, "allow": False, "category": "hook-interception-probe",
                 "tier": "R5", "reason": reason,
             }))
-            return 3
+            # EXIT 3 REMOVED (CX-2): a live probe on a host whose fail-open
+            # semantics treat any non-{0,2} exit as an implicit allow (the
+            # Grok probe, Addendum 6) must never be handed a code that means
+            # "proceed" on that host by accident - 2 is deny everywhere, 3
+            # meant nothing to any documented dialect and fail-opened on at
+            # least one.
+            return 2
 
         session = latest_session(archive)
         blocked_reason = None
@@ -549,14 +580,27 @@ def main(argv: list[str] | None = None) -> int:
         # is denied here, at the same call every other protected category
         # already goes through - the archive is the authoritative pin
         # store, and this is the one call site that has it in scope.
-        preview = classify_action(
-            operation, project_root=Path(anchor.project_root),
-            archive=archive,
-            extra_protected=policy.get("password_required", ()),
-            require_approval=policy.get("approval_required", ()),
-        ) if operation else {
-            "protected": True, "category": "unclassified-mutation",
-            "impact": ["no operation described"]}
+        # CX-2: an unknown tool name never degrades into a guessed operation
+        # string - it fails closed on its own, dedicated category, and the
+        # miss is chronicled (counts only: host + tool name, never the
+        # command/target that came with it). This replaces the pre-CX-2
+        # generic-invocation degradation path entirely.
+        if event.tool_kind == TOOL_KIND_UNRECOGNIZED:
+            preview = unrecognized_tool_preview(tool)
+            record_unrecognized_tool(archive, event.host, tool)
+            if capture_payload:
+                capture_payload_probe(archive, submitted, event)
+        elif operation:
+            preview = classify_action(
+                operation, project_root=Path(anchor.project_root),
+                archive=archive,
+                extra_protected=policy.get("password_required", ()),
+                require_approval=policy.get("approval_required", ()),
+            )
+        else:
+            preview = {
+                "protected": True, "category": "unclassified-mutation",
+                "impact": ["no operation described"]}
         preview["executes_operation"] = False
         if blocked_reason is not None:
             preview["allow"] = False
@@ -592,16 +636,54 @@ def main(argv: list[str] | None = None) -> int:
             # disabling the guard instead, which is the worst advice this
             # sentence could give and the likeliest to be taken.
             impact = "; ".join(str(item) for item in preview.get("impact", ()))[:160]
-            if _decision_for(preview) == "ask":
-                # A question, phrased as one. The reason is read aloud to the
-                # operator beside the command, so it says what is at stake
-                # rather than what the tool has decided.
-                preview["reason"] = (
-                    f"{preview['category']} ({preview.get('tier', 'R?')})"
+            # A question, phrased as one - what a host that actually has an
+            # `ask` decision (Claude, Cursor) shows the operator.
+            ask_reason = (
+                f"{preview['category']} ({preview.get('tier', 'R?')})"
+                + (f" - touches {impact}" if impact else "")
+                + ". Approve to run it."
+            )
+            if operation:
+                deny_reason = (
+                    f"refused: this is irreversible ({preview['category']}, "
+                    f"{preview.get('tier', 'R?')})"
                     + (f" - touches {impact}" if impact else "")
-                    + ". Approve to run it."
+                    + ". Run it yourself, rephrase it as something narrower, or "
+                    "stage a capability for this exact command: `godmode "
+                    "authorize stage --operation "
+                    f"{json.dumps(operation[:200])}` - it needs the password "
+                    "from `godmode authorize setup`, is spent once, and expires. "
+                    "In a hosted session, type it with a leading '!' to run it "
+                    "from the prompt without leaving the conversation.\n"
+                    "! godmode authorize stage --from-last-refusal"
                 )
             else:
+                # CX-2: an unrecognized tool (or any other no-operation-text
+                # case) has nothing to stage an exact command for - naming
+                # a remedy that names an empty command would be worse than
+                # naming none.
+                deny_reason = (
+                    f"refused: {preview['category']} ({preview.get('tier', 'R?')})"
+                    + (f" - touches {impact}" if impact else "")
+                    + ". No operation text is available to stage a capability "
+                    "for; run this yourself outside the agent, or extend the "
+                    "host adapter so this call carries one."
+                )
+            # CX-2 (Addendum 6): a host with no `ask` decision in its own
+            # contract (Grok/Codex/Gemini) never receives "ask" - it is
+            # DENIED, with a reason naming the staged-capability remedy, the
+            # instant `_decision_for` would otherwise have asked. Computed
+            # with the exact same condition `render_decision` uses to fold
+            # ask into deny, so the reason text sent and the decision value
+            # sent can never disagree about which one this call actually
+            # got. Claude/Cursor (both have `ask`) are UNCHANGED from
+            # pre-CX-2: `effectively_denied` is only ever True for them when
+            # `_decision_for` already said "deny".
+            effectively_denied = (
+                _decision_for(preview) != "ask" or event.host not in HOSTS_WITH_ASK
+            )
+            preview["reason"] = deny_reason if effectively_denied else ask_reason
+            if effectively_denied:
                 # Recorded here, in the full escalation path only - the fast
                 # gate stays IO-free by contract, and this branch is where a
                 # refusal is actually born. Bounded so the record cannot grow
@@ -630,19 +712,6 @@ def main(argv: list[str] | None = None) -> int:
                         )
                     except Exception:  # noqa: BLE001
                         pass
-                preview["reason"] = (
-                    f"refused: this is irreversible ({preview['category']}, "
-                    f"{preview.get('tier', 'R?')})"
-                    + (f" - touches {impact}" if impact else "")
-                    + ". Run it yourself, rephrase it as something narrower, or "
-                    "stage a capability for this exact command: `godmode "
-                    "authorize stage --operation "
-                    f"{json.dumps(operation[:200])}` - it needs the password "
-                    "from `godmode authorize setup`, is spent once, and expires. "
-                    "In a hosted session, type it with a leading '!' to run it "
-                    "from the prompt without leaving the conversation.\n"
-                    "! godmode authorize stage --from-last-refusal"
-                )
 
         # The fence, applied last and only to what would otherwise proceed. It
         # answers a question none of the checks above ask: not `is this
@@ -656,13 +725,18 @@ def main(argv: list[str] | None = None) -> int:
         # time it was wrong. Undeclared fences allow silently - every project
         # that predates this has no fence, and none may start refusing edits
         # because this shipped.
-        if preview.get("allow") and tool in _FENCED_TOOLS:
-            target = str((submitted.get("tool_input") or {}).get("file_path", "")).strip()
-            if target:
-                # Deferred: only Edit/Write-class tools pay for the fence
-                # module - the far more common read-only and R0-R2 tool
-                # calls never reach this branch.
-                from godmode_runtime.godmode_fence import design_verdict, fence_verdict
+        # CX-2: `event.targets` is one path for Claude's Write/Edit/
+        # NotebookEdit (the pre-CX-2 shape, unchanged) and MAY be several
+        # for Codex's `apply_patch` (Plan amendment 3: every add/update/
+        # delete/rename target reaches this same fence). First denial wins -
+        # both checks are binary allow/deny, so there is no "worst of" to
+        # rank, only the first target that is not allowed.
+        if preview.get("allow") and event.targets:
+            # Deferred: only fenced tool calls pay for the fence module - the
+            # far more common read-only and R0-R2 tool calls never reach
+            # this branch.
+            from godmode_runtime.godmode_fence import design_verdict, fence_verdict
+            for target in event.targets:
                 # The design boundary is checked first and denies outright. It
                 # is project state rather than task state, and the operator
                 # said this one needs their permission - a one-key `ask` in the
@@ -674,13 +748,14 @@ def main(argv: list[str] | None = None) -> int:
                     preview["design_block"] = True
                     preview["boundary"] = design["boundary"]
                     preview["reason"] = f"{design['detail']}. {design['remedy']}"
-                else:
-                    fenced = fence_verdict(archive, target,
-                                           project_root=Path(anchor.project_root))
-                    if not fenced["allowed"]:
-                        preview["allow"] = False
-                        preview["fence"] = fenced["fence"]
-                        preview["reason"] = f"{fenced['detail']}. {fenced['remedy']}"
+                    break
+                fenced = fence_verdict(archive, target,
+                                       project_root=Path(anchor.project_root))
+                if not fenced["allowed"]:
+                    preview["allow"] = False
+                    preview["fence"] = fenced["fence"]
+                    preview["reason"] = f"{fenced['detail']}. {fenced['remedy']}"
+                    break
 
         # U-E7 observe mode: the single point every check above converges at.
         # Ceilings, the watchdog, the classifier's ask/deny split, the design
@@ -710,16 +785,15 @@ def main(argv: list[str] | None = None) -> int:
                                      ensure_ascii=False))
                 return 0
             if not preview["allow"]:
-                print(json.dumps({
-                    "hookSpecificOutput": {
-                        "hookEventName": "PreToolUse",
-                        "permissionDecision": _decision_for(preview),
-                        "permissionDecisionReason": preview["reason"],
-                    }
-                }, ensure_ascii=False))
+                body, _code = render_decision(
+                    event.host, event.event, _decision_for(preview), preview["reason"])
+                print(json.dumps(body, ensure_ascii=False))
             return 0
         print(json.dumps(preview))
-        return 0 if preview["allow"] else 3
+        # EXIT 3 REMOVED (CX-2): see the probe branch's comment above - no
+        # documented host dialect assigns exit 3 any meaning, and at least
+        # one (Grok) fail-opens on it.
+        return 0 if preview["allow"] else 2
     except GodmodeError as exc:
         if claude_session:
             print(

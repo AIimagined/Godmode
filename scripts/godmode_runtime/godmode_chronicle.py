@@ -17,13 +17,17 @@ import uuid
 
 import shutil
 
-from .godmode_anchor import ProjectAnchor, anchor_fingerprint, nongit_archive_root
+from .godmode_anchor import ProjectAnchor, anchor_fingerprint, current_host, nongit_archive_root
 
 
 def writer_fingerprint() -> dict[str, str]:
     """Who is writing: host, model, effort, and the adapter's enforcement level."""
     return {
-        "host": os.environ.get("GODMODE_HOST") or os.environ.get("CLAUDE_CODE_ENTRYPOINT") or "unknown",
+        # CX-2: delegates to `godmode_anchor.current_host()` rather than
+        # re-reading the env vars here, so this record's `host` field can
+        # never disagree with what `godmode_hookproof.py`'s proof records or
+        # `godmode_hostevent.py`'s adapters call the same session.
+        "host": current_host(),
         "model": os.environ.get("GODMODE_MODEL", "unknown"),
         "effort": os.environ.get("GODMODE_EFFORT", "unknown"),
         "enforcement": os.environ.get("GODMODE_ENFORCEMENT", "SOFT"),
