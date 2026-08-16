@@ -49,6 +49,22 @@ REGRESSION_CEILING_IN_PROCESS = 1.20
 REGRESSION_CEILING_SUBPROCESS = 2.00
 SUBPROCESS_STAGES = frozenset({"startup", "decision_round_trip"})
 
+# M2 (review, Minor): a PURELY relative ceiling has a blind spot - if the
+# checked-in baseline was itself recorded during a slow run, doubling an
+# already-bad number still passes a relative-only check, and the reviewer's
+# own observation (a 130% swing recorded once on this machine, within
+# spitting distance of the 100% ceiling above) means that blind spot is not
+# hypothetical here. This SECOND, ABSOLUTE bound is independent of whatever
+# the baseline says: `decision_round_trip` is the full hook's classify+
+# archive round trip, at any documented host, and this checkout's own
+# measured baselines sit at 110-200ms - a full second is deliberately
+# generous headroom (never meant to compete with the relative ceiling's
+# job of catching a SMALLER regression), but it catches an order-of-
+# magnitude regression that could otherwise hide inside relative noise or
+# an inflated baseline. Both bounds are documented and both are enforced;
+# neither replaces the other.
+ABSOLUTE_CEILING_SECONDS = {"decision_round_trip": 1.0}
+
 
 def _load_baseline() -> dict:
     return json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
@@ -123,6 +139,22 @@ class RegressionGuardTests(unittest.TestCase):
                 with self.subTest(stage=stage, host=host):
                     live_median, ceiling, message = self._ceiling_check(stage, host)
                     self.assertLessEqual(live_median, ceiling, message)
+
+    def test_decision_round_trip_stays_under_its_absolute_hard_bound(self) -> None:
+        """M2 (review): a secondary, ABSOLUTE bound - independent of the
+        relative ceiling above and of whatever the checked-in baseline
+        says - so a genuine order-of-magnitude regression cannot hide
+        inside relative noise or an inflated baseline. See this module's
+        own `ABSOLUTE_CEILING_SECONDS` docstring for why."""
+        bound = ABSOLUTE_CEILING_SECONDS["decision_round_trip"]
+        for host in perf_measure.HOSTS:
+            with self.subTest(host=host):
+                live_median = self.live["stages"]["decision_round_trip"][host]["median_seconds"]
+                self.assertLess(
+                    live_median, bound,
+                    f"decision_round_trip/{host}: {live_median:.3f}s exceeds the "
+                    f"{bound:.0f}s absolute hard bound - independent of the relative "
+                    "ceiling and of whatever the checked-in baseline itself measured")
 
 
 if __name__ == "__main__":
