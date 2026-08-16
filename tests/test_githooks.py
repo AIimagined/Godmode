@@ -33,8 +33,11 @@ from godmode_runtime.godmode_console import main as cli_main  # noqa: E402
 from godmode_runtime.godmode_githooks import (  # noqa: E402
     HASH_PREFIX,
     HOOK_NAMES,
+    KNOWN_BYPASS,
     MARKER_PREFIX,
     POLICY_KEY,
+    _canonical_body,
+    _hook_file_state,
     _hook_script,
     evaluate_git_hook,
     git_hooks_install,
@@ -140,6 +143,28 @@ class HookScriptContentTests(unittest.TestCase):
         self.assertNotEqual(one, three)
 
 
+class KnownBypassDisclosureTests(unittest.TestCase):
+    """Fix round 1, I1: `--no-verify` must be disclosed everywhere the
+    feature describes itself, not just in prose a reader has to go find."""
+
+    def test_module_constant_names_no_verify(self) -> None:
+        self.assertIn("--no-verify", KNOWN_BYPASS)
+
+    def test_status_git_surfaces_the_same_disclosure(self) -> None:
+        with isolated_git_project() as (project, archive):
+            status = git_hooks_status(archive, project)
+            self.assertIn("--no-verify", status["known_bypass"])
+
+    def test_docs_disclose_the_bypass(self) -> None:
+        docs = (PLUGIN_ROOT / "hooks" / "GODMODE_HOOKS.md").read_text(encoding="utf-8")
+        self.assertIn("--no-verify", docs)
+
+    def test_changelog_fragment_discloses_the_bypass(self) -> None:
+        fragment = (PLUGIN_ROOT / "changelog.d" / "cx4-githooks.added.md").read_text(
+            encoding="utf-8")
+        self.assertIn("--no-verify", fragment)
+
+
 class InstallRefusalTests(unittest.TestCase):
     def test_install_refuses_without_declared_policy(self) -> None:
         with isolated_git_project() as (project, archive):
@@ -194,6 +219,78 @@ class InstallWritesHooksTests(unittest.TestCase):
             second = git_hooks_install(archive, project)
             self.assertEqual(set(second["installed"]), set(HOOK_NAMES))
             self.assertEqual(second["skipped_foreign"], [])
+
+
+class TamperDetectionTests(unittest.TestCase):
+    """Fix round 1, C1: `hooks status --git` must catch a hand-edit even
+    when the editor never touches the hash header line - the reviewer's
+    own live repro, run here directly against the fixed mechanism."""
+
+    def test_canonical_body_excludes_only_the_hash_line(self) -> None:
+        text = "#!/bin/sh\n# godmode-git-hook: pre-push\n# godmode-hook-hash: deadbeef\nexit 0\n"
+        self.assertEqual(_canonical_body(text),
+                          "#!/bin/sh\n# godmode-git-hook: pre-push\nexit 0")
+
+    def test_a_freshly_installed_hook_is_self_consistent(self) -> None:
+        with isolated_git_project() as (project, archive):
+            _declare_policy(project)
+            git_hooks_install(archive, project)
+            path = project / ".git" / "hooks" / "pre-push"
+            self.assertEqual(_hook_file_state(path, "pre-push")["state"], "godmode")
+
+    def test_the_reviewers_exact_tamper_is_now_caught(self) -> None:
+        # Live repro from the review: `sed -i 's/exit \$?/exit 0  # tampered:
+        # always allow/'` - edits the body, never touches the header line.
+        with isolated_git_project() as (project, archive):
+            _declare_policy(project)
+            git_hooks_install(archive, project)
+            path = project / ".git" / "hooks" / "pre-push"
+            before = _hook_file_state(path, "pre-push")
+            self.assertEqual(before["state"], "godmode")
+            original = path.read_text(encoding="utf-8")
+            self.assertIn("exit $?", original)
+            tampered = original.replace("exit $?", "exit 0  # tampered: always allow")
+            path.write_text(tampered, encoding="utf-8")
+            after = _hook_file_state(path, "pre-push")
+            self.assertEqual(after["state"], "godmode-modified")
+            # The header's OWN claimed hash is untouched by the edit - the
+            # old, defective comparison (recomputed from name+path alone)
+            # would have matched it anyway. The recorded hash is unchanged...
+            self.assertEqual(after["hash"], before["hash"])
+            # ...but `hooks status --git` (which reads the file, not the
+            # header's own say-so) now disagrees with it.
+            status = git_hooks_status(archive, project)
+            self.assertEqual(status["hooks"]["pre-push"]["state"], "godmode-modified")
+
+    def test_a_whitespace_only_edit_is_still_modified_byte_honestly(self) -> None:
+        with isolated_git_project() as (project, archive):
+            _declare_policy(project)
+            git_hooks_install(archive, project)
+            path = project / ".git" / "hooks" / "pre-push"
+            original = path.read_bytes()
+            path.write_bytes(original + b" ")
+            self.assertEqual(_hook_file_state(path, "pre-push")["state"], "godmode-modified")
+
+    def test_a_regenerated_identical_reinstall_still_reads_godmode(self) -> None:
+        with isolated_git_project() as (project, archive):
+            _declare_policy(project)
+            git_hooks_install(archive, project)
+            git_hooks_install(archive, project)  # reinstall: fresh header + fresh hash
+            path = project / ".git" / "hooks" / "pre-push"
+            self.assertEqual(_hook_file_state(path, "pre-push")["state"], "godmode")
+
+    def test_a_missing_hash_line_is_modified_not_godmode(self) -> None:
+        with isolated_git_project() as (project, archive):
+            _declare_policy(project)
+            git_hooks_install(archive, project)
+            path = project / ".git" / "hooks" / "pre-push"
+            text = path.read_text(encoding="utf-8")
+            stripped = "\n".join(
+                line for line in text.splitlines() if not line.startswith(HASH_PREFIX)) + "\n"
+            path.write_text(stripped, encoding="utf-8")
+            state = _hook_file_state(path, "pre-push")
+            self.assertEqual(state["state"], "godmode-modified")
+            self.assertIsNone(state["hash"])
 
 
 class SampleFileTests(unittest.TestCase):
@@ -386,6 +483,75 @@ class PrePushBlockingTests(unittest.TestCase):
             report = evaluate_git_hook(archive, project, "pre-push", stdin_text)
             self.assertEqual(report["verdict"], "allow")
             self.assertFalse(report["policy_declared"])
+
+
+class MalformedStdinTests(unittest.TestCase):
+    """Fix round 1, C2: malformed/unreadable pre-push stdin must never be
+    folded into "nothing to push" - the plan's Global Constraint ("silence
+    is never permission") applied to this hook's own input parsing."""
+
+    # The reviewer's exact live repro: a 5-field line.
+    HOSTILE_LINE = (
+        "refs/heads/main abc123 refs/heads/main def456 extra-garbage-field\n"
+    )
+
+    def test_reviewers_hostile_line_is_refused_under_declared_policy(self) -> None:
+        with isolated_git_project() as (project, archive):
+            _declare_policy(project)
+            report = evaluate_git_hook(archive, project, "pre-push", self.HOSTILE_LINE)
+            self.assertEqual(report["verdict"], "block")
+            self.assertEqual(report["category"], "malformed-git-hook-input")
+            self.assertIn("malformed-stdin", report["reason"])
+
+    def test_genuinely_empty_stdin_is_allowed_regardless_of_policy(self) -> None:
+        with isolated_git_project() as (project, archive):
+            _declare_policy(project)
+            report = evaluate_git_hook(archive, project, "pre-push", "")
+            self.assertEqual(report["verdict"], "allow")
+            self.assertEqual(report["ref_updates"], 0)
+
+    def test_malformed_stdin_without_declared_policy_is_advisory_allow(self) -> None:
+        with isolated_git_project() as (project, archive):
+            # Policy NOT declared.
+            report = evaluate_git_hook(archive, project, "pre-push", self.HOSTILE_LINE)
+            self.assertEqual(report["verdict"], "allow")
+            self.assertFalse(report["policy_declared"])
+            self.assertIn("malformed-stdin", report["reason"])
+            self.assertIn("advisory-only", report["reason"])
+
+    def test_unreadable_stdin_none_also_fails_closed_under_policy(self) -> None:
+        with isolated_git_project() as (project, archive):
+            _declare_policy(project)
+            report = evaluate_git_hook(archive, project, "pre-push", None)
+            self.assertEqual(report["verdict"], "block")
+            self.assertEqual(report["category"], "malformed-git-hook-input")
+
+    def test_malformed_input_is_chronicled_counts_only(self) -> None:
+        with isolated_git_project() as (project, archive):
+            _declare_policy(project)
+            evaluate_git_hook(archive, project, "pre-push", self.HOSTILE_LINE)
+            records = archive.select(
+                kind="action", subject="git-hook-malformed-input", limit=10)
+            self.assertEqual(len(records), 1)
+            data = records[0]["data"]
+            self.assertEqual(data["host"], "git")
+            self.assertNotIn("abc123", json.dumps(data))
+            self.assertNotIn("extra-garbage-field", json.dumps(data))
+
+    def test_cli_guard_git_hook_refuses_the_hostile_line_under_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw)
+            project = base / "proj"
+            state_home = base / "state"
+            _init_repo(project)
+            _cli(project, state_home, "init")
+            _declare_policy(project)
+            result = _cli(project, state_home, "guard", "--git-hook", "pre-push",
+                          input_text=self.HOSTILE_LINE)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["verdict"], "block")
+            self.assertEqual(payload["category"], "malformed-git-hook-input")
 
 
 class PreCommitPreRebasePostCheckoutTests(unittest.TestCase):
