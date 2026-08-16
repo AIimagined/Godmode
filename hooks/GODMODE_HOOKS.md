@@ -42,12 +42,22 @@ refuse:
 2. a declared run ceiling already reached;
 3. a skip pattern — three mandated steps skipped this session.
 
-This is the boundary that makes `tool_call_interception` real. The control
-reports `HARD` only from a live, chronicled proof: `godmode hooks probe` sends a
-marker operation through this exact path, this hook denies it unconditionally,
-and records the denial (`godmode_hookproof.py`). `godmode hooks status` reads
-that record back; without a fresh, unsuperseded proof the control reports
-`UNAVAILABLE`, because a control nobody has demonstrated is not a control.
+This is the boundary that makes `tool_call_interception` real. `godmode hooks
+probe` sends a marker operation through this exact path, this hook denies it
+unconditionally, and records the denial (`godmode_hookproof.py`). `godmode
+hooks status` reads that record back and reports one of five levels, never a
+claim the evidence cannot back: `HARD` (a fresh, unexpired, session-anchored
+proof, unsuperseded — the only level that may back an "enforced" claim),
+`DEGRADED` (a proof that WAS provably fresh but is now superseded — the hook
+came down, a probe failed, a real call's payload could not be parsed — or its
+`hook_version`/file hash drifted, or its TTL simply elapsed), `PARTIAL` (the
+hook is structurally discovered/registered — the manifest wires it — but no
+fresh proof exists), `SOFT` (the skills+CLI layer is installed for this host
+with no hook proven at all — the true floor on every host this project ships
+to today except a freshly probed Claude Code), or `UNAVAILABLE` (no
+compatible boundary at all). A `DEGRADED` grade carries a persistent, named
+reason in both `hooks status` and the session-start brief until a fresh probe
+passes — never a silent downgrade.
 
 **Costs and limits, stated.** `hooks.json` sets a 3s timeout on `PreToolUse`
 (`SessionStart` gets 10s, `UserPromptSubmit` gets 30s). Measured directly

@@ -116,9 +116,14 @@ subprocess spawned; anything else escalates to the full classifier.
 $ godmode capabilities
 ```
 
-`tool_call_interception` reports `HARD` only when a host calls the gate
-and honors its exit code. Run from a bare terminal, outside any hook, it
-reports `UNAVAILABLE` for the command above, which is the honest answer.
+`tool_call_interception` reports one of five levels
+(`UNAVAILABLE`/`SOFT`/`PARTIAL`/`HARD`/`DEGRADED`), never a claim the
+evidence cannot back. `HARD` needs a fresh, live, chronicled proof: a host
+that actually calls the gate and honors its exit code. Run from a bare
+terminal, outside any hook, the command above reports `PARTIAL` in this
+repository's own checkout (the shipped manifest wires the boundary, but
+nothing just proved it live) — the honest middle answer, not a guess in
+either direction.
 
 ### Verdicts
 
@@ -214,12 +219,15 @@ Next: what holds here depends on the host running it.
 ## Host support
 
 Enforcement tier is computed from what the running environment proves,
-never from the host's name. `godmode capabilities` reports `HARD` for
-`tool_call_interception` only from a live, chronicled proof: `godmode hooks
-probe` sends a marker operation through the real pre-tool hook, the hook
-denies it and records the denial, and `godmode hooks status` reads that
-record back. No proof, or a proof the hook has since disowned, reports
-`UNAVAILABLE`.
+never from the host's name. `godmode capabilities` reports one of five
+levels for `tool_call_interception`: `HARD` only from a live, chronicled
+proof (`godmode hooks probe` sends a marker operation through the real
+pre-tool hook, the hook denies it and records the denial, and `godmode
+hooks status` reads that record back); `DEGRADED` when a proof that WAS
+fresh is now superseded, expired, or drifted; `PARTIAL` when the hook is
+structurally registered but not freshly proven; `SOFT` when only the
+skills+CLI layer is installed with no hook proven at all; `UNAVAILABLE`
+when no compatible boundary exists.
 
 | Host | What's shipped | What's tested |
 |---|---|---|
