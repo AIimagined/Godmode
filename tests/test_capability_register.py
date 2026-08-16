@@ -383,6 +383,26 @@ class DogfoodingTests(unittest.TestCase):
     on, chosen by first locating the specific test that already exercises
     that line (see `docs/LESSONS.md` for the miss that made this mandatory)
     - not inferred from the rule's abstract verify-kind alone.
+
+    CX-5 fix round 1, M1 (Minor, observed during that review - the
+    mechanism here predates and is untouched by CX-5 itself): `setUp`/
+    `tearDown` below are a SECOND, independent restore, on top of
+    `plant_and_observe`'s own `try/finally` (which already restores each
+    target the moment ITS OWN call returns, exception or not). This class
+    method's own `tearDown` additionally restores from a byte-snapshot
+    taken before ANY plant runs, so a failure OUTSIDE
+    `plant_and_observe`'s own protected window (e.g. the `assess()` call or
+    an assertion after the loop, in this same Python process) still cannot
+    leave a target mutated once this test method returns. Stated honestly,
+    not overclaimed: this closes the in-process gap, not the one the
+    review actually observed - an EXTERNAL kill (a tool timeout sending
+    SIGKILL/taskkill to the whole `python -m unittest` process) bypasses
+    every in-process mechanism, `finally` included, by design; no code
+    running inside the process being killed can run afterward. Closing
+    THAT class of failure needs a supervisory mechanism outside this
+    process (a pre-flight self-heal against `git show HEAD:<path>` on the
+    NEXT run, or an external watchdog) - parked, not attempted here, as a
+    materially larger change than "cheap if trivial" describes.
     """
 
     PLANTS = [
@@ -416,6 +436,22 @@ class DogfoodingTests(unittest.TestCase):
                      'and not unattested_accept',
              with_text='    allowed = not unattested and not downgraded and not unattested_accept'),
     ]
+
+    def setUp(self) -> None:
+        self._plant_originals = {
+            plant["target"]: (PLUGIN_ROOT / plant["target"]).read_bytes()
+            for plant in self.PLANTS
+        }
+
+    def tearDown(self) -> None:
+        # Best-effort, in-process only (see the class docstring) - restores
+        # any target `plant_and_observe`'s own `try/finally` did not
+        # already put back, e.g. a failure raised AFTER a plant call
+        # returned but before this test method itself finished.
+        for target, original in self._plant_originals.items():
+            path = PLUGIN_ROOT / target
+            if path.read_bytes() != original:
+                path.write_bytes(original)
 
     def test_every_hard_rule_has_a_designed_plant(self) -> None:
         charter = compile_charter(PLUGIN_ROOT)
