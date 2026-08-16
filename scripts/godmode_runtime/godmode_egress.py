@@ -517,6 +517,15 @@ def scan_project(project: Path, limit: int = DEFAULT_SCAN_LIMIT) -> dict[str, An
             continue
         if any(part in {".git", "node_modules", "__pycache__"} for part in path.parts):
             continue
+        # Same boundary the swallow scanner draws (CX-3 fix round): host-agent
+        # worktrees nested under THIS project are duplicate checkouts of
+        # sibling work, not this project's own text - and the check is
+        # relative to the scan root, so a project that itself lives inside
+        # someone's .claude/worktrees/ still gets scanned in full.
+        rel_parts = path.relative_to(project).parts
+        if any(rel_parts[i] == ".claude" and rel_parts[i + 1] == "worktrees"
+               for i in range(len(rel_parts) - 1)):
+            continue
         candidates.append(path)
 
     truncated = len(candidates) > limit
