@@ -102,12 +102,18 @@ class HostControlParityTests(unittest.TestCase):
         # to differ above.
         with mock.patch.dict(os.environ, {"GODMODE_HOST": "claude"}, clear=False):
             with isolated_project() as archive:
+                # CX-5: registration="none" isolates the proof-driven check
+                # from this repo's own shipped hooks.json, which structurally
+                # grades "claude" PARTIAL even with no proof at all (see
+                # tests/test_hookproof.py's HostRegistrationGradeTests).
                 off = host_capabilities(
-                    tool_call_interception=interception_state(archive, "claude")
+                    tool_call_interception=interception_state(
+                        archive, "claude", registration="none")
                 )["controls"]["tool_call_interception"]
                 record_interception_proof(archive, host="claude", tool="Bash", request_id="n1")
                 on = host_capabilities(
-                    tool_call_interception=interception_state(archive, "claude")
+                    tool_call_interception=interception_state(
+                        archive, "claude", registration="none")
                 )["controls"]["tool_call_interception"]
         self.assertEqual(off, "UNAVAILABLE")
         self.assertEqual(on, "HARD")
