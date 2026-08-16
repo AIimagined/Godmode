@@ -24,6 +24,63 @@ this one's hook is even installed) and nothing newer says the hook came down
 case, including a proof that never existed, reports `UNAVAILABLE` - the same
 honest default `godmode_anchor.host_capabilities` always used, just backed by
 evidence instead of an environment sniff.
+
+**Fix round 1 (review of commit 9c558a7) closed two Critical gaps:**
+
+1. `run_probe` used to compute this attempt's own `denied`/`proof_recorded`
+   and then overwrite `state` with `interception_state`'s STANDING answer -
+   which reads whatever the most recently persisted proof says, regardless
+   of whether THIS attempt observed a denial at all. A project already
+   holding a valid, still-fresh proof from an earlier successful probe
+   would report `state: "HARD"` (and exit 0) on a LATER probe attempt whose
+   own denial was never observed - the self-check meant to catch a
+   degraded hook silently passed by reusing history. Fixed: `state` here is
+   this attempt's own verdict ONLY (`"HARD"` iff `denied and
+   proof_recorded`, both computed fresh from THIS run); the pre-attempt
+   history is still visible, but only in the separate `last_proof` field,
+   never as this attempt's verdict. A failed attempt also now WRITES a
+   `probe-failed` record (see below) - required shipped behavior, not a
+   test fixture - so the STANDING state a later, probe-less `hooks
+   status`/`capabilities` call reads is corrected too, not only this one
+   response.
+
+2. `_session_anchor_sequence` read `kind="session"` records, but nothing in
+   the shipped `hooks/godmode_session_hook.py` `session-start` branch ever
+   wrote one - only the explicit `godmode session open` CLI command did.
+   Under the one host this repo ships live support for, that branch runs
+   automatically every session and `open_session` is never called from it,
+   so the anchor sequence was always 0 and every proof read as fresh
+   forever. Fixed: `session-start` now also writes a lightweight,
+   counts-only `SUBJECT_ANCHOR` record via `record_session_anchor` on every
+   real session, automatically. `_session_anchor_sequence` takes the newer
+   of the two anchor kinds (see its own docstring for why they are kept
+   separate rather than unified, and why taking the max reconciles them
+   without either fighting the other).
+
+**Who writes each supersession/anchor subject, and when (per fix round 1's
+order to state this explicitly):**
+
+- `SUBJECT_PROOF` (`hook-interception-proof`) - written by
+  `record_interception_proof`, called from the hook's probe-marker branch
+  every time a `godmode-probe:<nonce>` operation is denied.
+- `SUBJECT_ANCHOR` (`hook-session-anchor`) - written by
+  `record_session_anchor`, called automatically from the hook's
+  `session-start` branch on every real session. Also effectively supplied
+  by `kind="session"` records from the explicit `godmode session open` CLI
+  (`godmode_attest.open_session`) - see `_session_anchor_sequence`.
+- `SUBJECT_PROBE_FAILED` (`probe-failed`) - written by `run_probe` itself,
+  whenever an attempt's own `denied`/`proof_recorded` isn't both true. This
+  is the only shipped writer as of fix round 1.
+- `SUBJECT_UNINSTALLED` (`hook-uninstalled`) - **consumed, not yet
+  written**, by design, in this unit. `interception_state` treats it as
+  supersession the moment any record with this subject exists (so a
+  detector, or an operator/test constructing one directly, immediately
+  flips the standing state), but nothing in CX-1 detects an actual
+  uninstall event and writes one automatically. Real writers belong to
+  CX-3 (native manifest install/uninstall) and CX-4 (git-hook backstop
+  uninstall), which is where "the hook came down" becomes something this
+  codebase can observe rather than something only a test or an operator
+  can assert by hand.
 """
 
 from __future__ import annotations
@@ -44,10 +101,12 @@ from .godmode_chronicle import Chronicle
 # can never coincidentally cover the next probe.
 PROBE_PREFIX = "godmode-probe:"
 
-# The three `action`-kind subjects `interception_state` reasons about. One
-# module owns all three so a caller cannot spell "the hook came down" a
-# second, drifting way.
+# The `action`-kind subjects `interception_state` reasons about. One module
+# owns all of them so a caller cannot spell "the hook came down" a second,
+# drifting way. See the module docstring's "who writes each" section for
+# which of these are actually written by shipped code today.
 SUBJECT_PROOF = "hook-interception-proof"
+SUBJECT_ANCHOR = "hook-session-anchor"
 SUBJECT_UNINSTALLED = "hook-uninstalled"
 SUBJECT_PROBE_FAILED = "probe-failed"
 
@@ -89,17 +148,65 @@ def last_proof(archive: Chronicle, host: str | None = None) -> dict[str, Any] | 
     return records[-1] if records else None
 
 
-def _session_anchor_sequence(archive: Chronicle) -> int:
-    """The sequence of the session this project is currently in, or 0 if none opened.
+def record_session_anchor(archive: Chronicle, host: str) -> dict[str, Any]:
+    """The lightweight, counts-only freshness anchor a real session start produces.
 
-    A proof older than this belongs to a session that already ended - session
-    open/close is deliberately optional (most tool calls run with no open
-    session at all, per `godmode_session_hook.py`'s own `latest_session`
-    fallback), so no open session means nothing to be stale relative to, and
-    any existing proof counts.
+    Called automatically from `hooks/godmode_session_hook.py`'s
+    `session-start` branch, on every session, unconditionally - not gated
+    on whether the operator ever runs `godmode session open`. See
+    `_session_anchor_sequence` for how this reconciles with that heavier,
+    explicit, opt-in record.
     """
+    return archive.append("action", SUBJECT_ANCHOR, {"host": str(host)[:80]}, evidence=[])
+
+
+def _session_anchor_sequence(archive: Chronicle) -> int:
+    """The sequence a proof must be at or after to still count as fresh.
+
+    Two DIFFERENT record kinds can each mark "a session started", and this
+    reads whichever is newer - so neither can make the other's anchor
+    stale, and an operator using both never sees them fight:
+
+    - `kind="session"` (`godmode_attest.open_session`, driven by the
+      explicit `godmode session open` CLI command). This is the heavier,
+      opt-in unit of TRACKED work: it is also what attestation coverage
+      (`attested_rule_ids`), the watchdog's skip-pattern detector, and
+      `close_session`'s unattested-command check key off of. Reusing it
+      directly as CX-1's freshness anchor - writing one automatically on
+      every hook session-start - would have pulled every ordinary Claude
+      Code session into that tracked-work machinery whether or not the
+      operator ever asked for it: a materially bigger behavior change than
+      an honesty fix needs to make.
+    - `kind="action", subject=SUBJECT_ANCHOR` (`record_session_anchor`,
+      written automatically by `hooks/godmode_session_hook.py`'s
+      `session-start` branch on every real session). Lightweight,
+      counts-only, and carries no attestation/watchdog side effects at all
+      - CX-1's own anchor, scoped to exactly the honesty question this
+      module answers.
+
+    A project that also runs `godmode session open` inside a Claude Code
+    session gets one anchor of each kind, close together in sequence;
+    taking the max is exactly "the freshness bar is set by whichever
+    anchor is more recent, whichever kind wrote it" - sound regardless of
+    order, so the two never need to agree on which one governs.
+
+    Neither kind ever written (no session-start hook installed, and
+    `session open` never run) returns 0 - nothing to be stale relative to,
+    so any existing proof counts. That residual gap is CX-6's e2e harness
+    (an installed package, a real host, a real session-start) to close for
+    hosts whose session-start branch this repository does not itself run;
+    for every host with the hook installed at all - Claude Code included -
+    this fix closes it now.
+    """
+    session_sequence = 0
     sessions = archive.select(kind="session", limit=200)
-    return sessions[-1]["sequence"] if sessions else 0
+    if sessions:
+        session_sequence = sessions[-1]["sequence"]
+    anchor_sequence = 0
+    anchors = archive.select(kind="action", subject=SUBJECT_ANCHOR, limit=200)
+    if anchors:
+        anchor_sequence = anchors[-1]["sequence"]
+    return max(session_sequence, anchor_sequence)
 
 
 def interception_state(archive: Chronicle, host: str | None) -> str:
@@ -181,10 +288,26 @@ def run_probe(
     invokes, with the same PreToolUse payload shape - proving the mechanism
     (recognise, deny, record) works end-to-end. It does NOT prove a live
     host's own runtime is wired to call this script on real tool calls; that
-    stronger claim is CX-3's install-verify. Exit 0 (via the caller's exit
-    code, derived from `state`) only when the denial was observed AND the
-    matching proof record was actually written - never inferred from silence
-    or a clean exit code alone.
+    stronger claim is CX-3's install-verify.
+
+    `state` (and the caller's exit code, which is derived from it) is THIS
+    ATTEMPT's own verdict, and nothing else: `"HARD"` iff `denied` and
+    `proof_recorded`, both computed fresh from what just happened, never
+    from `interception_state`'s standing answer. A project that already
+    holds a valid, still-fresh proof from an earlier successful probe gets
+    no credit for it here - that history is still available, in the
+    separate `last_proof` field, but a re-probe exists precisely to answer
+    "does interception still work RIGHT NOW", and letting a stale-but-
+    technically-fresh record answer on this attempt's behalf is exactly the
+    silent-pass fix round 1 exists to close.
+
+    Any attempt whose own denial was not observed - hook script missing,
+    subprocess failure, or a response with no matching proof - writes a
+    `probe-failed` record (`SUBJECT_PROBE_FAILED`) before returning, so the
+    STANDING state (what a later, probe-less `hooks status`/`capabilities`
+    call reads via `interception_state`) is corrected too, not only this
+    response. Best-effort: a probe that already failed must still report
+    the failure even if this write itself fails.
     """
     hook_script = _PACKAGE_ROOT / "hooks" / "godmode_session_hook.py"
     nonce = uuid.uuid4().hex[:16]
@@ -200,10 +323,26 @@ def run_probe(
         "denied": False,
         "proof_recorded": False,
         "state": "UNAVAILABLE",
+        # Pre-attempt history, captured before this probe runs, so it can
+        # never be conflated with this attempt's own outcome below.
+        "last_proof": last_proof(archive, host),
     }
-    if not hook_script.is_file():
-        result["detail"] = "hook script not found at the resolved package root"
+
+    def _fail(detail: str, reason: str) -> dict[str, Any]:
+        result["detail"] = detail
+        try:
+            archive.append(
+                "action", SUBJECT_PROBE_FAILED,
+                {"host": str(host)[:80], "reason": reason},
+                evidence=[],
+            )
+        except Exception:  # noqa: BLE001
+            pass
         return result
+
+    if not hook_script.is_file():
+        return _fail(
+            "hook script not found at the resolved package root", "hook-script-missing")
 
     environment = dict(os.environ)
     environment["GODMODE_HOST"] = host
@@ -214,8 +353,7 @@ def run_probe(
             encoding="utf-8", timeout=timeout, env=environment,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        result["detail"] = f"probe subprocess failed: {exc}"[:200]
-        return result
+        return _fail(f"probe subprocess failed: {exc}"[:200], "subprocess-failed")
 
     try:
         response = json.loads(completed.stdout) if completed.stdout.strip() else {}
@@ -228,9 +366,10 @@ def run_probe(
     result["proof_recorded"] = bool(
         proof is not None and proof["data"].get("request_id") == nonce
     )
-    result["state"] = interception_state(archive, host)
+
+    if result["denied"] and result["proof_recorded"]:
+        result["state"] = "HARD"
+        return result
     if not result["denied"]:
-        result["detail"] = "hook did not deny the probe operation"
-    elif not result["proof_recorded"]:
-        result["detail"] = "hook denied the probe but wrote no matching proof record"
-    return result
+        return _fail("hook did not deny the probe operation", "not-denied")
+    return _fail("hook denied the probe but wrote no matching proof record", "proof-not-recorded")

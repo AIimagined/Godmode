@@ -26,7 +26,8 @@ from godmode_runtime.godmode_attest import attested_rule_ids, latest_session  # 
 from godmode_runtime.godmode_guardrails import check_ceilings  # noqa: E402
 from godmode_runtime.godmode_guardrails import meter_tool_call, tool_operation, watchdog  # noqa: E402
 from godmode_runtime.godmode_hookproof import (  # noqa: E402
-    PROBE_PREFIX, interception_state, record_interception_proof)
+    PROBE_PREFIX, interception_state, record_interception_proof,
+    record_session_anchor)
 from godmode_runtime.godmode_sentinel import (  # noqa: E402
     GATE_MODE_OBSERVE, classify_action, evidence_pipe_advisory,
     local_authorization_policy)
@@ -344,6 +345,20 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.event == "session-start":
+            # CX-1 fix round 1, Critical-2: every real session start writes
+            # a lightweight, counts-only freshness anchor, unconditionally -
+            # this is the ONLY place that happens automatically, and without
+            # it `interception_state` had nothing newer than "the beginning
+            # of time" to compare a proof's freshness against (a proof from
+            # months ago read as fresh forever). Best-effort: a session that
+            # cannot record its own anchor must still be allowed to open -
+            # the honesty cost of a missed anchor (a proof stays fresh one
+            # session longer than it should) is far smaller than the cost
+            # of blocking the session itself over a recording failure.
+            try:
+                record_session_anchor(archive, current_host())
+            except Exception:  # noqa: BLE001
+                pass
             from godmode_runtime.godmode_lens import build_context_brief
             brief = build_context_brief(anchor, archive)
             brief["obligations"] = _session_obligations(anchor, archive)
