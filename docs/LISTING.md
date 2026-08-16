@@ -110,10 +110,16 @@ pointer is left as-is rather than moved without evidence.
    Claude and Grok both carry one. Whether Codex's plugin distribution
    needs one, and what its schema is, is not established here. Confirm
    against Codex's own current plugin documentation before drafting one.
-3. Whatever submission flow Codex's plugin ecosystem uses, whether a
-   self-hosted pointer or an application to a curated directory, needs the
-   operator's own Codex/OpenAI developer account to execute; this
-   repository holds no credential or prior submission record for it.
+3. **Resolved**: Codex's own developer portal is the submission path, and
+   it accepts a skills-only plugin (no hook/gate surface is required for
+   acceptance; a plugin that ships hooks, as this one does, is not
+   penalized for also shipping them). The portal form asks for per-tool
+   annotations, a short description of what each exposed tool does, plus
+   "five positive and three negative test cases with expected outcomes."
+   The test-case-mapping table below is that requirement, filled with real,
+   runnable tests rather than hand-written examples. Submitting still needs
+   the operator's own Codex/OpenAI developer account; this repository holds
+   no credential or prior submission record for it.
 
 ### Codex submission kit: test-case mapping
 
@@ -184,12 +190,16 @@ manifest audit below.
    (`https://github.com/AIimagined/Godmode.git`), the same self-hosted
    shape Claude's marketplace uses. Pushing to the public repository is
    the only step this repository can confirm.
-3. **Gap**: no command syntax for adding a Grok plugin marketplace or
-   installing a plugin is recorded anywhere in this repository (checked:
-   `GODMODE.md`, `OPERATOR.md`, `adapters/README.md`, `CONTRIBUTING.md`).
-   Confirm the actual client command against Grok's own current docs, on
-   the operator's own account, before publishing an install snippet that
-   claims to work.
+3. **Resolved**: Grok's own install command is
+   `grok plugin install godmode --trust`. Listing in Grok's official
+   marketplace catalog is a separate step from a self-hosted git-URL
+   source: it is a pull request against the official catalog repository's
+   `external_plugins/` directory, and the catalog requires that PR to pin
+   the plugin source to an exact commit SHA rather than a branch or tag
+   reference. This repository holds no submitted or merged PR against that
+   catalog; the git-URL source in `.grok-plugin/marketplace.json` above
+   remains the self-hosted path, usable today with no submission or
+   review step.
 
 ## Manifest audit
 
