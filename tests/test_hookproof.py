@@ -252,7 +252,12 @@ class ProbeMarkerHookTests(unittest.TestCase):
         with self._hosted() as (project, state, archive):
             done = self._run(
                 {"operation": f"{PROBE_PREFIX}bare-op"}, project, state)
-            self.assertEqual(done.returncode, 3, done.stdout)
+            # CX-2: exit 3 was removed entirely (no documented host dialect
+            # gave it any meaning, and Grok's own fail-open-on-unknown-exit
+            # semantics made it an active liability) - the bare-operation
+            # debug path now denies with exit 2, same as every other
+            # non-pretool refusal in this hook.
+            self.assertEqual(done.returncode, 2, done.stdout)
             self.assertEqual(interception_state(archive, "claude"), "HARD")
 
 
