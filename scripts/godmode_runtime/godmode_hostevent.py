@@ -935,3 +935,20 @@ def render_decision(host: str, event_name: str, base_decision: str,
         "agent_message": reason,
     }
     return body, 0
+
+
+# ---------------------------------------------------------------------------
+# CX-3: public aliases of this module's own tool/event vocabularies, for
+# `godmode_host_manifests.py` (the packaging layer) to build host hook
+# manifests FROM. A manifest generator must never re-type a tool or event
+# name by hand - every matcher/allowlist it emits is built from one of these
+# constants, so a manifest can never declare a tool this adapter would not
+# also recognise (or vice versa). Same objects as the private names above,
+# just re-exported without the leading underscore for cross-module use.
+# ---------------------------------------------------------------------------
+CODEX_TOOLS = _CODEX_TOOLS
+GROK_TOOLS = _GROK_TOOLS
+CLAUDE_TOOLS = _CLAUDE_TOOLS
+CURSOR_EVENTS = _CURSOR_EVENTS
+GEMINI_EVENTS = _GEMINI_EVENTS
+PRETOOL_EVENT_NAMES = _PRETOOL_EVENT_NAMES

@@ -1,0 +1,33 @@
+{
+  "_note": "Gemini CLI hooks are defined inside settings.json layers (project .gemini/settings.json, user ~/.gemini/settings.json, or an extension's own settings - Addendum 4a), not auto-loaded from a fixed plugin path. Merge this fragment's \"hooks\" object into that file's own \"hooks\" key. stdout MUST be a single JSON object only (Addendum 4a's I/O contract) - any other exit code than 0 or 2 is a non-fatal WARNING that proceeds with the original parameters (fail-open); never claim HARD interception on Gemini without a fresh CX-1 probe proof.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "godmode-session-start",
+            "type": "command",
+            "command": "python ${extensionPath}/hooks/godmode_session_hook.py session-start",
+            "timeout": 10000,
+            "description": "Godmode session continuity brief."
+          }
+        ]
+      }
+    ],
+    "BeforeTool": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "name": "godmode-pre-tool-gate",
+            "type": "command",
+            "command": "python ${extensionPath}/hooks/godmode_gate_fast.py",
+            "timeout": 3000,
+            "description": "Godmode pre-tool gate."
+          }
+        ]
+      }
+    ]
+  }
+}
