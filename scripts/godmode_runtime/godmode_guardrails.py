@@ -113,10 +113,18 @@ def meter_tool_call(archive: Chronicle, session: str, tool: str) -> dict[str, An
     return read_meter(archive, session)
 
 
-# Tool payload -> an operation string the action classifier already understands.
-# The mapping is deliberately literal: a tool this does not know becomes an
-# unclassifiable operation, which the classifier fails closed on.
-def tool_operation(tool: str, tool_input: dict[str, Any] | None) -> str:
+# Tool payload -> an operation string the action classifier already
+# understands, for the finite, adapter-documented tool names below.
+#
+# CX-2 deleted the old generic-invocation degradation path: a tool this did
+# not recognise used to fall back to `f"{tool} tool invocation"`, a string
+# that carried no command or target forward and happened to classify through
+# `classify_action`'s own catch-all - correct by accident, and losing the
+# only evidence of what the call actually was. Returns `None` for any name
+# outside this map; `godmode_hostevent.py`'s adapters (the only remaining
+# callers) route a `None` here to their own fail-closed `unrecognized-tool`
+# path instead - visible, chronicled, never guessed at.
+def tool_operation(tool: str, tool_input: dict[str, Any] | None) -> str | None:
     payload = tool_input or {}
     if tool in ("Bash", "PowerShell"):
         return str(payload.get("command", "")).strip() or f"{tool} with no command"
@@ -125,7 +133,7 @@ def tool_operation(tool: str, tool_input: dict[str, Any] | None) -> str:
         return f"{verb} file {payload.get('file_path', '(unnamed)')}"
     if tool in ("Read", "Glob", "Grep"):
         return f"read {tool.lower()} {payload.get('file_path') or payload.get('pattern') or ''}".strip()
-    return f"{tool} tool invocation"
+    return None
 
 
 def check_ceilings(project: Path, spent: dict[str, int]) -> dict[str, Any]:

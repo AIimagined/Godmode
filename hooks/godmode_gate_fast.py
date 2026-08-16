@@ -45,13 +45,20 @@ FULL_HOOK = HOOKS_DIR / "godmode_session_hook.py"
 # Tools the scope fence governs by naming their own target file. They never
 # reach the fast path - not because they are always dangerous, but because
 # this module has no fence logic of its own and duplicating it here would be
-# a second, driftable copy of a check that already exists.
-_FENCED_TOOLS = frozenset({"Edit", "Write", "NotebookEdit"})
+# a second, driftable copy of a check that already exists. CX-2 adds Codex's
+# `apply_patch` and Grok's `write`/`search_replace` (Addendum 6's tool map,
+# `scripts/godmode_runtime/godmode_hostevent.py`'s adapters) - same reasoning,
+# same escalate-not-guess default. Grok's `write` is lowercase and therefore
+# a distinct string from Claude's `Write` - both are listed.
+_FENCED_TOOLS = frozenset({"Edit", "Write", "NotebookEdit", "apply_patch",
+                          "write", "search_replace"})
 
 # Tools whose `tool_input` carries a shell command this module knows how to
 # read. Anything else - including a read-only tool the host's own matcher
-# should never have sent here - escalates rather than guesses.
-_SHELL_TOOLS = frozenset({"Bash", "PowerShell"})
+# should never have sent here - escalates rather than guesses. CX-2 adds
+# Codex's `shell_command` and Grok's `run_terminal_command` (Addendum 6).
+_SHELL_TOOLS = frozenset({"Bash", "PowerShell", "shell_command",
+                          "run_terminal_command"})
 
 # `git branch <name>` (no flag) creates a branch; `git branch -d/-D/-m/-M/
 # --delete <name>` deletes or renames one. Both are real mutations reachable
@@ -338,10 +345,20 @@ def fast_verdict(payload: dict[str, Any], table: dict[str, Any] | None) -> str:
             return "escalate"
         if not isinstance(payload, dict):
             return "escalate"
-        tool = payload.get("tool_name")
+        # CX-2: a local, independent dual-casing lookup - `toolName`/
+        # `tool_name`, `toolInput`/`tool_input` - matching
+        # `godmode_hostevent.field()`'s alias table without importing it
+        # (this module's zero-import boundary; see the module docstring).
+        # First-alias-wins (camelCase before snake_case) is deliberate, not
+        # incidental `dict.get` fallback ordering (fix round 1, I3): it
+        # agrees with `godmode_hostevent.field()` and the hook's own
+        # `host_field` lookup, so a payload naming a field under both
+        # casings with conflicting values can never be read as two
+        # different tools by two different checks.
+        tool = payload.get("toolName", payload.get("tool_name"))
         if not isinstance(tool, str) or tool in _FENCED_TOOLS or tool not in _SHELL_TOOLS:
             return "escalate"
-        tool_input = payload.get("tool_input")
+        tool_input = payload.get("toolInput", payload.get("tool_input"))
         if not isinstance(tool_input, dict):
             return "escalate"
         command = tool_input.get("command")
