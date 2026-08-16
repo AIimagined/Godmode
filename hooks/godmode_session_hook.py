@@ -27,7 +27,8 @@ from godmode_runtime.godmode_attest import attested_rule_ids, latest_session  # 
 from godmode_runtime.godmode_guardrails import check_ceilings  # noqa: E402
 from godmode_runtime.godmode_guardrails import meter_tool_call, watchdog  # noqa: E402
 from godmode_runtime.godmode_hookproof import (  # noqa: E402
-    PROBE_PREFIX, interception_state, record_interception_proof,
+    DEGRADE_REASON_MALFORMED_PAYLOAD, PROBE_PREFIX, degraded_reason,
+    interception_state, record_hook_degradation, record_interception_proof,
     record_session_anchor)
 from godmode_runtime.godmode_hostevent import (  # noqa: E402
     HOSTS_WITH_ASK, TOOL_KIND_MALFORMED, TOOL_KIND_UNRECOGNIZED,
@@ -62,14 +63,31 @@ _READ_ONLY_TOOLS = frozenset({"Read", "Glob", "Grep", "WebFetch", "WebSearch", "
 # leaving the ones that do not.
 
 
-def _input() -> dict[str, Any]:
+def _input() -> tuple[dict[str, Any], bool]:
+    """`(payload, malformed)`.
+
+    CX-5: a payload that failed to parse as JSON is a distinct, recordable
+    hook-health signal (`DEGRADE_REASON_MALFORMED_PAYLOAD`), told apart from
+    the ordinary, legitimate "nothing on stdin" case (a TTY, or genuinely
+    empty input) - the latter is not a failure, and must never be counted
+    as one. `malformed` is also `True` for a JSON document that parsed but
+    was not an object (e.g. a bare list or string) - every downstream
+    consumer of this hook's stdin expects a mapping, so that shape is exactly
+    as unusable as a parse failure, never silently coerced to `{}` without
+    the caller knowing it happened.
+    """
     if sys.stdin.isatty():
-        return {}
+        return {}, False
+    raw = sys.stdin.read()
+    if not raw.strip():
+        return {}, False
     try:
-        value = json.load(sys.stdin)
+        value = json.loads(raw)
     except json.JSONDecodeError:
-        return {}
-    return value if isinstance(value, dict) else {}
+        return {}, True
+    if not isinstance(value, dict):
+        return {}, True
+    return value, False
 
 
 def _bounded_list(value: Any, limit: int = 20) -> list[str]:
@@ -165,12 +183,33 @@ def _session_obligations(anchor: Any, archive: Chronicle) -> dict[str, Any]:
     except GodmodeError as exc:
         obligations["drift"] = {"unavailable": str(exc)[:160]}
 
-    surface = host_capabilities(
-        tool_call_interception=interception_state(archive, current_host()))
+    host = current_host()
+    interception_level = interception_state(archive, host)
+    surface = host_capabilities(tool_call_interception=interception_level)
     obligations["enforcement"] = {
         "host": surface["host"],
         "unavailable": surface["unavailable"],
+        # CX-5: the five-level grade itself, not just the "unavailable"
+        # bucket - PARTIAL/SOFT/DEGRADED are meaningfully different from
+        # each other and from a bare UNAVAILABLE, and a caller reading only
+        # the older `unavailable`/`controls` fields would not be able to
+        # tell a fresh install from a broken upgrade.
+        "tool_call_interception": interception_level,
     }
+    if interception_level == "DEGRADED":
+        # CX-5 mode table: hook registered-but-untrusted/disabled must carry
+        # a VISIBLE warning line in the session brief, persistently, until a
+        # probe passes - never a silent downgrade an operator has to go
+        # looking for. `degraded_reason` names the specific check that
+        # tripped (superseded/expired/version-drift/hash-drift), so the
+        # line says more than "trust me."
+        reason = degraded_reason(archive, host)
+        obligations["enforcement"]["degraded_reason"] = reason
+        obligations["enforcement"]["warning"] = (
+            "godmode's pre-tool interception for this host was previously proven "
+            f"and is now DEGRADED ({reason or 'unknown reason'}) - no HARD "
+            "enforcement claim holds until `godmode hooks probe` passes again."
+        )
     # U-E7: observe mode must be impossible to enter silently, which means
     # every session that opens under it is told so at open, not merely at
     # the moment a call would have been blocked. Best-effort like every
@@ -334,7 +373,7 @@ def main(argv: list[str] | None = None) -> int:
                              "only, never values) for building a future host fixture")
     args = parser.parse_args(argv)
     capture_payload = args.capture_payload or bool(os.environ.get(CAPTURE_PAYLOAD_ENV))
-    submitted = _input()
+    submitted, malformed_payload = _input()
     claude_session = _is_claude_session(submitted)
     project = args.project or str(submitted.get("cwd") or ".")
 
@@ -342,7 +381,10 @@ def main(argv: list[str] | None = None) -> int:
     # repository identity costs several git calls, which is worth paying before a
     # mutation and not worth paying before a file read - and the shipped matcher
     # already limits this hook to mutating tools, so this only protects a host
-    # that widened it.
+    # that widened it. CX-5: a malformed payload has no readable tool_name field
+    # (it parsed to `{}`), so this can never short-circuit a genuinely malformed
+    # call into the silent-allow read-only path - it always falls through to the
+    # full classify path below, which fails closed on an empty operation.
     if args.event == "pre-action" and str(host_field(submitted, "tool_name") or "") in _READ_ONLY_TOOLS:
         return 0
     try:
@@ -352,6 +394,16 @@ def main(argv: list[str] | None = None) -> int:
             # Stay silent for a genuinely new project, but never for one whose history
             # is merely unreachable: an agent starting here would otherwise be told
             # nothing while prior records sit one command away.
+            #
+            # CX-5 mode table: an uninitialized project never records
+            # anything here, including a malformed-payload degradation -
+            # `archive.append` (which `record_hook_degradation` calls)
+            # auto-initializes on first write, and doing that from a
+            # malformed-payload side effect would silently turn "governance
+            # was never asked for" into "governance is now active," exactly
+            # the uninvited opt-in this mode table forbids. Ordinary work
+            # stays allowed either way; only an initialized project's own
+            # health gets tracked.
             stranded = archive.orphaned()
             if stranded:
                 notice = {
@@ -367,6 +419,18 @@ def main(argv: list[str] | None = None) -> int:
             elif not claude_session:
                 print(json.dumps({"godmode": "not-initialized", "action": "run godmode init explicitly"}))
             return 0
+
+        if malformed_payload:
+            # CX-5: recorded for every event type this hook handles, not
+            # only pre-action - a degraded mode is about the hook's own
+            # health, not about one call's decision. Best-effort: a
+            # chronicle write failure must not turn a malformed-payload
+            # call into a crashed hook.
+            try:
+                record_hook_degradation(
+                    archive, current_host(), DEGRADE_REASON_MALFORMED_PAYLOAD)
+            except Exception:  # noqa: BLE001
+                pass
 
         if args.event == "session-start":
             # CX-1 fix round 1, Critical-2: every real session start writes
@@ -503,9 +567,16 @@ def main(argv: list[str] | None = None) -> int:
             except Exception:  # noqa: BLE001
                 pass
             try:
+                # CX-5: `hook_script=Path(__file__)` hashes THIS exact,
+                # currently-executing file - the trust anchor a later
+                # `interception_state` read compares the file's THEN-current
+                # hash against, to catch an edit made after this proof was
+                # written (the same tamper class `godmode_githooks.py`'s own
+                # digest already proves is real for the git backstop).
                 record_interception_proof(
                     archive, host=host, tool=tool or "operation",
                     request_id=operation[len(PROBE_PREFIX):][:200],
+                    hook_script=Path(__file__).resolve(),
                 )
             except Exception:  # noqa: BLE001
                 pass

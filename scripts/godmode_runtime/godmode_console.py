@@ -15,7 +15,10 @@ from typing import Any, Callable
 
 from .godmode_anchor import ProjectAnchor, current_host, resolve_anchor
 from .godmode_chronicle import Chronicle
-from .godmode_hookproof import hook_manifest_status, interception_state, last_proof, run_probe
+from .godmode_hookproof import (
+    FAIL_OPEN_HOSTS, degraded_reason, hook_manifest_status, interception_state,
+    last_latency_check, last_proof, run_probe,
+)
 from .godmode_githooks import (
     HOOK_NAMES as GIT_HOOK_NAMES,
     evaluate_git_hook,
@@ -1255,6 +1258,49 @@ def cmd_capabilities(args: argparse.Namespace, runtime: Runtime) -> CommandResul
         tool_call_interception=interception_state(runtime.archive, current_host())))
 
 
+def _hooks_health_fields(archive: Any, host: str, level: str) -> dict[str, Any]:
+    """CX-5: `hooks status`'s `matched`/`invoked`/`honored`/`version`/
+    `degraded_reason`/`latency`/`fail_open_host` fields.
+
+    `matched` - does the SHIPPED manifest declare a matcher/event that would
+    reach this host's boundary at all (structural, never live). `invoked` -
+    has this host's boundary EVER actually been reached (a proof, of any
+    age, exists). `honored` - did the host actually act on the decision the
+    hook rendered, per the last proof's own `observed_decision` (every
+    probe this codebase writes denies, so `honored` is really "did the host
+    demonstrably see and record that denial" - `"unknown"` when no proof
+    exists at all to answer from, never a guessed `True`). `version` - the
+    godmode version string the last proof was minted under. Every field is
+    the honest string `"unknown"`, never `None`, where the underlying fact
+    is not inspectable - matching the plan's own wording for this contract
+    point.
+    """
+    manifest = hook_manifest_status()
+    proof = last_proof(archive, host)
+    if host == "claude":
+        matched: Any = manifest["pretool_hook_seen"]
+    else:
+        entry = hooks_registration_report().get(host)
+        matched = bool(entry.get("manifest_present")) if isinstance(entry, dict) else "unknown"
+    invoked = proof is not None
+    if proof is None:
+        honored: Any = "unknown"
+        version: Any = "unknown"
+    else:
+        honored = proof["data"].get("observed_decision") == "deny"
+        version = proof["data"].get("hook_version") or "unknown"
+    latency = last_latency_check(archive, host)
+    return {
+        "matched": matched,
+        "invoked": invoked,
+        "honored": honored,
+        "version": version,
+        "degraded_reason": degraded_reason(archive, host) if level == "DEGRADED" else None,
+        "latency": latency,
+        "fail_open_host": host in FAIL_OPEN_HOSTS,
+    }
+
+
 def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     """CX-1: `status` reads the chronicled proof back; `probe` produces a fresh one.
 
@@ -1271,7 +1317,8 @@ def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             return CommandResult(
                 git_hooks_status(runtime.archive, Path(runtime.anchor.project_root)))
         manifest = hook_manifest_status()
-        return CommandResult({
+        level = interception_state(runtime.archive, host)
+        payload = {
             "plugin_installed": manifest["plugin_installed"],
             "session_hook_seen": manifest["session_hook_seen"],
             "pretool_hook_seen": manifest["pretool_hook_seen"],
@@ -1281,8 +1328,11 @@ def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             # explicit action, not a `status` side effect).
             "host_registration": hooks_registration_report(),
             "last_proof": last_proof(runtime.archive, host),
-            "verdict": interception_state(runtime.archive, host),
-        })
+            # CX-5: the five-level grade (was HARD/UNAVAILABLE only).
+            "verdict": level,
+        }
+        payload.update(_hooks_health_fields(runtime.archive, host, level))
+        return CommandResult(payload)
     if args.hooks_command == "probe":
         if not runtime.archive.initialized():
             return CommandResult(

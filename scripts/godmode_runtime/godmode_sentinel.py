@@ -2382,9 +2382,17 @@ class CapabilityBroker:
         """Identity a capability binds to at mint time.
 
         A capability approved in one repository must not be spendable in
-        another, on another worktree, or against a different HEAD than the
-        one the approver looked at. The worktree path is hashed because the
+        another, on another worktree, against a different HEAD, or (CX-5)
+        after a `git checkout` to a different branch than the one the
+        approver looked at - the worktree path is hashed because the
         binding needs identity, not the private path itself.
+
+        CX-5: `branch` closes a gap `head` alone left open - two branches can
+        point at the exact same commit (a fast-forward-able branch just cut,
+        a tag-like pointer branch), so a checkout between them changes
+        nothing about `head` while changing exactly what the approver
+        thought they were authorising. `head` and `worktree` stay as they
+        were; `branch` is additive, never a replacement for either.
         """
         anchor = getattr(self.archive, "anchor", None)
         if anchor is None:
@@ -2394,6 +2402,7 @@ class CapabilityBroker:
             "project_key": str(getattr(anchor, "project_key", "") or ""),
             "worktree": hashlib.sha256(worktree.encode("utf-8")).hexdigest(),
             "head": str(getattr(anchor, "head", None) or ""),
+            "branch": str(getattr(anchor, "branch", None) or ""),
         }
 
     def configured(self) -> bool:
@@ -2738,6 +2747,7 @@ class CapabilityBroker:
                 ("project_key", "repository"),
                 ("worktree", "worktree"),
                 ("head", "HEAD"),
+                ("branch", "branch"),
             ):
                 if str(minted_context.get(field, "")) != str(current.get(field, "")):
                     raise AuthorizationError(

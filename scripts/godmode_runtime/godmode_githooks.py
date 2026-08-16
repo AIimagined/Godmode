@@ -89,7 +89,10 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from .godmode_hookproof import SUBJECT_UNINSTALLED, SUBJECT_PROBE_FAILED, record_interception_proof
+from .godmode_hookproof import (
+    SUBJECT_PROBE_FAILED, SUBJECT_UNINSTALLED, interception_state,
+    record_interception_proof,
+)
 from .godmode_sentinel import (
     POLICY_FILENAME,
     CapabilityBroker,
@@ -408,6 +411,24 @@ KNOWN_BYPASS = (
 )
 
 
+def _git_registration_grade(hooks: dict[str, dict[str, Any]]) -> str:
+    """CX-5: `"partial"`/`"none"` - the git backstop's own registration signal.
+
+    `godmode_hookproof.py` cannot compute this itself (it would need to
+    import this module, which already imports IT - a real cycle). `"none"`
+    (UNAVAILABLE) when no godmode-owned hook file exists at all; `"partial"`
+    the moment at least one does, tampered or not - a `godmode-modified`
+    hook is still structurally registered (this backstop's own tamper
+    detector, not `interception_state`'s registration grading, is what
+    catches the tamper; a fresh `verify --git` proof additionally catches it
+    via `trusted_hook_hash` drift once one exists). There is no `"soft"`
+    tier for git: the skills+CLI floor Addendum 4 describes does not apply
+    to a host-independent backstop with no plugin of its own to install.
+    """
+    states = {entry.get("state") for entry in hooks.values()}
+    return "partial" if states & {"godmode", "godmode-modified"} else "none"
+
+
 def git_hooks_status(archive: Any, project_root: Path) -> dict[str, Any]:
     """Per-hook state, the declared policy, and the honesty notes for each boundary."""
     declared = declared_gate_ratchet(archive, project_root, POLICY_KEY)
@@ -417,11 +438,21 @@ def git_hooks_status(archive: Any, project_root: Path) -> dict[str, Any]:
             "declared": declared, "hooks_dir": None,
             "hooks": {name: {"state": "no-git"} for name in HOOK_NAMES},
             "boundary_notes": dict(_BOUNDARY_NOTES), "known_bypass": KNOWN_BYPASS,
+            # CX-5: no git directory at all is the same UNAVAILABLE grade as
+            # no godmode hook file - `registration="none"` since `hooks` is
+            # entirely synthetic `"no-git"` markers here, never a real state.
+            "interception": interception_state(archive, "git", registration="none"),
         }
     hooks = {name: _hook_file_state(hooks_dir / name, name) for name in HOOK_NAMES}
     return {
         "declared": declared, "hooks_dir": str(hooks_dir), "hooks": hooks,
         "boundary_notes": dict(_BOUNDARY_NOTES), "known_bypass": KNOWN_BYPASS,
+        # CX-5: the five-level grade for the git backstop specifically -
+        # `verify --git` is what can move this to HARD; a tampered or
+        # missing hook file caps it at PARTIAL/UNAVAILABLE via the
+        # registration override above, regardless of any stale proof.
+        "interception": interception_state(
+            archive, "git", registration=_git_registration_grade(hooks)),
     }
 
 

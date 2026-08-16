@@ -26,12 +26,27 @@ module, where it would just reproduce this same import-order gap.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import re
 from typing import Any, Callable
 
 from .godmode_errors import ArchiveError
 
 KindInvariant = Callable[[dict[str, Any]], None]
+
+# Fix round 1, C1(b) (Critical): the absolute ceiling a `hook-interception-
+# proof` record's `expiry` may claim, checked here at APPEND time (the
+# normal-write path's outright refusal) - `godmode_hookproof.py` checks the
+# SAME literal, independently, at GRADING time (`_expiry_out_of_bounds`),
+# so a record that somehow reaches disk anyway (an older archive, a
+# hand-edited file) still cannot grade above `DEGRADED`. This module stays
+# import-free of every archive-owning module on purpose (see the module
+# docstring above) - including `godmode_hookproof.py`, which imports
+# `godmode_chronicle` - so this is a DELIBERATE, independent copy of the
+# same value, not an import, kept in sync BY HAND exactly the way
+# `TOOL_ERROR_ACK` below already is with `godmode_verdict.py`'s own copy;
+# `tests/test_failure_semantics.py` pins the two literals equal.
+_PROOF_MAX_TTL_SECONDS = 24 * 60 * 60
 
 # PARTIAL-P3/B3-7: kept in sync BY HAND with `godmode_verdict.TOOL_ERROR_ACK`
 # - this module stays dependency-free of the archive-owning modules on
@@ -300,6 +315,58 @@ def _action_invariants(data: dict[str, Any]) -> None:
                 f"a hook-interception-proof record must carry a non-empty '{field}'; "
                 "an archived proof with a blank field enforces nothing while "
                 "claiming to"
+            )
+    # CX-5: enrichment fields are OPTIONAL (a pre-CX-5 minimal record must
+    # still validate - see godmode_hookproof.py's own backward-compatibility
+    # note) - so nothing here is required. When one IS present, though, its
+    # SHAPE is checked, additively, alongside the CX-1 checks above rather
+    # than replacing them: a proof claiming an `expiry`/`hook_version`/hash
+    # that is not even a string proves nothing while claiming to, exactly
+    # the same failure the three required fields above already refuse.
+    for field in (
+        "hook_version", "project_identity_hash", "trusted_hook_hash",
+        "nonce_hash", "observed_decision", "expiry",
+    ):
+        if field in data and data[field] is not None and not isinstance(data[field], str):
+            raise ArchiveError(
+                f"a hook-interception-proof record's '{field}', when present, must be "
+                "a string"
+            )
+    if "host_acknowledgement" in data and data["host_acknowledgement"] is not None \
+            and not isinstance(data["host_acknowledgement"], bool):
+        raise ArchiveError(
+            "a hook-interception-proof record's 'host_acknowledgement', when present, "
+            "must be a boolean or null"
+        )
+    # Fix round 1, C1(b) (Critical): the reviewer's live repro minted a
+    # record claiming `expiry: "9999-12-31T23:59:59+00:00"` - nothing
+    # anywhere bounded how far into the future an `expiry` may plausibly
+    # sit. Refused here, at append time, for the normal write path;
+    # `godmode_hookproof._expiry_out_of_bounds` independently re-checks the
+    # SAME ceiling at grading time, so a record that reaches disk some
+    # other way still cannot grade above `DEGRADED`. Compared against
+    # "now," not the record's own eventual `recorded_at` (which is not set
+    # until AFTER this validator returns, inside `Chronicle._write_record`)
+    # - the two are the same instant to within microseconds, so an honest
+    # write's own `expiry` (computed moments earlier, from the same "now")
+    # is never rejected by its own ceiling.
+    if "expiry" in data and isinstance(data["expiry"], str) and data["expiry"]:
+        try:
+            expiry_dt = datetime.fromisoformat(data["expiry"])
+        except ValueError as exc:
+            raise ArchiveError(
+                "a hook-interception-proof record's 'expiry' is not a valid "
+                "ISO-8601 timestamp"
+            ) from exc
+        if expiry_dt.tzinfo is None:
+            expiry_dt = expiry_dt.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        if (expiry_dt - now).total_seconds() > _PROOF_MAX_TTL_SECONDS:
+            raise ArchiveError(
+                "a hook-interception-proof record's 'expiry' may not be more than "
+                f"{_PROOF_MAX_TTL_SECONDS}s from now; a far-future expiry "
+                "(fix round 1, C1(b) - the reviewer's year-9999 repro) proves "
+                "nothing while claiming permanence"
             )
 
 
