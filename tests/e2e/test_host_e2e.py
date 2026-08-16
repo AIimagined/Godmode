@@ -20,6 +20,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -34,11 +35,12 @@ if str(Path(__file__).parent) not in sys.path:
 
 import harness as h  # noqa: E402
 
+from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_runtime.godmode_githooks import (  # noqa: E402
     POLICY_KEY, git_hooks_install)
 from godmode_runtime.godmode_hookproof import (  # noqa: E402
-    SUBJECT_UNINSTALLED, degraded_reason, interception_state,
+    SUBJECT_PROOF, SUBJECT_UNINSTALLED, degraded_reason, interception_state,
     record_interception_proof, run_probe)
 from godmode_runtime.godmode_plan import CONTRACT_FIELDS, approve, specify, start  # noqa: E402
 from godmode_runtime.godmode_sentinel import (  # noqa: E402
@@ -79,6 +81,17 @@ class ReadOnlyFastPathTests(unittest.TestCase):
         with h.e2e_repo() as repo:
             payload = h.claude_shell("git status", str(repo.project))
             result = h.run_hook(payload, repo, host="claude", fast=True)
+            # M1 (review, Minor): `git status` genuinely has no filesystem/git
+            # footprint to check either way - a read never changes state, so
+            # there is nothing independent for plane 4 to inspect. Unlike
+            # every other scenario in this file, `verify_side_effect` below
+            # cannot check real, external state; it re-reads plane 3's own
+            # `decision` value, which makes it structurally unable to
+            # disagree with plane 3 - a tautology, not independent evidence.
+            # This is the ONE scenario where the harness's own "positive
+            # evidence, not silence" promise does not apply, and it is
+            # documented here rather than left to look like every other
+            # scenario's real check.
             report = h.four_plane_check(
                 "read-only-fast-path", "claude", result, expect="allow",
                 on_allow=lambda: None,
@@ -591,6 +604,147 @@ class TamperedHookFileScenarioTests(unittest.TestCase):
             self.assertEqual(h.interpret("claude", result), "deny",
                              "a degraded proof state must never relax an unrelated call's "
                              "own real-time classification")
+
+
+# ---------------------------------------------------------------------------
+# 9b. Upgrade hash change (version drift) - plan-named row, distinct from
+#     TamperedHookFileScenarioTests' byte-hash tamper: `_version_drifted`
+#     fires when a proof's own `hook_version` no longer matches the
+#     currently-running RUNTIME_VERSION (a legitimate upgrade happened
+#     since the proof was written), never when the file's bytes changed.
+#     `record_interception_proof` always stamps the CURRENT RUNTIME_VERSION
+#     (no override parameter - by design, an honest write can never lie
+#     about its own version), so this scenario simulates the SAME thing an
+#     upgrade does: a record on disk whose `hook_version` field no longer
+#     matches what is running now, built from a real proof's own real
+#     fields (never a synthetic shape none of the CX-1/CX-5 invariants
+#     would accept).
+# ---------------------------------------------------------------------------
+
+
+class VersionDriftScenarioTests(unittest.TestCase):
+    """Review order I1(a): the plan names 'upgrade hash change' twice (the
+    original CX-6 step and amendment 2) and it was absent from the shipped
+    suite - `_version_drifted` and `_hash_drifted` are deliberately
+    distinct code paths in `godmode_hookproof.py` with distinct
+    `degraded_reason` strings, and only the hash-drift path had e2e
+    coverage before this fix round."""
+
+    def _stale_version_record(self, repo: h.E2ERepo) -> dict:
+        fresh = record_interception_proof(
+            repo.archive, host="claude", tool="Bash", request_id="version-drift")
+        self.assertEqual(interception_state(repo.archive, "claude"), "HARD",
+                         "the baseline proof must itself be HARD before staling it")
+        # A real record's real fields, with ONLY `hook_version` mutated to
+        # name an older release than the one now running - simulating an
+        # upgrade that happened after this proof was originally minted,
+        # never a byte-for-byte file edit (that is TamperedHookFileScenario
+        # Tests' own, separate scenario).
+        stale_data = dict(fresh["data"])
+        stale_data["hook_version"] = "0.0.1-simulated-pre-upgrade"
+        return repo.archive.append("action", SUBJECT_PROOF, stale_data, evidence=[])
+
+    def test_a_stale_hook_version_degrades_a_previously_hard_proof(self) -> None:
+        with h.e2e_repo() as repo:
+            self._stale_version_record(repo)
+            self.assertEqual(interception_state(repo.archive, "claude"), "DEGRADED")
+            self.assertEqual(degraded_reason(repo.archive, "claude"), "version-drift")
+
+    def test_a_protected_operation_still_refuses_through_the_real_hook_while_version_drifted(
+        self,
+    ) -> None:
+        with h.e2e_repo() as repo:
+            self._stale_version_record(repo)
+            self.assertEqual(interception_state(repo.archive, "claude"), "DEGRADED")
+
+            # R5 (force-push, never `ask`) - a deterministic `deny` makes
+            # this assertion unambiguous, driven through the REAL hook
+            # subprocess (not a direct `degraded_reason` call) - the same
+            # discipline TamperedHookFileScenarioTests already applies to
+            # the hash-drift path.
+            payload = h.claude_shell("git push --force origin main", str(repo.project))
+            result = h.run_hook(payload, repo, host="claude")
+            self.assertEqual(h.interpret("claude", result), "deny",
+                             "version-drift must never relax an unrelated call's own "
+                             "real-time classification")
+
+
+# ---------------------------------------------------------------------------
+# 9c. Identity-mismatch explicit state - plan-named row (amendment 2): an
+#     archive stranded at a NON-git identity (recorded before `git init`)
+#     resolves to a DIFFERENT anchor once the project becomes a real git
+#     repository. The mode table's own row: no continuity claim, and a
+#     protected operation is still refused - never read as allow - through
+#     the real hook subprocess, at both the session-start and pre-tool
+#     boundaries.
+# ---------------------------------------------------------------------------
+
+
+class IdentityMismatchScenarioTests(unittest.TestCase):
+    """Review order I1(b). Modeled on `tests/test_failure_semantics.py::
+    ModeTableTests.test_row3_identity_mismatch_makes_no_continuity_claim_
+    and_names_adopt`, extended here with a real bare remote and a real
+    pre-tool force-push through `four_plane_check` - CX-5's own test stops
+    at the session-start notice; this scenario is CX-6's job specifically
+    (the real-subprocess, four-plane proof layer), which is why the plan
+    assigns this row to CX-6 by name."""
+
+    def _stranded_project(self) -> h.E2ERepo:
+        base = Path(tempfile.mkdtemp())
+        project = base / "project"
+        project.mkdir()
+        state = base / "state"
+        # Record something BEFORE the project becomes a git repository - the
+        # archive lands at the salted, non-git identity, exactly like CX-5's
+        # own repro.
+        with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(state)}, clear=False):
+            pre_git_archive = Chronicle(resolve_anchor(project))
+            pre_git_archive.initialize()
+            pre_git_archive.append("checkpoint", "before git init", {}, evidence=[])
+        h.init_repo(project)
+        repo = h.E2ERepo(project=project, state=state)
+        h.commit_file(project, "seed.txt", "seed\n", env=repo.env())
+        remote = base / "remote.git"
+        h.git("init", "-q", "--bare", str(remote), cwd=base)
+        h.git("remote", "add", "origin", str(remote), cwd=project, env=repo.env())
+        pushed = h.git("push", "-q", "-u", "origin", "main", cwd=project, env=repo.env())
+        self.assertEqual(pushed.returncode, 0, pushed.stderr)
+        repo.remote = remote
+        return repo
+
+    def test_session_start_reports_orphaned_archive_never_a_continuity_claim(self) -> None:
+        repo = self._stranded_project()
+        done = subprocess.run(
+            [sys.executable, str(h.HOOK), "session-start", "--project", str(repo.project)],
+            input=json.dumps({"cwd": str(repo.project)}), capture_output=True, text=True,
+            encoding="utf-8", timeout=60, env=repo.env(),
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        body = json.loads(done.stdout.strip())
+        self.assertEqual(body.get("godmode"), "orphaned-archive")
+        self.assertIn("adopt", body.get("next_action", ""))
+        self.assertNotIn("permissionDecision", done.stdout)
+        self.assertNotIn('"allow": true', done.stdout.lower())
+
+    def test_a_protected_operation_is_still_refused_never_read_as_allow(self) -> None:
+        repo = self._stranded_project()
+        baseline = h.remote_ref(repo.remote)
+        payload = h.claude_shell("git push --force origin main", str(repo.project))
+        result = h.run_hook(payload, repo, host="claude")
+
+        def _apply() -> None:
+            pushed = h.git("push", "--force", "origin", "main",
+                           cwd=repo.project, env=repo.env())
+            self.assertEqual(pushed.returncode, 0, pushed.stderr)
+
+        def _verify(decision: str) -> bool:
+            current = h.remote_ref(repo.remote)
+            return current == baseline if decision != "allow" else current != baseline
+
+        report = h.four_plane_check(
+            "identity-mismatch-protected-op", "claude", result, expect="blocked",
+            on_allow=_apply, verify_side_effect=_verify)
+        self.assertNotEqual(report.host_decision, "allow")
 
 
 # ---------------------------------------------------------------------------
