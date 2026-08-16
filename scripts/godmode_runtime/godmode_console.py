@@ -1985,9 +1985,15 @@ def _cmd_guard_git_hook(args: argparse.Namespace, runtime: Runtime) -> CommandRe
                       "advisory-only until it is",
         })
     project_root = Path(runtime.anchor.project_root)
-    stdin_text = ""
+    stdin_text: str | None = ""
     if name == "pre-push" and not sys.stdin.isatty():
-        stdin_text = sys.stdin.read()
+        # `None` (fix round 1, C2) is the "could not be read at all" signal
+        # `_evaluate_pre_push` fails closed on - distinct from "" (genuinely
+        # nothing to read; not the tty case, not an unparseable stream).
+        try:
+            stdin_text = sys.stdin.read()
+        except (OSError, ValueError, UnicodeDecodeError):
+            stdin_text = None
     report = evaluate_git_hook(runtime.archive, project_root, name, stdin_text)
     return CommandResult(report, exit_code=0 if report["verdict"] == "allow" else 1)
 
