@@ -84,6 +84,15 @@ enforcement numbers, because none of these events were blocked. Delete
 empty `{}` file and no file at all are treated identically) to turn
 enforcement on for real.
 
+This is declared from your own editor or terminal, outside a governed
+session — that's the point: `.godmode-authorization-policy.json` is itself a
+protected surface once a session is governed. A `Write`/`Edit` tool call
+from inside a governed session targeting that file asks/denies the same as
+one targeting `.git/` or `.env`; the gate cannot be told to stop watching by
+the thing it watches. Entering or leaving observe mode is also chronicled
+the moment it's next observed, so the posture change leaves a durable
+record, not only the per-call advisory above.
+
 Next: pick a starting profile before you do.
 
 ## Starting profile
@@ -234,7 +243,8 @@ when no compatible boundary exists.
 | **Claude Code** | Plugin, hooks (`SessionStart`, `PreToolUse`, `UserPromptSubmit`) | Live: the pre-tool gate and session hook run under this host every session this repository is worked in. |
 | **Codex** | Same plugin package (`.codex-plugin/plugin.json`), same hooks convention | Packaged and unit-tested against the classifier; not independently live-probed under Codex itself. Whether Codex's own tool sandbox adds `bin/` to a command's PATH the way Claude Code's does isn't established here. |
 | **Grok** | Same plugin package (`.grok-plugin/plugin.json`), same hooks convention | Packaged, same as Codex: not independently live-probed, `bin/` exposure unconfirmed. |
-| **OpenCode, Cursor, Gemini CLI** | Instruction-file adapters ([`adapters/`](./adapters/README.md)), no plugin system | Attestation, claim-downgrade, and plan-gate controls run through the host-independent CLI and hold; `tool_call_interception` is declared `UNAVAILABLE` on all three, because none of them exposes a pre-tool boundary the adapter can call into. |
+| **OpenCode** | Instruction-file adapter ([`adapters/`](./adapters/README.md)), no plugin system | Attestation, claim-downgrade, and plan-gate controls run through the host-independent CLI and hold; `tool_call_interception` is declared `UNAVAILABLE`, because OpenCode exposes no pre-tool boundary the adapter can call into. |
+| **Cursor, Gemini CLI** | Instruction-file adapters ([`adapters/`](./adapters/README.md)) plus shipped pre-tool hook manifests (`.cursor-plugin/hooks.json`, `.gemini-plugin/hooks-fragment.json`) | Attestation, claim-downgrade, and plan-gate controls run through the host-independent CLI and hold. `tool_call_interception` reads `PARTIAL` (manifest present, not freshly proven) only when the session explicitly declares itself (`GODMODE_HOST=cursor`/`gemini`); by default neither host sets that, so an ordinary session still reads `UNAVAILABLE`. Neither manifest's wiring is live-probed: Cursor's is a best-effort `${PLUGIN_ROOT}`-relative guess, Gemini ships a fragment only — PARTIAL is a structural claim about what's shipped, not a proof the host actually calls it. |
 | **CI (GitHub Action)** | `action.yml`, integrity and changelog gates | Runs the same CLI the rows above do; no hook boundary involved. |
 
 Developed and tested on Windows. The Windows kill path for an overrun run

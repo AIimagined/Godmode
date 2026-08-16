@@ -449,6 +449,21 @@ class RealToolPayloadTests(unittest.TestCase):
             self.assertTrue(
                 classify_action(operation, project_root=PLUGIN_ROOT)["protected"], relative)
 
+    def test_editing_godmodes_own_authorization_policy_stays_protected(self) -> None:
+        """CX final review F1: a governed `Write`/`Edit` tool call targeting
+        `.godmode-authorization-policy.json` used to classify as an ordinary
+        `worktree-file-mutation` — allowed silently, exit 0, unchronicled —
+        which let a single tool call set `gate_mode: "observe"` and convert
+        every subsequent block into an advisory allow. It must now be
+        protected the same way `.git/`/`.env` already are, at the project
+        root AND nested (any depth an agent might target)."""
+        for relative in (".godmode-authorization-policy.json",
+                          "nested/.godmode-authorization-policy.json"):
+            operation = self._operation("Edit", file_path=str(PLUGIN_ROOT / relative))
+            verdict = classify_action(operation, project_root=PLUGIN_ROOT)
+            self.assertTrue(verdict["protected"], relative)
+            self.assertEqual(verdict["tier"], "R2", relative)
+
     def test_a_traversal_out_of_the_tree_is_not_contained(self) -> None:
         operation = self._operation(
             "Write", file_path=str(PLUGIN_ROOT / ".." / "outside.txt"))
@@ -518,7 +533,8 @@ class FileEditTests(unittest.TestCase):
                           "edit file ../outside.txt",
                           "write file /etc/passwd",
                           "write file .env",
-                          "write file secrets/id_rsa"):
+                          "write file secrets/id_rsa",
+                          "write file .godmode-authorization-policy.json"):
             self.assertTrue(classify_action(operation)["protected"], operation)
 
 

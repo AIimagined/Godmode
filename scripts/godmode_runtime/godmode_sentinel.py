@@ -656,12 +656,32 @@ _REDIRECT = re.compile(r"(?<![<>])>{1,2}(?!&)\s*(?P<target>[^\s;&|<>]*)")
 # gate off. Paths that are not ordinary working files are excluded below.
 _TOOL_FILE_EDIT = re.compile(r"(?i)^(?:write|edit) file\s+(?P<path>.+)$")
 
+# The file that switches this module's own enforcement between "enforce" and
+# "observe" (`CapabilityBroker._policy()`, below). Defined here, ahead of
+# `_SENSITIVE_EDIT`, so the classifier can name it by constant rather than by
+# a second, independently-spelled literal - the exact DUPDRIFT the rest of
+# this file warns about elsewhere. The later `POLICY_FILENAME` reference
+# near `CapabilityBroker` reads this same name; it is not redefined there.
+POLICY_FILENAME = ".godmode-authorization-policy.json"
+
 # Sensitive by name, wherever they sit. Containment is a separate question and
 # is answered separately: a path can be inside the working tree and still be
 # none of the agent's business.
+#
+# CX final review F1 (Important): `.godmode-authorization-policy.json` was
+# missing from this list. A governed `Write`/`Edit` tool call targeting it
+# classified as an ordinary `worktree-file-mutation` - allowed silently, exit
+# 0, unchronicled - and the very next `_policy()` read the file fresh, so a
+# single unprotected tool call could set `gate_mode: "observe"` and convert
+# every subsequent R5 op into an advisory allow. Naming the file here makes
+# writing it through a governed tool the same protected ask/deny as `.git/`
+# or `.env` - it does NOT touch the operator editing it directly outside the
+# session (their own editor/terminal), which stays the intended declaration
+# path; nor `apply_profile`'s/`init`'s own direct filesystem writes, which
+# never go through `classify_action` at all.
 _SENSITIVE_EDIT = re.compile(
     r"(?i)(?:^|[/\\])\.git[/\\]|(?:^|[/\\])\.env\b|credential|\bid_rsa\b|"
-    r"\.pem$|\.key$"
+    r"\.pem$|\.key$|(?:^|[/\\])" + re.escape(POLICY_FILENAME) + r"$"
 )
 
 # A path the shell will expand and this process will not. `~/.bashrc` has no
@@ -2260,7 +2280,8 @@ def _decode(data: str) -> bytes:
     return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
 
 
-POLICY_FILENAME = ".godmode-authorization-policy.json"
+# `POLICY_FILENAME` is defined once, near `_SENSITIVE_EDIT` above, so the
+# classifier and this reader can never drift onto two different literals.
 
 # U-E7: the one `gate_mode` value this file understands. Set here so the
 # validating reader (`CapabilityBroker._policy()`) and every consumer of
@@ -2268,10 +2289,66 @@ POLICY_FILENAME = ".godmode-authorization-policy.json"
 # the same literal rather than a second, independently-spelled copy.
 GATE_MODE_OBSERVE = "observe"
 
+# CX final review F1: subjects the observe-mode transition is chronicled
+# under - see `_chronicle_observe_transition`, called from `_policy()`
+# itself. Entry (enforce -> observe) and exit (observe -> enforce) are each
+# recorded once, the moment either is next observed by a live policy read,
+# so an out-of-band file edit leaves a durable, hash-chained trace instead
+# of surfacing only via later per-call advisories.
+SUBJECT_OBSERVE_ENTERED = "observe-mode-entered"
+SUBJECT_OBSERVE_EXITED = "observe-mode-exited"
+
 # 180 expired under an agent's ordinary retry latency (a slow tool round-trip
 # plus one retry could outlast it); 300 measured comfortable while staying
 # one short conversation, not an open-ended window.
 _DEFAULT_TTL_SECONDS = 300
+
+
+def _chronicle_observe_transition(archive: Any, live_observe: bool) -> None:
+    """Chronicle U-E7 observe-mode ENTRY/EXIT the moment either is next
+    observed by a live policy read (CX final review F1, part 2).
+
+    Compares `live_observe` (this call's freshly-read `gate_mode`) against
+    the LAST CHRONICLED posture - whichever of `SUBJECT_OBSERVE_ENTERED` /
+    `SUBJECT_OBSERVE_EXITED` has the higher `sequence` in the archive, or
+    enforce if neither has ever been recorded - and appends the transition
+    exactly once when they disagree. This is what makes the loosening
+    visible in the chronicle itself, not only in the per-call
+    `OBSERVE MODE` advisory `_apply_observe_mode` prints afterwards: a
+    `Write` that flips the file out-of-band, or an operator's own edit made
+    outside the session, is chronicled the very next time ANY policy reader
+    (`_policy()`/`local_authorization_policy`) touches the file live - so
+    the loosening leaves a hash-chained record before it is ever honored by
+    a decision, not merely a transient message after the fact.
+
+    Counts-only by construction: the record carries no operation, no path,
+    no tool - the archive already records those elsewhere (the file write
+    itself, if it went through a governed tool, and every subsequent
+    `observed: True` refusal). This is purely "the posture changed, here,
+    now."
+
+    Best-effort, exactly like the write `_apply_observe_mode` performs: a
+    chronicle that cannot be written must never turn a policy read into a
+    hard failure - `_policy()` still has to return a value (or raise
+    `AuthorizationError` for a genuinely malformed file) either way.
+    """
+    if archive is None:
+        return
+    try:
+        entered = archive.select(kind="action", subject=SUBJECT_OBSERVE_ENTERED, limit=1)
+        exited = archive.select(kind="action", subject=SUBJECT_OBSERVE_EXITED, limit=1)
+    except Exception:  # noqa: BLE001
+        return
+    last_entered_seq = entered[-1]["sequence"] if entered else -1
+    last_exited_seq = exited[-1]["sequence"] if exited else -1
+    chronicled_observe = last_entered_seq > last_exited_seq
+    if live_observe == chronicled_observe:
+        return
+    subject = SUBJECT_OBSERVE_ENTERED if live_observe else SUBJECT_OBSERVE_EXITED
+    try:
+        archive.append("action", subject, {}, evidence=[])
+    except Exception:  # noqa: BLE001
+        pass
 
 
 class CapabilityBroker:
@@ -2294,11 +2371,24 @@ class CapabilityBroker:
         anchor = getattr(self.archive, "anchor", None)
         root = getattr(anchor, "project_root", None)
         if not root:
+            # CX final review F1, part 2: an exit path too - deleting the
+            # policy file (or, degenerately, losing the project root this
+            # broker reads against) is a live "not observe" read exactly
+            # like the FileNotFoundError branch below, and must chronicle an
+            # exit the same way if entry was previously chronicled.
+            _chronicle_observe_transition(self.archive, False)
             return {}
         path = Path(root) / POLICY_FILENAME
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
+            # The reviewer's live repro, in reverse: deleting (or renaming
+            # away) `.godmode-authorization-policy.json` while under observe
+            # is a live read of "no key at all," i.e. not observe - chronicle
+            # the exit here too, not only on the path that finds `raw` a
+            # well-formed dict, or restoring enforcement by deleting the file
+            # would leave the loosening's own exit unrecorded.
+            _chronicle_observe_transition(self.archive, False)
             return {}
         except (OSError, json.JSONDecodeError) as exc:
             raise AuthorizationError(
@@ -2356,6 +2446,14 @@ class CapabilityBroker:
                     f"not {mode!r}"
                 )
             policy["gate_mode"] = GATE_MODE_OBSERVE
+        # CX final review F1, part 2: chronicle the transition (if any) the
+        # moment it is observed live - see `_chronicle_observe_transition`'s
+        # docstring for why this belongs in the reader itself rather than in
+        # any one caller (the hook's pre-tool path, session-start, `assess`,
+        # `apply_profile`'s regression coverage - every one of them reads
+        # through here, and the loosening must be visible regardless of
+        # which happens to read the file first).
+        _chronicle_observe_transition(self.archive, policy.get("gate_mode") == GATE_MODE_OBSERVE)
         return policy
 
     def _classify(self, operation: str) -> dict[str, Any]:

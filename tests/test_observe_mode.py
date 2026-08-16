@@ -335,6 +335,66 @@ class ObserveEntryAnnouncedAtSessionStart(unittest.TestCase):
             self.assertNotIn("OBSERVE mode", context)
 
 
+class ObserveModeTransitionIsChronicled(unittest.TestCase):
+    """CX final review F1, part 2: the loosening leaves a hash-chained
+    trace the moment ANY policy reader next observes it live, before that
+    same read is ever honored by a decision - not only via the per-call
+    `OBSERVE MODE` advisory that follows it. Entry and exit are each
+    recorded exactly once, as counts-only `action` records
+    (`observe-mode-entered`/`observe-mode-exited`)."""
+
+    def test_entering_observe_chronicles_before_the_first_decision_that_honors_it(
+        self,
+    ) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            self.assertEqual(
+                archive.select(kind="action", subject="observe-mode-entered"), [])
+            # The reviewer's live repro: the file changes out-of-band - here,
+            # a plain filesystem write, not even a governed tool call - and
+            # the very NEXT hook invocation must chronicle the transition
+            # before it honors the new posture.
+            _enable_observe(project)
+            result = _decide(project, "Bash", {"command": FORCE_PUSH})
+            self.assertEqual(result["decision"], "allow")  # honored...
+            entered = archive.select(kind="action", subject="observe-mode-entered")
+            self.assertEqual(len(entered), 1)  # ...but chronicled too.
+
+    def test_a_second_call_under_observe_does_not_re_chronicle_entry(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _enable_observe(project)
+            _decide(project, "Bash", {"command": FORCE_PUSH})
+            _decide(project, "Bash", {"command": ASK_TIER})
+            entered = archive.select(kind="action", subject="observe-mode-entered")
+            self.assertEqual(len(entered), 1)
+
+    def test_leaving_observe_chronicles_the_exit(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _enable_observe(project)
+            _decide(project, "Bash", {"command": FORCE_PUSH})
+            (project / POLICY_FILENAME).unlink()
+            result = _decide(project, "Bash", {"command": FORCE_PUSH})
+            self.assertEqual(result["decision"], "deny")  # real enforcement again
+            self.assertEqual(
+                len(archive.select(kind="action", subject="observe-mode-entered")), 1)
+            self.assertEqual(
+                len(archive.select(kind="action", subject="observe-mode-exited")), 1)
+
+    def test_session_start_alone_chronicles_entry_too(self) -> None:
+        """Not only the pre-tool path - `_policy()` is the single reader
+        both session-start and pre-action go through, so a session that
+        opens under observe (and never issues a single tool call) still
+        leaves the entry on record."""
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _enable_observe(project)
+            _session_start(project)
+            entered = archive.select(kind="action", subject="observe-mode-entered")
+            self.assertEqual(len(entered), 1)
+
+
 class StageFromRefusalNeverStagesAnObservedRefusal(unittest.TestCase):
     """U-E7 decision, pinned: an `observed: True` refusal is never stageable
     by default. Nothing was actually blocked when it was written, so there
