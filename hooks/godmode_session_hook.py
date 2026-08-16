@@ -632,10 +632,18 @@ def main(argv: list[str] | None = None) -> int:
         # this gate's: caught locally and treated as "no widening this call"
         # rather than left to propagate into the broad GodmodeError handler
         # around this whole function, which degrades to allowing everything.
+        # H3 (external audit): `policy_unreadable_detail` is kept alongside
+        # the `{}` degrade below, rather than only the degrade itself -
+        # this call site (unlike the session-start notice above) makes a
+        # real allow/ask decision from `policy`, and losing the detail here
+        # is what let that decision silently fall back to "no policy was
+        # ever declared" further down.
+        policy_unreadable_detail: str | None = None
         try:
             policy = local_authorization_policy(archive)
-        except GodmodeError:
+        except GodmodeError as exc:
             policy = {}
+            policy_unreadable_detail = str(exc)
         # U-E7: read once, alongside password_required/approval_required
         # above (same seam, same malformed-file degrade-to-"not observe"
         # behaviour). `observe` gates ONLY the conversion at the bottom of
@@ -681,6 +689,31 @@ def main(argv: list[str] | None = None) -> int:
                 "protected": True, "category": "unclassified-mutation",
                 "impact": ["no operation described"]}
         preview["executes_operation"] = False
+        # H3 (external audit): a malformed/unreadable policy file was
+        # caught above and silently replaced with `{}`, which reads to
+        # every check below as "no policy was ever declared" - an
+        # operator's own `approval_required`/`password_required` widening
+        # evaporates the instant their JSON has a typo, and the exact
+        # category they protected reverts to whatever `classify_action`'s
+        # UNWIDENED baseline says (the audit's own repro: R1, silently
+        # allowed). The lost widening cannot be recovered - the file that
+        # named it is the one that failed to parse - so this fails closed
+        # the only honest way available: the policy being unreadable is
+        # itself surfaced as a reason to ask, on every call this (full,
+        # archive-backed) gate reaches, until the file is fixed. Never
+        # applied when the baseline already asked/refused on its own -
+        # this only ever ADDS protection, the same tighten-only direction
+        # `extra_protected`/`require_approval` themselves are documented to
+        # take.
+        if policy_unreadable_detail is not None and not preview.get("protected"):
+            preview["protected"] = True
+            preview["category"] = preview.get("category") or "policy-unreadable"
+            preview["impact"] = list(preview.get("impact", ())) + [
+                "the authorization policy file is unreadable "
+                f"({policy_unreadable_detail}); any approval_required/"
+                "password_required it declared cannot be honoured, so this "
+                "asks rather than silently reverting to no policy"
+            ]
         if blocked_reason is not None:
             preview["allow"] = False
             preview["reason"] = blocked_reason
@@ -881,6 +914,29 @@ def main(argv: list[str] | None = None) -> int:
         # one (Grok) fail-opens on it.
         return 0 if preview["allow"] else 2
     except GodmodeError as exc:
+        # M7 (external audit): `claude_session` is read from the PAYLOAD
+        # (`hook_event_name == "SessionStart"`, in `_is_claude_session`),
+        # never from argv - a payload that CLAIMED `hook_event_name:
+        # "SessionStart"` while argv (`args.event`, the host's own
+        # invocation of this hook, unforgeable by the payload) actually
+        # said `pre-action` used to take the branch below regardless: a
+        # friendly systemMessage and exit 0, on ANY error raised anywhere
+        # above - silently allowing the tool call argv says this really
+        # was. argv decides which branch handles the error FIRST, before
+        # `claude_session` gets a say, and a pre-action error can never
+        # reach the session-start success path.
+        if args.event == "pre-action":
+            reason = (
+                f"godmode error during pre-action evaluation ({exc}); refusing "
+                "rather than allowing a call this hook could not evaluate"
+            )
+            body, _code = render_decision(current_host(), "", "deny", reason)
+            print(json.dumps(body, ensure_ascii=False))
+            # Exit 2 alongside the deny-shaped JSON body: a host that reads
+            # the body (Claude/Cursor/Grok) sees "deny" there; a host that
+            # only reads the exit code sees nonzero either way. Never 0 -
+            # this is the exact branch M7 exists to close.
+            return 2
         if claude_session:
             print(
                 json.dumps(

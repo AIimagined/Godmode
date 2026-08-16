@@ -298,10 +298,24 @@ def git_hooks_install(archive: Any, project_root: Path) -> dict[str, Any]:
     clobber). Re-running this after an earlier install is an ordinary
     reinstall/update for any hook this module already owns.
     """
+    # M6 (external audit): this whole function used to report success by a
+    # single proxy - `declared` - that only ever answers "is the policy
+    # opted in", never "did the install actually happen". Both the
+    # unresolvable-hooks-directory branch and a swallowed `chmod` failure
+    # below returned/left `declared: True` with nothing to contradict it,
+    # which the CLI (`godmode_console.cmd_hooks`) then read straight into
+    # `exit_code=0 if report["declared"] else 1` - a caller could not tell
+    # "installed" from "declared but nothing was written" without also
+    # comparing `installed` against `HOOK_NAMES` by hand. `ok` is now this
+    # function's own, explicit answer to "did the install succeed", true
+    # only when every non-foreign hook was both written AND made
+    # executable; the CLI reads this field directly instead of re-deriving
+    # it.
     declared = declared_gate_ratchet(archive, project_root, POLICY_KEY)
     if not declared:
         return {
             "declared": False,
+            "ok": False,
             "installed": [],
             "skipped_foreign": [],
             "reason": (
@@ -314,6 +328,7 @@ def git_hooks_install(archive: Any, project_root: Path) -> dict[str, Any]:
     if hooks_dir is None:
         return {
             "declared": True,
+            "ok": False,
             "installed": [],
             "skipped_foreign": [],
             "reason": "not resolvable as a git repository (`git rev-parse --git-path "
@@ -323,6 +338,7 @@ def git_hooks_install(archive: Any, project_root: Path) -> dict[str, Any]:
     godmode_py = _resolved_godmode_py()
     installed: list[str] = []
     foreign: list[str] = []
+    chmod_failed: list[str] = []
     for name in HOOK_NAMES:
         path = hooks_dir / name
         state = _hook_file_state(path, name)["state"]
@@ -334,18 +350,29 @@ def git_hooks_install(archive: Any, project_root: Path) -> dict[str, Any]:
         try:
             path.chmod(path.stat().st_mode | 0o111)
         except OSError:
-            pass
+            # Previously swallowed: the hook file was written but is not
+            # executable, so git will never actually run it - reported now
+            # (`chmod_failed`) rather than counted as an install success.
+            chmod_failed.append(name)
         installed.append(name)
     if installed:
         archive.append(
             "action", "git-hooks-installed",
-            {"host": "git", "installed_count": len(installed), "foreign_count": len(foreign)},
+            {"host": "git", "installed_count": len(installed), "foreign_count": len(foreign),
+             "chmod_failed_count": len(chmod_failed)},
             evidence=[],
         )
-    return {
+    result: dict[str, Any] = {
         "declared": True, "installed": installed, "skipped_foreign": foreign,
-        "hooks_dir": str(hooks_dir),
+        "hooks_dir": str(hooks_dir), "ok": not chmod_failed,
     }
+    if chmod_failed:
+        result["chmod_failed"] = chmod_failed
+        result["reason"] = (
+            f"{len(chmod_failed)} hook(s) written but could not be made executable "
+            f"({', '.join(chmod_failed)}); git will not run a non-executable hook"
+        )
+    return result
 
 
 def git_hooks_uninstall(archive: Any, project_root: Path) -> dict[str, Any]:
@@ -614,15 +641,69 @@ def _evaluate_pre_push(
     return result
 
 
-def _staged_paths(project_root: Path) -> list[str]:
+def _staged_paths(project_root: Path) -> list[str] | None:
+    """The staged file-name list, or `None` when the inspection itself
+    failed - never `[]` for that case.
+
+    H2 (external audit): `git diff --cached --name-only` failing (a
+    corrupt index, a git binary that cannot run, a repository git itself
+    cannot open) used to be converted to an empty list here, which reads
+    to `_evaluate_pre_commit` as "no staged changes" - allow, exit 0,
+    every pinned-file check and capability consumption skipped, on a
+    commit `_evaluate_pre_commit` never actually inspected. A failed
+    inspection is not an empty result; the two are now distinguishable at
+    the type level so the caller cannot fold them back together by
+    accident the way `bool([])`/`bool(None)` both being falsy would invite.
+    """
     result = _git("diff", "--cached", "--name-only", cwd=project_root, timeout=10)
     if result.returncode != 0:
-        return []
+        return None
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _inspection_failed_result(
+    archive: Any, project_root: Path, hook_name: str, detail: str,
+) -> dict[str, Any]:
+    """H2 counterpart to `_malformed_stdin_result`: a hook's own inspection
+    of repository state (not stdin this time) failed. Same shape, same
+    rule - fails closed under declared policy, stays advisory-only
+    otherwise, chronicled either way, and NEVER exits 0 by falling through
+    to "nothing here" the way an empty list would have."""
+    declared = declared_gate_ratchet(archive, project_root, POLICY_KEY)
+    try:
+        archive.append(
+            "action", "git-hook-inspection-failed",
+            {"host": "git", "git_hook": hook_name[:40], "enforced": declared},
+            evidence=[],
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    result: dict[str, Any] = {
+        "git_hook": hook_name, "policy_declared": declared,
+        "protected": True, "category": "inspection-failed",
+    }
+    if not declared:
+        result["verdict"] = "allow"
+        result["reason"] = (
+            f"inspection-failed: {detail}; {POLICY_KEY!r} is not declared in "
+            f"{POLICY_FILENAME}, so this stays advisory-only (the git backstop is "
+            "not opted in)"
+        )
+        return result
+    result["verdict"] = "block"
+    result["reason"] = (
+        f"refused: inspection-failed ({detail}) fails closed under declared policy - "
+        "a failed inspection is never treated as an empty, harmless result"
+    )
+    return result
 
 
 def _evaluate_pre_commit(archive: Any, project_root: Path) -> dict[str, Any]:
     staged = _staged_paths(project_root)
+    if staged is None:
+        return _inspection_failed_result(
+            archive, project_root, "pre-commit",
+            "`git diff --cached --name-only` exited nonzero")
     if not staged:
         return {
             "git_hook": "pre-commit", "verdict": "allow", "staged_files": 0,

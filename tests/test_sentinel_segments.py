@@ -89,15 +89,22 @@ class ArgumentPathsNeverConvict(unittest.TestCase):
 
 class QuotedOperatorsNeverReadAsRedirects(unittest.TestCase):
     """The other FP1 defect: a JS `=>`/`>>>` or a `<tag>` inside a quoted
-    argument misread as an unclosed, empty-target shell redirect."""
+    argument misread as an unclosed, empty-target shell redirect.
+
+    C1 (external audit, 2026-08-17) made `node -e "..."` protected
+    unconditionally - opaque, minimum R2 - so `classify_action(...)
+    ["protected"]` no longer isolates THIS defect from that one: both
+    assertions here now read `Segment.has_redirect` directly, the exact
+    mechanism FP1 fixed, rather than the two-defects-deep `protected` flag.
+    """
 
     def test_an_arrow_function_inside_a_node_dash_e_script_is_not_a_redirect(self) -> None:
-        verdict = classify_action('node -e "const f = l=>l.trim()"')
-        self.assertFalse(verdict["protected"])
+        segment = split_segments('node -e "const f = l=>l.trim()"')[0]
+        self.assertFalse(segment.has_redirect)
 
     def test_a_bitshift_inside_a_node_dash_e_script_is_not_a_redirect(self) -> None:
-        verdict = classify_action('node -e "console.log(1 >>> 2)"')
-        self.assertFalse(verdict["protected"])
+        segment = split_segments('node -e "console.log(1 >>> 2)"')[0]
+        self.assertFalse(segment.has_redirect)
 
     def test_a_real_redirect_outside_the_tree_is_still_protected(self) -> None:
         verdict = classify_action("cat notes.txt >> /etc/hosts")
