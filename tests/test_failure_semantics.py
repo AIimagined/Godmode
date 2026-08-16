@@ -39,9 +39,14 @@ from godmode_runtime.godmode_hostevent import parse_host_payload  # noqa: E402
 from godmode_runtime.godmode_hookproof import (  # noqa: E402
     DEGRADE_REASON_MALFORMED_PAYLOAD,
     FAIL_OPEN_HOSTS,
+    PROOF_MAX_TTL_SECONDS,
     RUNTIME_VERSION,
     SUBJECT_HOOK_DEGRADED,
     SUBJECT_PROOF,
+    _auto_registration_grade,
+    _expiry_out_of_bounds,
+    _fully_enriched,
+    _host_acknowledgement_from_registration,
     _pretool_timeout_ms,
     degraded_reason,
     interception_state,
@@ -49,6 +54,9 @@ from godmode_runtime.godmode_hookproof import (  # noqa: E402
     record_hook_degradation,
     record_interception_proof,
     run_probe,
+)
+from godmode_runtime.godmode_invariants import (  # noqa: E402
+    _PROOF_MAX_TTL_SECONDS as INVARIANTS_PROOF_MAX_TTL_SECONDS,
 )
 from godmode_runtime.godmode_sentinel import (  # noqa: E402
     GATE_MODE_OBSERVE,
@@ -146,6 +154,18 @@ class FiveLevelScaleTests(unittest.TestCase):
             self.assertEqual(degraded_reason(archive, "claude", registration="none"), "expired")
 
     def test_a_fresh_proof_with_a_version_mismatch_grades_degraded(self) -> None:
+        # Fix round 1, C1(a): must carry ALL FIVE HARD-eligible fields (not
+        # just `hook_version`/`expiry`) to even reach the drift comparison -
+        # under the uniform enrichment rule, a record missing the other
+        # three would grade PARTIAL, never reaching this check at all. An
+        # in-bounds `expiry` (fix round 1, C1(b) - a far-future literal
+        # would now be refused at append time; see
+        # `ExpiryCeilingTests` below for that behavior specifically) and a
+        # real, matching `trusted_hook_hash` isolate this test to the ONE
+        # deliberate defect, `hook_version`.
+        from datetime import datetime, timedelta, timezone as _tz
+        from godmode_runtime.godmode_hookproof import _hash_file
+        real_hash = _hash_file(PLUGIN_ROOT / "hooks" / "godmode_session_hook.py")
         with isolated_project() as (_project, _state, _anchor, archive):
             archive.initialize()
             archive.append(
@@ -153,7 +173,10 @@ class FiveLevelScaleTests(unittest.TestCase):
                 {
                     "host": "claude", "tool": "Bash", "request_id": "n1", "proof": True,
                     "hook_version": "0.0.1-not-the-running-version",
-                    "expiry": "2999-01-01T00:00:00+00:00",
+                    "trusted_hook_hash": real_hash,
+                    "nonce_hash": hashlib.sha256(b"n1").hexdigest(),
+                    "observed_decision": "deny",
+                    "expiry": (datetime.now(_tz.utc) + timedelta(hours=1)).isoformat(),
                 },
                 evidence=[],
             )
@@ -190,6 +213,166 @@ class FiveLevelScaleTests(unittest.TestCase):
             )
             self.assertEqual(
                 interception_state(archive, "claude", registration="none"), "PARTIAL")
+
+    def test_the_reviewers_c1_forge_no_longer_grades_hard(self) -> None:
+        # Fix round 1, C1(a) (Critical), red-first: the reviewer's exact
+        # live repro - a hand-crafted record carrying `expiry` (and a fake
+        # `host_acknowledgement: True`) while OMITTING `hook_version`/
+        # `trusted_hook_hash`/`nonce_hash`/`observed_decision` entirely -
+        # used to grade `HARD` forever, with no live hook subprocess
+        # involved at all. Must now cap at `PARTIAL`, exactly like any
+        # other incompletely-enriched record.
+        from datetime import datetime, timedelta, timezone as _tz
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            archive.append(
+                "action", SUBJECT_PROOF,
+                {
+                    "host": "claude", "tool": "Bash", "request_id": "forged",
+                    "proof": True,
+                    # In-bounds (fix round 1, C1(b) - a FAR-future expiry is
+                    # its own, separately-tested refusal; ExpiryCeilingTests
+                    # below) - isolates THIS test to C1(a)'s own defect,
+                    # omitted fields, not a second one.
+                    "expiry": (datetime.now(_tz.utc) + timedelta(hours=1)).isoformat(),
+                    "host_acknowledgement": True,
+                    # hook_version / trusted_hook_hash / nonce_hash /
+                    # observed_decision all omitted on purpose - the exact
+                    # reviewer repro.
+                },
+                evidence=[],
+            )
+            self.assertEqual(
+                interception_state(archive, "claude", registration="none"), "PARTIAL")
+            self.assertIsNone(degraded_reason(archive, "claude", registration="none"))
+
+    def test_fully_enriched_helper_requires_every_field_individually(self) -> None:
+        # Direct unit coverage of the gate itself: each of the five fields,
+        # removed one at a time from an otherwise-complete dict, fails the
+        # uniform-enrichment check on its own - no field is "load-bearing
+        # enough to excuse the others," which was exactly the C1(a) gap.
+        complete = {
+            "expiry": "2099-01-01T00:00:00+00:00",
+            "hook_version": "9.9.9",
+            "trusted_hook_hash": "a" * 64,
+            "nonce_hash": "b" * 64,
+            "observed_decision": "deny",
+        }
+        self.assertTrue(_fully_enriched(dict(complete)))
+        for field in complete:
+            partial = dict(complete)
+            del partial[field]
+            self.assertFalse(_fully_enriched(partial), f"missing {field!r} should fail")
+            partial_blank = dict(complete)
+            partial_blank[field] = ""
+            self.assertFalse(_fully_enriched(partial_blank), f"blank {field!r} should fail")
+
+
+class ExpiryCeilingTests(unittest.TestCase):
+    """Fix round 1, C1(b) (Critical): the absolute `PROOF_MAX_TTL_SECONDS`
+    ceiling, at BOTH layers, red-first with the reviewer's exact year-9999
+    repro at each.
+    """
+
+    def test_the_two_modules_own_copies_of_the_ceiling_stay_in_sync(self) -> None:
+        # godmode_invariants.py deliberately keeps an independent copy
+        # rather than importing godmode_hookproof.py (see both modules'
+        # own comments on why) - pinned equal here so the two can never
+        # silently drift apart.
+        self.assertEqual(PROOF_MAX_TTL_SECONDS, INVARIANTS_PROOF_MAX_TTL_SECONDS)
+        self.assertEqual(PROOF_MAX_TTL_SECONDS, 24 * 60 * 60)
+
+    def test_append_layer_refuses_the_reviewers_year_9999_repro(self) -> None:
+        # Red-first: `archive.append` itself must refuse a record whose
+        # `expiry` is the reviewer's exact literal - the normal write path
+        # can never even land this shape on disk.
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            with self.assertRaises(ArchiveError):
+                archive.append(
+                    "action", SUBJECT_PROOF,
+                    {
+                        "host": "claude", "tool": "Bash", "request_id": "n1",
+                        "proof": True,
+                        "expiry": "9999-12-31T23:59:59+00:00",
+                    },
+                    evidence=[],
+                )
+
+    def test_append_layer_accepts_an_in_bounds_expiry(self) -> None:
+        # Negative control on the invariant itself: an honest, in-bounds
+        # expiry must not be caught by the same check.
+        from datetime import datetime, timedelta, timezone as _tz
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            record = archive.append(
+                "action", SUBJECT_PROOF,
+                {
+                    "host": "claude", "tool": "Bash", "request_id": "n1",
+                    "proof": True,
+                    "expiry": (datetime.now(_tz.utc) + timedelta(hours=1)).isoformat(),
+                },
+                evidence=[],
+            )
+            self.assertTrue(record["data"]["proof"])
+
+    def test_record_interception_proof_itself_never_trips_its_own_ceiling(self) -> None:
+        # The shipped writer's own default TTL equals the ceiling exactly -
+        # confirms the two are reconciled, not merely coincidentally close.
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            record = record_interception_proof(
+                archive, host="claude", tool="Bash", request_id="n1")
+            self.assertTrue(record["data"]["proof"])
+
+    def test_grading_layer_catches_a_hypothetical_record_that_slipped_in(self) -> None:
+        # Red-first, the grading-layer half of the same order: a record
+        # bearing the reviewer's exact out-of-bounds expiry that reached
+        # disk SOME OTHER WAY (an older archive format, a hand-edited
+        # file, a hypothetical future bug in the append-time check) must
+        # still never grade above DEGRADED - written here via the
+        # Chronicle's own low-level writer, bypassing `append()`'s
+        # KIND_INVARIANTS call entirely, to simulate exactly that "already
+        # on disk" scenario without asserting the append-time refusal a
+        # second time.
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            forged_data = {
+                "host": "claude", "tool": "Bash", "request_id": "slipped-in",
+                "proof": True,
+                "hook_version": RUNTIME_VERSION,
+                "trusted_hook_hash": "a" * 64,
+                "nonce_hash": "b" * 64,
+                "observed_decision": "deny",
+                "expiry": "9999-12-31T23:59:59+00:00",
+            }
+            with archive.write_lock():
+                count, tail_hash = archive._chain_tail()
+                archive._write_record(
+                    "action", SUBJECT_PROOF, forged_data, [],
+                    sequence=count + 1, previous_hash=tail_hash,
+                )
+            self.assertEqual(
+                interception_state(archive, "claude", registration="none"), "DEGRADED")
+            self.assertEqual(
+                degraded_reason(archive, "claude", registration="none"),
+                "expiry-out-of-bounds",
+            )
+
+    def test_expiry_out_of_bounds_helper_directly(self) -> None:
+        from datetime import datetime, timedelta, timezone as _tz
+        recorded_at = datetime(2026, 1, 1, tzinfo=_tz.utc).isoformat()
+        within = {
+            "recorded_at": recorded_at,
+            "data": {"expiry": (datetime(2026, 1, 1, tzinfo=_tz.utc)
+                                + timedelta(hours=1)).isoformat()},
+        }
+        beyond = {
+            "recorded_at": recorded_at,
+            "data": {"expiry": "9999-12-31T23:59:59+00:00"},
+        }
+        self.assertFalse(_expiry_out_of_bounds(within))
+        self.assertTrue(_expiry_out_of_bounds(beyond))
 
 
 class KindInvariantsEnrichmentTests(unittest.TestCase):
@@ -586,6 +769,55 @@ class CapabilityDigestTests(unittest.TestCase):
         # future edit that DID start passing it would need to change this
         # literal source text to keep passing.
         self.assertNotIn(".actor", source)
+
+    def test_no_broker_consume_call_site_anywhere_in_the_repo_threads_actor(self) -> None:
+        # Fix round 1, I2 (Important): the prior version of this test only
+        # grepped the session hook, but three OTHER real production call
+        # sites of `CapabilityBroker.consume`/`.consume_staged` exist
+        # (console's `authorize use`/`authorize stage --from-last-refusal`,
+        # and the git-hook backstop) and were untouched by it - a future
+        # change threading `event.actor`/`.actor` into any of THOSE would
+        # not have been caught. This is a repo-wide structural pin: every
+        # `.consume(`/`.consume_staged(` call site in the tracked source
+        # tree (never `.git`/vendored output), and the line immediately
+        # around it, is checked for the literal `.actor` never appearing on
+        # the SAME call - the same "grep, not a mock" discipline as the
+        # single-file version above, now covering the whole surface the
+        # docstring/report actually claim it proves.
+        import re
+
+        call_pattern = re.compile(r"\.consume(?:_staged)?\(")
+        sites: list[tuple[Path, int, str]] = []
+        for path in sorted(PLUGIN_ROOT.rglob("*.py")):
+            relative = path.relative_to(PLUGIN_ROOT)
+            parts = relative.parts
+            if any(part in (".git", "node_modules", "__pycache__") for part in parts):
+                continue
+            if parts[0] not in ("hooks", "scripts"):
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                if call_pattern.search(line):
+                    sites.append((relative, lineno, line))
+
+        # A regression guard on the guard itself: if the known call sites
+        # ever stop being found (a refactor renamed the method, moved the
+        # file), this test must fail LOUD rather than silently pass with
+        # zero sites checked.
+        found_files = {p.as_posix() for p, _line, _text in sites}
+        for expected in (
+            "hooks/godmode_session_hook.py",
+            "scripts/godmode_runtime/godmode_console.py",
+            "scripts/godmode_runtime/godmode_githooks.py",
+        ):
+            self.assertIn(expected, found_files, f"expected a broker call site in {expected}")
+        self.assertGreaterEqual(len(sites), 6, sites)
+
+        for path, lineno, line in sites:
+            self.assertNotIn(
+                ".actor", line,
+                f"{path}:{lineno} threads `.actor` into a broker call: {line!r}",
+            )
 
 
 # ---------------------------------------------------------------------------

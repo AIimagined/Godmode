@@ -40,6 +40,8 @@ from godmode_runtime.godmode_hookproof import (  # noqa: E402
     SUBJECT_ANCHOR,
     SUBJECT_PROBE_FAILED,
     SUBJECT_UNINSTALLED,
+    _auto_registration_grade,
+    _host_acknowledgement_from_registration,
     interception_state,
     last_proof,
     record_interception_proof,
@@ -99,11 +101,18 @@ class RecordProofTests(unittest.TestCase):
                 hashlib.sha256(b"abc123").hexdigest(),
             )
             self.assertEqual(data["observed_decision"], "deny")
-            self.assertIsNone(data["host_acknowledgement"])
+            # Fix round 1, I1: this repo's own shipped hooks.json wires
+            # Claude's PreToolUse for real (registration grade "partial"),
+            # so the REAL computed value is True, not the old permanent
+            # None placeholder.
+            self.assertIs(data["host_acknowledgement"], True)
             self.assertIsInstance(data["expiry"], str)
-            # No trusted_hook_hash without an explicit hook_script - never a
-            # guessed or blank hash.
-            self.assertNotIn("trusted_hook_hash", data)
+            # Fix round 1, C1(a): `hook_script` now defaults to the real
+            # shipped session hook file, so `trusted_hook_hash` is
+            # populated on every ordinary write, not merely "when a caller
+            # remembered to pass one."
+            self.assertIsInstance(data["trusted_hook_hash"], str)
+            self.assertEqual(len(data["trusted_hook_hash"]), 64)
 
     def test_record_interception_proof_hashes_the_given_hook_script(self) -> None:
         with isolated_project() as (_project, archive):
@@ -234,6 +243,103 @@ class HostRegistrationGradeTests(unittest.TestCase):
         with isolated_project() as (_project, archive):
             self.assertEqual(
                 interception_state(archive, "cursor", registration="partial"), "PARTIAL")
+
+    def test_reviewers_c2_repro_empty_package_root_grades_none_not_soft(self) -> None:
+        # Fix round 1, C2 (Critical), red-first: the reviewer's exact
+        # repro - `_auto_registration_grade("codex", <a directory with no
+        # packaging/hosts.json at all>)` - used to catch the resulting
+        # exception and answer `"soft"`, the BETTER of the two
+        # possibilities a verifier failure could mean. Must now answer
+        # `"none"` (UNAVAILABLE), the worse one, per the module's own
+        # doctrine line.
+        with tempfile.TemporaryDirectory() as empty:
+            self.assertEqual(
+                _auto_registration_grade("codex", Path(empty)), "none")
+            # The `claude` branch's OWN exception path is a DIFFERENT
+            # function (`hook_manifest_status`, no `packaging/hosts.json`
+            # dependency) and already answered correctly ("none") before
+            # this fix round - confirmed here as a negative control so the
+            # fix is understood to be specific to the non-claude branch.
+            self.assertEqual(
+                _auto_registration_grade("claude", Path(empty)), "none")
+
+    def test_the_deliberate_soft_case_still_reports_soft_not_none(self) -> None:
+        # Negative control on the fix itself: when `registration_report`
+        # SUCCEEDS but genuinely finds no entry for this host (the
+        # documented, deliberate "plugin bundle simply not wired" case),
+        # the answer must stay `"soft"` - the fix narrows the exception
+        # path specifically, it must not also demote the successful-but-
+        # empty case to `"none"`.
+        with mock.patch(
+            "godmode_runtime.godmode_bindings.registration_report",
+            return_value={},
+        ):
+            self.assertEqual(_auto_registration_grade("codex"), "soft")
+
+    def test_a_genuine_read_failure_still_grades_none_against_the_real_package_root(self) -> None:
+        # Same repro, against a MOCK that raises instead of an empty
+        # directory - confirms the fix is in the exception branch itself,
+        # not an artifact of a missing file specifically.
+        with mock.patch(
+            "godmode_runtime.godmode_bindings.registration_report",
+            side_effect=RuntimeError("simulated verifier failure"),
+        ):
+            self.assertEqual(_auto_registration_grade("codex"), "none")
+
+
+class HostAcknowledgementTests(unittest.TestCase):
+    """Fix round 1, I1 (Important): `host_acknowledgement` is now really
+    computed, not a permanently-`None` placeholder - and confirmed never
+    to feed grading either way.
+    """
+
+    def test_a_record_written_against_this_repos_own_registered_claude_manifest_is_true(self) -> None:
+        # This repo's own shipped hooks.json wires Claude's PreToolUse for
+        # real (see HostRegistrationGradeTests above) - registration grade
+        # "partial" - so the real, computed value is True, not the old
+        # permanent None.
+        self.assertTrue(_host_acknowledgement_from_registration("claude"))
+
+    def test_an_unrecognised_host_is_none_not_false(self) -> None:
+        # "none" registration (genuinely unknowable) maps to None, told
+        # apart from "soft" (a confirmed structural negative), which maps
+        # to False.
+        self.assertIsNone(_host_acknowledgement_from_registration("some-future-host"))
+
+    def test_a_soft_registration_is_a_confirmed_false_not_none(self) -> None:
+        with mock.patch(
+            "godmode_runtime.godmode_bindings.registration_report",
+            return_value={},
+        ):
+            self.assertIs(_host_acknowledgement_from_registration("codex"), False)
+
+    def test_record_interception_proof_wires_the_real_value_by_default(self) -> None:
+        with isolated_project() as (_project, archive):
+            record = record_interception_proof(
+                archive, host="claude", tool="Bash", request_id="n1")
+            self.assertTrue(record["data"]["host_acknowledgement"])
+
+    def test_an_explicit_override_is_still_honored(self) -> None:
+        with isolated_project() as (_project, archive):
+            record = record_interception_proof(
+                archive, host="claude", tool="Bash", request_id="n1",
+                host_acknowledgement=None)
+            self.assertIsNone(record["data"]["host_acknowledgement"])
+
+    def test_host_acknowledgement_never_contributes_upward_to_grade(self) -> None:
+        # I1's own required test: two otherwise-identical, fully-enriched,
+        # fresh records - one with host_acknowledgement True, one with it
+        # None, one with it False - must grade IDENTICALLY. This field is
+        # descriptive only.
+        for value in (True, False, None):
+            with isolated_project() as (_project, archive):
+                record_interception_proof(
+                    archive, host="claude", tool="Bash", request_id="n1",
+                    host_acknowledgement=value)
+                self.assertEqual(
+                    interception_state(archive, "claude", registration="none"), "HARD",
+                    f"host_acknowledgement={value!r} changed the grade",
+                )
 
 
 class HostCapabilitiesTests(unittest.TestCase):
