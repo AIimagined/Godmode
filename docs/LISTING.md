@@ -115,6 +115,39 @@ pointer is left as-is rather than moved without evidence.
    operator's own Codex/OpenAI developer account to execute; this
    repository holds no credential or prior submission record for it.
 
+### Codex submission kit: test-case mapping
+
+The OpenAI portal's own listing requirements (developer docs, verified
+fetch, recorded in
+`docs/superpowers/specs/2026-08-16-codex-compat-design.md`'s Addendum 2)
+ask for "five positive + three negative test cases with expected outcomes,"
+and name directly that "the test-case requirement maps onto CX-6 scenarios
+(reuse them)." This section is that mapping — every row names a real,
+runnable test in `tests/e2e/test_host_e2e.py`, not a hand-written example;
+`python -m unittest tests.e2e.test_host_e2e.<ClassName> -v` reproduces each
+one.
+
+**Five positive cases** (expected outcome: the operation proceeds):
+
+| # | Case | Test | Expected outcome |
+|---|---|---|---|
+| 1 | A read-only command (`git status`) | `ReadOnlyFastPathTests` | Allowed, fast path, exit 0, no envelope |
+| 2 | An ordinary in-tree file edit | `NormalEditAllowedTests` | Allowed; the file's own content changes |
+| 3 | An edit inside a plan's declared fence | `OutOfScopeEditDeniedTests.test_an_edit_inside_the_declared_fence_still_proceeds` | Allowed; the in-scope file changes |
+| 4 | A staged, password-authorised capability's first use | `StagedCapabilityScenarioTests.test_a_staged_capability_is_consumed_exactly_once` (first call) | Allowed exactly once |
+| 5 | An in-scope edit sent in every documented host dialect | `PerHostDialectReplayTests.test_every_documented_host_dialect_allows_an_in_scope_edit` | Allowed on Claude/Grok/Cursor/Gemini's own wire shapes |
+
+**Three negative cases** (expected outcome: the operation is refused):
+
+| # | Case | Test | Expected outcome |
+|---|---|---|---|
+| 1 | A force-push, every documented host dialect | `ForcePushFourPlaneAllHostsTests` | Denied; the remote ref never moves (independent git-level backstop also refuses it) |
+| 2 | A destructive command (hard reset / recursive delete / `DROP TABLE`) | `ProtectedCommandDenialTests` | Denied or asked; the target state is provably unchanged |
+| 3 | A hook with no live proof (or one marked uninstalled) | `DisabledHookScenarioTests` | Never grades `HARD` — the negative control `docs/CAPABILITY-COVERAGE.md`'s interception row and `tests/e2e/test_release_gate.py` both require |
+
+Host names above are factual (which dialect a test replays), not a
+comparison between hosts.
+
 ## Grok
 
 **Short description** (one line, from `.grok-plugin/plugin.json`):

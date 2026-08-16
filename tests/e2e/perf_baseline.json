@@ -1,0 +1,112 @@
+{
+  "generated_at": "2026-08-16T13:49:55.030032+00:00",
+  "machine": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.13.4"
+  },
+  "note": "Median+p95 wall-clock seconds per stage, measured on the machine named above. The regression guard (tests/e2e/test_perf_baseline.py) fails a stage that regresses more than 20% against these numbers; it never updates this file - re-run this script and commit the result deliberately when a real perf change makes it stale.",
+  "stages": {
+    "archive_access": {
+      "generic": {
+        "median_seconds": 5.1e-05,
+        "p95_seconds": 0.000105,
+        "samples": 21
+      }
+    },
+    "decision_round_trip": {
+      "claude": {
+        "median_seconds": 0.250489,
+        "p95_seconds": 0.281384,
+        "samples": 15
+      },
+      "codex": {
+        "median_seconds": 0.222793,
+        "p95_seconds": 0.273664,
+        "samples": 15
+      },
+      "cursor": {
+        "median_seconds": 0.230159,
+        "p95_seconds": 0.248394,
+        "samples": 15
+      },
+      "gemini": {
+        "median_seconds": 0.244715,
+        "p95_seconds": 0.272057,
+        "samples": 15
+      },
+      "grok": {
+        "median_seconds": 0.223328,
+        "p95_seconds": 0.271141,
+        "samples": 15
+      }
+    },
+    "fast_classify": {
+      "claude": {
+        "median_seconds": 0.000115,
+        "p95_seconds": 0.000185,
+        "samples": 21
+      },
+      "codex": {
+        "median_seconds": 4e-05,
+        "p95_seconds": 6.6e-05,
+        "samples": 21
+      },
+      "cursor": {
+        "median_seconds": 3.9e-05,
+        "p95_seconds": 5.9e-05,
+        "samples": 21
+      },
+      "gemini": {
+        "median_seconds": 0.00014,
+        "p95_seconds": 0.000216,
+        "samples": 21
+      },
+      "grok": {
+        "median_seconds": 0.000112,
+        "p95_seconds": 0.000365,
+        "samples": 21
+      }
+    },
+    "identity_resolution": {
+      "generic": {
+        "median_seconds": 0.002339,
+        "p95_seconds": 0.003444,
+        "samples": 21
+      }
+    },
+    "normalization": {
+      "claude": {
+        "median_seconds": 1e-05,
+        "p95_seconds": 6.4e-05,
+        "samples": 21
+      },
+      "codex": {
+        "median_seconds": 2.4e-05,
+        "p95_seconds": 8.6e-05,
+        "samples": 21
+      },
+      "cursor": {
+        "median_seconds": 4.9e-05,
+        "p95_seconds": 0.000166,
+        "samples": 21
+      },
+      "gemini": {
+        "median_seconds": 2.2e-05,
+        "p95_seconds": 2.8e-05,
+        "samples": 21
+      },
+      "grok": {
+        "median_seconds": 2.3e-05,
+        "p95_seconds": 6.7e-05,
+        "samples": 21
+      }
+    },
+    "startup": {
+      "generic": {
+        "median_seconds": 0.052748,
+        "p95_seconds": 0.057759,
+        "samples": 15
+      }
+    }
+  }
+}
