@@ -18,11 +18,35 @@ those, never guessed):
 - Dual-casing field normalization: `hookEventName`/`hook_event_name`,
   `toolName`/`tool_name`, `toolInput`/`tool_input`, `sessionId`/
   `session_id`, `workspaceRoot`/`cwd` - both casings, always (`field()`).
+  **First-alias-wins is a deliberate security property, not incidental
+  dict-ordering** (fix round 1, I3): when a payload carries BOTH casings
+  of a field with conflicting values, the alias listed FIRST in
+  `_ALIASES` (always the camelCase spelling) wins, consistently, at
+  every call site that reads a payload field this way -
+  `godmode_hostevent.field()` itself, the fast gate's independent local
+  duplicate (`hooks/godmode_gate_fast.py`'s
+  `payload.get("toolName", payload.get("tool_name"))`), and the hook's
+  read-only shortcut (`hooks/godmode_session_hook.py`'s `host_field`
+  call) all agree on the same winner for the same payload. The
+  alternative - "last write wins" from an unordered merge, or each call
+  site picking independently - would let a payload that names the SAME
+  field under both casings mean two different things to two different
+  checks reading it, which is exactly the kind of disagreement a gate is
+  supposed to make impossible.
 - Host detection chain: `GODMODE_HOST` || `GROK_AGENT` ||
-  `CLAUDE_CODE_ENTRYPOINT` || payload-shape || `"unknown"`. No env var here
-  ever decides an INTERCEPTION claim - that stays `godmode_hookproof.py`'s
-  chronicled-proof job exclusively; this chain only picks which dialect to
-  speak for one payload.
+  `CLAUDE_CODE_ENTRYPOINT` || payload-shape || `"unknown"`. The first
+  three steps are Addendum 6's binding chain, verbatim
+  (`GODMODE_HOST || GROK_AGENT || CLAUDE_CODE_ENTRYPOINT || unknown`);
+  the payload-shape step is NOT addendum text - it is this module's own
+  synthesis with the Plan's ORIGINAL (pre-amendment) CX-2 interface line
+  ("`parse_host_payload(raw) -> HostEvent` - detects host by payload
+  shape"), needed because a real hook subprocess frequently runs with
+  none of the three env vars set at all (fix round 1, I2 - corrects a
+  misattribution in the prior revision of this docstring that cited the
+  whole chain, including the shape step, as addendum text). No env var
+  here ever decides an INTERCEPTION claim - that stays
+  `godmode_hookproof.py`'s chronicled-proof job exclusively; this chain
+  only picks which dialect to speak for one payload.
 - Claude tool map: unchanged from the pre-CX-2 hook, byte-for-byte
   (`Bash`/`PowerShell` -> command text, `Write`/`Edit`/`NotebookEdit` ->
   `file_path`, `Read`/`Glob`/`Grep` -> read operation).
@@ -33,24 +57,40 @@ those, never guessed):
   INTENT (Plan amendment 3); `functions.exec` is Codex's orchestration
   wrapper - unwrapped to the nested tool call it names, or failed closed
   when the nested shape does not match any documented pattern (Plan
-  amendment 2, CX-2 additions).
+  amendment 2, CX-2 additions). **STRICT whole-patch parsing** (fix
+  round 1, C1): if ANY line in the patch body looks directive-like (the
+  `***` marker plus an Add/Update/Delete File or Move to keyword, in any
+  indentation or spacing variant) but does not match the exact grammar
+  above, the ENTIRE `apply_patch` call fails closed - a patch mixing one
+  well-formed target with one malformed one used to silently drop the
+  malformed one instead of failing the whole call; partial recognition
+  may never shrink the target set the fence sees.
 - Grok tool map (Addendum 6, verbatim): `run_terminal_command` ->
   `toolInput.command`, `write` -> `toolInput.file_path`, `search_replace`
   -> `toolInput.file_path`.
 - Unknown tool name NEVER degrades silently: `HostEvent(tool="<raw-name>")`
   with `tool_kind="unrecognized"`, and the caller (the hook) classifies it
   fail-closed as `protected=True, category="unrecognized-tool"`,
-  chronicled with counts only (`record_unrecognized_tool`).
-- Gate-exactly-once (Plan amendment 2): `parse_host_payload(raw, seen=...)`
-  takes an OPTIONAL, caller-owned `seen` set of request ids. This is
-  documented honestly as an IN-PROCESS guard only - each real host tool
-  call spawns a fresh hook subprocess with its own empty set, so this
-  catches a payload that would otherwise reach the gate twice WITHIN one
-  parse (an orchestration wrapper whose unwrap logic double-dispatches),
-  never a host that resends the same request id across two separate
-  process invocations. That cross-invocation boundary is not this
-  module's to close; it is named here so nobody mistakes the guard for
-  more than it is.
+  chronicled with counts only (`record_unrecognized_tool`), exactly ONCE
+  per miss (fix round 1, M1 - the classifier's own generic refusal-write
+  used to fire a second time for the same miss; the hook now checks
+  `preview["_chronicled_miss"]` before its own write). A `tool_name` field
+  that is PRESENT but empty/whitespace-only is also unrecognized-tool
+  (fix round 1, M2), distinct from a payload that carries no `tool_name`
+  field at all (the bare `{"operation": ...}` shape below).
+- Gate-exactly-once dedup was REMOVED in fix round 1 (C2/I1): the prior
+  revision keyed a `seen` set on `request_id` alone, so a SECOND, DIFFERENT
+  operation replaying an already-seen id was silently allowed with zero
+  scrutiny - a live bypass guarding a double-dispatch path
+  (`_adapt_codex`'s `functions.exec` unwrap recurses via a direct Python
+  call, never through `parse_host_payload`) that does not exist anywhere
+  in this tree. `request_id` stays on `HostEvent` (recorded, and hashed
+  into the payload-capture probe's record) but nothing deduplicates on it
+  today. If a future unit's live orchestration probe proves a real
+  double-dispatch path exists, its dedup key must be
+  `(request_id, operation-or-tool-fingerprint)` - never `request_id`
+  alone - so a genuinely repeated parse dedupes while a differing one
+  under a reused id still classifies fully.
 """
 
 from __future__ import annotations
@@ -67,6 +107,14 @@ SCHEMA = 1
 # Dual-casing field lookup. One table, one function - every adapter below
 # reads a payload field through this, never through a bare `raw.get(...)`,
 # so a host that ships camelCase or snake_case is never a special case.
+#
+# Alias ORDER is load-bearing (fix round 1, I3): each tuple lists camelCase
+# before snake_case, and `field()` returns the FIRST key present - so when a
+# payload carries both casings with conflicting values, camelCase always
+# wins, deterministically, everywhere this table (or a duplicate of it, like
+# the fast gate's local lookup) is consulted. This is a security property,
+# not an accident of dict-literal ordering: see `test_hostevent.py`'s
+# `FirstAliasWinsTests` for the cross-call-site pin.
 # ---------------------------------------------------------------------------
 
 _ALIASES: dict[str, tuple[str, ...]] = {
@@ -93,6 +141,19 @@ def field(raw: Any, name: str) -> Any:
     return None
 
 
+def field_present(raw: Any, name: str) -> bool:
+    """Whether `raw` carries ANY known casing of `name`'s key, regardless of
+    its value - distinct from `field()` returning a falsy value. Fix round
+    1, M2: a payload with `"tool_name": ""` (explicitly present, empty) must
+    be told apart from one with no `tool_name` field at all - the first is
+    an unrecognized tool, the second is the host-neutral bare-operation
+    shape.
+    """
+    if not isinstance(raw, dict):
+        return False
+    return any(key in raw for key in _ALIASES.get(name, (name,)))
+
+
 # ---------------------------------------------------------------------------
 # HostEvent - the ONE shape every downstream consumer reads.
 # ---------------------------------------------------------------------------
@@ -100,14 +161,18 @@ def field(raw: Any, name: str) -> Any:
 # `tool_kind` values. Not an exhaustive taxonomy of every tool a host might
 # ever send - just enough for the hook to route without re-deriving it:
 # a read costs nothing, a fenced mutation walks `targets` through the scope
-# fence, a shell command is classified as text, `unrecognized` fails closed,
-# `duplicate` marks a gate-exactly-once hit, and `other` is "known tool,
-# none of the above" (e.g. Claude's TodoWrite).
+# fence, a shell command is classified as text, `unrecognized` fails closed
+# (an unmapped tool name, OR an empty/whitespace `tool_name` that was
+# explicitly present - fix round 1, M2), `malformed` fails closed the same
+# way for a structurally-invalid `apply_patch` body (fix round 1, C1 - kept
+# distinct from `unrecognized` so the chronicle record and the operator-
+# facing reason both name the real cause), and `other` is "known tool, none
+# of the above" (e.g. Claude's TodoWrite).
 TOOL_KIND_READ = "read"
 TOOL_KIND_FENCED = "fenced"
 TOOL_KIND_SHELL = "shell"
 TOOL_KIND_UNRECOGNIZED = "unrecognized"
-TOOL_KIND_DUPLICATE = "duplicate"
+TOOL_KIND_MALFORMED = "malformed"
 TOOL_KIND_OTHER = "other"
 
 
@@ -148,9 +213,14 @@ _GEMINI_EVENTS = frozenset({"BeforeTool"})
 
 def detect_host(raw: Any) -> str:
     """`GODMODE_HOST || GROK_AGENT || CLAUDE_CODE_ENTRYPOINT || payload-shape
-    || "unknown"` (Addendum 6's binding chain). Env vars decide the DIALECT
-    to speak, never the interception claim - `godmode_hookproof.py` owns
-    that exclusively, from chronicled proof records only.
+    || "unknown"`. The first three steps are Addendum 6's binding chain,
+    verbatim; the payload-shape step is this module's own addition, needed
+    because a real subprocess invocation frequently carries none of the
+    three env vars (fix round 1, I2 - the prior docstring wrongly cited the
+    whole chain as addendum text; see the module docstring's host-detection
+    bullet for the full correction). Env vars decide the DIALECT to speak,
+    never the interception claim - `godmode_hookproof.py` owns that
+    exclusively, from chronicled proof records only.
     """
     if os.environ.get("GODMODE_HOST"):
         return os.environ["GODMODE_HOST"]
@@ -216,6 +286,12 @@ def unrecognized_tool_preview(tool: str) -> dict[str, Any]:
     same honest answer: recoverable by staging or by the operator's own
     approval, never a silent guess and never an outright unrecoverable
     refusal for something that might turn out to be harmless.
+
+    `_chronicled_miss: True` (fix round 1, M1) tells the hook this preview
+    already has its own dedicated chronicle record
+    (`record_unrecognized_tool`, called alongside this) - the classifier's
+    OWN generic refusal-write, downstream, must not write a second record
+    for the same miss.
     """
     name = tool or "(unnamed)"
     return {
@@ -226,6 +302,7 @@ def unrecognized_tool_preview(tool: str) -> dict[str, Any]:
         "tier": "R3",
         "second_confirmation_required": False,
         "external_repo_ref": None,
+        "_chronicled_miss": True,
     }
 
 
@@ -233,13 +310,57 @@ def record_unrecognized_tool(archive: Any, host: str, tool: str) -> None:
     """Counts-only miss record: which host and tool name reached the gate
     with no adapter mapping - never the command/target text that came with
     it. Best-effort: a chronicle failure must never change the fail-closed
-    answer, which is already decided before this is ever called.
+    answer, which is already decided before this is ever called. Called
+    exactly ONCE per miss (fix round 1, M1) - the hook checks
+    `preview["_chronicled_miss"]` before its own generic refusal-write, so
+    this is never followed by a second record for the same call.
     """
     try:
         archive.append(
             "refusal", "unrecognized-tool",
             {"host": host[:60], "tool": (tool or "")[:120],
              "category": "unrecognized-tool", "tier": "R3"},
+            evidence=[],
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def malformed_apply_patch_preview(tool: str) -> dict[str, Any]:
+    """The `classify_action`-shaped preview for an `apply_patch` call whose
+    patch body contains a directive-looking line that does not match the
+    strict grammar (fix round 1, C1). Distinct category from
+    `unrecognized-tool`: the TOOL is known (`apply_patch` is mapped) - what
+    failed is the patch BODY's own structure, and the operator-facing
+    reason should say that, not "this tool is unmapped".
+    """
+    return {
+        "protected": True,
+        "category": "apply-patch-malformed-directive",
+        "operation_digest": hashlib.sha256((tool or "apply_patch").encode("utf-8")).hexdigest(),
+        "impact": [
+            "the patch body contains a line that looks like a directive "
+            "(the *** marker plus an Add/Update/Delete File or Move to "
+            "keyword) but does not match the exact grammar required - "
+            "failing the whole call closed rather than trusting only the "
+            "targets that did parse"],
+        "tier": "R3",
+        "second_confirmation_required": False,
+        "external_repo_ref": None,
+        "_chronicled_miss": True,
+    }
+
+
+def record_malformed_apply_patch(archive: Any, host: str, tool: str) -> None:
+    """Counts-only miss record for `malformed_apply_patch_preview` - host and
+    tool name only, never the patch body. Best-effort, same discipline as
+    `record_unrecognized_tool`.
+    """
+    try:
+        archive.append(
+            "refusal", "apply-patch-malformed-directive",
+            {"host": host[:60], "tool": (tool or "")[:120],
+             "category": "apply-patch-malformed-directive", "tier": "R3"},
             evidence=[],
         )
     except Exception:  # noqa: BLE001
@@ -257,6 +378,20 @@ def _unrecognized(host: str, tool: str, raw: Any) -> HostEvent:
         cwd=str(field(raw, "cwd") or ""),
         request_id=str(field(raw, "request_id") or ""),
         tool_kind=TOOL_KIND_UNRECOGNIZED,
+    )
+
+
+def _malformed(host: str, tool: str, raw: Any) -> HostEvent:
+    return HostEvent(
+        schema=SCHEMA,
+        event=str(field(raw, "hook_event_name") or ""),
+        host=host,
+        tool=tool or "",
+        operation="",
+        targets=[],
+        cwd=str(field(raw, "cwd") or ""),
+        request_id=str(field(raw, "request_id") or ""),
+        tool_kind=TOOL_KIND_MALFORMED,
     )
 
 
@@ -321,6 +456,24 @@ _APPLY_PATCH_ADD = re.compile(r"^\*\*\* Add File: (.+)$")
 _APPLY_PATCH_DELETE = re.compile(r"^\*\*\* Delete File: (.+)$")
 _APPLY_PATCH_UPDATE = re.compile(r"^\*\*\* Update File: (.+)$")
 _APPLY_PATCH_MOVE = re.compile(r"^\*\*\* Move to: (.+)$")
+_APPLY_PATCH_STRICT = (_APPLY_PATCH_ADD, _APPLY_PATCH_DELETE,
+                       _APPLY_PATCH_UPDATE, _APPLY_PATCH_MOVE)
+
+# Fix round 1, C1 (review Critical): a LOOSE detector, deliberately not
+# anchored and deliberately case-insensitive - the strict regexes above
+# require column-0, single-space, exact-case text; this one exists purely
+# to catch a line that LOOKS like a directive (the `***` marker plus an
+# Add/Update/Delete File or Move to keyword, ANY leading whitespace, ANY
+# spacing around the marker/keyword/colon, ANY case) but does not match
+# them. Reviewer's live repro: "*** Add File: harmless.txt" alongside
+# "  *** Add File: /etc/passwd" (two-space indent) used to silently keep
+# only the first - `_malformed_directive_lines` below is what makes the
+# whole call fail closed instead. Defense-in-depth, not precision-matching
+# Codex's own grammar: a false positive here (an ordinary content line that
+# happens to contain this text) costs one fail-closed call; a false
+# negative costs a silently-dropped mutation target.
+_DIRECTIVE_LOOKALIKE = re.compile(
+    r"\*\*\*\s*(?:Add File|Update File|Delete File|Move to)\s*:", re.IGNORECASE)
 
 # Field names tried, in order, for the patch body and the shell command
 # text. Codex's exact hook-payload field names are not published (spec's
@@ -374,6 +527,26 @@ def apply_patch_targets(patch_text: str) -> list[tuple[str, str]]:
     return targets
 
 
+def has_malformed_directive(patch_text: str) -> bool:
+    """Fix round 1, C1: `True` iff any line in `patch_text` LOOKS like a
+    patch directive (`_DIRECTIVE_LOOKALIKE`) but does not match one of the
+    four STRICT grammars `apply_patch_targets` requires. The caller's job
+    is to fail the WHOLE call closed when this is `True` - never to trust
+    `apply_patch_targets`'s output as "the complete picture" once any line
+    in the body looked directive-shaped and failed to parse. Ordinary patch
+    content (`+`/`-` diff lines, `*** Begin Patch`/`*** End Patch`) never
+    matches the lookalike pattern at all, so a normal, fully well-formed
+    patch never trips this.
+    """
+    for line in patch_text.splitlines():
+        if not _DIRECTIVE_LOOKALIKE.search(line):
+            continue
+        if any(pattern.match(line) for pattern in _APPLY_PATCH_STRICT):
+            continue
+        return True
+    return False
+
+
 def _target_operation_text(path: str, intent: str) -> str:
     """One `classify_action`-readable segment per target, reusing its
     EXISTING vocabulary (`write file <path>` already routes through
@@ -419,6 +592,12 @@ def _adapt_codex(raw: Any, tool: str | None = None, tool_input: Any = None,
 
     if tool == "apply_patch":
         patch_text = _first_field(tool_input, _PATCH_BODY_FIELDS) or ""
+        # Fix round 1, C1 (review Critical): checked BEFORE trusting
+        # apply_patch_targets's output - a patch with one well-formed and
+        # one malformed directive must never proceed on the well-formed
+        # target alone.
+        if has_malformed_directive(patch_text):
+            return _malformed("codex", tool, raw)
         touched = apply_patch_targets(patch_text)
         if not touched:
             return _unrecognized("codex", tool, raw)
@@ -571,30 +750,32 @@ _ADAPTERS = {
 }
 
 
-def parse_host_payload(raw: Any, *, seen: set[str] | None = None) -> HostEvent:
+def parse_host_payload(raw: Any) -> HostEvent:
     """Detect the host, translate its payload into one canonical `HostEvent`.
 
-    `seen`, when passed, is a caller-owned set of request ids scoped to ONE
-    hook process invocation (gate-exactly-once, in-process only - see the
-    module docstring). A request id already in it comes back as a minimal
-    `HostEvent` with `tool_kind="duplicate"`; the caller's job is to treat
-    that as "already decided this run", never to re-run classification.
+    Every call classifies fully - fix round 1 (C2/I1) removed the prior
+    revision's `seen`-set dedup entirely; see the module docstring's
+    "Gate-exactly-once dedup was REMOVED" bullet for why. `request_id`
+    still travels on the returned `HostEvent` (and is hashed, never stored
+    raw, by `capture_payload_probe`) - nothing in this function deduplicates
+    on it.
     """
     if not isinstance(raw, dict):
         raw = {}
     host = detect_host(raw)
-    request_id = str(field(raw, "request_id") or "")
-    if seen is not None and request_id and request_id in seen:
-        return HostEvent(
-            schema=SCHEMA, event=str(field(raw, "hook_event_name") or ""),
-            host=host, tool=str(field(raw, "tool_name") or ""), operation="",
-            targets=[], cwd=str(field(raw, "cwd") or ""),
-            request_id=request_id, tool_kind=TOOL_KIND_DUPLICATE,
-        )
 
+    # Fix round 1, M2: a `tool_name` field that is PRESENT but empty or
+    # whitespace-only is a host explicitly saying "no tool" - that is not
+    # the same signal as a payload that carries no `tool_name` field at
+    # all (the bare `{"operation": ...}` shape), and must not be routed
+    # there. `field_present` answers "was the key there", independent of
+    # what `field` reads back as its value.
     tool_name = field(raw, "tool_name")
-    if not tool_name:
+    tool_name_given = isinstance(tool_name, str) and tool_name.strip()
+    if not field_present(raw, "tool_name"):
         event = _adapt_bare(raw, host)
+    elif not tool_name_given:
+        event = _unrecognized(host, str(tool_name) if tool_name is not None else "", raw)
     elif host in _ADAPTERS:
         event = _ADAPTERS[host](raw)
     elif host in ("gemini", "cursor"):
@@ -607,8 +788,6 @@ def parse_host_payload(raw: Any, *, seen: set[str] | None = None) -> HostEvent:
     actor = field(raw, "actor")
     if actor is not None:
         event.actor = str(actor)
-    if seen is not None and request_id:
-        seen.add(request_id)
     return event
 
 

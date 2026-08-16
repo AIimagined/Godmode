@@ -349,6 +349,12 @@ def fast_verdict(payload: dict[str, Any], table: dict[str, Any] | None) -> str:
         # `tool_name`, `toolInput`/`tool_input` - matching
         # `godmode_hostevent.field()`'s alias table without importing it
         # (this module's zero-import boundary; see the module docstring).
+        # First-alias-wins (camelCase before snake_case) is deliberate, not
+        # incidental `dict.get` fallback ordering (fix round 1, I3): it
+        # agrees with `godmode_hostevent.field()` and the hook's own
+        # `host_field` lookup, so a payload naming a field under both
+        # casings with conflicting values can never be read as two
+        # different tools by two different checks.
         tool = payload.get("toolName", payload.get("tool_name"))
         if not isinstance(tool, str) or tool in _FENCED_TOOLS or tool not in _SHELL_TOOLS:
             return "escalate"

@@ -30,20 +30,14 @@ from godmode_runtime.godmode_hookproof import (  # noqa: E402
     PROBE_PREFIX, interception_state, record_interception_proof,
     record_session_anchor)
 from godmode_runtime.godmode_hostevent import (  # noqa: E402
-    HOSTS_WITH_ASK, TOOL_KIND_DUPLICATE, TOOL_KIND_UNRECOGNIZED,
+    HOSTS_WITH_ASK, TOOL_KIND_MALFORMED, TOOL_KIND_UNRECOGNIZED,
     capture_payload_probe, field as host_field, is_pretool_event,
-    parse_host_payload, record_unrecognized_tool, render_decision,
+    malformed_apply_patch_preview, parse_host_payload,
+    record_malformed_apply_patch, record_unrecognized_tool, render_decision,
     unrecognized_tool_preview)
 from godmode_runtime.godmode_sentinel import (  # noqa: E402
     GATE_MODE_OBSERVE, classify_action, evidence_pipe_advisory,
     local_authorization_policy)
-
-# CX-2 gate-exactly-once: request ids seen so far in THIS process. A fresh
-# hook subprocess gets a fresh, empty set every real host tool call, so this
-# is documented as an in-process guard only - see
-# `godmode_hostevent.py`'s module docstring for the cross-invocation
-# boundary this deliberately does not claim to close.
-_SEEN_REQUEST_IDS: set[str] = set()
 
 # CX-2 payload-capture probe: counts-only capture of an unrecognized host
 # shape (event/tool names, sorted input field names, request-id/cwd hashes -
@@ -297,22 +291,27 @@ def _apply_observe_mode(archive: Chronicle, tool: str, operation: str,
     continue under a posture whose entire point is "never block".
     """
     would_have = "ask" if _decision_for(preview) == "ask" else "deny"
-    try:
-        archive.append(
-            "refusal",
-            str(preview.get("category", "refusal"))[:200] or "refusal",
-            {
-                "operation": operation[:500],
-                "tool": tool or "operation",
-                "tier": str(preview.get("tier", "R?")),
-                "category": preview.get("category", "unclassified-mutation"),
-                "observed": True,
-                "would_have": would_have,
-            },
-            evidence=[],
-        )
-    except Exception:  # noqa: BLE001
-        pass
+    # Fix round 1, M1: skipped when `record_unrecognized_tool`/
+    # `record_malformed_apply_patch` already chronicled this exact miss,
+    # unconditionally, before observe mode was even consulted - the same
+    # "once, not twice" discipline the enforcement-mode write above applies.
+    if not preview.get("_chronicled_miss"):
+        try:
+            archive.append(
+                "refusal",
+                str(preview.get("category", "refusal"))[:200] or "refusal",
+                {
+                    "operation": operation[:500],
+                    "tool": tool or "operation",
+                    "tier": str(preview.get("tier", "R?")),
+                    "category": preview.get("category", "unclassified-mutation"),
+                    "observed": True,
+                    "would_have": would_have,
+                },
+                evidence=[],
+            )
+        except Exception:  # noqa: BLE001
+            pass
     reason = str(preview.get("reason") or preview.get("category", "operation"))[:300]
     preview["allow"] = True
     preview["observed"] = True
@@ -470,13 +469,13 @@ def main(argv: list[str] | None = None) -> int:
         # everything below reads `event.tool`/`event.operation`/
         # `event.targets`, never the raw payload again.
         pretool = is_pretool_event(submitted)
-        event = parse_host_payload(submitted, seen=_SEEN_REQUEST_IDS)
-        if event.tool_kind == TOOL_KIND_DUPLICATE:
-            # Gate-exactly-once: this request id already reached the gate
-            # once THIS process (an orchestration wrapper that unwrapped to
-            # the same call twice, for example) - it was already decided,
-            # so nothing further runs a second time for it.
-            return 0
+        # Fix round 1 (C2/I1): the prior gate-exactly-once `seen`-set dedup
+        # is removed - every call classifies fully. See
+        # `godmode_hostevent.py`'s module docstring for why (a request id
+        # reused for a genuinely DIFFERENT operation was silently allowed
+        # with zero scrutiny, guarding a double-dispatch path that does not
+        # exist anywhere in this tree).
+        event = parse_host_payload(submitted)
         tool = event.tool
         operation = event.operation
 
@@ -584,10 +583,19 @@ def main(argv: list[str] | None = None) -> int:
         # string - it fails closed on its own, dedicated category, and the
         # miss is chronicled (counts only: host + tool name, never the
         # command/target that came with it). This replaces the pre-CX-2
-        # generic-invocation degradation path entirely.
+        # generic-invocation degradation path entirely. Fix round 1, C1: a
+        # structurally-malformed `apply_patch` body (a directive-looking
+        # line that failed to parse) gets its own distinct fail-closed
+        # category instead of being folded into "unrecognized tool" - the
+        # tool IS known here, the patch body's own shape is what failed.
         if event.tool_kind == TOOL_KIND_UNRECOGNIZED:
             preview = unrecognized_tool_preview(tool)
             record_unrecognized_tool(archive, event.host, tool)
+            if capture_payload:
+                capture_payload_probe(archive, submitted, event)
+        elif event.tool_kind == TOOL_KIND_MALFORMED:
+            preview = malformed_apply_patch_preview(tool)
+            record_malformed_apply_patch(archive, event.host, tool)
             if capture_payload:
                 capture_payload_probe(archive, submitted, event)
         elif operation:
@@ -697,7 +705,14 @@ def main(argv: list[str] | None = None) -> int:
                 # instead, with `observed: True` set - writing it here too
                 # would double-record the same decision, once enforced and
                 # once advisory, for a call that was never actually denied.
-                if not observe:
+                #
+                # Also skipped when `preview["_chronicled_miss"]` is already
+                # set (fix round 1, M1): `unrecognized_tool_preview`/
+                # `malformed_apply_patch_preview` already wrote their own
+                # dedicated record above, before this branch ever ran - a
+                # second, generic `refusal` record for the exact same miss
+                # is redundant bookkeeping, not a second fact.
+                if not observe and not preview.get("_chronicled_miss"):
                     try:
                         archive.append(
                             "refusal",
