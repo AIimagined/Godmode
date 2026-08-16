@@ -16,6 +16,14 @@ from typing import Any, Callable
 from .godmode_anchor import ProjectAnchor, current_host, resolve_anchor
 from .godmode_chronicle import Chronicle
 from .godmode_hookproof import hook_manifest_status, interception_state, last_proof, run_probe
+from .godmode_githooks import (
+    HOOK_NAMES as GIT_HOOK_NAMES,
+    evaluate_git_hook,
+    git_hooks_install,
+    git_hooks_status,
+    git_hooks_uninstall,
+    run_git_verify,
+)
 from .godmode_constants import DEFAULT_CONTEXT_BUDGET, EVENT_KINDS, RUNTIME_VERSION
 from .godmode_attest import (
     advisory_decay,
@@ -1256,8 +1264,12 @@ def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     hooks probe` followed by a bare `godmode hooks status` agree without the
     caller naming a host twice.
     """
-    host = args.host or current_host()
+    host = getattr(args, "host", None) or current_host()
     if args.hooks_command == "status":
+        if getattr(args, "git", False):
+            _require_archive(runtime)
+            return CommandResult(
+                git_hooks_status(runtime.archive, Path(runtime.anchor.project_root)))
         manifest = hook_manifest_status()
         return CommandResult({
             "plugin_installed": manifest["plugin_installed"],
@@ -1283,12 +1295,23 @@ def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         report = run_probe(Path(runtime.anchor.project_root), runtime.archive, host)
         return CommandResult(report, exit_code=0 if report["state"] == "HARD" else 1)
     if args.hooks_command == "install":
+        if getattr(args, "git", False):
+            _require_archive(runtime)
+            project_root = Path(runtime.anchor.project_root)
+            if getattr(args, "uninstall", False):
+                return CommandResult(git_hooks_uninstall(runtime.archive, project_root))
+            report = git_hooks_install(runtime.archive, project_root)
+            return CommandResult(report, exit_code=0 if report["declared"] else 1)
         state_path = Path(args.state_path) if args.state_path else None
         report = hooks_install_verify(None, host, state_path=state_path)
         # "unverifiable"/"verified" both exit 0 - an honest unknown is not a
         # failure. Only "partial" (some declared hook confirmed missing from
         # the host's own state) fails loudly, per CX-3's binding instruction.
         return CommandResult(report, exit_code=1 if report["verdict"] == "partial" else 0)
+    if args.hooks_command == "verify":
+        _require_archive(runtime)
+        report = run_git_verify(runtime.archive)
+        return CommandResult(report, exit_code=0 if report["state"] == "HARD" else 1)
     raise ArchiveError(f"Unknown hooks subcommand {args.hooks_command!r}")
 
 
@@ -1926,6 +1949,8 @@ def cmd_privacy(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 
 def cmd_guard(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if getattr(args, "git_hook", None):
+        return _cmd_guard_git_hook(args, runtime)
     _require_archive(runtime)
     preview = classify_action(args.operation)
     preview["operation"] = args.operation
@@ -1943,6 +1968,34 @@ def cmd_guard(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     preview["authorized"] = True
     preview["capability_consumed"] = True
     return CommandResult(preview)
+
+
+def _cmd_guard_git_hook(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """CX-4: `guard --git-hook <name>` - the exact call every installed git
+    hook script makes. Uninitialized is never a block (an installed hook can
+    only exist under a policy this project already declared, but a foreign
+    caller running the file standalone, or a project reset after install,
+    must still fail open here rather than breaking every git operation).
+    """
+    name = args.git_hook
+    if not runtime.archive.initialized():
+        return CommandResult({
+            "git_hook": name, "verdict": "allow",
+            "reason": "godmode is not initialized for this project; the git backstop is "
+                      "advisory-only until it is",
+        })
+    project_root = Path(runtime.anchor.project_root)
+    stdin_text: str | None = ""
+    if name == "pre-push" and not sys.stdin.isatty():
+        # `None` (fix round 1, C2) is the "could not be read at all" signal
+        # `_evaluate_pre_push` fails closed on - distinct from "" (genuinely
+        # nothing to read; not the tty case, not an unparseable stream).
+        try:
+            stdin_text = sys.stdin.read()
+        except (OSError, ValueError, UnicodeDecodeError):
+            stdin_text = None
+    report = evaluate_git_hook(runtime.archive, project_root, name, stdin_text)
+    return CommandResult(report, exit_code=0 if report["verdict"] == "allow" else 1)
 
 
 def cmd_license_check(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -3268,6 +3321,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "status", help="Report hook manifest wiring and the last interception proof")
     hooks_status.add_argument(
         "--host", help="Host label to read the proof for (default: detected)")
+    hooks_status.add_argument(
+        "--git", action="store_true",
+        help="CX-4: report the git-hook backstop's own state instead of host hook wiring")
     hooks_status.set_defaults(handler=cmd_hooks)
     hooks_probe = hooks_sub.add_parser(
         "probe",
@@ -3278,15 +3334,33 @@ def _build_parser() -> argparse.ArgumentParser:
     hooks_install = hooks_sub.add_parser(
         "install",
         help="Verify each declared hook for one host appears in that host's own runtime "
-             "state, where inspectable; fails loudly on partial registration")
+             "state, where inspectable; fails loudly on partial registration. With --git, "
+             "installs (or, with --uninstall, removes) the host-independent git-hook "
+             "backstop instead")
     hooks_install.add_argument(
-        "--host", required=True,
-        help="Host to verify: claude, codex, grok, cursor, or gemini")
+        "--host", help="Host to verify: claude, codex, grok, cursor, or gemini")
     hooks_install.add_argument(
         "--state-path",
         help="A captured/fixture copy of the host's own state (Codex's config.toml, "
              "or a `grok inspect --json` capture) instead of auto-discovering one")
+    hooks_install.add_argument(
+        "--git", action="store_true",
+        help="CX-4: install the git-hook backstop (pre-commit/pre-push/pre-rebase/"
+             "post-checkout) instead of verifying a host manifest; refuses unless "
+             "{\"git_backstop\": true} is declared")
+    hooks_install.add_argument(
+        "--uninstall", action="store_true",
+        help="With --git: remove every godmode-owned git hook instead of installing them")
     hooks_install.set_defaults(handler=cmd_hooks)
+    hooks_verify = hooks_sub.add_parser(
+        "verify",
+        help="CX-4: run a synthetic protected push through the real pre-push hook "
+             "mechanics in a throwaway repo, and record a live proof (host=git) if it "
+             "actually blocks")
+    hooks_verify.add_argument(
+        "--git", action="store_true", required=True,
+        help="Currently the only verify target")
+    hooks_verify.set_defaults(handler=cmd_hooks)
     minimality_parser = sub.add_parser(
         "minimality", help="Rank existing duplicate/orphan/seam/decay surfaces into one report")
     minimality_parser.set_defaults(handler=cmd_minimality)
@@ -3530,7 +3604,13 @@ def _build_parser() -> argparse.ArgumentParser:
     integrity.set_defaults(handler=cmd_integrity)
 
     guard = sub.add_parser("guard", help="Preview and authorize an exact operation without executing it")
-    guard.add_argument("--operation", required=True)
+    guard_target = guard.add_mutually_exclusive_group(required=True)
+    guard_target.add_argument("--operation")
+    guard_target.add_argument(
+        "--git-hook", choices=GIT_HOOK_NAMES,
+        help="CX-4: evaluate the git-hook backstop for this hook name, reading git's own "
+             "hook-specific context (stdin for pre-push; nothing for the others) instead "
+             "of an --operation string. What every installed git hook script calls.")
     guard.add_argument("--capability")
     guard.set_defaults(handler=cmd_guard)
 
