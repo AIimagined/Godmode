@@ -275,17 +275,44 @@ def resolve_anchor(project: str | Path) -> ProjectAnchor:
     )
 
 
-def host_capabilities() -> dict[str, Any]:
+def current_host() -> str:
+    """The host label this process believes it is running under.
+
+    Declared, not detected: `GODMODE_HOST` is the explicit override; a host
+    that sets `CLAUDE_CODE_ENTRYPOINT` (Claude Code always does) is read from
+    that one fact instead. Neither present reads as "unknown" rather than a
+    guess - the same "an unknown is reported, not assumed" discipline
+    `host_capabilities` applies to every control it names.
+    """
+    return os.environ.get("GODMODE_HOST") or os.environ.get("CLAUDE_CODE_ENTRYPOINT") or "unknown"
+
+
+def host_capabilities(*, tool_call_interception: str | None = None) -> dict[str, Any]:
     """State honestly what this host can enforce. An unknown is reported, not assumed.
 
     HARD means the control is decided outside model judgment. SOFT means it is
     surfaced and checked after the fact. UNAVAILABLE means the environment cannot
     support it, and any claim resting on it stays unverified.
+
+    `tool_call_interception` arrives PRE-COMPUTED rather than being read here
+    from an archive: this module is imported by nearly everything (see
+    `godmode_drift.py`'s own note - "imported by everything, importing
+    nothing runtime") and `godmode_hookproof.py` (CX-1's proof reader) needs
+    `Chronicle`, which itself imports this module - so this module importing
+    `godmode_hookproof`, even lazily inside a function, would be exactly the
+    cycle that note exists to prevent (Godmode's own import-cycle guard
+    checks source text, not runtime laziness, so a deferred import inside a
+    function is not a way around it - nor should it be; the dependency really
+    would exist). A caller with an archive in scope computes
+    `godmode_hookproof.interception_state(archive, current_host())` itself
+    and passes the answer straight through; a caller with none leaves the
+    default, the same honest `UNAVAILABLE` as "no proof exists".
     """
     import sys
 
     interactive = bool(getattr(sys.stdin, "isatty", lambda: False)())
-    host = os.environ.get("GODMODE_HOST") or os.environ.get("CLAUDE_CODE_ENTRYPOINT") or "unknown"
+    host = current_host()
+    interception = tool_call_interception or "UNAVAILABLE"
     controls = {
         "attestation_gate": "HARD",
         "claim_downgrade": "HARD",
@@ -294,12 +321,14 @@ def host_capabilities() -> dict[str, Any]:
         "authority_claim_detection": "HARD",
         "interactive_authorization": "HARD" if interactive else "UNAVAILABLE",
         "agent_identity": "HARD" if os.environ.get("GODMODE_MODEL") else "SOFT",
-        # HARD only where a host actually calls the pre-tool gate and honours its
-        # decision; the installed hook sets GODMODE_PRETOOL_GATE. Claiming the
-        # control without the caller would be exactly the overstatement this
-        # table exists to prevent - and understating it once the gate is live
-        # would be the same failure pointing the other way.
-        "tool_call_interception": "HARD" if os.environ.get("GODMODE_PRETOOL_GATE") else "UNAVAILABLE",
+        # HARD only when a chronicled, live proof record shows the pre-tool
+        # boundary demonstrably received and denied a probe this session
+        # (see godmode_hookproof.py) - never from an environment variable.
+        # CX-1 replaced the previous GODMODE_PRETOOL_GATE sniff for exactly
+        # this reason: nothing ever set it, so the claim could be silently
+        # wrong while the gate really was live, and trivially fakeable by
+        # anyone who exported the variable by hand.
+        "tool_call_interception": interception,
     }
     return {
         "host": host,
