@@ -13,8 +13,9 @@ import re
 import sys
 from typing import Any, Callable
 
-from .godmode_anchor import ProjectAnchor, resolve_anchor
+from .godmode_anchor import ProjectAnchor, current_host, resolve_anchor
 from .godmode_chronicle import Chronicle
+from .godmode_hookproof import hook_manifest_status, interception_state, last_proof, run_probe
 from .godmode_constants import DEFAULT_CONTEXT_BUDGET, EVENT_KINDS, RUNTIME_VERSION
 from .godmode_attest import (
     advisory_decay,
@@ -1240,7 +1241,46 @@ def cmd_capabilities(args: argparse.Namespace, runtime: Runtime) -> CommandResul
             )
             payload["recorded"] = record["sequence"]
         return CommandResult(payload)
-    return CommandResult(host_capabilities())
+    return CommandResult(host_capabilities(
+        tool_call_interception=interception_state(runtime.archive, current_host())))
+
+
+def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """CX-1: `status` reads the chronicled proof back; `probe` produces a fresh one.
+
+    Host-neutral by construction - `--host` scopes which host's proof is
+    read or written, defaulting to the same detection `host_capabilities`
+    itself uses (`GODMODE_HOST`/`CLAUDE_CODE_ENTRYPOINT`), so a bare `godmode
+    hooks probe` followed by a bare `godmode hooks status` agree without the
+    caller naming a host twice.
+    """
+    host = args.host or current_host()
+    if args.hooks_command == "status":
+        manifest = hook_manifest_status()
+        return CommandResult({
+            "plugin_installed": manifest["plugin_installed"],
+            "session_hook_seen": manifest["session_hook_seen"],
+            "pretool_hook_seen": manifest["pretool_hook_seen"],
+            # Neither true nor false: whether the HOST's own runtime state
+            # shows this hook enabled is not something this process can
+            # inspect yet (CX-3's install-verify closes that gap per host).
+            # Honesty here means naming the unknown, never guessing it.
+            "host_registration": "unverified",
+            "last_proof": last_proof(runtime.archive, host),
+            "verdict": interception_state(runtime.archive, host),
+        })
+    if args.hooks_command == "probe":
+        if not runtime.archive.initialized():
+            return CommandResult(
+                {
+                    "probe": "not-run",
+                    "reason": "project is not initialized; run `godmode init` first",
+                },
+                exit_code=1,
+            )
+        report = run_probe(Path(runtime.anchor.project_root), runtime.archive, host)
+        return CommandResult(report, exit_code=0 if report["state"] == "HARD" else 1)
+    raise ArchiveError(f"Unknown hooks subcommand {args.hooks_command!r}")
 
 
 def cmd_assess(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -3201,6 +3241,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Check capabilities.json, its detector catalog, and the capability-coverage "
              "matrix against shipped code and tests")
     capabilities_parser.set_defaults(handler=cmd_capabilities)
+    hooks_parser = sub.add_parser(
+        "hooks", help="Truthful interception proof: what the pre-tool hook actually saw")
+    hooks_sub = hooks_parser.add_subparsers(dest="hooks_command", required=True)
+    hooks_status = hooks_sub.add_parser(
+        "status", help="Report hook manifest wiring and the last interception proof")
+    hooks_status.add_argument(
+        "--host", help="Host label to read the proof for (default: detected)")
+    hooks_status.set_defaults(handler=cmd_hooks)
+    hooks_probe = hooks_sub.add_parser(
+        "probe",
+        help="Send a synthetic marker operation through the real hook and verify it was denied")
+    hooks_probe.add_argument(
+        "--host", help="Host label to record the proof under (default: detected)")
+    hooks_probe.set_defaults(handler=cmd_hooks)
     minimality_parser = sub.add_parser(
         "minimality", help="Rank existing duplicate/orphan/seam/decay surfaces into one report")
     minimality_parser.set_defaults(handler=cmd_minimality)
