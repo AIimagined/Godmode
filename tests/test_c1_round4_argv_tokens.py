@@ -367,6 +367,42 @@ class Important1NoNewFalseRefusals(Case):
         self.assertProtected(f'python -W ignore -c "{FORCE}"', min_tier="R5")
         self.assertProtected(f'python -X faulthandler -c "{FORCE}"', min_tier="R5")
 
+    def test_an_option_value_that_looks_like_a_file_still_reaches_dash_c(self) -> None:
+        """A value that happens to look like a file (`a.b`, `k=/tmp/x`) ends
+        the operand scan, so the inline flag after it is not read by form (a).
+        For `-c`/`--command` that costs nothing, because form (c) reads the
+        flag whatever the operand rule decided. For `-e` it costs a real
+        miss - see `DisclosedOpen.test_an_e_flag_behind_a_file_shaped_option_
+        value`, where it is recorded rather than implied closed."""
+        for command in (f'python -X a.b -c "{FORCE}"',
+                        f'python -X pycache_prefix=/tmp/x -c "{FORCE}"',
+                        f'python -W a.b -c "{FORCE}"',
+                        f'bash --rcfile a.rc -c "{FORCE}"',
+                        f'pwsh -ConfigurationName a.b -Command "{FORCE}"'):
+            with self.subTest(command):
+                self.assertProtected(command)
+
+    def test_a_flag_after_the_scripts_own_operand_is_still_the_scripts(self) -> None:
+        """The operand scan stops at a real operand, and that is correct
+        rather than conservative: `python app.py -c foo` hands `-c foo` to
+        `app.py` and executes no inline code.
+
+        The last three are why the scan is NOT run a second time with
+        whole-token matching. I built that second phase, and it closed
+        `node -r ./setup.js -e "…"` - at the price of reading these three as
+        inline code, because a no-argument flag in front of the script makes
+        the script look like an option value. `python -u app.py -c conf.yml`
+        is an ordinary command and the brief for this round is explicit that
+        a round which blocks one does not ship, so the second phase was
+        reverted and the miss is disclosed instead."""
+        for command in ("python app.py -c foo", "node server.js -e prod",
+                        "ruby app.rb -e dev", "python -u train.py -ckpt m.pt",
+                        "python -u app.py -c conf.yml",
+                        "python -B app.py -c settings",
+                        "node --inspect server.js -e prod"):
+            with self.subTest(command):
+                self.assertUnprotected(command)
+
 
 class Important2ExecShapeRunsOnInterpreterHeads(Case):
     """The known-interpreter head used to return before the exec-shape scan,
@@ -520,6 +556,22 @@ class DisclosedOpen(Case):
         self.assertUnprotected('npx tsx -e "require(1)"')
         self.assertUnprotected('mytool -e "code"')
 
+    def test_an_e_flag_behind_a_file_shaped_option_value(self) -> None:
+        """A module-preload or include flag whose VALUE looks like a file ends
+        the operand scan, so an `-e` after it is not read. `-c` in the same
+        position is still read, by form (c). The direct `node -e "…"` and the
+        non-file-shaped `node -r fs -e "…"` are both caught; only this variant
+        escapes, and closing it costs `python -u app.py -c conf.yml` (see
+        `Important1NoNewFalseRefusals.test_a_flag_after_the_scripts_own_
+        operand_is_still_the_scripts`)."""
+        for command in ('node -r ./setup.js -e "require(1)"',
+                        'node -r a.b -e "require(1)"',
+                        'ruby -I lib.d -e "system(1)"'):
+            with self.subTest(command):
+                self.assertUnprotected(command)
+        self.assertProtected('node -r fs -e "require(1)"')
+        self.assertProtected('node -e "require(1)"')
+
     def test_program_text_of_a_data_printing_read_is_never_parsed(self) -> None:
         self.assertUnprotected('awk \'BEGIN{system("git push --force")}\'')
         self.assertUnprotected("sed -n 'e git push --force' f")
@@ -538,6 +590,28 @@ class DisclosedOpen(Case):
         help-flag fix is not credited with a hole it never touched."""
         self.assertUnprotected("chmod 777 /")
         self.assertUnprotected("chmod 777 / --help")
+
+    def test_a_mutation_that_needs_no_flag_is_still_excused_by_help(self) -> None:
+        """The residual the positional help rule does NOT close, stated as a
+        measurement. `--help` is excused when no OTHER flag precedes it, so a
+        protected command whose dangerous form needs no flag is still
+        disarmed. Every instance below is safe in reality - GNU `rm` and
+        `git` really do print help and perform nothing, PowerShell errors on
+        an unknown `--help`, and appended text breaks SQL rather than running
+        it - but a tool that IGNORED an unknown trailing `--help` and acted
+        anyway would be exploitable through this. Unchanged from every
+        previous round; the flag-bearing forms (`rm -rf / --help`, `git push
+        --force --help`) are the ones this round closed."""
+        for command in ("rm / --help", "git push origin main --help",
+                        "Remove-Item build --help", "DROP TABLE orders --help",
+                        "./deploy.sh --help"):
+            with self.subTest(command):
+                self.assertUnprotected(command)
+
+    def test_but_the_flag_bearing_forms_of_those_same_commands_are_closed(self) -> None:
+        self.assertProtected("rm -rf / --help", min_tier="R5")
+        self.assertProtected("git push --force origin main --help", min_tier="R5")
+        self.assertProtected("Remove-Item -Recurse -Force build --help")
 
 
 class PopulationSweepNewAxes(Case):
