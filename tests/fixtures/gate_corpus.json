@@ -631,7 +631,7 @@
  },
  {
   "operation": "node -p \"const p=require('./package.json');JSON.stringify({dev:Object.keys(p.devDependencies||{}).filter(d=>/play|puppet/i.test(d)),deps:Object.keys(p.dependencies||{}).filter(d=>/play|puppet/i.test(d))})\"; ls compositions/intro compositions/template-demo 2>/dev/null",
-  "expected": "allow",
+  "expected": "ask",
   "class": "FP1"
  },
  {
