@@ -231,12 +231,12 @@
  },
  {
   "operation": "python -m unittest tests.test_gate_usability 2>&1 | grep -E \"^(FAIL|ERROR|Ran|OK|FAILED)\" | head",
-  "expected": "ask",
+  "expected": "allow",
   "class": "by-design"
  },
  {
   "operation": "python -m unittest tests.test_gate_usability 2>&1 | tail -18",
-  "expected": "ask",
+  "expected": "allow",
   "class": "by-design"
  },
  {
@@ -246,7 +246,7 @@
  },
  {
   "operation": "python -m unittest discover -s tests 2>&1 | tail -6",
-  "expected": "ask",
+  "expected": "allow",
   "class": "by-design"
  },
  {
@@ -306,7 +306,7 @@
  },
  {
   "operation": "cd PATH\npython -m unittest discover -s tests 2>&1 | grep -E \"^(FAIL|ERROR):|^(Ran|OK|FAILED)\"\necho \"=== gates:\"\nfor g in \"docs --lint\" \"untrusted --brief\" \"trust\" \"selftest --brief\" \"changelog check\" \"integrity\" \"config check --brief\" \"evals --brief\" \"scenarios --brief\" \"grid --brief\" \"version --reconcile --brief\"; do\n  python scripts/godmode.py --project . $g > /dev/null 2>&1; printf \"%-28s %s\\n\" \"$g\" \"$?\"; done",
-  "expected": "ask",
+  "expected": "allow",
   "class": "by-design"
  },
  {
@@ -326,7 +326,7 @@
  },
  {
   "operation": "cd PATH\npython -m unittest discover -s tests 2>&1 | grep -E \"^(FAIL|ERROR):|^(Ran|OK|FAILED)\"\necho \"=== gates:\"\nfor g in \"docs --lint\" \"untrusted --brief\" \"trust\" \"selftest --brief\" \"changelog check\" \"integrity\" \"config check --brief\" \"evals --brief\" \"scenarios --brief\" \"grid --brief\" \"bindings --brief\" \"sbom --gate --brief\"; do\n  python scripts/godmode.py --project . $g >/dev/null 2>&1; printf \"%-28s %s\\n\" \"$g\" \"$?\"; done",
-  "expected": "ask",
+  "expected": "allow",
   "class": "by-design"
  },
  {
@@ -336,7 +336,7 @@
  },
  {
   "operation": "cd PATH\npython -m unittest discover -s tests 2>&1 | grep -E \"^(FAIL|ERROR):|^(Ran|OK|FAILED)\"\necho \"=== gates:\"\nfor g in \"docs --lint\" \"untrusted --brief\" \"trust\" \"selftest --brief\" \"changelog check\" \"integrity\" \"config check --brief\" \"evals --brief\" \"scenarios --brief\" \"grid --brief\" \"bindings --brief\" \"sbom --gate --brief\"; do\n  python scripts/godmode.py --project . $g 2>&1 | tail -1 | sed \"s|^|  |\"; printf \"%-28s exit=%s\\n\" \"$g\" \"${PIPESTATUS[0]}\"; done",
-  "expected": "ask",
+  "expected": "allow",
   "class": "FP3"
  },
  {

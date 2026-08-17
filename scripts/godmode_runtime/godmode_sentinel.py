@@ -446,10 +446,12 @@ def _output_flag_target(segment: Segment) -> str | None:
 # proved that allowance was the universal gate bypass: `python -c
 # "subprocess.run(['git','push','--force', ...])"` walked around every
 # tier through exactly this gap. `_OPAQUE_INTERPRETER_INLINE` (below) now
-# closes it for every interpreter that accepts a whole-program flag
-# (`-c`/`-m`/`-e`/`-Command`), and this table's own `bash`/`sh`/`eval`
-# heads are routed through the same evidence-aware verdict rather than a
-# flat, unescalating `unknown-command` - see `_opaque_inline_verdict`.
+# closes it for every interpreter that accepts a whole-PROGRAM flag - a
+# real, opaque string, never a named module (`-c`/`-e`/`--eval`/
+# `-Command`; `-m <module>` is deliberately excluded, see that constant's
+# own comment) - and this table's own `bash`/`sh`/`eval` heads are routed
+# through the same evidence-aware verdict rather than a flat, unescalating
+# `unknown-command` - see `_opaque_inline_verdict`.
 _UNKNOWABLE_BODY_HEADS = re.compile(
     r"(?i)^\s*ForEach-Object\b|"
     r"^\s*(?:bash|sh|zsh|ksh|dash)\b[^;|&]*\s-c\b|"
@@ -721,8 +723,21 @@ _SENSITIVE_EDIT = re.compile(
 # against. Only the shapes below - an inline-code flag, or a heredoc feeding
 # the interpreter's stdin - are opaque payloads with nothing else governing
 # them.
+#
+# CORRECTION (coordinator review, 2026-08-17): `-m <module>` names an
+# INSTALLED, IMPORTABLE ARTIFACT - exactly the same shape as a script
+# FILE, not an inline payload. `python -m unittest tests.test_x` and
+# `python -m pytest -q` carry no opaque string this classifier cannot see;
+# the module is a name it could resolve the same way a file path already
+# is, and gating it would be the everyday-test-running friction the scope
+# note above already rules out. `-m` was in the first pass of this fix and
+# is deliberately removed here - see `_LOCAL_COMPUTE`, below, which already
+# matches `python`/`node`/etc. bare and now covers `-m` the same way it
+# covers a bare script-file invocation. Only `-c`/`-e`/`--eval`/`-Command`/
+# `eval`/a heredoc actually hand the interpreter a string this module
+# cannot read into anything - those, and only those, stay opaque here.
 _OPAQUE_INTERPRETER_INLINE = re.compile(
-    r"(?i)^\s*(?:python[\d.]*|py)\b(?=[^;|&\n]*\s(?:-c|-m)\b)|"
+    r"(?i)^\s*(?:python[\d.]*|py)\b(?=[^;|&\n]*\s-c\b)|"
     r"^\s*(?:node|deno|bun)\b(?=[^;|&\n]*\s(?:-e|--eval)\b)|"
     r"^\s*ruby\b(?=[^;|&\n]*\s-e\b)|"
     r"^\s*perl\b(?=[^;|&\n]*\s-e\b)|"
@@ -772,7 +787,7 @@ def _opaque_inline_verdict(payload: str) -> tuple[str, bool, list[str]]:
     module does not and must not try to parse. Always protected; the only
     open question is which tier, decided by `_OPAQUE_R5_EVIDENCE`/
     `_OPAQUE_POLICY_WRITE_EVIDENCE` scanning `payload` for visible evidence.
-    Called from two sites: `_categorize` (the `-c`/`-e`/`-m`/`-Command`
+    Called from two sites: `_categorize` (the `-c`/`-e`/`--eval`/`-Command`
     flag shape, `payload` is the whole normalized segment) and
     `classify_action` (the heredoc shape, `payload` is the recovered body,
     or the header line alone when the body could not be read)."""
@@ -2211,9 +2226,10 @@ def _categorize(normalized: str, project_root: Path | None = None,
     # anywhere but the unrecognised-command fallback below, R0, before this
     # existed), and `python`/`node`/`ruby`/`perl` DO match it on their bare
     # name alone, which is exactly the C1 hole: `_LOCAL_COMPUTE` would
-    # return R1 here before this function ever noticed a `-c`/`-e`/`-m`/
+    # return R1 here before this function ever noticed a `-c`/`-e`/
     # `-Command` flag handing the interpreter an opaque program. A plain
-    # `python script.py` has no such flag - `_OPAQUE_INTERPRETER_INLINE`
+    # `python script.py` (or `python -m a_module`, a named artifact, not
+    # an opaque string) has no such flag - `_OPAQUE_INTERPRETER_INLINE`
     # does not match it - and falls through unchanged to `_LOCAL_COMPUTE`
     # below, R1, exactly as before.
     if _OPAQUE_INTERPRETER_INLINE.match(normalized):
@@ -3156,9 +3172,15 @@ def _self_check() -> None:
         "ls", "ls scripts | head -3", "git status --short",
         "cat README.md", "grep -rn TODO scripts | wc -l",
         "Get-ChildItem -Recurse", "Get-Content README.md | Measure-Object -Line",
-        # A script FILE, not an inline `-c`/`-m`/`-e` payload (C1) - see the
+        # A script FILE, not an inline `-c`/`-e` payload (C1) - see the
         # `protected` half below for that shape's own, now-opposite pin.
         "python scripts/godmode.py --project . selftest --brief",
+        # `-m <module>` (coordinator correction, 2026-08-17): names an
+        # installed, importable artifact, the same shape as a script file -
+        # not an opaque string this classifier cannot read. Everyday test-
+        # running (`python -m unittest`/`-m pytest`) stays R1 here.
+        "python -m unittest discover -s tests", "python -m pytest -q",
+        "python -m http.server",
         "write file README.md",
         # Reads the corpus of this project's own commands found refused.
         "git -C /repo log --oneline -1", "git rev-list --count v1..HEAD",
@@ -3196,8 +3218,10 @@ def _self_check() -> None:
         "ForEach-Object { Remove-Item x }",
         # C1 (external audit, 2026-08-17): an interpreter's opaque inline
         # payload is protected unconditionally now - the shape both of the
-        # audit's own repros used to walk around every gate through.
-        "python -c \"print(1)\"", "python -m unittest discover -s tests",
+        # audit's own repros used to walk around every gate through. `-m`
+        # is deliberately ABSENT here (coordinator correction) - it names
+        # a module, not an opaque string; see the `allowed` half above.
+        "python -c \"print(1)\"",
         "node -e \"1\"", "ruby -e \"1\"", "perl -e \"1\"",
         'pwsh -Command "Get-ChildItem"',
         "python <<'PY'\nprint(1)\nPY",
@@ -3220,6 +3244,12 @@ def _self_check() -> None:
     )["tier"] == "R5"
     # A script FILE stays R1, unaffected - the fix's own scope boundary.
     assert classify_action("python script.py")["tier"] == "R1"
+    # `-m <module>` stays R1 too (coordinator correction, 2026-08-17): a
+    # named, importable artifact is the same shape as a script file, not
+    # an opaque payload - `python -m unittest`/`-m pytest` must never ask
+    # on every ordinary test run.
+    assert classify_action("python -m unittest discover -s tests")["tier"] == "R1"
+    assert not classify_action("python -m unittest discover -s tests")["protected"]
     assert shell_segments("ls | head -3 && git status; cat x") == [
         "ls", "head -3", "git status", "cat x"]
     assert shell_segments("grep 'a|b' file") == ["grep 'a|b' file"]
