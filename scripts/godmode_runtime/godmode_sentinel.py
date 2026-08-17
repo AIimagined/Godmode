@@ -435,26 +435,17 @@ def _output_flag_target(segment: Segment) -> str | None:
 # `foreach($x in $list){...}` STATEMENT is a different construct (no piped
 # block, no cmdlet) and is not named here.
 #
-# `bash -c "..."`/`sh -c "..."`/`eval "..."` hand an interpreter a whole
-# script as one opaque, usually-quoted argument - `ExecutablePositionTests`
-# already pins `bash -c "rm -rf /"` as protected specifically because
-# quoting must not launder an unrecognised executable. This is the same
-# construct `node -e`/`python -c` are (an interpreter fed a string) -
-# UPDATE (C1, external audit, 2026-08-17): those two WERE pinned open by
-# `_self_check` on the reasoning that this plan was not chartered to
-# revisit interpreter policy (task-2-report.md, addendum 2). The audit
-# proved that allowance was the universal gate bypass: `python -c
-# "subprocess.run(['git','push','--force', ...])"` walked around every
-# tier through exactly this gap. `_OPAQUE_INTERPRETER_INLINE` (below) now
-# closes it for every interpreter that accepts a whole-PROGRAM flag - a
-# real, opaque string, never a named module (`-c`/`-e`/`--eval`/
-# `-Command`; `-m <module>` is deliberately excluded, see that constant's
-# own comment) - and this table's own `bash`/`sh`/`eval` heads are routed
-# through the same evidence-aware verdict rather than a flat, unescalating
-# `unknown-command` - see `_opaque_inline_verdict`.
+# `eval "..."` hands the shell builtin a whole script as one opaque,
+# usually-quoted argument. `bash -c "..."`/`sh -c "..."` (and every other
+# POSIX shell + fused-flag form, plus a wrapped/quoted/pathed invocation
+# of any of them) are handled EARLIER now, by `_normalized_interpreter_
+# head`/`_interpreter_opacity` above (C1, round 2 - security review,
+# 2026-08-17) - moved there rather than left here so a wrapped shell gets
+# the exact same head-resolution every other interpreter now does, instead
+# of a second, narrower copy of "is this bash/sh" that only ever
+# recognised the bare, unwrapped spelling.
 _UNKNOWABLE_BODY_HEADS = re.compile(
     r"(?i)^\s*ForEach-Object\b|"
-    r"^\s*(?:bash|sh|zsh|ksh|dash)\b[^;|&]*\s-c\b|"
     r"^\s*eval\b"
 )
 
@@ -730,29 +721,211 @@ _SENSITIVE_EDIT = re.compile(
 # `python -m pytest -q` carry no opaque string this classifier cannot see;
 # the module is a name it could resolve the same way a file path already
 # is, and gating it would be the everyday-test-running friction the scope
-# note above already rules out. `-m` was in the first pass of this fix and
-# is deliberately removed here - see `_LOCAL_COMPUTE`, below, which already
-# matches `python`/`node`/etc. bare and now covers `-m` the same way it
-# covers a bare script-file invocation. Only `-c`/`-e`/`--eval`/`-Command`/
-# `eval`/a heredoc actually hand the interpreter a string this module
+# note above already rules out. Only `-c`/`-e`/`--eval`/`-Command`/`eval`/
+# a heredoc/stdin feed actually hand the interpreter a string this module
 # cannot read into anything - those, and only those, stay opaque here.
-_OPAQUE_INTERPRETER_INLINE = re.compile(
-    r"(?i)^\s*(?:python[\d.]*|py)\b(?=[^;|&\n]*\s-c\b)|"
-    r"^\s*(?:node|deno|bun)\b(?=[^;|&\n]*\s(?:-e|--eval)\b)|"
-    r"^\s*ruby\b(?=[^;|&\n]*\s-e\b)|"
-    r"^\s*perl\b(?=[^;|&\n]*\s-e\b)|"
-    r"^\s*(?:pwsh|powershell)(?:\.exe)?\b(?=[^;|&\n]*\s-(?:[Cc]ommand|c)\b)"
+#
+# ---------------------------------------------------------------------
+# ROUND 2 (independent security review, 2026-08-17): round 1 anchored every
+# check to the interpreter being the LITERAL FIRST TOKEN, spelled one of a
+# few exact ways. `/usr/bin/python -c "…"`, `env python -c "…"`, `"python"
+# -c "…"`, and `sudo timeout 5 python -c "…"` are all ordinary ways to
+# invoke python that are not "python" as the first token - vocabulary
+# matching on the raw string again, one level up: not "does this LOOK like
+# a dangerous flag" but "does this LOOK like the word python", and a path
+# prefix, a wrapper, or a quote all defeat a look. The fix moves the
+# question from "does the raw text start with a known spelling" to "what
+# interpreter, if any, does this line actually invoke" - resolved once,
+# structurally, and every existing flag/evidence check below then runs
+# against the RESOLVED form instead of learning a second, parallel copy of
+# "what counts as this interpreter."
+# ---------------------------------------------------------------------
+
+# Wrapper commands whose entire purpose is to exec their OWN trailing
+# argument as the real command - stripped in a LOOP (`_strip_head_wrappers`)
+# because they stack: `sudo timeout 5 env python -c "…"` is four layers
+# deep before the interpreter is visible at all. Each pattern consumes the
+# wrapper's own name and whatever of ITS OWN flags/positional arguments
+# this module can recognise, ending on the whitespace immediately before
+# the wrapped command - never touching anything past that boundary, so a
+# `-c`/`-e` flag belonging to the WRAPPED interpreter is never mistaken
+# for one of the wrapper's own.
+_WRAPPER_STRIP_STEPS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?i)^\s*(?:sudo|doas)\b(?:\s+-{1,2}[A-Za-z][\w-]*(?:[= ]\S+)?)*\s+"),
+    # `env [-S] [VAR=val ...] cmd` - env's OWN flags and any inline
+    # `VAR=value` pairs IT sets for the wrapped command, never the wrapped
+    # command's own leading assignment (`_ASSIGNMENT_PREFIX` handles that
+    # one layer up, in `_strip_head_wrappers`'s own loop).
+    re.compile(r"(?i)^\s*env\b(?:\s+-[A-Za-z]+)?(?:\s+[A-Za-z_][A-Za-z0-9_]*=\S*)*\s+"),
+    re.compile(r"(?i)^\s*command\b(?:\s+-[A-Za-z]+)?\s+"),
+    re.compile(r"(?i)^\s*timeout\b(?:\s+-{1,2}[A-Za-z][\w-]*)*\s+[\d.]+[smhd]?\s+"),
+    re.compile(r"(?i)^\s*nohup\b\s+"),
+    re.compile(r"(?i)^\s*stdbuf\b(?:\s+-\S+)*\s+"),
+    re.compile(r"(?i)^\s*time\b\s+"),
+    re.compile(r"(?i)^\s*xargs\b(?:\s+-\S+)*\s+"),
+    re.compile(r"(?i)^\s*nice\b(?:\s+-\S+(?:\s+-?\d+)?)*\s+"),
+    re.compile(r"(?i)^\s*ionice\b(?:\s+-\S+(?:\s+\d+)?)*\s+"),
+    re.compile(r"(?i)^\s*setsid\b(?:\s+-\S+)*\s+"),
 )
 
-# The heredoc form of the same shape (`python <<EOF` / `node <<'EOF'`),
-# matched on the invocation LINE only - the body itself is recovered
-# separately by `_first_heredoc_interpreter`, below, before this module's own
-# `_without_heredoc_bodies` would otherwise discard it unread for every other
-# command's classification.
-_OPAQUE_HEREDOC_HEAD = re.compile(
-    r"(?i)^\s*(?:python[\d.]*|py|node|deno|bun|ruby|perl|"
-    r"bash|sh|zsh|ksh|dash|pwsh|powershell(?:\.exe)?)\b"
+
+def _strip_head_wrappers(text: str) -> str:
+    """`text` with every leading env-assignment and wrapper-command prefix
+    removed, bounded to 10 rounds - real chains never nest that deep; the
+    bound is against a pathological input looping forever, not a real
+    limitation on how many layers this strips."""
+    remaining = text
+    for _ in range(10):
+        trimmed = _ASSIGNMENT_PREFIX.sub("", remaining, count=1)
+        if trimmed != remaining:
+            remaining = trimmed
+            continue
+        changed = False
+        for pattern in _WRAPPER_STRIP_STEPS:
+            trimmed = pattern.sub("", remaining, count=1)
+            if trimmed != remaining:
+                remaining = trimmed
+                changed = True
+                break
+        if not changed:
+            break
+    return remaining
+
+
+# Every basename this module treats as a language/shell interpreter for
+# C1's opacity rule - matched ONLY against the basename `_normalized_
+# interpreter_head` resolves, never against the raw head directly (that
+# anchoring is exactly what the security review's bypass classes
+# exploited). `python2`/`python3`/`python3.11` and friends are covered by
+# the optional major-version digit and dotted minor-version suffix.
+_KNOWN_INTERPRETER_BASENAME = re.compile(
+    r"(?i)^(?:python[23]?(?:\.\d+)?|py|node|deno|bun|ruby|perl|"
+    r"pwsh|powershell|bash|sh|zsh|ksh|dash)$"
 )
+
+
+def _normalized_interpreter_head(text: str) -> tuple[str, str] | None:
+    """`(basename, rest)` when `text` (after stripping wrapper commands and
+    env-assignment prefixes) begins with a KNOWN interpreter however it is
+    spelled - quoted (`"python"`), backslash-escaped (`\\python`), path-
+    prefixed (`/usr/bin/python`, `./python`, `C:\\Python\\python.exe`) -
+    else `None`. `rest` is everything after the head TOKEN, read verbatim
+    from the position immediately following it - never itself touched, so
+    a quoted `-c "…"` payload right after a quoted head is not reinterpreted
+    by this function, only located correctly.
+
+    Basename comparison is case-insensitive unconditionally (not only on
+    Windows): every OTHER interpreter-name pattern in this module already
+    matches with `(?i)`, and folding case elsewhere but not here would be
+    the one inconsistent corner - the cost of over-folding on a
+    case-sensitive POSIX filesystem is at most one avoidable ask, never a
+    missed one.
+    """
+    stripped = _strip_head_wrappers(text)
+    look = stripped.lstrip()
+    if not look:
+        return None
+    if look[0] in "\"'":
+        quote = look[0]
+        end = look.find(quote, 1)
+        if end == -1:
+            return None
+        token, rest = look[1:end], look[end + 1:]
+    elif look[0] == "\\" and len(look) > 1:
+        token_match = re.match(r"\\(\S+)", look)
+        if not token_match:
+            return None
+        token, rest = token_match.group(1), look[token_match.end():]
+    else:
+        token_match = re.match(r"(\S+)", look)
+        if not token_match:
+            return None
+        token, rest = token_match.group(1), look[token_match.end():]
+    basename = re.split(r"[\\/]", token)[-1]
+    basename = re.sub(r"(?i)\.exe$", "", basename)
+    if not _KNOWN_INTERPRETER_BASENAME.match(basename):
+        return None
+    return basename.lower(), rest
+
+
+# C2 (security review): a single-dash cluster CONTAINING `c` - `-lc`,
+# `-ic`, `-xc`, `-cx` - not just a bare `-c` token. Lowercase `c` means
+# "read commands from the next argument" in every POSIX-family shell this
+# module recognises, and none of them defines any OTHER lowercase-`c`
+# single-letter option, so the cluster match cannot collide with an
+# unrelated flag; `-C` (capital, e.g. bash's noclobber) is a different
+# option and is not matched.
+_SHELL_FUSED_C_FLAG = re.compile(r"(?:^|\s)-[a-zA-Z]*c[a-zA-Z]*(?:\s|$)")
+
+# PowerShell's `-Command`/`-c` are already inline; `-EncodedCommand`/
+# `-enc`/`-e`/`-ec` carry a base64-encoded payload - opaque BY DEFINITION.
+# This module never decodes and judges it: decoding first and reading the
+# result is exactly the unsound static analysis the audit's own ruling
+# already rejected for every other opaque shape, just with an extra step.
+_PWSH_INLINE_FLAG = re.compile(
+    r"(?i)(?:^|\s)-(?:Command|c|EncodedCommand|enc|ec|e)(?:\s|$)")
+
+# Node's `-p`/`--print`/`-pe` genuinely evaluate an expression the same as
+# `-e`/`--eval` runs one.
+_NODE_INLINE_FLAG = re.compile(r"(?i)(?:^|\s)(?:-e|--eval|-p|--print|-pe)(?:\s|$)")
+_PYTHON_INLINE_FLAG = re.compile(r"(?:^|\s)-c(?:\s|$)")
+_RUBY_PERL_INLINE_FLAG = re.compile(r"(?:^|\s)-[eE](?:\s|$)")
+
+_PYTHON_LIKE = re.compile(r"(?i)^(?:python[23]?(?:\.\d+)?|py)$")
+_NODE_LIKE = re.compile(r"(?i)^(?:node|bun)$")
+_POSIX_SHELL_LIKE = re.compile(r"(?i)^(?:bash|sh|zsh|ksh|dash)$")
+_PWSH_LIKE = re.compile(r"(?i)^(?:pwsh|powershell)$")
+
+# C5/C6 (security review): the payload arrives on stdin instead of as a
+# flag argument at all - a pipe from an earlier segment (`echo … | python`,
+# the "rest" of the PIPED segment is bare), a herestring (`<<<`), a stdin
+# redirect (`< file`, `/dev/stdin`), or an explicit bare `-`. Matched
+# against `rest` (everything after the interpreter's own head token) with
+# `.match()`, so it only fires when NOTHING else recognisable follows -
+# `python script.py` (`rest` = " script.py") never matches any alternative
+# here and is untouched.
+_STDIN_FED_REST = re.compile(r"(?:^\s*$|^\s*<<<|^\s*-\s*(?:<|$)|^\s*/dev/stdin\b|^\s*<(?!<))")
+
+
+def _interpreter_opacity(basename: str, rest: str) -> tuple[str, bool, list[str]] | None:
+    """The opaque-inline verdict for a KNOWN interpreter `basename`
+    (already resolved past any wrapper/quote/path by
+    `_normalized_interpreter_head`), given the `rest` of its own line, or
+    `None` when this invocation is not opaque by any rule below - a
+    script FILE, a `-m module`, or an unrecognised flag with no evidence
+    either way (the R1 local-compute floor, decided by the caller).
+    """
+    if _PYTHON_LIKE.match(basename):
+        if _PYTHON_INLINE_FLAG.search(rest):
+            return _opaque_inline_verdict(rest)
+    elif _NODE_LIKE.match(basename):
+        if _NODE_INLINE_FLAG.search(rest):
+            return _opaque_inline_verdict(rest)
+    elif basename == "deno":
+        # C4: `-e`/`--eval`/`-p`/`--print` are node/bun flags deno does not
+        # define; deno's own inline-code form is the `eval` SUBCOMMAND.
+        if re.match(r"(?i)^\s*eval\b", rest):
+            return _opaque_inline_verdict(rest)
+    elif basename in ("ruby", "perl"):
+        if _RUBY_PERL_INLINE_FLAG.search(rest):
+            return _opaque_inline_verdict(rest)
+    elif _POSIX_SHELL_LIKE.match(basename):
+        if _SHELL_FUSED_C_FLAG.search(rest):
+            return _opaque_inline_verdict(rest)
+    elif _PWSH_LIKE.match(basename):
+        if _PWSH_INLINE_FLAG.search(rest):
+            return _opaque_inline_verdict(rest)
+    if _STDIN_FED_REST.match(rest):
+        # The gate cannot see this payload at all - the same "opaque" the
+        # flag-based checks above exist to protect, at the same floor.
+        # `_opaque_inline_verdict("")`/`(rest)` finds no visible R5
+        # evidence in an effectively empty string, which is honest: there
+        # is nothing HERE to find (a pipe's actual payload, if any, lives
+        # in a DIFFERENT segment this function does not see - scoped out
+        # of this round, named in the task report rather than guessed at).
+        return _opaque_inline_verdict(rest)
+    return None
+
 
 # Visible evidence inside an opaque payload that still raises its tier.
 # Matched with generous, non-greedy gaps (`.{0,40}`) rather than the strict
@@ -822,12 +995,18 @@ def _first_heredoc_interpreter(operation: str) -> tuple[str, str, str] | None:
     first line on purpose: `echo hi; python <<EOF` does not start with the
     interpreter, and is left to the existing segment-by-segment pipeline
     rather than guessed at here.
+
+    Head recognition is `_normalized_interpreter_head` (round 2, security
+    review) rather than a bare-name regex - `env python <<EOF` or
+    `"python" <<EOF` are exactly as opaque as an unwrapped heredoc and get
+    the same wrapper/quote/path normalization every other interpreter
+    shape in this module now does.
     """
     lines = operation.splitlines()
     if not lines:
         return None
     header = lines[0]
-    if not _OPAQUE_HEREDOC_HEAD.match(header):
+    if _normalized_interpreter_head(header) is None:
         return None
     match = _HEREDOC.search(header)
     if not match:
@@ -1292,16 +1471,115 @@ _SEPARATORS = re.compile(r"[ \t]*(?:\|\||&&|[;|\r\n]|(?<![<>])&)[ \t\r\n]*")
 #
 # `${VAR}` is excluded: it expands a value rather than running anything. Only
 # `$( )` and backticks execute.
-_SUBSTITUTION = re.compile(r"\$\((?P<paren>[^()]*)\)|`(?P<tick>[^`]*)`")
+#
+# C7 (security review, 2026-08-17): a single-level regex (`\$\((?P<paren>
+# [^()]*)\)`) cannot span a parenthesised body, and almost every real
+# interpreter payload IS one - `.run(...)`, `print(...)`, `execSync(...)`.
+# `echo $(python -c "…run(['git','push','--force'])")` matched only up to
+# the FIRST `)` (inside the payload's own `run(`), extracted an unclosed
+# fragment with nothing after it, and the classifier read the whole thing
+# as "no substitution here" - the outer `echo` alone, R0. Replaced with a
+# manual, quote- and paren-depth-aware scan (`_substitution_scan`, below)
+# rather than a wider regex: no fixed-depth regex is sound against
+# arbitrarily nested parens, and this is the same "do not try to parse
+# what cannot be parsed with confidence" boundary the rest of this module
+# already draws - except here, ability-to-parse is a real question with a
+# real answer (balanced or not), not an excuse to guess.
+def _substitution_scan(command: str) -> tuple[list[str], bool, str]:
+    """`(inner command texts, unparsed, blanked)`.
+
+    `inner` is every `$(...)`/`` `...` `` command substitution's own text,
+    extracted with a real balanced-paren (and quote-aware, so a `)` or a
+    backtick inside a quoted string never closes the span early) scan
+    instead of the old non-nesting regex. `blanked` is `command` with
+    every extracted substitution - delimiters included - replaced by
+    spaces, the same shape `_SUBSTITUTION.sub(" ", ...)` used to produce,
+    for the OUTER command's own classification to run against.
+
+    `unparsed` is True the instant a `$(` opens and the string ends
+    before its matching `)` closes, or a backtick opens and never closes
+    - a parse FAILURE, never folded into "no substitution was found
+    here": the caller (`classify_action`) fails closed on this rather
+    than reading absence-of-evidence as evidence-of-absence, the same
+    rule `_has_unclosed_quote` already enforces for a segment whose quote
+    never closes.
+    """
+    found: list[str] = []
+    blanked: list[str] = []
+    unparsed = False
+    index = 0
+    length = len(command)
+    while index < length:
+        char = command[index]
+        if char == "\\" and index + 1 < length:
+            blanked.append(command[index:index + 2])
+            index += 2
+            continue
+        if char == "`":
+            end = command.find("`", index + 1)
+            if end == -1:
+                unparsed = True
+                break
+            inner = command[index + 1:end].strip()
+            if inner:
+                found.append(inner)
+            blanked.append(" " * (end + 1 - index))
+            index = end + 1
+            continue
+        if command.startswith("$(", index):
+            start = index + 2
+            cursor = start
+            depth = 1
+            quote: str | None = None
+            while cursor < length and depth > 0:
+                ch = command[cursor]
+                if quote:
+                    if ch == "\\" and quote != "'" and cursor + 1 < length:
+                        cursor += 2
+                        continue
+                    if ch == quote:
+                        quote = None
+                    cursor += 1
+                    continue
+                if ch in "\"'":
+                    quote = ch
+                    cursor += 1
+                    continue
+                if ch == "\\" and cursor + 1 < length:
+                    cursor += 2
+                    continue
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                cursor += 1
+            if depth != 0:
+                unparsed = True
+                break
+            inner = command[start:cursor - 1].strip()
+            if inner:
+                found.append(inner)
+            blanked.append(" " * (cursor - index))
+            index = cursor
+            continue
+        blanked.append(char)
+        index += 1
+    if unparsed:
+        # The unscanned remainder is never guessed at either.
+        blanked.append(" " * (length - len("".join(blanked))))
+    return found, unparsed, "".join(blanked)
 
 
 def substituted_commands(command: str) -> list[str]:
-    """Every command a substitution would run, so each can be classified."""
-    found: list[str] = []
-    for match in _SUBSTITUTION.finditer(command):
-        inner = (match.group("paren") or match.group("tick") or "").strip()
-        if inner:
-            found.append(inner)
+    """Every command a substitution would run, so each can be classified.
+
+    Kept as a thin, list-only wrapper over `_substitution_scan` for any
+    caller that only needs the extracted commands - `classify_action`
+    itself calls `_substitution_scan` directly, because it also needs
+    `unparsed` (to fail closed) and `blanked` (to classify the outer
+    command without the substitution's own text inside it).
+    """
+    found, _unparsed, _blanked = _substitution_scan(command)
     return found
 
 
@@ -1402,6 +1680,42 @@ def shell_segments(command: str) -> list[str]:
     classifier stops reading a whole shell line as one opaque operation.
     """
     return _raw_segments(_without_heredoc_bodies(command))
+
+
+# C1 round 2 (security review, 2026-08-17): `P=python; $P -c "…"` - one
+# more layer of indirection the review's own C-1 list names. A simple,
+# bareword-only assignment made EARLIER in the SAME command is resolved
+# when a LATER segment's own head is that exact `$VAR`/`${VAR}` - not
+# general variable tracking (a value containing anything but a plain
+# path/name is left alone entirely, and an unset or previous-shell
+# variable is never guessed at), just trading an assignment this module
+# already reads for the value it names, the moment both are visible in
+# the one command being classified.
+_SIMPLE_VAR_ASSIGNMENT = re.compile(
+    r"^\s*([A-Za-z_][A-Za-z0-9_]*)=([A-Za-z0-9_./\\-]+)\s*$")
+_VAR_HEAD = re.compile(r"^\s*\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?(?=[\s;|&]|$)")
+
+
+def _resolve_head_variables(segments: list[str]) -> list[str]:
+    """`segments` with a `$VAR`/`${VAR}` HEAD replaced by an earlier,
+    simple, SAME-command `VAR=value` assignment's value. Only ever
+    substitutes at the HEAD position (the exact spot `_normalized_
+    interpreter_head` and every other head-anchored check in this module
+    reads from) - an occurrence of `$VAR` anywhere else in a segment
+    (an ordinary argument, e.g. `echo $VAR`) is untouched."""
+    resolved: dict[str, str] = {}
+    out: list[str] = []
+    for seg in segments:
+        assignment = _SIMPLE_VAR_ASSIGNMENT.match(seg)
+        if assignment:
+            resolved[assignment.group(1)] = assignment.group(2)
+            out.append(seg)
+            continue
+        head = _VAR_HEAD.match(seg)
+        if head and head.group(1) in resolved:
+            seg = resolved[head.group(1)] + seg[head.end():]
+        out.append(seg)
+    return out
 
 
 @dataclass(frozen=True)
@@ -1670,6 +1984,10 @@ _TIER_BY_CATEGORY = {
     "process-control": "R3",
     "database-mutation": "R3",
     "unclassified-mutation": "R3",
+    # C7 (security review): a `$(...)`/backtick substitution this module's
+    # own balanced scan could not close before the text ended - a parse
+    # failure, judged the same as any other real thing it cannot read.
+    "unparsed-substitution": "R3",
     "release-or-external-write": "R4",
     "filesystem-mutation": "R4",
     # U-B2: a pinned evaluator's own protection, and the edit a pin exists to
@@ -2215,25 +2533,32 @@ def _categorize(normalized: str, project_root: Path | None = None,
     # Last, so a help flag never excuses a redirect or a delete beside it.
     if asks_for_help:
         return "read-only-inspection", False, ["a help or version banner"]
+    # C1 round 2 (security review): checked BEFORE `_SAFE_SHELL_READS` -
+    # `env` is itself on that safe-read list (a bare `env` just prints
+    # variables, genuinely harmless), and `env python -c "…"` starts with
+    # the literal word "env", so it matched `_SAFE_SHELL_READS` and
+    # returned read-only-inspection before this check ever ran - the
+    # review's own `env python -c "…"`/`env -S python -c "…"` repros,
+    # found live while testing this fix rather than only claimed fixed.
+    # `_normalized_interpreter_head` resolves the interpreter past any
+    # wrapper/quote/path first, so a wrapped/quoted/pathed invocation
+    # cannot silently reach a SAFE-list match the way `env python -c "…"`
+    # could - and reaching a REAL local-compute R1 below now goes through
+    # the SAME resolved head, so a wrapped/quoted/pathed SCRIPT-file
+    # invocation (`env python app.py`) is not left unrecognised either.
+    normalized_interpreter = _normalized_interpreter_head(normalized)
+    if normalized_interpreter is not None:
+        basename, rest = normalized_interpreter
+        opacity = _interpreter_opacity(basename, rest)
+        if opacity is not None:
+            return opacity
+        return "local-compute-or-state", False, ["local computation; no protected surface named"]
     if (_SAFE_SHELL_READS.match(normalized) or _POWERSHELL_READS.match(normalized)
             or _TEST_BUILTIN.match(normalized)):
         return "read-only-inspection", False, ["local read-only state"]
     if _ENV_BINDING.match(normalized):
         return ("local-compute-or-state", False,
                 ["a value for later commands in this shell"])
-    # C1 (external audit): checked before `_LOCAL_COMPUTE` - `pwsh`/
-    # `powershell` never match that pattern at all (nothing routed them
-    # anywhere but the unrecognised-command fallback below, R0, before this
-    # existed), and `python`/`node`/`ruby`/`perl` DO match it on their bare
-    # name alone, which is exactly the C1 hole: `_LOCAL_COMPUTE` would
-    # return R1 here before this function ever noticed a `-c`/`-e`/
-    # `-Command` flag handing the interpreter an opaque program. A plain
-    # `python script.py` (or `python -m a_module`, a named artifact, not
-    # an opaque string) has no such flag - `_OPAQUE_INTERPRETER_INLINE`
-    # does not match it - and falls through unchanged to `_LOCAL_COMPUTE`
-    # below, R1, exactly as before.
-    if _OPAQUE_INTERPRETER_INLINE.match(normalized):
-        return _opaque_inline_verdict(normalized)
     if _LOCAL_COMPUTE.match(normalized):
         return "local-compute-or-state", False, ["local computation; no protected surface named"]
     # Nothing above recognised this command, and nothing above found evidence
@@ -2421,9 +2746,26 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
 
     # What a substitution runs is a command like any other, judged alongside
     # the line that contains it rather than taken on trust or refused on sight.
-    inner = substituted_commands(normalized)
+    inner, sub_unparsed, sub_blanked = _substitution_scan(normalized)
+    if sub_unparsed:
+        # C7 (security review): a `$(` opened and never validly closed (or
+        # a backtick opened and never closed) before the text ended - a
+        # parse FAILURE, not "no substitution was found here". Fails
+        # closed rather than falling through to whatever the rest of this
+        # function would make of the raw, un-recursed text.
+        return {
+            "protected": True,
+            "category": "unparsed-substitution",
+            "operation_digest": hashlib.sha256(normalized.encode()).hexdigest(),
+            "impact": ["a `$(...)` command substitution (or a backtick span) "
+                       "never closed before the text ended; this cannot be "
+                       "read with confidence"],
+            "tier": _TIER_BY_CATEGORY.get("unparsed-substitution", "R3"),
+            "second_confirmation_required": False,
+            "external_repo_ref": external_repo_ref,
+        }
     if inner:
-        stripped = _SUBSTITUTION.sub(" ", normalized).strip() or "echo"
+        stripped = sub_blanked.strip() or "echo"
         parts = [classify_action(stripped, extra_protected, project_root, archive, require_approval)]
         parts += [classify_action(one, extra_protected, project_root, archive, require_approval)
                   for one in inner]
@@ -2438,8 +2780,15 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     if len(segments) > 1:
         # The worst part decides, ranked by tier, so `git status && git push
         # --force` is a force push rather than a status call.
+        #
+        # C1 round 2: `P=python; $P -c "…"` resolved BEFORE each segment is
+        # classified independently - `_resolve_head_variables` only ever
+        # trades a plain `VAR=value` this loop already reads for the value
+        # it names, at the exact head position; `worst["segments"]` still
+        # counts the real, unresolved segment count below.
+        resolved_segments = _resolve_head_variables(segments)
         verdicts = [classify_action(segment, extra_protected, project_root, archive, require_approval)
-                    for segment in segments]
+                    for segment in resolved_segments]
         worst = max(verdicts, key=lambda v: (v["protected"], v["tier"]))
         worst["impact"] = sorted({item for v in verdicts for item in v["impact"]})
         worst["operation_digest"] = hashlib.sha256(normalized.encode()).hexdigest()
