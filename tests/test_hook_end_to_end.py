@@ -41,12 +41,17 @@ MUST_ALLOW = (
     ("conditional", "Bash", {"command": "if [ -f README.md ]; then cat README.md; fi"}),
     ("powershell read", "PowerShell",
      {"command": "Get-ChildItem | Select-Object -ExpandProperty Name"}),
-    # C1 (external audit): a SCRIPT FILE, not an inline `-c`/`-m` payload -
+    # C1 (external audit): a SCRIPT FILE, not an inline `-c`/`-e` payload -
     # this is the shape the fix's own scope statement keeps at R1/allow on
     # purpose (see INTERPRETER_ASK_NOW below for the flag forms that no
     # longer belong here).
     ("run a test module by file path", "Bash",
      {"command": "python tests/test_hook_end_to_end.py"}),
+    # `-m <module>` (coordinator correction, 2026-08-17): names an
+    # installed, importable artifact, the same shape as the file-path form
+    # above - not an opaque string. Everyday test-running must stay R1.
+    ("run the suite via -m", "Bash", {"command": "python -m unittest discover -s tests"}),
+    ("run pytest via -m", "Bash", {"command": "python -m pytest -q"}),
     ("read a file", "Read", {"file_path": str(PLUGIN_ROOT / "README.md")}),
     # Everything v0.2.5 unblocked, asserted where the host will hit it rather
     # than only against the classifier. Each of these was refused by a shipped
@@ -95,13 +100,17 @@ GIT_ASK_NOW = (
 # C1 (external audit, 2026-08-17): an interpreter handed a whole program as
 # one opaque string used to classify as R1 local compute - unrecognised,
 # unprotected, allowed silently - regardless of what the string contained.
-# `python -c/-m` was the single worst offender: `-m` in particular is
-# ordinary, everyday test-running (`python -m unittest`, `python -m
-# pytest`), which is exactly the friction cost this fix pays and the report
-# for this task states honestly. It now asks once, the same as staging or
-# committing - never silently, and never a hard stop for the common case.
+# `python -c`/`node -e`/etc. are the shape that closes: an inline payload
+# this classifier cannot and must not try to read. It now asks once - never
+# silently, and never a hard stop for the common case.
+#
+# `-m <module>` is deliberately ABSENT here (coordinator correction,
+# 2026-08-17): it names an installed, importable artifact - the same shape
+# as a script file - not an opaque string, so `python -m unittest`/`-m
+# pytest` stay in MUST_ALLOW above, unaffected. Treating `-m` as opaque was
+# this task's own first-pass error: it would have asked on the single most
+# common way this and most Python projects run their test suite.
 INTERPRETER_ASK_NOW = (
-    ("run the suite via -m", "Bash", {"command": "python -m unittest discover -s tests"}),
     ("the audit's own minimum-friction case", "Bash", {"command": 'python -c "print(1)"'}),
 )
 
@@ -135,8 +144,8 @@ class WorkingSessionTests(unittest.TestCase):
 
 
 class InterpreterOpaqueInlineTests(unittest.TestCase):
-    """C1 (external audit): an interpreter's opaque `-c`/`-m`/`-e` payload
-    now asks, driven through the real hook payload rather than only against
+    """C1 (external audit): an interpreter's opaque `-c`/`-e` payload now
+    asks, driven through the real hook payload rather than only against
     `classify_action`."""
 
     def test_interpreter_inline_flags_ask_rather_than_run_silently(self) -> None:
@@ -152,6 +161,16 @@ class InterpreterOpaqueInlineTests(unittest.TestCase):
         self.assertEqual(decision, "allow")
         decision, _reason = _decide("Bash", {"command": "node build.mjs"})
         self.assertEqual(decision, "allow")
+
+    def test_a_module_flag_is_also_unaffected(self) -> None:
+        """Coordinator correction, 2026-08-17: `-m <module>` names an
+        installed artifact, not an opaque string - it must stay allowed,
+        the same as a script file, even though it was briefly protected
+        in this task's first pass."""
+        for command in ("python -m unittest discover -s tests", "python -m pytest -q"):
+            with self.subTest(command=command):
+                decision, _reason = _decide("Bash", {"command": command})
+                self.assertEqual(decision, "allow")
 
     def test_c1_repro_writing_the_policy_file_through_an_interpreter(self) -> None:
         """The audit's other repro: opaque code naming the authorization

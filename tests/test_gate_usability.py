@@ -39,14 +39,18 @@ EVERYDAY_READ_ONLY = (
     "git log --oneline -5",
     "git diff --stat",
     "git show HEAD --stat",
-    # `python -m unittest ...`/`python -c "print(1)"` moved to
-    # INTERPRETER_INLINE_NOW_ASKS below (C1, external audit, 2026-08-17):
-    # an interpreter's opaque `-c`/`-m`/`-e` payload is no longer on this
-    # list at all - it now asks once, deliberately, and belongs beside the
-    # rest of that list's own read/tier assertions rather than diluting
-    # this one. A SCRIPT FILE stays here unaffected - the shape the fix's
-    # own scope statement keeps at R1.
+    # `python -c "print(1)"` moved to INTERPRETER_INLINE_NOW_ASKS below
+    # (C1, external audit, 2026-08-17): an interpreter's opaque `-c`/`-e`
+    # payload is no longer on this list at all - it now asks once,
+    # deliberately, and belongs beside the rest of that list's own
+    # read/tier assertions rather than diluting this one. A SCRIPT FILE
+    # stays here unaffected - the shape the fix's own scope statement
+    # keeps at R1. `-m <module>` stays here TOO (coordinator correction):
+    # it names an installed, importable artifact, the same shape as a
+    # script file, not an opaque payload - everyday `python -m unittest`/
+    # `-m pytest` test-running must never ask.
     "python scripts/godmode.py --project . selftest --brief",
+    "python -m unittest discover -s tests", "python -m pytest -q",
     # Compound and piped forms: a pipeline of read-only parts is read-only.
     "ls scripts/godmode_runtime | head -3",
     "grep -rn TODO scripts | wc -l",
@@ -210,13 +214,18 @@ class EverydayCommandTests(unittest.TestCase):
 
 
 # C1 (external audit, 2026-08-17): an interpreter handed a whole program as
-# one opaque `-c`/`-m`/`-e` string used to sit on EVERYDAY_READ_ONLY, R1,
+# one opaque `-c`/`-e` string used to sit on EVERYDAY_READ_ONLY, R1,
 # unprotected - the exact universal bypass the audit's own two repros
 # exploited. It now asks once - never silently, and never a hard stop for
 # the common case - which is the friction this fix pays, deliberately, and
 # names honestly here rather than folding back into "everyday work."
+#
+# `-m <module>` is deliberately ABSENT (coordinator correction,
+# 2026-08-17): it names an installed, importable artifact - the same
+# shape as a script file, not an opaque string - so `python -m unittest`/
+# `-m pytest` stay on EVERYDAY_READ_ONLY above, unaffected, and are
+# asserted explicitly in `InterpreterOpaqueInlineTests` below instead.
 INTERPRETER_INLINE_NOW_ASKS = (
-    "python -m unittest discover -s tests",
     "python -c \"print(1)\"",
 )
 
@@ -233,7 +242,7 @@ class InterpreterOpaqueInlineTests(unittest.TestCase):
         """The category is unchanged - still `interpreter-opaque-inline`'s
         own local-compute framing, not a mutation category - only
         `protected` moved, from False to True."""
-        verdict = classify_action("python -m unittest discover -s tests")
+        verdict = classify_action("python -c \"print(1)\"")
         self.assertTrue(verdict["protected"])
         self.assertEqual(verdict["tier"], "R2")
         self.assertEqual(verdict["category"], "interpreter-opaque-inline")
@@ -246,6 +255,19 @@ class InterpreterOpaqueInlineTests(unittest.TestCase):
                 verdict = classify_action(command)
                 self.assertFalse(verdict["protected"], command)
                 self.assertEqual(verdict["tier"], "R1", command)
+
+    def test_a_module_flag_is_also_unaffected(self) -> None:
+        """Coordinator correction, 2026-08-17: `-m <module>` names an
+        installed artifact, not an opaque string - it must stay R1, the
+        same as a script file, even though it was briefly R2 in this
+        task's first pass."""
+        for command in ("python -m unittest discover -s tests",
+                        "python -m pytest -q", "python -m http.server"):
+            with self.subTest(command=command):
+                verdict = classify_action(command)
+                self.assertFalse(verdict["protected"], command)
+                self.assertEqual(verdict["tier"], "R1", command)
+                self.assertEqual(verdict["category"], "local-compute-or-state", command)
 
 
 class WindowsCommandTests(unittest.TestCase):
