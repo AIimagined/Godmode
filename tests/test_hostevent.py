@@ -339,6 +339,153 @@ class ApplyPatchMalformedDirectiveTests(unittest.TestCase):
         self.assertEqual(data["host"], "codex")
 
 
+class ApplyPatchCommandBodyFieldTests(unittest.TestCase):
+    """SEC-B item 1: the real Codex `apply_patch` call delivers its patch
+    body in a field named `command`, which `_PATCH_BODY_FIELDS` did not
+    list - so every such call parsed an EMPTY body, found no target, and
+    fell out as `unrecognized-tool`. Fail-closed (the call was refused, not
+    allowed), but structurally the scope fence never saw a single one of the
+    paths the patch names, and the malformed-directive detector never saw a
+    single line of the body it was written to inspect.
+
+    `command` is tried FIRST, ahead of `input`/`patch`/`content`. The
+    precedence is a security decision, not a style one, and it is the same
+    one `_ALIASES` already makes for dual-cased payload fields (see
+    `FirstAliasWinsTests`): when a payload carries the body under two names
+    with different contents, the one the REAL host executes must be the one
+    the fence reads. Reading the other would let a caller fence a benign
+    patch under `input` while the host applies a different one from
+    `command`. `_SHELL_COMMAND_FIELDS` already spells the same host's shell
+    body `command` alone, so this also makes the two Codex tools agree.
+    """
+
+    ADD_AND_DELETE = "*** Add File: a.py\n+x\n*** Delete File: b.py\n"
+
+    def _codex_apply_patch(self, tool_input: dict) -> "he.HostEvent":
+        with mock.patch.dict(os.environ, {"GODMODE_HOST": "codex"}, clear=False):
+            return he.parse_host_payload({
+                "hook_event_name": "PreToolUse", "tool_name": "apply_patch",
+                "tool_input": tool_input,
+            })
+
+    def test_command_is_a_recognised_patch_body_field(self) -> None:
+        self.assertIn("command", he._PATCH_BODY_FIELDS)
+
+    def test_a_command_bodied_patch_reaches_the_fence_with_every_target(self) -> None:
+        event = self._codex_apply_patch({"command": self.ADD_AND_DELETE})
+        self.assertEqual(event.tool_kind, he.TOOL_KIND_FENCED)
+        self.assertEqual(set(event.targets), {"a.py", "b.py"})
+        self.assertIn("write file a.py", event.operation)
+        self.assertIn("rm b.py", event.operation)
+
+    def test_every_target_of_a_multi_target_command_body_reaches_the_fence(self) -> None:
+        patch = (
+            "*** Begin Patch\n"
+            "*** Add File: new_module.py\n"
+            "+print('hi')\n"
+            "*** Update File: existing.py\n"
+            "-old\n+new\n"
+            "*** Move to: renamed.py\n"
+            "*** Delete File: obsolete.py\n"
+            "*** End Patch\n"
+        )
+        event = self._codex_apply_patch({"command": patch})
+        self.assertEqual(
+            event.targets,
+            ["new_module.py", "existing.py", "renamed.py", "obsolete.py"],
+        )
+
+    def test_a_malformed_command_body_fails_the_whole_call_closed(self) -> None:
+        # The C1 regression, re-run through the field the real host uses:
+        # harmless.txt must NOT reach the fence alone while the indented
+        # /etc/passwd directive is silently dropped.
+        event = self._codex_apply_patch({
+            "command": ("*** Add File: harmless.txt\n+hello\n"
+                        "  *** Add File: /etc/passwd\n+pwned\n"),
+        })
+        self.assertEqual(event.tool_kind, he.TOOL_KIND_MALFORMED)
+        self.assertEqual(event.targets, [])
+        self.assertEqual(event.operation, "")
+
+    def test_a_command_body_with_no_parseable_target_still_fails_closed(self) -> None:
+        event = self._codex_apply_patch({"command": "not a patch"})
+        self.assertEqual(event.tool_kind, he.TOOL_KIND_UNRECOGNIZED)
+
+    def test_command_wins_over_input_when_both_carry_a_body(self) -> None:
+        # Confusable-body pin: the fence must read what the host executes.
+        event = self._codex_apply_patch({
+            "command": "*** Add File: real.py\n+x\n",
+            "input": "*** Add File: decoy.py\n+x\n",
+        })
+        self.assertEqual(event.targets, ["real.py"])
+
+    def test_command_wins_over_every_other_body_field(self) -> None:
+        event = self._codex_apply_patch({
+            "content": "*** Add File: decoy_content.py\n+x\n",
+            "patch": "*** Add File: decoy_patch.py\n+x\n",
+            "input": "*** Add File: decoy_input.py\n+x\n",
+            "command": "*** Add File: real.py\n+x\n",
+        })
+        self.assertEqual(event.targets, ["real.py"])
+
+    def test_a_malformed_command_body_beats_a_well_formed_input_body(self) -> None:
+        # Precedence must not become an escape hatch: a malformed `command`
+        # body fails the call closed even when a perfectly well-formed
+        # `input` body sits beside it.
+        event = self._codex_apply_patch({
+            "command": "  *** Add File: /etc/passwd\n+pwned\n",
+            "input": "*** Add File: harmless.txt\n+hello\n",
+        })
+        self.assertEqual(event.tool_kind, he.TOOL_KIND_MALFORMED)
+        self.assertEqual(event.targets, [])
+
+    def test_the_three_pre_existing_fields_keep_working(self) -> None:
+        # Additive, not a replacement: a host that ships any of the original
+        # three names is unchanged when `command` is absent.
+        for name in ("input", "patch", "content"):
+            with self.subTest(field=name):
+                event = self._codex_apply_patch({name: self.ADD_AND_DELETE})
+                self.assertEqual(event.tool_kind, he.TOOL_KIND_FENCED)
+                self.assertEqual(set(event.targets), {"a.py", "b.py"})
+
+    def test_an_empty_command_falls_through_to_the_next_field(self) -> None:
+        # `_first_field` skips a present-but-empty value; an empty `command`
+        # must not shadow a real body sitting under `input`.
+        event = self._codex_apply_patch({
+            "command": "", "input": self.ADD_AND_DELETE})
+        self.assertEqual(set(event.targets), {"a.py", "b.py"})
+
+    def test_a_non_string_command_falls_through_to_the_next_field(self) -> None:
+        # Codex's shell dialect can carry `command` as an argv ARRAY. The
+        # adapter has never read a non-string body and still does not: it is
+        # skipped, the next field is tried, and when nothing string-valued
+        # remains the call fails closed rather than guessing at a shape this
+        # repo has no live fixture for.
+        event = self._codex_apply_patch({
+            "command": ["apply_patch", self.ADD_AND_DELETE],
+            "input": self.ADD_AND_DELETE,
+        })
+        self.assertEqual(set(event.targets), {"a.py", "b.py"})
+
+        array_only = self._codex_apply_patch({
+            "command": ["apply_patch", self.ADD_AND_DELETE]})
+        self.assertEqual(array_only.tool_kind, he.TOOL_KIND_UNRECOGNIZED)
+
+    def test_an_orchestrated_apply_patch_reads_the_command_body_too(self) -> None:
+        # `functions.exec` unwraps to the nested call and re-enters the same
+        # adapter - the body-field fix must apply there as well.
+        with mock.patch.dict(os.environ, {"GODMODE_HOST": "codex"}, clear=False):
+            event = he.parse_host_payload({
+                "hook_event_name": "PreToolUse", "tool_name": "functions.exec",
+                "tool_input": {
+                    "name": "apply_patch",
+                    "arguments": {"command": self.ADD_AND_DELETE},
+                },
+            })
+        self.assertEqual(event.tool, "apply_patch")
+        self.assertEqual(set(event.targets), {"a.py", "b.py"})
+
+
 class UnicodeAndColonlessDirectiveTests(unittest.TestCase):
     """Fix round 2 (re-review adversarial extension, both reviewer vectors
     plus the additional cases the round-2 order named): a directive line

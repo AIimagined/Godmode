@@ -64,7 +64,11 @@ those, never guessed):
   above, the ENTIRE `apply_patch` call fails closed - a patch mixing one
   well-formed target with one malformed one used to silently drop the
   malformed one instead of failing the whole call; partial recognition
-  may never shrink the target set the fence sees.
+  may never shrink the target set the fence sees. The patch BODY itself is
+  read from `tool_input.command` first, then `input`/`patch`/`content`
+  (`_PATCH_BODY_FIELDS`, SEC-B item 1 - `command` is the field the live
+  Codex tool uses, and the field the fence reads has to be the field the
+  host executes; see that constant's own comment for the ordering rule).
 - Grok tool map (Addendum 6, verbatim): `run_terminal_command` ->
   `toolInput.command`, `write` -> `toolInput.file_path`, `search_replace`
   -> `toolInput.file_path`.
@@ -561,8 +565,30 @@ def _looks_directive_like(normalized_line: str) -> bool:
 # convention every documented dialect (Claude's Bash, the apply_patch tool
 # schema's own "input" parameter) already uses, tried first and alone
 # unless absent - never a value silently invented when both are missing.
+#
+# SEC-B item 1: `"command"` was named in the paragraph above but MISSING
+# from `_PATCH_BODY_FIELDS`, and field evidence says `command` is the name
+# the real Codex `apply_patch` call actually delivers its body under. The
+# omission failed CLOSED (an unread body parses to no target, so the call
+# came out `unrecognized-tool` and was refused) but it failed closed for
+# the wrong reason and at the wrong place: the scope fence never saw one of
+# the paths the patch names, `has_malformed_directive` never saw one line
+# of the body it exists to inspect, and an ordinary in-scope Codex edit was
+# refused as an unmapped tool. Adding it is additive - the three original
+# names still parse a body when `command` is absent.
+#
+# ORDER is a security decision, and the same one `_ALIASES` above already
+# makes for dual-cased payload fields: when a payload carries the body
+# under two names with DIFFERENT contents, the one the real host EXECUTES
+# has to be the one the fence READS. Reading the loser would let a caller
+# fence a benign patch under `input` while the host applied a different
+# one from `command`. So `command` is tried first - it is also the name
+# this same host's shell tool already uses (`_SHELL_COMMAND_FIELDS`), so
+# the two Codex tools now read their body from the same field name. The
+# remaining three keep their existing relative order; nothing about which
+# of THEM wins changes.
 _SHELL_COMMAND_FIELDS = ("command",)
-_PATCH_BODY_FIELDS = ("input", "patch", "content")
+_PATCH_BODY_FIELDS = ("command", "input", "patch", "content")
 
 
 def _first_field(payload: dict[str, Any], names: tuple[str, ...]) -> str | None:
