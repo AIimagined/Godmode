@@ -220,6 +220,16 @@ def codex_apply_patch(patch_body: str, cwd: str) -> dict[str, Any]:
             "toolInput": {"input": patch_body}, "cwd": cwd}
 
 
+def codex_apply_patch_command_body(patch_body: str, cwd: str) -> dict[str, Any]:
+    """SEC-B item 1: the same `apply_patch` call with its body under the
+    field name the LIVE Codex tool uses (`command`) rather than the
+    schema-derived `input` above. Both builders exist deliberately - the
+    scope fence must see identical targets from either spelling.
+    """
+    return {"hookEventName": "pre_tool_use", "toolName": "apply_patch",
+            "toolInput": {"command": patch_body}, "cwd": cwd}
+
+
 def codex_orchestrated_shell(command: str, cwd: str, *, request_id: str) -> dict[str, Any]:
     """Codex's `functions.exec` orchestration wrapper around a shell call -
     Plan amendments 2's "leaf tool, orchestration tool, or normalized alias"

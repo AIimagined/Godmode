@@ -245,6 +245,206 @@ class EventAllowlistTraceabilityTests(unittest.TestCase):
             host_manifests.gemini_emitted_events(fragment), host_manifests.GEMINI_HOOK_EVENTS)
 
 
+# ---------------------------------------------------------------------------
+# SEC-B item 2: the Codex hook-DISCOVERY contract.
+# ---------------------------------------------------------------------------
+
+# Codex CLI 0.147.0 ships its own plugin-authoring reference INSIDE the
+# binary: `plugin-creator/references/plugin-json-spec.md`. Every quoted line
+# below is copied from that embedded document, never paraphrased, and never
+# from a third-party summary:
+#
+#   "- `hooks` (`string`): Hook config path."
+#   "- Path values should be relative and begin with `./`."
+#   "  - Keep file paths relative to plugin root."
+#   "- `skills`, `hooks`, and string-valued `mcpServers` are supplemented on
+#      top of default component discovery; they do not replace defaults."
+#
+# The loader's own default hooks path is the literal `hooks/hooks.json`
+# (adjacent to the source label `plugin.json#hooks[` in
+# `core-plugins/src/loader.rs`), corroborated by this machine's live
+# `~/.codex/config.toml` `[hooks.state]` table, whose only godmode entry is
+# keyed `godmode@aiimagined:hooks/hooks.json:session_start:0:0`.
+#
+# `hooks` is DELIBERATELY not pinned present-or-absent here. The same
+# embedded document contradicts itself about it - its "Plugin validation
+# notes" say "Validation rejects unsupported manifest fields such as
+# `hooks`, so the scaffold keeps them out of generated manifests", of a
+# validator it describes as mirroring "the workspace plugin ingestion
+# schema" - so whether declaring the key is safe is exactly the question
+# only a live Codex plugin panel can settle (Sprint 4). What IS pinned is
+# every part of the contract the document states without contradicting
+# itself, so that the answer, whichever way it lands, cannot be reached by
+# a manifest that was malformed on some OTHER axis.
+CODEX_DOCUMENTED_HOOK_EVENTS = frozenset({
+    "pre_tool_use", "permission_request", "post_tool_use", "pre_compact",
+    "post_compact", "session_start", "session_end", "user_prompt_submit",
+    "subagent_start", "subagent_stop", "stop",
+})
+
+# The CamelCase spelling of each event above, as the host's own hook
+# vocabulary carries it. Both spellings exist in the host; whether the two
+# COLLIDE when they appear as sibling keys in one hooks.json is the open
+# question `CodexHookCasingTripwireTests` below records rather than answers.
+CODEX_CAMEL_TO_SNAKE = {
+    "PreToolUse": "pre_tool_use",
+    "PermissionRequest": "permission_request",
+    "PostToolUse": "post_tool_use",
+    "PreCompact": "pre_compact",
+    "PostCompact": "post_compact",
+    "SessionStart": "session_start",
+    "SessionEnd": "session_end",
+    "UserPromptSubmit": "user_prompt_submit",
+    "SubagentStart": "subagent_start",
+    "SubagentStop": "subagent_stop",
+    "Stop": "stop",
+}
+
+CODEX_DEFAULT_HOOKS_PATH = "hooks/hooks.json"
+
+
+def _hosts_json() -> dict:
+    return json.loads((PLUGIN_ROOT / "packaging" / "hosts.json").read_text(encoding="utf-8"))
+
+
+class CodexHookDiscoveryContractTests(unittest.TestCase):
+    """SEC-B item 2. Pins every part of Codex's documented plugin-manifest
+    hooks contract that the host's own embedded reference states WITHOUT
+    self-contradiction, so the one genuinely open question (declare the key
+    or not) is the only thing a live panel has to answer.
+    """
+
+    def _codex_manifest(self) -> dict:
+        return json.loads(
+            (PLUGIN_ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+
+    def test_a_declared_hooks_key_is_a_dot_slash_relative_string(self) -> None:
+        """"- `hooks` (`string`): Hook config path." + "Path values should be
+        relative and begin with `./`." - so if the key is declared at all,
+        an object, an array, an absolute path, or a bare relative path is
+        off-contract regardless of how the open question lands."""
+        manifest = self._codex_manifest()
+        if "hooks" not in manifest:
+            self.skipTest("no hooks key declared - nothing to constrain")
+        declared = manifest["hooks"]
+        self.assertIsInstance(declared, str)
+        self.assertTrue(declared.startswith("./"), declared)
+        self.assertNotIn("..", declared)
+        self.assertNotIn("\\", declared)
+
+    def test_a_declared_hooks_key_resolves_to_a_file_that_actually_exists(self) -> None:
+        """"Keep file paths relative to plugin root." A manifest pointing at
+        a path that does not exist under the plugin root is the failure mode
+        that produces exactly the observed symptom (a hooks component that
+        loads nothing) whatever the key's validity turns out to be."""
+        manifest = self._codex_manifest()
+        if "hooks" not in manifest:
+            self.skipTest("no hooks key declared - nothing to resolve")
+        declared = str(manifest["hooks"])
+        target = PLUGIN_ROOT / declared.removeprefix("./")
+        self.assertTrue(target.is_file(), f"{declared} -> {target}")
+
+    def test_a_declared_hooks_key_names_the_file_default_discovery_already_finds(self) -> None:
+        """"`skills`, `hooks`... are supplemented on top of default component
+        discovery; they do not replace defaults." A declared path that names
+        a DIFFERENT file from the one the generator writes (and the loader
+        default-discovers) would make the plugin ship two disagreeing hook
+        representations at once - the condition the host's own hook engine
+        warns about ("loading hooks from both ... prefer a single
+        representation for this layer")."""
+        manifest = self._codex_manifest()
+        if "hooks" not in manifest:
+            self.skipTest("no hooks key declared - nothing to compare")
+        generated = _hosts_json()["hook_manifests"]["codex"]["path"]
+        self.assertEqual(generated, CODEX_DEFAULT_HOOKS_PATH)
+        self.assertEqual(manifest["hooks"], "./" + generated)
+
+    def test_the_gate_is_discoverable_at_the_default_path_with_or_without_the_key(self) -> None:
+        """The invariant that survives either answer: the file the loader
+        default-discovers exists, parses, and carries godmode's Codex event
+        keys. If the manifest key is ever removed, nothing is lost; if it
+        stays, it points here."""
+        default_file = PLUGIN_ROOT / CODEX_DEFAULT_HOOKS_PATH
+        self.assertTrue(default_file.is_file())
+        events = json.loads(default_file.read_text(encoding="utf-8"))["hooks"]
+        for event in host_manifests.CODEX_HOOK_EVENTS:
+            self.assertIn(event, events)
+
+    def test_every_codex_event_this_repo_emits_is_in_the_hosts_own_vocabulary(self) -> None:
+        """The host's hook-event enum is a closed set. An event name outside
+        it is a name the host cannot register, however the manifest declares
+        the file it lives in."""
+        self.assertLessEqual(
+            set(host_manifests.CODEX_HOOK_EVENTS), CODEX_DOCUMENTED_HOOK_EVENTS)
+
+    def test_the_sibling_hosts_that_load_by_convention_declare_no_hooks_key(self) -> None:
+        """The convention Codex's entry diverged from, and the recorded
+        reason for it, both stay readable. `packaging/hosts.json` has carried
+        the note since 2026-08-06 (commit 6d8d5e5), ten days before CX-3
+        added the key for Codex - deleting the note to make the divergence
+        look uncontested is exactly what this pins against."""
+        hosts = _hosts_json()["hosts"]
+        for host in ("claude", "grok"):
+            self.assertNotIn("hooks", hosts[host]["fields"], host)
+            self.assertNotIn("hooks", hosts[host].get("extra", {}), host)
+        self.assertIn("duplicate-load", hosts["claude"]["note"])
+        for name, path in (("claude", "plugin.json"),
+                           ("grok", ".grok-plugin/plugin.json")):
+            manifest = json.loads((PLUGIN_ROOT / path).read_text(encoding="utf-8"))
+            self.assertNotIn("hooks", manifest, name)
+
+
+class CodexHookCasingTripwireTests(unittest.TestCase):
+    """SEC-B item 2, the OTHER candidate cause of the same field report, and
+    the reason this task shipped no manifest change.
+
+    CX-3 (commit 98c34db) changed two files in one commit: it added the
+    `hooks` key to `.codex-plugin/plugin.json` AND added the snake_case
+    `session_start`/`pre_tool_use` keys to the shared `hooks/hooks.json`,
+    which already carried CamelCase `SessionStart`/`PreToolUse`. The
+    operator observed three hooks in the Codex panel before that commit and
+    none after - a count consistent with EITHER change, because the panel
+    was only read once, after both.
+
+    That the panel showed three CamelCase-only hooks BEFORE proves the host
+    accepts CamelCase config keys. If it normalizes them to its snake_case
+    event enum, the post-CX-3 file declares two events twice, and a
+    duplicate key is a whole-file parse failure - which lands on exactly
+    zero hooks, not two.
+
+    These tests do not claim that is the cause. They RECORD the exact
+    condition, so that (a) it cannot change without someone reading this,
+    and (b) Sprint 4's live panel observation has a named state to compare
+    against. The settling observation is stated in
+    `.superpowers/sdd/2026-08-16-cx/task-secB-report.md`.
+    """
+
+    def _shared_events(self) -> list[str]:
+        return list(json.loads(
+            (PLUGIN_ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"])
+
+    def test_the_shared_hooks_file_currently_declares_both_casings(self) -> None:
+        events = self._shared_events()
+        collisions = sorted(
+            {CODEX_CAMEL_TO_SNAKE[key] for key in events
+             if key in CODEX_CAMEL_TO_SNAKE
+             and CODEX_CAMEL_TO_SNAKE[key] in events})
+        self.assertEqual(collisions, ["pre_tool_use", "session_start"])
+
+    def test_the_camelcase_keys_that_predate_cx3_are_still_present(self) -> None:
+        events = self._shared_events()
+        for key in ("SessionStart", "UserPromptSubmit", "PreToolUse"):
+            self.assertIn(key, events)
+
+    def test_no_event_key_is_outside_either_documented_casing(self) -> None:
+        """Whatever the collision question turns out to be, no third spelling
+        is allowed to appear in this file unnoticed."""
+        for key in self._shared_events():
+            self.assertTrue(
+                key in CODEX_DOCUMENTED_HOOK_EVENTS or key in CODEX_CAMEL_TO_SNAKE,
+                key)
+
+
 class BindingsRegenerateByteStableTests(unittest.TestCase):
     def test_running_write_twice_produces_identical_bytes(self) -> None:
         with _built_project() as project:
