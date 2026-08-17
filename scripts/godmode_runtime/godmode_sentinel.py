@@ -166,22 +166,19 @@ _GIT_GLOBAL_OPTION = re.compile(
 # index together in a way a blanking pass does not, and merging the two
 # risked the segment splitter for a benefit blanking does not need. Any
 # change to one's quote/backslash rule must be checked against the other.
-def _executable_text(command: str, *, blank: str = " ",
-                     keep_quotes: bool = False) -> str:
+def _executable_text(command: str) -> str:
     """The command with its quoted arguments blanked out, one character at
     a time rather than by collapsing each quoted span to one space - so a
     quote's start and end positions in the result line up exactly with
     `command`, which `_categorize`'s redirect-target extraction depends on.
 
-    `blank`/`keep_quotes` (round 3) exist for ONE other reader, the exec-
-    shape token scan (`_interpreter_tokens`): it needs the same quote and
-    backslash rules this function already gets right, but it splits the
-    result into tokens, and a quoted span blanked to SPACES would both
-    dissolve into several tokens and lose the fact that a quote was there
-    at all. `blank="\\x00"` keeps a quoted span one token; `keep_quotes`
-    leaves the quote marks themselves in place so a flag fused to a quoted
-    argument (`-c"…"`) is still recognisable as one. Defaults reproduce the
-    original behaviour exactly, character for character.
+    Round 3 added `blank=`/`keep_quotes=` here for one caller,
+    `_quote_masked`, which built a quote-aware token view for the exec-shape
+    scan. Round 4 replaced that view with real `shlex` tokens
+    (`_argv_tokens`), so the mask, its two keyword arguments and the two
+    branches that served them are deleted rather than left as dead
+    configurability - this function is back to the single behaviour its two
+    remaining callers use.
     """
     result: list[str] = []
     quote: str | None = None
@@ -191,20 +188,19 @@ def _executable_text(command: str, *, blank: str = " ",
         character = command[index]
         if character == "\\" and quote != "'" and index + 1 < length:
             blanking = quote is not None
-            result.append(blank if blanking else character)
-            result.append(blank if blanking else command[index + 1])
+            result.append(" " if blanking else character)
+            result.append(" " if blanking else command[index + 1])
             index += 2
             continue
         if quote:
-            closing = character == quote
-            result.append(character if closing and keep_quotes else blank)
-            if closing:
+            if character == quote:
                 quote = None
+            result.append(" ")
             index += 1
             continue
         if character in "\"'":
             quote = character
-            result.append(character if keep_quotes else " ")
+            result.append(" ")
             index += 1
             continue
         result.append(character)
@@ -456,9 +452,38 @@ def _output_flag_target(segment: Segment) -> str | None:
 # the exact same head-resolution every other interpreter now does, instead
 # of a second, narrower copy of "is this bash/sh" that only ever
 # recognised the bare, unwrapped spelling.
+# ROUND 4, Critical 4 and Critical 5. Four heads that run an argument as
+# code were absent, and this project runs on Windows, where two of them are
+# the ordinary spelling:
+#
+#   `Invoke-Expression`/`iex` IS PowerShell's `eval`. `ForEach-Object { … }`
+#   was named here and correctly R2, while the cmdlet next to it in the same
+#   idiom was R0. `Invoke-Command -ScriptBlock` is the remote-execution form
+#   of the same thing. Named exactly, NOT as an `Invoke-` prefix, so
+#   `Invoke-WebRequest`/`Invoke-RestMethod` keep going to `_SAFE_NETWORK_
+#   PROBE`/`_NETWORK_FETCH_HEADS`, which is where a fetch belongs.
+#
+#   `builtin eval "…"`/`command eval "…"` moves `eval` off the head, which
+#   the `^\s*eval\b` anchor is defined to miss. Only the `eval` form is
+#   named: bare `command python -c "…"` already has an interpreter token and
+#   is read by form (a), and naming `command`/`builtin` outright would ask
+#   about every ordinary use of them.
+#
+#   `trap '<payload>' EXIT` registers arbitrary code to run later. The
+#   payload is a quoted span, so it is data to every reader in this module;
+#   the head is the only thing that can be read.
+#
+# `source ./x.sh` and `. ./x.sh` run a script file too, and are deliberately
+# NOT here: `source venv/bin/activate` is one of the most common commands an
+# agent issues, and asking about it would be a friction regression larger
+# than the hole. Disclosed as open in the task report rather than closed.
 _UNKNOWABLE_BODY_HEADS = re.compile(
     r"(?i)^\s*ForEach-Object\b|"
-    r"^\s*eval\b"
+    r"^\s*eval\b|"
+    r"^\s*(?:builtin|command)\s+eval\b|"
+    r"^\s*(?:Invoke-Expression|iex)\b|"
+    r"^\s*Invoke-Command\b|"
+    r"^\s*trap\b"
 )
 
 # The one shape of the excluded tools above this project's own transcripts
@@ -555,7 +580,64 @@ _SAFE_GH = re.compile(
 # `-h` and `-V` are deliberately absent. `sort -h` sorts and `du -h` formats;
 # a single letter means whatever each tool decided, and the long forms carry
 # the whole benefit without inheriting that ambiguity.
-_HELP_FLAG = re.compile(r"(?i)(?:^|\s)--(?:help|version|usage)(?=\s|$)")
+#
+# ROUND 4, CRITICAL 1 - the widest hole any of the three reviews found, and
+# it predates all three rounds of this fix. This flag used to be SEARCHED
+# over the whole line, and `_categorize` returned an unprotected
+# `read-only-inspection` the moment it matched ANYWHERE - above the
+# interpreter-head check, above the exec-shape scan, above
+# `_UNKNOWABLE_BODY_HEADS`, and with `_ACTION_PATTERNS`/`_DB_CLIENT_HEAD`/
+# `_MOVE_COPY_HEAD` all sitting inside `if not asks_for_help:`. Appending one
+# token therefore turned the ENTIRE classifier off:
+#
+#     git push --force origin main --help   R0      rm -rf / --help    R0
+#     git reset --hard HEAD~5 --help        R0      chmod 777 / --help R0
+#     python -c "<payload>" --version       R0      <- and the payload RUNS
+#
+# The last one is not a theory: `python` and `bash` both stop option parsing
+# at `-c` and hand the trailing `--version` to the program as `argv`, which
+# the reviewer confirmed by executing both. The gate read a help banner while
+# the machine ran the payload.
+#
+# A trailing `--help` after a payload is not a help request. A help request
+# is the operation being performed, which means the help flag is the FIRST
+# OPTION on the line: everything between it and the command name is a
+# subcommand or a script to be explained, never another flag.
+#
+# "Another flag" is the whole test, and it is the right one because it is the
+# mechanism: the flags that make a trailing `--help` a lie are the ones that
+# CONSUME the rest of the line. `python -c CODE --version` never shows python
+# a `--version` at all - CPython stops option parsing at `-c` and the flag
+# becomes `argv` for the payload. So does `bash -c`, `pwsh -Command`, `su
+# -c`. A command with no such flag in front genuinely does print its banner
+# and exit: `rm foo.txt --help`, `git push origin main --help` and `curl
+# <url> --help` all print help and perform nothing, so reading them as
+# banners is correct rather than merely tolerable.
+#
+# `python scripts/godmode.py release --help` must stay a banner too - a
+# script path is what is being explained, and refusing it at R4 for
+# containing the word `release` is the exact defect this flag was introduced
+# to fix. That is why a path or a filename before the flag does NOT
+# disqualify it; only another flag does.
+#
+# This test is deliberately not the only thing standing between a payload and
+# an R0: `_categorize` now runs the interpreter check, the exec-shape scan
+# and `_UNKNOWABLE_BODY_HEADS` BEFORE it consults this at all, so `eval "…"
+# --help` and `cmd /c "…" --help` are read as code by a check this function
+# never reaches.
+_HELP_FLAG_TOKEN = re.compile(r"(?i)^--(?:help|version|usage)$")
+
+
+def _is_help_request(tokens: list[str] | None) -> bool:
+    """Whether this line's OPERATION is asking for a help/version banner."""
+    if not tokens:
+        return False
+    for token in tokens[1:]:
+        if _HELP_FLAG_TOKEN.match(token):
+            return True
+        if token.startswith("-"):
+            return False
+    return False
 
 # `godmode release --published v0.2.5` compares local tags against a list of
 # releases the caller supplies and contacts nothing. It was refused at R4 for
@@ -615,6 +697,50 @@ _POWERSHELL_READS = re.compile(
     r"Out-(?:String|Host|GridView)|Write-(?:Output|Host|Verbose|Debug)|"
     r"gci|gc|gi|gl|gp|gm|gcm|gu|sls|ls|dir|cls|ft|fl|man|help)\b"
 )
+
+# `env` is not a read - round 3 removed it from `_SAFE_SHELL_READS` for
+# exactly that reason, because its trailing argument is a command it execs.
+# But it is still a command this module RECOGNISES, and `head_known` asks a
+# different question from "is this a read": whether a detected write should
+# be judged by where it lands or asked about by name. Losing that distinction
+# turned `env > out.txt` into an R3 ask (round-3 review, finding I-5) - an
+# ordinary debugging command, refused for a reason that has nothing to do
+# with why `env` left the read list.
+_KNOWN_NON_READ_HEAD = re.compile(r"(?i)^\s*env\b")
+
+
+def _shields_its_arguments(normalized: str) -> bool:
+    """Whether this segment's head treats its own arguments as DATA, so the
+    exec-shape scan must not read an interpreter token inside them.
+
+    `echo python -c "hi"` prints an invocation and runs nothing; asking about
+    it would be a false refusal on a command that provably executes no code.
+
+    ROUND 4, Critical 4: `_POWERSHELL_READS` was doing what `_SAFE_SHELL_
+    READS` did for `env` before round 3 removed it - shielding an exec.
+    `Measure-Command { python -c "…" }` RUNS its scriptblock and its verb is
+    on the read list, so the whole round-3 mechanism was unreachable behind
+    it; `Where-Object`, `Sort-Object` and `Group-Object` take executable
+    blocks the same way. Rather than split the verb list (which would need
+    re-auditing every time PowerShell ships a cmdlet), the SHAPE decides: a
+    read cmdlet handed a `{ … }` scriptblock is handed code, so it shields
+    nothing. `Measure-Command { Get-ChildItem }` and `Where-Object { $_.Name
+    -eq "x" }` are unaffected - dropping the shield only means the
+    exec-shape scan gets to LOOK, and it finds no interpreter in either, so
+    both still reach the read verdict below it.
+
+    The scriptblock rule has to apply to `_SAFE_SHELL_READS` as well, not
+    only to `_POWERSHELL_READS`: `Where-Object` reaches the POSIX list
+    through its `where` entry (the `\\b` falls in the hyphen), so testing
+    only the PowerShell list left the highest-traffic block cmdlet shielded
+    anyway. It costs nothing on the POSIX side - a brace on an `echo`,
+    `grep` or `awk` line carries no interpreter token for the scan to find,
+    so those keep their R0 through the read verdict, one check further down.
+    """
+    if _SAFE_SHELL_READS.match(normalized) or _POWERSHELL_READS.match(normalized):
+        return "{" not in normalized
+    return False
+
 
 # `find` reads until it is told to act. `-delete` and `-exec` run a mutation
 # inside a single segment, so no separator splits them out and the read
@@ -783,24 +909,123 @@ _SENSITIVE_EDIT = re.compile(
 # inline-eval flag after it and never asking what came before.
 # ---------------------------------------------------------------------
 
+# ROUND 4 (third independent security review, 2026-08-18), finding I-3:
+# this set and the per-family `_PYTHON_LIKE`/`_NODE_LIKE`/
+# `_POSIX_SHELL_LIKE`/`_PWSH_LIKE` patterns below were two parallel
+# enumerations of the same fact, and round 3 had to add `pypy`/`jython`/
+# `micropython` to both. A name added to one and not the other resolves to a
+# basename that then falls through every branch of `_interpreter_opacity`
+# and returns `None` - a silent allow with no test that would notice. There
+# is now ONE table: the FAMILY a basename belongs to decides which
+# inline-eval flag grammar reads it, and the set of known basenames is
+# derived from the same table rather than restated beside it.
+#
 # Every basename this module treats as a language/shell interpreter for
 # C1's opacity rule - matched ONLY against a NORMALIZED token basename
 # (`_interpreter_basename`), never against raw text directly (that
 # anchoring is exactly what the security review's bypass classes
 # exploited). `python2`/`python3`/`python3.11` and friends are covered by
 # the optional major-version digit and dotted minor-version suffix; round
-# 3 adds the mainstream CPython alternatives the review found missing
+# 3 added the mainstream CPython alternatives the review found missing
 # (`pypy` is not an exotic spelling of python, it is a shipped one).
-_KNOWN_INTERPRETER_BASENAME = re.compile(
-    r"(?i)^(?:python[23]?(?:\.\d+)?|pypy[23]?(?:\.\d+)?|jython|micropython|py|"
-    r"node|deno|bun|ruby|perl|pwsh|powershell|bash|sh|zsh|ksh|dash)$"
+#
+# THIS LIST IS LOAD-BEARING AND IT IS NOT EXHAUSTIVE. A language whose
+# interpreter is not named here and whose inline flag is not `-c`/`--command`
+# (`Rscript -e`, `php -r`, `lua -e`, `osascript -e`) is not read by form (a)
+# and has no form-(c) backstop. That is stated in the changelog and in the
+# task report rather than implied closed.
+_INTERPRETER_FAMILY_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("python", r"python[23]?(?:\.\d+)?|pypy[23]?(?:\.\d+)?|jython|micropython|py"),
+    ("node", r"node|bun"),
+    ("deno", r"deno"),
+    ("ruby", r"ruby"),
+    ("perl", r"perl"),
+    ("posix-shell", r"bash|sh|zsh|ksh|dash"),
+    ("pwsh", r"pwsh|powershell"),
+    # ROUND 4, Critical 5. `cmd /c "…"` is the ordinary way to hand a whole
+    # command line to a shell on Windows - the platform this project runs
+    # on - and it was R0 through all three previous rounds. Its flag is
+    # spelled with a FORWARD SLASH, which is why no `-`-anchored rule could
+    # ever have reached it, whatever else was widened.
+    ("cmd", r"cmd"),
 )
+_INTERPRETER_FAMILY: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
+    (family, re.compile(rf"(?i)^(?:{alternatives})$"))
+    for family, alternatives in _INTERPRETER_FAMILY_PATTERNS
+)
+_KNOWN_INTERPRETER_BASENAME = re.compile(
+    "(?i)^(?:"
+    + "|".join(alternatives for _, alternatives in _INTERPRETER_FAMILY_PATTERNS)
+    + ")$"
+)
+
+
+def _interpreter_family(basename: str) -> str | None:
+    """Which inline-eval flag grammar reads `basename`, else `None`.
+
+    The single dispatch point that replaced round 3's four parallel
+    `_*_LIKE` patterns (finding I-3). A basename that is on
+    `_KNOWN_INTERPRETER_BASENAME` therefore ALWAYS has a family, because
+    both are built from `_INTERPRETER_FAMILY_PATTERNS`; the two cannot
+    drift apart the way the duplicated pair could.
+    """
+    for family, pattern in _INTERPRETER_FAMILY:
+        if pattern.match(basename):
+            return family
+    return None
+
 
 # Windows executable extensions, not only `.exe`. `python.bat`/`python.cmd`
 # are the shims a Windows launcher, a virtualenv, or a package manager
 # actually installs, and this project runs on Windows - stripping `.exe`
 # alone read `python.bat -c "…"` as an unknown command.
 _EXECUTABLE_SUFFIX = re.compile(r"(?i)\.(?:exe|bat|cmd|com|ps1)$")
+
+
+def _argv_tokens(text: str) -> list[str] | None:
+    """`text` split the way a shell splits it before `execve`, or `None`
+    when it cannot be split with confidence.
+
+    ROUND 4, findings Critical 2 and Critical 3. Every inline-flag rule in
+    this module used to be a regex searched over RAW segment text anchored
+    `(?:^|\\s)-`. The shell REMOVES quoting before the interpreter ever sees
+    an argument, so `python "-c" "CODE"` reaches CPython as exactly the same
+    argv as `python -c CODE` and runs, while a `"` in front of the dash is
+    not whitespace and defeated every one of those patterns; `p"y"thon`
+    reached the interpreter the same way, because `_interpreter_basename`
+    compared the quote characters along with the letters. Round 3's brief
+    asked for the flag to be matched as a prefix of the ARGV TOKEN and round
+    3 approximated that with a raw-text regex - which is the whole of both
+    findings. This is the tokenizer that makes the phrase true.
+
+    `escape=""` on the first attempt is deliberate and is the reason this is
+    not a bare `shlex.split`: POSIX escape handling turns
+    `C:\\Python\\python.exe` into `C:Pythonpython.exe`, which silently
+    UNDOES a round-1 closure the round-3 review re-verified. With escaping
+    off, a Windows path survives intact and `_interpreter_basename` splits
+    it on the separator as it always did. The escaped pass is then tried
+    only if the unescaped one fails, which is what keeps an ordinary
+    `node build.mjs --msg "say \\"hi\\""` from failing closed.
+
+    `commenters=""` matters as much: `shlex`'s default treats `#` as a
+    comment and would drop the rest of the line, so a payload containing one
+    would tokenize to something shorter than what actually runs.
+
+    `None` means the parse FAILED (an unbalanced quote), never "no tokens".
+    Callers fail closed on it - an unreadable line is evidence the parse
+    failed, not evidence of nothing, which is the rule this module already
+    applies at `_has_unclosed_quote`.
+    """
+    for escape in ("", "\\"):
+        lexer = shlex.shlex(text, posix=True)
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        lexer.escape = escape
+        try:
+            return list(lexer)
+        except ValueError:
+            continue
+    return None
 
 
 def _interpreter_basename(token: str) -> str | None:
@@ -831,14 +1056,34 @@ def _interpreter_basename(token: str) -> str | None:
     # component either way, so the two need no separate branches), and a
     # grouping character the shell parses as an operator rather than as part
     # of the name (`(python -c "…")` with no space after the paren).
-    basename = re.split(r"[\\/]", name.strip("\"'").lstrip("\\({"))[-1]
-    basename = _EXECUTABLE_SUFFIX.sub("", basename)
-    if not _KNOWN_INTERPRETER_BASENAME.match(basename):
-        return None
-    return basename.lower()
+    stem = name.strip("\"'").lstrip("\\({")
+    basename = _EXECUTABLE_SUFFIX.sub("", re.split(r"[\\/]", stem)[-1])
+    if _KNOWN_INTERPRETER_BASENAME.match(basename):
+        return basename.lower()
+    # ROUND 4: tokenizing removes the QUOTES of an ANSI-C `$'python'` and
+    # leaves the `$` behind, where the raw-text reader saw `$'…'` whole. The
+    # `$` is stripped only when what remains is a known interpreter, so this
+    # cannot widen anything else; a shell variable that literally expands to
+    # a command name is unknowable either way and asking is the safe
+    # direction. (Round 2's `$'python' -c "…"` closure is 22 of the
+    # population sweep's cases, and this is what keeps them closed.)
+    if basename.startswith("$") and _KNOWN_INTERPRETER_BASENAME.match(basename[1:]):
+        return basename[1:].lower()
+    # ROUND 4, Critical 3: an INTERIOR backslash is shell quoting, not a path
+    # separator - `pyth\on` is `python` to the shell, and the path split
+    # above truncates it to `on` instead. Tried only after the path reading
+    # fails, so `C:\Python\python.exe` still resolves through its real
+    # separators rather than collapsing to `C:Pythonpython.exe`. (The
+    # unescaped-first pass in `_argv_tokens` is what leaves the backslash
+    # here to be read; the two decisions belong together.)
+    unescaped = _EXECUTABLE_SUFFIX.sub("", stem.replace("\\", ""))
+    if _KNOWN_INTERPRETER_BASENAME.match(unescaped):
+        return unescaped.lower()
+    return None
 
 
-def _normalized_interpreter_head(text: str) -> tuple[str, str] | None:
+def _normalized_interpreter_head(
+        text: str, tokens: list[str] | None = None) -> tuple[str, str] | None:
     """`(basename, rest)` when `text` begins with a KNOWN interpreter,
     however that head token is spelled, else `None`. `rest` is everything
     after the head TOKEN, read verbatim from the position immediately
@@ -850,6 +1095,13 @@ def _normalized_interpreter_head(text: str) -> tuple[str, str] | None:
     `docker exec … python -c`) is found by `_exec_shape_opacity`'s token
     scan instead of by unwrapping the head, so this function no longer
     needs to know what a wrapper is.
+
+    ROUND 4: the head is resolved from the ARGV TOKEN first
+    (`_argv_tokens`), so an intra-word quote (`p"y"thon`) is removed the way
+    the shell removes it, and only falls back to the raw first word when the
+    line cannot be tokenized. `rest` is still sliced from the raw text,
+    because `_STDIN_FED_REST` reads shell operators (`<<<`, `<`) that are
+    not argv at all.
     """
     look = text.lstrip()
     if not look:
@@ -865,32 +1117,35 @@ def _normalized_interpreter_head(text: str) -> tuple[str, str] | None:
         if not token_match:
             return None
         token, rest = token_match.group(1), look[token_match.end():]
-    basename = _interpreter_basename(token)
+    if tokens is None:
+        tokens = _argv_tokens(text)
+    basename = _interpreter_basename(tokens[0]) if tokens else None
+    if basename is None:
+        basename = _interpreter_basename(token)
     if basename is None:
         return None
     return basename, rest
 
 
-# ROUND 3 (second security review): every pattern below used to end
-# `(?:\s|$)`, demanding whitespace between the flag and its argument. The
-# SHELL CONCATENATES them - `python -c"import os"` arrives as the single argv
-# token `-cimport os` - and python, node, ruby, perl, bash and pwsh all parse
-# their inline-code flag as a PREFIX of that token, so the whitespace the old
-# patterns required was not there to find and deleting one space walked
-# around detection for every interpreter at once. The trailing anchor is
-# simply gone; this is not a widening of what counts as dangerous, it is
-# reading the argv token the way the interpreter reads it. (`deno`'s check,
-# `^\s*eval\b` below, was the one inline rule already written this way.) The
-# same change recovers `bash -c'rm -rf /'`, which round 1 caught with a `\b`
-# terminator and round 2's `(?:\s|$)` silently allowed.
+# ROUND 4 (third security review): every pattern below used to be searched
+# over RAW TEXT anchored `(?:^|\s)-`. Round 3 deleted the trailing `(?:\s|$)`
+# and left that LEADING anchor, so one quote character - which the shell
+# removes before `execve` - walked straight through all of them
+# (`python "-c" "CODE"` R1, `bash "-c" "git push --force"` R1, both executed
+# by the reviewer to prove the payload runs). They are matched against
+# `_argv_tokens` output now, so a quote is gone before the comparison
+# happens and the flag really is "a prefix of the argv token".
+#
+# Each pattern is anchored `^` against ONE token. `--` long options are
+# excluded from the single-dash clusters for free: after the first `-` the
+# character class accepts only letters, so a second dash cannot be crossed.
 
-# A single-dash cluster CONTAINING `c` - `-lc`, `-ic`, `-xc`, `-cx`, and now
-# `-c"…"`/`-c'…'`. Lowercase `c` means "read commands from the next
-# argument" in every POSIX-family shell this module recognises, and none of
-# them defines any OTHER lowercase-`c` single-letter option, so the cluster
-# match cannot collide with an unrelated flag; `-C` (capital, e.g. bash's
-# noclobber) is a different option and is not matched.
-_SHELL_FUSED_C_FLAG = re.compile(r"(?:^|\s)-[a-zA-Z]*c")
+# A single-dash cluster CONTAINING `c` - `-lc`, `-ic`, `-xc`, `-cx`, and
+# the fused `-c"…"` (which arrives as the one token `-c…`). Lowercase `c`
+# means "read commands from the next argument" in every POSIX-family shell
+# this module recognises; `-C` (capital, e.g. bash's noclobber) is a
+# different option and is not matched.
+_SHELL_FLAG_TOKEN = re.compile(r"^-[a-zA-Z]*c")
 
 # CPython accepts combined short options, so `-Ic CODE`/`-bc CODE` run CODE
 # exactly as `-c CODE` does. `m` is excluded from the cluster because `-m`
@@ -898,18 +1153,29 @@ _SHELL_FUSED_C_FLAG = re.compile(r"(?:^|\s)-[a-zA-Z]*c")
 # module name: in `-mcProfile` the `c` belongs to `cProfile`, not to a `-c`
 # flag, and `-m <module>` names an installed, importable artifact rather
 # than an opaque string (the coordinator correction recorded above).
-_PYTHON_INLINE_FLAG = re.compile(r"(?:^|\s)-[A-LN-Za-ln-z]*c")
+_PYTHON_FLAG_TOKEN = re.compile(r"^-[A-LN-Za-ln-z]*c")
 
 # Node's `-p`/`--print`/`-pe` genuinely evaluate an expression the same as
 # `-e`/`--eval` runs one. Clustered (`-pe`) and fused (`-e"…"`,
-# `--eval"…"`) alike. The single-dash alternative cannot reach into a `--`
-# long option, so `--experimental-vm-modules`/`--enable-source-maps`/
-# `--preserve-symlinks` are untouched.
-_NODE_INLINE_FLAG = re.compile(r"(?i)(?:^|\s)(?:-[a-zA-Z]*[ep]|--eval|--print)")
+# `--eval"…"`) alike. `--experimental-vm-modules`/`--enable-source-maps`/
+# `--preserve-symlinks` are untouched - they are `--` long options, and the
+# only long options named here are the two that evaluate.
+_NODE_FLAG_TOKEN = re.compile(r"(?i)^(?:-[a-zA-Z]*[ep]|--eval|--print)")
 
-# ruby/perl `-e`, including the clustered forms their own documentation
-# uses (`perl -ne 'print'`, `perl -pi -e`).
-_RUBY_PERL_INLINE_FLAG = re.compile(r"(?:^|\s)-[a-zA-Z]*[eE]")
+# ROUND 4, finding I-1: ruby and perl were sharing one pattern that matched
+# `-e` OR `-E`, and `-E` is not ruby's eval flag at all - it is ruby's
+# EXTERNAL ENCODING flag, which is why `ruby -Eutf-8` was a false refusal
+# (round 3 disclosed it as an accepted over-ask; it was a wrong rule, not a
+# necessary cost). perl really does define both `-e` and `-E`, so perl keeps
+# both and ruby keeps only the lowercase one. Clustered forms their own
+# documentation uses (`perl -ne 'print'`, `ruby -ne`) still match.
+_RUBY_FLAG_TOKEN = re.compile(r"^-[a-zA-Z]*e")
+_PERL_FLAG_TOKEN = re.compile(r"^-[a-zA-Z]*[eE]")
+
+# ROUND 4, Critical 5. Windows' own shell spells its inline-command flag
+# with a forward slash (`cmd /c "…"`, `cmd /k "…"`), and accepts `-c`/`-k`
+# too. Case-insensitive because `cmd` is.
+_CMD_FLAG_TOKEN = re.compile(r"(?i)^[-/][ck]")
 
 # PowerShell resolves a parameter by any UNAMBIGUOUS PREFIX of its name,
 # and the prefix executes: `-Comm`/`-Com` run `-Command`, `-Enco`/`-Encod`
@@ -935,28 +1201,131 @@ _PWSH_OTHER_PARAMETERS = ("configurationname", "custompipename", "executionpolic
 # rule alone would call ambiguous (`-c` is also a prefix of
 # `-ConfigurationName`, `-e` also of `-ExecutionPolicy`).
 _PWSH_INLINE_ALIASES = frozenset({"c", "e", "ec", "enc"})
-_PWSH_FLAG = re.compile(r"(?i)(?:^|\s)-([A-Za-z]+)")
+_PWSH_FLAG_TOKEN = re.compile(r"(?i)^-([A-Za-z]+)")
 
 
-def _pwsh_inline_flag(rest: str) -> bool:
-    """Whether `rest` carries a PowerShell parameter that hands the shell
-    inline code - `-Command`/`-EncodedCommand`, either documented short
-    alias, or any unambiguous prefix of either, fused to its argument or
-    not."""
-    for match in _PWSH_FLAG.finditer(rest):
-        name = match.group(1).lower()
-        if name in _PWSH_INLINE_ALIASES or (
-                any(one.startswith(name) for one in _PWSH_INLINE_PARAMETERS)
-                and not any(one.startswith(name) for one in _PWSH_OTHER_PARAMETERS)):
-            return True
+def _pwsh_inline_flag_token(token: str) -> bool:
+    """Whether one argv `token` is a PowerShell parameter that hands the
+    shell inline code - `-Command`/`-EncodedCommand`, either documented short
+    alias, any unambiguous PREFIX of either, or any parameter that EXTENDS
+    either, fused to its argument or not.
+
+    ROUND 4, Critical 4: round 3 asked `any(one.startswith(name) …)` only,
+    which recognises spellings SHORTER than the enumerated names and misses
+    real parameters that are LONGER. `-CommandWithArgs` is a shipped
+    PowerShell 7.4 parameter that runs a command; `-Comm` matched it and the
+    full spelling did not. The test runs both directions now, so a parameter
+    whose name begins with `Command`/`EncodedCommand` is read whether or not
+    anybody added its exact spelling here.
+    """
+    match = _PWSH_FLAG_TOKEN.match(token)
+    if not match:
+        return False
+    name = match.group(1).lower()
+    if name in _PWSH_INLINE_ALIASES:
+        return True
+    if any(name.startswith(one) for one in _PWSH_INLINE_PARAMETERS):
+        return True
+    return (any(one.startswith(name) for one in _PWSH_INLINE_PARAMETERS)
+            and not any(one.startswith(name) for one in _PWSH_OTHER_PARAMETERS))
+
+
+# A quote that opens in the MIDDLE of a word. A POSIX shell concatenates
+# across it (`-c"import os"` is the one argv token `-cimport os`, which is
+# why the prefix tests above read it correctly), but PowerShell's own lexer
+# ENDS a parameter name there: `-Encod"ZwBpAHQA"` is the parameter `-Encod`
+# and a separate argument. Splitting at that boundary gives the second view
+# the pwsh test needs; it is never used for any other family, because for
+# every other family the POSIX reading is the correct one.
+_FUSED_QUOTE = re.compile(r"(?<=[^\s\"'])(?=[\"'])")
+
+
+def _quote_split_tokens(text: str) -> list[str]:
+    """`text` tokenized the way PowerShell breaks a fused quoted argument."""
+    return _argv_tokens(_FUSED_QUOTE.sub(" ", text)) or []
+
+
+def _family_inline_flag_token(family: str, token: str) -> bool:
+    """Whether one argv `token` is `family`'s own inline-eval flag."""
+    if family == "python":
+        return bool(_PYTHON_FLAG_TOKEN.match(token))
+    if family == "node":
+        return bool(_NODE_FLAG_TOKEN.match(token))
+    if family == "ruby":
+        return bool(_RUBY_FLAG_TOKEN.match(token))
+    if family == "perl":
+        return bool(_PERL_FLAG_TOKEN.match(token))
+    if family == "posix-shell":
+        return bool(_SHELL_FLAG_TOKEN.match(token))
+    if family == "pwsh":
+        return _pwsh_inline_flag_token(token)
+    if family == "cmd":
+        return bool(_CMD_FLAG_TOKEN.match(token))
     return False
 
 
-_PYTHON_LIKE = re.compile(
-    r"(?i)^(?:python[23]?(?:\.\d+)?|pypy[23]?(?:\.\d+)?|jython|micropython|py)$")
-_NODE_LIKE = re.compile(r"(?i)^(?:node|bun)$")
-_POSIX_SHELL_LIKE = re.compile(r"(?i)^(?:bash|sh|zsh|ksh|dash)$")
-_PWSH_LIKE = re.compile(r"(?i)^(?:pwsh|powershell)$")
+# A token that names a FILE rather than a flag's value: it carries a path
+# separator, or a short filename extension. Used only to decide where an
+# interpreter stops reading its own options (see `_inline_flag_in_tokens`).
+_FILE_SHAPED_TOKEN = re.compile(r"\.[A-Za-z0-9]{1,6}$")
+
+
+def _inline_flag_in_tokens(family: str, tokens: list[str]) -> bool:
+    """Whether `tokens` - everything AFTER the interpreter's own name -
+    carries that interpreter's inline-eval flag before the interpreter stops
+    reading its own options.
+
+    ROUND 4, finding I-1. Round 3 searched the whole rest of the line for
+    "any single-dash cluster containing the trigger letter", which blocked
+    twelve ordinary commands: `node server.js -port 3000`, `python train.py
+    -ckpt m.pt`, `python app.py -config conf.yml` and friends were all read
+    as inline code and asked at R2. They are not inline code, and the reason
+    is not a heuristic - it is how the interpreters parse. An interpreter
+    stops consuming its OWN options at its first operand, the script it is
+    asked to run, and everything after that operand is handed to the script:
+    `python app.py -c foo` passes `-c foo` to `app.py` and executes no
+    inline code at all. So the scan stops there too.
+
+    An operand is a non-flag token that either names a file (a path
+    separator or a filename extension) or is not sitting immediately behind
+    a flag. The second half is what keeps `python -X faulthandler -c "…"`
+    and `python -W ignore -c "…"` readable - a flag that takes a separate
+    argument is always immediately in front of it - without this module
+    learning any interpreter's list of argument-taking options, which is the
+    per-tool grammar round 3 deleted the wrapper table to be rid of.
+    """
+    previous_was_flag = False
+    for token in tokens:
+        flag_shaped = token.startswith("-") or (
+            family == "cmd" and token.startswith("/"))
+        if not flag_shaped:
+            if _is_path_shaped(token) or _FILE_SHAPED_TOKEN.search(token):
+                return False
+            if not previous_was_flag:
+                return False
+            previous_was_flag = False
+            continue
+        if _family_inline_flag_token(family, token):
+            return True
+        previous_was_flag = True
+    return False
+
+
+def _deno_eval_subcommand(tokens: list[str]) -> bool:
+    """`deno eval "<code>"` - deno's inline-code form is a SUBCOMMAND, not a
+    flag (`-e`/`-p` are node/bun spellings deno does not define). The first
+    non-flag token is the subcommand.
+
+    `startswith` rather than `==` because the fused `deno eval"CODE"` arrives
+    as the single token `evalCODE`, exactly as `-c"…"` arrives as `-c…`. No
+    other deno subcommand begins with `eval`.
+    """
+    for token in tokens:
+        if token.startswith("-"):
+            continue
+        return token.lower().startswith("eval")
+    return False
+
 
 # C5/C6 (security review): the payload arrives on stdin instead of as a
 # flag argument at all - a pipe from an earlier segment (`echo … | python`,
@@ -969,13 +1338,21 @@ _PWSH_LIKE = re.compile(r"(?i)^(?:pwsh|powershell)$")
 _STDIN_FED_REST = re.compile(r"(?:^\s*$|^\s*<<<|^\s*-\s*(?:<|$)|^\s*/dev/stdin\b|^\s*<(?!<))")
 
 
-def _interpreter_opacity(basename: str, rest: str, *,
+def _interpreter_opacity(basename: str, rest: str, rest_tokens: list[str], *,
+                         payload: str | None = None,
+                         pwsh_tokens: list[str] | None = None,
                          stdin_fed: bool = True) -> tuple[str, bool, list[str]] | None:
     """The opaque-inline verdict for a KNOWN interpreter `basename`, given
-    the `rest` of its own line, or `None` when this invocation is not opaque
-    by any rule below - a script FILE, a `-m module`, or an unrecognised flag
-    with no evidence either way (the R1 local-compute floor, decided by the
-    caller).
+    the argv tokens that follow it, or `None` when this invocation is not
+    opaque by any rule below - a script FILE, a `-m module`, or an
+    unrecognised flag with no evidence either way (the R1 local-compute
+    floor, decided by the caller).
+
+    `rest_tokens` (round 4) is what the FLAG rules read; `rest` is the raw
+    text after the head, still needed for `_STDIN_FED_REST`, which matches
+    shell operators (`<<<`, `<`, a trailing bare `-`) that are redirections
+    rather than argv at all. `payload` is the text the tier scan reads for
+    visible evidence, defaulting to `rest`.
 
     `stdin_fed=False` (round 3) drops the stdin rule for the exec-shape
     token scan: a bare interpreter name appearing as a LATER token (`which
@@ -983,27 +1360,28 @@ def _interpreter_opacity(basename: str, rest: str, *,
     interactive REPL is not an opaque payload - whereas a bare interpreter in
     HEAD position with a pipe feeding it (`echo … | python`) is.
     """
-    if _PYTHON_LIKE.match(basename):
-        if _PYTHON_INLINE_FLAG.search(rest):
-            return _opaque_inline_verdict(rest)
-    elif _NODE_LIKE.match(basename):
-        if _NODE_INLINE_FLAG.search(rest):
-            return _opaque_inline_verdict(rest)
-    elif basename == "deno":
-        # C4: `-e`/`--eval`/`-p`/`--print` are node/bun flags deno does not
-        # define; deno's own inline-code form is the `eval` SUBCOMMAND.
-        if re.match(r"(?i)^\s*eval\b", rest):
-            return _opaque_inline_verdict(rest)
-    elif basename in ("ruby", "perl"):
-        if _RUBY_PERL_INLINE_FLAG.search(rest):
-            return _opaque_inline_verdict(rest)
-    elif _POSIX_SHELL_LIKE.match(basename):
-        if _SHELL_FUSED_C_FLAG.search(rest):
-            return _opaque_inline_verdict(rest)
-    elif _PWSH_LIKE.match(basename):
-        if _pwsh_inline_flag(rest):
-            return _opaque_inline_verdict(rest)
-    if stdin_fed and _STDIN_FED_REST.match(rest):
+    evidence = rest if payload is None else payload
+    family = _interpreter_family(basename)
+    if family == "deno":
+        if _deno_eval_subcommand(rest_tokens):
+            return _opaque_inline_verdict(evidence)
+    elif family == "pwsh":
+        # Two views, because PowerShell's lexer and a POSIX shell's disagree
+        # about where a fused quoted argument starts (`_FUSED_QUOTE`). The
+        # second view is scanned whole rather than through the operand rule:
+        # a `-Comm…`-shaped token anywhere on a `pwsh` line is the thing this
+        # is looking for, and `-File`/`-NoProfile`/`-ExecutionPolicy` are not
+        # matched by the parameter test in either view.
+        if (_inline_flag_in_tokens(family, rest_tokens)
+                or any(_pwsh_inline_flag_token(one) for one in (pwsh_tokens or ()))):
+            return _opaque_inline_verdict(evidence)
+    elif family is not None and _inline_flag_in_tokens(family, rest_tokens):
+        return _opaque_inline_verdict(evidence)
+    # `cmd` is exempt from the stdin rule: it is on the interpreter table for
+    # its `/c` form alone (Critical 5), and a bare `cmd` opens an interactive
+    # console rather than reading a payload nobody can see. Without this,
+    # `cmd` and `cmd 2>&1 | grep x` would ask.
+    if stdin_fed and family != "cmd" and _STDIN_FED_REST.match(rest):
         # The gate cannot see this payload at all - the same "opaque" the
         # flag-based checks above exist to protect, at the same floor.
         # `_opaque_inline_verdict("")`/`(rest)` finds no visible R5
@@ -1092,61 +1470,110 @@ def _opaque_inline_verdict(payload: str) -> tuple[str, bool, list[str]]:
 #       "…"`) - checked in `classify_action`, where the substitution is
 #       still in the text. A name that is not knowable statically cannot be
 #       cleared.
-#   (c) an unresolved head carries an inline-COMMAND flag with a quoted
-#       argument (`su -c "git push --force"`).
+#   (c) an unresolved head carries an inline-COMMAND flag whose argument is
+#       a whole command line (`su -c "git push --force"`).
 #
-# Form (c) is scoped to `-c`/`--command` and requires a QUOTED argument on
-# purpose. `-e` is excluded: on an unresolved head it overwhelmingly means
-# environment, expression or editor (`docker run -e "NODE_ENV=production"`),
-# and reading it as inline code would refuse ordinary work. The quoted-
-# argument requirement is what keeps `tar -cf archive.tar` out.
-_UNRESOLVED_INLINE_COMMAND_FLAG = re.compile(r"(?i)(?:^|\s)-{1,2}c(?:ommand)?(?=\s*[\"'])")
+# Form (c) is scoped to `-c`/`--command` on purpose. `-e` is excluded: on an
+# unresolved head it overwhelmingly means environment, expression or editor
+# (`docker run -e "NODE_ENV=production"`), and reading it as inline code
+# would refuse ordinary work.
+#
+# ROUND 4 changes what form (c) requires of the ARGUMENT. Round 3 required
+# it to be QUOTED, which was both too loose and too tight: too loose, because
+# `tar -c "a.tar"` and `docker -c "ctx" ps` are quoted filenames and context
+# names that were asked about at R2 (round-3 review, false-refusal list); too
+# tight, because `su --command="git push --force"` puts an `=` where the
+# lookahead wanted a quote and was R0 (Critical 5). Quoting is invisible
+# after tokenization anyway. What separates a command line from a name is
+# that a command line has PARTS - whitespace, or a shell metacharacter - so
+# that is what is required. `su -cwhoami` (one bare word, fused) stays open
+# and is disclosed rather than guessed at.
+_FORM_C_PAYLOAD_IS_A_COMMAND_LINE = re.compile(r"[\s;|&$<>`]")
 
 
-def _quote_masked(text: str) -> str:
-    """`text` with each quoted span's CONTENT replaced by a non-space filler
-    and the quote marks themselves left in place - the one spelling of the
-    mask both exec-shape readers below share, so they cannot drift apart on
-    what counts as quoted."""
-    return _executable_text(text, blank="\x00", keep_quotes=True)
+def _unresolved_inline_command(tokens: list[str]) -> bool:
+    """Form (c) over argv tokens: an inline-COMMAND flag whose argument is a
+    whole command line rather than a single name.
 
-
-def _interpreter_tokens(text: str) -> list[tuple[str, str]]:
-    """`(basename, everything after that token)` for every token in `text`
-    that names a known interpreter, in order.
-
-    Tokens are taken from a quote-aware mask of `text`, so a token that
-    lives INSIDE a quoted argument is not a token here at all - `echo
-    'use python -c to run inline'` and `git commit -m "run python -c
-    later"` name no interpreter, because their text is data. The mask
-    keeps each quoted span as one token and keeps the quote marks, so a
-    quoted head (`sudo "python" -c "…"`) is still read, and the returned
-    "rest" is sliced from the ORIGINAL text so the payload reaching the
-    R5 evidence scan is the real one.
+    `-c CODE`, `-cCODE`, `--command CODE`, `--command=CODE`, in any case.
     """
-    mask = _quote_masked(text)
-    found: list[tuple[str, str]] = []
-    for match in re.finditer(r"\S+", mask):
-        basename = _interpreter_basename(text[match.start():match.end()])
+    for index, token in enumerate(tokens):
+        lowered = token.lower()
+        if lowered in ("-c", "--command"):
+            argument = tokens[index + 1] if index + 1 < len(tokens) else ""
+        elif lowered.startswith("--command="):
+            argument = token[len("--command="):]
+        elif lowered.startswith("-c") and len(token) > 2:
+            argument = token[2:]
+        else:
+            continue
+        if _FORM_C_PAYLOAD_IS_A_COMMAND_LINE.search(argument):
+            return True
+    return False
+
+
+def _interpreters_in_tokens(tokens: list[str]) -> list[tuple[str, list[str]]]:
+    """`(basename, the tokens after it)` for every token in `tokens` that
+    names a known interpreter, in order."""
+    found: list[tuple[str, list[str]]] = []
+    for index, token in enumerate(tokens):
+        basename = _interpreter_basename(token)
         if basename is not None:
-            found.append((basename, text[match.end():]))
+            found.append((basename, tokens[index + 1:]))
     return found
 
 
-def _exec_shape_opacity(text: str) -> tuple[str, bool, list[str]] | None:
-    """The opaque verdict for a segment whose own HEAD is not a known
-    interpreter but which carries positive evidence of running one anyway
-    (forms (a) and (c) above), else `None`.
+def _interpreter_tokens(text: str) -> list[tuple[str, list[str]]]:
+    """`(basename, the tokens after it)` for every argv token in `text` that
+    names a known interpreter, in order. Empty when `text` cannot be
+    tokenized - callers treat that separately, and fail closed.
 
-    Called only after the data-printing safe-read heads have had their say,
-    so `echo`/`printf`/`grep`/`which` still treat their arguments as the
-    data they are.
+    ROUND 4: taken from `_argv_tokens` rather than from a quote-aware mask.
+    The mask kept a quoted span as one token, which is what made `git commit
+    -m "run python -c later"` and `echo 'use python -c to run inline'` name
+    no interpreter - and `shlex` keeps a quoted span as one token too, so
+    both still read as the data they are, while `sudo "python" "-c" "…"`
+    now resolves the way the shell resolves it.
     """
-    for basename, rest in _interpreter_tokens(text):
-        verdict = _interpreter_opacity(basename, rest, stdin_fed=False)
+    tokens = _argv_tokens(text)
+    return [] if tokens is None else _interpreters_in_tokens(tokens)
+
+
+def _exec_shape_opacity(text: str,
+                        tokens: list[str] | None = None) -> tuple[str, bool, list[str]] | None:
+    """The opaque verdict for a segment carrying positive evidence of
+    running an interpreter (forms (a) and (c) above), else `None`.
+
+    Called only when the head does not shield its own arguments
+    (`_shields_its_arguments`), so `echo`/`printf`/`grep`/`which` still
+    treat their arguments as the data they are.
+
+    ROUND 4, finding I-2: this also runs when the head IS a known
+    interpreter whose own opacity rule did not fire, because otherwise
+    `_categorize` returned R1 on the head alone and `bun x python -c "…"`,
+    `deno task python -c "…"` and `node -r ./setup.js python -c "…"` were
+    unprotected.
+    """
+    if tokens is None:
+        tokens = _argv_tokens(text)
+    if tokens is None:
+        # Not "no evidence" - evidence the parse failed, which this module
+        # already treats as a reason to ask (`_has_unclosed_quote`). Failing
+        # closed here as well is what keeps an unbalanced quote from being a
+        # cheaper bypass than the ones this round closes.
+        return _opaque_inline_verdict(text)
+    # `classify_action` runs on EVERY tool call, so the line is tokenized once
+    # and the second (PowerShell) view is built only if a pwsh-family token is
+    # actually present - it costs a regex substitution plus a full re-lex.
+    pwsh_tokens: list[str] | None = None
+    for basename, rest_tokens in _interpreters_in_tokens(tokens):
+        if pwsh_tokens is None and _interpreter_family(basename) == "pwsh":
+            pwsh_tokens = _quote_split_tokens(text)
+        verdict = _interpreter_opacity(basename, "", rest_tokens, payload=text,
+                                       pwsh_tokens=pwsh_tokens, stdin_fed=False)
         if verdict is not None:
             return verdict
-    if _UNRESOLVED_INLINE_COMMAND_FLAG.search(_quote_masked(text)):
+    if _unresolved_inline_command(tokens):
         return _opaque_inline_verdict(text)
     return None
 
@@ -1165,14 +1592,19 @@ _COMMAND_POSITION = re.compile(
 
 
 def _substituted_command_name(text: str, spans: tuple[tuple[int, int], ...]) -> bool:
-    """Whether any substitution in `text` IS a command name (form (b)).
+    """Whether any substitution in `text` BUILDS a command name (form (b)).
 
-    The whole name must be the substitution: `$(which python) -c "…"`
-    qualifies, `$(npm bin)/eslint` and `$(git rev-parse --show-toplevel)/x.sh`
-    do not, because a file is still named after the substitution ends.
+    ROUND 4, Critical 3: round 3 required the whole name to be the
+    substitution, so `$(echo p)ython -cimport os` - a substitution glued to
+    the FRONT of a name - was R0. What matters is whether the name is
+    knowable from the text, and it is not knowable in either spelling. The
+    one shape that stays clear is a substitution followed by a PATH
+    SEPARATOR, because a file is still named after the substitution ends:
+    `$(npm bin)/eslint` and `$(git rev-parse --show-toplevel)/x.sh` name
+    `eslint` and `x.sh` whatever the prefix expands to.
     """
     return any(_COMMAND_POSITION.search(text[:start])
-               and (end >= len(text) or text[end] in " \t\n;&|)}")
+               and (end >= len(text) or text[end] not in "/\\")
                for start, end in spans)
 
 
@@ -1209,7 +1641,7 @@ def _first_heredoc_interpreter(operation: str) -> tuple[str, str, str] | None:
         return None
     header = lines[0]
     if _normalized_interpreter_head(header) is None and (
-            _SAFE_SHELL_READS.match(header) or not _interpreter_tokens(header)):
+            _shields_its_arguments(header) or not _interpreter_tokens(header)):
         return None
     match = _HEREDOC.search(header)
     if not match:
@@ -2624,7 +3056,8 @@ def _categorize(normalized: str, project_root: Path | None = None,
     # named mutations are skipped - but only those. The redirect check below
     # still applies, because `curl --help > ~/.bashrc` prints help and writes
     # a file, and the flag excuses the first half only.
-    asks_for_help = bool(_HELP_FLAG.search(command_position))
+    argv = _argv_tokens(normalized)
+    asks_for_help = _is_help_request(argv)
     if not asks_for_help:
         # U-B2 fix-round-1 (Critical), checked before `_ACTION_PATTERNS`:
         # `move-item` already sits in that table's blanket filesystem-
@@ -2694,6 +3127,8 @@ def _categorize(normalized: str, project_root: Path | None = None,
         # output flag) should be judged by where it lands, the same as any
         # other recognised command's write already is.
         or _NAMED_BY_OWN_RULES.match(normalized)
+        # `env` is recognised without being a read - see `_KNOWN_NON_READ_HEAD`.
+        or _KNOWN_NON_READ_HEAD.match(normalized)
     )
     # A redirect writes a file whatever the verb says, so it is checked after
     # the named mutations but before the read allowances. `segment.has_redirect`
@@ -2742,9 +3177,15 @@ def _categorize(normalized: str, project_root: Path | None = None,
         return "worktree-file-mutation", False, [f"{kind} write inside the working tree"]
     if _FIND_MUTATION.search(command_position):
         return "filesystem-mutation", True, ["local files", "recoverability"]
-    # Last, so a help flag never excuses a redirect or a delete beside it.
-    if asks_for_help:
-        return "read-only-inspection", False, ["a help or version banner"]
+    # ROUND 4, Critical 1: EVERY check that can find executable code now runs
+    # BEFORE the help/version fast-path, not after it. The old ordering put
+    # that fast-path here, above all of them, so one appended token returned
+    # an unprotected read for a line carrying a payload - see `_HELP_FLAG_
+    # TOKEN`'s comment for the full blast radius. The positional
+    # `_is_help_request` alone would close it; the reordering is the second,
+    # independent half, so a future widening of what counts as a help flag
+    # cannot reopen the class on its own.
+    #
     # C1: the interpreter this segment invokes in its own HEAD position,
     # however that head is spelled (quoted, escaped, path-prefixed,
     # `.exe`/`.bat`-suffixed). Checked before the read allowances below so a
@@ -2752,12 +3193,53 @@ def _categorize(normalized: str, project_root: Path | None = None,
     # so a real script-file invocation still lands on the R1 local-compute
     # floor through the SAME resolved head rather than a second copy of
     # "what counts as python".
-    normalized_interpreter = _normalized_interpreter_head(normalized)
+    normalized_interpreter = _normalized_interpreter_head(normalized, argv)
     if normalized_interpreter is not None:
         basename, rest = normalized_interpreter
-        opacity = _interpreter_opacity(basename, rest)
+        opacity = _interpreter_opacity(
+            basename, rest, (argv or [""])[1:], payload=rest,
+            pwsh_tokens=(_quote_split_tokens(normalized)
+                         if _interpreter_family(basename) == "pwsh" else None))
         if opacity is not None:
             return opacity
+    # C1 round 3: an unresolved head is all this function has left, and
+    # returning R0 for it - identically to matching the safe list - is what
+    # made the safe list contribute nothing (findings C-2/C-3/C-5, every one
+    # of them an unresolved head landing in the R0 default at the end of this
+    # function). Positive evidence of exec shape fails closed here instead.
+    #
+    # Shielded by `_shields_its_arguments` rather than by ORDERING (round 4):
+    # round 3 put this after the read allowlists so `echo python -c "hi"`
+    # would keep printing an invocation harmlessly, which worked for
+    # `_SAFE_SHELL_READS` and made `_POWERSHELL_READS` a shield over a real
+    # exec surface (`Measure-Command { python -c "…" }`, Critical 4). Asking
+    # the shield question directly says what is meant and lets this run
+    # first, which is also what finding I-2 needs: it runs even when the head
+    # IS an interpreter whose own rule did not fire, so `bun x python -c "…"`
+    # is read.
+    if not _shields_its_arguments(normalized):
+        exec_shape = _exec_shape_opacity(normalized, argv)
+        if exec_shape is not None:
+            return exec_shape
+    if _UNKNOWABLE_BODY_HEADS.match(normalized):
+        # C1 (external audit): `bash -c`/`eval`/`ForEach-Object` were
+        # already protected, but flatly, at whatever `unknown-command`
+        # defaults to (R3) - never lower, but never raised either, even
+        # when the opaque body plainly names a forced push. Routed through
+        # the same evidence-aware verdict an interpreter's `-c` flag gets,
+        # so `sh -c "git push --force"` and `python -c "..."` are judged by
+        # the same rule instead of two independently-drifting ones.
+        return _opaque_inline_verdict(normalized)
+    # Only now: nothing above found code to run, so a help flag really does
+    # describe the operation rather than sit beside a payload.
+    if asks_for_help:
+        return "read-only-inspection", False, ["a help or version banner"]
+    if normalized_interpreter is not None and normalized_interpreter[0] != "cmd":
+        # `cmd` is on the interpreter table for its `/c` form only (round 4,
+        # Critical 5). It is Windows' shell, not a compute runtime, so a bare
+        # `cmd` must keep falling through to the read/unknown path it always
+        # had rather than being reclassified as local compute - `cmd 2>&1 |
+        # grep x` is R0 before and after.
         return "local-compute-or-state", False, ["local computation; no protected surface named"]
     if (_SAFE_SHELL_READS.match(normalized) or _POWERSHELL_READS.match(normalized)
             or _TEST_BUILTIN.match(normalized)):
@@ -2765,23 +3247,6 @@ def _categorize(normalized: str, project_root: Path | None = None,
     if _ENV_BINDING.match(normalized):
         return ("local-compute-or-state", False,
                 ["a value for later commands in this shell"])
-    # C1 round 3: the head is not an interpreter and not a data-printing
-    # read, so an unresolved head is all this function has left - and
-    # returning R0 for it, identically to matching the safe list, is what
-    # made the safe list contribute nothing (findings C-2/C-3/C-5, every one
-    # of them an unresolved head landing in the R0 default at the end of this
-    # function). Positive evidence of exec shape fails closed here instead.
-    #
-    # Ordered AFTER the safe reads on purpose, and `env` removed from that
-    # list rather than this check moved in front of it: the remaining
-    # safe-read heads treat their arguments as data, so `echo python -c "hi"`
-    # prints an invocation and must stay R0, while `env`'s trailing argument
-    # is a command it execs and must not be shielded. Ordered BEFORE
-    # `_LOCAL_COMPUTE` so a task runner that execs its own argument
-    # (`uv run python -c "…"`) is not waved through on its head alone.
-    exec_shape = _exec_shape_opacity(normalized)
-    if exec_shape is not None:
-        return exec_shape
     if _LOCAL_COMPUTE.match(normalized):
         return "local-compute-or-state", False, ["local computation; no protected surface named"]
     # Nothing above recognised this command, and nothing above found evidence
@@ -2805,15 +3270,6 @@ def _categorize(normalized: str, project_root: Path | None = None,
             detail = (f"an unrecognised {head} subcommand or flag: "
                        f"{(segment.subcommand or '').strip() or '(none)'}")
         return ("unknown-command", True, [detail])
-    if _UNKNOWABLE_BODY_HEADS.match(normalized):
-        # C1 (external audit): `bash -c`/`eval`/`ForEach-Object` were
-        # already protected here, but flatly, at whatever `unknown-command`
-        # defaults to (R3) - never lower, but never raised either, even
-        # when the opaque body plainly names a forced push. Routed through
-        # the same evidence-aware verdict an interpreter's `-c` flag gets,
-        # so `sh -c "git push --force"` and `python -c "..."` are judged by
-        # the same rule instead of two independently-drifting ones.
-        return _opaque_inline_verdict(normalized)
     if _NETWORK_FETCH_HEADS.match(normalized) and not _SAFE_NETWORK_PROBE.match(normalized):
         return ("unknown-command", True,
                 [f"a network request: {segment.head}",
@@ -2992,7 +3448,14 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         parts = [classify_action(stripped, extra_protected, project_root, archive, require_approval)]
         parts += [classify_action(one, extra_protected, project_root, archive, require_approval)
                   for one in inner]
-        if _substituted_command_name(normalized, sub_spans):
+        # ROUND 4: blanking the substitution leaves the line headless, so the
+        # help test is given a placeholder head - `$(which python3)
+        # --version` asks a substituted binary to print its version and is
+        # not a command name this gate can usefully refuse (round-3 review,
+        # false-refusal list). `$(which python) -c "…"` has a flag before any
+        # help flag and is unaffected.
+        if (_substituted_command_name(normalized, sub_spans)
+                and not _is_help_request(["_"] + (_argv_tokens(sub_blanked) or []))):
             # C1 round 3, evidence form (b): the substitution stood where the
             # command NAME goes, so blanking it leaves the outer line headless
             # (`$(which python) -c "…"` reduces to `-c "…"`, whose head is
@@ -3792,6 +4255,32 @@ def _self_check() -> None:
         "tar -cf archive.tar somedir", 'docker run -e "NODE_ENV=x" img',
         "pwsh -ExecutionPolicy Bypass -File build.ps1",
         "python -m cProfile script.py",
+        # C1 round 4 (third security review, 2026-08-18). An interpreter
+        # stops reading its OWN options at its first operand, so a flag after
+        # a script file belongs to the script - round 3's prefix widening
+        # read these twelve everyday shapes as inline code and asked at R2.
+        "node server.js -port 3000", "python train.py -ckpt m.pt",
+        "python app.py -config conf.yml", "ruby app.rb -Eutf-8",
+        "perl script.pl -verbose", 'python app.py --note " -c thing"',
+        # `-E` is ruby's external-ENCODING flag, not an eval flag. perl
+        # defines both and keeps both; ruby keeps only the lowercase one.
+        "ruby -Eutf-8",
+        # A help/version banner is still a banner - including one that
+        # explains a SCRIPT, which is the regression `_HELP_FLAG_TOKEN`'s
+        # ancestor was introduced to fix (refused at R4 for saying "release").
+        "python scripts/godmode.py release --help", "git push --help",
+        "python --version", "docker compose up --help", "git remote add --help",
+        # `cmd` joins the interpreter table for its `/c` form ONLY.
+        "cmd", "cmd 2>&1 | grep x",
+        # A read cmdlet whose scriptblock contains no interpreter is still a
+        # read - dropping the shield only lets the exec-shape scan look.
+        "Measure-Command { Get-ChildItem }", 'Where-Object { $_.Name -eq "x" }',
+        # The escaped-quote fallback pass: an ordinary command must not fail
+        # closed merely for containing `\"`.
+        'node build.mjs --msg "say \\"hi\\""',
+        # `env` is recognised without being a read, so its redirect is judged
+        # by where it lands rather than asked about by name.
+        "env > out.txt",
     )
     for operation in allowed:
         verdict = classify_action(operation)
@@ -3840,6 +4329,36 @@ def _self_check() -> None:
         'sudo -E python -c "print(1)"', 'docker exec -it c python -c "print(1)"',
         '$(which python) -c "print(1)"', 'su -c "git push --force"',
         'pypy -c "print(1)"', 'python.bat -c "print(1)"',
+        # C1 round 4 (third security review, 2026-08-18). Critical 1: a
+        # trailing help flag is not a help request. Every check that can find
+        # code runs before the help fast-path now, and the fast-path itself
+        # requires the flag to be the first OPTION on the line.
+        'python -c "print(1)" --version', 'bash -c "git push --force" --help',
+        "git push --force origin main --help", "rm -rf / --help",
+        "git reset --hard HEAD~5 --help",
+        'powershell -EncodedCommand ZwBpAHQA --help',
+        # Critical 2: the flag matched as a prefix of its ARGV token, so a
+        # quote the shell removes before `execve` cannot hide it.
+        'python "-c" "print(1)"', 'bash "-c" "git push --force"',
+        'pwsh "-Command" "Remove-Item x"', 'python "-"c "print(1)"',
+        # Critical 3: an intra-word quote or backslash in the NAME.
+        'p"y"thon -cimport os', "pyth\\on -cimport os", 'n"o"de -e"require(1)"',
+        "$(echo p)ython -cimport os",
+        # Critical 4: PowerShell's own exec surfaces, on a Windows project.
+        'Measure-Command { python -c "print(1)" }',
+        'Invoke-Expression "git push --force"', 'iex "Remove-Item x"',
+        'Start-Process python -ArgumentList "-c","print(1)"',
+        'pwsh -CommandWithArgs "Remove-Item x"',
+        # Critical 5: shapes round 3 did not disclose, plus Windows' own shell.
+        'su --command="git push --force"', 'builtin eval "python -c 1"',
+        "trap 'git push --force' EXIT", 'cmd /c "git push --force"',
+        'cmd.exe /k "rm -rf /"',
+        # I-2: the exec-shape scan runs even when the head IS an interpreter
+        # whose own rule did not fire.
+        'bun x python -c "print(1)"', 'deno task python -c "print(1)"',
+        # Tokenization failure is evidence the parse failed, not evidence of
+        # nothing, so it fails closed.
+        'python -c "unclosed',
     )
     for operation in protected:
         verdict = classify_action(operation)
@@ -3874,6 +4393,25 @@ def _self_check() -> None:
     # still read, not asked about.
     assert classify_action("foobar --version")["tier"] == "R0"
     assert classify_action("env")["tier"] == "R0"
+    # C1 round 4: the tier equalities the help suffix used to erase. A
+    # payload keeps the tier it had, whatever is appended after it.
+    assert classify_action('python -c "git push --force" --version')["tier"] == "R5"
+    assert classify_action("git push --force origin main --help")["tier"] == "R5"
+    assert classify_action('python "-c" "git push --force"')["tier"] == "R5"
+    assert classify_action('bash "-lc" "git push --force"')["tier"] == "R5"
+    assert classify_action('cmd /c "git push --force"')["tier"] == "R5"
+    # One table, not two: every basename this module knows has a family that
+    # decides which inline-flag grammar reads it (finding I-3 - a name in one
+    # enumeration and not the other was a silent allow no test would notice).
+    for _name in ("python", "pypy3", "node", "bun", "deno", "ruby", "perl",
+                  "bash", "sh", "pwsh", "powershell", "cmd"):
+        assert _KNOWN_INTERPRETER_BASENAME.match(_name), _name
+        assert _interpreter_family(_name) is not None, _name
+    # And the tokenizer keeps a Windows path a path rather than escaping it
+    # away, which is what an unqualified `shlex.split` would have done.
+    assert _argv_tokens(r'C:\Py\python.exe -c "x"')[0] == r"C:\Py\python.exe"
+    assert _argv_tokens('python "-c" "import os"') == ["python", "-c", "import os"]
+    assert _argv_tokens('python -c "unclosed') is None
     assert shell_segments("ls | head -3 && git status; cat x") == [
         "ls", "head -3", "git status", "cat x"]
     assert shell_segments("grep 'a|b' file") == ["grep 'a|b' file"]
