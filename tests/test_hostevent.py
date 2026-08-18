@@ -348,15 +348,19 @@ class ApplyPatchCommandBodyFieldTests(unittest.TestCase):
     paths the patch names, and the malformed-directive detector never saw a
     single line of the body it was written to inspect.
 
-    `command` is tried FIRST, ahead of `input`/`patch`/`content`. The
-    precedence is a security decision, not a style one, and it is the same
-    one `_ALIASES` already makes for dual-cased payload fields (see
-    `FirstAliasWinsTests`): when a payload carries the body under two names
-    with different contents, the one the REAL host executes must be the one
-    the fence reads. Reading the other would let a caller fence a benign
-    patch under `input` while the host applies a different one from
-    `command`. `_SHELL_COMMAND_FIELDS` already spells the same host's shell
-    body `command` alone, so this also makes the two Codex tools agree.
+    SEC-B follow-up (review I1): field-precedence became a UNION. Codex
+    0.147.0's own embedded prompt documents the body as an argv ARRAY -
+    `{"command": ["apply_patch", "*** Begin Patch..."]}` - a shape
+    first-string-field-wins could never read. Instead of guessing which
+    element is "the" body, the adapter now collects EVERY non-empty string
+    candidate across all of `_PATCH_BODY_FIELDS` (including the string
+    elements of a list-valued field), fails the whole call closed if ANY
+    candidate carries a malformed directive, and unions the targets of all
+    of them. Unioning is monotone in the fail-closed direction: it can only
+    widen what the fence sees and add malformed detections, so whichever
+    body the real host executes, its targets are always a subset of what
+    the fence inspected - the security property the old precedence rule
+    existed to protect, without needing to know the winner.
     """
 
     ADD_AND_DELETE = "*** Add File: a.py\n+x\n*** Delete File: b.py\n"
@@ -411,22 +415,28 @@ class ApplyPatchCommandBodyFieldTests(unittest.TestCase):
         event = self._codex_apply_patch({"command": "not a patch"})
         self.assertEqual(event.tool_kind, he.TOOL_KIND_UNRECOGNIZED)
 
-    def test_command_wins_over_input_when_both_carry_a_body(self) -> None:
-        # Confusable-body pin: the fence must read what the host executes.
+    def test_two_bodied_fields_union_their_targets(self) -> None:
+        # Confusable-body pin, union form: whichever field the host
+        # executes, its target is in the fenced set.
         event = self._codex_apply_patch({
             "command": "*** Add File: real.py\n+x\n",
             "input": "*** Add File: decoy.py\n+x\n",
         })
-        self.assertEqual(event.targets, ["real.py"])
+        self.assertEqual(event.targets, ["real.py", "decoy.py"])
 
-    def test_command_wins_over_every_other_body_field(self) -> None:
+    def test_every_bodied_field_contributes_its_targets(self) -> None:
+        # Field order of `_PATCH_BODY_FIELDS`, not payload-key order.
         event = self._codex_apply_patch({
             "content": "*** Add File: decoy_content.py\n+x\n",
             "patch": "*** Add File: decoy_patch.py\n+x\n",
             "input": "*** Add File: decoy_input.py\n+x\n",
             "command": "*** Add File: real.py\n+x\n",
         })
-        self.assertEqual(event.targets, ["real.py"])
+        self.assertEqual(
+            event.targets,
+            ["real.py", "decoy_input.py", "decoy_patch.py",
+             "decoy_content.py"],
+        )
 
     def test_a_malformed_command_body_beats_a_well_formed_input_body(self) -> None:
         # Precedence must not become an escape hatch: a malformed `command`
@@ -455,21 +465,58 @@ class ApplyPatchCommandBodyFieldTests(unittest.TestCase):
             "command": "", "input": self.ADD_AND_DELETE})
         self.assertEqual(set(event.targets), {"a.py", "b.py"})
 
-    def test_a_non_string_command_falls_through_to_the_next_field(self) -> None:
-        # Codex's shell dialect can carry `command` as an argv ARRAY. The
-        # adapter has never read a non-string body and still does not: it is
-        # skipped, the next field is tried, and when nothing string-valued
-        # remains the call fails closed rather than guessing at a shape this
-        # repo has no live fixture for.
+    def test_the_documented_argv_array_shape_reaches_the_fence(self) -> None:
+        # Codex 0.147.0's own embedded prompt (offsets 0xe2d17e6/0xe3258ca)
+        # documents exactly this shape. The string elements of a
+        # list-valued field are candidates; the literal "apply_patch"
+        # element parses no target and contributes nothing.
         event = self._codex_apply_patch({
-            "command": ["apply_patch", self.ADD_AND_DELETE],
-            "input": self.ADD_AND_DELETE,
-        })
+            "command": ["apply_patch", self.ADD_AND_DELETE]})
+        self.assertEqual(event.tool_kind, he.TOOL_KIND_FENCED)
         self.assertEqual(set(event.targets), {"a.py", "b.py"})
 
-        array_only = self._codex_apply_patch({
-            "command": ["apply_patch", self.ADD_AND_DELETE]})
-        self.assertEqual(array_only.tool_kind, he.TOOL_KIND_UNRECOGNIZED)
+    def test_a_malformed_argv_array_element_fails_the_call_closed(self) -> None:
+        event = self._codex_apply_patch({
+            "command": ["apply_patch",
+                        "  *** Add File: /etc/passwd\n+pwned\n"]})
+        self.assertEqual(event.tool_kind, he.TOOL_KIND_MALFORMED)
+        self.assertEqual(event.targets, [])
+
+    def test_a_bodyless_command_string_never_shadows_a_real_input_body(self) -> None:
+        # `{"command": "apply_patch", "input": BODY}`: under
+        # first-field-wins the literal tool name would have won and parsed
+        # nothing; under the union it contributes nothing and the real body
+        # is read.
+        event = self._codex_apply_patch({
+            "command": "apply_patch", "input": self.ADD_AND_DELETE})
+        self.assertEqual(event.tool_kind, he.TOOL_KIND_FENCED)
+        self.assertEqual(set(event.targets), {"a.py", "b.py"})
+
+    def test_a_malformed_losing_field_now_fails_the_call_closed(self) -> None:
+        # The mirror image of the escape-hatch pin: first-field-wins never
+        # inspected the LOSING field, so a malformed `input` beside a clean
+        # `command` sailed through on the clean body alone. Union closes it.
+        event = self._codex_apply_patch({
+            "command": "*** Add File: harmless.txt\n+hello\n",
+            "input": "  *** Add File: /etc/passwd\n+pwned\n",
+        })
+        self.assertEqual(event.tool_kind, he.TOOL_KIND_MALFORMED)
+        self.assertEqual(event.targets, [])
+
+    def test_the_same_body_under_two_fields_is_not_double_counted(self) -> None:
+        event = self._codex_apply_patch({
+            "command": self.ADD_AND_DELETE, "input": self.ADD_AND_DELETE})
+        self.assertEqual(event.targets, ["a.py", "b.py"])
+
+    def test_unreadable_body_values_still_fail_closed(self) -> None:
+        # dict/bytes/int values are never candidates; a list contributes
+        # only its string elements. Nothing readable anywhere -> the call
+        # fails closed rather than guessing at an undocumented shape.
+        event = self._codex_apply_patch({
+            "command": {"patch": self.ADD_AND_DELETE},
+            "input": [b"bytes", 7, ["nested", self.ADD_AND_DELETE]],
+        })
+        self.assertEqual(event.tool_kind, he.TOOL_KIND_UNRECOGNIZED)
 
     def test_an_orchestrated_apply_patch_reads_the_command_body_too(self) -> None:
         # `functions.exec` unwraps to the nested call and re-enters the same
@@ -483,6 +530,21 @@ class ApplyPatchCommandBodyFieldTests(unittest.TestCase):
                 },
             })
         self.assertEqual(event.tool, "apply_patch")
+        self.assertEqual(set(event.targets), {"a.py", "b.py"})
+
+    def test_an_orchestrated_argv_array_body_reaches_the_fence_too(self) -> None:
+        # The documented shape through the `functions.exec` wrapper.
+        with mock.patch.dict(os.environ, {"GODMODE_HOST": "codex"}, clear=False):
+            event = he.parse_host_payload({
+                "hook_event_name": "PreToolUse", "tool_name": "functions.exec",
+                "tool_input": {
+                    "name": "apply_patch",
+                    "arguments": {
+                        "command": ["apply_patch", self.ADD_AND_DELETE]},
+                },
+            })
+        self.assertEqual(event.tool, "apply_patch")
+        self.assertEqual(event.tool_kind, he.TOOL_KIND_FENCED)
         self.assertEqual(set(event.targets), {"a.py", "b.py"})
 
 

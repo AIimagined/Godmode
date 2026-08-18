@@ -939,6 +939,47 @@ class PerHostDialectReplayTests(unittest.TestCase):
             envelope = json.dumps(result.envelope).lower()
             self.assertIn("src/auth/session.py", envelope)
 
+    def test_codex_argv_array_patch_is_fenced_on_an_out_of_scope_target(self) -> None:
+        """SEC-B review I1: the shape Codex's own embedded prompt documents
+        - `{"command": ["apply_patch", BODY]}` - reaches the scope fence.
+        Same wrong-reason guard as the string-body scenario: the denial
+        must name the fence's reason and the target, never the
+        `unrecognized-tool` an unread body also produces.
+        """
+        with h.e2e_repo() as repo:
+            _approved_fence(repo.archive, "src/auth/**")
+            outside = "src/billing/invoice.py"
+            patch = (
+                "*** Begin Patch\n"
+                f"*** Add File: {outside}\n"
+                "+new content\n"
+                "*** End Patch\n"
+            )
+            payload = h.codex_apply_patch_argv_array(patch, str(repo.project))
+            result = h.run_hook(payload, repo, host="codex")
+            self.assertEqual(h.interpret("codex", result), "deny")
+            envelope = json.dumps(result.envelope).lower()
+            self.assertIn("outside the editable set", envelope)
+            self.assertIn(outside, envelope)
+            self.assertNotIn("unrecognized", envelope)
+
+    def test_codex_argv_array_patch_allows_an_in_scope_target(self) -> None:
+        """The positive control for the argv-array denial above - an unread
+        array body would also deny, for the wrong reason. Allow on an
+        in-fence target is what proves the body was actually parsed.
+        """
+        with h.e2e_repo() as repo:
+            _approved_fence(repo.archive, "src/billing/**")
+            patch = (
+                "*** Begin Patch\n"
+                "*** Add File: src/billing/invoice.py\n"
+                "+new content\n"
+                "*** End Patch\n"
+            )
+            payload = h.codex_apply_patch_argv_array(patch, str(repo.project))
+            result = h.run_hook(payload, repo, host="codex")
+            self.assertEqual(h.interpret("codex", result), "allow")
+
 
 if __name__ == "__main__":
     unittest.main()

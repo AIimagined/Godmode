@@ -230,6 +230,17 @@ def codex_apply_patch_command_body(patch_body: str, cwd: str) -> dict[str, Any]:
             "toolInput": {"command": patch_body}, "cwd": cwd}
 
 
+def codex_apply_patch_argv_array(patch_body: str, cwd: str) -> dict[str, Any]:
+    """SEC-B review I1: the shape Codex 0.147.0's own embedded prompt
+    documents - the body as the second element of an argv ARRAY under
+    `command`. The union-of-candidates adapter reads the string elements
+    of a list-valued body field, so this must fence identically to the
+    two string spellings above.
+    """
+    return {"hookEventName": "pre_tool_use", "toolName": "apply_patch",
+            "toolInput": {"command": ["apply_patch", patch_body]}, "cwd": cwd}
+
+
 def codex_orchestrated_shell(command: str, cwd: str, *, request_id: str) -> dict[str, Any]:
     """Codex's `functions.exec` orchestration wrapper around a shell call -
     Plan amendments 2's "leaf tool, orchestration tool, or normalized alias"
