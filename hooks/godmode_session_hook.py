@@ -404,10 +404,16 @@ def main(argv: list[str] | None = None) -> int:
             # the uninvited opt-in this mode table forbids. Ordinary work
             # stays allowed either way; only an initialized project's own
             # health gets tracked.
+            # B4-8 extension (field feedback 3): a scope-less
+            # `not-initialized` was read as GLOBAL state in the field when
+            # the truth was cwd-relative - every answer here names the
+            # resolved project root it is about.
+            resolved_root = str(anchor.project_root)
             stranded = archive.orphaned()
             if stranded:
                 notice = {
                     "godmode": "orphaned-archive",
+                    "project": resolved_root,
                     "records": stranded["records"],
                     "reason": stranded["reason"],
                     "next_action": "run `godmode adopt --confirm` to relink this project's history",
@@ -417,7 +423,12 @@ def main(argv: list[str] | None = None) -> int:
                 else:
                     print(json.dumps(notice))
             elif not claude_session:
-                print(json.dumps({"godmode": "not-initialized", "action": "run godmode init explicitly"}))
+                print(json.dumps({
+                    "godmode": "not-initialized",
+                    "project": resolved_root,
+                    "action": f"not initialized for {resolved_root}; "
+                              "run godmode init explicitly",
+                }))
             return 0
 
         if malformed_payload:
