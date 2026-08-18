@@ -112,8 +112,13 @@ class OutputFlagEvidence(unittest.TestCase):
         project = PLUGIN_ROOT
         contained = classify_action("git diff --output=notes.txt", project_root=project)
         self.assertFalse(contained["protected"])
-        outside = classify_action("git log --output=/tmp/x", project_root=project)
+        # B4-9(b) made a temp-dir target a scratch write, so the outside
+        # exemplar moved off /tmp - the pin's point is that the TARGET is
+        # inspected at all, and /etc is outside both the tree and temp.
+        outside = classify_action("git log --output=/etc/x", project_root=project)
         self.assertTrue(outside["protected"])
+        scratch = classify_action("git log --output=/tmp/x", project_root=project)
+        self.assertFalse(scratch["protected"])
 
 
 class FindOkAndExecdirAlreadyDemoteFromR0(unittest.TestCase):

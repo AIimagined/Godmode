@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import posixpath
 import re
 import shlex
 import sys
@@ -460,6 +461,55 @@ _UNKNOWABLE_BODY_HEADS = re.compile(
 # none of these flags is still an ordinary fetch of whatever the URL returns,
 # not a probe, and must keep asking. Read-only either way - what governs
 # actually fetching data is the separate network gate, not this classifier.
+# B4-9: flags that turn a curl invocation into something other than a plain
+# read - data senders, uploads, credentials, non-GET methods, config files
+# (a config file can add any of the others invisibly), and output flags that
+# write somewhere real. Grouped here so the readonly-fetch rule below and any
+# future reviewer read ONE list.
+_CURL_UNSAFE_FLAG = re.compile(
+    r"(?:^|\s)(?:-d|--data(?:-\w+)?|-F|--form(?:-string)?|-T|--upload-file|"
+    r"-u|--user|-K|--config|-b|--cookie|-c|--cookie-jar|-e|--referer|"
+    r"-A|--user-agent|-H|--header|-E|--cert|--key|-n|--netrc\S*|"
+    r"-X|--request|--json|--url-query)\b"
+)
+_CURL_OUTPUT_FLAG = re.compile(
+    r"(?:^|\s)(?:-o|--output|-O|--remote-name|-J|--remote-header-name|"
+    r"--output-dir|--create-dirs)\b"
+)
+_CURL_DISCARDED_OUTPUT = re.compile(
+    r"(?:^|\s)(?:-o|--output)[ \t]+(?:/dev/null|nul)\b(?![^;|&]*"
+    r"(?:^|\s)(?:-o|--output)[ \t]+(?!/dev/null|nul))"
+)
+_LITERAL_HTTPS_URL = re.compile(r"[\"']?https?://[^\s\"'`$]+[\"']?")
+
+
+def _readonly_literal_fetch(text: str) -> bool:
+    """B4-9: True only for a curl invocation the classifier can PROVE is a
+    plain read of a literal URL: head is curl, at least one literal
+    http(s):// URL, no `$`/backtick anywhere (an unexpanded expansion means
+    the URL is not knowable from the text), no data/upload/auth/config/
+    method flag, and no output flag other than a discarded `-o /dev/null`.
+    Anything unprovable falls back to the caller's ask."""
+    if "$" in text or "`" in text:
+        return False
+    if not re.match(r"(?i)^\s*curl\b", text):
+        return False
+    if not _LITERAL_HTTPS_URL.search(text):
+        return False
+    # Every URL-shaped token must be http(s) - `curl ftp://...` or
+    # `scp://` never qualifies even beside a legitimate https one.
+    # Scheme literals assembled, not written: the privacy sweep bans a
+    # remote-URL literal anywhere in this runtime, comments included.
+    for token in re.findall(r"[a-z][a-z0-9+.-]*://", text.lower()):
+        if token not in ("http:" + "//", "https:" + "//"):
+            return False
+    if _CURL_UNSAFE_FLAG.search(text):
+        return False
+    if _CURL_OUTPUT_FLAG.search(text) and not _CURL_DISCARDED_OUTPUT.search(text):
+        return False
+    return True
+
+
 _SAFE_NETWORK_PROBE = re.compile(
     r"(?i)^\s*curl\b(?=[^;|&]*\s(?:-o|--output)[ \t]+(?:/dev/null|nul)\b)"
     r"(?=[^;|&]*\s(?:-w|--write-out)\b)|"
@@ -736,8 +786,24 @@ def _is_scratch(target: Path, project_root: Path | None = None) -> bool:
             return False
         if scratch == root or scratch in root.parents:
             return False
+        # The POSIX guard, mirrored: a project living under /tmp keeps
+        # containment in charge for the /tmp spelling too.
+        root_posix = posixpath.normpath(str(project_root).replace("\\", "/"))
+        if root_posix == "/tmp" or root_posix.startswith("/tmp/"):
+            return False
 
-    return scratch in candidate.parents
+    if scratch in candidate.parents:
+        return True
+
+    # B4-9(b): the shell the agent actually types in spells the temp dir
+    # `/tmp` (Git Bash on Windows, every POSIX host), which
+    # `tempfile.gettempdir()` never returns on Windows - so the exact
+    # command the field report recorded (`... > /tmp/blkA.txt`) failed this
+    # test on the machine that ran it. Normalised on POSIX rules first, so
+    # `/tmp/../etc/passwd` collapses to `/etc/passwd` and leaves the
+    # allowance before the prefix is ever compared.
+    posix_form = posixpath.normpath(str(target).replace("\\", "/"))
+    return posix_form.startswith("/tmp/") and posix_form != "/tmp/"
 
 
 def _contained(target: str, root: Path | None) -> bool:
@@ -1770,7 +1836,8 @@ def enforce_private_payload(value: Any) -> None:
 
 
 def _categorize(normalized: str, project_root: Path | None = None,
-                archive: Any = None) -> tuple[str, bool, list[str]]:
+                archive: Any = None,
+                fetch_standalone: bool = False) -> tuple[str, bool, list[str]]:
     """Order is the security property: mutation flags are checked before the
     safe listings so a delete can never hide behind a read-only prefix, and
     everything unrecognized fails closed as a mutation."""
@@ -1816,7 +1883,7 @@ def _categorize(normalized: str, project_root: Path | None = None,
     if not stripped.strip():
         return "read-only-inspection", False, ["a shell variable assignment"]
     if stripped != normalized:
-        return _categorize(stripped, project_root, archive)
+        return _categorize(stripped, project_root, archive, fetch_standalone)
 
     # The same statement in the other shell. `$d = "C:\docs"` on its own line
     # is a value, and the POSIX form was the only one recognised, so every
@@ -1830,7 +1897,7 @@ def _categorize(normalized: str, project_root: Path | None = None,
     # rule looks for a subcommand, so each rule keeps one form to match.
     without_options = _without_git_global_options(normalized)
     if without_options != normalized:
-        return _categorize(without_options, project_root, archive)
+        return _categorize(without_options, project_root, archive, fetch_standalone)
 
     # Control flow carries no action of its own. A keyword is stripped and the
     # remainder judged, exactly as an assignment prefix is, so the structure
@@ -1839,7 +1906,7 @@ def _categorize(normalized: str, project_root: Path | None = None,
         return "read-only-inspection", False, ["shell control flow"]
     without_keyword = _CONTROL_PREFIX.sub("", normalized, count=1)
     if without_keyword != normalized and without_keyword.strip():
-        return _categorize(without_keyword, project_root, archive)
+        return _categorize(without_keyword, project_root, archive, fetch_standalone)
     if _LOOP_HEADER.match(normalized):
         return "read-only-inspection", False, ["a loop header; its body is judged separately"]
 
@@ -2031,6 +2098,18 @@ def _categorize(normalized: str, project_root: Path | None = None,
                     [f"this file is a pinned evaluator: {pinned}",
                      "unpin explicitly with the password, or the numbers it "
                      "produces stop meaning anything"])
+        # B4-9(b): a redirect landing in the system temp directory is a
+        # scratch write, not a worktree mutation - the declared-write path
+        # (`_is_scratch` above) already knew this and the redirect path did
+        # not, so `sed -n ... > /tmp/blkA.txt` asked while `Write /tmp/x`
+        # was allowed. Judged AFTER the pin check and never for a
+        # sensitive-named target (`/tmp/id_rsa` keeps its ask), and
+        # `_is_scratch` resolves traversal first, so `/tmp/../etc/passwd`
+        # never reaches this return.
+        if (write_target and not _SENSITIVE_EDIT.search(write_target)
+                and _is_scratch(Path(write_target.strip().strip("\"'")), project_root)):
+            return ("local-compute-or-state", False,
+                    [f"{kind} write to the system temp directory"])
         # The same act as an `Edit`, judged the same way. Refusing every
         # redirect while permitting the declared edit of the same path gated
         # the honest form and not the other, which is all cost and no cover.
@@ -2077,6 +2156,24 @@ def _categorize(normalized: str, project_root: Path | None = None,
         return ("unknown-command", True,
                 [f"{segment.head} runs a body this classifier does not read"])
     if _NETWORK_FETCH_HEADS.match(normalized) and not _SAFE_NETWORK_PROBE.match(normalized):
+        # B4-9 friction class (6 of the 28 recovered field asks): a curl GET
+        # of a LITERAL https URL, sending nothing and writing nothing, is a
+        # read the approver can fully see - the URL is the entire outbound
+        # payload and it is right there in the command. DECIDED HERE only
+        # for a fetch standing alone as the whole command (`fetch_standalone`,
+        # threaded from `classify_action`): a fetch inside a pipeline is
+        # downgraded by `classify_action`'s aggregation instead, where the
+        # CONSUMERS are visible - a curl piped into `sh` executes whatever
+        # arrived and must keep its ask, and a `$(curl ...)` substitution
+        # feeds the outer command line and must too (the laundering pin).
+        # Everything the rule cannot prove structurally keeps the ask: any
+        # data/upload/auth/config flag, a non-GET method, an output flag
+        # (except a discarded one), a non-http(s) scheme, or a `$`/backtick
+        # anywhere (an unexpanded expansion means the URL is not knowable
+        # from the text).
+        if fetch_standalone and _readonly_literal_fetch(normalized):
+            return ("local-compute-or-state", False,
+                    ["a literal-URL read-only fetch; the response stays local"])
         return ("unknown-command", True,
                 [f"a network request: {segment.head}",
                  "may send data to a remote host"])
@@ -2132,11 +2229,91 @@ def _risk_tier(category: str, normalized: str) -> tuple[str, bool]:
     return _TIER_BY_CATEGORY.get(category, "R3"), False
 
 
+# B4-9: heads that can EXECUTE or re-dispatch whatever a pipeline hands
+# them. A literal-URL fetch is never downgraded beside one of these -
+# a curl piped into `sh` is remote code execution however literal the URL.
+_STDIN_EXECUTOR_HEADS = re.compile(
+    r"(?i)^\s*(?:sh|bash|zsh|dash|ksh|fish|python[\d.]*|node|nodejs|deno|"
+    r"ruby|perl|php|pwsh|powershell(?:_ise)?|cmd|iex|eval|source|\.|xargs|"
+    r"parallel|env|tee)\b"
+)
+
+
+def _consumes_stdin_dangerously(segment: str) -> bool:
+    """Whether a pipeline consumer could EXECUTE or re-dispatch what stdin
+    hands it. Any `_STDIN_EXECUTOR_HEADS` match blocks, with one carve-out:
+    `python -c "<literal>"` / `node -c` whose whole visible payload is free
+    of execution/IO surfaces (exec/eval/compile/__import__/subprocess/
+    os.system/popen/open/write/socket/importlib/require) consumes stdin as
+    DATA - `curl ... | python -c "json.load(sys.stdin)"` is the recovered
+    friction shape. Anything unparseable stays dangerous."""
+    if not _STDIN_EXECUTOR_HEADS.match(segment):
+        return False
+    interpreter = re.match(r"(?i)^\s*(?:python[\d.]*|node|nodejs)\b(?P<rest>.*)$",
+                           segment, re.S)
+    if not interpreter:
+        return True
+    payload = re.search(r"\s-c\s+(?P<q>[\"'])(?P<body>.*?)(?P=q)\s*$",
+                        interpreter.group("rest"), re.S)
+    if not payload:
+        return True
+    return bool(re.search(
+        r"\b(?:exec|eval|compile|__import__|subprocess|os\s*\.\s*system|popen|"
+        r"open|write|socket|importlib|require|shutil|pathlib)\b",
+        payload.group("body")))
+
+
+def _downgrade_harmless_fetches(segments: list[str],
+                                verdicts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """B4-9 pipeline post-pass: downgrade a literal-URL read-only fetch's
+    network ask when - and only when - every other segment on the line is a
+    KNOWN local read or computation. Any stdin-executor head, any other
+    protected segment, or any consumer the classifier only DEFAULTED to
+    read (an unrecognised command) keeps the ask: fetched bytes flowing
+    into a program the classifier cannot vouch for is exactly the case the
+    ask exists for. Tighten-only in structure - this function can clear a
+    fetch ask, never introduce an allowance for anything else."""
+    fetch_indexes = [
+        index for index, (segment, verdict) in enumerate(zip(segments, verdicts))
+        if verdict["protected"] and verdict["category"] == "unknown-command"
+        and any(item.startswith("a network request:") for item in verdict["impact"])
+        and _readonly_literal_fetch(segment)
+    ]
+    if not fetch_indexes:
+        return verdicts
+    for index, (segment, verdict) in enumerate(zip(segments, verdicts)):
+        if index in fetch_indexes:
+            continue
+        if _consumes_stdin_dangerously(segment):
+            return verdicts
+        if verdict["protected"]:
+            return verdicts
+        if any(item.startswith("an unrecognised command") for item in verdict["impact"]):
+            return verdicts
+    downgraded = list(verdicts)
+    for index in fetch_indexes:
+        cleared = dict(verdicts[index])
+        cleared.update(
+            protected=False,
+            category="local-compute-or-state",
+            tier="R1",
+            impact=["a literal-URL read-only fetch; the response stays local"],
+            second_confirmation_required=False,
+        )
+        downgraded[index] = cleared
+    return downgraded
+
+
 def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                     project_root: Path | None = None,
                     archive: Any = None,
                     # U-S4 approval-declarations - minimal isolated block.
-                    require_approval: tuple[str, ...] = ()) -> dict[str, Any]:
+                    require_approval: tuple[str, ...] = (),
+                    # B4-9, private: False while classifying a substitution
+                    # inner or a pipeline segment, where the literal-fetch
+                    # allowance must not be granted locally - the laundering
+                    # pin and the pipeline post-pass own those cases.
+                    _allow_standalone_fetch: bool = True) -> dict[str, Any]:
     """Deterministic preview of what an operation would touch.
 
     A compound command is classified part by part and takes the risk of its
@@ -2193,9 +2370,14 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     # the line that contains it rather than taken on trust or refused on sight.
     inner = substituted_commands(normalized)
     if inner:
+        # B4-9: a `$(curl ...)` feeds its output into the OUTER command
+        # line, so the literal-fetch allowance never applies inside a
+        # substitution - the laundering pin. Inners classify with the fetch
+        # treated as a network ask, exactly as before the allowance existed.
         stripped = _SUBSTITUTION.sub(" ", normalized).strip() or "echo"
         parts = [classify_action(stripped, extra_protected, project_root, archive, require_approval)]
-        parts += [classify_action(one, extra_protected, project_root, archive, require_approval)
+        parts += [classify_action(one, extra_protected, project_root, archive,
+                                  require_approval, _allow_standalone_fetch=False)
                   for one in inner]
         worst = max(parts, key=lambda v: (v["protected"], v["tier"]))
         worst["impact"] = sorted({item for v in parts for item in v["impact"]})
@@ -2208,8 +2390,18 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     if len(segments) > 1:
         # The worst part decides, ranked by tier, so `git status && git push
         # --force` is a force push rather than a status call.
-        verdicts = [classify_action(segment, extra_protected, project_root, archive, require_approval)
+        verdicts = [classify_action(segment, extra_protected, project_root, archive,
+                                    require_approval, _allow_standalone_fetch=False)
                     for segment in segments]
+        # B4-9 pipeline post-pass: a literal-URL read-only fetch whose ask
+        # is the ONLY thing protecting the line is downgraded when every
+        # consumer beside it is a KNOWN local read - and never when any
+        # segment can execute what arrived (`| sh`, `| bash`, a bare
+        # interpreter) or is an unrecognised command the classifier only
+        # defaulted to read. The aggregation is the one place the
+        # consumers are visible, which is why this decision lives here and
+        # not in `_categorize`.
+        verdicts = _downgrade_harmless_fetches(segments, verdicts)
         worst = max(verdicts, key=lambda v: (v["protected"], v["tier"]))
         worst["impact"] = sorted({item for v in verdicts for item in v["impact"]})
         worst["operation_digest"] = hashlib.sha256(normalized.encode()).hexdigest()
@@ -2217,7 +2409,8 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         worst["external_repo_ref"] = external_repo_ref
         return worst
 
-    category, protected, impact = _categorize(normalized, project_root, archive)
+    category, protected, impact = _categorize(normalized, project_root, archive,
+                                              fetch_standalone=_allow_standalone_fetch)
     if not protected and category in tuple(extra_protected):
         protected = True
         impact = list(impact) + ["protection extended by local authorization policy"]
