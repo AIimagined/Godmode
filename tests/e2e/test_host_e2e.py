@@ -872,6 +872,73 @@ class PerHostDialectReplayTests(unittest.TestCase):
             result = h.run_hook(payload, repo, host="codex")
             self.assertEqual(h.interpret("codex", result), "deny")
 
+    def test_codex_apply_patch_reaches_the_fence_when_the_body_is_in_command(self) -> None:
+        """SEC-B item 1, through the real hook subprocess: the same patch
+        delivered under the field name the live Codex tool actually uses
+        (`command`) must reach the SAME scope fence and produce the SAME
+        denial as the `input`-bodied payload above - not a different
+        fail-closed category from an empty parse.
+        """
+        with h.e2e_repo() as repo:
+            _approved_fence(repo.archive, "src/auth/**")
+            outside = "src/billing/invoice.py"
+            patch = (
+                "*** Begin Patch\n"
+                f"*** Add File: {outside}\n"
+                "+new content\n"
+                "*** End Patch\n"
+            )
+            payload = h.codex_apply_patch_command_body(patch, str(repo.project))
+            result = h.run_hook(payload, repo, host="codex")
+            self.assertEqual(h.interpret("codex", result), "deny")
+            # The denial must be the FENCE's, not the fail-closed
+            # `unrecognized-tool` an unread body also produces at exit 2 -
+            # without this the scenario would "pass" for the wrong reason.
+            envelope = json.dumps(result.envelope).lower()
+            self.assertIn("outside the editable set", envelope)
+            self.assertIn(outside, envelope)
+            self.assertNotIn("unrecognized", envelope)
+
+    def test_codex_apply_patch_in_command_allows_an_in_scope_target(self) -> None:
+        """The positive control the denial above needs: a `command`-bodied
+        patch whose target IS inside the declared fence is allowed. Without
+        this, a body the adapter simply failed to read would also "pass" the
+        denial test, for the wrong reason.
+        """
+        with h.e2e_repo() as repo:
+            _approved_fence(repo.archive, "src/billing/**")
+            patch = (
+                "*** Begin Patch\n"
+                "*** Add File: src/billing/invoice.py\n"
+                "+new content\n"
+                "*** End Patch\n"
+            )
+            payload = h.codex_apply_patch_command_body(patch, str(repo.project))
+            result = h.run_hook(payload, repo, host="codex")
+            self.assertEqual(h.interpret("codex", result), "allow")
+
+    def test_a_command_bodied_patch_is_fenced_on_its_later_targets_too(self) -> None:
+        """"Every target the patch names", proven where it can actually fail:
+        the FIRST target is inside the declared fence and the SECOND is not.
+        A fence that only ever saw the head of the target list would allow
+        this call.
+        """
+        with h.e2e_repo() as repo:
+            _approved_fence(repo.archive, "src/billing/**")
+            patch = (
+                "*** Begin Patch\n"
+                "*** Add File: src/billing/invoice.py\n"
+                "+in scope\n"
+                "*** Add File: src/auth/session.py\n"
+                "+out of scope\n"
+                "*** End Patch\n"
+            )
+            payload = h.codex_apply_patch_command_body(patch, str(repo.project))
+            result = h.run_hook(payload, repo, host="codex")
+            self.assertEqual(h.interpret("codex", result), "deny")
+            envelope = json.dumps(result.envelope).lower()
+            self.assertIn("src/auth/session.py", envelope)
+
 
 if __name__ == "__main__":
     unittest.main()
