@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
+import fnmatch
 import hashlib
 import json
 import os
@@ -62,8 +63,51 @@ def _category(path: Path) -> str:
     return "other"
 
 
+def _baseline_exclusions(root: Path) -> list[str]:
+    """Declared glob exclusions from `.godmode-privacy.json`'s optional
+    `baseline_exclude` list. Tighten-only by construction: an exclusion can
+    only REMOVE an entry from what persists (skipped and counted), never
+    widen what persists in clear - redaction still applies to everything
+    that is not excluded."""
+    try:
+        payload = json.loads(
+            (root / ".godmode-privacy.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    declared = payload.get("baseline_exclude")
+    if not isinstance(declared, list):
+        return []
+    return [item for item in declared if isinstance(item, str) and item]
+
+
+def _redacted_entry(relative: str, entry: dict[str, Any]) -> dict[str, Any]:
+    """B4-8(b): a secret-shaped PATH persists as {hash, length,
+    extension-class}, never in clear. The synthetic `path` key is stable
+    (derived from the cleartext's sha256), so `inventory_diff` keys on it
+    unchanged and drift detection keeps working against the redacted
+    baseline - no-baseline stops being a terminal state."""
+    digest = hashlib.sha256(relative.encode("utf-8")).hexdigest()
+    return {
+        "path": f"redacted:{digest[:16]}",
+        "redacted": True,
+        "length": len(relative),
+        "extension_class": entry["category"],
+        "category": entry["category"],
+        "size": entry["size"],
+        "mtime_ns": entry["mtime_ns"],
+        "sha256": entry["sha256"],
+    }
+
+
 def collect_inventory(project: str | Path) -> dict[str, Any]:
     root = canonical_path(Path(project))
+    # Deferred import: sentinel imports nothing from this module, but the
+    # scanner lives beside the gate machinery and a module-level import
+    # would put all of it on this module's import path.
+    from .godmode_sentinel import find_secret_shapes
+
+    exclusions = _baseline_exclusions(root)
+    redaction_count = 0
     entries: list[dict[str, Any]] = []
     skipped = Counter()
     for current, directories, files in os.walk(root, topdown=True, followlinks=False):
@@ -95,15 +139,24 @@ def collect_inventory(project: str | Path) -> dict[str, Any]:
                 except OSError:
                     skipped["unreadable"] += 1
                     continue
-            entries.append(
-                {
-                    "path": resolved.relative_to(root).as_posix(),
-                    "category": _category(resolved),
-                    "size": stat.st_size,
-                    "mtime_ns": stat.st_mtime_ns,
-                    "sha256": digest,
-                }
-            )
+            relative = resolved.relative_to(root).as_posix()
+            if any(fnmatch.fnmatch(relative, pattern) for pattern in exclusions):
+                skipped["excluded"] += 1
+                continue
+            entry = {
+                "path": relative,
+                "category": _category(resolved),
+                "size": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+                "sha256": digest,
+            }
+            # Skip-and-report, never abort (B4-8(b)): the whole snapshot
+            # used to be refused downstream by the privacy guard when ONE
+            # path was secret-shaped, so no baseline could ever exist.
+            if find_secret_shapes(relative):
+                entry = _redacted_entry(relative, entry)
+                redaction_count += 1
+            entries.append(entry)
     entries.sort(key=lambda item: item["path"])
     category_counts = Counter(entry["category"] for entry in entries)
     return {
@@ -112,6 +165,7 @@ def collect_inventory(project: str | Path) -> dict[str, Any]:
         "files": len(entries),
         "categories": dict(sorted(category_counts.items())),
         "skipped": dict(sorted(skipped.items())),
+        "redaction_count": redaction_count,
     }
 
 

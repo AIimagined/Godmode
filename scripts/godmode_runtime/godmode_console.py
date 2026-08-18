@@ -285,15 +285,20 @@ def _require_archive(runtime: Runtime) -> None:
     # "Not initialized" is the wrong answer when records exist under a previous
     # identity: the history is intact and one command away, so say that instead of
     # implying the project is new.
+    # B4-8 extension (field feedback 3): a not-initialized answer that does
+    # not say WHICH project it is answering about reads as global state -
+    # in the field it produced a confident wrong verdict. Scope is named.
+    project = runtime.anchor.project_root
     orphaned = runtime.archive.orphaned()
     if orphaned:
         raise ArchiveError(
-            f"Godmode is not initialized at this project's current identity, but "
+            f"Godmode is not initialized at {project}'s current identity, but "
             f"{orphaned['records']} records exist under its previous one "
             f"({orphaned['reason']}). Run `adopt --confirm` to relink them, or `init` "
             f"to start a separate archive and leave them unreachable."
         )
-    raise ArchiveError("Godmode is not initialized for this project; run `init` first")
+    raise ArchiveError(
+        f"Godmode is not initialized for {project}; run `init` first")
 
 
 def _event_view(record: dict[str, Any]) -> dict[str, Any]:
@@ -485,7 +490,8 @@ _CONFIG_CONTRACTS: dict[str, dict[str, tuple[type, bool]]] = {
                                "seconds": (int, False)},
     ".godmode-dependency-policy.json": {"max_dependencies": (int, False),
                                         "banned_licenses": (list, False)},
-    ".godmode-privacy.json": {"sensitive_paths": (list, False), "never_leave": (list, False)},
+    ".godmode-privacy.json": {"sensitive_paths": (list, False), "never_leave": (list, False),
+                              "baseline_exclude": (list, False)},
     # Task 10b's maturity/stop_contract/budget_s/verdict_path/escalation fields
     # on this same file are validated by `loop_ready` (legal maturity, positive
     # budget, sane thresholds) rather than here - this table's (type, required)
@@ -546,7 +552,7 @@ def cmd_config_check(args: argparse.Namespace, runtime: Runtime) -> CommandResul
         problems.extend(file_problems)
         checked.append({"file": filename, "state": "invalid" if file_problems else "valid"})
     return CommandResult(
-        {"checked": checked, "problems": problems,
+        {"project": str(project), "checked": checked, "problems": problems,
          "known_files": sorted(_CONFIG_CONTRACTS),
          "verdict": "valid" if not problems else "invalid"},
         exit_code=0 if not problems else 1,
@@ -1254,8 +1260,11 @@ def cmd_capabilities(args: argparse.Namespace, runtime: Runtime) -> CommandResul
             )
             payload["recorded"] = record["sequence"]
         return CommandResult(payload)
-    return CommandResult(host_capabilities(
-        tool_call_interception=interception_state(runtime.archive, current_host())))
+    return CommandResult({
+        "project": str(runtime.anchor.project_root),
+        **host_capabilities(
+            tool_call_interception=interception_state(runtime.archive, current_host())),
+    })
 
 
 def _hooks_health_fields(archive: Any, host: str, level: str) -> dict[str, Any]:
@@ -1319,6 +1328,9 @@ def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         manifest = hook_manifest_status()
         level = interception_state(runtime.archive, host)
         payload = {
+            # Scope-explicit (B4-8 ext.): status names the project it is
+            # answering about.
+            "project": str(runtime.anchor.project_root),
             "plugin_installed": manifest["plugin_installed"],
             "session_hook_seen": manifest["session_hook_seen"],
             "pretool_hook_seen": manifest["pretool_hook_seen"],
@@ -1338,7 +1350,9 @@ def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             return CommandResult(
                 {
                     "probe": "not-run",
-                    "reason": "project is not initialized; run `godmode init` first",
+                    "project": str(runtime.anchor.project_root),
+                    "reason": (f"godmode is not initialized for "
+                               f"{runtime.anchor.project_root}; run `godmode init` first"),
                 },
                 exit_code=1,
             )
@@ -1806,11 +1820,16 @@ def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 
 def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    # Scope-explicit (B4-8 ext.): every status answer names the project it
+    # is about, in JSON and in prose.
+    project = str(runtime.anchor.project_root)
     if not runtime.archive.initialized():
         return CommandResult(
             {
+                "project": project,
                 "healthy": False,
-                "issues": [{"code": "not-initialized", "severity": "error", "detail": "Run init."}],
+                "issues": [{"code": "not-initialized", "severity": "error",
+                            "detail": f"Not initialized for {project}. Run init."}],
                 "network_used": False,
             },
             exit_code=1,
@@ -1837,6 +1856,7 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     healthy = not any(issue["severity"] == "error" for issue in issues)
     return CommandResult(
         {
+            "project": project,
             "healthy": healthy,
             "archive": verification,
             "issues": issues,
@@ -2031,8 +2051,10 @@ def _cmd_guard_git_hook(args: argparse.Namespace, runtime: Runtime) -> CommandRe
     if not runtime.archive.initialized():
         return CommandResult({
             "git_hook": name, "verdict": "allow",
-            "reason": "godmode is not initialized for this project; the git backstop is "
-                      "advisory-only until it is",
+            "project": str(runtime.anchor.project_root),
+            "reason": f"godmode is not initialized for "
+                      f"{runtime.anchor.project_root}; the git backstop is "
+                      f"advisory-only until it is",
         })
     project_root = Path(runtime.anchor.project_root)
     stdin_text: str | None = ""
@@ -4004,10 +4026,31 @@ def main(argv: list[str] | None = None) -> int:
     mode = os.environ.get("GODMODE_MODE", "standard")
     if mode == "expert" and not getattr(args, "json", False):
         args.brief = True
+    return _dispatch(args, mode=mode)
+
+
+def _reports_error(payload: Any) -> bool:
+    """B4-8(a): a payload carrying an error verdict IS a failure, whatever
+    exit code its handler set. Truthy `error` key is the shape every such
+    site already uses (`{"error": "PrivacyError", ...}`)."""
+    return isinstance(payload, dict) and bool(payload.get("error"))
+
+
+def _dispatch(args: argparse.Namespace, mode: str = "standard") -> int:
+    """Run one parsed command and map its result to the exit vocabulary:
+    0 ok / 1 findings-red (ran, found problems - set by the handler) /
+    2 error (the command itself failed, whether raised OR reported in the
+    payload body). B4-8(a): enforced here, at the one seam every command
+    shares, so a handler that catches its own failure and reports it in the
+    body with exit 0 - the field defect - still exits nonzero, and commands
+    added later inherit the contract without opting in.
+    """
     try:
         runtime = _runtime(args.project)
         handler: Callable[[argparse.Namespace, Runtime], CommandResult] = args.handler
         result = handler(args, runtime)
+        if result.exit_code == 0 and _reports_error(result.payload):
+            result = CommandResult(result.payload, exit_code=2)
         if mode == "guided" and result.exit_code != 0 and isinstance(result.payload, dict):
             missing = (result.payload.get("missing")
                        or result.payload.get("exceeded")
