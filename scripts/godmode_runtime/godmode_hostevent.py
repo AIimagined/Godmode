@@ -577,16 +577,25 @@ def _looks_directive_like(normalized_line: str) -> bool:
 # refused as an unmapped tool. Adding it is additive - the three original
 # names still parse a body when `command` is absent.
 #
-# ORDER is a security decision, and the same one `_ALIASES` above already
-# makes for dual-cased payload fields: when a payload carries the body
-# under two names with DIFFERENT contents, the one the real host EXECUTES
-# has to be the one the fence READS. Reading the loser would let a caller
-# fence a benign patch under `input` while the host applied a different
-# one from `command`. So `command` is tried first - it is also the name
-# this same host's shell tool already uses (`_SHELL_COMMAND_FIELDS`), so
-# the two Codex tools now read their body from the same field name. The
-# remaining three keep their existing relative order; nothing about which
-# of THEM wins changes.
+# SEC-B follow-up (review I1): the patch body is a UNION, not a
+# first-field-wins pick. Codex 0.147.0's own embedded model-facing prompt
+# (offsets 0xe2d17e6/0xe3258ca) documents the body as an argv ARRAY -
+# `{"command": ["apply_patch", "*** Begin Patch..."]}` - a shape no
+# single-string-field rule can read, and the reason the original fix
+# probably never fixed the reported live break. Selecting "the" body
+# element would mean guessing at an unfixtured shape (the exact objection
+# the original report raised); UNIONING dissolves the objection instead:
+# every non-empty string candidate across `_PATCH_BODY_FIELDS` - including
+# the string elements of a list-valued field - is collected, the whole
+# call fails closed if ANY candidate carries a malformed directive, and
+# the targets of all of them are unioned. That is monotone in the
+# fail-closed direction: whichever body the real host executes, its
+# targets are a SUBSET of what the fence inspected, which is the property
+# the old `command`-first precedence existed to protect - now without
+# needing to know the winner, and with the old mirror-image blind spot (a
+# malformed directive in the LOSING field was never inspected) closed for
+# free. The shell tool still reads a single string field; nothing about
+# `shell_command` changes here.
 _SHELL_COMMAND_FIELDS = ("command",)
 _PATCH_BODY_FIELDS = ("command", "input", "patch", "content")
 
@@ -597,6 +606,25 @@ def _first_field(payload: dict[str, Any], names: tuple[str, ...]) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+def _body_candidates(payload: dict[str, Any], names: tuple[str, ...]) -> list[str]:
+    """Every non-empty string candidate across `names`, in field order. A
+    list-valued field contributes its non-empty string ELEMENTS in place
+    (the documented Codex argv-array shape); any other type is never a
+    candidate - an unreadable value contributes nothing and the caller
+    fails closed when no candidate parses a target.
+    """
+    candidates: list[str] = []
+    for name in names:
+        value = payload.get(name)
+        if isinstance(value, str) and value:
+            candidates.append(value)
+        elif isinstance(value, list):
+            candidates.extend(
+                item for item in value if isinstance(item, str) and item
+            )
+    return candidates
 
 
 def apply_patch_targets(patch_text: str) -> list[tuple[str, str]]:
@@ -702,14 +730,22 @@ def _adapt_codex(raw: Any, tool: str | None = None, tool_input: Any = None,
         )
 
     if tool == "apply_patch":
-        patch_text = _first_field(tool_input, _PATCH_BODY_FIELDS) or ""
+        candidates = _body_candidates(tool_input, _PATCH_BODY_FIELDS)
         # Fix round 1, C1 (review Critical): checked BEFORE trusting
         # apply_patch_targets's output - a patch with one well-formed and
         # one malformed directive must never proceed on the well-formed
-        # target alone.
-        if has_malformed_directive(patch_text):
+        # target alone. Union form (review I1): ANY candidate malformed
+        # fails the whole call closed, including one in a field the old
+        # precedence rule would never have read.
+        if any(has_malformed_directive(text) for text in candidates):
             return _malformed("codex", tool, raw)
-        touched = apply_patch_targets(patch_text)
+        touched: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for text in candidates:
+            for target in apply_patch_targets(text):
+                if target not in seen:
+                    seen.add(target)
+                    touched.append(target)
         if not touched:
             return _unrecognized("codex", tool, raw)
         operation = "; ".join(
