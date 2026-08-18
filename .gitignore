@@ -41,3 +41,6 @@ docs-site/
 
 # Host workspace state (worktree checkouts, agent scratch) - never shippable.
 .claude/
+
+# Agent task reports and SDD scratch - internal, never shippable.
+.superpowers/
