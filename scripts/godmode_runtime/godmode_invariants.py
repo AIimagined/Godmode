@@ -306,6 +306,32 @@ def _action_invariants(data: dict[str, Any]) -> None:
     `_pin_invariants` above refuses for a pin with no digest. Refused here,
     at the same seam a raw `archive.append()` cannot route around.
     """
+    if data.get("interrupted") is True:
+        # B4-4: an interrupted-intent record is counts + hashes by CONTRACT,
+        # enforced here at the seam a raw append cannot route around - a
+        # free-text field smuggled into this shape would persist the very
+        # content the record exists to avoid persisting.
+        allowed = {"interrupted", "open_obligations", "staged_capabilities",
+                   "plan_fence_active", "subject_hashes"}
+        extras = sorted(set(data) - allowed)
+        if extras:
+            raise ArchiveError(
+                f"an interrupted-intent record carries counts and hashes only; "
+                f"unexpected fields: {extras}")
+        for field in ("open_obligations", "staged_capabilities"):
+            value = data.get(field)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ArchiveError(
+                    f"interrupted-intent '{field}' must be a non-negative count")
+        hashes = data.get("subject_hashes", [])
+        if (not isinstance(hashes, list) or len(hashes) > 16
+                or not all(isinstance(h, str)
+                           and re.fullmatch(r"[0-9a-f]{16}", h)
+                           for h in hashes)):
+            raise ArchiveError(
+                "interrupted-intent subject_hashes must be at most 16 "
+                "16-hex-character digests")
+        return
     if data.get("proof") is not True:
         return
     for field in ("host", "tool", "request_id"):

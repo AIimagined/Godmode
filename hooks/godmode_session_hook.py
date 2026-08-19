@@ -306,6 +306,110 @@ def _ellipsize(text: str, limit: int) -> str:
     return kept + "..."
 
 
+def _open_next_actions(records: list[dict[str, Any]]) -> list[str]:
+    """The latest checkpoint's declared next-actions - the in-flight work a
+    dying session would otherwise take with it. Empty when the latest
+    checkpoint declared none (or none exists): finished is finished."""
+    for record in reversed(records):
+        if record["kind"] == "checkpoint":
+            raw = (record.get("data") or {}).get("next") or []
+            return [str(item) for item in raw if str(item).strip()] \
+                if isinstance(raw, list) else []
+    return []
+
+
+def _capture_interrupted_intent(archive: Chronicle) -> None:
+    """B4-4: when a session ends (or compacts) with declared work in flight
+    - open next-actions, an unconsumed staged capability, an active plan
+    fence - record that fact as counts + subject hashes, so the next resume
+    digest can surface it first. Content-free by construction and by
+    invariant: the record carries how MUCH was in flight, never what."""
+    import hashlib
+    import time as _time
+    records = archive.read_events()
+    open_actions = _open_next_actions(records)
+    from godmode_runtime.godmode_fence import declared_fence
+    fence_active = declared_fence(archive) is not None
+    staged = 0
+    try:
+        broker = _broker(archive)
+        if broker.configured():
+            now = int(_time.time())
+            staged = sum(
+                1 for entry in broker._load().get("staged", [])  # noqa: SLF001
+                if int(entry.get("expires_at", 0)) >= now)
+    except Exception:  # noqa: BLE001
+        staged = 0
+    if not (open_actions or staged or fence_active):
+        return
+    archive.append(
+        "action", "interrupted-intent",
+        {
+            "interrupted": True,
+            "open_obligations": len(open_actions),
+            "staged_capabilities": staged,
+            "plan_fence_active": fence_active,
+            "subject_hashes": [
+                hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+                for text in open_actions[:16]
+            ],
+        },
+        evidence=[],
+    )
+
+
+def _resume_digest(archive: Chronicle, project_root: Path,
+                   obligations: dict[str, Any]) -> dict[str, Any]:
+    """B4-4: the counts-only "where you left off" answer, rendered into the
+    existing brief within its budget. An interruption recorded since the
+    last checkpoint comes first; a checkpoint whose file refs no longer
+    resolve is marked stale rather than repeated as truth; the unattested-
+    HARD count is lifted from the obligations block already computed rather
+    than derived a second time."""
+    records = archive.read_events()
+    digest: dict[str, Any] = {}
+    checkpoints = [r for r in records if r["kind"] == "checkpoint"]
+    last_checkpoint_sequence = checkpoints[-1]["sequence"] if checkpoints else 0
+    interruptions = [r for r in records
+                     if r["kind"] == "action"
+                     and r["subject"] == "interrupted-intent"]
+    if interruptions and interruptions[-1]["sequence"] > last_checkpoint_sequence:
+        data = interruptions[-1].get("data") or {}
+        digest["interrupted"] = {
+            "sequence": interruptions[-1]["sequence"],
+            "open_obligations": data.get("open_obligations", 0),
+            "staged_capabilities": data.get("staged_capabilities", 0),
+            "plan_fence_active": bool(data.get("plan_fence_active")),
+        }
+    if checkpoints:
+        checkpoint = checkpoints[-1]
+        entry: dict[str, Any] = {
+            "subject": str(checkpoint["subject"])[:120],
+            "status": str((checkpoint.get("data") or {}).get("status", "")),
+            "sequence": checkpoint["sequence"],
+        }
+        stale_refs = sum(
+            1 for ref in checkpoint.get("evidence", [])
+            if isinstance(ref, str) and ref.startswith("file:")
+            and not (project_root / ref[len("file:"):]).exists())
+        if stale_refs:
+            entry["stale"] = True
+            entry["stale_refs"] = stale_refs
+        digest["last_checkpoint"] = entry
+    digest["open_obligations"] = len(_open_next_actions(records))
+    charter = obligations.get("charter")
+    if isinstance(charter, dict) and "unattested_hard" in charter:
+        digest["unattested_hard_rules"] = charter["unattested_hard"]
+    verdicts = [r for r in records if r["kind"] == "verdict"][-5:]
+    if verdicts:
+        counts: dict[str, int] = {}
+        for record in verdicts:
+            disposition = str((record.get("data") or {}).get("disposition", "?"))
+            counts[disposition] = counts.get(disposition, 0) + 1
+        digest["last_verdicts"] = counts
+    return digest
+
+
 def _checkpoint_pressure(archive: Chronicle, anchor: Any) -> str | None:
     """B4-7 rider 1: tick the tracked-mutation counter and answer with an
     advisory when it crosses the threshold - or, under declared
@@ -563,6 +667,13 @@ def main(argv: list[str] | None = None) -> int:
             from godmode_runtime.godmode_lens import build_context_brief
             brief = build_context_brief(anchor, archive)
             brief["obligations"] = _session_obligations(anchor, archive)
+            # B4-4: the resume digest, counts only, inside the same budget -
+            # best-effort like every other section, never a blocked session.
+            try:
+                brief["resume"] = _resume_digest(
+                    archive, Path(anchor.project_root), brief["obligations"])
+            except Exception:  # noqa: BLE001
+                pass
             if claude_session:
                 _emit_claude_context(brief)
             else:
@@ -595,6 +706,13 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.event in {"pre-compact", "session-end"}:
+            # B4-4: capture in-flight declared work BEFORE anything else in
+            # this branch - the summary checkpoint below is optional and a
+            # session dying without one is exactly the case this exists for.
+            try:
+                _capture_interrupted_intent(archive)
+            except Exception:  # noqa: BLE001
+                pass
             if args.event == "session-end":
                 # Best-effort, counts-only measurement of the host's own
                 # transcript. Never blocks the checkpoint below: a missing
