@@ -288,7 +288,10 @@ FAIL_OPEN_HOSTS = frozenset({"grok", "gemini", "cursor"})
 # (scale 1000).
 _PRETOOL_MANIFEST_SPECS: dict[str, tuple[str, str, int]] = {
     "claude": ("hooks/hooks.json", "PreToolUse", 1000),
-    "codex": ("hooks/hooks.json", "pre_tool_use", 1000),
+    # Sprint 4: Codex fires the shared CamelCase `PreToolUse` block (captured
+    # live), and the snake_case key it used to read here is retired - naming
+    # an event Codex cannot fire made this return "budget unknown".
+    "codex": ("hooks/hooks.json", "PreToolUse", 1000),
     "grok": (".grok-plugin/hooks.json", "PreToolUse", 1000),
     "cursor": (".cursor-plugin/hooks.json", "preToolUse", 1000),
     "gemini": (".gemini-plugin/hooks-fragment.json", "BeforeTool", 1),

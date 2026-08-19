@@ -966,6 +966,64 @@ def _adapt_cursor(raw: Any) -> HostEvent:
     return _unrecognized("cursor", tool, raw)
 
 
+# ---------------------------------------------------------------------------
+# Gemini CLI adapter. Sprint 4: the shipped `.gemini-plugin/hooks-fragment.json`
+# subscribes `BeforeTool` with matcher `.*` - EVERY tool - while Gemini was
+# routed through the generic adapter, whose map knows only Claude's names. So
+# every Gemini tool call arrived as `unrecognized-tool`: `run_shell_command`,
+# the tool Gemini runs shell commands with, included.
+#
+# Names below are documented ones only (Gemini CLI's published hooks reference
+# and hooks guide, fetched 2026-08-19): `run_shell_command`, `read_file`,
+# `write_file`, `replace`, and the MCP naming pattern `mcp_<server>_<tool>`.
+# Gemini's blocking contract is `{"decision": "deny"|"block", "reason": ...}`
+# with `reason` REQUIRED - the hook's dual-output envelope already carries
+# both keys, so no response change is needed here.
+#
+# The parameter field names are NOT documented in that reference, so every
+# plausible published spelling is read and the first present wins, rather
+# than one being guessed at - the same treatment Cursor's undocumented path
+# field gets, for the same reason.
+_GEMINI_PATH_FIELDS = ("absolute_path", "file_path", "path")
+
+
+def _adapt_gemini(raw: Any) -> HostEvent:
+    tool = str(field(raw, "tool_name") or "").strip()
+    tool_input = field(raw, "tool_input")
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+    event_name = str(field(raw, "hook_event_name") or "")
+    cwd = str(field(raw, "cwd") or "")
+    request_id = str(field(raw, "request_id") or "")
+
+    if tool == "run_shell_command":
+        return HostEvent(
+            schema=SCHEMA, event=event_name, host="gemini", tool=tool,
+            operation=str(tool_input.get("command", "")).strip(), targets=[],
+            cwd=cwd, request_id=request_id, tool_kind=TOOL_KIND_SHELL,
+        )
+
+    if tool in ("write_file", "replace"):
+        target = (_first_field(tool_input, _GEMINI_PATH_FIELDS) or "").strip()
+        verb = "write" if tool == "write_file" else "edit"
+        return HostEvent(
+            schema=SCHEMA, event=event_name, host="gemini", tool=tool,
+            operation=f"{verb} file {target or '(unnamed)'}",
+            targets=[target] if target else [], cwd=cwd,
+            request_id=request_id, tool_kind=TOOL_KIND_FENCED,
+        )
+
+    if tool == "read_file":
+        target = (_first_field(tool_input, _GEMINI_PATH_FIELDS) or "").strip()
+        return HostEvent(
+            schema=SCHEMA, event=event_name, host="gemini", tool=tool,
+            operation=f"read file {target}".strip(), targets=[], cwd=cwd,
+            request_id=request_id, tool_kind=TOOL_KIND_READ,
+        )
+
+    return _unrecognized("gemini", tool, raw)
+
+
 def _adapt_generic(raw: Any, host: str) -> HostEvent:
     from .godmode_guardrails import tool_operation
 
@@ -1031,6 +1089,7 @@ _ADAPTERS = {
     # dialect - see `_adapt_cursor`. Gemini stays generic (its dialect is
     # Addendum 4a and is not tool-type-matched the way Cursor's is).
     "cursor": _adapt_cursor,
+    "gemini": _adapt_gemini,
 }
 
 
@@ -1062,7 +1121,7 @@ def parse_host_payload(raw: Any) -> HostEvent:
         event = _unrecognized(host, str(tool_name) if tool_name is not None else "", raw)
     elif host in _ADAPTERS:
         event = _ADAPTERS[host](raw)
-    elif host in ("gemini", "cursor"):
+    elif host == "unknown-generic-placeholder":
         event = _adapt_generic(raw, host)
     else:
         # A tool name is present but the host is unrecognised - still fail
