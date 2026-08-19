@@ -109,6 +109,7 @@ from .godmode_roi import render_digest as render_roi_digest
 from .godmode_roi import render_roi
 from .godmode_roi import roi_digest
 from .godmode_roi import roi_report
+from .godmode_roi import would_have_summary
 # U-E10 - minimal isolated block (one import line, one subcommand, one
 # handler), same pattern as the U-R2 loop-ready block above.
 from .godmode_recurrence import DEFAULT_THRESHOLD as RECURRENCE_DEFAULT_THRESHOLD
@@ -2332,6 +2333,48 @@ def cmd_roi(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult({"report": render_roi(report)})
 
 
+def cmd_observe(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """B4-10(c): what an observe-mode trial recorded, read back on request.
+
+    Bare `observe` answers with the tier-shaped summary only - the same
+    counts `assess` and the session brief carry, no command text. `--report`
+    adds the last N would-have decisions with tier, category, reason and the
+    operation text itself: command text appears HERE and nowhere else,
+    because this is the one surface the operator reaches by explicitly
+    asking for it. Still redaction-scanned - a secret-shaped operation is
+    replaced whole (`find_secret_shapes`, the same scanner egress/trust/
+    verdict already use; whole-value replacement, never partial masking).
+    Zero would-haves renders an empty list beside `total: 0` - absence of
+    signal stated, never implied.
+    """
+    _require_archive(runtime)
+    payload: dict[str, Any] = {
+        "project": str(runtime.anchor.project_root),
+        "would_have": would_have_summary(runtime.archive),
+    }
+    if getattr(args, "report", False):
+        observed = [
+            record for record in runtime.archive.select(kind="refusal", limit=500)
+            if (record.get("data") or {}).get("observed") is True
+        ]
+        decisions = []
+        for record in observed[-max(1, args.last):]:
+            data = record.get("data") or {}
+            operation = str(data.get("operation", ""))
+            if find_secret_shapes(operation):
+                operation = "[redacted: secret-shaped content]"
+            decisions.append({
+                "sequence": record["sequence"],
+                "tier": str(data.get("tier", "R?")),
+                "category": str(data.get("category", "")),
+                "would_have": str(data.get("would_have", "")),
+                "reason": str(data.get("reason", "")),
+                "operation": operation,
+            })
+        payload["decisions"] = decisions
+    return CommandResult(payload)
+
+
 def cmd_recurring(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     """U-E10: recurring-ask mining. Proposals only; JSON with --json, prose otherwise."""
     _require_archive(runtime)
@@ -3832,6 +3875,22 @@ def _build_parser() -> argparse.ArgumentParser:
              "(would-have-denied/would-have-asked by category), never merged "
              "with the real denial counts above")
     roi_parser.set_defaults(handler=cmd_roi)
+
+    observe_parser = sub.add_parser(
+        "observe",
+        help="B4-10: what an observe-mode trial recorded - tier-shaped "
+             "would-have counts; --report lists the decisions themselves",
+    )
+    observe_parser.add_argument(
+        "--report", action="store_true",
+        help="List the last N would-have decisions with tier, category, "
+             "reason and (redaction-scanned) operation text",
+    )
+    observe_parser.add_argument(
+        "--last", type=int, default=20,
+        help="How many decisions --report lists (default: 20)",
+    )
+    observe_parser.set_defaults(handler=cmd_observe)
 
     recurring_parser = sub.add_parser(
         "recurring",

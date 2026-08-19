@@ -38,7 +38,7 @@ from godmode_runtime.godmode_hostevent import (  # noqa: E402
     unrecognized_tool_preview)
 from godmode_runtime.godmode_sentinel import (  # noqa: E402
     GATE_MODE_OBSERVE, classify_action, evidence_pipe_advisory,
-    local_authorization_policy)
+    find_secret_shapes, local_authorization_policy)
 
 # CX-2 payload-capture probe: counts-only capture of an unrecognized host
 # shape (event/tool names, sorted input field names, request-id/cwd hashes -
@@ -222,13 +222,45 @@ def _session_obligations(anchor: Any, archive: Chronicle) -> dict[str, Any]:
         policy = {}
     if policy.get("gate_mode") == GATE_MODE_OBSERVE:
         obligations["enforcement"]["gate_mode"] = GATE_MODE_OBSERVE
-        obligations["enforcement"]["notice"] = (
+        notice = (
             "gate in OBSERVE mode - nothing will be blocked; every deny/ask "
             "this session would have produced is instead recorded as an "
             "advisory refusal (`godmode roi --digest` reads them back). "
             "Entered via .godmode-authorization-policy.json's gate_mode - "
             "edit that file to return to enforcement."
         )
+        # B4-10(a)/(d): the trial's evidence, in the same brief every session
+        # reads - counts by tier plus the highest-tier example's category,
+        # never command text (that lives behind `godmode observe --report`,
+        # where the operator explicitly asks). Zero is stated, not implied:
+        # observe mode that is silent is a mute button, not a trial.
+        try:
+            from godmode_runtime.godmode_roi import (
+                OBSERVE_PROMOTION_THRESHOLD, would_have_summary,
+            )
+            summary = would_have_summary(archive)
+            obligations["enforcement"]["would_have"] = summary
+            if summary["total"]:
+                notice += (
+                    f" This trial's would-have events so far: r5={summary['r5']} "
+                    f"r4={summary['r4']} r3={summary['r3']} r2={summary['r2']}"
+                    + (f" (top: {summary['top']})" if summary["top"] else "")
+                    + " - `godmode observe --report` lists them."
+                )
+            else:
+                notice += " There are no would-have events recorded yet this trial."
+            irreversible = summary["r4"] + summary["r5"]
+            if irreversible >= OBSERVE_PROMOTION_THRESHOLD:
+                notice += (
+                    f" PROMOTE? Under enforce mode, {irreversible} of these "
+                    "operations would have been denied or asked about at the "
+                    "irreversible tiers (R4/R5). To promote the gate to "
+                    "enforce, remove 'gate_mode' from "
+                    ".godmode-authorization-policy.json."
+                )
+        except GodmodeError:
+            notice += " (would-have counts unavailable: archive unreadable)"
+        obligations["enforcement"]["notice"] = notice
     return obligations
 
 
@@ -348,6 +380,20 @@ def _apply_observe_mode(archive: Chronicle, tool: str, operation: str,
     continue under a posture whose entire point is "never block".
     """
     would_have = "ask" if _decision_for(preview) == "ask" else "deny"
+    reason = str(preview.get("reason") or preview.get("category", "operation"))[:300]
+    # B4-10: a secret-shaped operation used to VANISH from the trial's
+    # record here - `Chronicle.append` refuses secret-shaped payloads
+    # (`enforce_private_payload`), the best-effort except below swallowed
+    # the refusal, and the would-have event was silently dropped: invisible
+    # to the digest, the brief, and `observe --report` alike. Redact at
+    # write time instead - whole-value replacement, the same convention
+    # egress/verdict use - so the EVENT persists even when its text cannot.
+    recorded_operation = operation[:500]
+    if find_secret_shapes(recorded_operation):
+        recorded_operation = "[redacted: secret-shaped content]"
+    recorded_reason = reason
+    if find_secret_shapes(recorded_reason):
+        recorded_reason = "[redacted: secret-shaped content]"
     # Fix round 1, M1: skipped when `record_unrecognized_tool`/
     # `record_malformed_apply_patch` already chronicled this exact miss,
     # unconditionally, before observe mode was even consulted - the same
@@ -358,18 +404,21 @@ def _apply_observe_mode(archive: Chronicle, tool: str, operation: str,
                 "refusal",
                 str(preview.get("category", "refusal"))[:200] or "refusal",
                 {
-                    "operation": operation[:500],
+                    "operation": recorded_operation,
                     "tool": tool or "operation",
                     "tier": str(preview.get("tier", "R?")),
                     "category": preview.get("category", "unclassified-mutation"),
                     "observed": True,
                     "would_have": would_have,
+                    # B4-10(c): `observe --report` names reasons; a reason
+                    # never persisted cannot be reported. Bounded like the
+                    # advisory's own cap below.
+                    "reason": recorded_reason,
                 },
                 evidence=[],
             )
         except Exception:  # noqa: BLE001
             pass
-    reason = str(preview.get("reason") or preview.get("category", "operation"))[:300]
     preview["allow"] = True
     preview["observed"] = True
     preview["observe_advisory"] = (
