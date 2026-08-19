@@ -1677,6 +1677,20 @@ def cmd_context_status(args: argparse.Namespace, runtime: Runtime) -> CommandRes
     return CommandResult(payload)
 
 
+def cmd_context_structure(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """B4-6 MVP: build/refresh the structural index (incremental by content
+    hash) and render the bounded outline from it. Names and hashes only."""
+    _require_archive(runtime)
+    from .godmode_structure import build_structure_index, structure_outline
+    report = build_structure_index(
+        runtime.archive, Path(runtime.anchor.project_root))
+    return CommandResult({
+        "report": report,
+        "outline": structure_outline(runtime.archive,
+                                     limit_lines=args.limit_lines),
+    })
+
+
 def cmd_context_rebuild(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return cmd_inspect(args, runtime)
 
@@ -3584,6 +3598,13 @@ def _build_parser() -> argparse.ArgumentParser:
     context_status.add_argument("--scan", action="store_true")
     context_status.set_defaults(handler=cmd_context_status)
     context_sub.add_parser("rebuild").set_defaults(handler=cmd_context_rebuild)
+    context_structure = context_sub.add_parser(
+        "structure",
+        help="B4-6: incremental structural index (Python symbols via ast, "
+             "file-level otherwise; names and hashes only) + bounded outline")
+    context_structure.add_argument("--limit-lines", type=int, default=200,
+                                   dest="limit_lines")
+    context_structure.set_defaults(handler=cmd_context_structure)
     context_why_parser = context_sub.add_parser(
         "why", help="Show recorded decisions, fixes, dependencies, and invariants about a path or topic"
     )
