@@ -32,7 +32,7 @@ from .godmode_chronicle import Chronicle
 
 INDEX_FILENAME = "structure_index.json"
 
-# [private]: fixed walk bounds, tune when a real tree measurably exceeds them.
+# Fixed walk bounds - tune when a real tree measurably exceeds them.
 MAX_FILES = 2000
 MAX_PARSE_BYTES = 256_000
 
