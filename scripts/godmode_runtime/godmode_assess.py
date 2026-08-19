@@ -122,8 +122,13 @@ def assess(project: Path, budget: int = TYPICAL_COLD_START_TOKENS,
     if archive is not None:
         try:
             report["would_have"] = would_have_summary(archive)
-        except GodmodeError:
-            pass
+        except GodmodeError as exc:
+            # Stated, never skipped - the same shape `authority`/`charter`/
+            # `drift` above use when their own read fails. A silently absent
+            # block would read as "no would-have events", which is a
+            # different and much more comfortable claim than "could not
+            # look".
+            report["would_have"] = {"unavailable": str(exc)[:160]}
     if gate_mode == GATE_MODE_OBSERVE:
         findings.append(_finding(
             "medium", "gate-observe-mode",

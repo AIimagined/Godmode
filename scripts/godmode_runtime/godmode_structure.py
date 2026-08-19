@@ -59,7 +59,12 @@ def _load_index(archive: Chronicle) -> dict[str, Any]:
         if isinstance(raw, dict) and isinstance(raw.get("files"), dict):
             return raw
     except (OSError, json.JSONDecodeError):
-        pass
+        # An unreadable or corrupt index is indistinguishable from no index:
+        # both mean "nothing may be reused", and the next build re-parses
+        # every file. Returned here rather than falling through, so the
+        # empty result is the stated answer to a failed read and not a
+        # shared exit two different outcomes arrive at.
+        return {"files": {}}
     return {"files": {}}
 
 
@@ -136,8 +141,13 @@ def build_structure_index(archive: Chronicle, project: Path) -> dict[str, Any]:
         _index_path(archive).write_text(
             json.dumps(payload, sort_keys=True), encoding="utf-8")
     except OSError:
-        # An index that cannot be written is one rebuild away, never an error.
-        pass
+        # An index that cannot be written must not leave the PREVIOUS one
+        # standing: the report below would say these files were indexed
+        # while the cache on disk still describes an older tree, and the
+        # next `structure` render would answer from it. Dropping it makes
+        # the next build re-parse everything, which is the honest cost of
+        # a failed write.
+        _index_path(archive).unlink(missing_ok=True)
     return {
         "files": len(files),
         "indexed": indexed,

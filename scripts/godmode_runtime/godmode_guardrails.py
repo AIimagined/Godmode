@@ -80,24 +80,42 @@ def mutations_since_checkpoint(archive: Chronicle) -> int:
         return 0
 
 
+def _forget_mutation_counter(archive: Chronicle) -> bool:
+    """Remove the counter file. `True` when nothing is left on disk.
+
+    The single place this file is deleted, so both the reset path and the
+    write-failure path below agree on what "no count" means rather than
+    each swallowing its own OSError separately.
+    """
+    try:
+        _mutation_counter_path(archive).unlink(missing_ok=True)
+        return True
+    except OSError:
+        return False
+
+
 def count_tracked_mutation(archive: Chronicle) -> int:
-    """One tracked-file mutation crossing; returns the running count."""
+    """One tracked-file mutation crossing; returns the running count.
+
+    A counter that cannot be written must not stop the tool call - but it
+    must not leave a STALE count standing either, because the next read
+    would resume from a number that no longer matches reality and could
+    fire (or withhold) a checkpoint suggestion on it. The file is dropped
+    instead, so the count restarts honestly from zero.
+    """
     count = mutations_since_checkpoint(archive) + 1
     try:
         _mutation_counter_path(archive).write_text(
             json.dumps({"mutations": count}), encoding="utf-8")
     except OSError:
-        # A counter that cannot be written must not stop the tool call.
-        pass
+        _forget_mutation_counter(archive)
+        return 0
     return count
 
 
 def reset_mutation_counter(archive: Chronicle) -> None:
     """A checkpoint - manual or auto - starts the count over."""
-    try:
-        _mutation_counter_path(archive).unlink(missing_ok=True)
-    except OSError:
-        pass
+    _forget_mutation_counter(archive)
 
 
 def checkpoint_trigger_policy(project_root: Path) -> tuple[int, bool]:

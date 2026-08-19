@@ -444,8 +444,14 @@ class Chronicle:
             _atomic_json(self.chain_anchor, {"length": length, "head_hash": head_hash})
         except OSError:
             # An anchor that cannot be written must not fail the append its
-            # record already sealed; the previous anchor stays in force.
-            pass
+            # record already sealed. It must also not leave the PREVIOUS
+            # anchor standing: that one now under-counts the files, and an
+            # under-counting anchor is exactly the shape `verify` reads as
+            # the legal crash-window lag - so a persistent write failure
+            # would look like a healthy archive forever. Removing it makes
+            # the next read say `anchor-absent`, which is the honest answer,
+            # and the next successful append re-establishes it.
+            self.chain_anchor.unlink(missing_ok=True)
 
     @staticmethod
     def _raise_truncated(anchored: int, remaining: int) -> None:
