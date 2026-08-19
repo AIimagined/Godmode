@@ -876,6 +876,61 @@ def _adapt_grok(raw: Any) -> HostEvent:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Cursor adapter. Cursor has a documented dialect of its own (Addendum 5, and
+# re-verified 2026-08-19 against cursor.com/docs/hooks.md), so it does not
+# belong on the generic fallback: `preToolUse` matches on TOOL TYPE - `Shell`,
+# `Read`, `Write`, `Grep`, `Delete`, `Task`, `MCP:<tool_name>` - and none of
+# `Shell`/`Delete` is a name `tool_operation` knows, so routing Cursor through
+# the generic adapter answered its two most important tool types with
+# `unrecognized-tool`. Found by the Sprint 4 drift guard
+# (`tests/test_host_manifests.py`) reading our OWN shipped matcher
+# (`Shell|Write|Delete`) rather than by anyone running Cursor - it is not
+# installed on this machine.
+#
+# Only the three types our manifest actually subscribes to are handled. A
+# fourth would be a silent gap, so the guard fails the moment the matcher
+# widens without this map widening with it.
+_CURSOR_PATH_FIELDS = ("file_path", "path", "target_file")
+
+
+def _adapt_cursor(raw: Any) -> HostEvent:
+    tool = str(field(raw, "tool_name") or "").strip()
+    tool_input = field(raw, "tool_input")
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+    event_name = str(field(raw, "hook_event_name") or "")
+    cwd = str(field(raw, "cwd") or "")
+    request_id = str(field(raw, "request_id") or "")
+
+    if tool == "Shell":
+        # Documented verbatim: {"command": "npm install", "working_directory": ...}
+        command = str(tool_input.get("command", "")).strip()
+        return HostEvent(
+            schema=SCHEMA, event=event_name, host="cursor", tool=tool,
+            operation=command, targets=[], cwd=cwd, request_id=request_id,
+            tool_kind=TOOL_KIND_SHELL,
+        )
+
+    if tool in ("Write", "Delete"):
+        # The docs name the tool types but not the path field for file
+        # operations, so every documented spelling is read and the first
+        # present wins. A Delete with no readable target is still a DELETE -
+        # naming what is known beats answering `unrecognized-tool` for a tool
+        # whose name is documented.
+        target = _first_field(tool_input, _CURSOR_PATH_FIELDS) or ""
+        target = target.strip()
+        operation = (f"write file {target or '(unnamed)'}" if tool == "Write"
+                     else f"rm {target or '(unnamed target)'}")
+        return HostEvent(
+            schema=SCHEMA, event=event_name, host="cursor", tool=tool,
+            operation=operation, targets=[target] if target else [],
+            cwd=cwd, request_id=request_id, tool_kind=TOOL_KIND_FENCED,
+        )
+
+    return _unrecognized("cursor", tool, raw)
+
+
 def _adapt_generic(raw: Any, host: str) -> HostEvent:
     from .godmode_guardrails import tool_operation
 
@@ -937,6 +992,10 @@ _ADAPTERS = {
     "claude": _adapt_claude,
     "codex": _adapt_codex,
     "grok": _adapt_grok,
+    # Sprint 4: Cursor moved off the generic fallback onto its own documented
+    # dialect - see `_adapt_cursor`. Gemini stays generic (its dialect is
+    # Addendum 4a and is not tool-type-matched the way Cursor's is).
+    "cursor": _adapt_cursor,
 }
 
 

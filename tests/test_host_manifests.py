@@ -649,5 +649,94 @@ class SkillsHostNeutralityTests(unittest.TestCase):
             self.assertTrue((project / ".grok" / "skills" / "test-skill" / "SKILL.md").is_file())
 
 
+class EveryShippedMatcherResolvesInItsAdapter(unittest.TestCase):
+    """Sprint 4's generalisation: a manifest and an adapter are two
+    authorities over one list of tool names, and nothing compared them.
+
+    Found the expensive way on Grok - `.grok-plugin/hooks.json` subscribed
+    PreToolUse to nine names while `_adapt_grok` implemented three, so six
+    of the names godmode's OWN manifest asked the host to send came back
+    `unrecognized-tool`. Enforcement held (they were denied), but no
+    interception proof could ever be written for a tool the adapter could
+    not name, and `hooks probe --host grok` reported UNAVAILABLE
+    indefinitely.
+
+    This walks EVERY shipped manifest instead of that one, so the same
+    class cannot hide on a host nobody has probed yet. It is static by
+    design: it needs no host installed, which is the point - Cursor is not
+    installed on the machine this was written on, and the identical defect
+    was sitting in its manifest (`Shell|Write|Delete`, of which only
+    `Write` resolved).
+
+    A regex-wildcard matcher (Cursor's `beforeShellExecution: .*`, which
+    matches on COMMAND TEXT rather than tool name - Addendum 5) is skipped:
+    it names no tools to check.
+    """
+
+    # manifest path -> (host label for detection, event keys to check)
+    MANIFESTS = (
+        (Path("hooks/hooks.json"), "claude", ("PreToolUse",)),
+        (Path("hooks/hooks.json"), "codex", ("pre_tool_use",)),
+        (Path(".grok-plugin/hooks.json"), "grok", ("PreToolUse",)),
+        (Path(".cursor-plugin/hooks.json"), "cursor", ("preToolUse",)),
+    )
+
+    # A representative payload per tool-input shape. Only the SHAPE matters:
+    # the adapter is being asked "do you know this name", not "is this
+    # command dangerous".
+    _SHELLISH = {"command": "ls"}
+    _PATHISH = {"file_path": "a.txt"}
+    _PATCHISH = {"command": "*** Add File: a.txt\n+x\n"}
+
+    # `functions.exec` is Codex's ORCHESTRATION WRAPPER, not a tool: it only
+    # resolves when it carries a nested `{"function": {"name", "arguments"}}`
+    # call, and failing closed on any other shape is its documented, correct
+    # behaviour (Plan amendment 2). It gets a real wrapper here so the guard
+    # tests recognition, not the wrapper's own fail-closed.
+    _WRAPPED = {"function": {"name": "shell_command",
+                             "arguments": {"command": "ls"}}}
+
+    def _payload_for(self, name: str) -> dict:
+        lowered = name.lower()
+        if name == "functions.exec":
+            return self._WRAPPED
+        if "patch" in lowered:
+            return self._PATCHISH
+        if any(k in lowered for k in ("write", "edit", "delete", "read", "replace")):
+            return self._PATHISH
+        return self._SHELLISH
+
+    def test_no_manifest_subscribes_to_a_name_its_adapter_rejects(self) -> None:
+        import os
+        from unittest import mock
+
+        from godmode_runtime import godmode_hostevent as he
+
+        unresolved: list[str] = []
+        for relative, host, events in self.MANIFESTS:
+            manifest = json.loads(
+                (PLUGIN_ROOT / relative).read_text(encoding="utf-8"))
+            for event in events:
+                for block in manifest.get("hooks", {}).get(event, []):
+                    matcher = block.get("matcher")
+                    if not matcher or matcher == ".*":
+                        continue
+                    for name in (n for n in matcher.split("|") if n):
+                        env = {"GODMODE_HOST": host}
+                        with mock.patch.dict(os.environ, env, clear=False):
+                            os.environ.pop("GROK_AGENT", None)
+                            os.environ.pop("CLAUDE_CODE_ENTRYPOINT", None)
+                            parsed = he.parse_host_payload({
+                                "hook_event_name": event,
+                                "tool_name": name,
+                                "tool_input": self._payload_for(name),
+                            })
+                        if parsed.tool_kind == he.TOOL_KIND_UNRECOGNIZED:
+                            unresolved.append(f"{relative.as_posix()}:{host}:{name}")
+        self.assertEqual(unresolved, [], "a shipped manifest subscribes the "
+                         "host to tool names its own adapter answers with "
+                         "unrecognized-tool")
+
+
 if __name__ == "__main__":
     unittest.main()
