@@ -33,43 +33,13 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|PowerShell|Write|Edit|NotebookEdit",
+        "matcher": "Bash|PowerShell|Write|Edit|NotebookEdit|apply_patch|functions.exec|shell_command",
         "hooks": [
           {
             "type": "command",
             "command": "python",
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/hooks/godmode_gate_fast.py"
-            ],
-            "timeout": 3
-          }
-        ]
-      }
-    ],
-    "session_start": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python",
-            "args": [
-              "${PLUGIN_ROOT}/hooks/godmode_session_hook.py",
-              "session-start"
-            ],
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "pre_tool_use": [
-      {
-        "matcher": "apply_patch|functions.exec|shell_command",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python",
-            "args": [
-              "${PLUGIN_ROOT}/hooks/godmode_gate_fast.py"
             ],
             "timeout": 3
           }
