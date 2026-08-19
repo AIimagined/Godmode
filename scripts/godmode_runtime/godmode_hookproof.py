@@ -985,6 +985,24 @@ def run_probe(
         "latency_ms": None,
         "timeout_budget_ms": timeout_budget_ms,
         "latency_warning": False,
+        # The scope of this result, carried IN the result. This limitation
+        # was documented in this function's docstring from the start and a
+        # reader still published `state: HARD` as evidence that two hosts'
+        # gates were live; they were not. A caveat only reaches the person
+        # who quotes the number if it travels with the number, and it must
+        # be present on every outcome, because a failed probe is exactly
+        # when someone goes looking for a reason to discount it.
+        "proves": ("this plugin's own hook script recognises the operation, "
+                   "denies it, and records the denial - the mechanism works "
+                   "end to end when invoked"),
+        "does_not_prove": ("that this host's runtime actually calls the hook "
+                           "on real tool calls; the probe self-injects, so it "
+                           "reaches the script without the host's involvement"),
+        "to_prove_wiring": ("run a PROTECTED command inside the host's own "
+                            "session and confirm a refusal record lands in "
+                            "the archive; a read-only command proves nothing "
+                            "either way, because it is allowed silently and "
+                            "records nothing"),
     }
 
     def _record_latency(latency_ms: float) -> None:

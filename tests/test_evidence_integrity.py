@@ -162,5 +162,48 @@ class MarkdownNormalisationTests(unittest.TestCase):
         self.assertEqual(findings[0]["detector"], "claim-from-a-sample")
 
 
+class TheShapeThatActuallyFooledSomeone(unittest.TestCase):
+    """2026-08-19: this advisory was right and nobody was listening.
+
+    A full-suite run was reported GREEN on the strength of
+    `python -m unittest discover -s tests 2>&1 | tail -4`. The pipeline's
+    exit status is `tail`'s, so a red suite reported success, and one real
+    defect rode that mistake for hours before an unpiped re-run found it.
+
+    `evidence_pipe_advisory` already detected exactly this shape at the
+    time. It never fired because the pre-tool hook was not wired into the
+    host the work was happening in - the detector was correct and simply
+    was not running. These pin the exact strings from that incident, so
+    the detector cannot quietly stop covering the case that proved it
+    matters, and pin the correct form as silent so the advisory stays
+    actionable rather than something to tune out.
+    """
+
+    MASKED = (
+        "python -m unittest discover -s tests 2>&1 | tail -4",
+        'python -m unittest tests.test_gate_fast 2>&1 | grep -E "^(Ran|OK|FAILED)"',
+        "python -m unittest discover -s tests 2>&1 | tail -5",
+    )
+
+    HONEST = (
+        "python -m unittest discover -s tests > /tmp/suite.log 2>&1; echo EXIT=$?",
+        "python -m unittest discover -s tests",
+    )
+
+    def test_every_masking_shape_from_the_incident_is_caught(self) -> None:
+        for command in self.MASKED:
+            with self.subTest(command=command):
+                advisory = evidence_pipe_advisory(command)
+                self.assertIsNotNone(advisory, command)
+                self.assertIn("exit code", advisory)
+
+    def test_capturing_to_a_file_and_reading_the_status_is_not_flagged(self) -> None:
+        """The remedy the advisory names must itself be silent, or the
+        advice is unfollowable."""
+        for command in self.HONEST:
+            with self.subTest(command=command):
+                self.assertIsNone(evidence_pipe_advisory(command), command)
+
+
 if __name__ == "__main__":
     unittest.main()

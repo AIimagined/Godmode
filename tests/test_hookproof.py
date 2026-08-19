@@ -35,6 +35,7 @@ from godmode_runtime.godmode_attest import open_session  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_runtime.godmode_console import Runtime, cmd_hooks  # noqa: E402
 from godmode_runtime.godmode_errors import ArchiveError  # noqa: E402
+from godmode_runtime import godmode_hookproof as hookproof  # noqa: E402
 from godmode_runtime.godmode_hookproof import (  # noqa: E402
     PROBE_PREFIX,
     SUBJECT_ANCHOR,
@@ -758,6 +759,52 @@ class SupersessionIsHostScoped(unittest.TestCase):
             self.assertEqual(
                 interception_state(archive, "claude", registration="partial"),
                 "DEGRADED")
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class ProbeOutputStatesWhatItDoesNotProve(unittest.TestCase):
+    """The probe's limitation lived only in a docstring, and a docstring is
+    not where a reader meets the result.
+
+    `run_probe` self-injects: it spawns the same hook script a host would,
+    proving the mechanism recognises, denies and records. It does not prove
+    a host's runtime CALLS that script on real tool calls - `run_probe`'s
+    own docstring has always said so. But the returned payload said only
+    `"state": "HARD"`, and that is what gets read, quoted and pasted into a
+    release note.
+
+    It happened: `HARD` from this probe was published as evidence that two
+    hosts' gates were live. They were not - measured afterward by running a
+    protected command inside each host and finding no record. The claim was
+    withdrawn. The fix is that the result now carries its own scope, so the
+    misreading cannot be made innocently from the output alone.
+    """
+
+    def test_the_result_names_what_it_establishes_and_what_it_does_not(self) -> None:
+        with isolated_project() as (project, archive):
+            report = hookproof.run_probe(project, archive, "claude")
+            self.assertIn("proves", report)
+            self.assertIn("does_not_prove", report)
+            self.assertIn("host", report["does_not_prove"].lower())
+
+    def test_the_disclaimer_is_present_on_every_outcome_not_just_success(self) -> None:
+        """A failed probe is exactly when someone reaches for a caveat, so
+        the scope must not appear only on the happy path."""
+        with isolated_project() as (project, archive):
+            report = hookproof.run_probe(project, archive, "claude", timeout=0)
+            self.assertIn("does_not_prove", report)
+
+    def test_it_names_the_test_that_would_establish_wiring(self) -> None:
+        """A caveat that does not say what WOULD prove it just invites the
+        reader to keep using the wrong evidence."""
+        with isolated_project() as (project, archive):
+            report = hookproof.run_probe(project, archive, "claude")
+            guidance = (report["does_not_prove"] + " " + report.get("to_prove_wiring", "")).lower()
+            self.assertIn("protected", guidance)
+            self.assertIn("record", guidance)
 
 
 if __name__ == "__main__":
