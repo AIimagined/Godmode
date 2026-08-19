@@ -72,5 +72,45 @@ class HostedEscapeHintTests(unittest.TestCase):
         self.assertIn("authorize stage", reason)
 
 
+class EllipsizeTests(unittest.TestCase):
+    """The refusal embeds the operation and its impact list, both bounded -
+    but a hard slice cut mid-word (`...godmode authorize stage "git push --f`)
+    and left no sign anything was missing. Bounded text a human reads should
+    break at a word and say it was cut."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "godmode_session_hook_under_test",
+            PLUGIN_ROOT / "hooks" / "godmode_session_hook.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        cls.ellipsize = staticmethod(module._ellipsize)
+
+    def test_short_text_is_untouched(self) -> None:
+        self.assertEqual(self.ellipsize("git push", 200), "git push")
+
+    def test_text_at_exactly_the_limit_is_untouched(self) -> None:
+        text = "x" * 200
+        self.assertEqual(self.ellipsize(text, 200), text)
+
+    def test_long_text_breaks_at_a_word_and_is_marked(self) -> None:
+        text = ("git push --force origin main " * 10).strip()
+        cut = self.ellipsize(text, 60)
+        self.assertLessEqual(len(cut), 60)
+        self.assertTrue(cut.endswith("..."), cut)
+        kept = cut[:-3]
+        # what survived is a prefix of the original, and the cut fell on a
+        # word boundary - the next original character is the space itself
+        self.assertTrue(text.startswith(kept), cut)
+        self.assertEqual(text[len(kept)], " ")
+
+    def test_an_unbroken_token_still_cuts_and_is_marked(self) -> None:
+        cut = self.ellipsize("a" * 500, 60)
+        self.assertLessEqual(len(cut), 60)
+        self.assertTrue(cut.endswith("..."))
+
+
 if __name__ == "__main__":
     unittest.main()
