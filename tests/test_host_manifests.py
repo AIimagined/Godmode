@@ -850,3 +850,72 @@ class CodexEventNamesMatchTheirPublishedList(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GeminiDocumentedToolsResolve(unittest.TestCase):
+    """Sprint 4: the Gemini fragment subscribes EVERY tool and the adapter
+    knew none of them.
+
+    `.gemini-plugin/hooks-fragment.json` matches `BeforeTool` with `.*`, so
+    a wildcard cannot be enumerated the way the other manifests' matchers
+    can - the drift guard above has nothing to read. The check instead
+    pins Gemini's DOCUMENTED tool names (published hooks reference and
+    hooks guide, fetched 2026-08-19), which is what the wildcard actually
+    delivers: `run_shell_command`, `read_file`, `write_file`, `replace`.
+
+    Before this, Gemini routed through the generic adapter, whose map holds
+    only Claude's names, so every Gemini tool call - `run_shell_command`
+    included - arrived as `unrecognized-tool`.
+    """
+
+    DOCUMENTED = {
+        "run_shell_command": {"command": "ls"},
+        "read_file": {"absolute_path": "/x/a.txt"},
+        "write_file": {"absolute_path": "/x/a.txt"},
+        "replace": {"file_path": "a.txt"},
+    }
+
+    def _parse(self, tool: str, tool_input: dict):
+        import os
+        from unittest import mock
+        from godmode_runtime import godmode_hostevent as he
+        with mock.patch.dict(os.environ, {"GODMODE_HOST": "gemini"}, clear=False):
+            os.environ.pop("GROK_AGENT", None)
+            os.environ.pop("CLAUDE_CODE_ENTRYPOINT", None)
+            return he, he.parse_host_payload({
+                "hook_event_name": "BeforeTool", "tool_name": tool,
+                "tool_input": tool_input})
+
+    def test_every_documented_gemini_tool_resolves(self) -> None:
+        unresolved = []
+        for tool, payload in self.DOCUMENTED.items():
+            he, parsed = self._parse(tool, payload)
+            if parsed.tool_kind == he.TOOL_KIND_UNRECOGNIZED:
+                unresolved.append(tool)
+        self.assertEqual(unresolved, [])
+
+    def test_the_shell_tool_carries_its_command_text(self) -> None:
+        _he, parsed = self._parse("run_shell_command",
+                                  {"command": "git push --force origin main"})
+        self.assertEqual(parsed.operation, "git push --force origin main")
+
+    def test_an_undocumented_gemini_tool_still_fails_closed(self) -> None:
+        he, parsed = self._parse("mcp_someserver_sometool", {"x": 1})
+        self.assertEqual(parsed.tool_kind, he.TOOL_KIND_UNRECOGNIZED)
+
+    def test_the_fragment_only_declares_published_gemini_events(self) -> None:
+        """Published Gemini CLI event list, verbatim."""
+        published = {
+            "BeforeTool", "AfterTool", "BeforeAgent", "AfterAgent",
+            "BeforeModel", "BeforeToolSelection", "AfterModel",
+            "SessionStart", "SessionEnd", "Notification", "PreCompress",
+        }
+        fragment = json.loads(
+            (PLUGIN_ROOT / ".gemini-plugin" / "hooks-fragment.json").read_text(
+                encoding="utf-8"))
+        unpublished = sorted(k for k in fragment["hooks"] if k not in published)
+        self.assertEqual(unpublished, [])
+
+
+if __name__ == "__main__":
+    unittest.main()
