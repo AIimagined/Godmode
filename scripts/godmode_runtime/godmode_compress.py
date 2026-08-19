@@ -37,6 +37,7 @@ MASKS: dict[str, tuple[str, ...]] = {
     "database": ("rung", "decision", "status"),
     "decision": ("status",),
     "differential": ("subject", "method"),
+    "incident": ("expunged_sequence", "expunged_record_hash"),
     "inventory": ("files", "captured_at"),
     "invariant": ("status",),
     "lesson": ("status", "generalized_guard"),

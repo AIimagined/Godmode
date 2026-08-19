@@ -176,6 +176,7 @@ from typing import Any
 
 from .godmode_chronicle import Chronicle
 from .godmode_constants import RUNTIME_VERSION
+from .godmode_errors import ArchiveError
 
 # The operation prefix the hook recognises as a probe, never a real command.
 # Followed by a per-probe nonce so a stale proof can never be replayed as a
@@ -731,12 +732,19 @@ def interception_state(
     """
     now = now or datetime.now(timezone.utc)
     registration = registration if registration is not None else _auto_registration_grade(host or "unknown")
-    proof = last_proof(archive, host)
+    try:
+        proof = last_proof(archive, host)
 
-    if proof is None:
-        return _grade_from_registration(registration)
+        if proof is None:
+            return _grade_from_registration(registration)
 
-    if _superseded_since(archive, proof["sequence"]):
+        if _superseded_since(archive, proof["sequence"]):
+            return LEVEL_DEGRADED
+    except ArchiveError:
+        # B4-1: a chain reporting tail-truncated (or any tamper verdict) is
+        # DEGRADED evidence by definition - the proof this grade would have
+        # ridden on may be exactly what was removed. Worse-of-the-two, per
+        # this function's own doctrine.
         return LEVEL_DEGRADED
 
     data = proof.get("data", {})

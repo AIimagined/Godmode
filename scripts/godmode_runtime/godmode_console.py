@@ -2501,6 +2501,21 @@ def cmd_index(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 
 def cmd_database(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if getattr(args, "reanchor", False):
+        # B4-1: the explicit recovery for a tail-truncated chain - accept
+        # what remains and chronicle the acceptance. Never automatic.
+        _require_archive(runtime)
+        return CommandResult(runtime.archive.reanchor())
+    # Naming the missing flags rather than letting argparse require them for
+    # the modes that never read them (same pattern as checkpoint --review).
+    if getattr(args, "propose", False) and not args.change:
+        raise ArchiveError("db --propose requires --change")
+    if (not args.inventory and not args.review_migration
+            and not getattr(args, "propose", False)
+            and not (args.engine and args.change and args.status)):
+        raise ArchiveError(
+            "db requires --engine, --change and --status (or --reanchor/"
+            "--propose/--inventory/--review-migration)")
     if getattr(args, "inventory", False):
         inventory = schema_inventory(Path(runtime.anchor.project_root))
         if getattr(args, "propose", False):
@@ -3912,9 +3927,16 @@ def _build_parser() -> argparse.ArgumentParser:
     version.set_defaults(handler=cmd_version)
 
     database = sub.add_parser("db", help="Record database governance state")
-    database.add_argument("--engine", required=True)
-    database.add_argument("--change", required=True)
-    database.add_argument("--status", required=True)
+    # Not parser-required since --reanchor (B4-1): the record path validates
+    # them itself, same pattern as checkpoint's --review.
+    database.add_argument("--engine")
+    database.add_argument("--change")
+    database.add_argument("--status")
+    database.add_argument(
+        "--reanchor", action="store_true",
+        help="B4-1: accept a tail-truncated chain as the chain - rewrites "
+             "the sidecar anchor to the records that remain and chronicles "
+             "the acceptance (an explicit operator decision)")
     database.add_argument("--rollback")
     database.add_argument("--propose", action="store_true",
                           help="Run the schema decision ladder instead of recording state")

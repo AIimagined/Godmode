@@ -23,7 +23,7 @@ import time
 from typing import Any
 
 from .godmode_constants import MAX_HASH_BYTES
-from .godmode_errors import AuthorizationError, PrivacyError
+from .godmode_errors import ArchiveError, AuthorizationError, PrivacyError
 
 
 def _stdin_is_interactive() -> bool:
@@ -1726,10 +1726,17 @@ def declared_gate_ratchet(archive: Any, project_root: Path | None, key: str) -> 
     if archive is None:
         return live
     subject = f"policy-declared:{key}"[:200]
-    recorded = bool(archive.select(kind="action", subject=subject, limit=1))
-    if live and not recorded:
-        archive.append("action", subject, {"gate": key}, evidence=[])
-        recorded = True
+    try:
+        recorded = bool(archive.select(kind="action", subject=subject, limit=1))
+        if live and not recorded:
+            archive.append("action", subject, {"gate": key}, evidence=[])
+            recorded = True
+    except ArchiveError:
+        # B4-1: a chain that reports tail-truncated (or any other tamper
+        # verdict) is DEGRADED evidence - the ratchet's answer degrades to
+        # the STRICTEST one it could have given, because the record that
+        # would have relaxed it may be exactly what was removed.
+        return True
     return live or recorded
 
 

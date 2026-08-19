@@ -66,9 +66,10 @@ def _written_kinds() -> dict[str, set[str]]:
 # need the typed view).
 _MASK_FLOOR = frozenset({
     "action", "attestation", "branch", "change", "checkpoint", "claim",
-    "criterion", "database", "decision", "differential", "inventory",
-    "invariant", "lesson", "metric", "obligation", "pin", "plan", "refusal",
-    "request", "session", "sprint", "upstream-diff", "verdict",
+    "criterion", "database", "decision", "differential", "incident",
+    "inventory", "invariant", "lesson", "metric", "obligation", "pin",
+    "plan", "refusal", "request", "session", "sprint", "upstream-diff",
+    "verdict",
 })
 
 
