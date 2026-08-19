@@ -44,9 +44,21 @@ if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
 
 from tests.test_gate_corpus import corpus_entries, _decision  # noqa: E402
+from tests._gate_mode_isolation import park_local_policy, restore_local_policy  # noqa: E402
 from godmode_runtime.godmode_sentinel import (  # noqa: E402
     _raw_segments, _executable_text, _FIND_MUTATION, classify_action,
 )
+
+
+def setUpModule() -> None:
+    # The end-to-end smokes below pipe through the real hook against THIS
+    # repo, so a local observe-mode declaration replaces their decision
+    # envelope with an advisory - see _gate_mode_isolation's docstring.
+    park_local_policy()
+
+
+def tearDownModule() -> None:
+    restore_local_policy()
 
 
 def payload(command: str, tool: str = "Bash") -> dict[str, Any]:

@@ -29,6 +29,22 @@ import unittest
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 HOOK = PLUGIN_ROOT / "hooks" / "godmode_session_hook.py"
 
+if str(PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT))
+
+from tests._gate_mode_isolation import park_local_policy, restore_local_policy  # noqa: E402
+
+
+def setUpModule() -> None:
+    # These tests cross the boundary against THIS repo, so a local
+    # observe-mode declaration turns every decision envelope into an
+    # advisory systemMessage - see _gate_mode_isolation's docstring.
+    park_local_policy()
+
+
+def tearDownModule() -> None:
+    restore_local_policy()
+
 # (label, tool, tool_input) drawn from what a working session actually issues.
 MUST_ALLOW = (
     ("edit a project file", "Edit",

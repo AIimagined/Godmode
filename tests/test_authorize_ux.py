@@ -17,6 +17,21 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = PLUGIN_ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
+if str(PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT))
+
+from tests._gate_mode_isolation import park_local_policy, restore_local_policy  # noqa: E402
+
+
+def setUpModule() -> None:
+    # HostedEscapeHintTests drives the real hook against THIS repo, so a
+    # local observe-mode declaration replaces the refusal it asserts on
+    # with an advisory - see _gate_mode_isolation's docstring.
+    park_local_policy()
+
+
+def tearDownModule() -> None:
+    restore_local_policy()
 
 
 class TtlTests(unittest.TestCase):
