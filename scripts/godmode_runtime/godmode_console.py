@@ -110,6 +110,7 @@ from .godmode_roi import render_roi
 from .godmode_roi import roi_digest
 from .godmode_roi import roi_report
 from .godmode_roi import would_have_summary
+from .godmode_trends import render_trends, trends_report
 # U-E10 - minimal isolated block (one import line, one subcommand, one
 # handler), same pattern as the U-R2 loop-ready block above.
 from .godmode_recurrence import DEFAULT_THRESHOLD as RECURRENCE_DEFAULT_THRESHOLD
@@ -2350,6 +2351,17 @@ def cmd_roi(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult({"report": render_roi(report)})
 
 
+def cmd_trends(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """B4-5: per-session counts as a time series - gaps stated, never
+    interpolated; the render holds the causal denylist."""
+    _require_archive(runtime)
+    report = trends_report(runtime.archive, sessions=args.sessions)
+    if getattr(args, "json", False):
+        return CommandResult(report)
+    report["report"] = render_trends(report)
+    return CommandResult(report)
+
+
 def cmd_observe(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     """B4-10(c): what an observe-mode trial recorded, read back on request.
 
@@ -3895,6 +3907,17 @@ def _build_parser() -> argparse.ArgumentParser:
              "(would-have-denied/would-have-asked by category), never merged "
              "with the real denial counts above")
     roi_parser.set_defaults(handler=cmd_roi)
+
+    trends_parser = sub.add_parser(
+        "trends",
+        help="B4-5: per-session token/tool-call/test-run counts as a time "
+             "series - unmeasured sessions stated as gaps, never interpolated",
+    )
+    trends_parser.add_argument(
+        "--sessions", type=int, default=None,
+        help="Bound the series to the most recent N measurement records",
+    )
+    trends_parser.set_defaults(handler=cmd_trends)
 
     observe_parser = sub.add_parser(
         "observe",
