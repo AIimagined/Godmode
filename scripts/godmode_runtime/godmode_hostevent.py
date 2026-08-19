@@ -710,6 +710,10 @@ def _adapt_codex(raw: Any, tool: str | None = None, tool_input: Any = None,
     if not isinstance(tool_input, dict):
         tool_input = {}
 
+    claude_shaped = _claude_named_event(raw, "codex", tool, tool_input)
+    if claude_shaped is not None:
+        return claude_shaped
+
     if tool == "functions.exec" and not _orchestrated:
         unwrapped = _codex_unwrap(tool_input)
         if unwrapped is None:
@@ -823,25 +827,9 @@ def _adapt_grok(raw: Any) -> HostEvent:
     # here - a second transcription is exactly the drift that produced this.
     # `tests/test_grok_host_contract.py` asserts every name in the shipped
     # matcher resolves here, so the two cannot separate again.
-    if tool in _CLAUDE_TOOLS:
-        from .godmode_guardrails import tool_operation
-
-        operation = tool_operation(tool, tool_input) or ""
-        target = str(tool_input.get("file_path", "")).strip()
-        targets = [target] if tool in _CLAUDE_FENCED_TOOLS and target else []
-        if tool in _CLAUDE_READ_TOOLS:
-            kind = TOOL_KIND_READ
-        elif tool in _CLAUDE_FENCED_TOOLS:
-            kind = TOOL_KIND_FENCED
-        elif tool in _CLAUDE_SHELL_TOOLS:
-            kind = TOOL_KIND_SHELL
-        else:
-            kind = TOOL_KIND_OTHER
-        return HostEvent(
-            schema=SCHEMA, event=event_name, host="grok", tool=tool,
-            operation=operation, targets=targets, cwd=cwd,
-            request_id=request_id, tool_kind=kind,
-        )
+    claude_shaped = _claude_named_event(raw, "grok", tool, tool_input)
+    if claude_shaped is not None:
+        return claude_shaped
 
     if tool == "run_terminal_command":
         command = str(tool_input.get("command", "")).strip()
@@ -874,6 +862,53 @@ def _adapt_grok(raw: Any) -> HostEvent:
 # to `unrecognized-tool` (never a silent read-vs-mutation guess, per the
 # plan's RULING) when the payload does not carry one.
 # ---------------------------------------------------------------------------
+
+
+def _claude_named_event(raw: Any, host: str, tool: str,
+                        tool_input: dict[str, Any]) -> "HostEvent | None":
+    """One `HostEvent` for a CLAUDE-NAMED tool arriving at a non-Claude host,
+    or `None` when the name is not one of Claude's.
+
+    Sprint 4 measured the same thing on two hosts, from inside real sessions
+    of each: Grok 1.0.4 and Codex both send `{"hook_event_name":
+    "PreToolUse", "tool_name": "Bash", "tool_input": {"command": ...}}` -
+    Claude's event name, Claude's tool name, Claude's field. Both run
+    Claude-compatible harnesses (Grok's own `grok inspect` says so; Codex
+    fires from our shared manifest's CamelCase `PreToolUse` block, which is
+    also what refutes the long-standing "Codex rejects hooks.json" theory).
+
+    Shared rather than copied into each adapter: two transcriptions of one
+    tool map is precisely what produced the defect this closes, and a third
+    would reproduce it. The map and the tool-kind sets are the Claude
+    adapter's own, read here, never duplicated.
+
+    Returns `None` - not an unrecognized event - so each caller keeps its own
+    native names and its own fail-closed ending.
+    """
+    if tool not in _CLAUDE_TOOLS:
+        return None
+    from .godmode_guardrails import tool_operation
+
+    target = str(tool_input.get("file_path", "")).strip()
+    if tool in _CLAUDE_READ_TOOLS:
+        kind = TOOL_KIND_READ
+    elif tool in _CLAUDE_FENCED_TOOLS:
+        kind = TOOL_KIND_FENCED
+    elif tool in _CLAUDE_SHELL_TOOLS:
+        kind = TOOL_KIND_SHELL
+    else:
+        kind = TOOL_KIND_OTHER
+    return HostEvent(
+        schema=SCHEMA,
+        event=str(field(raw, "hook_event_name") or ""),
+        host=host,
+        tool=tool,
+        operation=tool_operation(tool, tool_input) or "",
+        targets=[target] if tool in _CLAUDE_FENCED_TOOLS and target else [],
+        cwd=str(field(raw, "cwd") or ""),
+        request_id=str(field(raw, "request_id") or ""),
+        tool_kind=kind,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -40,6 +40,7 @@ from godmode_runtime.godmode_hookproof import (  # noqa: E402
     SUBJECT_ANCHOR,
     SUBJECT_PROBE_FAILED,
     SUBJECT_UNINSTALLED,
+    record_interception_proof,
     _auto_registration_grade,
     _host_acknowledgement_from_registration,
     interception_state,
@@ -706,6 +707,57 @@ class SessionAnchorReconciliationTests(unittest.TestCase):
             # regardless of which kind is newer.
             record_interception_proof(archive, host="claude", tool="Bash", request_id="n2")
             self.assertEqual(interception_state(archive, "claude"), "HARD")
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class SupersessionIsHostScoped(unittest.TestCase):
+    """Sprint 4: one host's failed probe degraded every other host's proof.
+
+    `_superseded_since` scanned every `action` record and returned True for
+    any superseding subject newer than the proof, with no regard for WHICH
+    host it belonged to. Running the live probes for three hosts in one
+    session made it visible immediately: Claude and Grok both reached HARD
+    with recorded proofs, then a Codex probe-failed record landed after
+    them and both dropped to DEGRADED - reporting that Claude's boundary
+    "demonstrably broke" on the evidence of a Codex failure.
+
+    Supersession is per-host evidence: a Codex hook coming down says
+    nothing about Claude's. A record carrying no host at all still
+    supersedes everything, because an unattributed breakage cannot be ruled
+    out for any host - the fail-closed direction.
+    """
+
+    def _proof_then_failure(self, archive, proof_host: str, failure_host):
+        record_interception_proof(archive, proof_host, tool="Bash",
+                                  request_id="probe-1")
+        data = {"reason": "proof-not-recorded"}
+        if failure_host is not None:
+            data["host"] = failure_host
+        archive.append("action", SUBJECT_PROBE_FAILED, data, evidence=[])
+
+    def test_another_hosts_failure_does_not_degrade_this_hosts_proof(self) -> None:
+        with isolated_project() as (_project, archive):
+            self._proof_then_failure(archive, "claude", "codex")
+            self.assertEqual(
+                interception_state(archive, "claude", registration="partial"),
+                "HARD")
+
+    def test_this_hosts_own_failure_still_degrades_it(self) -> None:
+        with isolated_project() as (_project, archive):
+            self._proof_then_failure(archive, "claude", "claude")
+            self.assertEqual(
+                interception_state(archive, "claude", registration="partial"),
+                "DEGRADED")
+
+    def test_an_unattributed_failure_degrades_every_host(self) -> None:
+        with isolated_project() as (_project, archive):
+            self._proof_then_failure(archive, "claude", None)
+            self.assertEqual(
+                interception_state(archive, "claude", registration="partial"),
+                "DEGRADED")
 
 
 if __name__ == "__main__":
