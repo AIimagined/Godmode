@@ -57,7 +57,17 @@ MUST_ALLOW = (
     ("conditional", "Bash", {"command": "if [ -f README.md ]; then cat README.md; fi"}),
     ("powershell read", "PowerShell",
      {"command": "Get-ChildItem | Select-Object -ExpandProperty Name"}),
-    ("run the suite", "Bash", {"command": "python -m unittest discover -s tests"}),
+    # C1 (external audit): a SCRIPT FILE, not an inline `-c`/`-e` payload -
+    # this is the shape the fix's own scope statement keeps at R1/allow on
+    # purpose (see INTERPRETER_ASK_NOW below for the flag forms that no
+    # longer belong here).
+    ("run a test module by file path", "Bash",
+     {"command": "python tests/test_hook_end_to_end.py"}),
+    # `-m <module>` (coordinator correction, 2026-08-17): names an
+    # installed, importable artifact, the same shape as the file-path form
+    # above - not an opaque string. Everyday test-running must stay R1.
+    ("run the suite via -m", "Bash", {"command": "python -m unittest discover -s tests"}),
+    ("run pytest via -m", "Bash", {"command": "python -m pytest -q"}),
     ("read a file", "Read", {"file_path": str(PLUGIN_ROOT / "README.md")}),
     # Everything v0.2.5 unblocked, asserted where the host will hit it rather
     # than only against the classifier. Each of these was refused by a shipped
@@ -67,7 +77,7 @@ MUST_ALLOW = (
     ("name a protected command in an argument", "Bash",
      {"command": 'grep "git push" CHANGELOG.md'}),
     ("input redirect", "Bash", {"command": "wc -l < README.md"}),
-    ("descriptor duplication", "Bash", {"command": "python -m unittest discover -s tests 2>&1"}),
+    ("descriptor duplication", "Bash", {"command": "ls scripts 2>&1"}),
     ("substitution over a read", "Bash", {"command": "echo $(git rev-parse HEAD)"}),
     ("redirect inside the tree", "Bash", {"command": "echo hello > scratch.txt"}),
 )
@@ -85,6 +95,13 @@ MUST_DENY = (
     ("a substitution that destroys", "Bash", {"command": "echo $(rm -rf build)"}),
     ("a redirect out of the tree", "Bash", {"command": "echo x > ../outside.txt"}),
     ("discarding working changes", "Bash", {"command": "git checkout -- ."}),
+    # C1 (external audit): the audit's own repro. Before this fix,
+    # `python -c` classified as R1 local compute - allowed silently,
+    # regardless of what the string ran - and this exact call defeated R5
+    # entirely.
+    ("C1 repro: a forced push through an interpreter", "Bash",
+     {"command": "python -c \"import subprocess; "
+                 "subprocess.run(['git','push','--force','origin','main'])\""}),
 )
 
 # U-G1c (Controller Ruling 1): local, reversible git worktree operations ask
@@ -94,6 +111,23 @@ MUST_DENY = (
 GIT_ASK_NOW = (
     ("stage changes", "Bash", {"command": "git add -A"}),
     ("commit", "Bash", {"command": "git commit -m 'a message'"}),
+)
+
+# C1 (external audit, 2026-08-17): an interpreter handed a whole program as
+# one opaque string used to classify as R1 local compute - unrecognised,
+# unprotected, allowed silently - regardless of what the string contained.
+# `python -c`/`node -e`/etc. are the shape that closes: an inline payload
+# this classifier cannot and must not try to read. It now asks once - never
+# silently, and never a hard stop for the common case.
+#
+# `-m <module>` is deliberately ABSENT here (coordinator correction,
+# 2026-08-17): it names an installed, importable artifact - the same shape
+# as a script file - not an opaque string, so `python -m unittest`/`-m
+# pytest` stay in MUST_ALLOW above, unaffected. Treating `-m` as opaque was
+# this task's own first-pass error: it would have asked on the single most
+# common way this and most Python projects run their test suite.
+INTERPRETER_ASK_NOW = (
+    ("the audit's own minimum-friction case", "Bash", {"command": 'python -c "print(1)"'}),
 )
 
 
@@ -123,6 +157,49 @@ class WorkingSessionTests(unittest.TestCase):
         blocked = [label for label, tool, payload in MUST_ALLOW
                    if _decide(tool, payload)[0] != "allow"]
         self.assertEqual(blocked, [], f"the gate would stop a working session: {blocked}")
+
+
+class InterpreterOpaqueInlineTests(unittest.TestCase):
+    """C1 (external audit): an interpreter's opaque `-c`/`-e` payload now
+    asks, driven through the real hook payload rather than only against
+    `classify_action`."""
+
+    def test_interpreter_inline_flags_ask_rather_than_run_silently(self) -> None:
+        for label, tool, payload in INTERPRETER_ASK_NOW:
+            with self.subTest(label=label):
+                decision, _reason = _decide(tool, payload)
+                self.assertEqual(decision, "ask", label)
+
+    def test_a_script_file_is_unaffected(self) -> None:
+        """The audit's own scope boundary: running a FILE, not an inline
+        payload, must not tighten - `_LOCAL_COMPUTE`'s existing R1 path."""
+        decision, _reason = _decide("Bash", {"command": "python script.py"})
+        self.assertEqual(decision, "allow")
+        decision, _reason = _decide("Bash", {"command": "node build.mjs"})
+        self.assertEqual(decision, "allow")
+
+    def test_a_module_flag_is_also_unaffected(self) -> None:
+        """Coordinator correction, 2026-08-17: `-m <module>` names an
+        installed artifact, not an opaque string - it must stay allowed,
+        the same as a script file, even though it was briefly protected
+        in this task's first pass."""
+        for command in ("python -m unittest discover -s tests", "python -m pytest -q"):
+            with self.subTest(command=command):
+                decision, _reason = _decide("Bash", {"command": command})
+                self.assertEqual(decision, "allow")
+
+    def test_c1_repro_writing_the_policy_file_through_an_interpreter(self) -> None:
+        """The audit's other repro: opaque code naming the authorization
+        policy file used to classify as R1 local compute - unprotected,
+        silent - which is how a single interpreter call could flip
+        `gate_mode` to `observe` and defeat every later R5 refusal."""
+        decision, reason = _decide("Bash", {"command": (
+            "python -c \"import json; "
+            "open('.godmode-authorization-policy.json','w')"
+            ".write(json.dumps({'gate_mode':'observe'}))\""
+        )})
+        self.assertIn(decision, {"ask", "deny"})
+        self.assertIn(".godmode-authorization-policy.json", reason)
 
 
 class GitAskPolicyTests(unittest.TestCase):
@@ -160,6 +237,9 @@ class ProtectedOperationTests(unittest.TestCase):
             ("force push", "Bash", {"command": "git push --force origin main"}),
             ("hard reset", "Bash", {"command": "git reset --hard HEAD~3"}),
             ("drop a table", "Bash", {"command": "DROP TABLE orders"}),
+            ("C1 repro: a forced push through an interpreter", "Bash",
+             {"command": "python -c \"import subprocess; "
+                         "subprocess.run(['git','push','--force','origin','main'])\""}),
             # `psql -c 'DROP TABLE orders'` is deliberately absent: its SQL is
             # quoted, quoted spans are blanked before the patterns run, and it
             # classifies as an unknown mutation rather than a database one. It
@@ -274,6 +354,27 @@ class ApprovalRequiredHookTests(unittest.TestCase):
         self.POLICY.write_text("{not valid json", encoding="utf-8")
         decision, _reason = _decide("Bash", {"command": "git push --force origin main"})
         self.assertEqual(decision, "deny")
+
+    def test_h3_repro_an_approval_required_category_does_not_evaporate(self) -> None:
+        """H3 (external audit): the actual gap the test above did not cover
+        - `git push --force` is protected by baseline `classify_action`
+        with or without a policy, so it never exercised the lost widening.
+        This operation (`git checkout -b`, R1/git-branch-create by
+        default) is protected ONLY by the declared `approval_required`
+        below; before this fix, a malformed policy silently dropped that
+        widening and the operation reverted to a silent allow - exactly
+        the audit's own repro."""
+        self.POLICY.write_text(
+            json.dumps({"approval_required": ["git-branch-create"]}),
+            encoding="utf-8",
+        )
+        decision, reason = _decide("Bash", {"command": self.OPERATION})
+        self.assertEqual(decision, "ask")
+        self.POLICY.write_text("{not valid json", encoding="utf-8")
+        decision, reason = _decide("Bash", {"command": self.OPERATION})
+        self.assertIn(decision, {"ask", "deny"})
+        self.assertNotEqual(decision, "allow")
+        self.assertIn("policy", reason.lower())
 
 
 if __name__ == "__main__":

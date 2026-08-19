@@ -1384,7 +1384,12 @@ def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             if getattr(args, "uninstall", False):
                 return CommandResult(git_hooks_uninstall(runtime.archive, project_root))
             report = git_hooks_install(runtime.archive, project_root)
-            return CommandResult(report, exit_code=0 if report["declared"] else 1)
+            # M6 (external audit): `declared` alone used to decide the exit
+            # code, so an unresolvable hooks directory or a swallowed
+            # `chmod` failure - both `declared: True` - reported success.
+            # `git_hooks_install` now names its own real outcome in `ok`;
+            # this reads that field directly rather than re-deriving it.
+            return CommandResult(report, exit_code=0 if report["ok"] else 1)
         state_path = Path(args.state_path) if args.state_path else None
         report = hooks_install_verify(None, host, state_path=state_path)
         # "unverifiable"/"verified" both exit 0 - an honest unknown is not a

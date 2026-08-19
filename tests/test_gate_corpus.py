@@ -460,6 +460,24 @@ class GateCorpus(unittest.TestCase):
     `ask` now; the two of those still classified as ordinary local-repository
     changes - bare `add`/`commit` - fail red until Task 4 lands `GIT_ASK`,
     which is also by-design, not a mislabel).
+
+    SEC-A / C1 (external audit, 2026-08-17): 16 of the 142 entries were
+    relabelled `allow` -> `ask` - every one that names an interpreter
+    handed a whole program as one opaque `-c`/`-e`/heredoc payload,
+    directly or anywhere in a compound command (worst-segment-wins). This
+    is the audit's own repro generalised, not a mislabel: those entries
+    were harvested from a machine's own `python -c`/`node -e`/heredoc
+    work, i.e. real evidence of how often the C1 friction lands - a bit
+    over 1 in 9 of this window's denied commands, in a corpus that already
+    skews toward calls the classifier once refused.
+
+    `-m <module>` is NOT one of the shapes above (coordinator correction,
+    2026-08-17, this task's own first-pass error): a module name is an
+    installed, importable artifact, the same shape as a script FILE, not
+    an opaque string - `python -m unittest`/`-m pytest` stay `allow`. Six
+    entries that were briefly relabelled for exactly this reason (every
+    one a `python -m unittest ...` invocation) are back to their original
+    `allow` here.
     """
 
     def test_every_entry_matches_expected(self) -> None:

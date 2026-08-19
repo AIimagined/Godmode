@@ -118,16 +118,29 @@ class NodeToolingTests(Case):
 
 class HeredocTests(Case):
     """A newline ends a segment, so every line of a heredoc body was
-    classified as a command: `import json` became an unknown mutation."""
+    classified as a command: `import json` became an unknown mutation.
+
+    C1 (external audit, 2026-08-17) made a heredoc-fed interpreter opaque
+    and protected, minimum R2 - `python <<'PY'` no longer `allowed`, in
+    the same generalisation as `-c`/`-e`/`-m`. What this class still pins
+    is everything AROUND that change: the body is read as data, not as a
+    string of separate commands (still `shell_segments`'s own job, still
+    unaffected); and a real command on the line(s) AFTER the delimiter is
+    still judged as one - `_first_heredoc_interpreter`'s own remainder
+    recursion, the fix for the regression that plain `interpreter-opaque-
+    inline` protection would otherwise have introduced here (a trailing
+    `rm -rf /` silently capped at the heredoc's own R2 floor instead of
+    still refusing outright).
+    """
 
     SCRIPT = "python - <<'PY'\nimport json\nprint(json.dumps({'ok': 1}))\nPY"
 
     def test_a_heredoc_body_is_data(self) -> None:
-        self.allowed(self.SCRIPT)
+        self.asks(self.SCRIPT, "interpreter-opaque-inline")
         self.assertEqual(shell_segments(self.SCRIPT), ["python - <<'PY'"])
 
     def test_a_command_after_the_delimiter_is_still_a_command(self) -> None:
-        self.allowed(self.SCRIPT + "\ngit status --short")
+        self.asks(self.SCRIPT + "\ngit status --short")
         self.refuses(self.SCRIPT + "\nrm -rf /")
 
     def test_a_substitution_inside_a_body_is_still_run(self) -> None:
@@ -135,7 +148,9 @@ class HeredocTests(Case):
         self.asks("cat <<EOF\nvalue is $(rm -rf build)\nEOF")
 
     def test_an_unterminated_heredoc_does_not_classify_the_rest(self) -> None:
-        self.allowed("python - <<'PY'\nprint(1)")
+        """Still asks, exactly like the terminated form - not a crash, and
+        not a misread of `print(1)` as a bare, separately-judged command."""
+        self.asks("python - <<'PY'\nprint(1)", "interpreter-opaque-inline")
 
 
 class ConfigDiscoveryTests(unittest.TestCase):
