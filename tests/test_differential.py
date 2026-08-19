@@ -266,13 +266,21 @@ class RecordDifferentialTests(unittest.TestCase):
 
 
 class PlantTests(unittest.TestCase):
-    def test_deleting_the_differential_record_file_stops_the_citation_resolving(self) -> None:
-        """The mandated plant. The differential is deleted while it is still
-        the newest record in the archive, so the hash chain stays contiguous
-        for everything recorded before it - a real re-grade is what appends
-        next. That re-grade is what proves the citation stopped resolving:
-        the same claim that would have resolved (see `test_with_diff_citation_
-        resolves` above) now downgrades once its cited record is gone."""
+    def test_expunging_the_differential_stops_the_citation_resolving(self) -> None:
+        """The mandated plant, re-planted on a path that still exists.
+
+        This test used to DELETE the differential's record file while it was
+        the newest in the archive, on the stated premise that "the hash chain
+        stays contiguous for everything recorded before it" - which was true,
+        and was precisely the tail-truncation hole B4-1's chain anchor closes.
+        Deleting any record now refuses the whole archive (see the companion
+        test below), so that route can no longer reach the re-grade this test
+        exists to observe.
+
+        Expunge reaches it and models the same fact more honestly: the
+        differential's payload is gone while the citation to it still stands,
+        the chain stays valid (expunge re-seals it and leaves a tombstone),
+        and the claim that would otherwise have resolved downgrades."""
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
             session = open_session(archive, "differential")
@@ -285,9 +293,7 @@ class PlantTests(unittest.TestCase):
                 ["reordered the passes"], "read",
             )
             seq = diff["sequence"]
-            files = list(archive.events.glob(f"{seq:012d}-*.godmode.json"))
-            self.assertEqual(len(files), 1, "expected one file for the differential record")
-            files[0].unlink()
+            archive.expunge(seq, "the differential's payload was removed")
             out = record_claim(
                 archive, project, session,
                 "the root cause is the pipeline reorder", "verified",
@@ -296,6 +302,30 @@ class PlantTests(unittest.TestCase):
         self.assertEqual(out["data"]["grade"], "hypothesis")
         self.assertTrue(out["data"]["downgraded"])
         self.assertIn("diff:", out["data"]["reason"])
+
+    def test_deleting_the_newest_record_is_refused_by_the_chain_anchor(self) -> None:
+        """The guarantee that replaced the deletion route above, pinned here
+        so the behaviour change is recorded rather than merely losing the old
+        coverage: a cited record removed from the archive no longer degrades
+        one citation quietly - the archive itself refuses to be read until an
+        operator accepts the shorter chain (`godmode db --reanchor`)."""
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _checkpoint(archive, "render pipeline")
+            (project / "a.py").write_text("a\n", encoding="utf-8")
+            (project / "b.py").write_text("b\n", encoding="utf-8")
+            diff = record_differential(
+                archive, "render pipeline", "file:a.py", "file:b.py",
+                ["reordered the passes"], "read",
+            )
+            files = list(archive.events.glob(f"{diff['sequence']:012d}-*.godmode.json"))
+            self.assertEqual(len(files), 1, "expected one file for the differential record")
+            files[0].unlink()
+            archive.head.unlink(missing_ok=True)
+            archive._events_cache_key = None
+            with self.assertRaises(ArchiveError) as caught:
+                archive.read_events()
+            self.assertIn("tail-truncated", str(caught.exception))
 
 
 class ConsoleSmokeTests(unittest.TestCase):
