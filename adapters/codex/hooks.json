@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"<ABSOLUTE-PATH-TO-GODMODE>/hooks/godmode_gate_fast.py\""
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"<ABSOLUTE-PATH-TO-GODMODE>/hooks/godmode_session_hook.py\" session-start"
+          }
+        ]
+      }
+    ]
+  }
+}
