@@ -230,7 +230,7 @@ class HostEvent:
 # copied here (not re-derived) so detection-by-shape can never disagree with
 # the adapter that actually classifies these names.
 _CLAUDE_TOOLS = frozenset({
-    "Bash", "PowerShell", "Write", "Edit", "NotebookEdit",
+    "Bash", "PowerShell", "Write", "Edit", "NotebookEdit", "MultiEdit",
     "Read", "Glob", "Grep", "WebFetch", "WebSearch", "TodoWrite",
 })
 _CODEX_TOOLS = frozenset({"shell_command", "apply_patch", "functions.exec"})
@@ -436,7 +436,7 @@ def _malformed(host: str, tool: str, raw: Any) -> HostEvent:
 # ---------------------------------------------------------------------------
 
 _CLAUDE_READ_TOOLS = frozenset({"Read", "Glob", "Grep", "WebFetch", "WebSearch", "TodoWrite"})
-_CLAUDE_FENCED_TOOLS = frozenset({"Write", "Edit", "NotebookEdit"})
+_CLAUDE_FENCED_TOOLS = frozenset({"Write", "Edit", "NotebookEdit", "MultiEdit"})
 _CLAUDE_SHELL_TOOLS = frozenset({"Bash", "PowerShell"})
 
 
@@ -799,6 +799,49 @@ def _adapt_grok(raw: Any) -> HostEvent:
     event_name = str(field(raw, "hook_event_name") or "")
     cwd = str(field(raw, "cwd") or "")
     request_id = str(field(raw, "request_id") or "")
+
+    # Sprint 4 (live probe against Grok 1.0.4). The spec bound this seam as a
+    # UNION - "Matcher union keeps Claude names and adds
+    # run_terminal_command|search_replace|write" - and the shipped manifest
+    # honours it, subscribing PreToolUse to nine names
+    # (`Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|run_terminal_command|
+    # search_replace|write`). This adapter only ever implemented Grok's own
+    # three, so the six Claude-named calls our own manifest asks Grok to send
+    # were answered with `_unrecognized`: the manifest subscribed to names the
+    # adapter then rejected. Measured, not inferred - a `grok -p` run against
+    # this repository captured `{"event": "PreToolUse", "tool": "Bash",
+    # "field_names": ["command"]}`, and Grok's own `grok inspect` reports
+    # "Harness Compatibility -> claude -> hooks on".
+    #
+    # Fail-closed held throughout (every such call was DENIED, never allowed),
+    # so this was never an escape - but no proof record could be written for a
+    # tool the adapter could not name, which is why `hooks probe --host grok`
+    # reported UNAVAILABLE indefinitely.
+    #
+    # The Claude-named half is delegated to the same `tool_operation` map and
+    # the same `_CLAUDE_*` sets the Claude adapter reads, rather than copied
+    # here - a second transcription is exactly the drift that produced this.
+    # `tests/test_grok_host_contract.py` asserts every name in the shipped
+    # matcher resolves here, so the two cannot separate again.
+    if tool in _CLAUDE_TOOLS:
+        from .godmode_guardrails import tool_operation
+
+        operation = tool_operation(tool, tool_input) or ""
+        target = str(tool_input.get("file_path", "")).strip()
+        targets = [target] if tool in _CLAUDE_FENCED_TOOLS and target else []
+        if tool in _CLAUDE_READ_TOOLS:
+            kind = TOOL_KIND_READ
+        elif tool in _CLAUDE_FENCED_TOOLS:
+            kind = TOOL_KIND_FENCED
+        elif tool in _CLAUDE_SHELL_TOOLS:
+            kind = TOOL_KIND_SHELL
+        else:
+            kind = TOOL_KIND_OTHER
+        return HostEvent(
+            schema=SCHEMA, event=event_name, host="grok", tool=tool,
+            operation=operation, targets=targets, cwd=cwd,
+            request_id=request_id, tool_kind=kind,
+        )
 
     if tool == "run_terminal_command":
         command = str(tool_input.get("command", "")).strip()

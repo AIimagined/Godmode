@@ -50,6 +50,7 @@ if str(SCRIPTS) not in sys.path:
 
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
+from godmode_runtime import godmode_hostevent as he  # noqa: E402
 
 
 @contextmanager
@@ -381,6 +382,122 @@ class ChronicleOnceTests(unittest.TestCase):
         misses = [e for e in events if e["kind"] == "refusal"
                  and e["data"].get("category") == "apply-patch-malformed-directive"]
         self.assertEqual(len(misses), 1, misses)
+
+
+class LiveGrokHarnessShapeTests(unittest.TestCase):
+    """Sprint 4: the manifest subscribed to nine tool names, the adapter
+    understood three.
+
+    The spec bound this seam as a UNION - "Matcher union keeps Claude names
+    and adds run_terminal_command|search_replace|write" - and
+    `.grok-plugin/hooks.json` honours it, matching
+    `Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|run_terminal_command|
+    search_replace|write`. `_adapt_grok` implemented only Grok's own three,
+    so six of the names OUR OWN MANIFEST asks Grok to send were answered
+    with `_unrecognized`. Nothing about the vendor's documentation was
+    wrong or missing; two files in this repository disagreed, and no test
+    compared them.
+
+    Confirmed live rather than reasoned: a `grok -p` run against this
+    repository captured `{"event": "PreToolUse", "tool": "Bash",
+    "field_names": ["command"]}` through the payload-capture probe, and
+    `grok inspect` reports "Harness Compatibility -> claude -> hooks on".
+
+    Fail-closed held the whole time - every such call was DENIED, never
+    allowed - so this was a proof-recording and friction defect, not an
+    escape. But a tool the adapter cannot name cannot have a proof written
+    for it, which is why `hooks probe --host grok` reported UNAVAILABLE.
+    """
+
+    def setUp(self) -> None:
+        # Host detection reads the environment; pin it here rather than
+        # inheriting whatever the runner happened to export.
+        self._env = mock.patch.dict(os.environ, {"GROK_AGENT": "1"}, clear=False)
+        self._env.start()
+        os.environ.pop("GODMODE_HOST", None)
+        os.environ.pop("CLAUDE_CODE_ENTRYPOINT", None)
+
+    def tearDown(self) -> None:
+        self._env.stop()
+
+    def test_every_name_in_the_shipped_matcher_resolves(self) -> None:
+        """The drift guard whose absence let this happen: the manifest and
+        the adapter are two authorities over one list, so the list is read
+        from the manifest itself and every entry must resolve."""
+        manifest = json.loads(
+            (PLUGIN_ROOT / ".grok-plugin" / "hooks.json").read_text(encoding="utf-8"))
+        matchers = [block["matcher"]
+                    for blocks in manifest["hooks"].values()
+                    for block in blocks if "matcher" in block]
+        self.assertTrue(matchers, "the Grok manifest declares no matcher")
+        names = sorted({n for m in matchers for n in m.split("|") if n})
+        self.assertGreaterEqual(len(names), 9, names)
+        payload_for = {
+            "Bash": {"command": "ls"}, "PowerShell": {"command": "ls"},
+            "run_terminal_command": {"command": "ls"},
+            "Write": {"file_path": "a.txt"}, "Edit": {"file_path": "a.txt"},
+            "MultiEdit": {"file_path": "a.txt"},
+            "NotebookEdit": {"file_path": "a.ipynb"},
+            "write": {"file_path": "a.txt"},
+            "search_replace": {"file_path": "a.txt"},
+        }
+        unresolved = []
+        for name in names:
+            event = he.parse_host_payload({
+                "hook_event_name": "PreToolUse", "tool_name": name,
+                "tool_input": payload_for.get(name, {"command": "ls"}),
+            })
+            if event.tool_kind == he.TOOL_KIND_UNRECOGNIZED:
+                unresolved.append(name)
+        self.assertEqual(unresolved, [], "the Grok manifest subscribes to tool "
+                         "names this adapter answers with unrecognized-tool")
+
+    def test_the_live_shell_shape_is_a_shell_call_not_an_unrecognized_tool(self) -> None:
+        event = he.parse_host_payload({
+            "hook_event_name": "PreToolUse", "tool_name": "Bash",
+            "tool_input": {"command": "git push --force origin main"},
+        })
+        self.assertEqual(event.host, "grok")
+        self.assertEqual(event.tool_kind, he.TOOL_KIND_SHELL)
+        self.assertEqual(event.operation, "git push --force origin main")
+
+    def test_the_live_shell_shape_still_denies_an_irreversible_command(self) -> None:
+        with _hosted() as (project, state):
+            done = _run(
+                {"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                 "tool_input": {"command": "git push --force origin main"}},
+                project, state, extra_env={"GODMODE_HOST": "grok"},
+            )
+        body = json.loads(done.stdout)
+        self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_the_live_edit_shapes_reach_the_fence(self) -> None:
+        for tool, key in (("Write", "file_path"), ("Edit", "file_path")):
+            with self.subTest(tool=tool):
+                event = he.parse_host_payload({
+                    "hook_event_name": "PreToolUse", "tool_name": tool,
+                    "tool_input": {key: "/tmp/x.txt"},
+                })
+                self.assertEqual(event.host, "grok")
+                self.assertEqual(event.targets, ["/tmp/x.txt"])
+
+    def test_the_documented_spellings_still_work(self) -> None:
+        """Addendum 6's names are not dropped - a Grok build that speaks the
+        documented dialect must keep working."""
+        event = he.parse_host_payload({
+            "hook_event_name": "PreToolUse", "tool_name": "run_terminal_command",
+            "tool_input": {"command": "ls"},
+        })
+        self.assertEqual(event.operation, "ls")
+
+    def test_a_genuinely_unknown_tool_still_fails_closed(self) -> None:
+        """CX-2's rule survives the widening: recognising more NAMED shapes
+        must never become guessing at unnamed ones."""
+        event = he.parse_host_payload({
+            "hook_event_name": "PreToolUse", "tool_name": "some_future_grok_tool",
+            "tool_input": {"whatever": "shape"},
+        })
+        self.assertEqual(event.tool_kind, he.TOOL_KIND_UNRECOGNIZED)
 
 
 if __name__ == "__main__":
