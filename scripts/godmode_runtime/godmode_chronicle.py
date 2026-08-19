@@ -115,6 +115,14 @@ class Chronicle:
         self.config = self.root / "godmode-archive.json"
         self.lock_path = self.root / "godmode-write.lock"
         self.head = self.root / "godmode-head.json"
+        # B4-1: the tail-truncation anchor. The hash chain is tamper-evident
+        # mid-chain but silent on tail truncation (deleting the newest
+        # record(s) leaves a shorter, internally valid chain), and the head
+        # cache above is an explicitly disposable hint a deleter can refresh.
+        # This sidecar records {length, head_hash} on every append and reads
+        # may only ever catch UP to it - an anchor that over-counts the
+        # files means records that existed are gone.
+        self.chain_anchor = self.root / "godmode-chain-anchor.json"
         self._events_cache_key: tuple[Any, ...] | None = None
         self._events_cache: list[dict[str, Any]] | None = None
         self._accepted_keys_cache_key: tuple[int, int] | None = None
@@ -359,7 +367,8 @@ class Chronicle:
             self.verify(records)
         return records
 
-    def verify(self, records: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    def verify(self, records: list[dict[str, Any]] | None = None, *,
+               check_anchor: bool = True) -> dict[str, Any]:
         records = self.read_events(verify=False) if records is None else records
         previous: str | None = None
         expected_sequence = 1
@@ -376,11 +385,77 @@ class Chronicle:
                 raise ArchiveError("Record content hash is invalid")
             previous = record["record_hash"]
             expected_sequence += 1
-        return {
+        result = {
             "valid": True,
             "records": len(records),
             "head_hash": previous,
         }
+        # B4-1: the chain walk above proves the records present link up; it
+        # cannot prove none were removed from the END. Only the anchor can:
+        # the chain must still PASS THROUGH the anchored head. Shorter than
+        # anchored, or a different hash at the anchored length, is a
+        # truncation. Longer is the legal crash-window lag. `check_anchor`
+        # exists solely for `reanchor()`, which must verify the surviving
+        # structure while the anchor itself is what's stale.
+        if check_anchor:
+            anchor_state = self._read_chain_anchor()
+            if anchor_state is None:
+                result["anchor"] = "anchor-absent"
+            else:
+                if anchor_state["length"] > len(records):
+                    self._raise_truncated(anchor_state["length"], len(records))
+                if anchor_state["length"]:
+                    anchored_at = records[anchor_state["length"] - 1]
+                    if anchored_at["record_hash"] != anchor_state["head_hash"]:
+                        self._raise_truncated(anchor_state["length"], len(records))
+                result["anchor"] = "anchored"
+        return result
+
+    def _read_chain_anchor(self) -> dict[str, Any] | None:
+        """The anchored {length, head_hash}, or None when absent/unreadable.
+
+        Unlike the head hint, absence here is REPORTED (`verify()` returns
+        `anchor: "anchor-absent"`) rather than silently rebuilt - a fresh or
+        pre-anchor archive legitimately has none, and the first append
+        writes one; but nothing ever trusts an absent anchor as proof the
+        tail is intact."""
+        try:
+            value = json.loads(self.chain_anchor.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(value, dict):
+            return None
+        length = value.get("length")
+        head_hash = value.get("head_hash")
+        if not isinstance(length, int) or isinstance(length, bool) or length < 0:
+            return None
+        if length == 0 and head_hash is None:
+            return {"length": 0, "head_hash": None}
+        if not isinstance(head_hash, str):
+            return None
+        return {"length": length, "head_hash": head_hash}
+
+    def _write_chain_anchor(self, length: int, head_hash: str | None) -> None:
+        """Atomic + fsynced (`_atomic_json`), AFTER the record file lands:
+        a crash between the two leaves an anchor that under-counts by one,
+        which reads as the legal lag the next append repairs - never as a
+        truncation."""
+        try:
+            _atomic_json(self.chain_anchor, {"length": length, "head_hash": head_hash})
+        except OSError:
+            # An anchor that cannot be written must not fail the append its
+            # record already sealed; the previous anchor stays in force.
+            pass
+
+    @staticmethod
+    def _raise_truncated(anchored: int, remaining: int) -> None:
+        raise ArchiveError(
+            f"tail-truncated: the chain anchor records {anchored} sealed "
+            f"records but {remaining} remain, or the chain no longer passes "
+            "through the anchored head - the newest records were removed or "
+            "replaced. Recover them, or run `godmode db --reanchor` as an "
+            "explicit operator decision (the reanchor itself is chronicled)."
+        )
 
     def _read_head(self) -> dict[str, Any] | None:
         """Best-effort read of the head cache; anything doubtful reads as absent.
@@ -473,6 +548,21 @@ class Chronicle:
                 and last.get("record_hash") == head["record_hash"]
                 and _record_hash(last) == head["record_hash"]
             ):
+                # B4-1: the hint validates count + last record, both of
+                # which a tail-deleter who refreshes the hint controls -
+                # the anchor does not pass through their hands. Checked
+                # here too, or every append would ride the fast path
+                # straight past it. (`anchored < count` prefix divergence
+                # is left to the slow path's full verify - this guard's
+                # job is the fast path's own blind spot: a shortened tail
+                # behind a plausible hint.)
+                anchor_state = self._read_chain_anchor()
+                if anchor_state is not None:
+                    if anchor_state["length"] > count:
+                        self._raise_truncated(anchor_state["length"], count)
+                    if (anchor_state["length"] == count and count
+                            and last.get("record_hash") != anchor_state["head_hash"]):
+                        self._raise_truncated(anchor_state["length"], count)
                 return head["sequence"], head["record_hash"]
         records = self.read_events(verify=True)
         tail_hash = records[-1]["record_hash"] if records else None
@@ -515,6 +605,11 @@ class Chronicle:
         record["record_hash"] = _record_hash(record)
         destination = self.events / f"{sequence:012d}-{identifier}.godmode.json"
         _atomic_json(destination, record)
+        # B4-1 ordering: record first, anchor second, hint last. A crash
+        # after the record leaves the anchor lagging by one (legal, repaired
+        # by the next append); an anchor ahead of the files can only mean
+        # truncation.
+        self._write_chain_anchor(sequence, record["record_hash"])
         self._write_head(sequence, record["record_hash"])
         return record
 
@@ -561,6 +656,38 @@ class Chronicle:
                 kind, subject, data, evidence,
                 sequence=count + 1, previous_hash=tail_hash,
             )
+
+    def reanchor(self) -> dict[str, Any]:
+        """B4-1's explicit recovery: accept the chain that remains as the
+        chain, and say so on the record.
+
+        The surviving records must still verify structurally (`check_anchor=
+        False` - the anchor is exactly what is stale here); then the anchor
+        is rewritten to match them, and the act itself is chronicled as an
+        `action` record (counts only) - an operator decision that history
+        got shorter, never a silent repair.
+        """
+        with self.write_lock():
+            self._events_cache_key = None
+            records = [self._read_json(path) for path in self.event_paths()]
+            self.verify(records, check_anchor=False)
+            previous = self._read_chain_anchor()
+            self._write_chain_anchor(
+                len(records), records[-1]["record_hash"] if records else None)
+        record = self.append(
+            "action", "chain-reanchored",
+            {
+                "anchored_length": len(records),
+                "previous_anchor_length": previous["length"] if previous else 0,
+                "previous_anchor_present": previous is not None,
+            },
+            evidence=[],
+        )
+        return {
+            "reanchored": True,
+            "anchored_length": len(records),
+            "record": f"seq:{record['sequence']}",
+        }
 
     def expunge(self, sequence: int, reason: str) -> dict[str, Any]:
         """Erase a record's payload after a secret slipped past the scanner.
