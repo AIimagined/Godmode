@@ -4,9 +4,9 @@
 
 On the machine this was developed and measured on, **Codex and Grok load zero
 hooks from any plugin.** That is not a godmode-specific failure. Grok's own
-debug log is unambiguous: it discovers eight plugins carrying hook files —
-`superpowers`, `security-guidance`, `[private]`, `[private]`, `remember`,
-`i-have-adhd`, `explanatory-output-style`, `godmode` — and then reports
+debug log is unambiguous: it discovers eight installed plugins carrying hook
+files — godmode among them, the rest unrelated third-party plugins — and
+then reports
 
 ```
 hooks: discovery complete total_hooks=0 session_start=0 pre_tool=0 ...
