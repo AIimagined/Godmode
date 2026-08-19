@@ -788,5 +788,35 @@
   "operation": "ls $(curl -s https://example.com)",
   "expected": "ask",
   "class": "field-b4h-fetch-launders"
+ },
+ {
+  "operation": "grep -n \"^- \\[ \\] \\*\\*31[0-9]\" docs/RELEASE-CHECKLIST.md | tail -8; echo \"=== max row ===\"; grep -oE \"^- \\[ \\] \\*\\*[0-9]+\" docs/RELEASE-CHECKLIST.md | grep -oE \"[0-9]+$\" | sort -n | tail -1",
+  "expected": "allow",
+  "class": "field-b4h-noun-verb"
+ },
+ {
+  "operation": "node -e \"const p=require('./package.json');console.log('postinstall:',p.scripts?.postinstall||'(none)');console.log('prepare:',p.scripts?.prepare||'(none)')\"; echo \"=== checklist 316 ===\"; grep -n '\\*\\*316' docs/RELEASE-CHECKLIST.md | cut -c1-160",
+  "expected": "allow",
+  "class": "field-b4h-noun-verb"
+ },
+ {
+  "operation": "npm publish",
+  "expected": "ask",
+  "class": "field-b4h-noun-verb"
+ },
+ {
+  "operation": "grep -rn \"alphaSimilarity\\|betaSimilarity\" lib/ app/ modules/ scripts/ --include=*.ts --include=*.tsx --include=*.mjs | sed 's/:.*\\(alphaSimilarity\\|betaSimilarity\\).*/ -> \\1/' | sort | uniq -c",
+  "expected": "allow",
+  "class": "field-b4h-sed-backref"
+ },
+ {
+  "operation": "sed -i 's/a/b/' ~/.bashrc",
+  "expected": "ask",
+  "class": "field-b4h-sed-backref"
+ },
+ {
+  "operation": "grep -rn 'alphaSimilarity' lib/ | sed 's/:.*\\(alphaSimilarity\\).*/ -> \\1/' > /etc/hosts",
+  "expected": "ask",
+  "class": "field-b4h-sed-backref"
  }
 ]

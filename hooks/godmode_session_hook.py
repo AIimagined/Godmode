@@ -256,6 +256,24 @@ def _session_obligations(anchor: Any, archive: Chronicle) -> dict[str, Any]:
 _REFUSE_OUTRIGHT = frozenset({"R5"})
 
 
+def _ellipsize(text: str, limit: int) -> str:
+    """Bound text a human reads: break at the last word inside `limit` and
+    say it was cut. A hard slice ended the refusal's staged-command example
+    mid-word (`...authorize stage "git push --f`) with nothing to show
+    anything was missing. A token with no space inside the limit still cuts
+    hard - bounded beats pretty - but the marker always lands. The marker is
+    ASCII on purpose: this string crosses a pipe whose two ends can disagree
+    about encoding (a cp1252 child console read as utf-8 turns U+2026 into a
+    dead reader thread and a None stdout - found the hard way)."""
+    if len(text) <= limit:
+        return text
+    kept = text[:limit - 3]
+    space = kept.rfind(" ")
+    if space > 0:
+        kept = kept[:space]
+    return kept + "..."
+
+
 def _broker(archive: Chronicle) -> Any:
     # Deferred: CapabilityBroker drags secrets/hmac/getpass into the import
     # graph, which only the two consume branches below ever need - the
@@ -725,7 +743,8 @@ def main(argv: list[str] | None = None) -> int:
             # refusal denied the existence of its own remedy and offered
             # disabling the guard instead, which is the worst advice this
             # sentence could give and the likeliest to be taken.
-            impact = "; ".join(str(item) for item in preview.get("impact", ()))[:160]
+            impact = _ellipsize(
+                "; ".join(str(item) for item in preview.get("impact", ())), 160)
             # A question, phrased as one - what a host that actually has an
             # `ask` decision (Claude, Cursor) shows the operator.
             ask_reason = (
@@ -741,7 +760,7 @@ def main(argv: list[str] | None = None) -> int:
                     + ". Run it yourself, rephrase it as something narrower, or "
                     "stage a capability for this exact command: `godmode "
                     "authorize stage --operation "
-                    f"{json.dumps(operation[:200])}` - it needs the password "
+                    f"{json.dumps(_ellipsize(operation, 200))}` - it needs the password "
                     "from `godmode authorize setup`, is spent once, and expires. "
                     "In a hosted session, type it with a leading '!' to run it "
                     "from the prompt without leaving the conversation.\n"
