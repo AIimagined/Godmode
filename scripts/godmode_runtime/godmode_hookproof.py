@@ -526,11 +526,33 @@ def _session_anchor_sequence(archive: Chronicle) -> int:
     return max(session_sequence, anchor_sequence)
 
 
-def _superseded_since(archive: Chronicle, since_sequence: int) -> bool:
+def _superseded_since(archive: Chronicle, since_sequence: int,
+                      host: str | None = None) -> bool:
+    """Whether this HOST's boundary demonstrably broke after its last proof.
+
+    Sprint 4 found this unscoped: it counted any superseding record from any
+    host, so running three hosts' live probes in one session had a Codex
+    failure drop Claude's and Grok's freshly-proven boundaries to DEGRADED -
+    each reporting that it "demonstrably broke" on another host's evidence.
+    Supersession is per-host evidence; a Codex hook coming down says nothing
+    about Claude's.
+
+    A superseding record carrying NO host still supersedes for every host:
+    an unattributed breakage cannot be ruled out for any of them, which is
+    the fail-closed direction and the one to keep when the attribution is
+    missing.
+    """
     for record in archive.select(kind="action", limit=500):
         if record["sequence"] <= since_sequence:
             continue
-        if record["subject"] in _SUPERSEDING_SUBJECTS:
+        if record["subject"] not in _SUPERSEDING_SUBJECTS:
+            continue
+        if host is None:
+            return True
+        recorded_host = (record.get("data") or {}).get("host")
+        if not isinstance(recorded_host, str) or not recorded_host.strip():
+            return True
+        if recorded_host == host:
             return True
     return False
 
@@ -738,7 +760,7 @@ def interception_state(
         if proof is None:
             return _grade_from_registration(registration)
 
-        if _superseded_since(archive, proof["sequence"]):
+        if _superseded_since(archive, proof["sequence"], host):
             return LEVEL_DEGRADED
     except ArchiveError:
         # B4-1: a chain reporting tail-truncated (or any tamper verdict) is
@@ -802,7 +824,7 @@ def degraded_reason(
     proof = last_proof(archive, host)
     if proof is None:
         return None
-    if _superseded_since(archive, proof["sequence"]):
+    if _superseded_since(archive, proof["sequence"], host):
         for record in reversed(archive.select(kind="action", limit=500)):
             if record["sequence"] <= proof["sequence"]:
                 break
