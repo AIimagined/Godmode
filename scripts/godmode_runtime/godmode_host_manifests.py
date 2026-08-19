@@ -61,16 +61,29 @@ from . import godmode_hostevent as hostevent
 # silently drops a verified one) fails the test, not a live host.
 # ---------------------------------------------------------------------------
 
-# Addendum 2 (spec, verified fetch): the Codex build doc's own event example
-# is CamelCase ("SessionStart"), but the ONLY two event identifiers this repo
-# has live evidence for are the operator's Sol audit's own two observations -
-# "session_start registered" and "pre_tool_use supported" - both snake_case.
-# Given the build doc explicitly says the full event list is NOT published
-# and instructs verification before emission, the live-audit spelling is what
-# ships; `user_prompt_submit` (a candidate in the Plan's ORIGINAL, PRE-spec
-# red-test line) has no audit or doc confirmation at all and is OMITTED - a
-# gap `hooks status`/`hooks install --host codex` reports, not a guess.
-CODEX_HOOK_EVENTS = frozenset({"session_start", "pre_tool_use"})
+# Sprint 4 correction, on evidence that did not exist when the previous
+# spelling was chosen. The old comment here recorded its own reasoning
+# honestly: the Codex build doc's example was CamelCase, but the event list
+# was "NOT published", so an audit observation of `session_start`/
+# `pre_tool_use` was preferred over a single documented example.
+#
+# Both halves of that are now superseded:
+#   - OpenAI publishes the full list, and every name in it is CamelCase:
+#     SessionStart, SessionEnd, SubagentStart, SubagentStop, PreToolUse,
+#     PermissionRequest, PostToolUse, PreCompact, PostCompact,
+#     UserPromptSubmit, Stop.
+#   - A live `codex exec` session captured the hook firing with
+#     `hook_event_name: "PreToolUse"` - Codex reads the CamelCase block,
+#     the same one Claude uses, resolving `${CLAUDE_PLUGIN_ROOT}` as the
+#     documented legacy alias for `${PLUGIN_ROOT}`.
+#
+# The snake_case keys were not merely redundant: naming an event Codex
+# cannot enable is what left the orphan trust row in the operator's
+# `~/.codex/config.toml` (a `trusted_hash` with no `enabled`), and it put
+# `apply_patch` - Codex's documented file-edit tool - behind a key that
+# never fires, so Codex file edits reached no boundary at all. Codex now
+# rides the shared CamelCase events, and its tool names join that matcher.
+CODEX_HOOK_EVENTS = frozenset({"SessionStart", "UserPromptSubmit", "PreToolUse"})
 
 # Plan amendments (CX-3 additions, spec Addendum 6 verbatim): "register
 # PreCompact + SessionEnd" alongside Addendum 2026-08-16's own confirmed
@@ -224,20 +237,32 @@ def merge_codex_into_shared(existing: dict[str, Any]) -> dict[str, Any]:
     """
     merged = dict(existing)
     merged["hooks"] = dict(existing.get("hooks") or {})
-    merged["hooks"]["session_start"] = [
-        {"hooks": [_claude_style_entry("${PLUGIN_ROOT}", SESSION_HOOK, "session-start", timeout=10)]},
-    ]
-    merged["hooks"]["pre_tool_use"] = [
-        {
-            "matcher": CODEX_MATCHER,
-            "hooks": [_claude_style_entry("${PLUGIN_ROOT}", GATE_FAST_HOOK, timeout=3)],
-        },
-    ]
+    # Retire the two keys this function used to emit. They name events that
+    # appear nowhere in Codex's published list, and a checkout carrying them
+    # keeps producing the orphan trust row - so regeneration removes them
+    # rather than merely ceasing to add them.
+    for retired in ("session_start", "pre_tool_use"):
+        merged["hooks"].pop(retired, None)
+    # Codex fires the SHARED CamelCase events (measured live), so it needs no
+    # keys of its own - only its tool names inside the PreToolUse matcher.
+    # Widening that matcher is what gates `apply_patch`; leaving Codex's tools
+    # under a key Codex never fires gated nothing.
+    pre_tool_use = [dict(block) for block in merged["hooks"].get("PreToolUse") or []]
+    for block in pre_tool_use:
+        if "matcher" not in block:
+            continue
+        names = [n for n in block["matcher"].split("|") if n]
+        for tool in sorted(hostevent.CODEX_TOOLS):
+            if tool not in names:
+                names.append(tool)
+        block["matcher"] = "|".join(names)
+    if pre_tool_use:
+        merged["hooks"]["PreToolUse"] = pre_tool_use
     return merged
 
 
 def codex_emitted_events() -> frozenset[str]:
-    return frozenset({"session_start", "pre_tool_use"})
+    return frozenset(CODEX_HOOK_EVENTS)
 
 
 # ---------------------------------------------------------------------------

@@ -70,10 +70,13 @@ class CodexManifestTests(unittest.TestCase):
         with _built_project() as project:
             manifest = json.loads(
                 (project / "hooks" / "hooks.json").read_text(encoding="utf-8"))
-        codex_text = json.dumps(manifest["hooks"]["session_start"]) + json.dumps(
-            manifest["hooks"]["pre_tool_use"])
-        self.assertIn("${PLUGIN_ROOT}", codex_text)
-        self.assertNotIn("${CLAUDE_PLUGIN_ROOT}", codex_text)
+        # Sprint 4: Codex fires the SHARED CamelCase block (captured live),
+        # resolving ${CLAUDE_PLUGIN_ROOT} as the documented legacy alias for
+        # ${PLUGIN_ROOT}. There are no Codex-only keys left to check - the
+        # snake_case pair named events Codex cannot fire and is retired.
+        events = list(manifest["hooks"])
+        self.assertNotIn("session_start", events)
+        self.assertNotIn("pre_tool_use", events)
 
     def test_claudes_own_three_keys_are_untouched_by_the_codex_merge(self) -> None:
         with _built_project() as project:
@@ -89,7 +92,11 @@ class CodexManifestTests(unittest.TestCase):
         with _built_project() as project:
             manifest = json.loads(
                 (project / "hooks" / "hooks.json").read_text(encoding="utf-8"))
-        matcher = manifest["hooks"]["pre_tool_use"][0]["matcher"]
+        # Codex's tools now ride the CamelCase PreToolUse matcher, which is
+        # the event Codex actually fires. `apply_patch` living only under the
+        # retired snake_case key is what left Codex file edits ungated.
+        matcher = [b["matcher"] for b in manifest["hooks"]["PreToolUse"]
+                   if "matcher" in b][0]
         for tool in ("shell_command", "apply_patch", "functions.exec"):
             self.assertIn(tool, matcher)
 
@@ -264,7 +271,7 @@ class EventAllowlistTraceabilityTests(unittest.TestCase):
 # (adjacent to the source label `plugin.json#hooks[` in
 # `core-plugins/src/loader.rs`), corroborated by this machine's live
 # `~/.codex/config.toml` `[hooks.state]` table, whose only godmode entry is
-# keyed `godmode@aiimagined:hooks/hooks.json:session_start:0:0`.
+# keyed `godmode@aiimagined:hooks/hooks.json:SessionStart:0:0`.
 #
 # `hooks` is DELIBERATELY not pinned present-or-absent here. The same
 # embedded document contradicts itself about it - its "Plugin validation
@@ -276,10 +283,14 @@ class EventAllowlistTraceabilityTests(unittest.TestCase):
 # every part of the contract the document states without contradicting
 # itself, so that the answer, whichever way it lands, cannot be reached by
 # a manifest that was malformed on some OTHER axis.
+# Sprint 4: superseded by OpenAI's PUBLISHED hooks reference (fetched
+# 2026-08-19), which lists the events verbatim and entirely in CamelCase.
+# The snake_case set this previously held was inferred when the list was
+# unpublished; it is kept below only as the retired spelling map.
 CODEX_DOCUMENTED_HOOK_EVENTS = frozenset({
-    "pre_tool_use", "permission_request", "post_tool_use", "pre_compact",
-    "post_compact", "session_start", "session_end", "user_prompt_submit",
-    "subagent_start", "subagent_stop", "stop",
+    "SessionStart", "SessionEnd", "SubagentStart", "SubagentStop",
+    "PreToolUse", "PermissionRequest", "PostToolUse", "PreCompact",
+    "PostCompact", "UserPromptSubmit", "Stop",
 })
 
 # The CamelCase spelling of each event above, as the host's own hook
@@ -423,13 +434,33 @@ class CodexHookCasingTripwireTests(unittest.TestCase):
         return list(json.loads(
             (PLUGIN_ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"])
 
-    def test_the_shared_hooks_file_currently_declares_both_casings(self) -> None:
+    def test_the_double_casing_condition_is_retired(self) -> None:
+        """SETTLED by Sprint 4, which is what this tripwire was recording
+        the condition FOR.
+
+        Two independent results, both live: OpenAI's published hooks
+        reference lists every Codex event in CamelCase and contains no
+        snake_case spelling at all, and a `codex exec` session captured the
+        hook firing with `hook_event_name: "PreToolUse"` - the CamelCase
+        block, resolving `${CLAUDE_PLUGIN_ROOT}` as the documented legacy
+        alias.
+
+        The duplicate-key parse-failure hypothesis this class recorded is
+        therefore REFUTED, not confirmed: the file parsed and the hook ran
+        the whole time. The snake_case keys named events Codex cannot fire,
+        which is what left the orphan trust row (a `trusted_hash` with no
+        `enabled`) in the operator's config - and, far worse, left
+        `apply_patch` matched only under a key that never fires, so Codex
+        file edits reached no boundary at all.
+        """
         events = self._shared_events()
         collisions = sorted(
             {CODEX_CAMEL_TO_SNAKE[key] for key in events
              if key in CODEX_CAMEL_TO_SNAKE
              and CODEX_CAMEL_TO_SNAKE[key] in events})
-        self.assertEqual(collisions, ["pre_tool_use", "session_start"])
+        self.assertEqual(collisions, [])
+        self.assertEqual(
+            [k for k in events if k in CODEX_CAMEL_TO_SNAKE.values()], [])
 
     def test_the_camelcase_keys_that_predate_cx3_are_still_present(self) -> None:
         events = self._shared_events()
@@ -535,22 +566,28 @@ class RegistrationReportAndInstallVerifyTests(unittest.TestCase):
         with _built_project() as project:
             state = project / "fake-codex-config.toml"
             state.write_text(
-                '[hooks.state."godmode@x:hooks/hooks.json:session_start:0:0"]\n'
+                '[hooks.state."godmode@x:hooks/hooks.json:SessionStart:0:0"]\n'
                 'trusted_hash = "sha256:deadbeef"\n',
                 encoding="utf-8",
             )
             result = bindings.install_verify(project, "codex", state_path=state)
         self.assertEqual(result["verdict"], "partial")
-        self.assertEqual(result["missing_events"], ["pre_tool_use"])
-        self.assertEqual(result["registered_events"], ["session_start"])
+        self.assertEqual(result["missing_events"], ["PreToolUse", "UserPromptSubmit"])
+        self.assertEqual(result["registered_events"], ["SessionStart"])
 
     def test_install_verify_passes_when_every_declared_event_registers(self) -> None:
         with _built_project() as project:
             state = project / "fake-codex-config.toml"
+            # All three CamelCase events Codex actually fires (Sprint 4:
+            # the snake_case pair is retired), each trusted AND enabled.
             state.write_text(
-                '[hooks.state."godmode@x:hooks/hooks.json:session_start:0:0"]\n'
-                'trusted_hash = "sha256:deadbeef"\n\n'
-                '[hooks.state."godmode@x:hooks/hooks.json:pre_tool_use:0:0"]\n'
+                '[hooks.state."godmode@x:hooks/hooks.json:SessionStart:0:0"]\n'
+                'trusted_hash = "sha256:deadbeef"\n'
+                "enabled = true\n\n"
+                '[hooks.state."godmode@x:hooks/hooks.json:PreToolUse:0:0"]\n'
+                'trusted_hash = "sha256:deadbeef"\n'
+                "enabled = true\n\n"
+                '[hooks.state."godmode@x:hooks/hooks.json:UserPromptSubmit:0:0"]\n'
                 'trusted_hash = "sha256:deadbeef"\n'
                 "enabled = true\n",
                 encoding="utf-8",
@@ -573,9 +610,9 @@ class RegistrationReportAndInstallVerifyTests(unittest.TestCase):
         with _built_project() as project:
             state = project / "decoy-codex-config.toml"
             state.write_text(
-                '[hooks.state."some-other-plugin@evil:hooks/hooks.json:session_start:0:0"]\n'
+                '[hooks.state."some-other-plugin@evil:hooks/hooks.json:SessionStart:0:0"]\n'
                 'trusted_hash = "sha256:notgodmode1"\n\n'
-                '[hooks.state."some-other-plugin@evil:hooks/hooks.json:pre_tool_use:0:0"]\n'
+                '[hooks.state."some-other-plugin@evil:hooks/hooks.json:PreToolUse:0:0"]\n'
                 'trusted_hash = "sha256:notgodmode2"\n'
                 "enabled = true\n",
                 encoding="utf-8",
@@ -597,7 +634,7 @@ class RegistrationReportAndInstallVerifyTests(unittest.TestCase):
         with _built_project() as project:
             state = project / "fake-codex-config.toml"
             state.write_text(
-                '[hooks.state."godmode@x:hooks/hooks.json:session_start:0:0"]\n'
+                '[hooks.state."godmode@x:hooks/hooks.json:SessionStart:0:0"]\n'
                 'trusted_hash = "sha256:deadbeef"\n',
                 encoding="utf-8",
             )
@@ -674,11 +711,14 @@ class EveryShippedMatcherResolvesInItsAdapter(unittest.TestCase):
     """
 
     # manifest path -> (host label for detection, event keys to check)
+    # `hooks/hooks.json` is the SHARED file: Claude and Codex both read the
+    # same CamelCase block (Sprint 4 captured Codex firing it), so its
+    # matcher is a union and a name need only resolve for ONE of its
+    # readers - `apply_patch` is Codex's, `NotebookEdit` is Claude's.
     MANIFESTS = (
-        (Path("hooks/hooks.json"), "claude", ("PreToolUse",)),
-        (Path("hooks/hooks.json"), "codex", ("pre_tool_use",)),
-        (Path(".grok-plugin/hooks.json"), "grok", ("PreToolUse",)),
-        (Path(".cursor-plugin/hooks.json"), "cursor", ("preToolUse",)),
+        (Path("hooks/hooks.json"), ("claude", "codex"), ("PreToolUse",)),
+        (Path(".grok-plugin/hooks.json"), ("grok",), ("PreToolUse",)),
+        (Path(".cursor-plugin/hooks.json"), ("cursor",), ("preToolUse",)),
     )
 
     # A representative payload per tool-input shape. Only the SHAPE matters:
@@ -713,7 +753,7 @@ class EveryShippedMatcherResolvesInItsAdapter(unittest.TestCase):
         from godmode_runtime import godmode_hostevent as he
 
         unresolved: list[str] = []
-        for relative, host, events in self.MANIFESTS:
+        for relative, hosts, events in self.MANIFESTS:
             manifest = json.loads(
                 (PLUGIN_ROOT / relative).read_text(encoding="utf-8"))
             for event in events:
@@ -722,20 +762,90 @@ class EveryShippedMatcherResolvesInItsAdapter(unittest.TestCase):
                     if not matcher or matcher == ".*":
                         continue
                     for name in (n for n in matcher.split("|") if n):
-                        env = {"GODMODE_HOST": host}
-                        with mock.patch.dict(os.environ, env, clear=False):
-                            os.environ.pop("GROK_AGENT", None)
-                            os.environ.pop("CLAUDE_CODE_ENTRYPOINT", None)
-                            parsed = he.parse_host_payload({
-                                "hook_event_name": event,
-                                "tool_name": name,
-                                "tool_input": self._payload_for(name),
-                            })
-                        if parsed.tool_kind == he.TOOL_KIND_UNRECOGNIZED:
-                            unresolved.append(f"{relative.as_posix()}:{host}:{name}")
+                        resolved_by = []
+                        for host in hosts:
+                            with mock.patch.dict(os.environ,
+                                                 {"GODMODE_HOST": host},
+                                                 clear=False):
+                                os.environ.pop("GROK_AGENT", None)
+                                os.environ.pop("CLAUDE_CODE_ENTRYPOINT", None)
+                                parsed = he.parse_host_payload({
+                                    "hook_event_name": event,
+                                    "tool_name": name,
+                                    "tool_input": self._payload_for(name),
+                                })
+                            if parsed.tool_kind != he.TOOL_KIND_UNRECOGNIZED:
+                                resolved_by.append(host)
+                        if not resolved_by:
+                            unresolved.append(
+                                f"{relative.as_posix()}:{'/'.join(hosts)}:{name}")
         self.assertEqual(unresolved, [], "a shipped manifest subscribes the "
                          "host to tool names its own adapter answers with "
                          "unrecognized-tool")
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class CodexEventNamesMatchTheirPublishedList(unittest.TestCase):
+    """Sprint 4: the snake_case Codex keys are not Codex event names, and
+    Codex's own file-editing tool was never gated.
+
+    `godmode_host_manifests` chose `session_start`/`pre_tool_use` on
+    honestly-stated evidence - its own comment records that the build doc
+    said the event list was NOT published, so an audit observation of those
+    two spellings was preferred over the doc's lone CamelCase example.
+
+    That evidence is now superseded from both directions. OpenAI publishes
+    the full list, and every name in it is CamelCase: SessionStart,
+    SessionEnd, SubagentStart, SubagentStop, PreToolUse, PermissionRequest,
+    PostToolUse, PreCompact, PostCompact, UserPromptSubmit, Stop. And a
+    live `codex exec` session captured the hook firing with
+    `hook_event_name: "PreToolUse"` - the CamelCase block - while the
+    snake_case entry produced only an orphan trust row in the operator's
+    `~/.codex/config.toml` carrying a `trusted_hash` and no `enabled`,
+    because it names an event Codex cannot enable.
+
+    The second half is the one that mattered: `apply_patch` - documented as
+    Codex's file-edit tool - was listed ONLY under the invalid
+    `pre_tool_use` key, so the valid `PreToolUse` matcher never covered it.
+    Proven live: a `codex exec` run created a file through `apply_patch`
+    and wrote ZERO archive records. Unlike every other Sprint 4 finding,
+    which failed CLOSED, this one was a fail-open by omission - the tool
+    Codex edits files with reached no boundary at all.
+    """
+
+    # Verbatim from OpenAI's published hooks reference (fetched 2026-08-19).
+    OFFICIAL_CODEX_EVENTS = frozenset({
+        "SessionStart", "SessionEnd", "SubagentStart", "SubagentStop",
+        "PreToolUse", "PermissionRequest", "PostToolUse", "PreCompact",
+        "PostCompact", "UserPromptSubmit", "Stop",
+    })
+
+    def test_no_shipped_event_key_is_absent_from_the_published_list(self) -> None:
+        manifest = json.loads(
+            (PLUGIN_ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+        unpublished = sorted(k for k in manifest["hooks"]
+                             if k not in self.OFFICIAL_CODEX_EVENTS)
+        self.assertEqual(unpublished, [], "hooks.json declares event names "
+                         "that appear nowhere in Codex's published list")
+
+    def test_codexs_file_edit_tool_is_covered_by_a_valid_event(self) -> None:
+        """`apply_patch` must be matched under an event Codex actually
+        fires - being listed under an unpublished key gates nothing."""
+        manifest = json.loads(
+            (PLUGIN_ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+        covered = False
+        for event, blocks in manifest["hooks"].items():
+            if event not in self.OFFICIAL_CODEX_EVENTS:
+                continue
+            for block in blocks:
+                if "apply_patch" in (block.get("matcher") or "").split("|"):
+                    covered = True
+        self.assertTrue(covered, "apply_patch - Codex's documented file-edit "
+                        "tool - is matched by no valid event, so Codex file "
+                        "edits reach no boundary")
 
 
 if __name__ == "__main__":
