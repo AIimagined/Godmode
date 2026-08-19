@@ -229,6 +229,31 @@ class GodmodeOwnReadTests(GateCase):
         self.refused("python deploy.py --publish", "release-or-external-write")
 
 
+class AgentTrustBoundaryTests(GateCase):
+    """`claude plugin marketplace add` registers a new plugin SOURCE - from
+    then on, everything it serves is code the agent will offer to run. The
+    recovered field corpus shows the gate asking about it as an unclassified
+    mutation and the operator judging that ask CORRECT (trust boundary),
+    while `list`/`install` beside it were judged pure friction. U-G1b's
+    read-by-default for unknown heads later swallowed all three - the two
+    friction reads rightly, the trust write wrongly. Named, it asks as what
+    it is."""
+
+    def test_adding_a_marketplace_asks(self) -> None:
+        self.refused("claude plugin marketplace add someuser/some-plugin",
+                     "agent-trust-mutation")
+
+    def test_adding_through_a_pipe_still_asks(self) -> None:
+        self.refused("claude plugin marketplace add someuser/some-plugin 2>&1 | tail -20",
+                     "agent-trust-mutation")
+
+    def test_listing_and_installing_stay_reads(self) -> None:
+        """The operator's own ruling: list/install = friction, not a
+        boundary - installing draws from a marketplace already trusted."""
+        self.allowed("claude plugin marketplace list 2>&1 | tail -30")
+        self.allowed("claude plugin install some-plugin@some-plugin 2>&1 | tail -20")
+
+
 class PowerShellAssignmentTests(GateCase):
     """Every PowerShell script that opened by naming a path was an unknown
     mutation from its first line."""

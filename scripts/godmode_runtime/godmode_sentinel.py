@@ -289,6 +289,22 @@ _ACTION_PATTERNS: tuple[tuple[str, re.Pattern[str], tuple[str, ...]], ...] = (
         ("local files", "recoverability"),
     ),
     (
+        # Registering a new plugin SOURCE: from then on, everything that
+        # marketplace serves is code the agent will offer to run. The
+        # recovered field corpus (B4-9) shows the gate asking about this as
+        # an unclassified mutation and the operator judging the ask CORRECT
+        # (trust boundary) - while `list`/`install` beside it were judged
+        # pure friction, because installing draws from a marketplace already
+        # trusted. U-G1b's read-by-default for unknown heads later swallowed
+        # all three; this names the one that must keep asking. Anchored to
+        # the full `plugin marketplace add` phrase so the two friction reads
+        # stay reads.
+        "agent-trust-mutation",
+        re.compile(r"(?i)\bclaude\s+plugin\s+marketplace\s+add\b"),
+        ("the agent's own plugin trust surface",
+         "every plugin the new source serves"),
+    ),
+    (
         # A streamed regex edit of a file in place. Multi-layer escaping and
         # pattern-located boundaries silently corrupt source (four escaping
         # failures in one recorded session); the honest tools are the host's
@@ -1567,6 +1583,10 @@ _TIER_BY_CATEGORY = {
     "git-branch-mutation": "R3",
     "git-history-or-remote": "R3",
     "worktree-discard": "R3",
+    # The recovered field ask this restores was tiered R3, and the operator
+    # judged that ask correct - recoverable (the source can be removed), but
+    # not before everything it serves has been offered as trusted.
+    "agent-trust-mutation": "R3",
     "scripted-source-edit": "R3",
     "process-control": "R3",
     "database-mutation": "R3",
