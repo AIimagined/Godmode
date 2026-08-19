@@ -44,3 +44,9 @@ docs-site/
 
 # Agent task reports and SDD scratch - internal, never shippable.
 .superpowers/
+
+# B4-7 dogfood plant snapshot registry - exists only while DogfoodingTests
+# run (or after a killed run, until the next run heals from it). Carries
+# repo file contents, so it must never be committable by a `git add -A`
+# that races a test run.
+.dogfood-restore.json
