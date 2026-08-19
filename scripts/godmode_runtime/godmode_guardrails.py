@@ -196,7 +196,11 @@ def tool_operation(tool: str, tool_input: dict[str, Any] | None) -> str | None:
     payload = tool_input or {}
     if tool in ("Bash", "PowerShell"):
         return str(payload.get("command", "")).strip() or f"{tool} with no command"
-    if tool in ("Write", "Edit", "NotebookEdit"):
+    # MultiEdit joins the edit family (Sprint 4): the Grok manifest's matcher
+    # has always subscribed to it, but no tool map named it, so every one
+    # arrived as an unrecognised tool and was refused outright. It carries the
+    # same `file_path` these do and belongs to the same fence.
+    if tool in ("Write", "Edit", "NotebookEdit", "MultiEdit"):
         verb = "write" if tool == "Write" else "edit"
         return f"{verb} file {payload.get('file_path', '(unnamed)')}"
     if tool in ("Read", "Glob", "Grep"):
