@@ -818,5 +818,105 @@
   "operation": "grep -rn 'alphaSimilarity' lib/ | sed 's/:.*\\(alphaSimilarity\\).*/ -> \\1/' > /etc/hosts",
   "expected": "ask",
   "class": "field-b4h-sed-backref"
+ },
+ {
+  "operation": "cd PROJ && cat >> docs/specs/design.md <<'EOF'\nBODY\nEOF\ncat >> docs/plans/tasks.md <<'EOF'\nBODY\nEOF\necho ok",
+  "expected": "allow",
+  "class": "field-recovered"
+ },
+ {
+  "operation": "claude plugin marketplace add someuser/some-plugin 2>&1 | tail -20",
+  "expected": "ask",
+  "class": "field-recovered"
+ },
+ {
+  "operation": "claude plugin marketplace list 2>&1 | tail -30",
+  "expected": "allow",
+  "class": "field-recovered"
+ },
+ {
+  "operation": "claude plugin install some-plugin@some-plugin 2>&1 | tail -20",
+  "expected": "allow",
+  "class": "field-recovered"
+ },
+ {
+  "operation": "cd PROJ && cat >> notes/progress.md <<'EOF'\nBODY\nEOF",
+  "expected": "allow",
+  "class": "field-recovered"
+ },
+ {
+  "operation": "grep -n \"godmode\" ~/.claude/settings.json; echo \"--- installed plugin versions/state ---\"; claude plugin list 2>&1 | grep -iA2 godmode | head -20",
+  "expected": "allow",
+  "class": "field-recovered"
+ },
+ {
+  "operation": "grep -rln \"app/api\" --include=\"*.test.ts\" lib/__tests__ __tests__ 2>/dev/null | head -10; echo \"=== route-level tests ===\"; find . -name \"*.test.ts\" -not -path \"./node_modules/*\" | xargs grep -ln \"requireUser\" 2>/dev/null | head -5",
+  "expected": "allow",
+  "class": "field-recovered"
+ },
+ {
+  "operation": "diff <(sed -n '25,37p' docs/SPRINT-SSOT.md) <(sed -n '38,51p' docs/SPRINT-SSOT.md) | sed 's/\\(.\\{200\\}\\).*/\\1.../' | head -40",
+  "expected": "allow",
+  "class": "field-recovered"
+ },
+ {
+  "operation": "cd PROJ && grep -q \"some-policy\" .git/info/exclude 2>/dev/null || printf \"\\n# local-only\\n.some-policy.json\\n\" >> .git/info/exclude; git status --porcelain | head -3; git log --oneline -1",
+  "expected": "ask",
+  "class": "field-recovered"
+ },
+ {
+  "operation": "cd PROJ && python - <<'PY'\nimport pathlib\np=pathlib.Path(\"docs/CHANGELOG.md\"); t=p.read_text(encoding=\"utf-8\")\ne = \"\"\" BODY \"\"\"\np.write_text(t+e, encoding=\"utf-8\"); print(\"changelog appended\")\nPY",
+  "expected": "allow",
+  "class": "field-recovered"
+ },
+ {
+  "operation": "cd PROJ && for d in libA libB libC libD libE libF libG libH; do echo \"--- $d ---\"; head -6 .agents/skills/$d/SKILL.md 2>/dev/null | sed 's/^/   /' | cut -c1-140; done",
+  "expected": "allow",
+  "class": "field-recovered"
+ },
+ {
+  "operation": "cd PROJ && for d in libA libB libC; do\ncode=$(curl -s -o /dev/null -w \"%{http_code}\" -L \"https://raw.githubusercontent.com/example-org/example-repo/main/.claude/skills/$d/SKILL.md\" --max-time 12)\nif [ \"$code\" = \"200\" ]; then echo \"  $d : UPSTREAM PUBLISHES (200)\"; else echo \"  $d : not upstream ($code)\"; fi\ndone",
+  "expected": "allow",
+  "class": "field-recovered"
+ },
+ {
+  "operation": "cd PROJ && for d in libA libB libC; do code=$(curl -s -o /dev/null -w \"%{http_code}\" -L \"https://raw.githubusercontent.com/example-org/example-repo/main/skills/$d/SKILL.md\" --max-time 12); echo \"  CONTROL $d : $code\"; done; node -e \"const s=require('./skills-lock.json').skills; for(const k of ['libA','libB']) console.log(k, JSON.stringify(s[k]))\"",
+  "expected": "allow",
+  "class": "field-recovered"
+ },
+ {
+  "operation": "cd PROJ && probe(){ curl -s -o /dev/null -w \"%{http_code}\" -L \"https://raw.githubusercontent.com/example-org/example-repo/main/$1\" --max-time 12; }\nfor d in libA libB libC; do a=$(probe \"skills/$d/SKILL.md\"); b=$(probe \".claude/skills/$d/SKILL.md\"); echo \"  $d : $a / $b\"; done",
+  "expected": "allow",
+  "class": "field-recovered"
+ },
+ {
+  "operation": "curl -s --max-time 25 \"https://api.github.com/repos/example-org/example-repo/contents/.claude/skills\" | python -c \"import json,sys; names=[e['name'] for e in json.load(sys.stdin)]; print(names)\"",
+  "expected": "allow",
+  "class": "field-recovered"
+ },
+ {
+  "operation": "cd PROJ && python - <<'PY'\nimport pathlib\np=pathlib.Path(\"docs/CHECKLIST.md\"); t=p.read_text(encoding=\"utf-8\")\np.write_text(t + \"| 318 | BODY |\\n\", encoding=\"utf-8\"); print(\"row appended\")\nPY",
+  "expected": "allow",
+  "class": "field-recovered"
+ },
+ {
+  "operation": "cd PROJ && git stash push -m \"release-prep (blocked)\" -- CHANGELOG.md changelog.d && git status --porcelain | head -5 && git stash list | head -2",
+  "expected": "ask",
+  "class": "field-recovered"
+ },
+ {
+  "operation": "cd PROJ && git checkout -- hooks/gate_table.json tests/test_x.py 2>/dev/null; git status --porcelain | head -5 && python -m unittest tests.test_x 2>&1 | tail -2",
+  "expected": "ask",
+  "class": "field-recovered"
+ },
+ {
+  "operation": "curl -s --max-time 25 -L \"https://raw.githubusercontent.com/example-org/example-repo/main/skills/example/SKILL.md\" | head -60",
+  "expected": "allow",
+  "class": "field-recovered"
+ },
+ {
+  "operation": "cd PROJ && printf '%s\\n' \"STATUS NOTE BODY\" >> notes/progress.md && echo ok",
+  "expected": "allow",
+  "class": "field-recovered"
  }
 ]
