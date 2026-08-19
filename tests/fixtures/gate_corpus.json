@@ -6,7 +6,7 @@
  },
  {
   "operation": "python - <<'PY' BODY",
-  "expected": "allow",
+  "expected": "ask",
   "class": "by-design"
  },
  {
@@ -41,12 +41,12 @@
  },
  {
   "operation": "node -e \"BODY\"",
-  "expected": "allow",
+  "expected": "ask",
   "class": "by-design"
  },
  {
   "operation": "node -e \"BODY\"",
-  "expected": "allow",
+  "expected": "ask",
   "class": "by-design"
  },
  {
@@ -111,7 +111,7 @@
  },
  {
   "operation": "npm view @pkg/producer version 2>/dev/null; echo \"---pinned---\"; node -e \"const p=require('./package.json');console.log(JSON.stringify(Object.fromEntries(Object.entries({...p.dependencies,...p.devDependencies}).filter(([k])=>k.includes('pkg'))),null,1))\"",
-  "expected": "allow",
+  "expected": "ask",
   "class": "FP1"
  },
  {
@@ -171,17 +171,17 @@
  },
  {
   "operation": "cd PATH && node packages/render-headless/frames.js --composition packages/bench/results/render-workload.json --frames 4 --pipe --format webm --alpha --transport fast > /dev/null 2>&1; ffmpeg -y -loglevel error -c:v libvpx-vp9 -i out/app-demo.webm -vframes 1 -pix_fmt rgba out/alpha-opaque.png && node --input-type=module -e \"BODY\"",
-  "expected": "allow",
+  "expected": "ask",
   "class": "by-design"
  },
  {
   "operation": "cd PATH && ffmpeg -y -loglevel error -c:v libvpx-vp9 -i out/app-demo.webm -vframes 1 -pix_fmt rgba out/alpha-opaque.png && node --input-type=module -e \"BODY\"",
-  "expected": "allow",
+  "expected": "ask",
   "class": "by-design"
  },
  {
   "operation": "P=~/.claude/plugins/cache/publisher/godmode && ls \"$P\" && python -c \"\nimport json,os\np=os.path.expanduser('~/.claude/plugins/cache/publisher/godmode')\nfor v in sorted(os.listdir(p)):\n    m=os.path.join(p,v,'.claude-plugin','plugin.json')\n    if os.path.isfile(m): print(v,'->',json.load(open(m,encoding='utf-8')).get('version'))\n\"; echo \"--- hooks registered:\"; cat \"$P/0.2.1/hooks/hooks.json\" 2>/dev/null | python -c \"import json,sys; d=json.load(sys.stdin); print(list(d['hooks'].keys()))\" 2>/dev/null",
-  "expected": "allow",
+  "expected": "ask",
   "class": "by-design"
  },
  {
@@ -226,7 +226,7 @@
  },
  {
   "operation": "python -c \"BODY\"",
-  "expected": "allow",
+  "expected": "ask",
   "class": "by-design"
  },
  {
@@ -256,7 +256,7 @@
  },
  {
   "operation": "python -c 'import sys; sys.path.insert(0,\"scripts\")\nfrom godmode_runtime.godmode_sentinel import classify_action\nfor p in [\"git commit -m fix\", \"git add -A\", \"git push origin main\", \"git commit --amend\"]:\n    v=classify_action(p)\n    print((\"DENY \" if v[\"protected\"] else \"ok   \")+v[\"tier\"]+\" \"+v[\"category\"].ljust(24)+repr(p))'",
-  "expected": "allow",
+  "expected": "ask",
   "class": "by-design"
  },
  {
@@ -271,7 +271,7 @@
  },
  {
   "operation": "D=\"PATH\"\npython -c \"import json;d=json.load(open(r'$D/.claude-plugin/plugin.json'));print('version',d['version'])\"\necho \"--- runtime modules present:\"\nfor m in godmode_census godmode_obligations godmode_release godmode_usage godmode_integrity godmode_sentinel; do\n  [ -f \"$D/scripts/godmode_runtime/$m.py\" ] && echo \"  yes $m\" || echo \"  NO  $m\"; done\necho \"--- newest source mtime:\"; ls -t \"$D/scripts/godmode_runtime/\" | head -3\necho \"--- repo tag for 0.2.6:\"; cd PATH && git log --oneline -1 v0.2.",
-  "expected": "allow",
+  "expected": "ask",
   "class": "by-design"
  },
  {
@@ -301,7 +301,7 @@
  },
  {
   "operation": "cd PATH\nS=\"PATH\"\npython \"$S/probe2.py\"\necho \"=== escaped-separator safety:\"\npython - <<'PY' BODY",
-  "expected": "allow",
+  "expected": "ask",
   "class": "by-design"
  },
  {
@@ -351,7 +351,7 @@
  },
  {
   "operation": "cd \"PATH\"\npython - <<'PY' 2>/dev/null || true BODY",
-  "expected": "allow",
+  "expected": "ask",
   "class": "FP2"
  },
  {
@@ -361,7 +361,7 @@
  },
  {
   "operation": "python - <<'EOF' BODY",
-  "expected": "allow",
+  "expected": "ask",
   "class": "by-design"
  },
  {
@@ -456,7 +456,7 @@
  },
  {
   "operation": "node packages/render-headless/frames.js --frames 3 --fps 30 --pipe >/dev/null 2>&1; node -e \"const h=require('./out/frame-hashes.json');console.log('frame0:',h[0], h[0]==='ea69b40a'?'UNCHANGED ✓':'CHANGED ✗')\"",
-  "expected": "allow",
+  "expected": "ask",
   "class": "by-design"
  },
  {
@@ -561,7 +561,7 @@
  },
  {
   "operation": "python - << 'PY' BODY",
-  "expected": "allow",
+  "expected": "ask",
   "class": "by-design"
  },
  {
@@ -596,7 +596,7 @@
  },
  {
   "operation": "node -e \"\nconst fs=require('fs');\nconst m=JSON.parse(fs.readFileSync('node_modules/pkg/dist/studio/index.js.map','utf8'));\nconst i=m.sources.findIndex(s=>/useTimelinePlayer/.test(s));\nconsole.log('idx',i,m.sources[i]);\nconst src=m.sourcesContent[i]||'';\nconst k=src.indexOf('getAdapter');\nconsole.log(src.slice(Math.max(0,k-2500),k+3000));\n\"",
-  "expected": "allow",
+  "expected": "ask",
   "class": "FP1"
  },
  {
@@ -631,7 +631,7 @@
  },
  {
   "operation": "node -p \"const p=require('./package.json');JSON.stringify({dev:Object.keys(p.devDependencies||{}).filter(d=>/play|puppet/i.test(d)),deps:Object.keys(p.dependencies||{}).filter(d=>/play|puppet/i.test(d))})\"; ls compositions/intro compositions/template-demo 2>/dev/null",
-  "expected": "allow",
+  "expected": "ask",
   "class": "FP1"
  },
  {
@@ -731,8 +731,8 @@
  },
  {
   "operation": "curl -s --max-time 25 \"https://api.github.com/repos/example/repo/contents/\" | python -c \"import json,sys; d=json.load(sys.stdin); print(len(d))\"",
-  "expected": "allow",
-  "class": "field-b4h-readonly-fetch"
+  "expected": "ask",
+  "class": "field-b4h-readonly-fetch+seca-opaque-inline"
  },
  {
   "operation": "curl -s --max-time 25 -L \"https://raw.githubusercontent.com/example/repo/main/SKILL.md\" | head -60",
@@ -796,8 +796,8 @@
  },
  {
   "operation": "node -e \"const p=require('./package.json');console.log('postinstall:',p.scripts?.postinstall||'(none)');console.log('prepare:',p.scripts?.prepare||'(none)')\"; echo \"=== checklist 316 ===\"; grep -n '\\*\\*316' docs/RELEASE-CHECKLIST.md | cut -c1-160",
-  "expected": "allow",
-  "class": "field-b4h-noun-verb"
+  "expected": "ask",
+  "class": "field-b4h-noun-verb+seca-opaque-inline"
  },
  {
   "operation": "npm publish",
@@ -866,8 +866,8 @@
  },
  {
   "operation": "cd PROJ && python - <<'PY'\nimport pathlib\np=pathlib.Path(\"docs/CHANGELOG.md\"); t=p.read_text(encoding=\"utf-8\")\ne = \"\"\" BODY \"\"\"\np.write_text(t+e, encoding=\"utf-8\"); print(\"changelog appended\")\nPY",
-  "expected": "allow",
-  "class": "field-recovered"
+  "expected": "ask",
+  "class": "field-recovered+seca-opaque-inline"
  },
  {
   "operation": "cd PROJ && for d in libA libB libC libD libE libF libG libH; do echo \"--- $d ---\"; head -6 .agents/skills/$d/SKILL.md 2>/dev/null | sed 's/^/   /' | cut -c1-140; done",
@@ -881,8 +881,8 @@
  },
  {
   "operation": "cd PROJ && for d in libA libB libC; do code=$(curl -s -o /dev/null -w \"%{http_code}\" -L \"https://raw.githubusercontent.com/example-org/example-repo/main/skills/$d/SKILL.md\" --max-time 12); echo \"  CONTROL $d : $code\"; done; node -e \"const s=require('./skills-lock.json').skills; for(const k of ['libA','libB']) console.log(k, JSON.stringify(s[k]))\"",
-  "expected": "allow",
-  "class": "field-recovered"
+  "expected": "ask",
+  "class": "field-recovered+seca-opaque-inline"
  },
  {
   "operation": "cd PROJ && probe(){ curl -s -o /dev/null -w \"%{http_code}\" -L \"https://raw.githubusercontent.com/example-org/example-repo/main/$1\" --max-time 12; }\nfor d in libA libB libC; do a=$(probe \"skills/$d/SKILL.md\"); b=$(probe \".claude/skills/$d/SKILL.md\"); echo \"  $d : $a / $b\"; done",
@@ -891,13 +891,13 @@
  },
  {
   "operation": "curl -s --max-time 25 \"https://api.github.com/repos/example-org/example-repo/contents/.claude/skills\" | python -c \"import json,sys; names=[e['name'] for e in json.load(sys.stdin)]; print(names)\"",
-  "expected": "allow",
-  "class": "field-recovered"
+  "expected": "ask",
+  "class": "field-recovered+seca-opaque-inline"
  },
  {
   "operation": "cd PROJ && python - <<'PY'\nimport pathlib\np=pathlib.Path(\"docs/CHECKLIST.md\"); t=p.read_text(encoding=\"utf-8\")\np.write_text(t + \"| 318 | BODY |\\n\", encoding=\"utf-8\"); print(\"row appended\")\nPY",
-  "expected": "allow",
-  "class": "field-recovered"
+  "expected": "ask",
+  "class": "field-recovered+seca-opaque-inline"
  },
  {
   "operation": "cd PROJ && git stash push -m \"release-prep (blocked)\" -- CHANGELOG.md changelog.d && git status --porcelain | head -5 && git stash list | head -2",
