@@ -672,8 +672,11 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 brief["resume"] = _resume_digest(
                     archive, Path(anchor.project_root), brief["obligations"])
-            except Exception:  # noqa: BLE001
-                pass
+            except GodmodeError as exc:
+                # Stated, not skipped: an absent `resume` block reads as
+                # "nothing to resume", which is a claim. This says the
+                # digest could not be built and why.
+                brief["resume"] = {"unavailable": str(exc)[:160]}
             if claude_session:
                 _emit_claude_context(brief)
             else:
@@ -711,8 +714,15 @@ def main(argv: list[str] | None = None) -> int:
             # session dying without one is exactly the case this exists for.
             try:
                 _capture_interrupted_intent(archive)
-            except Exception:  # noqa: BLE001
-                pass
+            except GodmodeError:
+                # A capture that cannot be written is a hook-health fact,
+                # not nothing: recorded through the same degradation path
+                # every other boundary failure in this file uses, so it
+                # surfaces in `hooks status` instead of vanishing. The
+                # session still ends normally - this is bookkeeping about
+                # bookkeeping, and it may never cost the operator a close.
+                record_hook_degradation(
+                    archive, current_host(), "interrupted-intent-capture-failed")
             if args.event == "session-end":
                 # Best-effort, counts-only measurement of the host's own
                 # transcript. Never blocks the checkpoint below: a missing
