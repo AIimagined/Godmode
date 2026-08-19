@@ -306,6 +306,41 @@ def _ellipsize(text: str, limit: int) -> str:
     return kept + "..."
 
 
+def _checkpoint_pressure(archive: Chronicle, anchor: Any) -> str | None:
+    """B4-7 rider 1: tick the tracked-mutation counter and answer with an
+    advisory when it crosses the threshold - or, under declared
+    `auto_checkpoint` policy, write the chronicled auto-checkpoint and
+    reset. Best-effort throughout: a counter or checkpoint that cannot be
+    written never blocks the tool call it rides on."""
+    from godmode_runtime.godmode_guardrails import (
+        checkpoint_trigger_policy, count_tracked_mutation,
+        reset_mutation_counter,
+    )
+    count = count_tracked_mutation(archive)
+    threshold, auto = checkpoint_trigger_policy(Path(anchor.project_root))
+    if count < threshold:
+        return None
+    if auto:
+        try:
+            archive.append(
+                "checkpoint", "auto-checkpoint",
+                {"status": "auto",
+                 "next": ["review the last stretch and name the next step"],
+                 "mutations": count},
+                evidence=[],
+            )
+        except Exception:  # noqa: BLE001
+            return None
+        reset_mutation_counter(archive)
+        return (f"auto-checkpoint recorded after {count} tracked-file "
+                "mutations (declared auto_checkpoint policy); counter reset")
+    if count % threshold == 0:
+        return (f"{count} tracked-file mutations since the last checkpoint - "
+                "consider `godmode checkpoint`, or declare auto_checkpoint "
+                "in .godmode-authorization-policy.json")
+    return None
+
+
 def _broker(archive: Chronicle) -> Any:
     # Deferred: CapabilityBroker drags secrets/hmac/getpass into the import
     # graph, which only the two consume branches below ever need - the
@@ -938,13 +973,24 @@ def main(argv: list[str] | None = None) -> int:
             # Silence is the allow signal in this contract; only a refusal speaks,
             # so an allowed tool call costs the host nothing but the exit code.
             if preview["allow"] and operation:
+                # B4-7 rider 1: an allowed tracked-file mutation ticks the
+                # edit counter; at the threshold that becomes a checkpoint
+                # suggestion, or - under declared policy - a chronicled
+                # auto-checkpoint. Counted here, after every gate said yes,
+                # so a refused edit never inflates the count.
+                checkpoint_advisory = None
+                if event.targets and tool in (
+                        "Write", "Edit", "NotebookEdit", "apply_patch"):
+                    checkpoint_advisory = _checkpoint_pressure(archive, anchor)
                 # An allowed call may still deserve one sentence: a test run
                 # piped through a truncating filter destroys the evidence the
                 # run exists to produce, or (U-E7) this call would have been
                 # denied/asked about and observe mode let it through anyway -
                 # the classifier cannot know which run is the deciding one,
                 # and observe mode cannot be silent about looser enforcement.
-                advisory = preview.get("observe_advisory") or evidence_pipe_advisory(operation)
+                advisory = (preview.get("observe_advisory")
+                            or evidence_pipe_advisory(operation)
+                            or checkpoint_advisory)
                 if advisory:
                     print(json.dumps({"systemMessage": advisory},
                                      ensure_ascii=False))

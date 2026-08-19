@@ -1773,7 +1773,7 @@ def cmd_checkpoint(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         raise ArchiveError("checkpoint requires --summary and --status (or --review)")
     if args.status in {"complete", "fixed"} and not args.evidence:
         raise ArchiveError("Completion requires at least one --evidence reference")
-    return CommandResult(
+    result = CommandResult(
         {
             "record": _append(
                 runtime,
@@ -1791,6 +1791,11 @@ def cmd_checkpoint(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             )
         }
     )
+    # B4-7 rider 1: a recorded checkpoint starts the tracked-mutation count
+    # over - the suggestion measures distance from THIS moment now.
+    from .godmode_guardrails import reset_mutation_counter
+    reset_mutation_counter(runtime.archive)
+    return result
 
 
 def cmd_checklist_update(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -2764,7 +2769,35 @@ def cmd_skill_retire(args: argparse.Namespace, runtime: Runtime) -> CommandResul
 
 
 def cmd_lessons(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """Bare `lessons` runs the promote-or-retire pipeline, unchanged. B4-7
+    adds the flat ledger beside it: `add` writes one typed lesson record
+    into the chronicle (no daemon, no database - the sweep source's shape
+    reduced to a record and a renderer), `list` reads them back bounded."""
     _require_archive(runtime)
+    command = getattr(args, "lessons_command", None)
+    if command == "add":
+        record = runtime.archive.append(
+            "lesson", args.subject,
+            {"status": args.status, "generalized_guard": args.guard},
+            evidence=[],
+        )
+        return CommandResult({"record": {
+            "sequence": record["sequence"], "subject": args.subject,
+            "status": args.status,
+        }})
+    if command == "list":
+        rows = [
+            {
+                "sequence": record["sequence"],
+                "subject": record["subject"],
+                "status": str((record.get("data") or {}).get("status", "")),
+                "generalized_guard": str(
+                    (record.get("data") or {}).get("generalized_guard", "")),
+            }
+            for record in runtime.archive.select(
+                kind="lesson", limit=max(1, args.limit))
+        ]
+        return CommandResult({"lessons": rows})
     from .godmode_attest import lesson_pipeline
 
     report = lesson_pipeline(runtime.archive)
@@ -2946,6 +2979,18 @@ def _build_parser() -> argparse.ArgumentParser:
 
     lessons = sub.add_parser("lessons", help="The promote-or-retire pipeline over recorded lessons")
     lessons.set_defaults(handler=cmd_lessons)
+    lessons_sub = lessons.add_subparsers(dest="lessons_command")
+    lessons_add = lessons_sub.add_parser(
+        "add", help="B4-7: record one lesson into the flat ledger")
+    lessons_add.add_argument("subject", help="What failed, in one line")
+    lessons_add.add_argument("--guard", required=True,
+                             help="The rule that prevents its recurrence")
+    lessons_add.add_argument("--status", default="open")
+    lessons_add.set_defaults(handler=cmd_lessons)
+    lessons_list = lessons_sub.add_parser(
+        "list", help="B4-7: the recorded lessons, newest last, bounded")
+    lessons_list.add_argument("--limit", type=int, default=20)
+    lessons_list.set_defaults(handler=cmd_lessons)
 
     experiment = sub.add_parser(
         "experiment",

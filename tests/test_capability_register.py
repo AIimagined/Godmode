@@ -376,6 +376,45 @@ class CapabilityCoverageMatrixTests(unittest.TestCase):
         self.assertTrue(report["dead_pointers"])
 
 
+def _dogfood_registry_path(root: Path) -> Path:
+    return root / ".dogfood-restore.json"
+
+
+def restore_from_registry(root: Path) -> list[str]:
+    """B4-7 rider 3: restore-on-next-run for the plant harness.
+
+    A registry written before any plant maps each target's repo-relative
+    path to a base64 byte-snapshot. A run killed from OUTSIDE (tool
+    timeout, taskkill) can run nothing afterward - `finally` included - so
+    the stale registry it leaves is the only signal, and the next run's
+    setUp calls here to put every registered target back before doing
+    anything else. Returns the repo-relative paths it processed; a missing
+    registry means nothing to heal. The registry is deleted after healing -
+    it describes a dead run, and keeping it would re-restore over live
+    edits forever."""
+    registry = _dogfood_registry_path(root)
+    if not registry.exists():
+        return []
+    import base64
+    try:
+        entries = json.loads(registry.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        entries = {}
+    healed: list[str] = []
+    if isinstance(entries, dict):
+        for relative, encoded in sorted(entries.items()):
+            target = root / relative
+            try:
+                original = base64.b64decode(encoded)
+                if not target.exists() or target.read_bytes() != original:
+                    target.write_bytes(original)
+                healed.append(relative)
+            except (OSError, ValueError):
+                continue
+    registry.unlink(missing_ok=True)
+    return healed
+
+
 class DogfoodingTests(unittest.TestCase):
     """Deliverable 4: this repository practises what it enforces.
 
@@ -438,10 +477,23 @@ class DogfoodingTests(unittest.TestCase):
     ]
 
     def setUp(self) -> None:
+        # B4-7 rider 3 (CX-5's parked M1): heal whatever a KILLED previous
+        # run left planted - an external SIGKILL/taskkill bypasses every
+        # in-process finally by design, so the NEXT run is the only place
+        # that can restore. Runs before this run's own snapshot so a healed
+        # tree is what gets snapshotted.
+        restore_from_registry(PLUGIN_ROOT)
         self._plant_originals = {
             plant["target"]: (PLUGIN_ROOT / plant["target"]).read_bytes()
             for plant in self.PLANTS
         }
+        # The registry IS the kill insurance: written to disk before any
+        # plant mutates a target, deleted only after tearDown restored.
+        import base64
+        _dogfood_registry_path(PLUGIN_ROOT).write_text(json.dumps({
+            target: base64.b64encode(original).decode("ascii")
+            for target, original in self._plant_originals.items()
+        }), encoding="utf-8")
 
     def tearDown(self) -> None:
         # Best-effort, in-process only (see the class docstring) - restores
@@ -452,6 +504,7 @@ class DogfoodingTests(unittest.TestCase):
             path = PLUGIN_ROOT / target
             if path.read_bytes() != original:
                 path.write_bytes(original)
+        _dogfood_registry_path(PLUGIN_ROOT).unlink(missing_ok=True)
 
     def test_every_hard_rule_has_a_designed_plant(self) -> None:
         charter = compile_charter(PLUGIN_ROOT)
