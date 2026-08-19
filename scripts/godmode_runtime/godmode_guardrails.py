@@ -55,6 +55,74 @@ def _meter_path(archive: Chronicle) -> Path:
     return archive.root / METER_FILENAME
 
 
+# --- B4-7 rider 1: edit-count checkpoint trigger -------------------------
+# Tracked-file mutations since the last checkpoint, counted in disposable
+# operational state (outside the hash chain, same reasoning as the meter:
+# a per-edit chronicle record would bury the evidence in bookkeeping, and a
+# lost count costs nothing but a later suggestion).
+
+MUTATION_COUNTER_FILENAME = "mutation_counter.json"
+
+# The default suggestion threshold, and the tighten-only ceiling: policy may
+# lower it (more frequent checkpoints), never raise it past this.
+CHECKPOINT_SUGGEST_DEFAULT = 20
+
+
+def _mutation_counter_path(archive: Chronicle) -> Path:
+    return archive.root / MUTATION_COUNTER_FILENAME
+
+
+def mutations_since_checkpoint(archive: Chronicle) -> int:
+    try:
+        raw = json.loads(_mutation_counter_path(archive).read_text(encoding="utf-8"))
+        return max(0, int(raw.get("mutations", 0)))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return 0
+
+
+def count_tracked_mutation(archive: Chronicle) -> int:
+    """One tracked-file mutation crossing; returns the running count."""
+    count = mutations_since_checkpoint(archive) + 1
+    try:
+        _mutation_counter_path(archive).write_text(
+            json.dumps({"mutations": count}), encoding="utf-8")
+    except OSError:
+        # A counter that cannot be written must not stop the tool call.
+        pass
+    return count
+
+
+def reset_mutation_counter(archive: Chronicle) -> None:
+    """A checkpoint - manual or auto - starts the count over."""
+    try:
+        _mutation_counter_path(archive).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def checkpoint_trigger_policy(project_root: Path) -> tuple[int, bool]:
+    """(threshold, auto) from `.godmode-authorization-policy.json`.
+
+    `checkpoint_every` clamps tighten-only into 1..CHECKPOINT_SUGGEST_DEFAULT;
+    `auto_checkpoint: true` turns the suggestion into a chronicled
+    auto-checkpoint. A missing or malformed file degrades to the defaults -
+    the suggestion is a convenience, never something a broken file may
+    silently disable OR silently loosen.
+    """
+    from .godmode_sentinel import POLICY_FILENAME
+    try:
+        raw = json.loads((project_root / POLICY_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return CHECKPOINT_SUGGEST_DEFAULT, False
+    if not isinstance(raw, dict):
+        return CHECKPOINT_SUGGEST_DEFAULT, False
+    threshold = CHECKPOINT_SUGGEST_DEFAULT
+    every = raw.get("checkpoint_every")
+    if isinstance(every, int) and not isinstance(every, bool):
+        threshold = min(CHECKPOINT_SUGGEST_DEFAULT, max(1, every))
+    return threshold, raw.get("auto_checkpoint") is True
+
+
 def _load_meter(archive: Chronicle) -> dict[str, Any]:
     """Disposable operational state, deliberately outside the hash chain.
 
