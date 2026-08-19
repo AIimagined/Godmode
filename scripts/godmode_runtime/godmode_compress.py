@@ -21,18 +21,32 @@ from .godmode_errors import ArchiveError
 # kind -> fields a compressed view keeps from data. Everything else is masked
 # and listed by name, never silently absent.
 MASKS: dict[str, tuple[str, ...]] = {
+    # B4-3: coverage went stale as CX/B3 added writers - a kind without a
+    # mask compressed to the default ("status", "state"), which for most of
+    # the kinds below kept nothing their payloads hold. The completeness
+    # test (tests/test_brief_budget.py) now enumerates every literal-kind
+    # writer by AST scan; grow-only - a mask outlives its writer, because
+    # old archives still hold the records.
+    "action": ("state", "host", "category"),
     "attestation": ("status", "session"),
+    "branch": ("branch", "state"),
     "claim": ("grade", "session"),
     "checkpoint": ("status", "next"),
     "change": ("files", "plan"),
+    "criterion": ("task", "session"),
+    "database": ("rung", "decision", "status"),
     "decision": ("status",),
     "differential": ("subject", "method"),
+    "inventory": ("files", "captured_at"),
     "invariant": ("status",),
     "lesson": ("status", "generalized_guard"),
     "metric": ("measured", "turns"),
     "obligation": ("status",),
+    "pin": ("action", "path"),
     "plan": ("state",),
     "refusal": ("tool", "tier", "category"),
+    "request": ("digest", "status", "session"),
+    "session": ("state", "agent"),
     "sprint": ("state", "title"),
     "upstream-diff": ("target", "verdict", "resolved"),
     "verdict": ("disposition", "run_state", "acquitted_by"),

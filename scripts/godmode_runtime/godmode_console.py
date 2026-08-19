@@ -464,6 +464,23 @@ def cmd_brief(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         "head": runtime.anchor.head,
         "worktree": runtime.anchor.worktree_root is not None,
     }
+    if getattr(args, "measure", False):
+        # B4-2: what this brief costs, per section, counts only - the bodies
+        # the brief would carry are exactly what a measurement must not.
+        sections = {}
+        for key, value in brief.items():
+            rendered = len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+            sections[key] = {"bytes": rendered,
+                             "tokens_est": max(1, rendered // 4)}
+        total = sum(entry["bytes"] for entry in sections.values())
+        return CommandResult({
+            "project": brief["project"],
+            "measure": {
+                "sections": sections,
+                "total": {"bytes": total, "tokens_est": max(1, total // 4)},
+                "estimator": "bytes/4",
+            },
+        })
     if not args.full:
         for entry in brief["context"]:
             entry.pop("body", None)
@@ -2895,6 +2912,9 @@ def _build_parser() -> argparse.ArgumentParser:
     brief.add_argument("task", help="What this session is about; drives relevance ranking")
     brief.add_argument("--token-budget", type=int, default=DEFAULT_CONTEXT_BUDGET)
     brief.add_argument("--full", action="store_true", help="Include segment bodies, not just the map")
+    brief.add_argument("--measure", action="store_true",
+                       help="B4-2: bytes + estimated tokens per brief section, "
+                            "counts only - no bodies")
     brief.set_defaults(handler=cmd_brief)
 
     charter = sub.add_parser("charter", help="Compile prose guidance into addressable rules")
