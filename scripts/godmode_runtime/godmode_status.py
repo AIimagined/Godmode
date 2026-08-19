@@ -229,6 +229,20 @@ def render_view(archive: Chronicle) -> str:
             lines.append(f"## {state} ({len(by_state[state])})")
             lines.extend(by_state[state])
             lines.append("")
+    # B4-10(b): the one computed line in an otherwise hand-written ledger -
+    # observe-mode would-have counts, zero stated rather than implied by an
+    # absent line. Deferred import: this module is otherwise chronicle-only.
+    from .godmode_roi import would_have_summary
+    summary = would_have_summary(archive)
+    if summary["total"]:
+        lines.append(
+            f"Observe would-have events: total={summary['total']} "
+            f"r5={summary['r5']} r4={summary['r4']} r3={summary['r3']} "
+            f"r2={summary['r2']}"
+            + (f" (top: {summary['top']})" if summary["top"] else "")
+        )
+    else:
+        lines.append("Observe would-have events: none recorded.")
     return "\n".join(lines)
 
 

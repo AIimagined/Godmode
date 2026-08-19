@@ -22,6 +22,7 @@ from .godmode_charter import ADVISORY, HARD, SOFT, compile_charter
 from .godmode_corpus import resolve_roles, segment_document
 from .godmode_errors import ArchiveError, GodmodeError
 from .godmode_reconcile import reconcile_capabilities
+from .godmode_roi import would_have_summary
 from .godmode_sentinel import GATE_MODE_OBSERVE, local_authorization_policy
 from .godmode_status import authority_claims
 
@@ -114,6 +115,15 @@ def assess(project: Path, budget: int = TYPICAL_COLD_START_TOKENS,
         except GodmodeError:
             gate_mode = "enforce"
     report["gate_mode"] = gate_mode
+    # B4-10(b): the tier-shaped would-have block, whenever an archive exists
+    # to read - not only under observe, because a finished trial's records
+    # are still the evidence the promotion decision reads. Zero is a stated
+    # answer (`total: 0`), never an absent key with an archive present.
+    if archive is not None:
+        try:
+            report["would_have"] = would_have_summary(archive)
+        except GodmodeError:
+            pass
     if gate_mode == GATE_MODE_OBSERVE:
         findings.append(_finding(
             "medium", "gate-observe-mode",

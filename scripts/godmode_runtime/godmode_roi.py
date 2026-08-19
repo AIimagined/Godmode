@@ -75,6 +75,14 @@ _ROI_EVENTS = (GATE_DENIED, GATE_ASKED, GATE_ADVISORY, PRECEDENT_HIT, FENCE_FIND
 # lowercased rendered text - case is not a way around this.
 CAUSAL_DENYLIST = ("saved", "prevented", "avoided", "earned", "roi of")
 
+# B4-10(d): accumulated R4/R5 would-have events at which the session brief
+# states the promotion case plainly. Three rather than one: a single
+# irreversible-tier event is already visible in the brief's counts line the
+# moment it exists; the prompt is for a pattern, not an incident.
+OBSERVE_PROMOTION_THRESHOLD = 3
+
+_WOULD_HAVE_TIERS = ("r2", "r3", "r4", "r5")
+
 # `basis` names every counted record so a number can be checked, not
 # believed - bounded so a long-lived archive cannot make the report itself
 # unbounded.
@@ -346,6 +354,41 @@ def roi_digest(archive: Chronicle, sessions: int | None = None) -> dict[str, Any
         "by_category": dict(sorted(by_category.items())),
         "basis": basis,
     }
+
+
+def would_have_summary(archive: Chronicle) -> dict[str, Any]:
+    """B4-10(b): the tier-shaped fold behind `assess`, `status` and the
+    session brief - `{r2, r3, r4, r5, total, top}` over the observed-refusal
+    records `roi_digest` already reads, where `top` is the most frequent
+    category within the highest tier that has any events.
+
+    Same discipline as every other fold here: counts and category names
+    only, never a record's free-text fields. Zero is a real answer - the
+    caller renders `total: 0` as an explicit statement, because absence of
+    signal stated is the whole point of B4-10 (observe mode that is silent
+    is a mute button, not a trial). Bounded by `select`'s own cap: the 500
+    most recent refusal records, which is also what keeps a long trial from
+    making every session brief pay for its whole history.
+    """
+    summary: dict[str, Any] = {tier: 0 for tier in _WOULD_HAVE_TIERS}
+    summary["total"] = 0
+    by_tier: dict[str, dict[str, int]] = {tier: {} for tier in _WOULD_HAVE_TIERS}
+    for record in archive.select(kind="refusal", limit=500):
+        data = record.get("data") or {}
+        if data.get("observed") is not True:
+            continue
+        summary["total"] += 1
+        tier = str(data.get("tier", "")).lower()
+        if tier in by_tier:
+            summary[tier] += 1
+            category = str(data.get("category") or "unclassified-mutation")[:80]
+            by_tier[tier][category] = by_tier[tier].get(category, 0) + 1
+    summary["top"] = None
+    for tier in reversed(_WOULD_HAVE_TIERS):
+        if by_tier[tier]:
+            summary["top"] = max(by_tier[tier].items(), key=lambda item: item[1])[0]
+            break
+    return summary
 
 
 def render_digest(digest: dict[str, Any]) -> str:

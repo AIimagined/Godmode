@@ -35,7 +35,8 @@ from godmode_runtime.godmode_errors import AuthorizationError  # noqa: E402
 from godmode_runtime.godmode_plan import CONTRACT_FIELDS, approve, specify, start  # noqa: E402
 from godmode_runtime.godmode_profile import PROFILE_NAMES, apply_profile  # noqa: E402
 from godmode_runtime.godmode_roi import (  # noqa: E402
-    CAUSAL_DENYLIST, render_digest, render_roi, roi_digest, roi_report,
+    CAUSAL_DENYLIST, OBSERVE_PROMOTION_THRESHOLD, render_digest, render_roi,
+    roi_digest, roi_report, would_have_summary,
 )
 from godmode_runtime.godmode_sentinel import (  # noqa: E402
     GATE_MODE_OBSERVE, POLICY_FILENAME, local_authorization_policy,
@@ -538,6 +539,217 @@ class InitProfileNeverTouchesGateMode(unittest.TestCase):
                 if policy_path.exists():
                     on_disk = json.loads(policy_path.read_text(encoding="utf-8"))
                     self.assertNotIn("gate_mode", on_disk)
+
+
+# ---------------------------------------------------------------------------
+# B4-10 - observe-mode visibility. Three governed tasks under observe produced
+# ZERO visible signal, so the operator had no evidence for the only decision
+# observe mode exists to inform. Would-have events must be visible without
+# being asked for: a tier-shaped summary (assess/status/brief), a record
+# listing on explicit request (`godmode observe --report`), and a promotion
+# prompt once irreversible-tier events accumulate.
+# ---------------------------------------------------------------------------
+
+R4_TIER = "npm publish"
+SECRET_BEARING = 'echo "token=abcdefgh12345" > ~/.bashrc'
+
+
+def _console_json(project: Path, argv: list[str]) -> dict:
+    """Drive the real console in-process and parse the JSON it prints."""
+    import io
+    from unittest import mock
+    from godmode_runtime import godmode_console as console
+    out = io.StringIO()
+    with mock.patch.object(sys, "stdout", out):
+        code = console.main(["--project", str(project)] + argv)
+    return {"exit_code": code, **json.loads(out.getvalue())}
+
+
+class WouldHaveSummaryFoldsTierCounts(unittest.TestCase):
+    """B4-10(b): the tier-shaped fold behind assess, status and the brief -
+    counts by tier plus the highest-tier example's category, counts-only."""
+
+    def test_counts_by_tier_and_names_the_top_tier_category(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _enable_observe(project)
+            _decide(project, "Bash", {"command": FORCE_PUSH})   # R5
+            _decide(project, "Bash", {"command": R4_TIER})      # R4
+            _decide(project, "Bash", {"command": "echo x > ~/.bashrc"})  # R2
+            summary = would_have_summary(archive)
+            self.assertEqual(summary["r5"], 1)
+            self.assertEqual(summary["r4"], 1)
+            self.assertEqual(summary["r2"], 1)
+            self.assertEqual(summary["total"], 3)
+            self.assertEqual(summary["top"], "git-history-or-remote")
+
+    def test_zero_would_haves_is_explicit_not_absent(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            summary = would_have_summary(archive)
+            self.assertEqual(summary["total"], 0)
+            self.assertEqual(summary["r5"], 0)
+            self.assertIsNone(summary["top"])
+
+    def test_a_real_denial_never_inflates_the_would_have_counts(self) -> None:
+        """Enforcement records and observed records answer different
+        questions - the fold reads only `observed: True`."""
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _decide(project, "Bash", {"command": FORCE_PUSH})   # real deny
+            summary = would_have_summary(archive)
+            self.assertEqual(summary["total"], 0)
+
+
+class ObservedRecordCarriesItsReason(unittest.TestCase):
+    """B4-10(c) wants the report to name reasons; a reason that was never
+    persisted cannot be reported. Bounded, same as the advisory's own cap."""
+
+    def test_the_refusal_record_stores_a_bounded_reason(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _enable_observe(project)
+            _decide(project, "Bash", {"command": FORCE_PUSH})
+            observed = [r for r in archive.select(kind="refusal", limit=500)
+                        if (r.get("data") or {}).get("observed") is True]
+            self.assertTrue(observed)
+            reason = observed[-1]["data"].get("reason", "")
+            self.assertTrue(reason)
+            self.assertLessEqual(len(reason), 300)
+
+
+class AssessSurfacesWouldHave(unittest.TestCase):
+    """B4-10(b): `assess` carries the tier-shaped block for the current
+    project - and zero is stated, never implied by absence."""
+
+    def test_assess_reports_the_would_have_block(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _enable_observe(project)
+            _decide(project, "Bash", {"command": FORCE_PUSH})
+            report = assess(project, archive=archive)
+            self.assertEqual(report["would_have"]["r5"], 1)
+            self.assertEqual(report["would_have"]["top"], "git-history-or-remote")
+
+    def test_zero_would_haves_is_stated_not_omitted(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            report = assess(project, archive=archive)
+            self.assertEqual(report["would_have"]["total"], 0)
+
+
+class StatusViewNamesWouldHave(unittest.TestCase):
+    """B4-10(b): the status document carries the same tier-shaped line -
+    zero stated, never implied by an absent line."""
+
+    def test_status_document_carries_the_would_have_line(self) -> None:
+        from godmode_runtime.godmode_status import render_view
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _enable_observe(project)
+            _decide(project, "Bash", {"command": FORCE_PUSH})
+            document = render_view(archive)
+            self.assertIn("would-have", document)
+            self.assertIn("r5=1", document)
+
+    def test_zero_would_haves_is_stated_in_the_document(self) -> None:
+        from godmode_runtime.godmode_status import render_view
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            document = render_view(archive)
+            self.assertIn("none recorded", document)
+
+
+class ObserveReportListsWouldHaveDecisions(unittest.TestCase):
+    """B4-10(c): `godmode observe --report` - the one surface that includes
+    command text, because the operator explicitly asked for it. Still
+    redaction-scanned."""
+
+    def test_report_lists_tier_category_reason_and_operation(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _enable_observe(project)
+            _decide(project, "Bash", {"command": FORCE_PUSH})
+            payload = _console_json(project, ["observe", "--report"])
+            self.assertEqual(payload["exit_code"], 0)
+            decision = payload["decisions"][-1]
+            self.assertEqual(decision["tier"], "R5")
+            self.assertEqual(decision["category"], "git-history-or-remote")
+            self.assertEqual(decision["would_have"], "deny")
+            self.assertIn("push", decision["operation"])
+            self.assertTrue(decision["reason"])
+
+    def test_zero_would_haves_is_stated_explicitly(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            payload = _console_json(project, ["observe", "--report"])
+            self.assertEqual(payload["decisions"], [])
+            self.assertEqual(payload["would_have"]["total"], 0)
+
+    def test_a_secret_shaped_operation_is_redacted_whole(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _enable_observe(project)
+            _decide(project, "Bash", {"command": SECRET_BEARING})
+            payload = _console_json(project, ["observe", "--report"])
+            operations = [d["operation"] for d in payload["decisions"]]
+            self.assertTrue(operations)
+            for operation in operations:
+                self.assertNotIn("abcdefgh12345", operation)
+
+    def test_bare_observe_returns_the_summary_without_command_text(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _enable_observe(project)
+            _decide(project, "Bash", {"command": FORCE_PUSH})
+            payload = _console_json(project, ["observe"])
+            self.assertEqual(payload["would_have"]["r5"], 1)
+            self.assertNotIn("decisions", payload)
+            self.assertNotIn("push --force", json.dumps(payload))
+
+
+class BriefCarriesWouldHaveLine(unittest.TestCase):
+    """B4-10(a)/(d): the acceptance line - a would-have R4 in session N
+    appears in session N+1's brief without any command being run, and
+    accumulated R4/R5 events surface the promotion prompt."""
+
+    def test_a_would_have_r4_appears_in_the_next_sessions_brief(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _enable_observe(project)
+            _decide(project, "Bash", {"command": R4_TIER})
+            brief = _session_start(project)
+            context = brief["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("would-have", context)
+            self.assertIn("r4=1", context)
+
+    def test_zero_would_haves_under_observe_is_stated(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _enable_observe(project)
+            brief = _session_start(project)
+            context = brief["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("no would-have events recorded", context)
+
+    def test_promotion_prompt_appears_at_the_threshold(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _enable_observe(project)
+            for _ in range(OBSERVE_PROMOTION_THRESHOLD):
+                _decide(project, "Bash", {"command": FORCE_PUSH})
+            brief = _session_start(project)
+            context = brief["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("PROMOTE?", context)
+            self.assertIn("remove 'gate_mode'", context)
+
+    def test_promotion_prompt_stays_quiet_below_the_threshold(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _enable_observe(project)
+            _decide(project, "Bash", {"command": FORCE_PUSH})
+            brief = _session_start(project)
+            context = brief["hookSpecificOutput"]["additionalContext"]
+            self.assertNotIn("PROMOTE?", context)
 
 
 if __name__ == "__main__":
