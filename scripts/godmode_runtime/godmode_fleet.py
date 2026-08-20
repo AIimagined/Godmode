@@ -26,15 +26,25 @@ a state that cannot be repaired after the fact:
 
 from __future__ import annotations
 
-import hashlib
-import os
 import time
 from typing import Any
 
 from .godmode_chronicle import Chronicle
+from .godmode_constants import AGENT_ENV, agent_id
 from .godmode_errors import ArchiveError
 
-AGENT_ENV = "GODMODE_AGENT_ID"
+# `agent_id` and `AGENT_ENV` live in `godmode_constants`, the module with no
+# runtime dependencies, because the chronicle stamps the id on every record
+# and this module coordinates between agents. Owning it here would make the
+# chronicle import this module while this module imports the chronicle - a
+# cycle the atlas catches statically, and one that deferring the import
+# inside a function would hide rather than remove. Re-exported so callers
+# reading the fleet layer still find it where they expect.
+__all__ = [
+    "AGENT_ENV", "MAX_TTL_SECONDS", "acquire_lease", "active_leases",
+    "agent_id", "delegate", "delegation_graph", "fleet_view",
+    "release_lease", "retract",
+]
 
 _LEASE_PREFIX = "fleet:lease:"
 _DELEGATION_PREFIX = "fleet:delegation:"
@@ -43,35 +53,6 @@ _DELEGATION_PREFIX = "fleet:delegation:"
 # crashed agent must not hold a path forever. Callers state the term; this
 # bound stops a typo turning a ten-minute lease into a ten-year one.
 MAX_TTL_SECONDS = 24 * 3600
-
-
-def agent_id() -> str:
-    """This agent's identity: declared if the host set one, else derived.
-
-    **Only the host can truly separate concurrent agents, and the derived
-    form does not pretend otherwise.** Two undeclared agents working the
-    same project share this id; separating them requires the host to set
-    `GODMODE_AGENT_ID`, and the honest fallback is one identity per project
-    rather than a fabricated per-agent one.
-
-    An earlier version folded in the pid to look distinct. That was wrong
-    twice over: the gate runs as a fresh subprocess per tool call, so the
-    pid changes between two records written by the SAME agent - the id
-    would have been unstable exactly where it needed to be stable - and it
-    reached for the hostname through `socket`, which the runtime's
-    local-first invariant bans outright. The suite caught the import.
-
-    Derived from the state home so it is stable across those subprocesses,
-    then hashed and truncated because the id travels inside records that
-    may be shared and a raw path is local detail that should not leave the
-    machine.
-    """
-    declared = os.environ.get(AGENT_ENV, "").strip()
-    if declared:
-        return declared
-    seed = (os.environ.get("GODMODE_STATE_HOME") or os.getcwd())
-    digest = hashlib.sha256(seed.encode("utf-8", "replace")).hexdigest()
-    return "agent-" + digest[:12]
 
 
 def _fleet_records(archive: Chronicle, prefix: str) -> list[dict[str, Any]]:
