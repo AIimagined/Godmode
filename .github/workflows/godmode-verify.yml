@@ -1,8 +1,11 @@
 name: Godmode verification
 
+# Manual dispatch only, deliberately. This repository's owner has no
+# GitHub Actions minutes, so a `push:` trigger would spend minutes that do
+# not exist on the very first push - silently, and before anyone chose to
+# run anything. Re-enable `push:` and `pull_request:` here once minutes are
+# available; nothing else needs to change.
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
 permissions:
