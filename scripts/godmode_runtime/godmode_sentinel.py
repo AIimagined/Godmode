@@ -2303,19 +2303,6 @@ def _substitution_scan(command: str) -> tuple[list[str], bool, str, tuple[tuple[
     return found, unparsed, "".join(blanked), tuple(spans)
 
 
-def substituted_commands(command: str) -> list[str]:
-    """Every command a substitution would run, so each can be classified.
-
-    Kept as a thin, list-only wrapper over `_substitution_scan` for any
-    caller that only needs the extracted commands - `classify_action`
-    itself calls `_substitution_scan` directly, because it also needs
-    `unparsed` (to fail closed) and `blanked` (to classify the outer
-    command without the substitution's own text inside it).
-    """
-    found, _unparsed, _blanked, _spans = _substitution_scan(command)
-    return found
-
-
 # `cmd <<DELIM` feeds the following lines to stdin. They are data, and the
 # delimiter line ends them.
 _HEREDOC = re.compile(r"<<-?\s*(?P<quote>['\"]?)(?P<delim>[A-Za-z_][A-Za-z0-9_]*)(?P=quote)")

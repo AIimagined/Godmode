@@ -35,6 +35,11 @@ INFERRED = "inferred"
 DEFINES = "defines"
 IMPORTS = "imports"
 CALLS = "calls"
+# A call through an instance - `archive.reanchor()`. The receiver's type is
+# unknown, so the target is a bare name and the edge is deliberately NOT a
+# `calls` edge: it must not enter a blast radius, where an unresolved guess
+# would read as a real dependency. Only the orphan query consults it.
+ATTR_CALLS = "attr-calls"
 # A test importing a module and an app importing it are different obligations:
 # one breaks at runtime, the other is the safety net. Distinct relation kinds
 # keep "who calls this" and "what covers this" answerable separately.
@@ -104,9 +109,6 @@ class Atlas:
     body_signatures: dict[str, frozenset] = field(default_factory=dict)
 
     # ---- queries -------------------------------------------------------------
-
-    def by_path(self, path: str) -> list[Symbol]:
-        return [symbol for symbol in self.symbols if symbol.path == path]
 
     def affected(self, target: str, depth: int = 2, evidence: str | None = EXTRACTED,
                  relations: set[str] | None = None) -> dict[str, Any]:
@@ -220,11 +222,23 @@ class Atlas:
             (module_key(target.rsplit("::", 1)[0]), target.rsplit("::", 1)[1])
             for target in referenced if "::" in target
         }
+        # Names called through an instance somewhere in the tree. Matching by
+        # name alone can mark a same-named method elsewhere as reached, so
+        # some genuinely dead code goes unreported. That trade runs the
+        # cheaper way: a false negative costs a missed cleanup, while a false
+        # positive costs someone deleting live code - or, as happened here,
+        # learning to ignore the report entirely.
+        attribute_calls = {
+            edge.target.split("::", 1)[1]
+            for edge in self.edges
+            if edge.relation == ATTR_CALLS and "::" in edge.target
+        }
         return [
             symbol.view()
             for symbol in self.symbols
             if symbol.kind in ("function", "class")
             and symbol.id not in referenced
+            and symbol.name not in attribute_calls
             and (module_key(symbol.path), symbol.name) not in referenced_names
             and not symbol.name.startswith("_")
             # Test files are entry points: the runner discovers them by pattern,
@@ -542,6 +556,32 @@ def _python_symbols(path: str, text: str) -> tuple[list[Symbol], list[Edge]]:
             name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
             if name and name in defined:
                 edges.append(Edge(f"{path}::<module>", defined[name], CALLS, EXTRACTED, node.lineno))
+            elif isinstance(node.func, ast.Attribute) and node.func.attr:
+                # `archive.reanchor()` names a method this file does not
+                # define and never imports by name, so the branch above
+                # cannot resolve it and the method read as unreached. Its
+                # NAME is recorded under a separate relation - unresolved
+                # by construction, since the receiver's type is unknown -
+                # and only the orphan query consults it. Without this, every
+                # public method not also called inside its own file was
+                # reported dead: seven of nine sampled orphans in this
+                # project were live code.
+                edges.append(Edge(
+                    f"{path}::<module>", f"*::{node.func.attr}",
+                    ATTR_CALLS, EXTRACTED, node.lineno,
+                ))
+        elif (isinstance(node, ast.Attribute)
+              and isinstance(node.ctx, ast.Load)
+              and node.attr
+              and node.attr not in defined):
+            # A property is READ, never called, so no call edge can reach
+            # it. `Symbol.id` here is that shape - used as `symbol.id`
+            # throughout this very module - and read as dead because
+            # nothing ever writes `symbol.id()`.
+            edges.append(Edge(
+                f"{path}::<module>", f"*::{node.attr}",
+                ATTR_CALLS, EXTRACTED, node.lineno,
+            ))
         elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id in defined:
             # A function passed as a value (a handler, a callback, a registry
             # entry) is referenced without being called; missing these once made
