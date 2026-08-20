@@ -184,6 +184,13 @@ from .godmode_fleet import (
     fleet_view,
     release_lease,
 )
+# B5-B / B6 - citation drift, restore points, and policy replay. Same
+# isolated-block convention; all three report and none of them mutate.
+from .godmode_reanchor import reanchor_report
+from .godmode_rollback import mark_green, rollback_plan
+from .godmode_forecast import forecast as forecast_operation, replay as replay_policy
+# Sprint 8 - evidence-derived governance. Proposes; never installs.
+from .godmode_governance import governance_report, promote as promote_candidate
 from .godmode_forge import SkillProposal, forge_skill, validate_skill
 from .godmode_lens import (
     build_context_brief,
@@ -968,6 +975,78 @@ def cmd_fleet_delegate(args: argparse.Namespace, runtime: Runtime) -> CommandRes
          "task": args.task, "sequence": record["sequence"]},
         exit_code=0,
     )
+
+
+def cmd_governance_show(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    # Exit 0 even with candidates present: a proposal is not a failure, and
+    # a review surface that fails the build is a review surface people
+    # learn to switch off.
+    return CommandResult(governance_report(runtime.archive), exit_code=0)
+
+
+def cmd_governance_promote(args: argparse.Namespace,
+                           runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    try:
+        record = promote_candidate(
+            runtime.archive, args.candidate, reason=args.reason)
+    except ArchiveError as error:
+        return CommandResult({"refused": str(error)}, exit_code=1)
+    return CommandResult(
+        {"promoted": args.candidate, "rule": record["data"]["rule"],
+         "sequence": record["sequence"]},
+        exit_code=0,
+    )
+
+
+def cmd_reanchor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    report = reanchor_report(runtime.archive, Path(runtime.anchor.project_root))
+    # Findings are a prompt to re-read evidence, not a failure: exiting
+    # non-zero here would make an honest report look like a broken build
+    # and invite someone to silence it.
+    return CommandResult(report, exit_code=0)
+
+
+def cmd_rollback_mark(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    try:
+        record = mark_green(
+            runtime.archive, runtime.project,
+            command=args.command, exit_code=args.exit_code,
+        )
+    except ArchiveError as error:
+        return CommandResult({"refused": str(error)}, exit_code=1)
+    return CommandResult(
+        {"commit": record["data"]["commit"], "command": record["data"]["command"],
+         "sequence": record["sequence"]},
+        exit_code=0,
+    )
+
+
+def cmd_rollback_plan(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    plan = rollback_plan(runtime.archive, Path(runtime.anchor.project_root))
+    return CommandResult(plan, exit_code=0)
+
+
+def cmd_forecast(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    try:
+        result = forecast_operation(
+            runtime.archive, args.operation, project_root=Path(runtime.anchor.project_root))
+    except ArchiveError as error:
+        return CommandResult({"refused": str(error)}, exit_code=1)
+    return CommandResult(result, exit_code=0)
+
+
+def cmd_replay(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    report = replay_policy(runtime.archive, project_root=Path(runtime.anchor.project_root))
+    # A relaxation is the one outcome that means a rule went backwards, so
+    # it - and only it - reaches the exit status.
+    return CommandResult(report, exit_code=1 if report["relaxed"] else 0)
 
 
 # U-E2 cross-project precedent exchange - file-carried, advisory-foreign.
@@ -3370,6 +3449,54 @@ def _build_parser() -> argparse.ArgumentParser:
     fleet_delegate.add_argument("--parent", default=None,
                                 help="Defaults to this agent's own id")
     fleet_delegate.set_defaults(handler=cmd_fleet_delegate)
+
+    # Sprint 8 - the review surface. `show` reads, `promote` is the only
+    # path by which anything here becomes binding, and it needs a person.
+    governance = sub.add_parser(
+        "governance",
+        help="Rules this project's own record argues for; proposals only")
+    governance_sub = governance.add_subparsers(
+        dest="governance_command", required=True)
+    governance_show = governance_sub.add_parser(
+        "show", help="The current review surface, with provenance per candidate")
+    governance_show.set_defaults(handler=cmd_governance_show)
+    governance_promote = governance_sub.add_parser(
+        "promote", help="Adopt a reviewed candidate; requires a reason")
+    governance_promote.add_argument("--candidate", required=True)
+    governance_promote.add_argument("--reason", required=True,
+                                    help="Who reviewed it, and why")
+    governance_promote.set_defaults(handler=cmd_governance_promote)
+
+    # B5-B / B6 - three read-only reports and one attestation.
+    reanchor = sub.add_parser(
+        "reanchor",
+        help="Citations that came loose: cited files changed since, commits gone")
+    reanchor.set_defaults(handler=cmd_reanchor)
+
+    rollback = sub.add_parser(
+        "rollback", help="Restore points proven green, and what it takes to reach one")
+    rollback_sub = rollback.add_subparsers(dest="rollback_command", required=True)
+    rollback_mark = rollback_sub.add_parser(
+        "mark", help="Attest that a command passed at the current commit")
+    rollback_mark.add_argument("--command", required=True,
+                               help="The command that proved it")
+    rollback_mark.add_argument("--exit-code", type=int, required=True,
+                               dest="exit_code",
+                               help="Its exit code; non-zero is refused")
+    rollback_mark.set_defaults(handler=cmd_rollback_mark)
+    rollback_show = rollback_sub.add_parser(
+        "plan", help="The last green, what changed since, and how to return")
+    rollback_show.set_defaults(handler=cmd_rollback_plan)
+
+    forecast_parser = sub.add_parser(
+        "forecast", help="What an operation would classify as, plus prior precedent")
+    forecast_parser.add_argument("--operation", required=True)
+    forecast_parser.set_defaults(handler=cmd_forecast)
+
+    replay_parser = sub.add_parser(
+        "replay",
+        help="Re-classify recorded operations under today's rules; exits 1 on a relaxation")
+    replay_parser.set_defaults(handler=cmd_replay)
 
     # U-V2 disposition register - minimal isolated block, mirrors the
     # `verdict` block above.
