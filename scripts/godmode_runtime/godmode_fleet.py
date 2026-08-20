@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import socket
 import time
 from typing import Any
 
@@ -49,18 +48,30 @@ MAX_TTL_SECONDS = 24 * 3600
 def agent_id() -> str:
     """This agent's identity: declared if the host set one, else derived.
 
-    The derived form must be stable within a process and distinct between
-    concurrent ones. A blank default would collapse every undeclared agent
-    into one identity - precisely the confusion the fleet layer exists to
-    remove - so the pid is folded in. Hashed and truncated because this id
-    travels in a record that may be shared, and a raw hostname is the kind
-    of local detail that should never leave the machine.
+    **Only the host can truly separate concurrent agents, and the derived
+    form does not pretend otherwise.** Two undeclared agents working the
+    same project share this id; separating them requires the host to set
+    `GODMODE_AGENT_ID`, and the honest fallback is one identity per project
+    rather than a fabricated per-agent one.
+
+    An earlier version folded in the pid to look distinct. That was wrong
+    twice over: the gate runs as a fresh subprocess per tool call, so the
+    pid changes between two records written by the SAME agent - the id
+    would have been unstable exactly where it needed to be stable - and it
+    reached for the hostname through `socket`, which the runtime's
+    local-first invariant bans outright. The suite caught the import.
+
+    Derived from the state home so it is stable across those subprocesses,
+    then hashed and truncated because the id travels inside records that
+    may be shared and a raw path is local detail that should not leave the
+    machine.
     """
     declared = os.environ.get(AGENT_ENV, "").strip()
     if declared:
         return declared
-    seed = f"{socket.gethostname()}:{os.getpid()}".encode("utf-8", "replace")
-    return "agent-" + hashlib.sha256(seed).hexdigest()[:12]
+    seed = (os.environ.get("GODMODE_STATE_HOME") or os.getcwd())
+    digest = hashlib.sha256(seed.encode("utf-8", "replace")).hexdigest()
+    return "agent-" + digest[:12]
 
 
 def _fleet_records(archive: Chronicle, prefix: str) -> list[dict[str, Any]]:
