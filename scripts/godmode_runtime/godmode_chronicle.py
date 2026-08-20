@@ -41,16 +41,19 @@ def writer_fingerprint() -> dict[str, str]:
         # identity when two agents run on the same host - without this,
         # concurrent lanes interleave into one indistinguishable stream and
         # the fleet layer can name a lease holder that cannot be found in
-        # the archive afterwards. Imported here rather than at module scope
-        # because `godmode_fleet` reads this module's Chronicle.
-        "agent_id": _agent_id(),
+        # the archive afterwards. Sourced from `godmode_constants`, which
+        # has no runtime dependencies: owning it in the fleet layer would
+        # make this module import that one while it imports this, and the
+        # atlas reads imports statically, so deferring it inside a function
+        # hid the cycle from the interpreter without removing it.
+        "agent_id": agent_id(),
     }
-
-
-def _agent_id() -> str:
-    from .godmode_fleet import agent_id
-    return agent_id()
-from .godmode_constants import EVENT_KINDS, RUNTIME_VERSION, SCHEMA_VERSION
+from .godmode_constants import (
+    EVENT_KINDS,
+    RUNTIME_VERSION,
+    SCHEMA_VERSION,
+    agent_id,
+)
 from .godmode_errors import ArchiveError
 from . import godmode_invariants as _invariants
 from .godmode_sentinel import enforce_private_payload
