@@ -42,6 +42,15 @@ from .godmode_errors import ArchiveError
 # way, so the default stays on the record kinds that assert something.
 DEFAULT_KINDS = ("claim", "verdict", "attestation", "invariant")
 
+# Kinds that assert something still true, as against kinds that record an
+# act. A claim or verdict is either right or wrong today; an attestation
+# says "at this time I performed this step citing this file", and a later
+# edit to that file does not falsify the act - the evidence simply moved.
+# The split exists because of the proportions: on this project 85 stale
+# citations included 80 attestations, and the five standing assertions that
+# could actually be wrong were buried in them. One of those five WAS wrong.
+STANDING_KINDS = frozenset({"claim", "verdict", "invariant"})
+
 _GIT_TIMEOUT = 30
 
 
@@ -162,6 +171,7 @@ def stale_records(archive: Chronicle, project: Path, *,
                 "citation": str(citation),
                 "recorded_at": record.get("recorded_at"),
                 "changed_at": changed.isoformat(),
+                "standing": record.get("kind") in STANDING_KINDS,
                 "reason": ("the cited file was committed after this record "
                            "was written, so the evidence readable now is not "
                            "the evidence that was graded then"),
@@ -431,6 +441,11 @@ def reanchor_report(archive: Chronicle, project: Path, *,
     return {
         "git": True,
         "stale": stale,
+        # Ranked, not filtered: the flat list stays so nothing is hidden,
+        # but the assertions that can actually be wrong are reachable
+        # without reading past eighty attestations to find five.
+        "standing": [f for f in stale if f.get("standing")],
+        "historical": [f for f in stale if not f.get("standing")],
         "unreachable": unreachable,
         # Stated, not implied: this module never rewrites a grade. A stale
         # citation is a prompt to look again, not a verdict that the claim

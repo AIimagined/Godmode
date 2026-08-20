@@ -153,6 +153,52 @@ class CommitCitationTests(unittest.TestCase):
             self.assertEqual(findings[0]["commit"], ghost)
 
 
+class StandingVersusHistoricalTests(unittest.TestCase):
+    """An attestation that went stale is not the same event as a claim.
+
+    A claim or a verdict asserts something that is either still true or is
+    not. An attestation records an act - "at this time I performed this
+    step, citing this file" - and a later edit to that file does not
+    falsify the act; it only means the evidence has moved on.
+
+    Ranking matters because of the proportions. On this project 85
+    citations are stale and 80 of them are attestations, so an unsorted
+    list buries the five standing assertions that can actually be wrong.
+    Exactly one of those five turned out to be false, and it would not
+    have been found by reading a flat list of eighty-five.
+    """
+
+    def test_a_claim_is_marked_standing(self) -> None:
+        with git_project() as (project, archive):
+            _commit(project, "api.py", "before\n")
+            archive.append("claim", "api is covered", {"text": "x"},
+                           evidence=["file:api.py"])
+            _commit(project, "api.py", "after\n", when=AFTER)
+            self.assertTrue(stale_records(archive, project)[0]["standing"])
+
+    def test_an_attestation_is_marked_historical(self) -> None:
+        with git_project() as (project, archive):
+            _commit(project, "api.py", "before\n")
+            archive.append("attestation", "step done", {"step": "x"},
+                           evidence=["file:api.py"])
+            _commit(project, "api.py", "after\n", when=AFTER)
+            self.assertFalse(stale_records(archive, project)[0]["standing"])
+
+    def test_the_report_separates_the_two(self) -> None:
+        with git_project() as (project, archive):
+            _commit(project, "api.py", "before\n")
+            archive.append("claim", "api is covered", {"text": "x"},
+                           evidence=["file:api.py"])
+            archive.append("attestation", "step done", {"step": "x"},
+                           evidence=["file:api.py"])
+            _commit(project, "api.py", "after\n", when=AFTER)
+            report = reanchor_report(archive, project)
+            self.assertEqual(len(report["standing"]), 1)
+            self.assertEqual(len(report["historical"]), 1)
+            # The flat list stays, so nothing is hidden by the ranking.
+            self.assertEqual(len(report["stale"]), 2)
+
+
 class ReportTests(unittest.TestCase):
     def test_the_report_separates_stale_from_unreachable(self) -> None:
         with git_project() as (project, archive):
