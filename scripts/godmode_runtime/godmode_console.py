@@ -173,6 +173,17 @@ from .godmode_register import (
     export_precedents,
     import_precedents,
 )
+# B5 fleet governance - same minimal, isolated-block convention as the two
+# imports above: its own imports, its own handlers, its own subparser. Like
+# the register, it stores nothing of its own; every answer is a fold over
+# `decision` records carrying a `fleet:` subject.
+from .godmode_fleet import (
+    acquire_lease,
+    agent_id,
+    delegate,
+    fleet_view,
+    release_lease,
+)
 from .godmode_forge import SkillProposal, forge_skill, validate_skill
 from .godmode_lens import (
     build_context_brief,
@@ -900,6 +911,62 @@ def cmd_register_show(args: argparse.Namespace, runtime: Runtime) -> CommandResu
     return CommandResult(
         {"domain": args.domain, "register": view, "conflicts": findings},
         exit_code=1 if findings else 0,
+    )
+
+
+# B5 fleet governance - four handlers over one derived view. A lease
+# conflict and a delegation cycle both exit non-zero: an agent scripting
+# against this needs the refusal in the exit status, not only in the text.
+def cmd_fleet_show(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    view = fleet_view(runtime.archive)
+    return CommandResult({"agent": agent_id(), **view}, exit_code=0)
+
+
+def cmd_fleet_lease(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    try:
+        record = acquire_lease(
+            runtime.archive, args.resource,
+            ttl_seconds=args.ttl, holder=args.holder,
+        )
+    except ArchiveError as error:
+        # Refused, not crashed: the conflicting holder is the answer the
+        # caller asked for, so it is reported as a result with a failing
+        # exit code rather than as a traceback.
+        return CommandResult({"refused": str(error)}, exit_code=1)
+    return CommandResult(
+        {"resource": args.resource, "holder": record["data"]["holder"],
+         "expires_at": record["data"]["expires_at"],
+         "sequence": record["sequence"]},
+        exit_code=0,
+    )
+
+
+def cmd_fleet_release(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    try:
+        record = release_lease(runtime.archive, args.resource, holder=args.holder)
+    except ArchiveError as error:
+        return CommandResult({"refused": str(error)}, exit_code=1)
+    return CommandResult(
+        {"resource": args.resource, "released_by": record["data"]["holder"],
+         "sequence": record["sequence"]},
+        exit_code=0,
+    )
+
+
+def cmd_fleet_delegate(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    try:
+        record = delegate(
+            runtime.archive, child=args.child, task=args.task, parent=args.parent)
+    except ArchiveError as error:
+        return CommandResult({"refused": str(error)}, exit_code=1)
+    return CommandResult(
+        {"parent": record["data"]["parent"], "child": args.child,
+         "task": args.task, "sequence": record["sequence"]},
+        exit_code=0,
     )
 
 
@@ -3271,6 +3338,38 @@ def _build_parser() -> argparse.ArgumentParser:
     verdict_show = verdict_sub.add_parser("show", help="Read back a verdict record by sequence")
     verdict_show.add_argument("--seq", type=int, required=True)
     verdict_show.set_defaults(handler=cmd_verdict_show)
+
+    # B5 fleet governance - minimal isolated block, mirrors the `register`
+    # block below. MAX_TTL is enforced in the module, not here, so a caller
+    # reaching the function directly gets the same bound as the CLI.
+    fleet = sub.add_parser(
+        "fleet",
+        help="Many-agent governance: identity, leases, delegation provenance",
+    )
+    fleet_sub = fleet.add_subparsers(dest="fleet_command", required=True)
+    fleet_show = fleet_sub.add_parser(
+        "show", help="Agents, live leases and the delegation DAG")
+    fleet_show.set_defaults(handler=cmd_fleet_show)
+    fleet_lease = fleet_sub.add_parser(
+        "lease", help="Take an exclusive lease on a resource; refuses if held")
+    fleet_lease.add_argument("--resource", required=True)
+    fleet_lease.add_argument("--ttl", type=float, default=1800.0,
+                             help="Lease term in seconds (default 1800)")
+    fleet_lease.add_argument("--holder", default=None,
+                             help="Defaults to this agent's own id")
+    fleet_lease.set_defaults(handler=cmd_fleet_lease)
+    fleet_release = fleet_sub.add_parser(
+        "release", help="Give up a lease; only the holder may")
+    fleet_release.add_argument("--resource", required=True)
+    fleet_release.add_argument("--holder", default=None)
+    fleet_release.set_defaults(handler=cmd_fleet_release)
+    fleet_delegate = fleet_sub.add_parser(
+        "delegate", help="Record a dispatch; refuses a cycle")
+    fleet_delegate.add_argument("--child", required=True)
+    fleet_delegate.add_argument("--task", default="")
+    fleet_delegate.add_argument("--parent", default=None,
+                                help="Defaults to this agent's own id")
+    fleet_delegate.set_defaults(handler=cmd_fleet_delegate)
 
     # U-V2 disposition register - minimal isolated block, mirrors the
     # `verdict` block above.
