@@ -142,6 +142,43 @@ class GuardrailTests(unittest.TestCase):
                              [c["id"] for c in candidates(archive)])
 
 
+class LayeringTests(unittest.TestCase):
+    """The recurring-ask miner (U-E10) is reused, not reimplemented.
+
+    The sprint plan left "merge or layer?" open. Layer: E10 already folds
+    the request ledger into charter-rule candidates under the same
+    propose-never-install shape, so a second implementation over the same
+    ledger would be a duplicate authority - two components answering "what
+    keeps getting asked" that can disagree after either is edited.
+    """
+
+    def test_recurring_asks_arrive_as_governance_candidates(self) -> None:
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            for index in range(3):
+                archive.append(
+                    "request", "add retry backoff to the uploader",
+                    {"session": f"session-{index}",
+                     "text": "add retry backoff to the uploader"})
+            found = [c for c in candidates(archive)
+                     if c["class"] == "recurring-ask"]
+            self.assertEqual(len(found), 1)
+            self.assertEqual(found[0]["direction"], "tighten")
+            self.assertTrue(found[0]["citations"])
+
+    def test_an_ask_from_one_session_is_not_a_candidate(self) -> None:
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            for index in range(3):
+                archive.append(
+                    "request", "add retry backoff to the uploader",
+                    {"session": "one-session",
+                     "text": "add retry backoff to the uploader"})
+            self.assertEqual(
+                [c for c in candidates(archive) if c["class"] == "recurring-ask"],
+                [])
+
+
 class ReportTests(unittest.TestCase):
     def test_the_report_states_that_nothing_was_installed(self) -> None:
         with isolated_project() as (_project, _state, _anchor, archive):
