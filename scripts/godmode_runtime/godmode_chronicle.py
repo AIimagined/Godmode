@@ -37,7 +37,19 @@ def writer_fingerprint() -> dict[str, str]:
         # since this record travels.
         "platform": os.environ.get("GODMODE_PLATFORM_OVERRIDE") or sys.platform,
         "python": f"{sys.version_info.major}.{sys.version_info.minor}",
+        # B5: which agent, not merely which host. Host and model are not an
+        # identity when two agents run on the same host - without this,
+        # concurrent lanes interleave into one indistinguishable stream and
+        # the fleet layer can name a lease holder that cannot be found in
+        # the archive afterwards. Imported here rather than at module scope
+        # because `godmode_fleet` reads this module's Chronicle.
+        "agent_id": _agent_id(),
     }
+
+
+def _agent_id() -> str:
+    from .godmode_fleet import agent_id
+    return agent_id()
 from .godmode_constants import EVENT_KINDS, RUNTIME_VERSION, SCHEMA_VERSION
 from .godmode_errors import ArchiveError
 from . import godmode_invariants as _invariants
