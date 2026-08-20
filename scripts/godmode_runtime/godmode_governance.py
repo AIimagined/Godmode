@@ -35,6 +35,14 @@ from typing import Any
 
 from .godmode_chronicle import Chronicle
 from .godmode_errors import ArchiveError
+# The sprint plan left "merge or layer?" open for the recurring-ask miner.
+# Layered: U-E10 already folds the request ledger into charter-rule
+# candidates under this same propose-never-install shape. A second
+# implementation over the same ledger would be a duplicate authority - two
+# components answering "what keeps getting asked" that drift apart the
+# moment either is edited - so this imports the miner instead of
+# re-deriving what it already knows.
+from .godmode_recurrence import mine_recurring_asks
 
 # How much evidence before a candidate is worth a reviewer's attention.
 # Per class, because the classes differ in how much a single observation
@@ -177,12 +185,55 @@ def _repeated_obligation_candidates(
     return results
 
 
+def _recurring_ask_candidates(archive: Chronicle) -> list[dict[str, Any]]:
+    """U-E10's own candidates, re-dressed in the candidate shape.
+
+    The miner owns the clustering (it shares `_terms` with the precheck, so
+    "the same ask" means one thing across the runtime); this only adopts its
+    output. Its threshold is its own - overriding it here would put the
+    decision about what counts as recurring in two places.
+    """
+    try:
+        mined = mine_recurring_asks(archive)
+    except ArchiveError:
+        # The miner reads the same archive this fold already read. If it
+        # cannot, the other classes are still worth showing - governance
+        # failing closed on one class would hide the rest. Narrow on
+        # purpose: a broad catch here would swallow a real defect in the
+        # miner and register against the swallow ratchet, which only ever
+        # tightens.
+        return []
+    results: list[dict[str, Any]] = []
+    for entry in mined.get("candidates") or []:
+        terms = ", ".join(entry.get("terms") or [])
+        if not terms:
+            continue
+        sessions = entry.get("sessions", 0)
+        results.append({
+            "id": _candidate_id("recurring-ask", terms),
+            "class": "recurring-ask",
+            "category": None,
+            "rule": (f"Consider a SOFT charter rule for the recurring ask "
+                     f"'{terms}': it has come up in {sessions} distinct "
+                     f"sessions."),
+            "direction": "tighten",
+            "observations": sessions,
+            "citations": list(entry.get("refs") or []),
+            "first_seen": None,
+            "last_seen": None,
+            "caution": ("mined from prompts, which record what was wanted, "
+                        "not what turned out to be right"),
+        })
+    return results
+
+
 def candidates(archive: Chronicle) -> list[dict[str, Any]]:
     """Rules this project's record argues for. A pure read - never writes."""
     events = _events(archive)
     already = promoted_rules(archive)
     found = (_protected_category_candidates(events)
-             + _repeated_obligation_candidates(events))
+             + _repeated_obligation_candidates(events)
+             + _recurring_ask_candidates(archive))
     # A promoted candidate stops being proposed: leaving it in the review
     # surface would ask the same person the same question forever, which is
     # how a review surface trains people to skim it.
