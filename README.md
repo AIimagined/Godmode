@@ -162,6 +162,68 @@ exactly what it supersedes.
 $ godmode register show --domain <domain>
 ```
 
+### Fleet
+
+More than one agent on a project shares one chronicle. Each declares an
+identity (`GODMODE_AGENT_ID`, else derived), takes exclusive leases on the
+paths it is working, and records who dispatched whom. A lease held by
+another agent and a delegation that would make an agent its own ancestor
+are both refused at write time, with a failing exit code. Leases carry a
+term and lapse by the clock, so a stopped agent does not hold a path.
+
+```console
+$ godmode fleet show
+```
+
+### Citation drift
+
+A claim graded against a file keeps that grade after the file changes.
+`reanchor` names citations that came loose: cited files committed over
+since the record was written, and `commit:` citations whose object the
+repository no longer has. It reports and does not regrade — a stale
+citation and an unsupported claim are different facts.
+
+```console
+$ godmode reanchor
+```
+
+### Restore points
+
+A green is attested rather than inferred from prose: the command, its exit
+code, and the commit it ran against. A failing run cannot mark a commit
+green. The plan names the last green, what changed since, and what is
+uncommitted, then hands over a non-destructive command; it runs nothing.
+
+```console
+$ godmode rollback plan
+```
+
+### Forecast and replay
+
+`forecast` classifies an operation before it runs and reports how many
+distinct operations in the same category this project already refused.
+`replay` re-classifies recorded operations under today's rules and
+separates tightenings from relaxations, since direction is what the
+ratchet is about.
+
+```console
+$ godmode forecast --operation "git push --force origin main"
+$ godmode replay
+```
+
+### Project governance
+
+Rules proposed from this project's own record: a refusal category with
+enough distinct operations behind it, an obligation restated without being
+discharged, an ask recurring across sessions. Each candidate carries the
+records supporting it, their count and their window. Nothing is installed:
+reading the surface performs no write, and `governance promote` — which
+takes a person, a candidate id and a reason — is what records an adoption.
+
+```console
+$ godmode governance show
+```
+
 ### Measurement
 
 A session-log pass counts tool calls, commands, test runs, and token
