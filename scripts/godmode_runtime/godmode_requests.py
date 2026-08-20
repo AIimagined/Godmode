@@ -103,6 +103,54 @@ def _keywords(text: str) -> frozenset[str]:
     return frozenset({w.lower() for w in _WORD.findall(text)} - _STOPWORDS)
 
 
+# `UserPromptSubmit` is the only input a host cannot reconstruct later, so
+# every prompt is recorded - but the host delivers more than typed asks
+# through that door. A tool-permission prompt, a task-completion
+# notification and a subagent's queued command all arrive prompt-shaped,
+# and on this archive they were most of a 44-entry open list that nobody
+# had reviewed across 34 handovers. A ledger whose count is mostly noise
+# is a ledger nobody reads.
+#
+# Narrow and shape-based on purpose: dropping a real ask costs far more
+# than carrying a stray line, so each pattern is a host envelope no person
+# types. Anything not matched is kept.
+_HOST_ENVELOPES = (
+    re.compile(r"^\s*<task-notification>"),
+    re.compile(r"^\s*<system-reminder>"),
+    # "Hook PreToolUse:Bash requires confirmation for this command: ..."
+    re.compile(r"^\s*Hook [A-Za-z]+:[A-Za-z]+ requires confirmation\b"),
+    # Claude Code renders a queued tool call for approval as "Bash command
+    # <the command>", optionally attributed to a subagent. A person asking
+    # about bash writes a sentence, which is why the command text must
+    # follow immediately rather than merely appear somewhere in the line.
+    # The attribution separator is matched as "any non-word run" rather than
+    # as a literal middle dot: this archive stores it mojibaked, as U+00C2
+    # U+00B7 - the UTF-8 bytes of `·` read back as two characters - so a
+    # literal never matched the records it was written for.
+    re.compile(r"^\s*Bash command\s+\W*from the \S+ agent\b"),
+    re.compile(r"^\s*Bash command\s+\S"),
+    # A queued command body arrives with no prefix at all. Command-shaped,
+    # not sentence-shaped: a shell verb first AND a shell operator present.
+    # Both are required, so "can you run the bash command that rebuilds the
+    # gate table?" - a person asking - is untouched.
+    re.compile(r"^\s*(cd|grep|echo|python3?|git|ls|cat|awk|sed|for|while)\s"
+               r"[^\n]*(&&|\|\||<<|\|\s|>\s|>>)"),
+)
+
+
+def is_operator_ask(text: str) -> bool:
+    """Whether a prompt is a person asking for something.
+
+    False for a host envelope and for a prompt carrying no word at all - a
+    rule of box-drawing characters is a separator, not a request.
+    """
+    if not text or not text.strip():
+        return False
+    if not _WORD.findall(text):
+        return False
+    return not any(pattern.search(text) for pattern in _HOST_ENVELOPES)
+
+
 def record_request(archive: Any, text: str, *, session: str | None = None,
                    tools_in_flight: int = 0,
                    source: str = "stated") -> dict[str, Any] | None:
@@ -133,6 +181,11 @@ def record_request(archive: Any, text: str, *, session: str | None = None,
     """
     flattened = " ".join(str(text).split())
     if not flattened:
+        return None
+    if not is_operator_ask(flattened):
+        # A host envelope, not an ask. Dropped rather than stored, because
+        # a ledger of asks that fills with tool-permission prompts and task
+        # notifications stops being a ledger of asks.
         return None
 
     identifier = digest(flattened)
@@ -209,8 +262,22 @@ def review_requests(records: list[dict[str, Any]],
         identifier = str(data.get("digest", ""))
         if str(data.get("status", "")).lower() != "open":
             continue
+        # A closure written by a person carries the subject they can see,
+        # never the full-text digest they cannot. The subject is truncated
+        # at SUBJECT_LIMIT while `digest` comes from the whole flattened
+        # prompt, so for any prompt longer than the limit the two could
+        # never match and the closure landed without closing anything -
+        # the same shape the digest-only matching had before the subject
+        # fallback was added, one truncation further along.
+        subject_key = digest(str(record.get("subject", "")).strip())
+        # Applied on read as well as on write. A predicate used only at
+        # write time would leave every envelope already in the archive in
+        # the open count forever - which is the state that made this
+        # ledger unreviewable in the first place.
+        if not is_operator_ask(str(record.get("subject", ""))):
+            continue
         total += 1
-        if identifier in closed or identifier in seen:
+        if identifier in closed or subject_key in closed or identifier in seen:
             continue
         seen.add(identifier)
 
