@@ -43,6 +43,7 @@ from godmode_runtime.godmode_fleet import (  # noqa: E402
     delegation_graph,
     fleet_view,
     release_lease,
+    retract,
 )
 from test_godmode_runtime import isolated_project  # noqa: E402
 
@@ -140,6 +141,58 @@ class DelegationTests(unittest.TestCase):
             delegate(archive, child="lane-c", task="build", parent="lane-b")
             graph = delegation_graph(archive)
             self.assertEqual(graph["ancestry"]["lane-c"], ["lane-b", "lane-a"])
+
+
+class RetractionTests(unittest.TestCase):
+    """A lease can be released; an edge could not, which was a real gap.
+
+    It surfaced from leaked smoke-test records: the stray leases lapsed by
+    their own term while the stray delegation edges stayed in the graph
+    forever, with no supported way to close one. A finished dispatch has
+    to be expressible, or the graph only ever grows.
+    """
+
+    def test_a_retracted_delegation_leaves_the_graph(self) -> None:
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            delegate(archive, child="lane-b", task="review", parent="lane-a")
+            retract(archive, child="lane-b", parent="lane-a")
+            self.assertNotIn(("lane-a", "lane-b"),
+                             delegation_graph(archive)["edges"])
+
+    def test_only_the_parent_may_retract(self) -> None:
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            delegate(archive, child="lane-b", task="review", parent="lane-a")
+            with self.assertRaises(ArchiveError):
+                retract(archive, child="lane-b", parent="lane-c")
+
+    def test_retracting_an_absent_delegation_is_refused(self) -> None:
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            with self.assertRaises(ArchiveError):
+                retract(archive, child="lane-b", parent="lane-a")
+
+    def test_a_retracted_edge_can_be_delegated_again(self) -> None:
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            delegate(archive, child="lane-b", task="review", parent="lane-a")
+            retract(archive, child="lane-b", parent="lane-a")
+            delegate(archive, child="lane-b", task="second pass", parent="lane-a")
+            self.assertIn(("lane-a", "lane-b"),
+                          delegation_graph(archive)["edges"])
+
+    def test_retraction_frees_the_child_to_become_an_ancestor(self) -> None:
+        # The cycle guard reads the live graph, so a retracted edge must
+        # stop constraining it - otherwise retraction is cosmetic.
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            delegate(archive, child="lane-b", task="review", parent="lane-a")
+            retract(archive, child="lane-b", parent="lane-a")
+            delegate(archive, child="lane-a", task="now the other way",
+                     parent="lane-b")
+            self.assertIn(("lane-b", "lane-a"),
+                          delegation_graph(archive)["edges"])
 
 
 class ViewTests(unittest.TestCase):

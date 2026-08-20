@@ -183,6 +183,7 @@ from .godmode_fleet import (
     delegate,
     fleet_view,
     release_lease,
+    retract as retract_delegation,
 )
 # B5-B / B6 - citation drift, restore points, and policy replay. Same
 # isolated-block convention; all three report and none of them mutate.
@@ -999,6 +1000,20 @@ def cmd_governance_promote(args: argparse.Namespace,
         return CommandResult({"refused": str(error)}, exit_code=1)
     return CommandResult(
         {"promoted": args.candidate, "rule": record["data"]["rule"],
+         "sequence": record["sequence"]},
+        exit_code=0,
+    )
+
+
+def cmd_fleet_retract(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    try:
+        record = retract_delegation(
+            runtime.archive, child=args.child, parent=args.parent)
+    except ArchiveError as error:
+        return CommandResult({"refused": str(error)}, exit_code=1)
+    return CommandResult(
+        {"retracted": args.child, "parent": record["data"]["parent"],
          "sequence": record["sequence"]},
         exit_code=0,
     )
@@ -3467,6 +3482,12 @@ def _build_parser() -> argparse.ArgumentParser:
     fleet_delegate.add_argument("--parent", default=None,
                                 help="Defaults to this agent's own id")
     fleet_delegate.set_defaults(handler=cmd_fleet_delegate)
+    fleet_retract = fleet_sub.add_parser(
+        "retract", help="Close a delegation edge; only the parent that opened it may")
+    fleet_retract.add_argument("--child", required=True)
+    fleet_retract.add_argument("--parent", default=None,
+                               help="Defaults to this agent's own id")
+    fleet_retract.set_defaults(handler=cmd_fleet_retract)
 
     # Sprint 8 - the review surface. `show` reads, `promote` is the only
     # path by which anything here becomes binding, and it needs a person.

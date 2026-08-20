@@ -43,6 +43,19 @@ class FingerprintTests(unittest.TestCase):
             self.assertIn(field, print_)
             self.assertTrue(print_[field])
 
+    def test_the_writer_records_which_agent_wrote_it(self) -> None:
+        """Host and model are not an identity when two agents share a host.
+
+        Without this, records from two concurrent lanes interleave into one
+        indistinguishable stream and the fleet layer can name a lease
+        holder it cannot then find in the archive.
+        """
+        from godmode_runtime.godmode_fleet import agent_id
+
+        print_ = writer_fingerprint()
+        self.assertIn("agent_id", print_)
+        self.assertEqual(print_["agent_id"], agent_id())
+
     def test_the_fingerprint_carries_no_machine_identity(self) -> None:
         """A hostname or a user path names a person, and this is written to a
         record that travels."""

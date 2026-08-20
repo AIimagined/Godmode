@@ -179,11 +179,21 @@ def delegation_graph(archive: Chronicle) -> dict[str, Any]:
     edges: list[tuple[str, str]] = []
     parent_of: dict[str, str] = {}
     tasks: dict[str, str] = {}
+    # Latest record per child wins, so a retraction supersedes the
+    # delegation it closes and a later re-delegation reopens the edge.
+    latest: dict[str, dict[str, Any]] = {}
     for record in _fleet_records(archive, _DELEGATION_PREFIX):
-        data = record.get("data") or {}
         child = str(record.get("subject", ""))[len(_DELEGATION_PREFIX):]
+        if child:
+            latest[child] = record.get("data") or {}
+    for child, data in latest.items():
         parent = str(data.get("parent", ""))
-        if not child or not parent:
+        if not parent:
+            continue
+        # Absent state means active: every delegation written before
+        # retraction existed carries no state, and treating those as
+        # closed would empty the graph on upgrade.
+        if data.get("state", "active") != "active":
             continue
         if (parent, child) not in edges:
             edges.append((parent, child))
@@ -232,7 +242,39 @@ def delegate(archive: Chronicle, *, child: str, task: str,
             f"{child} is already an ancestor of {who}; that delegation is a cycle")
     return archive.append(
         "decision", f"{_DELEGATION_PREFIX}{child}",
-        {"parent": who, "task": task},
+        {"parent": who, "task": task, "state": "active"},
+    )
+
+
+def retract(archive: Chronicle, *, child: str,
+            parent: str | None = None) -> dict[str, Any]:
+    """Close a delegation edge. Only the parent that opened it may.
+
+    Without this the graph only ever grows: a lease lapses by its term, but
+    a finished dispatch had no way to be expressed, so every edge ever
+    written stayed live forever. Retracting also frees the cycle guard -
+    the guard reads the live graph, so a closed edge must stop constraining
+    it or retraction would be cosmetic.
+    """
+    child = child.strip()
+    who = (parent or agent_id()).strip()
+    if not child or not who:
+        raise ArchiveError("A retraction needs a parent and a child")
+    graph = delegation_graph(archive)
+    current = None
+    for edge_parent, edge_child in graph["edges"]:
+        if edge_child == child:
+            current = edge_parent
+            break
+    if current is None:
+        raise ArchiveError(f"No live delegation to {child} to retract")
+    if current != who:
+        raise ArchiveError(
+            f"{child} was dispatched by {current}, not {who}")
+    return archive.append(
+        "decision", f"{_DELEGATION_PREFIX}{child}",
+        {"parent": who, "task": graph["tasks"].get(child, ""),
+         "state": "retracted"},
     )
 
 
