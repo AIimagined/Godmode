@@ -1013,7 +1013,7 @@ def cmd_rollback_mark(args: argparse.Namespace, runtime: Runtime) -> CommandResu
     _require_archive(runtime)
     try:
         record = mark_green(
-            runtime.archive, runtime.project,
+            runtime.archive, Path(runtime.anchor.project_root),
             command=args.command, exit_code=args.exit_code,
         )
     except ArchiveError as error:
