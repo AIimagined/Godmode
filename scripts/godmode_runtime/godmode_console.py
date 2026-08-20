@@ -186,7 +186,11 @@ from .godmode_fleet import (
 )
 # B5-B / B6 - citation drift, restore points, and policy replay. Same
 # isolated-block convention; all three report and none of them mutate.
-from .godmode_reanchor import reanchor_report
+from .godmode_reanchor import (
+    reanchor_report,
+    remap_commit_citations,
+    snapshot_commit_citations,
+)
 from .godmode_rollback import mark_green, rollback_plan
 from .godmode_forecast import forecast as forecast_operation, replay as replay_policy
 # Sprint 8 - evidence-derived governance. Proposes; never installs.
@@ -1002,7 +1006,21 @@ def cmd_governance_promote(args: argparse.Namespace,
 
 def cmd_reanchor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
-    report = reanchor_report(runtime.archive, Path(runtime.anchor.project_root))
+    project = Path(runtime.anchor.project_root)
+    # Ordering is the contract: snapshot BEFORE a rewrite, remap after. A
+    # snapshot taken afterwards records the new sha and proves nothing
+    # about the old one, so the two are separate deliberate acts rather
+    # than one command that guesses which the caller meant.
+    if getattr(args, "snapshot", False):
+        return CommandResult(
+            snapshot_commit_citations(runtime.archive, project), exit_code=0)
+    if getattr(args, "remap", False):
+        report = remap_commit_citations(runtime.archive, project)
+        # An unresolved citation is a real loss - no snapshot existed, so
+        # nothing records what the sha meant. That belongs in the status.
+        return CommandResult(
+            report, exit_code=1 if report["unresolved"] else 0)
+    report = reanchor_report(runtime.archive, project)
     # Findings are a prompt to re-read evidence, not a failure: exiting
     # non-zero here would make an honest report look like a broken build
     # and invite someone to silence it.
@@ -3471,6 +3489,12 @@ def _build_parser() -> argparse.ArgumentParser:
     reanchor = sub.add_parser(
         "reanchor",
         help="Citations that came loose: cited files changed since, commits gone")
+    reanchor.add_argument(
+        "--snapshot", action="store_true",
+        help="Fingerprint every cited commit BEFORE a history rewrite")
+    reanchor.add_argument(
+        "--remap", action="store_true",
+        help="After a rewrite, find each snapshotted commit's new sha")
     reanchor.set_defaults(handler=cmd_reanchor)
 
     rollback = sub.add_parser(
