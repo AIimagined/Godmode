@@ -53,9 +53,12 @@ class IdentityTests(unittest.TestCase):
             self.assertEqual(agent_id(), "lane-a")
 
     def test_absent_declaration_still_yields_a_stable_id(self) -> None:
-        # An undeclared agent must not collapse to a blank that every other
-        # undeclared agent also shares - that would silently merge two lanes
-        # into one identity, which is the exact confusion this prevents.
+        # Stability is the property that matters, and it is easy to get
+        # wrong in the direction that looks right: the gate runs as a fresh
+        # subprocess per tool call, so anything process-scoped (a pid, a
+        # uuid) would give ONE agent a different id per record. Undeclared
+        # agents on one project deliberately share an id - only the host
+        # can really tell two of them apart.
         environment = {k: v for k, v in os.environ.items() if k != AGENT_ENV}
         with mock.patch.dict(os.environ, environment, clear=True):
             first = agent_id()
