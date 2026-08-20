@@ -508,12 +508,10 @@ def negation_heavy(text: str) -> bool:
     )
 
 
-def rules_for(charter: dict[str, Any], trigger: str, enforcement: str | None = None) -> list[dict[str, Any]]:
-    return [
-        rule
-        for rule in charter["compiled"]
-        if rule["trigger"] == trigger and (enforcement is None or rule["enforcement"] == enforcement)
-    ]
+# `rules_for` filtered `charter["compiled"]` by trigger and enforcement. No
+# caller ever used it - the consumers filter inline against the shape they
+# already hold - so it was a speculative seam, removed once the orphan
+# detector could see that nothing reached it.
 
 
 def _self_check() -> None:

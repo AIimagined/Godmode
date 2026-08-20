@@ -270,24 +270,11 @@ def _scan_timeline(transcript_path: Path) -> tuple[dict[str, list[tuple[int, int
     return commands, mutations
 
 
-def command_timeline(transcript_path: Path) -> dict[str, list[tuple[int, int]]]:
-    """Per-command outcome timeline: `{cmd_digest: [(turn, exit_code)]}`.
-
-    Digests only, never the command text - see `command_digest`. `exit_code`
-    is a synthesised binary outcome derived from `is_error` (see the module
-    docstring's U-T2 note), not a parsed POSIX exit status: treat any
-    nonzero value as "failed", not as a specific code. Raises the same
-    `OSError`/`ValueError` as `measure` for a path that cannot be opened -
-    the caller decides what a missing transcript means.
-    """
-    commands, _mutations = _scan_timeline(Path(transcript_path))
-    return commands
-
-
-def mutation_turns(transcript_path: Path) -> list[int]:
-    """Turns (1-based assistant-message index) carrying an Edit/Write/NotebookEdit."""
-    _commands, mutations = _scan_timeline(Path(transcript_path))
-    return mutations
+# `command_timeline` and `mutation_turns` lived here as separate one-line
+# readers over `_scan_timeline`. `session_timeline` returns both halves from
+# a single scan and is what every caller uses, so the pair were speculative
+# seams rather than API - removed once the orphan detector could see that
+# nothing reached them.
 
 
 def session_timeline(transcript_path: Path) -> dict[str, Any]:
