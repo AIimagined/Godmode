@@ -882,6 +882,13 @@ _TOOL_FILE_EDIT = re.compile(r"(?i)^(?:write|edit) file\s+(?P<path>.+)$")
 # near `CapabilityBroker` reads this same name; it is not redefined there.
 POLICY_FILENAME = ".godmode-authorization-policy.json"
 
+# A policy read sits in front of every gated tool call, so a retry here has
+# to be short enough to be invisible and few enough to stay bounded. Three
+# attempts across ~120ms covers a rename window without turning a genuinely
+# unreadable file into a long stall on the way to the same refusal.
+_POLICY_READ_RETRIES = 3
+_POLICY_READ_BACKOFF_SECONDS = 0.02
+
 # Sensitive by name, wherever they sit. Containment is a separate question and
 # is answered separately: a path can be inside the working tree and still be
 # none of the agent's business.
@@ -3908,10 +3915,41 @@ class CapabilityBroker:
             # would leave the loosening's own exit unrecorded.
             _chronicle_observe_transition(self.archive, False)
             return {}
-        except (OSError, json.JSONDecodeError) as exc:
+        except json.JSONDecodeError as exc:
+            # Broken JSON is not transient. Retrying only delays the same
+            # refusal, so it refuses immediately.
             raise AuthorizationError(
                 f"Authorization policy file is unreadable; fix or remove {POLICY_FILENAME}"
             ) from exc
+        except OSError as exc:
+            # A file mid-rename is not a malformed file. On Windows a read
+            # against one answers with a sharing violation - PermissionError,
+            # an OSError - so the deliberate refusal above fired for a file
+            # that was intact and readable a millisecond later. Seen three
+            # times in one session: the suite parks the operator's
+            # observe-mode declaration while hook subprocess tests run, and
+            # any live gate call landing in that window got a hard hook
+            # error instead of a decision.
+            #
+            # Bounded and short, because this sits in front of every gated
+            # tool call. A read that keeps failing still refuses, so the
+            # guarantee is unchanged - only the false positive is gone.
+            raw = None
+            for attempt in range(_POLICY_READ_RETRIES):
+                time.sleep(_POLICY_READ_BACKOFF_SECONDS * (attempt + 1))
+                try:
+                    raw = json.loads(path.read_text(encoding="utf-8"))
+                    break
+                except FileNotFoundError:
+                    _chronicle_observe_transition(self.archive, False)
+                    return {}
+                except (OSError, json.JSONDecodeError):
+                    continue
+            if raw is None:
+                raise AuthorizationError(
+                    f"Authorization policy file is unreadable; fix or remove "
+                    f"{POLICY_FILENAME}"
+                ) from exc
         if not isinstance(raw, dict):
             raise AuthorizationError(f"{POLICY_FILENAME} must contain a JSON object")
         policy: dict[str, Any] = {}
