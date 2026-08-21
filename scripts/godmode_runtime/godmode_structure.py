@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from .godmode_chronicle import Chronicle
+from .godmode_constants import IGNORED_DIRECTORY_NAMES
 
 INDEX_FILENAME = "structure_index.json"
 
@@ -36,10 +37,12 @@ INDEX_FILENAME = "structure_index.json"
 MAX_FILES = 2000
 MAX_PARSE_BYTES = 256_000
 
-_SKIP_DIRS = frozenset({
-    ".git", "__pycache__", "node_modules", ".venv", "venv", ".tox",
-    ".mypy_cache", ".pytest_cache", "dist", "build",
-})
+# Owned by `godmode_constants`, so "which directories does godmode ignore?"
+# has one answer rather than depending on which module a reader opens. The
+# private copy this replaces had drifted both ways: it walked into
+# `coverage`, `target`, `.research`, `.evidence` and `.decisions`, while
+# every other walker descended into the tool caches it alone skipped.
+_SKIP_DIRS = IGNORED_DIRECTORY_NAMES
 
 # File-level entries are only worth carrying for things a person edits.
 _TEXT_SUFFIXES = frozenset({
