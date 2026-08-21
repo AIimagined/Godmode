@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 import re
 from typing import Any, Callable
 
+from .godmode_constants import REGISTER_EVIDENCE_PREFIXES, REGISTER_STATES
 from .godmode_errors import ArchiveError
 
 KindInvariant = Callable[[dict[str, Any]], None]
@@ -117,19 +118,14 @@ def _verdict_invariants(data: dict[str, Any]) -> None:
             )
 
 
-# U-V2's register/evidence disconnect - kept in sync with
-# godmode_register.STATES and godmode_register.EVIDENCE_PREFIXES by hand,
-# not by import: this module stays dependency-free (see the module
-# docstring above) so godmode_chronicle can keep importing it with no
-# cycle risk, and godmode_register itself imports godmode_chronicle, so a
-# reverse import here (invariants -> register -> chronicle) would recreate
-# the very cycle that dependency-freedom exists to avoid. tests.test_register
-# asserts the two tuples still agree.
-_REGISTER_STATES = (
-    "established", "superseded", "refuted", "worse-than-baseline",
-    "matched-baseline", "rejected-precedent", "open",
-)
-_REGISTER_EVIDENCE_PREFIXES = ("witness:", "verdict:", "file:")
+# U-V2's register/evidence vocabulary, read from `godmode_constants` - the
+# one module with no runtime imports, so taking it from there keeps this
+# module dependency-free for `godmode_chronicle` while avoiding the
+# invariants -> register -> chronicle cycle a direct import would close.
+# Two hand-synced copies with a test asserting they still agreed came
+# before this; one definition makes the drift unrepresentable instead.
+_REGISTER_STATES = REGISTER_STATES
+_REGISTER_EVIDENCE_PREFIXES = REGISTER_EVIDENCE_PREFIXES
 
 
 def _register_invariants(data: dict[str, Any]) -> None:

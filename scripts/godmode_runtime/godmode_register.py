@@ -58,20 +58,21 @@ from pathlib import Path
 from typing import Any
 
 from .godmode_chronicle import Chronicle
+from .godmode_constants import REGISTER_EVIDENCE_PREFIXES, REGISTER_STATES
 from .godmode_errors import ArchiveError
 
 # Closed enumeration. Anything not in this tuple is not a fourth kind of
 # "sort of decided" - it is refused at set_state() and at the archive seam,
 # never silently accepted and never silently coerced into a listed state.
-STATES = (
-    "established", "superseded", "refuted", "worse-than-baseline",
-    "matched-baseline", "rejected-precedent", "open",
-)
+# Owned by `godmode_constants`, which has no runtime imports, so
+# `godmode_invariants` can read the same definition without closing an
+# invariants -> register -> chronicle cycle.
+STATES = REGISTER_STATES
 
 # Evidence prefixes that count as "this state points at something checkable."
 # Mirrored (not imported) in godmode_invariants._register_invariants - see
 # that module's docstring for why the duplication is deliberate.
-EVIDENCE_PREFIXES = ("witness:", "verdict:", "file:")
+EVIDENCE_PREFIXES = REGISTER_EVIDENCE_PREFIXES
 
 # The legal target states reachable FROM each state. `open` is the implicit
 # default for a key with no records at all, and it is also a state a caller

@@ -5,6 +5,36 @@ from __future__ import annotations
 import hashlib
 import os
 
+# Tools that read and cannot write. Named rather than inferred: a tool
+# absent from this set is treated as capable of mutation and pays the full
+# check.
+#
+# One owner because two had the same six names as separate literals - the
+# gate hook deciding what skips the full check, and the Claude adapter
+# deciding what an event reports as a read. They agreed by coincidence, and
+# a disagreement about what can mutate is not the kind of drift worth
+# discovering from behaviour.
+READ_ONLY_TOOLS = frozenset({
+    "Read", "Glob", "Grep", "WebFetch", "WebSearch", "TodoWrite",
+})
+
+# U-V2 disposition register vocabulary. It lives here rather than in
+# `godmode_register` because two modules need it and neither may import the
+# other: `godmode_invariants` is deliberately dependency-free so
+# `godmode_chronicle` can import it without a cycle, while `godmode_register`
+# imports `godmode_chronicle` - so invariants -> register would close exactly
+# the loop that dependency-freedom exists to prevent.
+#
+# The previous arrangement kept two copies in step by hand with a test
+# asserting they still agreed. This module has no runtime imports at all, so
+# both sides can read one definition and the drift becomes unrepresentable
+# rather than merely detected.
+REGISTER_STATES = (
+    "established", "superseded", "refuted", "worse-than-baseline",
+    "matched-baseline", "rejected-precedent", "open",
+)
+REGISTER_EVIDENCE_PREFIXES = ("witness:", "verdict:", "file:")
+
 AGENT_ENV = "GODMODE_AGENT_ID"
 
 
@@ -70,6 +100,10 @@ IGNORED_DIRECTORY_NAMES = frozenset(
         ".checkpoints", ".handovers", ".evidence", ".decisions", ".lessons",
         "node_modules", "coverage", "dist", "build", "target", "__pycache__",
         ".venv", "venv",
+        # Tool caches. These lived only in `godmode_structure`'s private
+        # copy of this list, so every other walk - the atlas, the database
+        # inventory, the scope fence - descended into them.
+        ".tox", ".mypy_cache", ".pytest_cache",
     }
 )
 

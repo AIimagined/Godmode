@@ -21,6 +21,7 @@ sys.path.insert(0, str(SCRIPTS))
 # imported inside the branch that actually uses them, below, instead of
 # paying for seven modules a mutating tool call never touches.
 from godmode_runtime.godmode_anchor import current_host, resolve_anchor  # noqa: E402
+from godmode_runtime.godmode_constants import READ_ONLY_TOOLS  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_runtime.godmode_errors import GodmodeError  # noqa: E402
 from godmode_runtime.godmode_attest import attested_rule_ids, latest_session  # noqa: E402
@@ -50,9 +51,11 @@ CAPTURE_PAYLOAD_ENV = "GODMODE_CAPTURE_HOST_PAYLOADS"
 
 CLAUDE_CONTEXT_LIMIT = 9_000
 
-# Tools that read and cannot write. Named rather than inferred: a tool absent
-# from this set is treated as capable of mutation and pays the full check.
-_READ_ONLY_TOOLS = frozenset({"Read", "Glob", "Grep", "WebFetch", "WebSearch", "TodoWrite"})
+# Tools that read and cannot write. Owned by `godmode_constants` so this
+# gate and the Claude adapter cannot disagree about which tools can mutate;
+# a tool absent from the set is treated as capable of mutation and pays the
+# full check.
+_READ_ONLY_TOOLS = READ_ONLY_TOOLS
 
 # CX-2: which tools name the file(s) they change - Claude's Write/Edit/
 # NotebookEdit, Codex's apply_patch (one to several) - is now an adapter

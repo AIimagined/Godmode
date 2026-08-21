@@ -106,6 +106,8 @@ import re
 from typing import Any
 import unicodedata
 
+from .godmode_constants import READ_ONLY_TOOLS
+
 SCHEMA = 1
 
 # ---------------------------------------------------------------------------
@@ -435,7 +437,10 @@ def _malformed(host: str, tool: str, raw: Any) -> HostEvent:
 # string).
 # ---------------------------------------------------------------------------
 
-_CLAUDE_READ_TOOLS = frozenset({"Read", "Glob", "Grep", "WebFetch", "WebSearch", "TodoWrite"})
+# Owned by `godmode_constants`, so the gate hook and this adapter cannot
+# disagree about which tools can mutate. Aliased rather than renamed at the
+# call sites, which read fine as they are.
+_CLAUDE_READ_TOOLS = READ_ONLY_TOOLS
 _CLAUDE_FENCED_TOOLS = frozenset({"Write", "Edit", "NotebookEdit", "MultiEdit"})
 _CLAUDE_SHELL_TOOLS = frozenset({"Bash", "PowerShell"})
 
