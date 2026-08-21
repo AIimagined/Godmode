@@ -1,14 +1,8 @@
 {
   "rules": {
-    "R-0ea8f0e4ea": {
+    "R-03a3e6bad4": {
       "enforcement": "ADVISORY",
-      "text_hash": "0aaa9a5d7ef38823",
-      "trigger": "always",
-      "verify": "none"
-    },
-    "R-17950a69a7": {
-      "enforcement": "ADVISORY",
-      "text_hash": "ab9d888f819b60e5",
+      "text_hash": "91c0b12bea7bee89",
       "trigger": "always",
       "verify": "none"
     },
@@ -18,15 +12,9 @@
       "trigger": "before_completion",
       "verify": "citation_resolves"
     },
-    "R-32633debfc": {
+    "R-42b5713ae4": {
       "enforcement": "ADVISORY",
-      "text_hash": "8caf101b1f2c5c9b",
-      "trigger": "always",
-      "verify": "none"
-    },
-    "R-40b5224071": {
-      "enforcement": "ADVISORY",
-      "text_hash": "674f6de7f309e503",
+      "text_hash": "c628013ecad522ce",
       "trigger": "always",
       "verify": "none"
     },
@@ -36,23 +24,17 @@
       "trigger": "before_mutation",
       "verify": "attestation_present"
     },
+    "R-5590f3b009": {
+      "enforcement": "ADVISORY",
+      "text_hash": "b59db74f0413a7ad",
+      "trigger": "always",
+      "verify": "none"
+    },
     "R-56305a9e8f": {
       "enforcement": "HARD",
       "text_hash": "9e9404b494b372e4",
       "trigger": "before_mutation",
       "verify": "attestation_present"
-    },
-    "R-58d1490ec6": {
-      "enforcement": "ADVISORY",
-      "text_hash": "228b5bba76ae7bce",
-      "trigger": "always",
-      "verify": "none"
-    },
-    "R-61d1c72f9e": {
-      "enforcement": "ADVISORY",
-      "text_hash": "9e171ac5155c5757",
-      "trigger": "always",
-      "verify": "none"
     },
     "R-720cc85a48": {
       "enforcement": "HARD",
@@ -60,45 +42,15 @@
       "trigger": "before_mutation",
       "verify": "attestation_present"
     },
-    "R-721d1c3f84": {
-      "enforcement": "ADVISORY",
-      "text_hash": "60bbadee4a668b55",
-      "trigger": "always",
-      "verify": "none"
-    },
-    "R-74c5b02dab": {
-      "enforcement": "ADVISORY",
-      "text_hash": "97132c65d4ce96da",
-      "trigger": "always",
-      "verify": "none"
-    },
-    "R-7b54303e37": {
-      "enforcement": "ADVISORY",
-      "text_hash": "a463432c75ec2511",
-      "trigger": "always",
-      "verify": "none"
-    },
-    "R-826d705de8": {
-      "enforcement": "ADVISORY",
-      "text_hash": "e10ba7845937d3c2",
-      "trigger": "always",
-      "verify": "none"
-    },
     "R-83998b8fa7": {
       "enforcement": "ADVISORY",
       "text_hash": "4beefb6463258be0",
       "trigger": "always",
       "verify": "none"
     },
-    "R-86132a0d27": {
+    "R-865a06da09": {
       "enforcement": "ADVISORY",
-      "text_hash": "87a2d87a914b849c",
-      "trigger": "always",
-      "verify": "none"
-    },
-    "R-90189a3708": {
-      "enforcement": "ADVISORY",
-      "text_hash": "1a253ec9250f7605",
+      "text_hash": "a64df8fe167155c8",
       "trigger": "always",
       "verify": "none"
     },
@@ -108,9 +60,9 @@
       "trigger": "always",
       "verify": "none"
     },
-    "R-9d972a0655": {
+    "R-9ad21ee2cf": {
       "enforcement": "ADVISORY",
-      "text_hash": "3f451e038c932438",
+      "text_hash": "f7cdc01bac08f49d",
       "trigger": "always",
       "verify": "none"
     },
@@ -120,38 +72,32 @@
       "trigger": "before_completion",
       "verify": "guard_observed_failing"
     },
-    "R-c17a1d11f3": {
+    "R-ba23482724": {
       "enforcement": "ADVISORY",
-      "text_hash": "ef1d291197d98f74",
+      "text_hash": "de2020830e2f5428",
       "trigger": "always",
       "verify": "none"
     },
-    "R-d18ad9407f": {
+    "R-c090d76ad2": {
       "enforcement": "ADVISORY",
-      "text_hash": "719dea3549d80a1a",
+      "text_hash": "49e4f75d39f9d434",
       "trigger": "always",
       "verify": "none"
     },
-    "R-de13d01ecb": {
-      "enforcement": "ADVISORY",
-      "text_hash": "d1db10c86004856b",
-      "trigger": "always",
-      "verify": "none"
-    },
-    "R-e1add57204": {
-      "enforcement": "ADVISORY",
-      "text_hash": "56307924675cf16c",
-      "trigger": "always",
-      "verify": "none"
+    "R-e19dfe0488": {
+      "enforcement": "HARD",
+      "text_hash": "9da1de908466b152",
+      "trigger": "before_completion",
+      "verify": "attestation_present"
     }
   },
   "schema": "godmode-charter-snapshot-v1",
   "summary": {
     "enforcement": {
-      "ADVISORY": 19,
-      "HARD": 5,
+      "ADVISORY": 9,
+      "HARD": 6,
       "SOFT": 0
     },
-    "rules": 24
+    "rules": 15
   }
 }
