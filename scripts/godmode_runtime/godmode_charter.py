@@ -206,22 +206,69 @@ def _rule_id(role: str, path: str, text: str) -> str:
 
 
 def _directives(segment: Segment) -> list[tuple[int, str]]:
+    """Directives in a segment, one per DIRECTIVE - not one per line.
+
+    This walked `splitlines()` and made a rule of every physical line, so a
+    directive wrapped by an editor compiled as several. This project's own
+    charter carried the result: "Protected operations receive a preview and
+    require a scoped, expiring, one-use local" and "capability. Godmode
+    never executes the operation itself." are one sentence torn in half,
+    and both halves became separate ADVISORY rules.
+
+    The inflated count is the smaller cost. A fragment cannot be enforced
+    or reviewed, because half a sentence states no complete obligation -
+    which is why 19 of 24 compiled rules sat dormant.
+
+    A new bullet, a blank line, a heading or a fence ends a directive;
+    anything else continues the one before it, which is what a hard wrap
+    is. Single-line bullets are therefore byte-identical to before, and
+    that matters beyond tidiness: a rule's id derives from its text, so
+    moving a HARD rule's text would orphan the attestations proving it was
+    honoured.
+
+    This depends on prose stating one directive per bullet. A paragraph
+    that runs several together still compiles as one rule - joining cannot
+    invent a boundary the writing does not have, which is why
+    `OPERATOR.md`'s standing directives were split into bullets rather
+    than left as one wrapped sentence.
+    """
     found: list[tuple[int, str]] = []
     fenced = False
+    pending: tuple[int, str] | None = None
+
+    def flush() -> None:
+        nonlocal pending
+        if pending is None:
+            return
+        offset, text = pending
+        pending = None
+        # Strip emphasis and inline markup so shape matching sees plain words.
+        cleaned = re.sub(r"[*_`]+", "", text).strip()
+        if len(cleaned) < 12 or not _DIRECTIVE.search(cleaned):
+            return
+        found.append((segment.start_line + offset, cleaned))
+
     for offset, raw in enumerate(segment.body.splitlines()):
         if _FENCE.match(raw):
+            flush()
             fenced = not fenced
             continue
         if fenced:
             continue
-        line = _BULLET.sub("", raw).strip()
-        if not line or _NOISE.match(raw) and not _BULLET.match(raw):
+        if not raw.strip():
+            flush()
             continue
-        # Strip emphasis and inline markup so shape matching sees plain words.
-        line = re.sub(r"[*_`]+", "", line).strip()
-        if len(line) < 12 or not _DIRECTIVE.search(line):
+        if _NOISE.match(raw) and not _BULLET.match(raw):
+            flush()
             continue
-        found.append((segment.start_line + offset, line))
+        if _BULLET.match(raw):
+            flush()
+            pending = (offset, _BULLET.sub("", raw).strip())
+        elif pending is not None:
+            pending = (pending[0], f"{pending[1]} {raw.strip()}")
+        else:
+            pending = (offset, raw.strip())
+    flush()
     return found
 
 
