@@ -474,6 +474,23 @@ class DogfoodingTests(unittest.TestCase):
              replace='    allowed = not unattested and not downgraded and not half_done '
                      'and not unattested_accept',
              with_text='    allowed = not unattested and not downgraded and not unattested_accept'),
+        # Sixth HARD rule, and it arrived by being read correctly rather
+        # than by being written: `docs/FIXED-REGISTRY.md` states the
+        # capability-pointer invariant in one sentence that the charter
+        # compiler used to split across physical lines into fragments. Whole
+        # again, it classifies HARD - which is right for the invariants role,
+        # whose stated job is "behaviours that must stay true, each owning a
+        # guard", and this one names its guard in its own text.
+        #
+        # Verified by `CapabilityDriftPlantTests` rather than this whole
+        # module: the plant runs its command in a subprocess, so naming the
+        # module that contains this test would re-enter the planting suite.
+        dict(name="capability-pointer-drift", rule="R-e19dfe0488",
+             target="scripts/godmode_runtime/godmode_reconcile.py",
+             command=[sys.executable, "-m", "unittest",
+                      "tests.test_capability_register.CapabilityDriftPlantTests"],
+             replace='        if status == "built":',
+             with_text='        if status == "built" and False:'),
     ]
 
     def setUp(self) -> None:
