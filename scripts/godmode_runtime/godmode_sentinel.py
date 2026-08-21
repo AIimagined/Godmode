@@ -3763,6 +3763,29 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     }
 
 
+# Failures this module chose not to raise on, kept so the choice is
+# observable. Both call sites below are genuinely best-effort - a private
+# file's permission bits, and a chronicle write that must not turn a policy
+# read into a hard failure - but "we decided to continue" and "nothing went
+# wrong" are different facts, and a bare `pass` renders them identically.
+# `godmode swallow`'s own remedy for an empty handler is to handle it,
+# re-raise it, or say why ignoring is safe; this says so where a later
+# reader can count it.
+_DEGRADATIONS: list[str] = []
+
+
+def degradations() -> tuple[str, ...]:
+    """Best-effort failures this process continued past, oldest first."""
+    return tuple(_DEGRADATIONS)
+
+
+def _degraded(reason: str) -> None:
+    # Bounded: this is process-local and a caller in a loop must not turn a
+    # diagnostic into a leak.
+    if len(_DEGRADATIONS) < 64:
+        _DEGRADATIONS.append(reason)
+
+
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(
@@ -3776,8 +3799,13 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
             os.fsync(handle.fileno())
         try:
             os.chmod(temporary, 0o600)
-        except OSError:
-            pass
+        except OSError as error:
+            # Not fatal: the write itself succeeded and the file still
+            # replaces its target. On Windows this is a no-op that cannot
+            # fail; on a filesystem that refuses it, the file keeps the
+            # mode `mkstemp` gave it - which is already owner-only - so the
+            # bits are a tightening we would like, not one we depend on.
+            _degraded(f"chmod 0600 on a private temp file: {type(error).__name__}")
         os.replace(temporary, path)
     finally:
         if os.path.exists(temporary):
@@ -3859,8 +3887,13 @@ def _chronicle_observe_transition(archive: Any, live_observe: bool) -> None:
     subject = SUBJECT_OBSERVE_ENTERED if live_observe else SUBJECT_OBSERVE_EXITED
     try:
         archive.append("action", subject, {}, evidence=[])
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as error:  # noqa: BLE001
+        # Best-effort by contract: a chronicle that cannot be written must
+        # not turn a policy read into a hard failure. Recorded rather than
+        # discarded, so "the posture change went unrecorded" is a fact
+        # someone can find instead of an absence indistinguishable from
+        # nothing having happened.
+        _degraded(f"chronicling an observe-mode transition: {type(error).__name__}")
 
 
 class CapabilityBroker:
