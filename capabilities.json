@@ -1,919 +1,927 @@
 {
-  "schema": 1,
-  "note": "IDs and one-line neutral statements only, generated from the reachable private sprint ledger and cross-checked against shipped code and tests. No ledger prose.",
   "capabilities": [
     {
+      "guard": [
+        "test:tests/test_atlas_registry.py"
+      ],
       "id": "C-01",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_atlas.py"
+      ],
       "statement": "Offline repository relationship index with hash, confidence, and freshness.",
-      "status": "built",
-      "impl": [
-        "file:scripts/godmode_runtime/godmode_atlas.py"
-      ],
-      "guard": [
-        "test:tests/test_atlas_registry.py"
-      ]
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_atlas_registry.py"
+      ],
       "id": "C-02",
-      "statement": "Index-to-detail retrieval with content-hash dedup and bounded expansion.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_atlas.py"
       ],
-      "guard": [
-        "test:tests/test_atlas_registry.py"
-      ]
+      "statement": "Index-to-detail retrieval with content-hash dedup and bounded expansion.",
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_experiment_ledger.py"
+      ],
       "id": "C-03",
-      "statement": "Bounded experiment loop: fixed baseline, one variable, objective metric.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_guardrails.py"
       ],
-      "guard": [
-        "test:tests/test_experiment_ledger.py"
-      ]
+      "statement": "Bounded experiment loop: fixed baseline, one variable, objective metric.",
+      "status": "built"
     },
     {
+      "guard": [],
       "id": "C-04",
+      "impl": [],
       "statement": "Minimality pressure gate on layer-adding plans.",
-      "status": "unbuilt",
-      "impl": [],
-      "guard": []
+      "status": "unbuilt"
     },
     {
+      "guard": [],
       "id": "C-05",
-      "statement": "Output-quality findings, severity-ranked, with guarded remediation.",
-      "status": "unbuilt",
       "impl": [],
-      "guard": []
+      "statement": "Output-quality findings, severity-ranked, with guarded remediation.",
+      "status": "unbuilt"
     },
     {
+      "guard": [
+        "test:tests/test_evals.py"
+      ],
       "id": "C-06",
-      "statement": "Routing evaluation: positive, near-negative, and collision detection.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_evals.py"
       ],
-      "guard": [
-        "test:tests/test_evals.py"
-      ]
+      "statement": "Routing evaluation: positive, near-negative, and collision detection.",
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_godmode_runtime.py"
+      ],
       "id": "C-07",
-      "statement": "Spec to contract to evidence lifecycle with resumable gates.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_plan.py"
       ],
-      "guard": [
-        "test:tests/test_godmode_runtime.py"
-      ]
+      "statement": "Spec to contract to evidence lifecycle with resumable gates.",
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_parity_gov.py"
+      ],
       "id": "C-08",
-      "statement": "Canonical-vs-overlay parity preserving local extensions.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_parity.py"
       ],
-      "guard": [
-        "test:tests/test_parity_gov.py"
-      ]
+      "statement": "Canonical-vs-overlay parity preserving local extensions.",
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_godmode_runtime.py"
+      ],
       "id": "C-09",
-      "statement": "Worktree-aware task ownership with collision surfacing.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_console.py"
       ],
+      "note": "branches --claim / --release",
+      "statement": "Worktree-aware task ownership with collision surfacing.",
+      "status": "built"
+    },
+    {
+      "guard": [],
+      "id": "C-10",
+      "impl": [],
+      "statement": "Source-freshness preflight with honest partial reporting.",
+      "status": "unbuilt"
+    },
+    {
+      "guard": [],
+      "id": "C-11",
+      "impl": [],
+      "statement": "Terse action-first output profile.",
+      "status": "unbuilt"
+    },
+    {
       "guard": [
         "test:tests/test_godmode_runtime.py"
       ],
-      "note": "branches --claim / --release"
-    },
-    {
-      "id": "C-10",
-      "statement": "Source-freshness preflight with honest partial reporting.",
-      "status": "unbuilt",
-      "impl": [],
-      "guard": []
-    },
-    {
-      "id": "C-11",
-      "statement": "Terse action-first output profile.",
-      "status": "unbuilt",
-      "impl": [],
-      "guard": []
-    },
-    {
       "id": "C-12",
-      "statement": "Reversible bounded summarisation with a reconstruction path.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_compress.py"
       ],
-      "guard": [
-        "test:tests/test_godmode_runtime.py"
-      ]
+      "statement": "Reversible bounded summarisation with a reconstruction path.",
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_fuzz.py"
+      ],
       "id": "C-13",
-      "statement": "Deterministic seeded reproduction contract.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_fuzz.py"
       ],
-      "guard": [
-        "test:tests/test_fuzz.py"
-      ]
+      "statement": "Deterministic seeded reproduction contract.",
+      "status": "built"
     },
     {
+      "guard": [],
       "id": "C-14",
-      "statement": "Small requirement slices with user-oriented acceptance.",
-      "status": "partial",
       "impl": [
         "file:scripts/godmode_runtime/godmode_plan.py"
       ],
-      "guard": [],
-      "note": "plan spec carries an acceptance field; not a dedicated slicing mechanism"
+      "note": "plan spec carries an acceptance field; not a dedicated slicing mechanism",
+      "statement": "Small requirement slices with user-oriented acceptance.",
+      "status": "partial"
     },
     {
+      "guard": [
+        "test:tests/test_atlas_registry.py"
+      ],
       "id": "C-15",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_atlas.py"
+      ],
       "statement": "Deterministic multi-language symbol extraction with a pluggable per-language extractor interface.",
-      "status": "built",
-      "impl": [
-        "file:scripts/godmode_runtime/godmode_atlas.py"
-      ],
-      "guard": [
-        "test:tests/test_atlas_registry.py"
-      ]
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_atlas_registry.py"
+      ],
       "id": "C-16",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_atlas.py"
+      ],
       "statement": "Reverse-impact traversal: given a symbol, return what breaks, bounded by depth and relation.",
-      "status": "built",
-      "impl": [
-        "file:scripts/godmode_runtime/godmode_atlas.py"
-      ],
-      "guard": [
-        "test:tests/test_atlas_registry.py"
-      ]
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_atlas_registry.py"
+      ],
       "id": "C-17",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_atlas.py"
+      ],
       "statement": "Near-duplicate detection via order-independent set signatures.",
-      "status": "built",
-      "impl": [
-        "file:scripts/godmode_runtime/godmode_atlas.py"
-      ],
-      "guard": [
-        "test:tests/test_atlas_registry.py"
-      ]
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_atlas_registry.py"
+      ],
       "id": "C-18",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_atlas.py"
+      ],
       "statement": "Bounded file slicing for evidence with explicit truncation markers.",
-      "status": "built",
-      "impl": [
-        "file:scripts/godmode_runtime/godmode_atlas.py"
-      ],
-      "guard": [
-        "test:tests/test_atlas_registry.py"
-      ]
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_atlas_registry.py"
+      ],
       "id": "C-19",
-      "statement": "Structural self-diagnosis of the tool's own index data.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_atlas.py"
       ],
-      "guard": [
-        "test:tests/test_atlas_registry.py"
-      ]
+      "statement": "Structural self-diagnosis of the tool's own index data.",
+      "status": "built"
     },
     {
-      "id": "C-20",
-      "statement": "Union-merge driver for state files under version control, registered as a Git merge driver.",
-      "status": "rejected",
-      "impl": [],
       "guard": [],
-      "note": "decision recorded: no merge driver ships, per-record append-only files make state conflicts structurally impossible"
+      "id": "C-20",
+      "impl": [],
+      "note": "decision recorded: no merge driver ships, per-record append-only files make state conflicts structurally impossible",
+      "statement": "Union-merge driver for state files under version control, registered as a Git merge driver.",
+      "status": "rejected"
     },
     {
+      "guard": [
+        "test:tests/test_parity_gov.py"
+      ],
       "id": "C-21",
-      "statement": "Cross-repository graph merge for comparing two codebases in one structure.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_parity.py"
       ],
-      "guard": [
-        "test:tests/test_parity_gov.py"
-      ]
+      "statement": "Cross-repository graph merge for comparing two codebases in one structure.",
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_godmode_runtime.py"
+      ],
       "id": "C-22",
-      "statement": "Per-host always-on instruction files as data, generated from a single source.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_bindings.py"
       ],
-      "guard": [
-        "test:tests/test_godmode_runtime.py"
-      ]
+      "statement": "Per-host always-on instruction files as data, generated from a single source.",
+      "status": "built"
     },
     {
+      "guard": [],
       "id": "C-23",
+      "impl": [],
       "statement": "Skill generator with expected-output fixtures per platform.",
-      "status": "unbuilt",
-      "impl": [],
-      "guard": []
+      "status": "unbuilt"
     },
     {
+      "guard": [],
       "id": "C-24",
-      "statement": "Worked example corpora as first-class reproducible fixtures.",
-      "status": "unbuilt",
       "impl": [],
-      "guard": []
+      "statement": "Worked example corpora as first-class reproducible fixtures.",
+      "status": "unbuilt"
     },
     {
+      "guard": [
+        "test:tests/test_index_dbmgr.py"
+      ],
       "id": "C-25",
-      "statement": "Deterministic lexical relevance ranking (BM25-class), offline, no embeddings.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_index.py"
       ],
-      "guard": [
-        "test:tests/test_index_dbmgr.py"
-      ]
+      "statement": "Deterministic lexical relevance ranking (BM25-class), offline, no embeddings.",
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_godmode_runtime.py"
+      ],
       "id": "C-26",
-      "statement": "Typed compression with declared masks and a reversible handler per content class.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_compress.py"
       ],
-      "guard": [
-        "test:tests/test_godmode_runtime.py"
-      ]
+      "statement": "Typed compression with declared masks and a reversible handler per content class.",
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_netgate.py"
+      ],
       "id": "C-27",
-      "statement": "Differential network capture as a release gate: observed connections diffed against expected-empty.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_netgate.py"
       ],
-      "guard": [
-        "test:tests/test_netgate.py"
-      ]
+      "statement": "Differential network capture as a release gate: observed connections diffed against expected-empty.",
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_release_status.py"
+      ],
       "id": "C-28",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_bindings.py"
+      ],
+      "note": "SBOM (SPDX+CycloneDX) and license policy ship; no vulnerability scan found",
       "statement": "Machine-generated SBOM in two standard formats plus a vulnerability scan and license inventory.",
-      "status": "partial",
-      "impl": [
-        "file:scripts/godmode_runtime/godmode_bindings.py"
-      ],
+      "status": "partial"
+    },
+    {
       "guard": [
         "test:tests/test_release_status.py"
       ],
-      "note": "SBOM (SPDX+CycloneDX) and license policy ship; no vulnerability scan found"
-    },
-    {
       "id": "C-29",
-      "statement": "Declarative dependency policy gate: banned packages and licenses enforced in CI.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_bindings.py"
       ],
-      "guard": [
-        "test:tests/test_release_status.py"
-      ]
+      "statement": "Declarative dependency policy gate: banned packages and licenses enforced in CI.",
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_godmode_runtime.py"
+      ],
       "id": "C-30",
-      "statement": "Adversarial evaluation grid: hostile inputs run across every control, pass/fail tracked.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_console.py"
       ],
-      "guard": [
-        "test:tests/test_godmode_runtime.py"
-      ]
+      "statement": "Adversarial evaluation grid: hostile inputs run across every control, pass/fail tracked.",
+      "status": "built"
     },
     {
+      "guard": [],
       "id": "C-31",
-      "statement": "Structured learning loop with a plugin registry: scanner, analyzer, writer.",
-      "status": "partial",
       "impl": [
         "file:scripts/godmode_runtime/godmode_attest.py"
       ],
-      "guard": [],
-      "note": "promote-or-retire lessons pipeline exists; not the full scanner/analyzer/writer registry"
+      "note": "promote-or-retire lessons pipeline exists; not the full scanner/analyzer/writer registry",
+      "statement": "Structured learning loop with a plugin registry: scanner, analyzer, writer.",
+      "status": "partial"
     },
     {
+      "guard": [
+        "test:tests/test_godmode_runtime.py"
+      ],
       "id": "C-32",
-      "statement": "Read-audit ledger with record maturation and confidence decay.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_compress.py"
       ],
-      "guard": [
-        "test:tests/test_godmode_runtime.py"
-      ]
+      "statement": "Read-audit ledger with record maturation and confidence decay.",
+      "status": "built"
     },
     {
-      "id": "C-33",
-      "statement": "Claim-citation binding: an unresolvable citation downgrades a claim to hypothesis.",
-      "status": "built",
-      "impl": [
-        "file:scripts/godmode_runtime/godmode_attest.py"
-      ],
       "guard": [
         "test:tests/test_claim_discipline.py"
-      ]
-    },
-    {
-      "id": "C-34",
-      "statement": "Rationalization interception: a named table of reasoning patterns surfaced at the gate they predict.",
-      "status": "built",
+      ],
+      "id": "C-33",
       "impl": [
         "file:scripts/godmode_runtime/godmode_attest.py"
       ],
-      "guard": [
-        "test:tests/test_godmode_runtime.py"
-      ]
+      "statement": "Claim-citation binding: an unresolvable citation downgrades a claim to hypothesis.",
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_godmode_runtime.py"
+      ],
+      "id": "C-34",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_attest.py"
+      ],
+      "statement": "Rationalization interception: a named table of reasoning patterns surfaced at the gate they predict.",
+      "status": "built"
+    },
+    {
+      "guard": [
+        "test:tests/test_charter_checkability.py"
+      ],
       "id": "C-35",
-      "statement": "Rule compilation: prose guidance parsed into addressable rules with ids, triggers, and verification.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_charter.py"
       ],
-      "guard": [
-        "test:tests/test_charter_checkability.py"
-      ]
+      "statement": "Rule compilation: prose guidance parsed into addressable rules with ids, triggers, and verification.",
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_godmode_runtime.py"
+      ],
       "id": "C-36",
-      "statement": "Step attestation: each mandated step records ran, result, empty, or skipped-because.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_attest.py"
       ],
-      "guard": [
-        "test:tests/test_godmode_runtime.py"
-      ]
+      "statement": "Step attestation: each mandated step records ran, result, empty, or skipped-because.",
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_godmode_runtime.py"
+      ],
       "id": "C-37",
-      "statement": "Authority-claim detection: every artefact asserting primacy, with the collision reported.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_status.py"
       ],
-      "guard": [
-        "test:tests/test_godmode_runtime.py"
-      ]
+      "statement": "Authority-claim detection: every artefact asserting primacy, with the collision reported.",
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_godmode_runtime.py"
+      ],
       "id": "C-38",
-      "statement": "Deterministic method selection: evidence shape selects the analysis method.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_method.py"
       ],
-      "guard": [
-        "test:tests/test_godmode_runtime.py"
-      ]
+      "statement": "Deterministic method selection: evidence shape selects the analysis method.",
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_godmode_runtime.py"
+      ],
       "id": "C-39",
-      "statement": "Completed-work immunity: verified-complete work cannot reopen without explicit proof.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_status.py"
       ],
-      "guard": [
-        "test:tests/test_godmode_runtime.py"
-      ]
+      "statement": "Completed-work immunity: verified-complete work cannot reopen without explicit proof.",
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_godmode_runtime.py"
+      ],
       "id": "C-40",
-      "statement": "Cross-agent behavioural drift detection across session attestations.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_drift.py"
       ],
-      "guard": [
-        "test:tests/test_godmode_runtime.py"
-      ]
+      "statement": "Cross-agent behavioural drift detection across session attestations.",
+      "status": "built"
     },
     {
-      "id": "C-41",
-      "statement": "Document role registry: projects declare role-to-path bindings; roles addressed by role, never filename.",
-      "status": "built",
-      "impl": [
-        "file:scripts/godmode_runtime/godmode_corpus.py"
-      ],
       "guard": [
         "test:tests/test_init_detect.py"
-      ]
-    },
-    {
-      "id": "C-42",
-      "statement": "Open-corpus authority ranking: an unbounded, user-extensible authority set ranked to a budget.",
-      "status": "built",
+      ],
+      "id": "C-41",
       "impl": [
         "file:scripts/godmode_runtime/godmode_corpus.py"
       ],
-      "guard": [
-        "test:tests/test_rank_contract.py"
-      ]
+      "statement": "Document role registry: projects declare role-to-path bindings; roles addressed by role, never filename.",
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_rank_contract.py"
+      ],
+      "id": "C-42",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_corpus.py"
+      ],
+      "statement": "Open-corpus authority ranking: an unbounded, user-extensible authority set ranked to a budget.",
+      "status": "built"
+    },
+    {
+      "guard": [
+        "test:tests/test_godmode_runtime.py"
+      ],
       "id": "C-43",
-      "statement": "Operator profile as a typed record, portable and carrying no personal name.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_console.py"
       ],
-      "guard": [
-        "test:tests/test_godmode_runtime.py"
-      ]
+      "statement": "Operator profile as a typed record, portable and carrying no personal name.",
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_godmode_runtime.py"
+      ],
       "id": "C-44",
-      "statement": "Multi-host binding generation: one canonical source emits N host-specific directories.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_bindings.py"
       ],
-      "guard": [
-        "test:tests/test_godmode_runtime.py"
-      ]
+      "statement": "Multi-host binding generation: one canonical source emits N host-specific directories.",
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_godmode_runtime.py"
+      ],
       "id": "C-45",
-      "statement": "Skill lifecycle states: in-progress, active, deprecated, with an explicit retirement record.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_console.py"
       ],
-      "guard": [
-        "test:tests/test_godmode_runtime.py"
-      ]
+      "statement": "Skill lifecycle states: in-progress, active, deprecated, with an explicit retirement record.",
+      "status": "built"
     },
     {
-      "id": "C-46",
-      "statement": "Behavioural eval snapshots: a prompt corpus with expected-output snapshots, regression-tested.",
-      "status": "built",
-      "impl": [
-        "file:scripts/godmode_runtime/godmode_evals.py"
-      ],
       "guard": [
         "test:tests/test_eval_registry.py"
-      ]
-    },
-    {
-      "id": "C-47",
-      "statement": "Eval cases and fixtures as first-class directories, separate from unit tests.",
-      "status": "built",
+      ],
+      "id": "C-46",
       "impl": [
         "file:scripts/godmode_runtime/godmode_evals.py"
       ],
-      "guard": [
-        "test:tests/test_evals.py"
-      ]
+      "statement": "Behavioural eval snapshots: a prompt corpus with expected-output snapshots, regression-tested.",
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_evals.py"
+      ],
+      "id": "C-47",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_evals.py"
+      ],
+      "statement": "Eval cases and fixtures as first-class directories, separate from unit tests.",
+      "status": "built"
+    },
+    {
+      "guard": [
+        "test:tests/test_godmode_runtime.py"
+      ],
       "id": "C-48",
-      "statement": "Localized operating guidance: translated variants of the guide and skills.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_locale.py"
       ],
-      "guard": [
-        "test:tests/test_godmode_runtime.py"
-      ]
+      "statement": "Localized operating guidance: translated variants of the guide and skills.",
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_changelog_gate.py"
+      ],
       "id": "C-49",
-      "statement": "Changelog fragments: one file per change, merged at release.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_changelog.py"
       ],
-      "guard": [
-        "test:tests/test_changelog_gate.py"
-      ]
+      "statement": "Changelog fragments: one file per change, merged at release.",
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_godmode_runtime.py"
+      ],
       "id": "C-50",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_assess.py"
+      ],
       "statement": "Self-test extension: the tool verifies its own installation and behaviour inside the host.",
-      "status": "built",
-      "impl": [
-        "file:scripts/godmode_runtime/godmode_assess.py"
-      ],
-      "guard": [
-        "test:tests/test_godmode_runtime.py"
-      ]
+      "status": "built"
     },
     {
+      "guard": [
+        "test:tests/test_godmode_runtime.py"
+      ],
       "id": "C-51",
-      "statement": "Assess command: grade the current project against the methodology and report gaps.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_assess.py"
       ],
-      "guard": [
-        "test:tests/test_godmode_runtime.py"
-      ]
+      "statement": "Assess command: grade the current project against the methodology and report gaps.",
+      "status": "built"
     },
     {
-      "id": "C-52",
-      "statement": "Extension model: capabilities install as extensions rather than growing a monolithic core.",
-      "status": "unbuilt",
-      "impl": [],
       "guard": [],
-      "note": "runtime remains a single package; capability list has grown inside it, not as installable extensions"
+      "id": "C-52",
+      "impl": [],
+      "note": "runtime remains a single package; capability list has grown inside it, not as installable extensions",
+      "statement": "Extension model: capabilities install as extensions rather than growing a monolithic core.",
+      "status": "unbuilt"
     },
     {
-      "id": "C-53",
-      "statement": "Framework adapters and pluggable engines swappable per detection framework.",
-      "status": "partial",
-      "impl": [
-        "file:scripts/godmode_runtime/godmode_atlas.py"
-      ],
       "guard": [
         "test:tests/test_atlas_registry.py"
       ],
-      "note": "per-language extractor plugin interface exists; not framework-level (React/Django-class) adapters"
+      "id": "C-53",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_atlas.py"
+      ],
+      "note": "per-language extractor plugin interface exists; not framework-level (React/Django-class) adapters",
+      "statement": "Framework adapters and pluggable engines swappable per detection framework.",
+      "status": "partial"
     },
     {
+      "guard": [
+        "test:tests/test_ci_gates.py"
+      ],
       "id": "C-54",
-      "statement": "CI action packaging: a shippable CI action so gates run in CI, not only locally.",
-      "status": "built",
       "impl": [
         "file:action.yml"
       ],
-      "guard": [
-        "test:tests/test_ci_gates.py"
-      ]
+      "statement": "CI action packaging: a shippable CI action so gates run in CI, not only locally.",
+      "status": "built"
     },
     {
+      "guard": [],
       "id": "C-55",
+      "impl": [],
       "statement": "Agent watchdog: monitor the agent's own behaviour during a run and interrupt on anomaly.",
-      "status": "unbuilt",
-      "impl": [],
-      "guard": []
+      "status": "unbuilt"
     },
     {
+      "guard": [],
       "id": "C-56",
-      "statement": "Plan arbiter: adjudicate between competing plans or approaches.",
-      "status": "unbuilt",
       "impl": [],
-      "guard": []
+      "statement": "Plan arbiter: adjudicate between competing plans or approaches.",
+      "status": "unbuilt"
     },
     {
+      "guard": [],
       "id": "C-57",
-      "statement": "Recap and rewind: cheap session recap plus rollback to a prior verified state.",
-      "status": "partial",
       "impl": [
         "file:scripts/godmode_runtime/godmode_guardrails.py"
       ],
-      "guard": [],
-      "note": "rewind_preview previews a rollback target; no executed rollback"
+      "note": "rewind_preview previews a rollback target; no executed rollback",
+      "statement": "Recap and rewind: cheap session recap plus rollback to a prior verified state.",
+      "status": "partial"
     },
     {
-      "id": "C-58",
-      "statement": "Explicit resource ceilings per run.",
-      "status": "built",
-      "impl": [
-        "file:scripts/godmode_runtime/godmode_console.py"
-      ],
       "guard": [
         "test:tests/test_godmode_runtime.py"
-      ]
-    },
-    {
-      "id": "C-59",
-      "statement": "Primary-source enforcement: force reading actual documentation before answering.",
-      "status": "unbuilt",
-      "impl": [],
-      "guard": []
-    },
-    {
-      "id": "C-60",
-      "statement": "Formal skill spec plus scaffold template, versioned.",
-      "status": "partial",
-      "impl": [
-        "file:scripts/godmode_runtime/godmode_forge.py"
       ],
-      "guard": [],
-      "note": "forge emits skills; no separately published spec/template document"
-    },
-    {
-      "id": "C-61",
-      "statement": "Tiered difficulty ladder for worked onboarding material.",
-      "status": "unbuilt",
-      "impl": [],
-      "guard": []
-    },
-    {
-      "id": "C-62",
-      "statement": "User config file with a published JSON schema.",
-      "status": "partial",
+      "id": "C-58",
       "impl": [
         "file:scripts/godmode_runtime/godmode_console.py"
       ],
-      "guard": [],
-      "note": "per-file config validation (config check) exists; no published JSON schema file"
+      "statement": "Explicit resource ceilings per run.",
+      "status": "built"
     },
     {
-      "id": "C-63",
-      "statement": "Editor integration surface for findings.",
-      "status": "unbuilt",
-      "impl": [],
-      "guard": []
-    },
-    {
-      "id": "C-64",
-      "statement": "Convention for a memory directory distinct from project docs.",
-      "status": "rejected",
-      "impl": [],
-      "guard": [],
-      "note": "godmode's own archive convention was judged stronger; noted for interop only, not adopted"
-    },
-    {
-      "id": "C-65",
-      "statement": "Named multi-agent team configurations and orchestration workflows.",
-      "status": "rejected",
-      "impl": [],
-      "guard": [],
-      "note": "explicitly out of scope; automatic subagent fan-out declined by design"
-    },
-    {
-      "id": "C-66",
-      "statement": "Bounded experiment program spec: the whole loop defined in one declarative file.",
-      "status": "rejected",
-      "impl": [],
-      "guard": [],
-      "note": "superseded by the built experiment-ledger subsystem (C-03); a single spec file was not the interface chosen"
-    },
-    {
-      "id": "C-67",
-      "statement": "Rule matching keyed on artefact characteristics rather than only on task text.",
-      "status": "built",
-      "impl": [
-        "file:scripts/godmode_runtime/godmode_charter.py"
-      ],
       "guard": [
-        "test:tests/test_charter_checkability.py"
-      ]
-    },
-    {
-      "id": "C-68",
-      "statement": "Deterministic work-unit selection: in-scope and filtered-out artefacts decided before reasoning.",
-      "status": "built",
-      "impl": [
-        "file:scripts/godmode_runtime/godmode_scope.py"
+        "test:tests/test_external_claims.py"
       ],
-      "guard": [
-        "test:tests/test_scope_fence.py"
-      ]
-    },
-    {
-      "id": "C-69",
-      "statement": "Related-artefact bundling: artefacts that must be judged together grouped into one unit.",
-      "status": "unbuilt",
-      "impl": [],
-      "guard": []
-    },
-    {
-      "id": "C-70",
-      "statement": "Position verification as a separate module: a finding's citation independently confirmed correct, not only resolvable.",
-      "status": "built",
-      "impl": [
-        "file:scripts/godmode_runtime/godmode_verdict.py"
-      ],
-      "guard": [
-        "test:tests/test_verdict.py"
-      ]
-    },
-    {
-      "id": "C-71",
-      "statement": "Reflection pass on content accuracy, run as its own step rather than folded into generation.",
-      "status": "built",
+      "id": "C-59",
       "impl": [
         "file:scripts/godmode_runtime/godmode_attest.py"
       ],
-      "guard": [
-        "test:tests/test_godmode_runtime.py"
-      ]
+      "statement": "Primary-source enforcement: force reading actual documentation before answering.",
+      "status": "built"
     },
     {
+      "guard": [],
+      "id": "C-60",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_forge.py"
+      ],
+      "note": "forge emits skills; no separately published spec/template document",
+      "statement": "Formal skill spec plus scaffold template, versioned.",
+      "status": "partial"
+    },
+    {
+      "guard": [],
+      "id": "C-61",
+      "impl": [],
+      "statement": "Tiered difficulty ladder for worked onboarding material.",
+      "status": "unbuilt"
+    },
+    {
+      "guard": [],
+      "id": "C-62",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_console.py"
+      ],
+      "note": "per-file config validation (config check) exists; no published JSON schema file",
+      "statement": "User config file with a published JSON schema.",
+      "status": "partial"
+    },
+    {
+      "guard": [],
+      "id": "C-63",
+      "impl": [],
+      "statement": "Editor integration surface for findings.",
+      "status": "unbuilt"
+    },
+    {
+      "guard": [],
+      "id": "C-64",
+      "impl": [],
+      "note": "godmode's own archive convention was judged stronger; noted for interop only, not adopted",
+      "statement": "Convention for a memory directory distinct from project docs.",
+      "status": "rejected"
+    },
+    {
+      "guard": [],
+      "id": "C-65",
+      "impl": [],
+      "note": "explicitly out of scope; automatic subagent fan-out declined by design",
+      "statement": "Named multi-agent team configurations and orchestration workflows.",
+      "status": "rejected"
+    },
+    {
+      "guard": [],
+      "id": "C-66",
+      "impl": [],
+      "note": "superseded by the built experiment-ledger subsystem (C-03); a single spec file was not the interface chosen",
+      "statement": "Bounded experiment program spec: the whole loop defined in one declarative file.",
+      "status": "rejected"
+    },
+    {
+      "guard": [
+        "test:tests/test_charter_checkability.py"
+      ],
+      "id": "C-67",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_charter.py"
+      ],
+      "statement": "Rule matching keyed on artefact characteristics rather than only on task text.",
+      "status": "built"
+    },
+    {
+      "guard": [
+        "test:tests/test_scope_fence.py"
+      ],
+      "id": "C-68",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_scope.py"
+      ],
+      "statement": "Deterministic work-unit selection: in-scope and filtered-out artefacts decided before reasoning.",
+      "status": "built"
+    },
+    {
+      "guard": [
+        "test:tests/test_precheck.py"
+      ],
+      "id": "C-69",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_precheck.py"
+      ],
+      "statement": "Related-artefact bundling: artefacts that must be judged together grouped into one unit.",
+      "status": "built"
+    },
+    {
+      "guard": [
+        "test:tests/test_verdict.py"
+      ],
+      "id": "C-70",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_verdict.py"
+      ],
+      "statement": "Position verification as a separate module: a finding's citation independently confirmed correct, not only resolvable.",
+      "status": "built"
+    },
+    {
+      "guard": [
+        "test:tests/test_godmode_runtime.py"
+      ],
+      "id": "C-71",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_attest.py"
+      ],
+      "statement": "Reflection pass on content accuracy, run as its own step rather than folded into generation.",
+      "status": "built"
+    },
+    {
+      "guard": [
+        "test:tests/test_godmode_runtime.py"
+      ],
       "id": "C-72",
-      "statement": "Assurance case as a document type: countermeasures bound to the automated check that proves each.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_assess.py"
       ],
-      "guard": [
-        "test:tests/test_godmode_runtime.py"
-      ]
+      "statement": "Assurance case as a document type: countermeasures bound to the automated check that proves each.",
+      "status": "built"
     },
     {
-      "id": "C-73",
-      "statement": "Rank-fusion context ranking (fusing positions across relevance/weight/freshness signals).",
-      "status": "rejected",
-      "impl": [],
       "guard": [],
-      "note": "prototyped, then rejected on measurement: this corpus is tens of segments across three signals, where fusing positions collapsed into ties broken alphabetically, and it contradicted the deliberate property that role authority should dominate"
+      "id": "C-73",
+      "impl": [],
+      "note": "prototyped, then rejected on measurement: this corpus is tens of segments across three signals, where fusing positions collapsed into ties broken alphabetically, and it contradicted the deliberate property that role authority should dominate",
+      "statement": "Rank-fusion context ranking (fusing positions across relevance/weight/freshness signals).",
+      "status": "rejected"
     },
     {
+      "guard": [
+        "test:tests/test_trust.py"
+      ],
       "id": "C-74",
-      "statement": "Content-trust scanner over settings and MCP configuration JSON.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_trust.py"
       ],
-      "guard": [
-        "test:tests/test_trust.py"
-      ]
+      "statement": "Content-trust scanner over settings and MCP configuration JSON.",
+      "status": "built"
     },
     {
+      "guard": [],
       "id": "C-75",
-      "statement": "Not found in the reachable private ledger (numbering gap).",
-      "status": "unbuilt",
       "impl": [],
-      "guard": []
+      "statement": "Not found in the reachable private ledger (numbering gap).",
+      "status": "rejected"
     },
     {
+      "guard": [],
       "id": "C-76",
-      "statement": "Not found in the reachable private ledger (numbering gap).",
-      "status": "unbuilt",
       "impl": [],
-      "guard": []
+      "statement": "Not found in the reachable private ledger (numbering gap).",
+      "status": "rejected"
     },
     {
+      "guard": [],
       "id": "C-77",
-      "statement": "Not found in the reachable private ledger (numbering gap).",
-      "status": "unbuilt",
       "impl": [],
-      "guard": []
+      "statement": "Not found in the reachable private ledger (numbering gap).",
+      "status": "rejected"
     },
     {
+      "guard": [],
       "id": "C-78",
-      "statement": "Not found in the reachable private ledger (numbering gap).",
-      "status": "unbuilt",
       "impl": [],
-      "guard": []
+      "statement": "Not found in the reachable private ledger (numbering gap).",
+      "status": "rejected"
     },
     {
+      "guard": [
+        "test:tests/test_session_log.py"
+      ],
       "id": "C-79",
-      "statement": "Session-log measurement: host-transcript counts only (tool calls, commands, tests, token usage, turns), content-free.",
-      "status": "built",
       "impl": [
         "file:scripts/godmode_runtime/godmode_session_log.py"
       ],
-      "guard": [
-        "test:tests/test_session_log.py"
-      ]
+      "statement": "Session-log measurement: host-transcript counts only (tool calls, commands, tests, token usage, turns), content-free.",
+      "status": "built"
     },
     {
+      "guard": [],
       "id": "C-80",
-      "statement": "Not found in the reachable private ledger (numbering gap).",
-      "status": "unbuilt",
       "impl": [],
-      "guard": []
+      "statement": "Not found in the reachable private ledger (numbering gap).",
+      "status": "rejected"
     },
     {
+      "guard": [],
       "id": "C-81",
-      "statement": "Not found in the reachable private ledger (numbering gap).",
-      "status": "unbuilt",
       "impl": [],
-      "guard": []
+      "statement": "Not found in the reachable private ledger (numbering gap).",
+      "status": "rejected"
     }
   ],
   "detectors": [
     {
-      "id": "M1",
-      "function": "label_as_fact",
-      "version": "1",
       "family": "a status label used as evidence without tracing to the record that assigned it",
       "file": "file:scripts/godmode_runtime/godmode_mistakes.py",
-      "test": "test:tests/test_godmode_runtime.py"
+      "function": "label_as_fact",
+      "id": "M1",
+      "test": "test:tests/test_godmode_runtime.py",
+      "version": "1"
     },
     {
-      "id": "M2",
-      "function": "ritual_without_reading",
-      "version": "1",
       "family": "a mandated artefact regenerated but never queried (box-tick ritual)",
       "file": "file:scripts/godmode_runtime/godmode_mistakes.py",
-      "test": "test:tests/test_godmode_runtime.py"
+      "function": "ritual_without_reading",
+      "id": "M2",
+      "test": "test:tests/test_godmode_runtime.py",
+      "version": "1"
     },
     {
-      "id": "M6",
-      "function": "invariant_vs_instance",
-      "version": "1",
       "family": "a guard narrower than the ruling it protects, covering one surface of many",
       "file": "file:scripts/godmode_runtime/godmode_mistakes.py",
-      "test": "test:tests/test_godmode_runtime.py"
+      "function": "invariant_vs_instance",
+      "id": "M6",
+      "test": "test:tests/test_godmode_runtime.py",
+      "version": "1"
     },
     {
-      "id": "M8",
-      "function": "stale_runtime",
-      "version": "1",
       "family": "root-cause analysis performed against a process older than the code it runs",
       "file": "file:scripts/godmode_runtime/godmode_mistakes.py",
-      "test": "test:tests/test_godmode_runtime.py"
+      "function": "stale_runtime",
+      "id": "M8",
+      "test": "test:tests/test_godmode_runtime.py",
+      "version": "1"
     },
     {
-      "id": "M13",
-      "function": "claim_splitting",
-      "version": "1",
       "family": "one report carrying several independent claims, hiding the weak one",
       "file": "file:scripts/godmode_runtime/godmode_mistakes.py",
-      "test": "test:tests/test_godmode_runtime.py"
+      "function": "claim_splitting",
+      "id": "M13",
+      "test": "test:tests/test_godmode_runtime.py",
+      "version": "1"
     },
     {
-      "id": "M14",
-      "function": "inferred_ask_blocking",
-      "version": "1",
       "family": "the agent waiting on an instruction the operator never gave",
       "file": "file:scripts/godmode_runtime/godmode_mistakes.py",
-      "test": "test:tests/test_requests.py"
+      "function": "inferred_ask_blocking",
+      "id": "M14",
+      "test": "test:tests/test_requests.py",
+      "version": "1"
     },
     {
-      "id": "M15",
-      "function": "unframed_clock",
-      "version": "1",
       "family": "a wall-clock time quoted to a person without the clock it came from",
       "file": "file:scripts/godmode_runtime/godmode_mistakes.py",
-      "test": "test:tests/test_godmode_runtime.py"
+      "function": "unframed_clock",
+      "id": "M15",
+      "test": "test:tests/test_godmode_runtime.py",
+      "version": "1"
     },
     {
-      "id": "M16",
-      "function": "root_without_code",
-      "version": "1",
       "family": "a named root cause citing no line of the program it indicts",
       "file": "file:scripts/godmode_runtime/godmode_mistakes.py",
-      "test": "test:tests/test_godmode_runtime.py"
+      "function": "root_without_code",
+      "id": "M16",
+      "test": "test:tests/test_godmode_runtime.py",
+      "version": "1"
     },
     {
-      "id": "M17",
-      "function": "unretracted_reversal",
-      "version": "1",
       "family": "the same question answered twice, differently, with neither answer withdrawn",
       "file": "file:scripts/godmode_runtime/godmode_mistakes.py",
-      "test": "test:tests/test_godmode_runtime.py"
+      "function": "unretracted_reversal",
+      "id": "M17",
+      "test": "test:tests/test_godmode_runtime.py",
+      "version": "1"
     },
     {
-      "id": "M18",
-      "function": "claim_from_a_sample",
-      "version": "1",
       "family": "a population-wide statement made from a sample that omits the sample",
       "file": "file:scripts/godmode_runtime/godmode_mistakes.py",
-      "test": "test:tests/test_godmode_runtime.py"
+      "function": "claim_from_a_sample",
+      "id": "M18",
+      "test": "test:tests/test_godmode_runtime.py",
+      "version": "1"
     },
     {
-      "id": "M19",
-      "function": "carried_status_unverified",
-      "version": "1",
       "family": "a carried status re-presented without fresh per-item evidence",
       "file": "file:scripts/godmode_runtime/godmode_mistakes.py",
-      "test": "test:tests/test_godmode_runtime.py"
+      "function": "carried_status_unverified",
+      "id": "M19",
+      "test": "test:tests/test_godmode_runtime.py",
+      "version": "1"
     },
     {
-      "id": "M20",
-      "function": "remedy_on_hypothesis",
-      "version": "1",
       "family": "a remedy designed against a root still graded as a hypothesis",
       "file": "file:scripts/godmode_runtime/godmode_mistakes.py",
-      "test": "test:tests/test_claim_discipline.py"
+      "function": "remedy_on_hypothesis",
+      "id": "M20",
+      "test": "test:tests/test_claim_discipline.py",
+      "version": "1"
     },
     {
-      "id": "M21",
-      "function": "absence_without_control",
-      "version": "1",
       "family": "an absence claim whose search was never proven able to find",
       "file": "file:scripts/godmode_runtime/godmode_mistakes.py",
-      "test": "test:tests/test_claim_discipline.py"
+      "function": "absence_without_control",
+      "id": "M21",
+      "test": "test:tests/test_claim_discipline.py",
+      "version": "1"
     },
     {
-      "id": "M22",
-      "function": "class_claim_single_file",
-      "version": "1",
       "family": "a change quantifying over a whole class while touching a single file",
       "file": "file:scripts/godmode_runtime/godmode_mistakes.py",
-      "test": "test:tests/test_sweep_and_guard_parity.py"
+      "function": "class_claim_single_file",
+      "id": "M22",
+      "test": "test:tests/test_sweep_and_guard_parity.py",
+      "version": "1"
     }
-  ]
+  ],
+  "note": "IDs and one-line neutral statements only, generated from the reachable private sprint ledger and cross-checked against shipped code and tests. No ledger prose.",
+  "schema": 1
 }
