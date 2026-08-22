@@ -154,9 +154,20 @@ def _decide(tool: str, tool_input: dict) -> tuple[str, str]:
 
 class WorkingSessionTests(unittest.TestCase):
     def test_the_host_can_still_do_ordinary_work(self) -> None:
-        blocked = [label for label, tool, payload in MUST_ALLOW
-                   if _decide(tool, payload)[0] != "allow"]
-        self.assertEqual(blocked, [], f"the gate would stop a working session: {blocked}")
+        # The reason is captured, not discarded. This assertion has failed
+        # twice inside a full-suite run and passed every time the module is
+        # run alone, which means the cause is state some other test leaves
+        # behind - and the one diagnostic that would name it was the reason
+        # string the hook already returns and this test used to drop. A
+        # failure that cannot say why is a failure someone re-runs until it
+        # is green.
+        blocked = []
+        for label, tool, payload in MUST_ALLOW:
+            decision, reason = _decide(tool, payload)
+            if decision != "allow":
+                blocked.append(f"{label}: {decision} - {reason}")
+        self.assertEqual(blocked, [],
+                         "the gate would stop a working session:\n" + "\n".join(blocked))
 
 
 class InterpreterOpaqueInlineTests(unittest.TestCase):
