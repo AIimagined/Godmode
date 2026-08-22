@@ -34,6 +34,7 @@ from .godmode_attest import advisory_decay
 from .godmode_census import census
 from .godmode_charter import compile_charter
 from .godmode_constants import IGNORED_DIRECTORY_NAMES
+from .godmode_errors import ArchiveError
 from .godmode_errors import GodmodeError
 
 
@@ -307,4 +308,132 @@ def duplicate_authority_findings(project: Path, threshold: float = 0.6) -> dict[
                 "(e.g. `assert declared <= EVENT_KINDS`, not `assert len(declared) == 27`). "
                 "No code enforcement of this note in v1 - advisory only.",
         "verdict": "duplicate-authority-found" if findings else "no-drift-found",
+    }
+
+
+# ---------------------------------------------------------------------------
+# C-04: a pressure gate on layer-adding work.
+#
+# The report above has always counted duplicated authority, speculative
+# seams and orphans. A number nobody compares against anything is a number
+# that gets ignored, so the counts get a recorded ceiling and growth past
+# it has to be answered for.
+#
+# The shape is the swallow ratchet's, which is already proven in this tree.
+# It differs in one deliberate way: swallowed errors should only ever fall,
+# so that ratchet's baseline never rises. Minimality counts rise whenever a
+# feature legitimately lands, so a never-rising baseline would be red
+# forever after the first one - and a gate that is always red is a gate
+# people learn to skip. Growth is accepted rather than forbidden, and
+# accepting it costs a recorded reason. The cost is stating why, not being
+# blocked.
+# ---------------------------------------------------------------------------
+
+PRESSURE_BASELINE_FILENAME = ".godmode-minimality-baseline.json"
+_GROWTH_PREFIX = "minimality-growth:"
+
+
+def _pressure_baseline_path(project: Path) -> Path:
+    return Path(project) / PRESSURE_BASELINE_FILENAME
+
+
+def pressure_baseline(project: Path) -> dict[str, int] | None:
+    """The recorded ceiling per section, or None when none was ever written."""
+    try:
+        raw = json.loads(
+            _pressure_baseline_path(project).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    counts = raw.get("counts") if isinstance(raw, dict) else None
+    if not isinstance(counts, dict):
+        return None
+    return {str(k): int(v) for k, v in counts.items()
+            if isinstance(v, (int, float)) and not isinstance(v, bool)}
+
+
+def write_pressure_baseline(project: Path,
+                            counts: dict[str, int]) -> dict[str, int]:
+    """Record the current counts as the ceiling to compare against."""
+    recorded = {str(k): int(v) for k, v in counts.items()}
+    _pressure_baseline_path(project).write_text(
+        json.dumps({"counts": recorded}, indent=1, sort_keys=True) + "\n",
+        encoding="utf-8")
+    return recorded
+
+
+def accept_growth(archive: Any, section: str, *, reason: str) -> dict[str, Any]:
+    """Record why a section's pressure was allowed to rise.
+
+    The reason is the whole mechanism. Growth is normal; growth nobody can
+    explain afterwards is the thing worth catching, and an acceptance with
+    no stated reason would record only that somebody wanted the number to
+    stop complaining.
+    """
+    section = (section or "").strip()
+    reason = (reason or "").strip()
+    if not section:
+        raise ArchiveError("Accepting growth needs the section it applies to")
+    if not reason:
+        raise ArchiveError(
+            "Accepting growth needs --reason: what did this buy, and why is "
+            "the added surface the smaller cost?")
+    return archive.append(
+        "decision", f"{_GROWTH_PREFIX}{section}", {"reason": reason[:400]})
+
+
+def accepted_growth(archive: Any) -> dict[str, str]:
+    """Sections whose growth carries a recorded reason, newest reason wins."""
+    if archive is None:
+        return {}
+    try:
+        events = archive.read_events(verify=False)
+    except (ArchiveError, AttributeError):
+        return {}
+    accepted: dict[str, str] = {}
+    for record in events:
+        subject = str(record.get("subject", ""))
+        if record.get("kind") == "decision" and subject.startswith(_GROWTH_PREFIX):
+            accepted[subject[len(_GROWTH_PREFIX):]] = str(
+                (record.get("data") or {}).get("reason", ""))
+    return accepted
+
+
+def pressure_report(project: Path, counts: dict[str, int],
+                    archive: Any = None) -> dict[str, Any]:
+    """Compare current section counts against the recorded ceiling."""
+    baseline = pressure_baseline(project)
+    if baseline is None:
+        # An absent baseline is not a clean bill of health, and reporting
+        # zero growth against nothing would read as one.
+        return {
+            "baseline_exists": False,
+            "verdict": "no-baseline",
+            "grew": [], "fell": {}, "accepted": {},
+            "note": ("no ceiling recorded yet - run `minimality --set-baseline` "
+                     "to make later growth answerable"),
+        }
+    accepted = accepted_growth(archive)
+    grew: list[dict[str, Any]] = []
+    fell: dict[str, int] = {}
+    for section, current in sorted(counts.items()):
+        ceiling = baseline.get(section)
+        if ceiling is None:
+            continue
+        if current > ceiling and section not in accepted:
+            grew.append({"section": section, "baseline": ceiling,
+                         "current": int(current), "delta": int(current) - ceiling})
+        elif current < ceiling:
+            fell[section] = ceiling - int(current)
+    return {
+        "baseline_exists": True,
+        "verdict": "pressure-grew" if grew else "steady",
+        "grew": grew,
+        # Reported because a fall is the outcome worth noticing, and a
+        # ratchet that only ever speaks to complain trains its reader to
+        # expect bad news.
+        "fell": fell,
+        "accepted": {s: r for s, r in accepted.items() if s in counts},
+        "note": ("growth is allowed, not forbidden - accept it with "
+                 "`minimality --accept-growth <section> --reason ...` and the "
+                 "reason becomes part of the record"),
     }

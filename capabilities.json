@@ -34,11 +34,15 @@
       "status": "built"
     },
     {
-      "guard": [],
+      "guard": [
+        "test:tests/test_minimality_pressure.py"
+      ],
       "id": "C-04",
-      "impl": [],
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_minimality.py"
+      ],
       "statement": "Minimality pressure gate on layer-adding plans.",
-      "status": "unbuilt"
+      "status": "built"
     },
     {
       "guard": [],

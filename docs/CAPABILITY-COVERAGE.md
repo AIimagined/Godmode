@@ -43,6 +43,7 @@ someone updates the row.
 | Pre-flight forecast and policy replay | covered | Classification of an operation before it runs with prior refusal precedent in the same category, and re-classification of recorded operations under current rules with tightenings and relaxations reported separately (`file:scripts/godmode_runtime/godmode_forecast.py`, `test:tests/test_forecast.py`) |
 | Evidence-derived governance proposals | covered | Candidate rules folded from refusal categories, undischarged obligations and the recurring-ask miner, each carrying its citations, count and window; reading proposes and writes nothing, promotion takes a person and a reason (`file:scripts/godmode_runtime/godmode_governance.py`, `test:tests/test_governance.py`) |
 | Host approval decisions as evidence | covered | A host's own sandbox/approval state recorded beside godmode's independent decision, with the disagreements in both directions surfaced; neither boundary is read to satisfy the other, and the operation is stored as a digest rather than as text (`file:scripts/godmode_runtime/godmode_hostapproval.py`, `test:tests/test_host_approval.py`) |
+| Minimality pressure gate | covered | Duplicate-authority, seam, orphan and decay counts carry a recorded ceiling; growth past it is reported until a reason is recorded, and a fall is reported too (`file:scripts/godmode_runtime/godmode_minimality.py`, `test:tests/test_minimality_pressure.py`) |
 
 ## Regenerating this table
 
