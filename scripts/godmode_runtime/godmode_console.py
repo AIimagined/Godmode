@@ -212,6 +212,7 @@ from .godmode_lens import why as context_why
 from .godmode_sentinel import (
     CapabilityBroker,
     classify_action,
+    degradations as sentinel_degradations,
     find_secret_shapes,
     pin_evaluator,
     pinned_evaluators,
@@ -2075,6 +2076,16 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
                 "detail": f"Potential secret material at {', '.join(secret_locations[:5])}.",
             }
         )
+    # Best-effort failures the gate continued past this process. Surfaced
+    # here because recording them and never showing them would leave the
+    # same silence the swallow ratchet exists to remove, one layer along:
+    # advisory, since each site continued on purpose.
+    for reason in sentinel_degradations():
+        issues.append({
+            "code": "degraded-best-effort",
+            "severity": "warning",
+            "detail": f"Continued past a failure while {reason}.",
+        })
     healthy = not any(issue["severity"] == "error" for issue in issues)
     return CommandResult(
         {
