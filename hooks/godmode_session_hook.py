@@ -1133,6 +1133,31 @@ def main(argv: list[str] | None = None) -> int:
         if observe and not preview.get("allow", True):
             preview = _apply_observe_mode(archive, tool, operation, preview)
 
+        # Sprint 9: what the host said about its OWN boundary, recorded
+        # beside what godmode decided. Every adapter already lifted this
+        # onto the event and nothing ever wrote it, so the evidence was
+        # collected and dropped. Recorded only when the host actually
+        # carried approval metadata - most calls carry none, and a row per
+        # call would bury the ones that say something.
+        #
+        # Placed after observe mode so the recorded decision is the one
+        # that took effect, not the one that would have. Best-effort by the
+        # same contract as every other write on this path: a chronicle that
+        # cannot be written must not fail the tool call.
+        if event.approval_context:
+            try:
+                from godmode_runtime.godmode_hostapproval import record_host_approval
+
+                record_host_approval(
+                    archive, host=event.host, tool=tool, operation=operation,
+                    approval_context=event.approval_context,
+                    godmode_decision=_decision_for(preview),
+                )
+            except GodmodeError as error:
+                from godmode_runtime.godmode_sentinel import _degraded
+
+                _degraded(f"recording a host approval: {type(error).__name__}")
+
         if pretool:
             # Silence is the allow signal in this contract; only a refusal speaks,
             # so an allowed tool call costs the host nothing but the exit code.
