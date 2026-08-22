@@ -45,6 +45,8 @@ SPRINT_COMMANDS = [
      {"child": "lane-b", "task": "review", "parent": "lane-a"}),
     (["fleet", "retract", "--child", "lane-b"],
      {"child": "lane-b", "parent": "lane-a"}),
+    (["approvals"], {"all": False}),
+    (["approvals", "--all"], {"all": True}),
     (["reanchor"], {}),
     (["reanchor", "--snapshot"], {"snapshot": True, "remap": False}),
     (["reanchor", "--remap"], {"snapshot": False, "remap": True}),

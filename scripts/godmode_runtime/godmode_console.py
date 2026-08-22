@@ -196,6 +196,8 @@ from .godmode_rollback import mark_green, rollback_plan
 from .godmode_forecast import forecast as forecast_operation, replay as replay_policy
 # Sprint 8 - evidence-derived governance. Proposes; never installs.
 from .godmode_governance import governance_report, promote as promote_candidate
+# Sprint 9 - the host's own approval recorded beside godmode's decision.
+from .godmode_hostapproval import approval_divergence, host_approvals
 from .godmode_forge import SkillProposal, forge_skill, validate_skill
 from .godmode_lens import (
     build_context_brief,
@@ -1018,6 +1020,16 @@ def cmd_fleet_retract(args: argparse.Namespace, runtime: Runtime) -> CommandResu
          "sequence": record["sequence"]},
         exit_code=0,
     )
+
+
+def cmd_host_approvals(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    report = approval_divergence(runtime.archive)
+    if args.all:
+        report["records"] = host_approvals(runtime.archive)
+    # Exit 0 on divergence: two boundaries disagreeing is information, not
+    # a fault. Neither answers to the other, so neither can be "wrong" here.
+    return CommandResult(report, exit_code=0)
 
 
 def cmd_reanchor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -3516,6 +3528,14 @@ def _build_parser() -> argparse.ArgumentParser:
     governance_promote.add_argument("--reason", required=True,
                                     help="Who reviewed it, and why")
     governance_promote.set_defaults(handler=cmd_governance_promote)
+
+    # Sprint 9 - what each host approved, beside what godmode decided.
+    approvals = sub.add_parser(
+        "approvals",
+        help="Host approval decisions recorded beside godmode's own, and where they differ")
+    approvals.add_argument("--all", action="store_true",
+                           help="Include every recorded pair, not only the divergences")
+    approvals.set_defaults(handler=cmd_host_approvals)
 
     # B5-B / B6 - three read-only reports and one attestation.
     reanchor = sub.add_parser(

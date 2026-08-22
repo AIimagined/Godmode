@@ -211,6 +211,18 @@ $ godmode forecast --operation "git push --force origin main"
 $ godmode replay
 ```
 
+### Host approvals
+
+Every host ships approval controls of its own. Where a host tells the hook
+what it decided, that is recorded next to what godmode decided, and the
+rows where the two differ are reported in both directions. Neither
+boundary is read to satisfy the other; the operation is stored as a
+digest, not as text.
+
+```console
+$ godmode approvals
+```
+
 ### Project governance
 
 Rules proposed from this project's own record: a refusal category with
