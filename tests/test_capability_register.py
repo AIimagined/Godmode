@@ -151,8 +151,12 @@ class CapabilityRegisterStructureTests(unittest.TestCase):
         self.assertIn("capability_debt", report)
         self.assertIsInstance(report["capability_debt"], list)
         # A known-unbuilt id from the register must appear here, or the
-        # debt list is not actually reading the register.
-        self.assertIn("C-04", report["capability_debt"])
+        # debt list is not actually reading the register. C-05 stands in for
+        # C-04, which was the sentinel here until C-04 shipped as the
+        # minimality pressure gate - the assertion needs *an* unbuilt id,
+        # not that particular one, and pinning one that later gets built
+        # turns a real delivery into a test failure.
+        self.assertIn("C-05", report["capability_debt"])
         # A known-built id must never appear as debt.
         self.assertNotIn("C-01", report["capability_debt"])
 

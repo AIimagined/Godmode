@@ -81,7 +81,12 @@ from .godmode_netgate import differential as netgate_differential
 from .godmode_parity import absorption_check, parity_matrix, schema_ladder
 from .godmode_reconcile import classify_environment, reconcile_docs, reconcile_versions, record_triggers
 from .godmode_reconcile import reconcile_capabilities, reconcile_capability_coverage, reconcile_detectors
-from .godmode_minimality import minimality_report
+from .godmode_minimality import (
+    accept_growth,
+    minimality_report,
+    pressure_report,
+    write_pressure_baseline,
+)
 from .godmode_removal import REQUIRED_FIELDS as REMOVAL_FIELDS
 from .godmode_report import completion_report, render_markdown
 from .godmode_docslint import lint_docs
@@ -1416,8 +1421,33 @@ def cmd_minimality(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # No archive means no census/decay sections; the report says so rather
     # than failing, the same policy every other archive-optional report uses.
     archive = runtime.archive if runtime.archive.initialized() else None
-    report = minimality_report(Path(runtime.anchor.project_root), archive=archive)
-    return CommandResult(report)
+    project = Path(runtime.anchor.project_root)
+    if getattr(args, "accept_growth", None):
+        _require_archive(runtime)
+        record = accept_growth(
+            runtime.archive, args.accept_growth, reason=args.reason or "")
+        return CommandResult(
+            {"accepted": args.accept_growth,
+             "reason": record["data"]["reason"],
+             "sequence": record["sequence"]},
+            exit_code=0,
+        )
+    report = minimality_report(project, archive=archive)
+    counts = {section["section"]: section["count"] for section in report["sections"]}
+    if getattr(args, "set_baseline", False):
+        return CommandResult(
+            {"baseline": write_pressure_baseline(project, counts),
+             "note": "later growth past these counts is reported until accepted"},
+            exit_code=0,
+        )
+    # C-04: the counts alone were a number nobody compared against anything.
+    report["pressure"] = pressure_report(project, counts, archive=archive)
+    # Non-zero only on UNACCEPTED growth: accepted growth is a decision the
+    # record already carries, and failing on it would punish saying why.
+    return CommandResult(
+        report,
+        exit_code=1 if report["pressure"]["verdict"] == "pressure-grew" else 0,
+    )
 
 
 def cmd_capabilities(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -3891,6 +3921,13 @@ def _build_parser() -> argparse.ArgumentParser:
     hooks_verify.set_defaults(handler=cmd_hooks)
     minimality_parser = sub.add_parser(
         "minimality", help="Rank existing duplicate/orphan/seam/decay surfaces into one report")
+    # C-04: the counts get a ceiling, and growth past it is answered for.
+    minimality_parser.add_argument("--set-baseline", action="store_true",
+                            help="Record the current counts as the ceiling to compare against")
+    minimality_parser.add_argument("--accept-growth", default=None, metavar="SECTION",
+                            help="Allow a section to exceed its ceiling; needs --reason")
+    minimality_parser.add_argument("--reason", default=None,
+                            help="What the added surface bought, for --accept-growth")
     minimality_parser.set_defaults(handler=cmd_minimality)
     inspect = sub.add_parser("inspect", help="Capture an on-demand repository snapshot")
     inspect.set_defaults(handler=cmd_inspect)
