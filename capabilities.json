@@ -101,11 +101,15 @@
       "status": "built"
     },
     {
-      "guard": [],
+      "guard": [
+        "test:tests/test_freshness.py"
+      ],
       "id": "C-10",
-      "impl": [],
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_freshness.py"
+      ],
       "statement": "Source-freshness preflight with honest partial reporting.",
-      "status": "unbuilt"
+      "status": "built"
     },
     {
       "guard": [
@@ -556,12 +560,16 @@
       "status": "built"
     },
     {
-      "guard": [],
+      "guard": [
+        "test:tests/test_extensions.py"
+      ],
       "id": "C-52",
-      "impl": [],
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_extensions.py"
+      ],
       "note": "runtime remains a single package; capability list has grown inside it, not as installable extensions",
       "statement": "Extension model: capabilities install as extensions rather than growing a monolithic core.",
-      "status": "unbuilt"
+      "status": "built"
     },
     {
       "guard": [
@@ -587,18 +595,26 @@
       "status": "built"
     },
     {
-      "guard": [],
+      "guard": [
+        "test:tests/test_watchdog.py"
+      ],
       "id": "C-55",
-      "impl": [],
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_watchdog.py"
+      ],
       "statement": "Agent watchdog: monitor the agent's own behaviour during a run and interrupt on anomaly.",
-      "status": "unbuilt"
+      "status": "built"
     },
     {
-      "guard": [],
+      "guard": [
+        "test:tests/test_arbitrate.py"
+      ],
       "id": "C-56",
-      "impl": [],
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_arbiter.py"
+      ],
       "statement": "Plan arbiter: adjudicate between competing plans or approaches.",
-      "status": "unbuilt"
+      "status": "built"
     },
     {
       "guard": [],
