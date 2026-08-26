@@ -45,7 +45,7 @@ class ExamplesCorpusTests(unittest.TestCase):
             for key in ("name", "command", "expect_keys", "expect_exit"):
                 self.assertIn(key, example, example)
         with _state_home():
-            report = check_examples(EXAMPLES)
+            report = check_examples(EXAMPLES, console.main)
         failed = [r for r in report["results"] if not r["ok"]]
         self.assertEqual(failed, [], failed)
         self.assertEqual(report["verdict"], "reproduced")
@@ -59,7 +59,7 @@ class ExamplesCorpusTests(unittest.TestCase):
                 "expect_keys": ["healthy", "a_key_doctor_never_returns"],
                 "expect_exit": 0,
             }), encoding="utf-8")
-            report = check_examples(corpus)
+            report = check_examples(corpus, console.main)
         self.assertEqual(report["verdict"], "stale")
         self.assertEqual(report["results"][0]["name"], "stale")
         self.assertIn("a_key_doctor_never_returns", report["results"][0]["missing_keys"])

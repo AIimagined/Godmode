@@ -1181,7 +1181,7 @@ def cmd_examples(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
                           "about": e.get("about", "")} for e in examples],
             "count": len(examples),
         })
-    report = check_examples(corpus)
+    report = check_examples(corpus, main)
     report["corpus"] = str(corpus)
     return CommandResult(report, exit_code=1 if report["verdict"] == "stale" else 0)
 

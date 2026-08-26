@@ -84,6 +84,12 @@
       "trigger": "always",
       "verify": "none"
     },
+    "R-db95542fd0": {
+      "enforcement": "HARD",
+      "text_hash": "170a6518175c0060",
+      "trigger": "before_mutation",
+      "verify": "attestation_present"
+    },
     "R-e19dfe0488": {
       "enforcement": "HARD",
       "text_hash": "9da1de908466b152",
@@ -95,9 +101,9 @@
   "summary": {
     "enforcement": {
       "ADVISORY": 9,
-      "HARD": 6,
+      "HARD": 7,
       "SOFT": 0
     },
-    "rules": 15
+    "rules": 16
   }
 }

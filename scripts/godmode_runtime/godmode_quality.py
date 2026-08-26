@@ -133,8 +133,9 @@ def render_sarif(report: dict[str, Any], tool_version: str) -> dict[str, Any]:
                 "region": {"startLine": max(1, f["line"])},
             }}]
         results.append(result)
+    # No `$schema` URL: the runtime carries no remote literal, by a test
+    # that scans every module for one. SARIF viewers key on `version`.
     return {
-        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
         "runs": [{"tool": {"driver": {"name": "godmode", "version": tool_version}},
                   "results": results}],

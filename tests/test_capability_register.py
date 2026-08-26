@@ -491,6 +491,16 @@ class DogfoodingTests(unittest.TestCase):
         # Verified by `CapabilityDriftPlantTests` rather than this whole
         # module: the plant runs its command in a subprocess, so naming the
         # module that contains this test would re-enter the planting suite.
+        # Seventh HARD rule: the release checklist's claim-scan directive
+        # ("before any public surface ships: `claim --scan` reports
+        # covered"). It names its own guard command, so it classifies
+        # HARD, and this plant breaks the scan's verdict - every sentence
+        # reads as covered - and watches `tests.test_claim_scan` go red.
+        dict(name="public-surface-claims-covered", rule="R-db95542fd0",
+             target="scripts/godmode_runtime/godmode_claimscan.py",
+             command=[sys.executable, "-m", "unittest", "tests.test_claim_scan"],
+             replace='        "verdict": "uncovered" if uncovered else "covered",',
+             with_text='        "verdict": "covered",'),
         dict(name="capability-pointer-drift", rule="R-e19dfe0488",
              target="scripts/godmode_runtime/godmode_reconcile.py",
              command=[sys.executable, "-m", "unittest",

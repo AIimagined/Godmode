@@ -23,7 +23,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
-from typing import Any
+from typing import Any, Callable
 
 from .godmode_errors import GodmodeError
 
@@ -46,15 +46,17 @@ def load_examples(corpus: Path | str) -> list[dict[str, Any]]:
     return examples
 
 
-def _run(project: Path, argv: list[str]) -> tuple[int, Any]:
-    # Imported here, not at module top: the console imports this module,
-    # and an import cycle at load time would cost every command a
-    # `godmode_examples` load it never uses.
-    from .godmode_console import main
+Runner = Callable[[list[str]], int]
 
+
+def _run(runner: Runner, project: Path, argv: list[str]) -> tuple[int, Any]:
+    # The console is handed in, never imported: this module must not
+    # depend on the console that depends on it, and the atlas's
+    # import-cycle test reads imports statically, so a lazy import inside
+    # a function would still be a cycle on paper.
     out, err = io.StringIO(), io.StringIO()
     with redirect_stdout(out), redirect_stderr(err):
-        code = main(["--project", str(project), "--json", *argv])
+        code = runner(["--project", str(project), "--json", *argv])
     text = out.getvalue().strip()
     try:
         payload = json.loads(text) if text else None
@@ -63,7 +65,9 @@ def _run(project: Path, argv: list[str]) -> tuple[int, Any]:
     return code, payload
 
 
-def check_examples(corpus: Path | str) -> dict[str, Any]:
+def check_examples(corpus: Path | str, runner: Runner) -> dict[str, Any]:
+    """`runner` is the console's `main`; it is passed in so this module
+    never imports the console that imports it."""
     results: list[dict[str, Any]] = []
     for example in load_examples(corpus):
         with tempfile.TemporaryDirectory(prefix="godmode-example-") as temporary:
@@ -74,8 +78,8 @@ def check_examples(corpus: Path | str) -> dict[str, Any]:
             os.environ["GODMODE_STATE_HOME"] = str(state)
             try:
                 for step in example.get("setup", []):
-                    _run(project, [str(token) for token in step])
-                code, payload = _run(project, [str(token) for token in example["command"]])
+                    _run(runner, project, [str(token) for token in step])
+                code, payload = _run(runner, project, [str(token) for token in example["command"]])
             finally:
                 if previous is None:
                     os.environ.pop("GODMODE_STATE_HOME", None)

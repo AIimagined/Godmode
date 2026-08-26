@@ -262,9 +262,15 @@ def validate_skill(skill_dir: str | Path) -> dict[str, Any]:
         raise ForgeError("Skill requires at least two near-negative routing cases")
     if not evals.get("behavior_assertions"):
         raise ForgeError("Skill requires observable behavior assertions")
+    # C-23. A forged skill carries one fixture per host and is refused when
+    # one is missing. A hand-written skill that never had a `fixtures/`
+    # directory is not refused - it predates the fixtures and reports
+    # `fixture_hosts: 0` honestly - but a directory that exists and is
+    # incomplete is a forged skill someone broke, and that is refused.
     fixture_hosts = 0
-    for host in FIXTURE_HOSTS:
-        fixture_file = root / "fixtures" / host / "expected.json"
+    fixtures_root = root / "fixtures"
+    for host in (FIXTURE_HOSTS if fixtures_root.is_dir() else ()):
+        fixture_file = fixtures_root / host / "expected.json"
         if not fixture_file.is_file():
             raise ForgeError(f"Skill is missing the expected-output fixture for {host}")
         try:
