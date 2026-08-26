@@ -1,6 +1,6 @@
 # Godmode
 
-> Local-first context continuity and evidence governance for coding agents.
+> A local, tamper-evident record of what a coding agent did, what it claimed, and what was verified.
 > Deterministic Python-stdlib runtime; no telemetry, no network calls, no
 > background processes, no runtime dependencies.
 

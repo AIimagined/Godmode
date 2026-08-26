@@ -1,7 +1,7 @@
 {
   "name": "godmode",
   "version": "0.2.13",
-  "description": "Local-first context continuity and evidence-governance skills for coding agents.",
+  "description": "Skills for a local, tamper-evident record of what a coding agent did, what it claimed, and what was verified.",
   "author": {
     "name": "AIimagined"
   },

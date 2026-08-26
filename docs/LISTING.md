@@ -12,7 +12,7 @@ in-repo or published schema could verify it.
 
 **Short description** (one line, from `.claude-plugin/plugin.json`):
 
-> Local-first context continuity and evidence governance for coding agents.
+> A local, tamper-evident record of what a coding agent did, what it claimed, and what was verified.
 
 **Long description**:
 
@@ -70,7 +70,7 @@ top-level `description` field, distinct from the nested
 `interface.shortDescription` the same manifest also carries; see the note
 below):
 
-> Local-first context continuity and evidence-governance skills for coding agents.
+> Skills for a local, tamper-evident record of what a coding agent did, what it claimed, and what was verified.
 
 Note: `.codex-plugin/plugin.json` carries a second, shorter description
 under `interface.shortDescription` ("Local continuity and guarded coding
@@ -158,7 +158,7 @@ comparison between hosts.
 
 **Short description** (one line, from `.grok-plugin/plugin.json`):
 
-> Local-first context continuity and evidence governance for coding agents.
+> A local, tamper-evident record of what a coding agent did, what it claimed, and what was verified.
 
 **Long description**:
 
