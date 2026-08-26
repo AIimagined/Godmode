@@ -92,6 +92,10 @@ from .godmode_report import completion_report, render_markdown
 from .godmode_docslint import lint_docs
 from .godmode_quality import quality_report, render_editor, render_sarif
 from .godmode_examples import check_examples, load_examples
+from .godmode_freshness import freshness_report
+from .godmode_watchdog import interrupt as watchdog_interrupt, watchdog_report
+from .godmode_arbiter import arbitrate as arbitrate_plans
+from .godmode_extensions import ExtensionRefused, list_extensions, run_extension
 
 # The plugin's own root: scripts/godmode_runtime/godmode_console.py -> two
 # up. Used for artefacts that ship WITH the plugin (the example corpus,
@@ -1171,6 +1175,61 @@ def cmd_examples(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     report = check_examples(corpus)
     report["corpus"] = str(corpus)
     return CommandResult(report, exit_code=1 if report["verdict"] == "stale" else 0)
+
+
+def cmd_freshness(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    # C-10. Stale or unreachable is a finding; partial is a statement of
+    # what was not checked, and never fails on its own.
+    report = freshness_report(runtime.archive, Path(runtime.anchor.project_root))
+    return CommandResult(report, exit_code=1 if report["verdict"] == "stale" else 0)
+
+
+def cmd_watchdog(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    # C-55. On demand, between steps; no daemon. `--interrupt` writes the
+    # operator-stop flag the stop algebra already honours, only on anomaly.
+    report = watchdog_report(runtime.archive)
+    report["interrupted"] = False
+    if args.interrupt and report["verdict"] == "anomaly":
+        flag = watchdog_interrupt(
+            Path(runtime.anchor.project_root),
+            "; ".join(a["kind"] for a in report["anomalies"]))
+        report["interrupted"] = True
+        report["flag"] = str(flag)
+    return CommandResult(report, exit_code=1 if report["verdict"] == "anomaly" else 0)
+
+
+def cmd_arbitrate(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    # C-56. Undecided is a finding: the plans need more before one can be
+    # held to, and an exit 0 would read as "either is fine".
+    plans = [Path(p) for p in args.plan]
+    missing = [str(p) for p in plans if not p.is_file()]
+    if missing:
+        return CommandResult({"refused": f"plan file(s) not found: {', '.join(missing)}"},
+                             exit_code=1)
+    report = arbitrate_plans(Path(runtime.anchor.project_root), plans)
+    return CommandResult(report, exit_code=0 if report["verdict"] == "decided" else 1)
+
+
+def cmd_extensions_list(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    # C-52. Manifests only; nothing is imported by a listing.
+    listed = list_extensions()
+    return CommandResult({
+        "extensions": listed,
+        "count": len(listed),
+        "policy": POLICY_FILENAME,
+        "note": "an extension runs only when named in the project's policy `extensions` list",
+    })
+
+
+def cmd_extensions_run(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    argv = list(args.argv)
+    if argv[:1] == ["--"]:
+        argv = argv[1:]
+    try:
+        result = run_extension(Path(runtime.anchor.project_root), args.name, argv)
+    except ExtensionRefused as error:
+        return CommandResult({"refused": str(error), "extension": args.name}, exit_code=1)
+    return CommandResult({"extension": args.name, "argv": argv, "result": result})
 
 
 def cmd_forecast(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -3708,6 +3767,44 @@ def _build_parser() -> argparse.ArgumentParser:
     examples_parser.add_argument("--check", action="store_true")
     examples_parser.add_argument("--corpus", help="Directory of *.example.json (default: the plugin's)")
     examples_parser.set_defaults(handler=cmd_examples)
+
+    freshness_parser = sub.add_parser(
+        "freshness",
+        help="Are the sources standing records cite still what was graded? "
+             "file: and commit: are checked; url: is reported unverifiable, never fresh")
+    freshness_parser.set_defaults(handler=cmd_freshness)
+
+    watchdog_parser = sub.add_parser(
+        "watchdog",
+        help="Anomalies in the newest window of this project's record - repeated "
+             "operations, refusal bursts, unattested runs; on demand, no daemon")
+    watchdog_parser.add_argument(
+        "--interrupt", action="store_true",
+        help="On anomaly, write the operator-stop flag the stop algebra honours")
+    watchdog_parser.set_defaults(handler=cmd_watchdog)
+
+    arbitrate_parser = sub.add_parser(
+        "arbitrate",
+        help="Score competing plan files on what a plan can be held to; a tie is "
+             "undecided, never broken silently")
+    arbitrate_parser.add_argument("--plan", action="append", required=True,
+                                  help="A plan file; repeat for each competitor")
+    arbitrate_parser.set_defaults(handler=cmd_arbitrate)
+
+    extensions_parser = sub.add_parser(
+        "extensions",
+        help="Extensions under the private state home; run one only when the "
+             "project's policy names it")
+    extensions_sub = extensions_parser.add_subparsers(dest="extensions_command")
+    extensions_list = extensions_sub.add_parser("list", help="Manifests only; imports nothing")
+    extensions_list.set_defaults(handler=cmd_extensions_list)
+    extensions_run = extensions_sub.add_parser(
+        "run", help="Import and run one policy-named extension")
+    extensions_run.add_argument("name")
+    extensions_run.add_argument("argv", nargs=argparse.REMAINDER,
+                                help="Arguments handed to the extension, after --")
+    extensions_run.set_defaults(handler=cmd_extensions_run)
+    extensions_parser.set_defaults(handler=cmd_extensions_list)
 
     forecast_parser = sub.add_parser(
         "forecast", help="What an operation would classify as, plus prior precedent")
