@@ -321,6 +321,17 @@ $ godmode extensions list
 $ godmode claim --scan
 ```
 
+`experiment holdout` takes observations from two arms and one metric and
+computes the verdict from medians: `treatment`, `control`,
+`indistinguishable` within epsilon, or `underpowered` below two
+observations per arm. The last two exit non-zero, because "cannot tell"
+must never read as "yes".
+
+```console
+$ godmode experiment holdout --name terse-brief --metric tokens --epsilon 5 \
+    --control 100 --control 110 --treatment 70 --treatment 72 --lower-is-better
+```
+
 ## The numbers
 
 Every row below was run against this repository to write this document.
