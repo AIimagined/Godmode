@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "godmode",
-      "description": "Local-first context continuity and evidence governance for coding agents.",
+      "description": "A local, tamper-evident record of what a coding agent did, what it claimed, and what was verified.",
       "version": "0.2.13",
       "category": "productivity",
       "source": {
