@@ -96,6 +96,7 @@ from .godmode_freshness import freshness_report
 from .godmode_watchdog import interrupt as watchdog_interrupt, watchdog_report
 from .godmode_arbiter import arbitrate as arbitrate_plans
 from .godmode_extensions import ExtensionRefused, list_extensions, run_extension
+from .godmode_claimscan import scan_public_surfaces
 
 # The plugin's own root: scripts/godmode_runtime/godmode_console.py -> two
 # up. Used for artefacts that ship WITH the plugin (the example corpus,
@@ -837,6 +838,14 @@ def _load_timeline(transcript_path: str | None) -> dict[str, Any] | None:
 
 
 def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if getattr(args, "scan", False):
+        # Public-surface enforcement: the sentences on README and its
+        # siblings that are claims by definition, minus the ones whose line
+        # names a reproduction or whose text a claim record carries.
+        report = scan_public_surfaces(Path(runtime.anchor.project_root), runtime.archive)
+        return CommandResult(report, exit_code=1 if report["uncovered"] else 0)
+    if not args.text:
+        return CommandResult({"refused": "claim needs the claim text, or --scan"}, exit_code=1)
     _require_archive(runtime)
     record = record_claim(
         runtime.archive,
@@ -3335,7 +3344,8 @@ MORE                         README.md (concepts) - godmode <cmd> --help (any
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="godmode",
-        description="Local-first context continuity and guarded coding workflows.",
+        description="A local, tamper-evident record of what a coding agent did, "
+                    "what it claimed, and what was verified.",
         epilog="Start here: godmode guide  |  day one: init, resume, status, doctor",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -3542,7 +3552,12 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    claim.add_argument("text")
+    claim.add_argument("text", nargs="?", default=None)
+    claim.add_argument("--scan", action="store_true",
+                       help="Instead of recording: list every claim-shaped sentence on "
+                            "the public surfaces (README, LISTING, coverage map, llms.txt, "
+                            "GODMODE.md) whose line names no reproduction and no claim "
+                            "record carries")
     claim.add_argument("--grade", choices=list(GRADES), default="observed")
     claim.add_argument("--cite", action="append", default=[], help="rec:<hash> or file:<path>#L<n>; repeatable")
     claim.add_argument("--external", action="store_true",
