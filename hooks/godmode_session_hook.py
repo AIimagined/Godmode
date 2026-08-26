@@ -361,6 +361,37 @@ def _capture_interrupted_intent(archive: Chronicle) -> None:
     )
 
 
+# A checkpoint older than this is likelier to be behind the project's own
+# state document than ahead of it; the brief says so instead of letting a
+# resuming agent read an eight-day-old checkpoint as current (field
+# report, 2026-08-27).
+STALE_CHECKPOINT_DAYS = 7
+
+
+def checkpoint_age(record: dict[str, Any], *, now: Any = None) -> tuple[int | None, str | None]:
+    """(whole days since the record was written, note) - the note only past
+    STALE_CHECKPOINT_DAYS, and None for a record with no readable time."""
+    from datetime import datetime, timezone
+
+    raw = record.get("recorded_at")
+    if not isinstance(raw, str):
+        return None, None
+    try:
+        written = datetime.fromisoformat(raw)
+    except ValueError:
+        return None, None
+    if written.tzinfo is None:
+        written = written.replace(tzinfo=timezone.utc)
+    current = now or datetime.now(timezone.utc)
+    days = max(0, int((current - written).total_seconds() // 86_400))
+    note = None
+    if days > STALE_CHECKPOINT_DAYS:
+        note = (f"this checkpoint is {days} days old; prefer the project's own "
+                "state document if it is newer, and write a checkpoint as part "
+                "of the next handover")
+    return days, note
+
+
 def _resume_digest(archive: Chronicle, project_root: Path,
                    obligations: dict[str, Any]) -> dict[str, Any]:
     """B4-4: the counts-only "where you left off" answer, rendered into the
@@ -391,6 +422,11 @@ def _resume_digest(archive: Chronicle, project_root: Path,
             "status": str((checkpoint.get("data") or {}).get("status", "")),
             "sequence": checkpoint["sequence"],
         }
+        age_days, age_note = checkpoint_age(checkpoint)
+        if age_days is not None:
+            entry["age_days"] = age_days
+        if age_note:
+            entry["note"] = age_note
         stale_refs = sum(
             1 for ref in checkpoint.get("evidence", [])
             if isinstance(ref, str) and ref.startswith("file:")
