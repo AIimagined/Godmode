@@ -1,0 +1,21 @@
+{
+  "host": "codex",
+  "skill": "golden-fixture-skill",
+  "cases": [
+    {
+      "trigger": "format the golden fixture",
+      "expected": [
+        "output matches the checked-in golden tree",
+        "no timestamp appears in generated text"
+      ]
+    },
+    {
+      "trigger": "regenerate the reference skill",
+      "expected": [
+        "output matches the checked-in golden tree",
+        "no timestamp appears in generated text"
+      ]
+    }
+  ],
+  "note": "expected output per positive trigger; a host eval runner compares its observed output against `expected`"
+}
