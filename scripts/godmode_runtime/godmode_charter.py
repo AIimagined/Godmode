@@ -21,6 +21,17 @@ HARD = "HARD"
 SOFT = "SOFT"
 ADVISORY = "ADVISORY"
 
+# A record is not a directive, whatever voice it is written in. These roles
+# hold what happened, what was decided, what exists: a lessons ledger, a
+# state file, a sprint ledger, a decisions log, an inventory. A sentence in
+# one of them compiles to ADVISORY at most, and `capped_from` says what
+# shape it matched so the cap is visible. The directive-bearing roles - the
+# operating guide, the operator profile, the invariants, the checklist -
+# are untouched. Field report, 2026-08-27: "508 unattested hard rules",
+# 308 of them from a project's LESSONS.md.
+RECORD_ROLES: frozenset[str] = frozenset(
+    {"lessons", "state", "sprint-truth", "decisions", "inventory"})
+
 TRIGGERS = (
     "session_open",
     "before_approach",
@@ -178,6 +189,7 @@ class Rule:
     trigger: str
     enforcement: str
     verify: str
+    capped_from: str | None = None
 
     def view(self) -> dict[str, Any]:
         return {
@@ -188,6 +200,7 @@ class Rule:
             "trigger": self.trigger,
             "enforcement": self.enforcement,
             "verify": self.verify,
+            "capped_from": self.capped_from,
         }
 
 
@@ -278,6 +291,9 @@ def compile_binding(binding: Binding, project: Path) -> list[Rule]:
     for segment in segment_document(binding, project):
         for line, text in _directives(segment):
             enforcement, verify, trigger = _classify(text)
+            capped_from = None
+            if segment.role in RECORD_ROLES and enforcement != ADVISORY:
+                capped_from, enforcement = enforcement, ADVISORY
             identifier = _rule_id(segment.role, segment.path, text)
             if identifier in seen:
                 continue
@@ -292,6 +308,7 @@ def compile_binding(binding: Binding, project: Path) -> list[Rule]:
                     trigger=trigger,
                     enforcement=enforcement,
                     verify=verify,
+                    capped_from=capped_from,
                 )
             )
     return rules
