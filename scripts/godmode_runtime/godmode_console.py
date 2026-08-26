@@ -3239,6 +3239,25 @@ def cmd_experiment_run(args: argparse.Namespace, runtime: Runtime) -> CommandRes
     return CommandResult(report, exit_code=0 if report["succeeded"] else 1)
 
 
+def cmd_experiment_holdout(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    # Two arms, one metric, a verdict computed from medians. `underpowered`
+    # and `indistinguishable` are findings - the operator asked whether the
+    # change moved the metric, and "cannot tell" must not exit as "yes".
+    _require_archive(runtime)
+    from .godmode_holdout import record_holdout
+    try:
+        record = record_holdout(
+            runtime.archive, Path(runtime.anchor.project_root),
+            name=args.name, metric=args.metric, control=args.control,
+            treatment=args.treatment, epsilon=args.epsilon,
+            lower_is_better=args.lower_is_better)
+    except ArchiveError as error:
+        return CommandResult({"refused": str(error)}, exit_code=1)
+    data = dict(record["data"])
+    data["sequence"] = record["sequence"]
+    return CommandResult(data, exit_code=0 if data["verdict"] in ("treatment", "control") else 1)
+
+
 def cmd_experiment_verdict(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     """U-R3: adjudicate one experiment cycle - keep/discard/keep-simpler,
     computed from {metric, before, after, epsilon}, commit-linked."""
@@ -3437,6 +3456,19 @@ def _build_parser() -> argparse.ArgumentParser:
                                 help="U-R1 wall-time budget over this cycle's attempts; overrun "
                                      "truncates early and records run_state=truncated")
     experiment_run.set_defaults(handler=cmd_experiment_run)
+    experiment_holdout = experiment_sub.add_parser(
+        "holdout",
+        help="Two arms, one metric: does the treatment differ from the control by "
+             "more than --epsilon? Medians; two observations per arm or `underpowered`")
+    experiment_holdout.add_argument("--name", required=True)
+    experiment_holdout.add_argument("--metric", required=True)
+    experiment_holdout.add_argument("--control", type=float, action="append", default=[],
+                                    help="An observation with the change OFF; repeatable")
+    experiment_holdout.add_argument("--treatment", type=float, action="append", default=[],
+                                    help="An observation with the change ON; repeatable")
+    experiment_holdout.add_argument("--epsilon", type=float, required=True)
+    experiment_holdout.add_argument("--lower-is-better", action="store_true", dest="lower_is_better")
+    experiment_holdout.set_defaults(handler=cmd_experiment_holdout)
     experiment_verdict = experiment_sub.add_parser(
         "verdict",
         help="Adjudicate an experiment cycle: keep/discard/keep-simpler, computed "

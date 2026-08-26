@@ -261,6 +261,11 @@ def detect_host(raw: Any) -> str:
         return "grok"
     if os.environ.get("CLAUDE_CODE_ENTRYPOINT"):
         return "claude"
+    # Same chain as `godmode_anchor.current_host`, same position: the two
+    # must never disagree about which host produced a record.
+    from .godmode_anchor import is_copilot_environment
+    if is_copilot_environment():
+        return "copilot"
     return _detect_from_shape(raw) or "unknown"
 
 

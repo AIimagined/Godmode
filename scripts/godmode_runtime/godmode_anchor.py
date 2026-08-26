@@ -341,7 +341,22 @@ def current_host() -> str:
         return "grok"
     if os.environ.get("CLAUDE_CODE_ENTRYPOINT"):
         return "claude"
+    if is_copilot_environment():
+        return "copilot"
     return "unknown"
+
+
+def is_copilot_environment() -> bool:
+    """VS Code Copilot, detected the way it actually presents (absorbed
+    2026-08-27 from an upstream plugin's fix): it never sets
+    `COPILOT_PLUGIN_DATA`, only `CLAUDE_PLUGIN_ROOT` pointing into a
+    `.vscode/agent-plugins/` install path - and no `CLAUDE_CODE_ENTRYPOINT`,
+    which is why this sits after the Claude Code check in both chains.
+    Either marker reads as Copilot; a plugin root anywhere else does not."""
+    if os.environ.get("COPILOT_PLUGIN_DATA"):
+        return True
+    root = os.environ.get("CLAUDE_PLUGIN_ROOT", "").replace("\\", "/")
+    return ".vscode/agent-plugins" in root
 
 
 def host_capabilities(*, tool_call_interception: str | None = None) -> dict[str, Any]:

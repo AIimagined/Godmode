@@ -238,6 +238,39 @@ class MetricPlateau(Stop):
         self._streak = 0
 
 
+class NonFinite(Stop):
+    """Fires on the first observation of a named metric that is NaN or
+    infinite.
+
+    Absorbed 2026-08-27 from an upstream experiment loop's NaN fast-fail.
+    A metric that cannot be read as a finite number is not a plateau and
+    not progress - the run has lost the ability to measure itself, and
+    `MetricPlateau` skipped such values silently, so a loop could keep
+    spending its budget on observations that meant nothing. Strings that
+    parse (`"0.25"`) are read as their number; strings that do not are
+    ignored here as they are in `MetricPlateau` - a label is not a NaN.
+    """
+
+    def __init__(self, name: str) -> None:
+        super().__init__()
+        self._name = name
+
+    def _check(self, delta: list[Record]) -> str | None:
+        for record in delta:
+            data = record.get("data") or {}
+            if self._name not in data:
+                continue
+            try:
+                value = float(data[self._name])
+            except (TypeError, ValueError):
+                continue
+            if value != value:  # NaN is the one float that is not itself
+                return f"NonFinite({self._name}): observed nan at seq {record.get('sequence')}"
+            if value in (float("inf"), float("-inf")):
+                return f"NonFinite({self._name}): observed {value} at seq {record.get('sequence')}"
+        return None
+
+
 class AttemptHandle:
     """What `attempt()` yields: the deadline, and the one operation it
     bounds - running a subprocess to at most the time left on the budget.
