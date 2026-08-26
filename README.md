@@ -3,7 +3,7 @@
 </h1>
 
 <p align="center">
-  <b>Local-first context continuity and evidence governance for coding agents.</b><br>
+  <b>A local, tamper-evident record of what a coding agent did, what it claimed, and what was verified.</b><br>
   Zero runtime dependencies · zero network use · nothing leaves your machine.
 </p>
 
@@ -111,28 +111,9 @@ Next: see what each posture enforces.
 
 ## What it does
 
-Six mechanisms carry the product. Each one below has a command that shows
-its own current state, not a claim about it.
-
-### The gate
-
-The pre-tool boundary reads a command's own structure, not its vocabulary:
-argument text, unrecognized binaries, and stream tools no longer read as
-mutations by default. A vetted read-only call resolves in-process with no
-subprocess spawned; anything else escalates to the full classifier.
-
-```console
-$ godmode capabilities
-```
-
-`tool_call_interception` reports one of five levels
-(`UNAVAILABLE`/`SOFT`/`PARTIAL`/`HARD`/`DEGRADED`), never a claim the
-evidence cannot back. `HARD` needs a fresh, live, chronicled proof: a host
-that actually calls the gate and honors its exit code. Run from a bare
-terminal, outside any hook, the command above reports `PARTIAL` in this
-repository's own checkout (the shipped manifest wires the boundary, but
-nothing just proved it live) — the honest middle answer, not a guess in
-either direction.
+The record carries the product; the gate is one consumer of it. Each
+mechanism below has a command that shows its own current state, not a
+claim about it.
 
 ### Verdicts
 
@@ -161,6 +142,28 @@ exactly what it supersedes.
 ```console
 $ godmode register show --domain <domain>
 ```
+
+### The gate
+
+The gate is one consumer of the record: it computes its decision from what
+the archive holds and writes its own decision back as a record, beside the
+host's. The pre-tool boundary reads a command's own structure, not its vocabulary:
+argument text, unrecognized binaries, and stream tools no longer read as
+mutations by default. A vetted read-only call resolves in-process with no
+subprocess spawned; anything else escalates to the full classifier.
+
+```console
+$ godmode capabilities
+```
+
+`tool_call_interception` reports one of five levels
+(`UNAVAILABLE`/`SOFT`/`PARTIAL`/`HARD`/`DEGRADED`), never a claim the
+evidence cannot back. `HARD` needs a fresh, live, chronicled proof: a host
+that actually calls the gate and honors its exit code. Run from a bare
+terminal, outside any hook, the command above reports `PARTIAL` in this
+repository's own checkout (the shipped manifest wires the boundary, but
+nothing just proved it live) — the honest middle answer, not a guess in
+either direction.
 
 ### Fleet
 
@@ -273,6 +276,51 @@ $ godmode ceilings --spent tokens=1200,tool_calls=40,seconds=90
 Next: the numbers behind these mechanisms, each with its own reproduce
 command.
 
+### Quality, freshness, and the watchdog
+
+Three detectors already produced quality findings in three shapes;
+`quality` folds them into one severity-ranked list, worst first, and
+executes none of the remedies it proposes. `--format editor` prints one
+`path:line: severity: message` per line for an editor's problem matcher;
+`--format sarif` prints a SARIF 2.1.0 document.
+
+```console
+$ godmode quality --format editor
+```
+
+`freshness` asks whether the sources standing records cite are still what
+was graded: a cited file committed over since is stale, a cited commit no
+longer reachable is gone, and a `url:` citation is reported unverifiable,
+never fresh, because nothing here touches the network. `partial` names
+what was not checked and is not a failure.
+
+```console
+$ godmode freshness
+```
+
+`watchdog` reads the newest window of the record on demand — no daemon —
+and names a repeated operation, a burst of refusals, or a run of actions
+with no attestation behind them. `--interrupt` writes the operator-stop
+flag the stop algebra already honours.
+
+```console
+$ godmode watchdog --interrupt
+```
+
+`arbitrate` scores competing plan files on what a plan can be held to and
+returns `undecided` on a tie rather than breaking it. `examples --check`
+reproduces every worked example against the real console. `extensions`
+lists what sits under the private state home and runs one only when the
+project's policy names it. `claim --scan` lists every claim-shaped sentence
+on a public surface whose line names no reproduction.
+
+```console
+$ godmode arbitrate --plan a.md --plan b.md
+$ godmode examples --check
+$ godmode extensions list
+$ godmode claim --scan
+```
+
 ## The numbers
 
 Every row below was run against this repository to write this document.
@@ -291,8 +339,8 @@ checkout's current state, and they carry their own basis instead:
 | Measurement | Value | Basis |
 |---|---|---|
 | Old gate, median latency per gated call | 3.9s | 50-session window, measured 2026-08-14 ([release notes](docs/releases/RELEASE_NOTES_v0.2.11.md)) |
-| New fast-path allow (`git status`) | 90.3ms median | 10 timed runs after warm-up, sorted-sample median, same source |
-| New escalating call (`git push --force`, refused) | 468.6ms median | same method |
+| New fast-path allow (`git status`) | 90.3ms median | 10 timed runs after warm-up, sorted-sample median ([release notes](docs/releases/RELEASE_NOTES_v0.2.11.md)) |
+| New escalating call (`git push --force`, refused) | 468.6ms median | same method ([release notes](docs/releases/RELEASE_NOTES_v0.2.11.md)) |
 
 Full two-minute walk-through, every command pinned against the real CLI
 parser: [docs/DEMO.md](docs/DEMO.md).
@@ -330,6 +378,7 @@ is pinned by a mocked unit test, not live-probed on a POSIX host.
 | Document | Covers |
 |---|---|
 | [docs/DEMO.md](docs/DEMO.md) | Two-minute terminal walk-through, every command pinned against the real CLI |
+| [docs/LADDER.md](docs/LADDER.md) | Four tiers of onboarding, one session each; `godmode guide --tier N` prints one |
 | [docs/CAPABILITY-COVERAGE.md](docs/CAPABILITY-COVERAGE.md) | What's `covered`, `partial`, or `not-claimed`, and at what grade |
 | [docs/releases/](docs/releases/) | Release notes; every number in them carries its own basis |
 | [docs/LISTING.md](docs/LISTING.md) | Marketplace listing text and manifest audit |
