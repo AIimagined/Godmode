@@ -236,11 +236,15 @@
       "status": "built"
     },
     {
-      "guard": [],
+      "guard": [
+        "test:tests/test_forge_fixtures.py"
+      ],
       "id": "C-23",
-      "impl": [],
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_forge.py"
+      ],
       "statement": "Skill generator with expected-output fixtures per platform.",
-      "status": "unbuilt"
+      "status": "built"
     },
     {
       "guard": [],
