@@ -166,6 +166,27 @@ LEARNING_LOOP: dict[str, str] = {
 }
 
 
+# C-23. The hosts this plugin ships an adapter or manifest for. A fixture
+# per host states what the skill is expected to produce when it fires
+# there - the thing a host's own eval runner compares against - so the
+# assertion "this skill works on N hosts" has N files behind it, not a
+# sentence.
+FIXTURE_HOSTS: tuple[str, ...] = ("claude", "codex", "cursor", "gemini", "grok")
+
+
+def _fixture_payload(proposal: SkillProposal, host: str) -> dict[str, Any]:
+    return {
+        "host": host,
+        "skill": proposal.name,
+        "cases": [
+            {"trigger": trigger, "expected": list(proposal.assertions)}
+            for trigger in proposal.positive_triggers
+        ],
+        "note": "expected output per positive trigger; a host eval runner "
+                "compares its observed output against `expected`",
+    }
+
+
 def forge_skill(destination_root: str | Path, proposal: SkillProposal) -> Path:
     proposal.validate()
     root = Path(destination_root).expanduser().resolve(strict=False)
@@ -188,6 +209,11 @@ def forge_skill(destination_root: str | Path, proposal: SkillProposal) -> Path:
             f"Observed reusable uses: {proposal.repeated_uses}\n\n"
             f"{proposal.gap_evidence.strip()}\n",
         )
+        for host in FIXTURE_HOSTS:
+            _atomic_text(
+                skill_dir / "fixtures" / host / "expected.json",
+                json.dumps(_fixture_payload(proposal, host), indent=2, ensure_ascii=False) + "\n",
+            )
         validate_skill(skill_dir)
     except Exception:
         for path in sorted(skill_dir.rglob("*"), key=lambda item: len(item.parts), reverse=True):
@@ -236,6 +262,18 @@ def validate_skill(skill_dir: str | Path) -> dict[str, Any]:
         raise ForgeError("Skill requires at least two near-negative routing cases")
     if not evals.get("behavior_assertions"):
         raise ForgeError("Skill requires observable behavior assertions")
+    fixture_hosts = 0
+    for host in FIXTURE_HOSTS:
+        fixture_file = root / "fixtures" / host / "expected.json"
+        if not fixture_file.is_file():
+            raise ForgeError(f"Skill is missing the expected-output fixture for {host}")
+        try:
+            fixture = json.loads(fixture_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ForgeError(f"Expected-output fixture for {host} is invalid") from exc
+        if fixture.get("host") != host or not fixture.get("cases"):
+            raise ForgeError(f"Expected-output fixture for {host} names the wrong host or no cases")
+        fixture_hosts += 1
     return {
         "valid": True,
         "name": fields["name"],
@@ -243,4 +281,5 @@ def validate_skill(skill_dir: str | Path) -> dict[str, Any]:
         "positive_cases": len(evals["routing"]["positive"]),
         "near_negative_cases": len(evals["routing"]["near_negative"]),
         "assertions": len(evals["behavior_assertions"]),
+        "fixture_hosts": fixture_hosts,
     }
