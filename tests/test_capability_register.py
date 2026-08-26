@@ -150,13 +150,15 @@ class CapabilityRegisterStructureTests(unittest.TestCase):
         report = assess(PLUGIN_ROOT)
         self.assertIn("capability_debt", report)
         self.assertIsInstance(report["capability_debt"], list)
-        # A known-unbuilt id from the register must appear here, or the
-        # debt list is not actually reading the register. C-05 stands in for
-        # C-04, which was the sentinel here until C-04 shipped as the
-        # minimality pressure gate - the assertion needs *an* unbuilt id,
-        # not that particular one, and pinning one that later gets built
-        # turns a real delivery into a test failure.
-        self.assertIn("C-05", report["capability_debt"])
+        # The debt list must be exactly the register's `unbuilt` set - read
+        # from the register here, not pinned to an id. This assertion pinned
+        # C-04, then C-05, and each shipped; a sentinel that a delivery
+        # invalidates turns real work into a red test. When the set is
+        # empty the debt list must be empty too, which is the one state a
+        # pinned id could never express.
+        register = json.loads((PLUGIN_ROOT / "capabilities.json").read_text(encoding="utf-8"))
+        unbuilt = sorted(c["id"] for c in register["capabilities"] if c["status"] == "unbuilt")
+        self.assertEqual(sorted(report["capability_debt"]), unbuilt)
         # A known-built id must never appear as debt.
         self.assertNotIn("C-01", report["capability_debt"])
 

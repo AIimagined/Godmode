@@ -45,11 +45,15 @@
       "status": "built"
     },
     {
-      "guard": [],
+      "guard": [
+        "test:tests/test_quality.py"
+      ],
       "id": "C-05",
-      "impl": [],
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_quality.py"
+      ],
       "statement": "Output-quality findings, severity-ranked, with guarded remediation.",
-      "status": "unbuilt"
+      "status": "built"
     },
     {
       "guard": [
@@ -643,11 +647,15 @@
       "status": "partial"
     },
     {
-      "guard": [],
+      "guard": [
+        "test:tests/test_quality_editor.py"
+      ],
       "id": "C-63",
-      "impl": [],
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_quality.py"
+      ],
       "statement": "Editor integration surface for findings.",
-      "status": "unbuilt"
+      "status": "built"
     },
     {
       "guard": [],
