@@ -181,15 +181,51 @@ def _store_cached_anchor(requested: Path, identity: tuple[int, int],
 
 
 def _remote_hashes(project: Path) -> list[str]:
-    remotes = run_git(project, "remote")
-    if not remotes:
+    """Every remote's address from ONE spawn, not `git remote` plus one
+    `get-url` per remote.
+
+    The old shape cost 1+N subprocess spawns inside a hook whose entire
+    budget is six of them; this one costs the same whether a repository
+    carries one remote or ten.
+    """
+    listing = run_git(project, "config", "--get-regexp", r"^remote\..*\.url")
+    if not listing:
         return []
-    hashes: list[str] = []
-    for remote in sorted(filter(None, remotes.splitlines())):
-        address = run_git(project, "remote", "get-url", remote)
-        if address:
-            hashes.append(hashlib.sha256(address.encode("utf-8")).hexdigest())
-    return hashes
+    addresses: dict[str, str] = {}
+    for line in listing.splitlines():
+        key, _, address = line.strip().partition(" ")
+        address = address.strip()
+        if not address or not key.startswith("remote.") or not key.endswith(".url"):
+            continue
+        addresses[key[len("remote."):-len(".url")]] = address
+    return [hashlib.sha256(addresses[name].encode("utf-8")).hexdigest()
+            for name in sorted(addresses)]
+
+
+def _head_and_branch(project: Path) -> tuple[str | None, str | None]:
+    """HEAD's commit and branch name from ONE spawn instead of two.
+
+    `rev-parse` applies a flag to every argument to its RIGHT, so the commit
+    has to be asked for before `--abbrev-ref` - reversed, the branch name is
+    printed twice and the commit is lost.
+
+    A detached HEAD abbreviates to the literal string `HEAD`, which is the
+    same "on no branch" that `branch --show-current`'s empty output carried,
+    so it is reported the same way: `None`.
+
+    An unborn HEAD - a repository initialised but never committed to - fails
+    the whole call, and `branch --show-current` still names the branch that
+    the first commit will create. That case keeps its own spawn rather than
+    losing the name: it is rare, and it is never the hot path this exists to
+    shorten.
+    """
+    combined = run_git(project, "rev-parse", "HEAD", "--abbrev-ref", "HEAD")
+    if not combined:
+        return None, run_git(project, "branch", "--show-current") or None
+    lines = combined.splitlines()
+    head = lines[0].strip() or None
+    branch = (lines[1].strip() if len(lines) > 1 else "") or None
+    return head, (None if branch == "HEAD" else branch)
 
 
 @dataclass(frozen=True)
@@ -229,8 +265,12 @@ def resolve_anchor(project: str | Path) -> ProjectAnchor:
         if cached is not None:
             return cached
 
-    top = run_git(requested, "rev-parse", "--show-toplevel")
-    common = run_git(requested, "rev-parse", "--git-common-dir")
+    # Both paths from one spawn: `rev-parse` answers each query it is given,
+    # in argument order, one per line.
+    located = (run_git(requested, "rev-parse", "--show-toplevel",
+                       "--git-common-dir") or "").splitlines()
+    top = located[0].strip() if located else None
+    common = located[1].strip() if len(located) > 1 else None
     if top and common:
         project_root = canonical_path(Path(top))
         common_path = Path(common)
@@ -240,6 +280,7 @@ def resolve_anchor(project: str | Path) -> ProjectAnchor:
         project_key = hashlib.sha256(
             f"git\0{common_path}".encode("utf-8")
         ).hexdigest()[:24]
+        head_value, branch_value = _head_and_branch(project_root)
         anchor = ProjectAnchor(
             schema_version=SCHEMA_VERSION,
             project_root=str(project_root),
@@ -247,8 +288,8 @@ def resolve_anchor(project: str | Path) -> ProjectAnchor:
             is_git=True,
             git_common_dir=str(common_path),
             worktree_root=str(project_root),
-            branch=run_git(project_root, "branch", "--show-current") or None,
-            head=run_git(project_root, "rev-parse", "HEAD"),
+            branch=branch_value,
+            head=head_value,
             remote_hashes=_remote_hashes(project_root),
             archive_root=str(canonical_path(common_path / ARCHIVE_DIRNAME)),
         )
