@@ -392,6 +392,37 @@ def checkpoint_age(record: dict[str, Any], *, now: Any = None) -> tuple[int | No
     return days, note
 
 
+def _silenced_by_ask_only(policy: dict[str, Any], preview: dict[str, Any]) -> bool:
+    """True when the policy names `ask_only`, this call would have asked,
+    its tier is R2/R3, and its category is not on the list. R4 and R5 are
+    never silenced: the list narrows attention, it never lowers the ceiling."""
+    listed = policy.get("ask_only")
+    if not listed:
+        return False
+    if _decision_for(preview) != "ask":
+        return False
+    if str(preview.get("tier") or "") not in ("R2", "R3"):
+        return False
+    return str(preview.get("category") or "") not in set(listed)
+
+
+def _session_counts(archive: Chronicle) -> dict[str, int]:
+    """Counts of what happened since the last checkpoint, by kind. Numbers
+    only - the auto checkpoint must carry no operation text."""
+    counts: dict[str, int] = {}
+    since = 0
+    records = archive.read_events(verify=False)
+    for record in records:
+        if record.get("kind") == "checkpoint":
+            since = record.get("sequence", 0)
+    for record in records:
+        if record.get("sequence", 0) <= since:
+            continue
+        kind = str(record.get("kind"))
+        counts[kind] = counts.get(kind, 0) + 1
+    return dict(sorted(counts.items()))
+
+
 def _resume_digest(archive: Chronicle, project_root: Path,
                    obligations: dict[str, Any]) -> dict[str, Any]:
     """B4-4: the counts-only "where you left off" answer, rendered into the
@@ -777,19 +808,34 @@ def main(argv: list[str] | None = None) -> int:
                 except Exception:  # noqa: BLE001
                     pass
             summary = str(submitted.get("summary", "")).strip()[:1000]
+            auto = False
+            if not summary and args.event == "session-end":
+                # Field report, 2026-08-27: a host's SessionEnd payload
+                # carries no summary, so this branch never wrote anything,
+                # and the next session's brief showed a checkpoint eight
+                # days old as if it were current. A counts-only checkpoint
+                # written at every session end is not a handover, and it
+                # says so in its status - but it is dated today, and it is
+                # what stops the brief lying about when work last happened.
+                summary = "session-end (auto, counts only)"
+                auto = True
             if not summary:
                 print(json.dumps({"godmode": "no-structured-checkpoint", "stored": False}))
                 return 0
+            data: dict[str, Any] = {
+                "status": "auto" if auto else str(submitted.get("status", "active"))[:40],
+                "next": _bounded_list(submitted.get("next")),
+                "hypothesis": str(submitted.get("hypothesis", ""))[:500] or None,
+                "outcome": str(submitted.get("outcome", ""))[:100] or None,
+                "lifecycle": args.event,
+            }
+            if auto:
+                data["auto"] = True
+                data["counts"] = _session_counts(archive)
             record = archive.append(
                 "checkpoint",
                 summary[:200],
-                {
-                    "status": str(submitted.get("status", "active"))[:40],
-                    "next": _bounded_list(submitted.get("next")),
-                    "hypothesis": str(submitted.get("hypothesis", ""))[:500] or None,
-                    "outcome": str(submitted.get("outcome", ""))[:100] or None,
-                    "lifecycle": args.event,
-                },
+                data,
                 evidence=_bounded_list(submitted.get("evidence")),
             )
             payload = {"godmode": "checkpoint", "stored": True,
@@ -1017,6 +1063,22 @@ def main(argv: list[str] | None = None) -> int:
             _broker(archive).consume(operation, str(submitted["capability"]))
             preview["allow"] = True
             preview["capability_consumed"] = True
+        elif _silenced_by_ask_only(policy, preview):
+            # The focused posture (field report 2026-08-27): an R2/R3 ask
+            # for a category the operator did not list is an allow - with
+            # a record, never silently. R4 and R5 never reach here.
+            preview["allow"] = True
+            preview["silenced_by"] = "ask_only"
+            try:
+                archive.append("action", str(preview.get("category") or "unclassified-mutation"), {
+                    "category": str(preview.get("category") or ""),
+                    "tier": str(preview.get("tier") or ""),
+                    "tool": str(host_field(submitted, "tool_name") or "")[:40],
+                    "gate": "allow",
+                    "silenced_by": "ask_only",
+                })
+            except GodmodeError:
+                record_hook_degradation(archive, current_host(), "ask-only-record-failed")
         else:
             preview["allow"] = False
             # Name a remedy the reader can actually perform - and name the one

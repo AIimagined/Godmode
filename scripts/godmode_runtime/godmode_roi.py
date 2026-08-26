@@ -52,6 +52,7 @@ travel outward.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from .godmode_chronicle import Chronicle
@@ -82,6 +83,42 @@ CAUSAL_DENYLIST = ("saved", "prevented", "avoided", "earned", "roi of")
 OBSERVE_PROMOTION_THRESHOLD = 3
 
 _WOULD_HAVE_TIERS = ("r2", "r3", "r4", "r5")
+
+# The categories an `ask_only` proposal always keeps: the ones whose
+# operation cannot be undone by the next command. Field report 2026-08-27:
+# in one observed session these were 13 of 304 asks, and they sat in the
+# same bucket as 137 inline interpreter runs. Any category that produced
+# an R4/R5 event joins them in the proposal; nothing else does.
+IRREVERSIBLE_CATEGORIES: tuple[str, ...] = (
+    "worktree-discard", "git-history-or-remote",
+    "release-or-external-write", "process-control",
+)
+_SILENCEABLE_TIERS = frozenset({"R2", "R3"})
+
+
+def _tune(by_category: dict[str, int],
+          tiers_by_category: dict[str, set[str]]) -> dict[str, Any] | None:
+    """Propose an `ask_only` list from what was observed. Never installed:
+    the operator writes the key by hand, and the proposal says so."""
+    if not by_category:
+        return None
+    keep = set(IRREVERSIBLE_CATEGORIES)
+    for category, tiers in tiers_by_category.items():
+        if tiers - _SILENCEABLE_TIERS:
+            keep.add(category)
+    kept = sum(n for c, n in by_category.items() if c in keep)
+    silenced = {c: n for c, n in sorted(by_category.items()) if c not in keep}
+    ask_only = sorted(keep)
+    return {
+        "ask_only": ask_only,
+        "asks_kept": kept,
+        "asks_silenced": sum(silenced.values()),
+        "silenced_by_category": silenced,
+        "policy": {"ask_only": ask_only},
+        "note": ("proposal only - write `ask_only` into "
+                 ".godmode-authorization-policy.json by hand to adopt it; R4 "
+                 "still asks and R5 still denies whatever the list says"),
+    }
 
 # `basis` names every counted record so a number can be checked, not
 # believed - bounded so a long-lived archive cannot make the report itself
@@ -326,6 +363,7 @@ def roi_digest(archive: Chronicle, sessions: int | None = None) -> dict[str, Any
     would_have_denied = 0
     would_have_asked = 0
     by_category: dict[str, int] = {}
+    tiers_by_category: dict[str, set[str]] = {}
     basis: list[str] = []
 
     def _cite(record: dict[str, Any]) -> None:
@@ -342,6 +380,7 @@ def roi_digest(archive: Chronicle, sessions: int | None = None) -> dict[str, Any
             continue
         category = str(data.get("category") or "unclassified-mutation")[:80]
         by_category[category] = by_category.get(category, 0) + 1
+        tiers_by_category.setdefault(category, set()).add(str(data.get("tier") or ""))
         if data.get("would_have") == "ask":
             would_have_asked += 1
         else:
@@ -353,6 +392,7 @@ def roi_digest(archive: Chronicle, sessions: int | None = None) -> dict[str, Any
         "would_have_asked": would_have_asked,
         "by_category": dict(sorted(by_category.items())),
         "basis": basis,
+        "tune": _tune(by_category, tiers_by_category),
     }
 
 
@@ -418,6 +458,14 @@ def render_digest(digest: dict[str, Any]) -> str:
         "not what would otherwise have happened to it or because of it."
     )
     lines.append("")
+    tune = digest.get("tune")
+    if tune:
+        lines.append(
+            f"Tune (proposal, not installed): ask_only={tune['ask_only']} keeps "
+            f"{tune['asks_kept']} of these asks and silences {tune['asks_silenced']}; "
+            "R4 still asks, R5 still denies. Adopt by writing "
+            f"{json.dumps(tune['policy'])} into .godmode-authorization-policy.json.")
+        lines.append("")
     lines.append("Basis: " + (", ".join(digest["basis"]) if digest["basis"] else "(none)"))
 
     return "\n".join(lines) + "\n"

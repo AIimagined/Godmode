@@ -4001,6 +4001,20 @@ class CapabilityBroker:
             ):
                 raise AuthorizationError("approval_required must be a list of category names")
             policy["approval_required"] = tuple(approval)
+        # `ask_only` (field report 2026-08-27): the focused posture. The
+        # categories that keep asking; every other R2/R3 ask becomes an
+        # allow with an `action` record naming the silence. R4 still asks
+        # and R5 still denies whatever the list says - the list narrows
+        # attention, it never lowers the ceiling. A loosening, so it is
+        # written by hand, never by a profile; `roi --digest` proposes the
+        # list from the observed records and states what it keeps.
+        ask_only = raw.get("ask_only")
+        if ask_only is not None:
+            if not isinstance(ask_only, list) or not all(
+                isinstance(name, str) for name in ask_only
+            ):
+                raise AuthorizationError("ask_only must be a list of category names")
+            policy["ask_only"] = tuple(ask_only)
         # U-E7 observe mode: a LOOSENING of enforcement (every deny/ask
         # becomes an advisory - see `hooks/godmode_session_hook.py`'s
         # `_apply_observe_mode`), so this is the one key in this file that
