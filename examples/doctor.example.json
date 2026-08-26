@@ -1,0 +1,8 @@
+{
+  "name": "doctor",
+  "about": "Health of the archive and the project's baseline, with every issue named.",
+  "setup": [["init"]],
+  "command": ["doctor"],
+  "expect_keys": ["healthy", "issues", "project", "archive"],
+  "expect_exit": 0
+}

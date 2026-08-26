@@ -1,0 +1,7 @@
+{
+  "name": "init",
+  "about": "Initialise the private archive for a project; nothing tracked is written.",
+  "command": ["init"],
+  "expect_keys": ["initialized", "identity", "next"],
+  "expect_exit": 0
+}

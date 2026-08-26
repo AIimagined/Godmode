@@ -1,0 +1,8 @@
+{
+  "name": "quality",
+  "about": "Every quality finding worst-first; an empty project is clean and exits 0.",
+  "setup": [["init"]],
+  "command": ["quality"],
+  "expect_keys": ["findings", "counts", "verdict", "remediation"],
+  "expect_exit": 0
+}
