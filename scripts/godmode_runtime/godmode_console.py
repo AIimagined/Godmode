@@ -91,6 +91,12 @@ from .godmode_removal import REQUIRED_FIELDS as REMOVAL_FIELDS
 from .godmode_report import completion_report, render_markdown
 from .godmode_docslint import lint_docs
 from .godmode_quality import quality_report, render_editor, render_sarif
+from .godmode_examples import check_examples, load_examples
+
+# The plugin's own root: scripts/godmode_runtime/godmode_console.py -> two
+# up. Used for artefacts that ship WITH the plugin (the example corpus,
+# the ladder) as opposed to anything under the operator's project.
+_PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 from .godmode_trust import scan_agent_configuration
 from .godmode_obligations import review_obligations
 from .godmode_atlas import speculative_seams, unfollowed_dependents
@@ -1147,6 +1153,24 @@ def cmd_quality(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     if fmt == "sarif":
         return CommandResult(render_sarif(report, RUNTIME_VERSION), exit_code=exit_code)
     return CommandResult(report, exit_code=exit_code)
+
+
+def cmd_examples(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    # C-24. The corpus lives with the plugin, not the project: an example
+    # is a claim about what godmode returns, so it is checked against a
+    # throwaway project rather than whichever one the reader is standing in.
+    corpus = Path(args.corpus) if args.corpus else _PLUGIN_ROOT / "examples"
+    if not args.check:
+        examples = load_examples(corpus)
+        return CommandResult({
+            "corpus": str(corpus),
+            "examples": [{"name": e["name"], "command": e["command"],
+                          "about": e.get("about", "")} for e in examples],
+            "count": len(examples),
+        })
+    report = check_examples(corpus)
+    report["corpus"] = str(corpus)
+    return CommandResult(report, exit_code=1 if report["verdict"] == "stale" else 0)
 
 
 def cmd_forecast(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -3266,10 +3290,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"Godmode {RUNTIME_VERSION}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser(
+    guide_parser = sub.add_parser(
         "guide",
         help="One-page orientation: what godmode does, the five day-one commands, "
              "and when the password matters")
+    guide_parser.add_argument(
+        "--tier", type=int, choices=(1, 2, 3, 4),
+        help="C-61: print one tier of docs/LADDER.md instead of the orientation page")
 
     init_parser = sub.add_parser("init", help="Initialize the private local archive")
     init_parser.add_argument("--roles", action="store_true",
@@ -3673,6 +3700,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="editor: one `path:line: severity: message` per line; "
              "sarif: a SARIF 2.1.0 document")
     quality_parser.set_defaults(handler=cmd_quality)
+
+    examples_parser = sub.add_parser(
+        "examples",
+        help="The worked-example corpus; --check reproduces every example "
+             "against the real console in a throwaway project")
+    examples_parser.add_argument("--check", action="store_true")
+    examples_parser.add_argument("--corpus", help="Directory of *.example.json (default: the plugin's)")
+    examples_parser.set_defaults(handler=cmd_examples)
 
     forecast_parser = sub.add_parser(
         "forecast", help="What an operation would classify as, plus prior precedent")
@@ -4631,7 +4666,19 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(lifted + raw)
     if args.command == "guide":
-        print(GUIDE_TEXT, end="")
+        tier = getattr(args, "tier", None)
+        if tier is None:
+            print(GUIDE_TEXT, end="")
+            return 0
+        # C-61: one tier at a time, so the day-one reader is never handed
+        # the fleet tier by accident. The doc is the authority; this only
+        # cuts it at the tier headings.
+        ladder = (_PLUGIN_ROOT / "docs" / "LADDER.md").read_text(encoding="utf-8")
+        parts = re.split(r"^(?=## Tier \d\b)", ladder, flags=re.M)
+        section = next((p for p in parts if p.startswith(f"## Tier {tier}")), None)
+        if section is None:
+            parser.error(f"docs/LADDER.md has no `## Tier {tier}` section")
+        print(section.rstrip() + "\n", end="")
         return 0
     if hasattr(args, "token_budget") and not 200 <= args.token_budget <= 10_000:
         parser.error("--token-budget must be between 200 and 10000")

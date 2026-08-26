@@ -247,11 +247,16 @@
       "status": "built"
     },
     {
-      "guard": [],
+      "guard": [
+        "test:tests/test_examples_corpus.py"
+      ],
       "id": "C-24",
-      "impl": [],
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_examples.py",
+        "file:examples/doctor.example.json"
+      ],
       "statement": "Worked example corpora as first-class reproducible fixtures.",
-      "status": "unbuilt"
+      "status": "built"
     },
     {
       "guard": [
@@ -638,11 +643,16 @@
       "status": "partial"
     },
     {
-      "guard": [],
+      "guard": [
+        "test:tests/test_ladder_doc.py"
+      ],
       "id": "C-61",
-      "impl": [],
+      "impl": [
+        "file:docs/LADDER.md",
+        "file:scripts/godmode_runtime/godmode_console.py"
+      ],
       "statement": "Tiered difficulty ladder for worked onboarding material.",
-      "status": "unbuilt"
+      "status": "built"
     },
     {
       "guard": [],
