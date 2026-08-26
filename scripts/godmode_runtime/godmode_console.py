@@ -288,6 +288,55 @@ def _brief_line(payload: Any) -> str:
     return " | ".join(parts) or "(no scalar fields; use --json)"
 
 
+def _terse_text(payload: Any) -> str:
+    """C-11: action first, then the findings, then the brief line.
+
+    `--brief` leads with the verdict; this profile is for the reader who
+    wants to act. Line one is the next action - or the explicit statement
+    that there is none, because a missing line reads as "nothing to do"
+    without ever saying so. Then one line per finding, capped, with the
+    cap stated rather than silent. Nothing is computed here that `--json`
+    does not already carry.
+    """
+    if not isinstance(payload, dict):
+        return str(payload)[:200]
+    action = next(
+        (str(payload[key]) for key in _ACTIONS
+         if isinstance(payload.get(key), str) and payload[key].strip()),
+        "",
+    )
+    if not action:
+        pending = payload.get("next")
+        if isinstance(pending, list) and pending and isinstance(pending[0], str):
+            action = pending[0]
+    verdict = str(payload.get("verdict") or payload.get("state") or "").strip()
+    lines = [f"next: {action.strip()[:200]}" if action
+             else f"next: nothing - {verdict or 'no findings reported'}"]
+    items = next(
+        (payload[key] for key in _FINDING_LISTS
+         if isinstance(payload.get(key), list) and payload[key]),
+        [],
+    )
+    for item in items[:_TERSE_CAP]:
+        if isinstance(item, dict):
+            where = str(item.get("path") or item.get("file") or item.get("code") or "")
+            line = item.get("line")
+            text = str(item.get("message") or item.get("detail") or item.get("why")
+                       or item.get("reason") or item.get("summary") or "")
+            head = f"{where}:{line}" if where and line else where
+            lines.append(f"{head} {text}".strip()[:200])
+        else:
+            lines.append(str(item)[:200])
+    if len(items) > _TERSE_CAP:
+        lines.append(f"... {len(items) - _TERSE_CAP} more")
+    lines.append(_brief_line(payload))
+    return "\n".join(lines)
+
+
+_ACTIONS = ("next_action", "action", "remedy", "recommendation")
+_FINDING_LISTS = ("findings", "regressions", "issues", "missing", "advisories")
+_TERSE_CAP = 10
+
 # Fields worth leading with, counting, and closing on.
 _HEADLINE = ("verdict", "state", "grade", "class", "message", "error", "check")
 _COUNTS = ("passed", "count", "rules", "changed", "records", "adopted", "enforced", "total",
@@ -3211,6 +3260,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--json", action="store_true", help="Emit compact JSON")
     parser.add_argument("--brief", action="store_true",
                         help="Emit one human-readable line instead of JSON")
+    parser.add_argument("--terse", action="store_true",
+                        help="Action first: the next step on line one, then one line "
+                             "per finding, then the brief line")
     parser.add_argument("--version", action="version", version=f"Godmode {RUNTIME_VERSION}")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -4573,8 +4625,8 @@ def main(argv: list[str] | None = None) -> int:
     # suppresses use in the first place, so they are lifted out of wherever they
     # were written and position stops mattering.
     raw = list(sys.argv[1:] if argv is None else argv)
-    lifted = [flag for flag in ("--brief", "--json") if flag in raw]
-    raw = [token for token in raw if token not in ("--brief", "--json")]
+    lifted = [flag for flag in ("--brief", "--json", "--terse") if flag in raw]
+    raw = [token for token in raw if token not in ("--brief", "--json", "--terse")]
 
     parser = _build_parser()
     args = parser.parse_args(lifted + raw)
@@ -4630,6 +4682,9 @@ def _dispatch(args: argparse.Namespace, mode: str = "standard") -> int:
             }
         if getattr(args, "brief", False):
             print(_brief_line(result.payload))
+            return result.exit_code
+        if getattr(args, "terse", False):
+            print(_terse_text(result.payload))
             return result.exit_code
         if isinstance(result.payload, str):
             # A handler that has already rendered text - an editor-shaped

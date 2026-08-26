@@ -108,11 +108,15 @@
       "status": "unbuilt"
     },
     {
-      "guard": [],
+      "guard": [
+        "test:tests/test_terse_profile.py"
+      ],
       "id": "C-11",
-      "impl": [],
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_console.py"
+      ],
       "statement": "Terse action-first output profile.",
-      "status": "unbuilt"
+      "status": "built"
     },
     {
       "guard": [
