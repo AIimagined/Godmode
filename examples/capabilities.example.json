@@ -1,0 +1,8 @@
+{
+  "name": "capabilities",
+  "about": "Which controls this host enforces, and which claims rest on controls it lacks.",
+  "setup": [["init"]],
+  "command": ["capabilities"],
+  "expect_keys": ["controls", "host", "unavailable"],
+  "expect_exit": 0
+}
