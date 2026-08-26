@@ -160,9 +160,13 @@ class KnownBypassDisclosureTests(unittest.TestCase):
         self.assertIn("--no-verify", docs)
 
     def test_changelog_fragment_discloses_the_bypass(self) -> None:
-        fragment = (PLUGIN_ROOT / "changelog.d" / "cx4-githooks.added.md").read_text(
-            encoding="utf-8")
-        self.assertIn("--no-verify", fragment)
+        # The fragment lives in changelog.d/ until a release merges it into
+        # CHANGELOG.md; the disclosure must survive the merge, so whichever
+        # of the two holds it is the one read.
+        fragment_path = PLUGIN_ROOT / "changelog.d" / "cx4-githooks.added.md"
+        text = (fragment_path.read_text(encoding="utf-8") if fragment_path.exists()
+                else (PLUGIN_ROOT / "CHANGELOG.md").read_text(encoding="utf-8"))
+        self.assertIn("--no-verify", text)
 
 
 class InstallRefusalTests(unittest.TestCase):

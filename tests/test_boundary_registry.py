@@ -50,6 +50,10 @@ BOUNDARY_TESTS: dict[str, tuple[str, str]] = {
         "the host's UserPromptSubmit payload, through the hook process and "
         "into a real archive",
         "tests/test_request_hook.py"),
+    "session-end hook": (
+        "the host's SessionEnd payload (no summary, as the host sends it), "
+        "through the hook's main and into a real archive",
+        "tests/test_session_end_auto_checkpoint.py"),
 }
 
 # Surfaces with no boundary test, and why. Listed rather than omitted.
