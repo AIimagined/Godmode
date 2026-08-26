@@ -434,7 +434,11 @@ def _resume_digest(archive: Chronicle, project_root: Path,
     records = archive.read_events()
     digest: dict[str, Any] = {}
     checkpoints = [r for r in records if r["kind"] == "checkpoint"]
-    last_checkpoint_sequence = checkpoints[-1]["sequence"] if checkpoints else 0
+    # An automatic session-end checkpoint is dated, not authored: it must
+    # not hide an interruption captured moments before it. Only a written
+    # checkpoint counts as having covered what came before it.
+    authored = [r for r in checkpoints if not (r.get("data") or {}).get("auto")]
+    last_checkpoint_sequence = authored[-1]["sequence"] if authored else 0
     interruptions = [r for r in records
                      if r["kind"] == "action"
                      and r["subject"] == "interrupted-intent"]
