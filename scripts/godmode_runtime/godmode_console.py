@@ -90,6 +90,7 @@ from .godmode_minimality import (
 from .godmode_removal import REQUIRED_FIELDS as REMOVAL_FIELDS
 from .godmode_report import completion_report, render_markdown
 from .godmode_docslint import lint_docs
+from .godmode_quality import quality_report, render_editor, render_sarif
 from .godmode_trust import scan_agent_configuration
 from .godmode_obligations import review_obligations
 from .godmode_atlas import speculative_seams, unfollowed_dependents
@@ -1080,6 +1081,23 @@ def cmd_rollback_plan(args: argparse.Namespace, runtime: Runtime) -> CommandResu
     _require_archive(runtime)
     plan = rollback_plan(runtime.archive, Path(runtime.anchor.project_root))
     return CommandResult(plan, exit_code=0)
+
+
+def cmd_quality(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    # C-05. Aggregation only; every remedy is a proposal and nothing here
+    # writes. A `high` finding is a defect the reader must answer for, so
+    # it - and only it - reaches the exit status; the rest are questions.
+    report = quality_report(Path(runtime.anchor.project_root), runtime.archive)
+    exit_code = 1 if report["counts"]["high"] else 0
+    # C-63: the same findings in a shape an editor consumes. The exit
+    # status is the same in every format - a format is a view, not a
+    # verdict.
+    fmt = getattr(args, "format", "json")
+    if fmt == "editor":
+        return CommandResult(render_editor(report), exit_code=exit_code)
+    if fmt == "sarif":
+        return CommandResult(render_sarif(report, RUNTIME_VERSION), exit_code=exit_code)
+    return CommandResult(report, exit_code=exit_code)
 
 
 def cmd_forecast(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -3594,6 +3612,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "plan", help="The last green, what changed since, and how to return")
     rollback_show.set_defaults(handler=cmd_rollback_plan)
 
+    quality_parser = sub.add_parser(
+        "quality",
+        help="Every quality finding - docs, swallowed errors, minimality - "
+             "worst first, with a proposed remedy each; executes nothing")
+    quality_parser.add_argument(
+        "--format", choices=("json", "editor", "sarif"), default="json",
+        help="editor: one `path:line: severity: message` per line; "
+             "sarif: a SARIF 2.1.0 document")
+    quality_parser.set_defaults(handler=cmd_quality)
+
     forecast_parser = sub.add_parser(
         "forecast", help="What an operation would classify as, plus prior precedent")
     forecast_parser.add_argument("--operation", required=True)
@@ -4602,6 +4630,12 @@ def _dispatch(args: argparse.Namespace, mode: str = "standard") -> int:
             }
         if getattr(args, "brief", False):
             print(_brief_line(result.payload))
+            return result.exit_code
+        if isinstance(result.payload, str):
+            # A handler that has already rendered text - an editor-shaped
+            # listing, say - is printed as-is; JSON-encoding it would wrap
+            # every line in one quoted string no consumer could parse.
+            print(result.payload)
             return result.exit_code
         print(
             json.dumps(
