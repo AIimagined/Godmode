@@ -500,8 +500,13 @@ def upstream_verdicts(archive: Chronicle, items: list[str]) -> dict[str, Any]:
             unread.append(item)
             continue
         data = record.get("data") or {}
-        import_verdict = str(data.get("import_verdict", "")).lower()
-        behaviour_verdict = str(data.get("behaviour_verdict", "")).lower()
+        # The verdict is the leading token; what follows ("- different
+        # surface (postgres table)", "(FAISS dependency)") is the reason and
+        # is kept on the record, not judged here.
+        raw_import = str(data.get("import_verdict", "")).lower().strip()
+        leading = re.match(r"[a-z-]+", raw_import)
+        import_verdict = leading.group(0) if leading else raw_import
+        behaviour_verdict = str(data.get("behaviour_verdict", "")).lower().strip()
         problems: list[str] = []
         if import_verdict not in _IMPORT_VERDICTS:
             problems.append(

@@ -1786,6 +1786,20 @@ class StatusTruthTests(unittest.TestCase):
             self.assertNotIn("ghost-work", ids)
             self.assertEqual(left["phantoms_closed"], ["ghost-work"])
 
+    def test_an_obligation_closed_by_a_later_record_is_not_remaining(self) -> None:
+        from godmode_runtime.godmode_status import remaining
+
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            archive.append("obligation", "review-sources", {"status": "open", "value": "read them"})
+            archive.append("obligation", "review-sources", {"status": "closed", "value": "read"})
+            archive.append("obligation", "flip-identity", {"status": "open", "value": "flip"})
+            archive.append("obligation", "flip-identity", {"status": "retired", "value": "overtaken"})
+            archive.append("obligation", "still-open", {"status": "open", "value": "pending"})
+            left = remaining(archive, project)
+            ids = [entry["id"] for entry in left["remaining"] if entry["source"] == "obligation"]
+            self.assertEqual(ids, ["still-open"])
+
     def test_rendered_view_and_handover_derive_from_the_store(self) -> None:
         from godmode_runtime.godmode_status import handover, record_item, render_view
 
