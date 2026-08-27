@@ -243,16 +243,24 @@ def _session_obligations(anchor: Any, archive: Chronicle) -> dict[str, Any]:
             )
             summary = would_have_summary(archive)
             obligations["enforcement"]["would_have"] = summary
+            irreversible = summary["r4"] + summary["r5"]
+            asks = summary["r2"] + summary["r3"]
             if summary["total"]:
+                # Field report 2026-08-28: a brief that listed r2..r5 counts
+                # was read as "340 refused ops, none a real risk". Lead with
+                # the tier that means risk, zero stated; name the rest as the
+                # friction it is, with the posture that trims it.
                 notice += (
-                    f" This trial's would-have events so far: r5={summary['r5']} "
-                    f"r4={summary['r4']} r3={summary['r3']} r2={summary['r2']}"
-                    + (f" (top: {summary['top']})" if summary["top"] else "")
-                    + " - `godmode observe --report` lists them."
+                    f" This trial so far: {irreversible} would-have-denied at R4/R5"
+                    f" (irreversible: r5={summary['r5']} r4={summary['r4']})"
+                    f"{'' if irreversible else ' - none'}; {asks} would-have-asked at R2/R3"
+                    f" (r3={summary['r3']} r2={summary['r2']} - friction, not risk;"
+                    " `godmode roi --digest` proposes an ask_only posture that trims it)"
+                    + (f"; top: {summary['top']}" if summary["top"] else "")
+                    + ". `godmode observe --report` lists them."
                 )
             else:
                 notice += " There are no would-have events recorded yet this trial."
-            irreversible = summary["r4"] + summary["r5"]
             if irreversible >= OBSERVE_PROMOTION_THRESHOLD:
                 notice += (
                     f" PROMOTE? Under enforce mode, {irreversible} of these "
@@ -368,9 +376,31 @@ def _capture_interrupted_intent(archive: Chronicle) -> None:
 STALE_CHECKPOINT_DAYS = 7
 
 
-def checkpoint_age(record: dict[str, Any], *, now: Any = None) -> tuple[int | None, str | None]:
+# Field report 2026-08-28: projects that keep their own state document. The
+# first that exists is named in the brief so a stale checkpoint is never
+# the only pointer. Relative POSIX paths, checked in this order.
+RESUME_DOC_CANDIDATES = (
+    "docs/STATE.md", "STATE.md", "docs/HANDOVER.md", "HANDOVER.md",
+    "docs/HANDOFF.md", "HANDOFF.md", "docs/RESUME.md", "RESUME.md",
+    "docs/STATUS.md", "STATUS.md",
+)
+
+
+def project_resume_doc(project_root: Path) -> str | None:
+    """The project's own resume document, if it keeps one - the first of
+    RESUME_DOC_CANDIDATES that exists, as a relative POSIX path."""
+    for candidate in RESUME_DOC_CANDIDATES:
+        if (project_root / candidate).is_file():
+            return candidate
+    return None
+
+
+def checkpoint_age(record: dict[str, Any], *, now: Any = None,
+                   resume_doc: str | None = None) -> tuple[int | None, str | None]:
     """(whole days since the record was written, note) - the note only past
-    STALE_CHECKPOINT_DAYS, and None for a record with no readable time."""
+    STALE_CHECKPOINT_DAYS, and None for a record with no readable time.
+    `resume_doc` names the project's own state document when it has one,
+    so the note can say which file to read first."""
     from datetime import datetime, timezone
 
     raw = record.get("recorded_at")
@@ -386,9 +416,14 @@ def checkpoint_age(record: dict[str, Any], *, now: Any = None) -> tuple[int | No
     days = max(0, int((current - written).total_seconds() // 86_400))
     note = None
     if days > STALE_CHECKPOINT_DAYS:
-        note = (f"this checkpoint is {days} days old; prefer the project's own "
-                "state document if it is newer, and write a checkpoint as part "
-                "of the next handover")
+        if resume_doc:
+            note = (f"this checkpoint is {days} days old; {resume_doc} is the "
+                    "project's own state document - read it first, and write a "
+                    "checkpoint as part of the next handover")
+        else:
+            note = (f"this checkpoint is {days} days old; prefer the project's own "
+                    "state document if it is newer, and write a checkpoint as part "
+                    "of the next handover")
     return days, note
 
 
@@ -457,7 +492,10 @@ def _resume_digest(archive: Chronicle, project_root: Path,
             "status": str((checkpoint.get("data") or {}).get("status", "")),
             "sequence": checkpoint["sequence"],
         }
-        age_days, age_note = checkpoint_age(checkpoint)
+        resume_doc = project_resume_doc(project_root)
+        if resume_doc:
+            entry["resume_doc"] = resume_doc
+        age_days, age_note = checkpoint_age(checkpoint, resume_doc=resume_doc)
         if age_days is not None:
             entry["age_days"] = age_days
         if age_note:

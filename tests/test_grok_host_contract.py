@@ -240,6 +240,39 @@ class ClaudeRegressionLockTests(unittest.TestCase):
 
 
 class CodexShellCommandTests(unittest.TestCase):
+    # An UNMODIFIED Codex PreToolUse payload, per learn.chatgpt.com/docs/hooks:
+    # Claude's tool name, plus Codex's own `turn_id`/`tool_use_id`. Codex
+    # exports PLUGIN_ROOT (+ the CLAUDE_PLUGIN_ROOT alias) and nothing else
+    # this detector knows. No GODMODE_HOST - the 2026-08-28 field report was
+    # that only the override made the gate answer as Codex.
+    _CODEX_ENV = {"PLUGIN_ROOT": "/tmp/plugins/godmode",
+                  "CLAUDE_PLUGIN_ROOT": "/tmp/plugins/godmode"}
+
+    def _codex_bash(self, command: str) -> dict:
+        return {"session_id": "s1", "cwd": "/w", "hook_event_name": "PreToolUse",
+                "permission_mode": "default", "turn_id": "01a0", "tool_name": "Bash",
+                "tool_use_id": "call_1", "tool_input": {"command": command}}
+
+    def test_an_unmodified_codex_bash_payload_never_yields_ask(self) -> None:
+        # Codex does not support "ask": it marks the hook failed and runs the
+        # command. So an R3/R4 verdict must land as "deny" here, the way the
+        # Grok contract already folds it.
+        for command in ("rm -rf build", "git add -A"):
+            with _hosted() as (project, state):
+                done = _run(self._codex_bash(command), project, state,
+                            extra_env=self._CODEX_ENV)
+            body = json.loads(done.stdout)
+            self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "deny",
+                             (command, body))
+
+    def test_turn_id_alone_is_enough_to_deny_rather_than_ask(self) -> None:
+        # Even without the env markers (a hook launched some other way), the
+        # payload's own Codex extension decides.
+        with _hosted() as (project, state):
+            done = _run(self._codex_bash("rm -rf build"), project, state)
+        body = json.loads(done.stdout)
+        self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "deny", body)
+
     def test_a_force_push_reaches_r5(self) -> None:
         with _hosted() as (project, state):
             done = _run(

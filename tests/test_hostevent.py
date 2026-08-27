@@ -100,6 +100,45 @@ class HostDetectionChainTests(unittest.TestCase):
         with mock.patch.dict(os.environ, environment, clear=True):
             self.assertEqual(he.detect_host({}), "claude")
 
+    def test_codex_plugin_root_env_reads_as_codex_for_a_claude_shaped_payload(self) -> None:
+        # Codex field report 2026-08-28: Codex sends `tool_name: "Bash"` and
+        # sets none of GROK_AGENT / CLAUDE_CODE_ENTRYPOINT, so the shape
+        # step called it Claude and R3/R4 came back "ask" - which Codex
+        # "marks as failed, reports the error, and continues the tool call"
+        # (learn.chatgpt.com/docs/hooks#pretooluse). Codex's own markers:
+        # `PLUGIN_ROOT`/`PLUGIN_DATA` in the env ("Codex-specific extension").
+        from godmode_runtime.godmode_anchor import current_host
+        environment = {k: v for k, v in os.environ.items()
+                       if k not in ("GODMODE_HOST", "GROK_AGENT", "CLAUDE_CODE_ENTRYPOINT",
+                                    "COPILOT_PLUGIN_DATA", "CLAUDE_PLUGIN_ROOT")}
+        environment["PLUGIN_ROOT"] = "/tmp/plugins/godmode"
+        environment["CLAUDE_PLUGIN_ROOT"] = "/tmp/plugins/godmode"  # Codex's alias
+        with mock.patch.dict(os.environ, environment, clear=True):
+            self.assertEqual(
+                he.detect_host({"hook_event_name": "PreToolUse", "tool_name": "Bash"}),
+                "codex")
+            self.assertEqual(current_host(), "codex")
+
+    def test_codex_turn_id_in_a_claude_shaped_payload_reads_as_codex(self) -> None:
+        # `turn_id` is documented as a Codex-specific extension of the
+        # PreToolUse input; no other host's payload carries it.
+        environment = {k: v for k, v in os.environ.items()
+                       if k not in ("GODMODE_HOST", "GROK_AGENT", "CLAUDE_CODE_ENTRYPOINT",
+                                    "COPILOT_PLUGIN_DATA", "CLAUDE_PLUGIN_ROOT", "PLUGIN_ROOT")}
+        with mock.patch.dict(os.environ, environment, clear=True):
+            self.assertEqual(
+                he.detect_host({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                                "turn_id": "01a0", "tool_use_id": "call_1",
+                                "tool_input": {"command": "rm -rf build"}}),
+                "codex")
+
+    def test_a_cursor_shaped_payload_stays_cursor_even_with_plugin_root_set(self) -> None:
+        environment = {k: v for k, v in os.environ.items()
+                       if k not in ("GODMODE_HOST", "GROK_AGENT", "CLAUDE_CODE_ENTRYPOINT")}
+        environment["PLUGIN_ROOT"] = "/tmp/plugins/godmode"
+        with mock.patch.dict(os.environ, environment, clear=True):
+            self.assertEqual(he.detect_host({"hook_event_name": "preToolUse"}), "cursor")
+
     def test_payload_shape_is_the_last_resort(self) -> None:
         environment = {k: v for k, v in os.environ.items()
                        if k not in ("GODMODE_HOST", "GROK_AGENT", "CLAUDE_CODE_ENTRYPOINT")}
