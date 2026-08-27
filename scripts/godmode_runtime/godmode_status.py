@@ -417,12 +417,16 @@ def remaining(
             items_left.append({"source": "status", "id": name,
                                "detail": f"{entry['title'] or name} is {entry['state']}"})
 
-    obligations = [
-        record for record in archive.select(kind="obligation", limit=500)
-    ]
+    # The latest record per subject is the obligation's state: a later
+    # `closed` or `retired` record supersedes the original `open` one, so
+    # closing through `remember --status closed` actually closes.
+    latest_obligation: dict[str, dict[str, Any]] = {}
+    for record in archive.select(kind="obligation", limit=500):
+        latest_obligation[record["subject"]] = record
     consulted.append("open obligations")
-    for record in obligations:
-        if str(record["data"].get("status", "open")).lower() not in ("closed", "met", "done"):
+    for record in latest_obligation.values():
+        status = str(record["data"].get("status", "open")).lower()
+        if status not in ("closed", "met", "done", "retired"):
             items_left.append({"source": "obligation", "id": record["subject"],
                                "detail": str(record["data"].get("value", ""))[:160]})
 

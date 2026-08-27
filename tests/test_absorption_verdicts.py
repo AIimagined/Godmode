@@ -69,6 +69,24 @@ class UpstreamVerdictTests(unittest.TestCase):
             report = upstream_verdicts(archive, ["0.7.108-fix-audio-mux"])
         self.assertEqual(report["verdict"], "absorbed")
 
+    def test_a_qualified_import_verdict_is_read_by_its_leading_token(self) -> None:
+        # The sweep writes the reason beside the verdict - "n-a - different
+        # surface (postgres table)", "skip (FAISS dependency)", "adopt -
+        # candidate, not built". The verdict is the leading token; the rest
+        # is why, and must not turn a full verdict into a half one.
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            for item, verdict in (("a", "n-a - different surface (postgres table)"),
+                                  ("b", "skip (FAISS/BGE dependencies)"),
+                                  ("c", "adopt - candidate, not built")):
+                archive.append("decision", f"absorb:{item}",
+                               {"import_verdict": verdict,
+                                "behaviour_verdict": "unverified"}, evidence=[])
+            report = upstream_verdicts(archive, ["a", "b", "c"])
+        self.assertEqual(report["verdict"], "absorbed", report["half_verdicted"])
+        self.assertEqual([e["import_verdict"] for e in report["verdicted"]],
+                         ["n-a", "skip", "adopt"])
+
     def test_an_honest_unverified_needs_no_proof(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
