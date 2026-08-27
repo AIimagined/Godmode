@@ -888,8 +888,11 @@ class LatencySelfCheckTests(unittest.TestCase):
         self.assertEqual(FAIL_OPEN_HOSTS, frozenset({"grok", "gemini", "cursor"}))
 
     def test_pretool_timeout_ms_reads_the_real_shipped_manifests(self) -> None:
-        self.assertEqual(_pretool_timeout_ms("claude"), 3000)
-        self.assertEqual(_pretool_timeout_ms("codex"), 3000)
+        # Claude, Codex and Grok read the one shared file, whose PreToolUse
+        # bound is the generous 8 s Grok's fail-open timeout needs
+        # (2026-08-28); Cursor and Gemini keep their own 3 s files.
+        self.assertEqual(_pretool_timeout_ms("claude"), 8000)
+        self.assertEqual(_pretool_timeout_ms("codex"), 8000)
         self.assertEqual(_pretool_timeout_ms("grok"), 8000)
         self.assertEqual(_pretool_timeout_ms("gemini"), 3000)
         self.assertEqual(_pretool_timeout_ms("cursor"), 3000)
@@ -901,10 +904,10 @@ class LatencySelfCheckTests(unittest.TestCase):
             report = run_probe(project, archive, "claude")
             self.assertEqual(report["state"], "HARD")
             self.assertIsInstance(report["latency_ms"], float)
-            self.assertEqual(report["timeout_budget_ms"], 3000)
+            self.assertEqual(report["timeout_budget_ms"], 8000)
             record = last_latency_check(archive, "claude")
             self.assertIsNotNone(record)
-            self.assertEqual(record["data"]["timeout_budget_ms"], 3000)
+            self.assertEqual(record["data"]["timeout_budget_ms"], 8000)
 
     def test_a_tiny_timeout_budget_trips_the_latency_warning(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
