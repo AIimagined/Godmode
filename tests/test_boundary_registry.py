@@ -54,6 +54,10 @@ BOUNDARY_TESTS: dict[str, tuple[str, str]] = {
         "the host's SessionEnd payload (no summary, as the host sends it), "
         "through the hook's main and into a real archive",
         "tests/test_session_end_auto_checkpoint.py"),
+    "post-edit hook": (
+        "the host's PostToolUse payload for Write/Edit, through the hook "
+        "process, with the policy both off and on",
+        "tests/test_post_edit_hook.py"),
 }
 
 # Surfaces with no boundary test, and why. Listed rather than omitted.
@@ -123,6 +127,7 @@ class NewSurfaceTests(unittest.TestCase):
             "precompact": "pre-compact hook",
             "sessionend": "session-end hook",
             "stop": "session-end hook",
+            "posttooluse": "post-edit hook",
         }
         unaccounted = []
         for event in sorted(events):
