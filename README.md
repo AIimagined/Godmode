@@ -321,6 +321,14 @@ $ godmode extensions list
 $ godmode claim --scan
 ```
 
+Per-edit feedback is opt-in. With `"post_edit_quality": true` in
+`.godmode-authorization-policy.json`, every Write or Edit runs the same
+detectors over the one file just written and returns the findings as an
+advisory; without it the hook exits at once with nothing to say. The
+structure index (`context structure`) now carries who calls what across
+files, names only, and its outline shows each file's dependencies as
+`-> other.py`.
+
 `experiment holdout` takes observations from two arms and one metric and
 computes the verdict from medians: `treatment`, `control`,
 `indistinguishable` within epsilon, or `underpowered` below two

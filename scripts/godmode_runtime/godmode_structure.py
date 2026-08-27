@@ -81,11 +81,16 @@ def _python_symbols(source: str) -> dict[str, list[str]] | None:
     classes: list[str] = []
     functions: list[str] = []
     imports: list[str] = []
+    calls: dict[str, list[str]] = {}
     for node in tree.body:
         if isinstance(node, ast.ClassDef):
             classes.append(node.name)
+            for item in node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    calls[f"{node.name}.{item.name}"] = _callee_names(item)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             functions.append(node.name)
+            calls[node.name] = _callee_names(node)
         elif isinstance(node, ast.Import):
             imports.extend(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
@@ -94,7 +99,45 @@ def _python_symbols(source: str) -> dict[str, list[str]] | None:
         "classes": sorted(classes),
         "functions": sorted(functions),
         "imports": sorted(set(imports)),
+        # L2 (absorbed 2026-08-27): per definition, the names it calls.
+        # Names only - a callee is `f` or the `attr` of `x.attr(...)`, never
+        # an argument or a body. Resolution to files happens at index time,
+        # where every file's definitions are known.
+        "calls": {name: callees for name, callees in sorted(calls.items())},
     }
+
+
+def _callee_names(node: ast.AST) -> list[str]:
+    names: set[str] = set()
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Call):
+            continue
+        target = child.func
+        if isinstance(target, ast.Name):
+            names.add(target.id)
+        elif isinstance(target, ast.Attribute):
+            names.add(target.attr)
+    return sorted(names)
+
+
+def _resolve_dependencies(files: dict[str, dict[str, Any]]) -> int:
+    """Fill each entry's `dependencies`: the other indexed files that define
+    a name it calls. Returns the edge count. Recomputed on every build from
+    the whole index, so a reused (unchanged) entry still sees a dependency
+    that moved files."""
+    defined: dict[str, set[str]] = {}
+    for relative, entry in files.items():
+        for name in list(entry.get("classes", ())) + list(entry.get("functions", ())):
+            defined.setdefault(name, set()).add(relative)
+    edges = 0
+    for relative, entry in files.items():
+        targets: set[str] = set()
+        for callees in (entry.get("calls") or {}).values():
+            for callee in callees:
+                targets.update(f for f in defined.get(callee, ()) if f != relative)
+        entry["dependencies"] = sorted(targets)
+        edges += len(targets)
+    return edges
 
 
 def build_structure_index(archive: Chronicle, project: Path) -> dict[str, Any]:
@@ -139,6 +182,7 @@ def build_structure_index(archive: Chronicle, project: Path) -> dict[str, Any]:
                         entry.update(symbols)
             files[relative] = entry
             indexed += 1
+    edges = _resolve_dependencies(files)
     payload = {"files": files}
     try:
         _index_path(archive).write_text(
@@ -154,6 +198,7 @@ def build_structure_index(archive: Chronicle, project: Path) -> dict[str, Any]:
     return {
         "files": len(files),
         "indexed": indexed,
+        "edges": edges,
         "reused": reused,
         "skipped_over_file_cap": skipped_over_cap,
         "skipped_oversized_parse": skipped_oversize,
@@ -175,6 +220,8 @@ def structure_outline(archive: Chronicle, limit_lines: int = 200) -> str:
             parts.append("functions: " + ", ".join(entry["functions"]))
         if entry.get("imports"):
             parts.append("imports: " + ", ".join(entry["imports"]))
+        if entry.get("dependencies"):
+            parts.append("-> " + ", ".join(entry["dependencies"]))
         lines.append(f"{relative}" + (f"  ({'; '.join(parts)})" if parts else ""))
     shown = lines[:max(1, limit_lines - 1)]
     rendered = shown[:]
