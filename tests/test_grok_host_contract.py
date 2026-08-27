@@ -424,13 +424,19 @@ class LiveGrokHarnessShapeTests(unittest.TestCase):
         """The drift guard whose absence let this happen: the manifest and
         the adapter are two authorities over one list, so the list is read
         from the manifest itself and every entry must resolve."""
+        # Grok discovers the SHARED `hooks/hooks.json` (its own 09-plugins.md
+        # lists only that path), so the matcher it actually sends is the
+        # shared file's union, not a dedicated Grok manifest's.
         manifest = json.loads(
-            (PLUGIN_ROOT / ".grok-plugin" / "hooks.json").read_text(encoding="utf-8"))
+            (PLUGIN_ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
         matchers = [block["matcher"]
                     for blocks in manifest["hooks"].values()
                     for block in blocks if "matcher" in block]
         self.assertTrue(matchers, "the Grok manifest declares no matcher")
         names = sorted({n for m in matchers for n in m.split("|") if n})
+        # The shared file also carries Codex's tool names; Grok never sends
+        # those, so they are outside what THIS adapter must resolve.
+        names = [n for n in names if n not in he.CODEX_TOOLS]
         self.assertGreaterEqual(len(names), 9, names)
         payload_for = {
             "Bash": {"command": "ls"}, "PowerShell": {"command": "ls"},

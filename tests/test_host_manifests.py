@@ -101,52 +101,71 @@ class CodexManifestTests(unittest.TestCase):
             self.assertIn(tool, matcher)
 
 
-class GrokManifestTests(unittest.TestCase):
-    def test_grok_entries_are_a_single_string_command_never_an_args_array(self) -> None:
-        with _built_project() as project:
-            manifest = json.loads(
-                (project / ".grok-plugin" / "hooks.json").read_text(encoding="utf-8"))
-        for event in manifest["hooks"].values():
-            for entry in event[0]["hooks"]:
-                self.assertNotIn("args", entry, entry)
-                self.assertIsInstance(entry["command"], str)
-                self.assertIn("commandWindows", entry)
-                self.assertIsInstance(entry["commandWindows"], str)
+class SharedHooksFileTests(unittest.TestCase):
+    """2026-08-28 field reports from Codex and Grok, both on 0.3.0: every
+    host discovers the SAME default `hooks/hooks.json`, and only Claude
+    reads a `command` + `args` pair. Grok resolved the bare `"python"` token
+    against the file's own directory (`command not found: ...\\hooks\\python`)
+    and failed every hook open; Codex refused the shape and listed zero
+    hooks. Grok's `10-hooks.md`: `command` is "Path to executable (relative
+    to the JSON file) or inline shell command", with `${VAR}` expansion and
+    the `CLAUDE_PLUGIN_ROOT` alias set; Codex's plugin guide: one command
+    string, `${CLAUDE_PLUGIN_ROOT}` as a compatibility alias; Claude's hooks
+    reference: no `args` means shell form with `${CLAUDE_PLUGIN_ROOT}`
+    substituted. One shell-form string therefore serves all three."""
 
-    def test_the_pretooluse_matcher_is_the_plans_exact_union_string(self) -> None:
-        with _built_project() as project:
-            manifest = json.loads(
-                (project / ".grok-plugin" / "hooks.json").read_text(encoding="utf-8"))
-        matcher = manifest["hooks"]["PreToolUse"][0]["matcher"]
-        self.assertEqual(
-            matcher,
-            "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|"
-            "run_terminal_command|search_replace|write",
-        )
+    def _shared(self, project: Path) -> dict:
+        return json.loads((project / "hooks" / "hooks.json").read_text(encoding="utf-8"))
 
-    def test_precompact_and_sessionend_are_registered(self) -> None:
+    def test_every_entry_is_one_shell_command_string_never_an_args_array(self) -> None:
         with _built_project() as project:
-            manifest = json.loads(
-                (project / ".grok-plugin" / "hooks.json").read_text(encoding="utf-8"))
-        self.assertIn("PreCompact", manifest["hooks"])
-        self.assertIn("SessionEnd", manifest["hooks"])
-        # The script this manifest wires to must actually accept these two
-        # CLI subcommands - not just have the event key present.
-        args_or_command = json.dumps(manifest["hooks"]["PreCompact"])
-        self.assertIn("pre-compact", args_or_command)
-        args_or_command = json.dumps(manifest["hooks"]["SessionEnd"])
-        self.assertIn("session-end", args_or_command)
+            manifest = self._shared(project)
+        for event, groups in manifest["hooks"].items():
+            for group in groups:
+                for entry in group["hooks"]:
+                    self.assertNotIn("args", entry, (event, entry))
+                    self.assertIsInstance(entry["command"], str, event)
+                    self.assertTrue(
+                        entry["command"].startswith('python "${CLAUDE_PLUGIN_ROOT}/hooks/'),
+                        (event, entry["command"]))
+
+    def test_the_pretooluse_matcher_unions_every_host_tool_the_adapter_recognises(self) -> None:
+        with _built_project() as project:
+            manifest = self._shared(project)
+        matcher = [b["matcher"] for b in manifest["hooks"]["PreToolUse"] if "matcher" in b][0]
+        names = set(matcher.split("|"))
+        for tool in ("Bash", "shell_command", "apply_patch", "functions.exec",
+                     "run_terminal_command", "search_replace", "write"):
+            self.assertIn(tool, names, tool)
+
+    def test_session_end_fits_the_tightest_host_budget(self) -> None:
+        # Codex's field report: SessionEnd permits at most 3 seconds.
+        with _built_project() as project:
+            manifest = self._shared(project)
+        timeout = manifest["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"]
+        self.assertLessEqual(timeout, 3)
 
     def test_every_timeout_is_explicit_and_bounded(self) -> None:
         with _built_project() as project:
-            manifest = json.loads(
-                (project / ".grok-plugin" / "hooks.json").read_text(encoding="utf-8"))
+            manifest = self._shared(project)
         for event, groups in manifest["hooks"].items():
             for entry in groups[0]["hooks"]:
                 timeout = entry["timeout"]
                 self.assertIsInstance(timeout, int, event)
                 self.assertGreater(timeout, 0, event)
-                self.assertLess(timeout, 120, event)  # bounded, not unbounded
+                self.assertLess(timeout, 120, event)
+
+    def test_grok_is_a_shared_file_host_with_no_dedicated_artifact(self) -> None:
+        # Grok's 09-plugins.md lists `hooks/hooks.json` as the one hooks
+        # component a plugin folder holds; a `.grok-plugin/hooks.json` is
+        # never read, so shipping one only misleads.
+        with _built_project() as project:
+            self.assertFalse((project / ".grok-plugin" / "hooks.json").exists())
+        self.assertEqual(host_manifests.HOOK_ARTIFACTS["grok"]["mode"], "merge-into-shared")
+        source = json.loads(
+            (PLUGIN_ROOT / "packaging" / "hosts.json").read_text(encoding="utf-8"))
+        self.assertEqual(source["hook_manifests"]["grok"]["path"], "hooks/hooks.json")
+        self.assertFalse((PLUGIN_ROOT / ".grok-plugin" / "hooks.json").exists())
 
 
 class CursorManifestTests(unittest.TestCase):
@@ -168,6 +187,18 @@ class CursorManifestTests(unittest.TestCase):
             manifest = json.loads(
                 (project / ".cursor-plugin" / "hooks.json").read_text(encoding="utf-8"))
         self.assertIn("sessionStart", manifest["hooks"])
+
+    def test_cursor_entries_are_one_shell_command_string_never_an_args_array(self) -> None:
+        # Same outlier as the shared file: Addendum 5 documents `command`
+        # only, never an `args` array.
+        with _built_project() as project:
+            manifest = json.loads(
+                (project / ".cursor-plugin" / "hooks.json").read_text(encoding="utf-8"))
+        for event, groups in manifest["hooks"].items():
+            for entry in groups[0]["hooks"]:
+                self.assertNotIn("args", entry, event)
+                self.assertTrue(entry["command"].startswith('python "${PLUGIN_ROOT}/hooks/'),
+                                (event, entry["command"]))
 
     def test_the_pretooluse_matcher_never_emits_edit_or_any_untraceable_name(self) -> None:
         """Fix round 1 (C2, review Critical): `"Edit"` has no source in
@@ -235,11 +266,6 @@ class EventAllowlistTraceabilityTests(unittest.TestCase):
 
     def test_codex_emitted_events_equal_the_allowlist(self) -> None:
         self.assertEqual(host_manifests.codex_emitted_events(), host_manifests.CODEX_HOOK_EVENTS)
-
-    def test_grok_emitted_events_equal_the_allowlist(self) -> None:
-        manifest = host_manifests.build_grok_manifest()
-        self.assertEqual(
-            host_manifests.grok_emitted_events(manifest), host_manifests.GROK_HOOK_EVENTS)
 
     def test_cursor_emitted_events_equal_the_allowlist(self) -> None:
         manifest = host_manifests.build_cursor_manifest()
@@ -482,7 +508,6 @@ class BindingsRegenerateByteStableTests(unittest.TestCase):
             paths = [
                 "hooks/hooks.json",
                 ".codex-plugin/plugin.json",
-                ".grok-plugin/hooks.json",
                 ".cursor-plugin/hooks.json",
                 ".gemini-plugin/hooks-fragment.json",
             ]
@@ -711,13 +736,14 @@ class EveryShippedMatcherResolvesInItsAdapter(unittest.TestCase):
     """
 
     # manifest path -> (host label for detection, event keys to check)
-    # `hooks/hooks.json` is the SHARED file: Claude and Codex both read the
-    # same CamelCase block (Sprint 4 captured Codex firing it), so its
-    # matcher is a union and a name need only resolve for ONE of its
-    # readers - `apply_patch` is Codex's, `NotebookEdit` is Claude's.
+    # `hooks/hooks.json` is the SHARED file: Claude, Codex and Grok all read
+    # the same CamelCase block (Sprint 4 captured Codex firing it; Grok's
+    # 09-plugins.md lists it as the one hooks component), so its matcher is
+    # a union and a name need only resolve for ONE of its readers -
+    # `apply_patch` is Codex's, `run_terminal_command` is Grok's,
+    # `NotebookEdit` is Claude's.
     MANIFESTS = (
-        (Path("hooks/hooks.json"), ("claude", "codex"), ("PreToolUse",)),
-        (Path(".grok-plugin/hooks.json"), ("grok",), ("PreToolUse",)),
+        (Path("hooks/hooks.json"), ("claude", "codex", "grok"), ("PreToolUse",)),
         (Path(".cursor-plugin/hooks.json"), ("cursor",), ("preToolUse",)),
     )
 

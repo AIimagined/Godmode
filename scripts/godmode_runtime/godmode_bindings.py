@@ -96,7 +96,7 @@ def _render_hook_artifact(project: Path, host: str, mode: str) -> dict[str, Any]
                 existing = json.loads(target.read_text(encoding="utf-8"))
             except json.JSONDecodeError:
                 existing = {"hooks": {}}
-        return host_manifests.merge_codex_into_shared(existing)
+        return host_manifests.merge_host_tools_into_shared(existing)
     artifact = host_manifests.HOOK_ARTIFACTS[host]
     return artifact["build"]()
 
@@ -236,8 +236,8 @@ def registration_report(project: Path | None = None) -> dict[str, Any]:
             emitted_fn = artifact.get("emitted")
             if actual is not None and emitted_fn is not None:
                 entry["declared_events"] = sorted(emitted_fn(actual))
-            elif host == "codex":
-                entry["declared_events"] = sorted(host_manifests.CODEX_HOOK_EVENTS)
+            elif "allowed_events" in artifact:
+                entry["declared_events"] = sorted(artifact["allowed_events"])
         gap = artifact.get("gap")
         if gap:
             entry["gap"] = gap

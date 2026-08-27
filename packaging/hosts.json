@@ -111,11 +111,23 @@
     }
   },
   "hook_manifests": {
-    "_comment": "CX-3: per-host HOOK artifacts (distinct from the identity manifests above). Content is built by scripts/godmode_runtime/godmode_host_manifests.py's HOOK_ARTIFACTS registry - this section supplies only the PATH each host's artifact is written to, the same division of labour `hosts` above already uses (path here, content generation in code). `godmode bindings --write`/`--check` drive both sections from one command. Codex's own build doc names ./hooks/hooks.json as its manifest-referenced hooks path (spec Addendum 2) - the SAME file Claude's plugin.json loads by convention - so codex's native event keys are merged into that shared file rather than writing a second one; grok/cursor/gemini get their own dedicated file per spec Addendum 3's 'host dirs' recommendation, since their command/decision-contract shapes are incompatible with the shared file's Claude-authored array format.",
-    "codex": {"path": "hooks/hooks.json", "mode": "merge-into-shared"},
-    "grok": {"path": ".grok-plugin/hooks.json", "mode": "dedicated"},
-    "cursor": {"path": ".cursor-plugin/hooks.json", "mode": "dedicated"},
-    "gemini": {"path": ".gemini-plugin/hooks-fragment.json", "mode": "dedicated"}
+    "_comment": "CX-3: per-host HOOK artifacts (distinct from the identity manifests above). Content is built by scripts/godmode_runtime/godmode_host_manifests.py's HOOK_ARTIFACTS registry - this section supplies only the PATH each host's artifact is written to, the same division of labour `hosts` above already uses (path here, content generation in code). `godmode bindings --write`/`--check` drive both sections from one command. Codex's build doc and Grok's 09-plugins.md both name ./hooks/hooks.json as the one hooks file a plugin carries - the SAME default path Claude loads - so codex and grok are merge-into-shared: their tool names join that file's PreToolUse matcher and its entries are shell-form command strings every host parses (2026-08-28 field reports: Grok resolved a bare `python` token against the file's directory, Codex refused the args shape). cursor/gemini keep a dedicated file because their envelopes (`version: 1`/`failClosed`; settings fragment) differ in shape, not only in path.",
+    "codex": {
+      "path": "hooks/hooks.json",
+      "mode": "merge-into-shared"
+    },
+    "grok": {
+      "path": "hooks/hooks.json",
+      "mode": "merge-into-shared"
+    },
+    "cursor": {
+      "path": ".cursor-plugin/hooks.json",
+      "mode": "dedicated"
+    },
+    "gemini": {
+      "path": ".gemini-plugin/hooks-fragment.json",
+      "mode": "dedicated"
+    }
   },
   "adapters": {
     "_comment": "Instruction-file adapters for hosts without a plugin manifest. Controls state what each host can actually hold; the adapter docs must match this matrix (tests enforce agreement).",

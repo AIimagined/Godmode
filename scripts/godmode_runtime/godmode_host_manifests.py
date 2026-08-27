@@ -5,8 +5,8 @@ CX-2 taught the runtime to *read* five hosts' dialects through one adapter
 *ship* a manifest each host actually loads, so the adapter has something to
 be called by in the first place. Before this unit, only Claude's hand-authored
 `hooks/hooks.json` wired a real pre-tool boundary; Codex's own matcher never
-named a Codex tool, Grok's `${CLAUDE_PLUGIN_ROOT}` never resolves on Grok
-(no such variable exists there), and Cursor had no hook manifest at all.
+named a Codex tool, Grok never ran the `command` + `args` entries it was
+handed, and Cursor had no hook manifest at all.
 
 **Governing rule, repeated from the plan/spec because it is the one this
 whole module exists to obey:** every event name, field name, or matcher this
@@ -25,23 +25,20 @@ in common with the flat identity-field copy `godmode_bindings.render()`
 already does, so it gets its own builder functions here - called BY
 `godmode_bindings.write()`/`check()`, not a second, parallel entry point.
 
-**File-layout decision (not a guessed host fact - an architectural choice,
-documented so it can be revisited):** Codex's own build doc names
-`"hooks": "./hooks/hooks.json"` in its example manifest (spec Addendum 2,
-CONFIRMED verified fetch) - the SAME default-detected path Claude already
-uses. So Codex's two native event keys (`session_start`, `pre_tool_use`) are
-MERGED into the existing shared `hooks/hooks.json`, leaving every one of
-Claude's own keys byte-for-byte untouched (`merge_codex_into_shared`).
-Grok, Cursor, and Gemini get their OWN dedicated files under their own host
-directory instead: Addendum 3's CX-3 implication explicitly recommends
-"host-specific hook manifests carried per host... host dirs" over three
-bespoke files, and Grok's own documented command shape (a single string,
-never an args array - Addendum 6) is structurally incompatible with the
-array-based entries the shared file already carries for Claude - merging
-them into one file would require one JSON key to mean two different things
-at once, which is not possible. Cursor's `"version": 1` envelope and
-`failClosed` field, and Gemini's settings.json-fragment shape, are equally
-host-specific, so they follow the same per-host-directory pattern.
+**File-layout decision (revisited 2026-08-28 on two field reports):** Codex's
+build doc and Grok's own 09-plugins.md both name `hooks/hooks.json` as the
+one hooks file a plugin carries - the SAME default path Claude loads. Both
+hosts fire the shared CamelCase events, so neither gets keys of its own;
+their tool names join the shared PreToolUse matcher
+(`merge_host_tools_into_shared`). The shared file's entries are shell-form
+command strings (`_shell_entry`), the one shape all three parse: the
+earlier `command` + `args` pair was Claude's exec form only - Grok resolved
+the bare `python` token against the file's directory and failed every hook
+open, Codex refused the shape and registered nothing. The dedicated
+`.grok-plugin/hooks.json` that revision shipped was never read and is gone.
+Cursor's `"version": 1` envelope and `failClosed` field, and Gemini's
+settings.json-fragment shape, differ in shape rather than only in path, so
+they keep a dedicated file under their own host directory.
 """
 
 from __future__ import annotations
@@ -108,16 +105,6 @@ CURSOR_HOOK_EVENTS = frozenset({"sessionStart", "preToolUse", "beforeShellExecut
 # emitting names this module has no builder logic for would be exactly the
 # "declare it, never call it" honesty gap CX-1 exists to prevent elsewhere.
 GEMINI_HOOK_EVENTS = frozenset({"SessionStart", "BeforeTool"})
-
-# Plan amendments (CX-3 additions, verbatim): "Grok manifest: single-string
-# command + commandWindows (no args array); matcher union
-# Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|run_terminal_command|
-# search_replace|write". Built from `hostevent.CLAUDE_TOOLS`'s fenced/shell
-# subset plus `hostevent.GROK_TOOLS` so this string can never silently drift
-# from what the adapter itself recognises - but the ORDER is the plan's own
-# verbatim text (not the constants' natural iteration order), because that
-# exact string is what a test pins against the plan.
-GROK_MATCHER = "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|run_terminal_command|search_replace|write"
 
 # Addendum 2 confirmed fact + CX-3's own instruction: Codex's matcher is the
 # union of every tool `godmode_hostevent._adapt_codex` recognises, including
@@ -186,33 +173,26 @@ SESSION_HOOK = "hooks/godmode_session_hook.py"
 GATE_FAST_HOOK = "hooks/godmode_gate_fast.py"
 
 
-def _claude_style_entry(root_var: str, script: str, *args: str, timeout: int) -> dict[str, Any]:
-    """Claude/Codex's shared array-based hook-entry shape: `command` is the
-    bare interpreter, `args` is a list, unchanged from the pre-CX-3 file.
-    """
-    return {
-        "type": "command",
-        "command": "python",
-        "args": [f"{root_var}/{script}", *args] if args else [f"{root_var}/{script}"],
-        "timeout": timeout,
-    }
+def _shell_entry(root_var: str, script: str, *args: str, timeout: int) -> dict[str, Any]:
+    """The one hook-entry shape every host parses: `command` is ONE shell
+    string, never a `command` + `args` pair.
 
-
-def _single_string_entry(root_var: str, script: str, *args: str, timeout: int) -> dict[str, Any]:
-    """Grok's own documented shape (Addendum 6, "HOOK CONFIG FORMAT" bullet):
-    `command` is ONE string (POSIX-separated), `commandWindows` the same
-    invocation with backslash path separators - never an `args` array, which
-    Grok's own docs single out as the outlier that fails open if a host drops
-    it (a bare `python` with no arguments runs and times out).
+    Claude's hooks reference: no `args` means shell form, with the root
+    variable substituted and quoted. Codex's plugin guide: one command
+    string, `${CLAUDE_PLUGIN_ROOT}` honoured as a compatibility alias.
+    Grok's 10-hooks.md: `command` is "Path to executable (relative to the
+    JSON file) or inline shell command", `${VAR}` expanded, the
+    `CLAUDE_PLUGIN_ROOT` alias set. The 2026-08-28 field reports are why
+    this is the only builder left: Grok took a bare `"python"` token as a
+    path beside the file and failed every hook open; Codex refused the
+    `args` shape and listed zero hooks. Forward slashes are fine on
+    Windows for python, Git Bash and PowerShell alike, so there is no
+    per-OS variant.
     """
     tail = " ".join(args)
-    posix = f'python "{root_var}/{script}"' + (f" {tail}" if tail else "")
-    windows_script = script.replace("/", "\\")
-    windows = f'python "{root_var}\\{windows_script}"' + (f" {tail}" if tail else "")
     return {
         "type": "command",
-        "command": posix,
-        "commandWindows": windows,
+        "command": f'python "{root_var}/{script}"' + (f" {tail}" if tail else ""),
         "timeout": timeout,
     }
 
@@ -222,37 +202,34 @@ def _single_string_entry(root_var: str, script: str, *args: str, timeout: int) -
 # ---------------------------------------------------------------------------
 
 
-def merge_codex_into_shared(existing: dict[str, Any]) -> dict[str, Any]:
-    """Return `existing` (Claude's hand-authored `hooks/hooks.json`) with
-    Codex's own two verified event keys inserted/overwritten - every OTHER
-    top-level key stays byte-identical, insertion order preserved, so
-    Claude's own behavior and the file's `check()`/`write()` diff for a
-    Claude-only edit are both unaffected by this function ever having run.
+def merge_host_tools_into_shared(existing: dict[str, Any]) -> dict[str, Any]:
+    """Return `existing` (the hand-authored `hooks/hooks.json`) with every
+    shared-file host's tool names present in the PreToolUse matcher - every
+    OTHER key stays byte-identical, insertion order preserved, so Claude's
+    own behavior and the file's `check()`/`write()` diff for a Claude-only
+    edit are both unaffected by this function ever having run.
 
-    `${PLUGIN_ROOT}` is Codex's NATIVE root variable (Addendum 2, verified
-    fetch: "${PLUGIN_ROOT} and ${PLUGIN_DATA}... CLAUDE_PLUGIN_ROOT... as
-    legacy aliases") - CX-3's own binding instruction is to use the native
-    spelling here, never the legacy alias, even though the alias would also
-    resolve.
+    Codex and Grok both discover this one default file (Codex's build doc;
+    Grok's 09-plugins.md lists `hooks/hooks.json` as the sole hooks
+    component) and both fire the shared CamelCase events, so neither needs
+    keys of its own - only its tool names inside the matcher. Widening the
+    matcher is what gates `apply_patch` on Codex and `run_terminal_command`
+    on Grok; a name under a key a host never fires gates nothing.
     """
     merged = dict(existing)
     merged["hooks"] = dict(existing.get("hooks") or {})
-    # Retire the two keys this function used to emit. They name events that
-    # appear nowhere in Codex's published list, and a checkout carrying them
-    # keeps producing the orphan trust row - so regeneration removes them
-    # rather than merely ceasing to add them.
+    # Retire the two snake_case keys an earlier revision emitted. They name
+    # events that appear nowhere in Codex's published list, and a checkout
+    # carrying them keeps producing the orphan trust row - so regeneration
+    # removes them rather than merely ceasing to add them.
     for retired in ("session_start", "pre_tool_use"):
         merged["hooks"].pop(retired, None)
-    # Codex fires the SHARED CamelCase events (measured live), so it needs no
-    # keys of its own - only its tool names inside the PreToolUse matcher.
-    # Widening that matcher is what gates `apply_patch`; leaving Codex's tools
-    # under a key Codex never fires gated nothing.
     pre_tool_use = [dict(block) for block in merged["hooks"].get("PreToolUse") or []]
     for block in pre_tool_use:
         if "matcher" not in block:
             continue
         names = [n for n in block["matcher"].split("|") if n]
-        for tool in sorted(hostevent.CODEX_TOOLS):
+        for tool in sorted(hostevent.CODEX_TOOLS) + sorted(hostevent.GROK_TOOLS):
             if tool not in names:
                 names.append(tool)
         block["matcher"] = "|".join(names)
@@ -268,52 +245,6 @@ def codex_emitted_events() -> frozenset[str]:
 # ---------------------------------------------------------------------------
 # Grok: dedicated `.grok-plugin/hooks.json`.
 # ---------------------------------------------------------------------------
-
-
-def build_grok_manifest() -> dict[str, Any]:
-    """Grok's own native manifest - CamelCase event keys (Addendum 6: "largely
-    CLAUDE-COMPATIBLE"), single-string command entries (Addendum 6), the
-    matcher union from the Plan's CX-3 additions verbatim, and PreCompact +
-    SessionEnd registered per the same addition ("script already implements
-    pre-compact/session-end branches" - verified above at
-    `hooks/godmode_session_hook.py`'s `main()`, which accepts exactly these
-    two `event` choices).
-
-    Timeouts are this module's own explicit choice, not a documented Grok
-    fact: Addendum 6 says Grok's hook timeout defaults to 5s and FAILS OPEN
-    past it, and instructs "an explicit generous timeout" - so every entry
-    below sets one well above the fast gate's own <150ms median budget
-    (`docs/superpowers/plans/2026-08-16-codex-compat.md`'s Global
-    Constraints) while staying finite and bounded, never unbounded.
-    """
-    root = "${GROK_PLUGIN_ROOT}"
-    return {
-        "description": "Godmode continuity + pre-tool gate for Grok's native plugin loader.",
-        "hooks": {
-            "SessionStart": [
-                {"hooks": [_single_string_entry(root, SESSION_HOOK, "session-start", timeout=10)]},
-            ],
-            "UserPromptSubmit": [
-                {"hooks": [_single_string_entry(root, SESSION_HOOK, "user-prompt", timeout=30)]},
-            ],
-            "PreToolUse": [
-                {
-                    "matcher": GROK_MATCHER,
-                    "hooks": [_single_string_entry(root, GATE_FAST_HOOK, timeout=8)],
-                },
-            ],
-            "PreCompact": [
-                {"hooks": [_single_string_entry(root, SESSION_HOOK, "pre-compact", timeout=15)]},
-            ],
-            "SessionEnd": [
-                {"hooks": [_single_string_entry(root, SESSION_HOOK, "session-end", timeout=15)]},
-            ],
-        },
-    }
-
-
-def grok_emitted_events(manifest: dict[str, Any]) -> frozenset[str]:
-    return frozenset(manifest.get("hooks", {}).keys())
 
 
 # ---------------------------------------------------------------------------
@@ -348,20 +279,20 @@ def build_cursor_manifest() -> dict[str, Any]:
         "version": 1,
         "hooks": {
             "sessionStart": [
-                {"hooks": [_claude_style_entry(root, SESSION_HOOK, "session-start", timeout=10)]},
+                {"hooks": [_shell_entry(root, SESSION_HOOK, "session-start", timeout=10)]},
             ],
             "preToolUse": [
                 {
                     "matcher": CURSOR_PRETOOLUSE_MATCHER,
                     "failClosed": True,
-                    "hooks": [_claude_style_entry(root, GATE_FAST_HOOK, timeout=3)],
+                    "hooks": [_shell_entry(root, GATE_FAST_HOOK, timeout=3)],
                 },
             ],
             "beforeShellExecution": [
                 {
                     "matcher": CURSOR_SHELL_TEXT_MATCHER,
                     "failClosed": True,
-                    "hooks": [_claude_style_entry(root, GATE_FAST_HOOK, timeout=3)],
+                    "hooks": [_shell_entry(root, GATE_FAST_HOOK, timeout=3)],
                 },
             ],
         },
@@ -491,9 +422,7 @@ HOOK_ARTIFACTS: dict[str, dict[str, Any]] = {
         "allowed_events": CODEX_HOOK_EVENTS,
     },
     "grok": {
-        "mode": "dedicated",
-        "build": build_grok_manifest,
-        "emitted": grok_emitted_events,
+        "mode": "merge-into-shared",
         "allowed_events": GROK_HOOK_EVENTS,
     },
     "cursor": {
