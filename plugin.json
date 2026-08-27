@@ -36,7 +36,7 @@
       },
       "host_hook_manifests": {
         "codex": "hooks/hooks.json",
-        "grok": ".grok-plugin/hooks.json",
+        "grok": "hooks/hooks.json",
         "cursor": ".cursor-plugin/hooks.json",
         "gemini": ".gemini-plugin/hooks-fragment.json"
       }

@@ -292,7 +292,7 @@ _PRETOOL_MANIFEST_SPECS: dict[str, tuple[str, str, int]] = {
     # live), and the snake_case key it used to read here is retired - naming
     # an event Codex cannot fire made this return "budget unknown".
     "codex": ("hooks/hooks.json", "PreToolUse", 1000),
-    "grok": (".grok-plugin/hooks.json", "PreToolUse", 1000),
+    "grok": ("hooks/hooks.json", "PreToolUse", 1000),
     "cursor": (".cursor-plugin/hooks.json", "preToolUse", 1000),
     "gemini": (".gemini-plugin/hooks-fragment.json", "BeforeTool", 1),
 }
@@ -889,10 +889,16 @@ def hook_manifest_status(package_root: Path | None = None) -> dict[str, Any]:
             for entry in group.get("hooks", []) or []:
                 if not isinstance(entry, dict):
                     continue
-                args = entry.get("args") or []
+                # Shell form (`command` is one string naming the script) is
+                # the shipped shape since 2026-08-28; the exec form
+                # (`command` + `args`) is still read so an older checkout
+                # grades the same.
+                tokens = [str(entry.get("command") or "")] + [
+                    str(arg) for arg in (entry.get("args") or [])]
                 if any(
-                    str(arg).endswith(("godmode_session_hook.py", "godmode_gate_fast.py"))
-                    for arg in args
+                    script in token
+                    for token in tokens
+                    for script in ("godmode_session_hook.py", "godmode_gate_fast.py")
                 ):
                     return True
         return False

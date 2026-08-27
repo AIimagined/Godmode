@@ -1,16 +1,12 @@
 {
-  "description": "Load bounded Godmode continuity at session start, and decide protected tool calls at the pre-tool boundary.",
+  "description": "Load bounded Godmode continuity at session start, and decide protected tool calls at the pre-tool boundary. One shell-form command string per entry: the shape Claude, Codex and Grok all parse.",
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "python",
-            "args": [
-              "${CLAUDE_PLUGIN_ROOT}/hooks/godmode_session_hook.py",
-              "session-start"
-            ],
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/godmode_session_hook.py\" session-start",
             "timeout": 10
           }
         ]
@@ -21,11 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python",
-            "args": [
-              "${CLAUDE_PLUGIN_ROOT}/hooks/godmode_session_hook.py",
-              "user-prompt"
-            ],
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/godmode_session_hook.py\" user-prompt",
             "async": true,
             "timeout": 30
           }
@@ -37,11 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python",
-            "args": [
-              "${CLAUDE_PLUGIN_ROOT}/hooks/godmode_session_hook.py",
-              "pre-compact"
-            ],
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/godmode_session_hook.py\" pre-compact",
             "timeout": 10
           }
         ]
@@ -52,12 +40,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python",
-            "args": [
-              "${CLAUDE_PLUGIN_ROOT}/hooks/godmode_session_hook.py",
-              "session-end"
-            ],
-            "timeout": 10
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/godmode_session_hook.py\" session-end",
+            "timeout": 3
           }
         ]
       }
@@ -68,10 +52,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python",
-            "args": [
-              "${CLAUDE_PLUGIN_ROOT}/hooks/godmode_post_edit.py"
-            ],
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/godmode_post_edit.py\"",
             "timeout": 5
           }
         ]
@@ -79,15 +60,12 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|PowerShell|Write|Edit|NotebookEdit|apply_patch|functions.exec|shell_command",
+        "matcher": "Bash|PowerShell|Write|Edit|NotebookEdit|apply_patch|functions.exec|shell_command|run_terminal_command|search_replace|write",
         "hooks": [
           {
             "type": "command",
-            "command": "python",
-            "args": [
-              "${CLAUDE_PLUGIN_ROOT}/hooks/godmode_gate_fast.py"
-            ],
-            "timeout": 3
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/godmode_gate_fast.py\"",
+            "timeout": 8
           }
         ]
       }
