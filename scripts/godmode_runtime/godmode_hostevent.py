@@ -245,15 +245,19 @@ _GEMINI_EVENTS = frozenset({"BeforeTool"})
 
 
 def detect_host(raw: Any) -> str:
-    """`GODMODE_HOST || GROK_AGENT || CLAUDE_CODE_ENTRYPOINT || payload-shape
-    || "unknown"`. The first three steps are Addendum 6's binding chain,
+    """`GODMODE_HOST || GROK_AGENT || CLAUDE_CODE_ENTRYPOINT || copilot markers
+    || cursor/gemini event shape || PLUGIN_ROOT (Codex) || payload-shape ||
+    "unknown"`. The first three steps are Addendum 6's binding chain,
     verbatim; the payload-shape step is this module's own addition, needed
     because a real subprocess invocation frequently carries none of the
     three env vars (fix round 1, I2 - the prior docstring wrongly cited the
     whole chain as addendum text; see the module docstring's host-detection
-    bullet for the full correction). Env vars decide the DIALECT to speak,
-    never the interception claim - `godmode_hookproof.py` owns that
-    exclusively, from chronicled proof records only.
+    bullet for the full correction). The Codex step (2026-08-28) reads the
+    markers Codex documents as its own - `PLUGIN_ROOT` in the env, `turn_id`
+    in the payload - because Codex otherwise presents as Claude and cannot
+    honour Claude's "ask". Env vars decide the DIALECT to speak, never the
+    interception claim - `godmode_hookproof.py` owns that exclusively, from
+    chronicled proof records only.
     """
     if os.environ.get("GODMODE_HOST"):
         return os.environ["GODMODE_HOST"]
@@ -266,12 +270,30 @@ def detect_host(raw: Any) -> str:
     from .godmode_anchor import is_copilot_environment
     if is_copilot_environment():
         return "copilot"
-    return _detect_from_shape(raw) or "unknown"
+    shape = _detect_from_shape(raw)
+    if shape in ("cursor", "gemini"):
+        # Their event names are unmistakable; an env marker must not
+        # override them (Cursor's own plugin-root variable is undocumented).
+        return shape
+    if os.environ.get("PLUGIN_ROOT"):
+        # Codex field report 2026-08-28: Codex sends Claude's tool names and
+        # sets none of the env vars above, so the shape step called it
+        # Claude - and Claude's "ask" is a hook FAILURE on Codex, which then
+        # runs the command. `PLUGIN_ROOT`/`PLUGIN_DATA` are "a Codex-specific
+        # extension" (learn.chatgpt.com/docs/hooks); Claude and Grok set only
+        # their own prefixed variables. Same step in
+        # `godmode_anchor.current_host`.
+        return "codex"
+    return shape or "unknown"
 
 
 def _detect_from_shape(raw: Any) -> str | None:
     if not isinstance(raw, dict):
         return None
+    if "turn_id" in raw:
+        # "turn_id (string, Codex-specific extension)" of the PreToolUse
+        # input - no other host's payload carries it.
+        return "codex"
     event_name = field(raw, "hook_event_name")
     tool = field(raw, "tool_name")
     if event_name in _CURSOR_EVENTS or "beforeShellExecution" in raw:

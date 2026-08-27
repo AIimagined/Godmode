@@ -328,6 +328,25 @@ class ObserveEntryAnnouncedAtSessionStart(unittest.TestCase):
             self.assertIn("OBSERVE mode", context)
             self.assertIn("nothing will be blocked", context)
 
+    def test_the_brief_leads_with_the_irreversible_tier_count_and_names_asks_as_asks(self) -> None:
+        # Field report (2026-08-28, another project): 340 would-have events,
+        # every one an R2 ask, read by the agent as "340 would-have-refused
+        # ops (none mapped to a real risk)". The brief now states the R4/R5
+        # count first - zero included - and calls the rest what they are.
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _enable_observe(project)
+            for _ in range(3):
+                archive.append("refusal", "edit-outside-fence", {
+                    "operation": "[counts only]", "tool": "Edit", "tier": "R2",
+                    "category": "edit-outside-fence", "observed": True,
+                    "would_have": "ask", "reason": "outside the fence"})
+            brief = _session_start(project)
+            context = brief["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("0 would-have-denied at R4/R5", context)
+        self.assertIn("3 would-have-asked at R2/R3", context)
+        self.assertNotIn("would-have events so far", context)
+
     def test_session_start_brief_is_silent_about_observe_in_normal_mode(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()

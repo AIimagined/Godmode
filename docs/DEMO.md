@@ -57,7 +57,7 @@ Denials of commands that were, on inspection,
   read-only                                            52             harvested into the 142-command corpus
 New fast-path allow (`git status`)                    90.3ms median   10 timed runs after warm-up, sorted-sample median
 New escalating call (`git push --force`, refused)     468.6ms median  same method
-`PreToolUse` timeout                                  10s -> 3s       hooks.json, this release
+`PreToolUse` timeout                                  10s -> 3s       hooks.json, this release (raised to 8s on 2026-08-28: Grok fails open past its timeout)
 Full suite, at that release                           1112 tests, four shards   scripts/dev/run-suite.ps1
 ```
 

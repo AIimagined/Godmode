@@ -343,6 +343,10 @@ def current_host() -> str:
         return "claude"
     if is_copilot_environment():
         return "copilot"
+    if os.environ.get("PLUGIN_ROOT"):
+        # Codex's own marker ("a Codex-specific extension"); the same step,
+        # in the same position, as `godmode_hostevent.detect_host`.
+        return "codex"
     return "unknown"
 
 
