@@ -140,10 +140,13 @@ class PackagingTests(unittest.TestCase):
         self.assertTrue(entry["strict"])
         self.assertNotIn("version", entry)
 
+        # One shell-form string per entry (2026-08-28): the shape Claude,
+        # Codex and Grok all parse; never a `command` + `args` pair.
         handler = hook_config["hooks"]["SessionStart"][0]["hooks"][0]
-        self.assertEqual(handler["command"], "python")
-        self.assertEqual(handler["args"][0], "${CLAUDE_PLUGIN_ROOT}/hooks/godmode_session_hook.py")
-        self.assertEqual(handler["args"][1], "session-start")
+        self.assertEqual(
+            handler["command"],
+            'python "${CLAUDE_PLUGIN_ROOT}/hooks/godmode_session_hook.py" session-start')
+        self.assertNotIn("args", handler)
 
     def test_claude_session_hook_is_silent_until_initialized(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
