@@ -262,6 +262,16 @@ def law_candidates(archive: Any) -> list[dict[str, Any]]:
     correction increments a counter instead of splitting the promotion
     ladder's own evidence across duplicates (dedup-or-increment)."""
     clusters: dict[frozenset[str], dict[str, Any]] = {}
+    # A promoted cluster is consumed (2026-08-29): promotion appends the
+    # law but left the candidate records standing, so the cluster stayed
+    # "promotable" forever and invited a second, duplicate promotion.
+    promoted: set[int] = set()
+    for record in archive.read_events():
+        if record.get("kind") != "lesson":
+            continue
+        origin = (record.get("data") or {}).get("promoted_from")
+        if origin is not None:
+            promoted.add(int(origin))
     for record in archive.read_events():
         if record.get("kind") != "lesson":
             continue
@@ -285,6 +295,8 @@ def law_candidates(archive: Any) -> list[dict[str, Any]]:
             cluster["sessions"].add(str(session))
     ranked = []
     for cluster in clusters.values():
+        if cluster["first_seq"] in promoted:
+            continue
         cluster["distinct_sessions"] = len(cluster.pop("sessions"))
         # An explicit standing instruction promotes after one session; an
         # inferred correction still climbs the three-session ladder.
