@@ -326,6 +326,53 @@ def write_opencode_project_shim(plugin_root, project, *, force: bool = False) ->
                     "tool call is what upgrades the SOFT interception claim"}
 
 
+def runtime_census(home=None) -> list:
+    """Every godmode install held by this machine's known plugin caches.
+
+    S6 (obligation 4436, field report 2026-08-28): three runtimes shared one
+    archive across processes and raced its chain, and the stale 0.3.0 cache
+    was still being loaded by something. Stat-and-regex only, bounded."""
+    import re as _re
+    from pathlib import Path as _Path
+
+    base = _Path(home) if home else _Path.home()
+    installs = []
+    for cache in (base / ".claude" / "plugins" / "cache",
+                  base / ".codex" / "plugins" / "cache",
+                  base / ".grok" / "plugins" / "cache"):
+        if not cache.is_dir():
+            continue
+        pattern = "*/godmode/*/scripts/godmode_runtime/godmode_constants.py"
+        for constants in sorted(cache.glob(pattern))[:10]:
+            try:
+                text = constants.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            match = _re.search(r'RUNTIME_VERSION = "([^"]+)"', text)
+            installs.append({
+                "path": str(constants.parents[2]),
+                "version": match.group(1) if match else "unknown",
+            })
+    return installs
+
+
+def runtime_census_issues(current_version, home=None) -> list:
+    """Doctor issues for stale cached runtimes sharing this archive."""
+    issues = []
+    for install in runtime_census(home):
+        if install["version"] == current_version:
+            continue
+        issues.append({
+            "code": "stale-runtime-cache",
+            "severity": "warning",
+            "detail": (f"{install['path']} holds godmode {install['version']} "
+                       f"while this runtime is {current_version}; two runtimes "
+                       "share one archive and race its chain - remove or "
+                       "update the stale cache."),
+        })
+    return issues
+
+
 def codex_emitted_events() -> frozenset[str]:
     return frozenset(CODEX_HOOK_EVENTS)
 

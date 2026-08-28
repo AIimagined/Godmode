@@ -727,6 +727,37 @@ def explain_context(anchor: ProjectAnchor, archive: Chronicle) -> dict[str, Any]
     }
 
 
+def _tests_naming_symbol(project, about) -> dict[str, Any]:
+    """S6 (obligation 4482, reports 11-12): "which guards cite this symbol".
+
+    A reversal and a withdrawal both came from reading a test file directly
+    because no godmode surface answered it. The last token of `about` is
+    searched across the tests tree, bounded, names only."""
+    from pathlib import Path as _Path
+
+    tokens = str(about).replace("/", " ").replace(chr(92), " ").split()
+    symbol = tokens[-1].split(".")[-1] if tokens else ""
+    result: dict[str, Any] = {"symbol": symbol, "tests_naming": []}
+    if len(symbol) < 4:
+        result["note"] = "symbol too short to search"
+        return result
+    tests_dir = _Path(project) / "tests"
+    if tests_dir.is_dir():
+        for count, test_file in enumerate(sorted(tests_dir.rglob("*.py"))):
+            if count >= 250 or len(result["tests_naming"]) >= 10:
+                break
+            try:
+                body = test_file.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if symbol in body:
+                result["tests_naming"].append(
+                    test_file.relative_to(project).as_posix())
+    result["note"] = ("read the pin before grading a gap"
+                     if result["tests_naming"] else "no test names this symbol")
+    return result
+
+
 def why(anchor: ProjectAnchor, archive: Chronicle, about: str) -> dict[str, Any]:
     """Answer "why is this the way it is?" for a named path or topic.
 
@@ -767,6 +798,9 @@ def why(anchor: ProjectAnchor, archive: Chronicle, about: str) -> dict[str, Any]
         "dependencies": [],
         "invariants": [],
     }
+    # S6 (obligation 4482): the tests that name the asked-about surface,
+    # beside the records - a gap claim meets its pin at design time.
+    answer["guards"] = _tests_naming_symbol(anchor.project_root, about)
     for record in records:
         if not needle or not mentions(record):
             continue
