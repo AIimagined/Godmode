@@ -1,1 +1,0 @@
-`godmode hooks wire --host opencode` installs the Bun shim into the project's `.opencode/plugins/` and names the exact GODMODE_PLUGIN_ROOT to export - the manual copy step the field verdict called out is gone.
