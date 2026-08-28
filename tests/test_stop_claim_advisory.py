@@ -156,6 +156,52 @@ class ClaimEchoTests(unittest.TestCase):
             self.assertFalse((archive.root / "godmode-claim-echo.json").exists())
 
 
+class ObligationEchoTests(unittest.TestCase):
+    """S9 (report 16): an obligation recorded mid-session was inert until
+    resume - the turn boundary now carries it when the reply's vocabulary
+    touches an open obligation."""
+
+    def test_a_touching_reply_parks_and_delivers_the_obligation(self) -> None:
+        from godmode_runtime.godmode_chronicle import Chronicle as _C  # noqa: F401
+
+        with _project() as (project, state, archive):
+            archive.append(
+                "obligation", "effectiveness-section-in-every-report",
+                {"status": "open",
+                 "value": "every published report carries the godmode "
+                          "effectiveness section before the verdict"},
+                evidence=[])
+            reply = ("I published the report without the effectiveness "
+                     "section again; the verdict stands alone")
+            done = _run(project, state, {
+                "transcript_path": str(_transcript(project, reply))})
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertIn("obligation", done.stdout)
+            echo = archive.root / "godmode-claim-echo.json"
+            self.assertTrue(echo.exists())
+            environment = dict(os.environ)
+            environment["GODMODE_STATE_HOME"] = str(state)
+            first = subprocess.run(
+                [sys.executable, str(HOOK), "user-prompt",
+                 "--project", str(project)],
+                input=json.dumps({"prompt": "carry on"}), capture_output=True,
+                text=True, encoding="utf-8", timeout=180, env=environment)
+            self.assertIn("effectiveness-section-in-every-report", first.stdout)
+            self.assertFalse(echo.exists())
+
+    def test_an_unrelated_reply_stays_silent(self) -> None:
+        with _project() as (project, state, archive):
+            archive.append(
+                "obligation", "effectiveness-section-in-every-report",
+                {"status": "open",
+                 "value": "every published report carries the godmode "
+                          "effectiveness section before the verdict"},
+                evidence=[])
+            done = _run(project, state, {
+                "transcript_path": str(_transcript(project, PLAIN_SENTENCE))})
+            self.assertNotIn("obligation(s)", done.stdout)
+
+
 class BriefEchoTests(unittest.TestCase):
     """S8 addendum: Grok ignores SessionStart stdout, so the brief is
     parked and the first prompt boundary delivers it to the model once."""
