@@ -225,12 +225,26 @@ def _session_obligations(anchor: Any, archive: Chronicle) -> dict[str, Any]:
         policy = {}
     if policy.get("gate_mode") == GATE_MODE_OBSERVE:
         obligations["enforcement"]["gate_mode"] = GATE_MODE_OBSERVE
+        # S4: the trial states its own age. A field project ran observe for
+        # twelve days because the promotion rule keyed on R4/R5 events that
+        # never came; a date turns "still observing" from ambient into a
+        # decision the reader can see themselves making.
+        entered = ""
+        try:
+            for record in archive.select(kind="action", limit=200):
+                if record.get("subject") == "observe-mode-entered":
+                    entered = str(record.get("recorded_at", ""))[:10]
+        except GodmodeError:
+            entered = ""
         notice = (
-            "gate in OBSERVE mode - nothing will be blocked; every deny/ask "
+            "gate in OBSERVE mode"
+            + (f" since {entered}" if entered else "")
+            + " - nothing will be blocked; every deny/ask "
             "this session would have produced is instead recorded as an "
             "advisory refusal (`godmode roi --digest` reads them back). "
             "Entered via .godmode-authorization-policy.json's gate_mode - "
-            "edit that file to return to enforcement."
+            "edit that file to return to enforcement, and state it plainly "
+            "if the trial is meant to continue."
         )
         # B4-10(a)/(d): the trial's evidence, in the same brief every session
         # reads - counts by tier plus the highest-tier example's category,
@@ -393,6 +407,65 @@ def project_resume_doc(project_root: Path) -> str | None:
         if (project_root / candidate).is_file():
             return candidate
     return None
+
+
+def _final_reply_text(submitted: dict[str, Any]) -> str:
+    """The turn's final assistant text, bounded, from the payload itself
+    (Grok sends `lastAssistantMessage`) or the host transcript's tail
+    (Claude/Codex send `transcript_path`). Read in memory, never stored."""
+    direct = submitted.get("lastAssistantMessage") or submitted.get("last_assistant_message")
+    if isinstance(direct, str) and direct.strip():
+        return direct[-6000:]
+    path = submitted.get("transcript_path") or submitted.get("transcriptPath")
+    if not path:
+        return ""
+    try:
+        lines = Path(str(path)).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    for line in reversed(lines[-400:]):
+        try:
+            entry = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if entry.get("type") != "assistant":
+            continue
+        message = entry.get("message") or {}
+        parts = message.get("content")
+        if isinstance(parts, str):
+            return parts[-6000:]
+        if isinstance(parts, list):
+            texts = [str(p.get("text", "")) for p in parts
+                     if isinstance(p, dict) and p.get("type") == "text"]
+            joined = "\n".join(t for t in texts if t)
+            if joined.strip():
+                return joined[-6000:]
+    return ""
+
+
+def _unrecorded_claims(archive: Any, reply_text: str) -> list[str]:
+    """Claim-shaped sentences in the reply with no claim record behind them.
+    Reuses the public-surface claim definition (`claimscan.is_claim`) and
+    the archive's normalised claim set - one definition of a claim, not two."""
+    from godmode_runtime.godmode_claimscan import _normalise, _recorded_claims, is_claim
+
+    try:
+        recorded = _recorded_claims(archive)
+    except Exception:  # noqa: BLE001 - an unreadable archive silences the advisory
+        return []
+    found: list[str] = []
+    for raw_line in reply_text.splitlines():
+        line = raw_line.strip().lstrip("-*#>| ").strip()
+        if not line:
+            continue
+        for chunk in line.replace("!", ".").replace("?", ".").split("."):
+            sentence = chunk.strip()
+            if len(sentence) < 15 or not is_claim(sentence):
+                continue
+            if _normalise(sentence) in recorded:
+                continue
+            found.append(sentence)
+    return found
 
 
 def checkpoint_age(record: dict[str, Any], *, now: Any = None,
@@ -683,7 +756,7 @@ def _apply_observe_mode(archive: Chronicle, tool: str, operation: str,
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="godmode-session-hook")
-    parser.add_argument("event", choices=["session-start", "pre-compact", "session-end",
+    parser.add_argument("event", choices=["stop", "session-start", "pre-compact", "session-end",
                                           "pre-action", "user-prompt"])
     parser.add_argument("--project")
     parser.add_argument("--capture-payload", action="store_true",
@@ -794,16 +867,49 @@ def main(argv: list[str] | None = None) -> int:
             # rather than skipped on failure - an absent `laws` block would
             # read as "no laws", which is a claim.
             try:
-                from godmode_runtime.godmode_law import top_laws
+                from godmode_runtime.godmode_law import record_delivery, top_laws
                 laws = top_laws(archive, 3)
                 if laws:
                     brief["laws"] = laws
+                    # L2: the delivery receipt - the denominator without
+                    # which "violated 0" cannot be told from "never seen".
+                    record_delivery(
+                        archive, laws,
+                        session=str(submitted.get("session_id") or "") or None)
             except Exception as exc:  # noqa: BLE001
                 brief["laws"] = {"unavailable": str(exc)[:120]}
             if claude_session:
                 _emit_claude_context(brief)
             else:
                 print(json.dumps({"godmode": "context", "brief": brief}))
+            return 0
+
+        if args.event == "stop":
+            # S4 (obligation 4102): the claim gate at the message boundary.
+            # Seven field reports in one day ended with "claim still
+            # unused" - the verbs wait to be invoked and never are, so the
+            # check moves to the moment of claiming. Advisory ONLY: a
+            # systemMessage naming the unsupported claim-shaped sentence
+            # and the one command that records it. Never a block, never a
+            # nonzero exit, and silent when the reply carries no claim, when
+            # every claim has a record, or when the host is re-firing the
+            # hook (stop_hook_active) - a Stop hook that loops is worse
+            # than no gate at all. The reply text is read in memory from
+            # the host's own transcript and never stored (the 4018 privacy
+            # decision governs here too).
+            if submitted.get("stop_hook_active") or submitted.get("stopHookActive"):
+                return 0
+            reply_text = _final_reply_text(submitted)
+            if not reply_text:
+                return 0
+            unsupported = _unrecorded_claims(archive, reply_text)
+            if unsupported:
+                shown = "; ".join(f"'{s[:160]}'" for s in unsupported[:2])
+                print(json.dumps({"systemMessage": (
+                    f"godmode: {len(unsupported)} claim-shaped sentence(s) in this "
+                    f"reply have no record: {shown} - record with `godmode claim "
+                    "--cite <evidence>` (grades honestly, downgrades what the "
+                    "citations cannot carry) or soften the sentence.")}))
             return 0
 
         if args.event == "user-prompt":
@@ -824,6 +930,13 @@ def main(argv: list[str] | None = None) -> int:
                     session=str(submitted.get("session_id") or "") or None,
                     tools_in_flight=int(submitted.get("tools_in_flight") or 0),
                 )
+                # L2: the operator-correction detector rides the same guarded
+                # block - a correction-shaped prompt becomes a law candidate,
+                # keywords and digest only, never the sentence.
+                from godmode_runtime.godmode_law import record_correction_candidate
+                record_correction_candidate(
+                    archive, prompt,
+                    session=str(submitted.get("session_id") or "") or None)
             except Exception:  # noqa: BLE001
                 # A prompt that cannot be stored - a secret-shaped paste the
                 # archive refuses, a locked store - must not stop the turn the
@@ -1191,6 +1304,24 @@ def main(argv: list[str] | None = None) -> int:
                 _decision_for(preview) != "ask" or event.host not in HOSTS_WITH_ASK
             )
             preview["reason"] = deny_reason if effectively_denied else ask_reason
+            if not effectively_denied and not observe:
+                # Obligation 4026 (S4): an enforce-mode ask was invisible -
+                # only denies were chronicled, so nothing could learn from
+                # what the operator actually approves. Counts only: tier and
+                # category, never the operation. Best-effort the same way
+                # the refusal record below degrades.
+                try:
+                    archive.append(
+                        "action", "gate-asked",
+                        {"tier": str(preview.get("tier", "R?")),
+                         "category": preview.get("category", "unclassified"),
+                         "tool": tool or "operation"},
+                        evidence=[],
+                    )
+                except Exception as error:  # noqa: BLE001
+                    from godmode_runtime.godmode_sentinel import _degraded
+
+                    _degraded(f"recording a gate ask: {type(error).__name__}")
             if effectively_denied:
                 # Recorded here, in the full escalation path only - the fast
                 # gate stays IO-free by contract, and this branch is where a

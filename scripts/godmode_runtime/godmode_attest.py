@@ -1400,6 +1400,23 @@ def _independent_witness_count(citations: list[str]) -> int:
     return len({_witness_identity(str(c)) for c in citations})
 
 
+def _guard_citations(citations: list[str]) -> list[str]:
+    """Citations that name a test/guard file: `tests/` path segment, a
+    `test_*`/`*_test.*`/`*.test.*` basename. Conservative on purpose - a
+    false positive here taxes an honest claim."""
+    guards: list[str] = []
+    for citation in citations:
+        text = str(citation)
+        if not text.startswith("file:"):
+            continue
+        path = text[len("file:"):].replace("\\", "/").lower()
+        name = path.rsplit("/", 1)[-1]
+        if ("/tests/" in f"/{path}" or name.startswith("test_")
+                or ".test." in name or name.endswith("_test.py")):
+            guards.append(citation)
+    return guards
+
+
 def record_claim(
     archive: Chronicle,
     project: Path,
@@ -1574,6 +1591,17 @@ def record_claim(
             effective, reason = (
                 "hypothesis",
                 "absence claim cites no search that would have found a counter-example",
+            )
+        elif _guard_citations(citations) and not cmd_citations:
+            # Obligation 4122 (field report 2026-08-28): three withdrawals
+            # rested on guard assertions READ but not RUN. Reading a test
+            # file pins what it would check; only running it checks it. A
+            # verified claim resting on a test file needs the run beside it.
+            effective, reason = (
+                "hypothesis",
+                "a guard is cited but not run: reading a test pins intent, "
+                "only running it verifies - add cmd:<the command that ran it> "
+                "beside the file citation",
             )
         elif unsupported:
             effective, reason = "hypothesis", "cited location does not support the claim"

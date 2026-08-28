@@ -1431,6 +1431,19 @@ def cmd_law_show(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult({"laws": top_laws(runtime.archive, args.top)})
 
 
+def cmd_law_candidates(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    from .godmode_law import law_candidates
+
+    return CommandResult({"candidates": law_candidates(runtime.archive)})
+
+
+def cmd_law_promote(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    from .godmode_law import promote_candidate
+
+    return CommandResult(promote_candidate(
+        runtime.archive, args.candidate, guard=args.guard, subject=args.subject))
+
+
 def cmd_benchmark(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     """S7-04/05/06: measure the budgets locally; transmit nothing."""
     import time as _time
@@ -4381,6 +4394,19 @@ def _build_parser() -> argparse.ArgumentParser:
     law_show = law_sub.add_parser("show", help="The top laws, as the brief carries them")
     law_show.add_argument("--top", type=int, default=5)
     law_show.set_defaults(handler=cmd_law_show)
+    law_candidates_parser = law_sub.add_parser(
+        "candidates",
+        help="Correction candidates clustered by keywords, with recurrence counts")
+    law_candidates_parser.set_defaults(handler=cmd_law_candidates)
+    law_promote = law_sub.add_parser(
+        "promote",
+        help="Promote a promotable candidate cluster into a guarded law "
+             "(the ladder requires recurrence across 3 distinct sessions)")
+    law_promote.add_argument("--candidate", type=int, required=True,
+                             help="The cluster's first_seq from `law candidates`")
+    law_promote.add_argument("--guard", required=True)
+    law_promote.add_argument("--subject", required=True)
+    law_promote.set_defaults(handler=cmd_law_promote)
 
     changelog = sub.add_parser("changelog", help="Fragment-based release notes")
     changelog_sub = changelog.add_subparsers(dest="changelog_command", required=True)

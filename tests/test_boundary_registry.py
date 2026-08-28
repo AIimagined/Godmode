@@ -58,6 +58,14 @@ BOUNDARY_TESTS: dict[str, tuple[str, str]] = {
         "the host's PostToolUse payload for Write/Edit, through the hook "
         "process, with the policy both off and on",
         "tests/test_post_edit_hook.py"),
+    "stop hook": (
+        "the host's Stop payload with a real transcript file, through the "
+        "hook process - claim-shaped final text with and without a record",
+        "tests/test_stop_claim_advisory.py"),
+    "opencode adapter": (
+        "the shipped Bun shim, driven by Bun against the real gate: deny "
+        "throws, allow passes, missing root fails closed",
+        "tests/test_opencode_plugin.py"),
 }
 
 # Surfaces with no boundary test, and why. Listed rather than omitted.
@@ -66,8 +74,6 @@ NO_BOUNDARY_TEST: dict[str, str] = {
                           "degrades the session but cannot permit an operation",
     "pre-compact hook": "same shape as session-start, and it fires on a host "
                         "event no test can schedule",
-    "opencode adapter": "an instruction file consumed by a host this project "
-                        "cannot run in CI; no boundary test written yet",
     "cursor adapter": "an instruction file consumed by a host this project "
                       "cannot run in CI; no boundary test written yet",
     "gemini adapter": "an instruction file consumed by a host this project "
