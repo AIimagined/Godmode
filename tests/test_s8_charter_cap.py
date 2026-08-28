@@ -52,5 +52,26 @@ class LawDedupTests(unittest.TestCase):
             self.assertEqual(top_laws(archive, 10), [])
 
 
+class PromotedClusterIsConsumedTests(unittest.TestCase):
+    def test_a_promoted_cluster_leaves_the_candidate_list(self) -> None:
+        import sys as _sys
+        from pathlib import Path as _Path
+        _sys.path.insert(0, str(_Path(__file__).parent))
+        from test_godmode_runtime import isolated_project
+        from godmode_runtime.godmode_law import (
+            law_candidates, promote_candidate, record_instruction_candidate)
+
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            record_instruction_candidate(
+                archive, "always preview destructive removals first",
+                session="S-1")
+            cluster = law_candidates(archive)[0]
+            promote_candidate(archive, cluster["first_seq"],
+                              guard="Preview destructive removals first.",
+                              subject="preview-first")
+            self.assertEqual(law_candidates(archive), [])
+
+
 if __name__ == "__main__":
     unittest.main()
