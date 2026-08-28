@@ -118,5 +118,43 @@ class StopAdvisoryTests(unittest.TestCase):
         self.assertIn("systemMessage", payload)
 
 
+class ClaimEchoTests(unittest.TestCase):
+    """S8 (obligation 4538): the advisory's audience was the operator; the
+    model that made the claim never saw it. The Stop hook parks the flagged
+    sentences and the next prompt boundary delivers them to the model,
+    exactly once."""
+
+    def _prompt(self, project: Path, state: Path) -> subprocess.CompletedProcess:
+        environment = dict(os.environ)
+        environment["GODMODE_STATE_HOME"] = str(state)
+        return subprocess.run(
+            [sys.executable, str(HOOK), "user-prompt", "--project", str(project)],
+            input=json.dumps({"prompt": "carry on with the next task"}),
+            capture_output=True, text=True, encoding="utf-8", timeout=180,
+            env=environment,
+        )
+
+    def test_a_flagged_reply_is_echoed_to_the_model_once(self) -> None:
+        with _project() as (project, state, archive):
+            done = _run(project, state, {
+                "transcript_path": str(
+                    _transcript(project, CLAIM_SENTENCE))})
+            self.assertEqual(done.returncode, 0, done.stderr)
+            echo = archive.root / "godmode-claim-echo.json"
+            self.assertTrue(echo.exists())
+            first = self._prompt(project, state)
+            self.assertIn("additionalContext", first.stdout)
+            self.assertIn("claim-shaped", first.stdout)
+            self.assertFalse(echo.exists())
+            second = self._prompt(project, state)
+            self.assertNotIn("additionalContext", second.stdout)
+
+    def test_a_plain_reply_parks_nothing(self) -> None:
+        with _project() as (project, state, archive):
+            _run(project, state, {
+                "transcript_path": str(_transcript(project, PLAIN_SENTENCE))})
+            self.assertFalse((archive.root / "godmode-claim-echo.json").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
