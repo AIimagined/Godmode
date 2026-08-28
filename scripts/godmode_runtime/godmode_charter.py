@@ -30,13 +30,18 @@ ADVISORY = "ADVISORY"
 # are untouched. Field report, 2026-08-27: "508 unattested hard rules",
 # 308 of them from a project's LESSONS.md.
 RECORD_ROLES: frozenset[str] = frozenset(
-    # code-of-law (S8 addendum, 2026-08-29): laws are ADVISORY by design -
-    # the law module's own contract says HARD stays with the charter's
-    # directive documents - yet the first committed law file minted seven
-    # unattested HARD rules from its guard sentences and blocked `status
-    # remaining` within the hour. A generated record of guards is a record.
-    {"lessons", "state", "sprint-truth", "decisions", "inventory",
-     "code-of-law"})
+    {"lessons", "state", "sprint-truth", "decisions", "inventory"})
+
+# code-of-law is not compiled at all (2026-08-29, two field rounds in one
+# night): capping it to ADVISORY still minted twenty advisory rules the
+# checkability review then demanded decisions for - per law, per edit,
+# forever. The law file is DELIVERY, not source: its guards already reach
+# every session through the brief's top laws and the wrapper skill, each
+# with archive provenance; compiling them again as charter rules is the
+# same guard delivered twice under two ids. The role stays bound in the
+# corpus - attest and the required-sources counter still demand the file
+# be read - the charter just never mints rules from it.
+SKIPPED_ROLES: frozenset[str] = frozenset({"code-of-law"})
 
 TRIGGERS = (
     "session_open",
@@ -294,6 +299,8 @@ def _directives(segment: Segment) -> list[tuple[int, str]]:
 def compile_binding(binding: Binding, project: Path) -> list[Rule]:
     rules: list[Rule] = []
     seen: set[str] = set()
+    if binding.role in SKIPPED_ROLES:
+        return rules
     for segment in segment_document(binding, project):
         for line, text in _directives(segment):
             enforcement, verify, trigger = _classify(text)

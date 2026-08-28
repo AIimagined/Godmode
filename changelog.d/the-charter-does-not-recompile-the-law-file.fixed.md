@@ -1,0 +1,1 @@
+The charter never mints rules from the generated Code of Law: the ADVISORY cap still produced twenty rules the checkability review then demanded per-law decisions for; the law file is delivery (the brief and the wrapper skill), not charter source, and its role stays bound for attest and the sources counter.

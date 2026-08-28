@@ -14,14 +14,32 @@ SCRIPTS = PLUGIN_ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from godmode_runtime.godmode_charter import RECORD_ROLES  # noqa: E402
+from godmode_runtime.godmode_charter import SKIPPED_ROLES, compile_charter  # noqa: E402
 
 
 class LawFileCompilesAdvisoryTests(unittest.TestCase):
-    def test_code_of_law_is_a_record_role(self) -> None:
-        # Membership is the whole mechanism: RECORD_ROLES members are capped
-        # to ADVISORY at compile time, with capped_from naming the cap.
-        self.assertIn("code-of-law", RECORD_ROLES)
+    def test_code_of_law_is_skipped_entirely(self) -> None:
+        # Round two of the same night: the ADVISORY cap still minted twenty
+        # rules the checkability review then demanded decisions for. The law
+        # file is delivery, not source - the charter never mints rules from
+        # it, and the wrapper skill plus the brief remain its channel.
+        self.assertIn("code-of-law", SKIPPED_ROLES)
+        import tempfile
+        from pathlib import Path as _Path
+
+        body = "\n".join([
+            "# GODMODE CODE OF LAW",
+            "",
+            "## Law 1 - x  [ADVISORY]",
+            "Guard: Always record every claim before stating it.",
+            "",
+        ])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _Path(tmp)
+            (root / "GODMODE-CODE-OF-LAW.md").write_text(body, encoding="utf-8")
+            charter = compile_charter(root)
+        law_rules = charter.get("by_role", {}).get("code-of-law", [])
+        self.assertEqual(list(law_rules), [])
 
 
 class LawDedupTests(unittest.TestCase):

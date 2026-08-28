@@ -9,28 +9,40 @@
         34
       ],
       [
-        "docs/FIXED-REGISTRY.md",
-        1
+        "GODMODE-CODE-OF-LAW.md",
+        81
+      ],
+      [
+        "GODMODE-CODE-OF-LAW.md",
+        61
+      ],
+      [
+        "GODMODE-CODE-OF-LAW.md",
+        16
+      ],
+      [
+        "GODMODE-CODE-OF-LAW.md",
+        71
+      ],
+      [
+        "GODMODE-CODE-OF-LAW.md",
+        106
       ],
       [
         "OPERATOR.md",
         1
       ],
       [
-        "GODMODE.md",
-        1
+        "GODMODE-CODE-OF-LAW.md",
+        101
       ],
       [
-        "GODMODE.md",
-        7
+        "GODMODE-CODE-OF-LAW.md",
+        91
       ],
       [
         "GODMODE.md",
         23
-      ],
-      [
-        "GODMODE.md",
-        42
       ]
     ],
     "investigate a regression in context continuity after a branch switch": [
@@ -39,12 +51,8 @@
         7
       ],
       [
-        "docs/FIXED-REGISTRY.md",
-        1
-      ],
-      [
-        "GODMODE.md",
-        34
+        "GODMODE-CODE-OF-LAW.md",
+        16
       ],
       [
         "GODMODE.md",
@@ -55,18 +63,38 @@
         23
       ],
       [
-        "OPERATOR.md",
-        1
+        "GODMODE-CODE-OF-LAW.md",
+        81
+      ],
+      [
+        "GODMODE-CODE-OF-LAW.md",
+        56
       ],
       [
         "GODMODE.md",
-        42
+        34
+      ],
+      [
+        "GODMODE-CODE-OF-LAW.md",
+        36
+      ],
+      [
+        "GODMODE-CODE-OF-LAW.md",
+        61
+      ],
+      [
+        "GODMODE-CODE-OF-LAW.md",
+        31
       ]
     ],
     "prepare a release: changelog, version surfaces, and docs": [
       [
         "OPERATOR.md",
         1
+      ],
+      [
+        "GODMODE-CODE-OF-LAW.md",
+        116
       ],
       [
         "GODMODE.md",
@@ -87,10 +115,6 @@
       [
         "GODMODE.md",
         42
-      ],
-      [
-        "GODMODE.md",
-        23
       ]
     ]
   }
