@@ -1,0 +1,1 @@
+The OpenCode shim with no GODMODE_PLUGIN_ROOT set warns once and allows instead of refusing every tool call (a live session was bricked down to dir); a configured gate still fails closed with no bypass variable, and the shim now runs under Node as well as Bun.
