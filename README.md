@@ -4,7 +4,8 @@
 
 <p align="center">
   <b>A local, tamper-evident record of what a coding agent did, what it claimed, and what was verified.</b><br>
-  Zero runtime dependencies · zero network use · nothing leaves your machine.
+  Zero runtime dependencies · zero network use · nothing leaves your machine.<br>
+  Claude Code · Grok · Codex · OpenCode
 </p>
 
 <p align="center">
@@ -24,37 +25,42 @@ what the command itself does.
 
 ## Install
 
+One plugin package, four hosts. Per-host enforcement detail lives in
+[Host support](#host-support) - read it before you rely on any gate.
+
+**Claude Code**
+
 ```text
 /plugin marketplace add AIimagined/Godmode
 /plugin install godmode@aiimagined
 /reload-plugins
 ```
 
-That installs Godmode for Claude Code. Every `godmode ...` command shown
-below runs through Claude Code's own Bash tool: installing a plugin adds
-its `bin/` directory to that tool's PATH for the session, so pasting a
-command into a Claude Code conversation, or asking Claude to run it,
-works with no setup. Outside Claude Code, in your own terminal, call the
-installed copy directly once you know its cached version directory
-(`ls ~/.claude/plugins/cache/aiimagined/godmode/` lists it):
-
-```console
-$ python ~/.claude/plugins/cache/aiimagined/godmode/<version>/scripts/godmode.py init
-```
-
-Codex and Grok carry the same plugin package (`.codex-plugin/`,
-`.grok-plugin/`). On Grok:
+**Grok**
 
 ```console
 $ grok plugin marketplace add AIimagined/Godmode
 $ grok plugin install godmode --trust
 ```
 
-Codex installs the same package through its own plugin flow; its CLI
-ignores plugin-bundled hooks (see the host table), so after installing run
-`godmode hooks wire` inside each project. [Host support](#host-support)
-states exactly what each host enforces, and what's verified about its own
-`bin/` exposure, before you rely on it.
+**Codex** - install the same package through Codex's own plugin flow, then
+wire the hooks per project (Codex's CLI ignores plugin-bundled hooks; see
+the host table): run `godmode hooks wire` inside the project and trust the
+commands it lists in `codex`.
+
+**OpenCode** - `godmode hooks wire --host opencode` installs the shim
+(runs under Bun or Node) into the project's `.opencode/plugins/`; export
+`GODMODE_PLUGIN_ROOT` in the shell that launches OpenCode.
+
+Every `godmode ...` command shown below runs through the host's own shell
+tool: installing the plugin adds its `bin/` directory to that tool's PATH
+on hosts that expose one. Outside a session, call the installed copy
+directly (`ls ~/.claude/plugins/cache/aiimagined/godmode/` lists the
+version directory):
+
+```console
+$ python ~/.claude/plugins/cache/aiimagined/godmode/<version>/scripts/godmode.py init
+```
 
 Next: run it for a week before you trust it for anything.
 
