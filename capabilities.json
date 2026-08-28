@@ -852,6 +852,17 @@
       "impl": [],
       "statement": "Not found in the reachable private ledger (numbering gap).",
       "status": "rejected"
+    },
+    {
+      "id": "C-82",
+      "statement": "Generated per-project Code of Law: guarded lessons compiled into a bounded, provenance-carrying authority document with a wrapper skill, carried by the session brief.",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_law.py"
+      ],
+      "guard": [
+        "test:tests/test_law.py"
+      ],
+      "status": "built"
     }
   ],
   "detectors": [

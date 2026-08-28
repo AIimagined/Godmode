@@ -789,6 +789,17 @@ def main(argv: list[str] | None = None) -> int:
                 # "nothing to resume", which is a claim. This says the
                 # digest could not be built and why.
                 brief["resume"] = {"unavailable": str(exc)[:160]}
+            # Sprint L1 (decision 4114): the top laws ride the brief so the
+            # Code of Law fires without being fetched. Bounded, and stated
+            # rather than skipped on failure - an absent `laws` block would
+            # read as "no laws", which is a claim.
+            try:
+                from godmode_runtime.godmode_law import top_laws
+                laws = top_laws(archive, 3)
+                if laws:
+                    brief["laws"] = laws
+            except Exception as exc:  # noqa: BLE001
+                brief["laws"] = {"unavailable": str(exc)[:120]}
             if claude_session:
                 _emit_claude_context(brief)
             else:
