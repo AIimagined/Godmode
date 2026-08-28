@@ -1418,6 +1418,19 @@ def cmd_changelog_merge(args: argparse.Namespace, runtime: Runtime) -> CommandRe
     ))
 
 
+def cmd_law_compile(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    from .godmode_law import compile_laws
+
+    return CommandResult(compile_laws(
+        runtime.archive, Path(runtime.anchor.project_root)))
+
+
+def cmd_law_show(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    from .godmode_law import top_laws
+
+    return CommandResult({"laws": top_laws(runtime.archive, args.top)})
+
+
 def cmd_benchmark(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     """S7-04/05/06: measure the budgets locally; transmit nothing."""
     import time as _time
@@ -4356,6 +4369,18 @@ def _build_parser() -> argparse.ArgumentParser:
         "propose-ui", help="Propose design globs to declare; prints, never writes")
     propose_ui.set_defaults(handler=cmd_boundaries_propose_ui)
     sub.add_parser("privacy", help="Audit the local privacy boundary").set_defaults(handler=cmd_privacy)
+
+    law = sub.add_parser(
+        "law",
+        help="The generated per-project Code of Law (Sprint L1: compile guarded "
+             "lessons into GODMODE-CODE-OF-LAW.md + wrapper skill)")
+    law_sub = law.add_subparsers(dest="law_command", required=True)
+    law_compile = law_sub.add_parser(
+        "compile", help="Fold every guarded lesson into the bounded law file")
+    law_compile.set_defaults(handler=cmd_law_compile)
+    law_show = law_sub.add_parser("show", help="The top laws, as the brief carries them")
+    law_show.add_argument("--top", type=int, default=5)
+    law_show.set_defaults(handler=cmd_law_show)
 
     changelog = sub.add_parser("changelog", help="Fragment-based release notes")
     changelog_sub = changelog.add_subparsers(dest="changelog_command", required=True)

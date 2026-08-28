@@ -41,6 +41,11 @@ DEFAULT_ROLES: dict[str, list[str]] = {
     "state": ["docs/STATE.md"],
     "sprint-truth": ["docs/SPRINT-SSOT.md"],
     "lessons": ["docs/LESSONS.md"],
+    # The generated Code of Law (godmode_law.py). A bound role on purpose:
+    # the charter compiles it, `attest` enforces its entries, and the
+    # required-sources counter lists it - the loop writes into the same
+    # slot the operator's hand-written rules occupy.
+    "code-of-law": ["GODMODE-CODE-OF-LAW.md"],
     "checklist": ["docs/RELEASE-CHECKLIST.md"],
     "decisions": ["docs/DECISIONS.md"],
     "inventory": ["docs/FEATURE-INVENTORY.md"],
