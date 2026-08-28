@@ -142,12 +142,19 @@ class SharedHooksFileTests(unittest.TestCase):
                      "run_terminal_command", "search_replace", "write"):
             self.assertIn(tool, names, tool)
 
-    def test_session_end_fits_the_tightest_host_budget(self) -> None:
-        # Codex's field report: SessionEnd permits at most 3 seconds.
+    def test_session_end_fits_the_tightest_reading_host(self) -> None:
+        # The 3s bound served Codex's documented budget - and Codex ignores
+        # plugin-bundled hooks entirely (host bug, 2026-08-29), so the
+        # shared file's readers are Claude and Grok. A live Claude exit on a
+        # large archive was cancelled mid-checkpoint at 3s ("SessionEnd
+        # hook ... failed: Hook cancelled"), which loses the auto
+        # checkpoint; 10s fits the work, and the Codex project fallback
+        # (hooks wire) carries no timeout keys at all.
         with _built_project() as project:
             manifest = self._shared(project)
         timeout = manifest["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"]
-        self.assertLessEqual(timeout, 3)
+        self.assertLessEqual(timeout, 10)
+        self.assertGreater(timeout, 3)
 
     def test_every_timeout_is_explicit_and_bounded(self) -> None:
         with _built_project() as project:

@@ -40,7 +40,7 @@
           {
             "type": "command",
             "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/godmode_session_hook.py\" session-end",
-            "timeout": 3
+            "timeout": 10
           }
         ]
       }
