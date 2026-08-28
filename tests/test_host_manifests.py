@@ -759,6 +759,35 @@ class CodexProjectFallbackTests(unittest.TestCase):
         self.assertIn("trust", forced["note"].lower())
 
 
+class OpencodeShimInstallTests(unittest.TestCase):
+    def test_install_copies_the_shim_and_names_the_root(self) -> None:
+        import tempfile
+        from godmode_runtime.godmode_host_manifests import write_opencode_project_shim
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            result = write_opencode_project_shim(PLUGIN_ROOT, project)
+            body = (project / ".opencode" / "plugins" / "godmode.js").read_text(
+                encoding="utf-8")
+        self.assertTrue(result["written"])
+        self.assertEqual(result["env"]["GODMODE_PLUGIN_ROOT"], str(PLUGIN_ROOT))
+        self.assertIn("tool.execute.before", body)
+
+    def test_a_differing_existing_shim_is_refused_without_force(self) -> None:
+        import tempfile
+        from godmode_runtime.godmode_host_manifests import write_opencode_project_shim
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / ".opencode" / "plugins").mkdir(parents=True)
+            (project / ".opencode" / "plugins" / "godmode.js").write_text(
+                "// local edit", encoding="utf-8")
+            refused = write_opencode_project_shim(PLUGIN_ROOT, project)
+            forced = write_opencode_project_shim(PLUGIN_ROOT, project, force=True)
+        self.assertFalse(refused["written"])
+        self.assertTrue(forced["written"])
+
+
 class EveryShippedMatcherResolvesInItsAdapter(unittest.TestCase):
     """Sprint 4's generalisation: a manifest and an adapter are two
     authorities over one list of tool names, and nothing compared them.

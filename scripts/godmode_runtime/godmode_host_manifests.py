@@ -297,6 +297,35 @@ def write_codex_project_hooks(plugin_root, project, *, force: bool = False) -> d
                     "command, Trust, then restart - hooks run outside its sandbox"}
 
 
+def write_opencode_project_shim(plugin_root, project, *, force: bool = False) -> dict:
+    """Install the Bun shim into a project's `.opencode/plugins/` (field
+    verdict 2026-08-28: the adapter works but the copy step was manual).
+    The shim itself sets GODMODE_HOST=opencode and fails closed; the one
+    thing it cannot know is where this install lives, so the note names the
+    exact GODMODE_PLUGIN_ROOT to export (and GODMODE_PYTHON for a
+    non-default interpreter). Same overwrite contract as the Codex fallback:
+    a differing existing file is refused without force.
+    """
+    from pathlib import Path as _Path
+
+    root = _Path(plugin_root)
+    source = root / "adapters" / "opencode" / "godmode.opencode.js"
+    body = source.read_text(encoding="utf-8")
+    target = _Path(project) / ".opencode" / "plugins" / "godmode.js"
+    if target.exists() and target.read_text(encoding="utf-8") != body and not force:
+        return {"written": False, "path": str(target),
+                "reason": "exists with different content; pass --force to overwrite"}
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(body, encoding="utf-8")
+    return {"written": True, "path": str(target),
+            "env": {"GODMODE_PLUGIN_ROOT": str(root),
+                    "GODMODE_PYTHON": "optional; defaults to python"},
+            "note": "export GODMODE_PLUGIN_ROOT before starting OpenCode; "
+                    "append adapters/opencode/AGENTS-godmode.md to the "
+                    "project AGENTS.md for the CLI controls; a live denied "
+                    "tool call is what upgrades the SOFT interception claim"}
+
+
 def codex_emitted_events() -> frozenset[str]:
     return frozenset(CODEX_HOOK_EVENTS)
 
