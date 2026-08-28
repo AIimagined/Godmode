@@ -42,6 +42,23 @@ def _newest_record(archive) -> Path:
     return sorted(archive.events.glob("*.godmode.json"))[-1]
 
 
+class AnchorRaceSelfHeals(unittest.TestCase):
+    """Lesson 4128, third live occurrence 2026-08-28: a reader holding a
+    pre-append listing sees anchor N+1 against N records while the writer's
+    record is already on disk. The check re-reads fresh state once after a
+    beat; only a persistent mismatch raises (that path is pinned below)."""
+
+    def test_a_stale_listing_against_a_newer_anchor_self_heals(self) -> None:
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            _grow(archive, 3)
+            stale = list(archive.read_events())
+            archive.append("decision", "in-flight", {"status": "ruled"},
+                           evidence=[])
+            result = archive.verify(stale)
+        self.assertEqual(result["anchor"], "anchored")
+
+
 class TailTruncationIsDetected(unittest.TestCase):
     def test_deleting_the_newest_record_raises_on_read(self) -> None:
         with isolated_project() as (_project, _state, _anchor, archive):

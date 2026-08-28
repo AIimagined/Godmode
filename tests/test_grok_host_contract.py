@@ -466,7 +466,8 @@ class LiveGrokHarnessShapeTests(unittest.TestCase):
                     for blocks in manifest["hooks"].values()
                     for block in blocks if "matcher" in block]
         self.assertTrue(matchers, "the Grok manifest declares no matcher")
-        names = sorted({n for m in matchers for n in m.split("|") if n})
+        # Names ship regex-escaped in the matcher; adapters speak raw names.
+        names = sorted({n.replace("\\.", ".") for m in matchers for n in m.split("|") if n})
         # The shared file also carries Codex's tool names; Grok never sends
         # those, so they are outside what THIS adapter must resolve.
         names = [n for n in names if n not in he.CODEX_TOOLS]

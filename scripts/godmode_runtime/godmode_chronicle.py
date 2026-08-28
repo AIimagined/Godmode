@@ -417,12 +417,27 @@ class Chronicle:
             if anchor_state is None:
                 result["anchor"] = "anchor-absent"
             else:
-                if anchor_state["length"] > len(records):
-                    self._raise_truncated(anchor_state["length"], len(records))
-                if anchor_state["length"]:
-                    anchored_at = records[anchor_state["length"] - 1]
-                    if anchored_at["record_hash"] != anchor_state["head_hash"]:
-                        self._raise_truncated(anchor_state["length"], len(records))
+                gap = self._anchor_gap(anchor_state, records)
+                if gap is not None:
+                    # Lesson 4128, and its third live occurrence (2026-08-28,
+                    # two projects in one day): a concurrent writer appends
+                    # the record file and then the anchor, so a reader
+                    # holding a pre-append listing can see anchor N+1
+                    # against N files - a false truncation that self-heals.
+                    # One re-read after a short beat, against FRESH disk
+                    # state, separates that race from a real truncation;
+                    # only the persistent mismatch raises. The remedy the
+                    # alarm names (db --reanchor) is destructive on a false
+                    # positive, which is why the beat is worth its 150ms.
+                    time.sleep(0.15)
+                    fresh_anchor = self._read_chain_anchor()
+                    if fresh_anchor is None:
+                        gap = None
+                    else:
+                        fresh = [self._read_json(path) for path in self.event_paths()]
+                        gap = self._anchor_gap(fresh_anchor, fresh)
+                if gap is not None:
+                    self._raise_truncated(*gap)
                 result["anchor"] = "anchored"
         return result
 
@@ -467,6 +482,18 @@ class Chronicle:
             # the next read say `anchor-absent`, which is the honest answer,
             # and the next successful append re-establishes it.
             self.chain_anchor.unlink(missing_ok=True)
+
+    @staticmethod
+    def _anchor_gap(anchor_state: dict[str, Any],
+                    records: list[dict[str, Any]]) -> tuple[int, int] | None:
+        """(anchored, remaining) when the chain does not pass through the
+        anchored head; None when it does."""
+        length = int(anchor_state["length"])
+        if length > len(records):
+            return length, len(records)
+        if length and records[length - 1].get("record_hash") != anchor_state["head_hash"]:
+            return length, len(records)
+        return None
 
     @staticmethod
     def _raise_truncated(anchored: int, remaining: int) -> None:
