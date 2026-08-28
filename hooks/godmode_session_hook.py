@@ -443,6 +443,35 @@ def _final_reply_text(submitted: dict[str, Any]) -> str:
     return ""
 
 
+def _open_obligations_touched(archive: Any, reply_text: str) -> list[str]:
+    """Open obligations whose vocabulary the turn's final text shares (S9,
+    report 16 2026-08-29): an obligation recorded mid-session surfaced only
+    at resume and session close - inert for the whole middle. The turn
+    boundary is the carrier the claim echo already proved. Latest record
+    per subject is the state; >=3 salient shared words is the match bar the
+    guard-pin lookup already uses; bounded to two subjects."""
+    try:
+        from godmode_runtime.godmode_sources import _salient_words
+
+        latest: dict[str, dict] = {}
+        for record in archive.select(kind="obligation", limit=200):
+            latest[str(record.get("subject", ""))] = record
+        reply_words = _salient_words(reply_text)
+        if not reply_words:
+            return []
+        touched = []
+        for subject, record in latest.items():
+            data = record.get("data") or {}
+            if str(data.get("status", "open")) in ("closed", "done", "retired"):
+                continue
+            vocab = _salient_words(f"{subject} {data.get('value', '')}")
+            if len(reply_words & vocab) >= 3:
+                touched.append(subject)
+        return touched[:2]
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def _unrecorded_claims(archive: Any, reply_text: str) -> list[str]:
     """Claim-shaped sentences in the reply with no claim record behind them.
     Reuses the public-surface claim definition (`claimscan.is_claim`) and
@@ -969,6 +998,22 @@ def main(argv: list[str] | None = None) -> int:
             if not reply_text:
                 return 0
             unsupported = _unrecorded_claims(archive, reply_text)
+            touched = _open_obligations_touched(archive, reply_text)
+            if touched:
+                print(json.dumps({"systemMessage": (
+                    "godmode: open obligation(s) this turn touches: "
+                    + ", ".join(touched)
+                    + " - update or close them, or they resurface.")}))
+                try:
+                    echo = archive.root / "godmode-claim-echo.json"
+                    parked = {}
+                    if echo.exists():
+                        parked = json.loads(echo.read_text(encoding="utf-8"))
+                    parked["obligations"] = touched
+                    echo.write_text(json.dumps(parked, ensure_ascii=False),
+                                    encoding="utf-8")
+                except Exception:  # noqa: BLE001
+                    pass
             if unsupported:
                 shown = "; ".join(f"'{s[:160]}'" for s in unsupported[:2])
                 print(json.dumps({"systemMessage": (
@@ -984,11 +1029,14 @@ def main(argv: list[str] | None = None) -> int:
                 # are parked beside the archive, outside it, and deleted the
                 # moment the next prompt boundary delivers them back.
                 try:
-                    (archive.root / "godmode-claim-echo.json").write_text(
-                        json.dumps({"sentences": [s[:200] for s in unsupported[:3]]},
-                                   ensure_ascii=False),
-                        encoding="utf-8")
-                except OSError:
+                    echo = archive.root / "godmode-claim-echo.json"
+                    parked = {}
+                    if echo.exists():
+                        parked = json.loads(echo.read_text(encoding="utf-8"))
+                    parked["sentences"] = [s[:200] for s in unsupported[:3]]
+                    echo.write_text(json.dumps(parked, ensure_ascii=False),
+                                    encoding="utf-8")
+                except Exception:  # noqa: BLE001
                     pass
             return 0
 
@@ -1013,16 +1061,27 @@ def main(argv: list[str] | None = None) -> int:
                     echo_path.unlink()
                     sentences = [str(s)[:200]
                                  for s in (parked.get("sentences") or [])][:3]
+                    touched = [str(s)[:120]
+                               for s in (parked.get("obligations") or [])][:2]
+                    parts = []
                     if sentences:
                         listed = "; ".join(f"'{s}'" for s in sentences)
+                        parts.append(
+                            "godmode: your previous reply made "
+                            f"{len(sentences)} claim-shaped statement(s) "
+                            f"with no record: {listed}. Record each with "
+                            "`godmode claim --cite <evidence>` (it grades "
+                            "honestly) or soften the wording this turn.")
+                    if touched:
+                        parts.append(
+                            "godmode: open obligation(s) the previous turn "
+                            "touched: " + ", ".join(touched)
+                            + " - act on them or close them on the record.")
+                    if parts:
+                        joined = " ".join(parts)
                         print(json.dumps({"hookSpecificOutput": {
                             "hookEventName": "UserPromptSubmit",
-                            "additionalContext": (
-                                "godmode: your previous reply made "
-                                f"{len(sentences)} claim-shaped statement(s) "
-                                f"with no record: {listed}. Record each with "
-                                "`godmode claim --cite <evidence>` (it grades "
-                                "honestly) or soften the wording this turn.")}},
+                            "additionalContext": joined}},
                             ensure_ascii=False))
             except Exception:  # noqa: BLE001
                 pass
