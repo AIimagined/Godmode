@@ -228,11 +228,15 @@ def merge_host_tools_into_shared(existing: dict[str, Any]) -> dict[str, Any]:
     for block in pre_tool_use:
         if "matcher" not in block:
             continue
-        names = [n for n in block["matcher"].split("|") if n]
+        # Field report 2026-08-28: the matcher is a REGEX to Claude-family
+        # hosts, so a dotted tool name must ship escaped (`functions\.exec`);
+        # identity is compared on the unescaped name so regeneration stays
+        # idempotent.
+        names = [n.replace("\\.", ".") for n in block["matcher"].split("|") if n]
         for tool in sorted(hostevent.CODEX_TOOLS) + sorted(hostevent.GROK_TOOLS):
             if tool not in names:
                 names.append(tool)
-        block["matcher"] = "|".join(names)
+        block["matcher"] = "|".join(n.replace(".", "\\.") for n in names)
     if pre_tool_use:
         merged["hooks"]["PreToolUse"] = pre_tool_use
     return merged

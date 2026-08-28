@@ -142,30 +142,12 @@ def opening_handshake(archive: Chronicle, anchor: Any, project: Path) -> dict[st
     # record in this archive cites it (`file:<path>`), which is the same
     # evidence class every other check here trusts; the unread ones are
     # named, because a count with no list is not actionable.
-    required_paths: list[str] = []
-    try:
-        from .godmode_corpus import resolve_roles
+    from .godmode_sources import required_sources_view
 
-        resolution = resolve_roles(project)
-        required_paths = sorted(
-            binding.path.relative_to(resolution.project).as_posix()
-            if binding.path.is_absolute() else binding.path.as_posix()
-            for binding in resolution.bindings
-        )
-    except Exception:
-        required_paths = []
-    sources_total = len(required_paths)
-    cited: set[str] = set()
-    try:
-        for record in archive.read_events():
-            for reference in record.get("evidence", []) or []:
-                text = str(reference)
-                if text.startswith("file:"):
-                    cited.add(text[len("file:"):].replace("\\", "/").lstrip("./"))
-    except Exception:
-        cited = set()
-    unread = [path for path in required_paths if path not in cited]
-    sources_read = sources_total - len(unread)
+    sources_view = required_sources_view(project, archive)
+    sources_total = sources_view["documents"]
+    unread = sources_view["unread"]
+    sources_read = sources_view["read"]
     handshake: dict[str, Any] = {
         "identity": anchor.public_view() if anchor is not None else None,
         "branch": getattr(anchor, "branch", None),
@@ -1417,6 +1399,13 @@ def _guard_citations(citations: list[str]) -> list[str]:
     return guards
 
 
+def _guard_pin_reason(project: Path, archive: Chronicle, text: str,
+                      citations: list[str]) -> str:
+    from .godmode_sources import guard_pin_reason
+
+    return guard_pin_reason(project, archive, text, citations)
+
+
 def record_claim(
     archive: Chronicle,
     project: Path,
@@ -1603,6 +1592,12 @@ def record_claim(
                 "only running it verifies - add cmd:<the command that ran it> "
                 "beside the file citation",
             )
+        elif absence and (pin_reason := _guard_pin_reason(project, archive, text, citations)):
+            # Obligation 4166 (field report 2026-08-28): a state-is-a-gap
+            # claim about a line an uncited test pins, or a symptom the
+            # lessons ledger already holds, is answered by that pin's
+            # provenance - not published as a gap, not fixed in place.
+            effective, reason = "hypothesis", pin_reason
         elif unsupported:
             effective, reason = "hypothesis", "cited location does not support the claim"
 

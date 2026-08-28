@@ -59,7 +59,7 @@ compatible boundary at all). A `DEGRADED` grade carries a persistent, named
 reason in both `hooks status` and the session-start brief until a fresh probe
 passes — never a silent downgrade.
 
-**Costs and limits, stated.** `hooks.json` sets a 3s timeout on `PreToolUse`
+**Costs and limits, stated.** `hooks.json` sets an 8s timeout on `PreToolUse`
 (`SessionStart` gets 10s, `UserPromptSubmit` gets 30s). Measured directly
 against `godmode_gate_fast.py` on Windows (2026-08-14, `python
 hooks/godmode_gate_fast.py < payload.json`, 10 timed runs after one unmeasured

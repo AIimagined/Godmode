@@ -40,6 +40,51 @@ def isolated_project():
             yield project, archive
 
 
+class ReadKindAllowTests(unittest.TestCase):
+    """Field report 2026-08-28 (live Grok session): the gate fail-closed on
+    Grok's own read-only builtin and blocked ordinary work. A positively
+    identified read-kind tool is allow by construction at this boundary."""
+
+    def test_a_grok_readonly_builtin_is_allowed(self) -> None:
+        with isolated_project() as (project, _archive):
+            environment = dict(os.environ)
+            environment["GROK_AGENT"] = "1"
+            done = subprocess.run(
+                [sys.executable,
+                 str(PLUGIN_ROOT / "hooks" / "godmode_session_hook.py"),
+                 "pre-action", "--project", str(project)],
+                input=json.dumps({
+                    "hookEventName": "pre_tool_use",
+                    "toolName": "get_command_or_subagent_output",
+                    "toolInput": {},
+                }),
+                capture_output=True, text=True, encoding="utf-8",
+                timeout=120, env=environment,
+            )
+        # Allow is SILENT by this hook's contract (only deny/ask print a
+        # body), so the pin is a contrast pair: the read-only builtin stays
+        # silent with exit 0, while an unknown name on the same payload
+        # shape prints a deny - the verdict can vary, so it is a verdict.
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertNotIn("deny", done.stdout)
+        with isolated_project() as (project, _archive):
+            environment = dict(os.environ)
+            environment["GROK_AGENT"] = "1"
+            unknown = subprocess.run(
+                [sys.executable,
+                 str(PLUGIN_ROOT / "hooks" / "godmode_session_hook.py"),
+                 "pre-action", "--project", str(project)],
+                input=json.dumps({
+                    "hookEventName": "pre_tool_use",
+                    "toolName": "some_other_tool",
+                    "toolInput": {},
+                }),
+                capture_output=True, text=True, encoding="utf-8",
+                timeout=120, env=environment,
+            )
+        self.assertIn("deny", unknown.stdout)
+
+
 class MeterTests(unittest.TestCase):
     def test_tool_calls_and_wall_time_are_measured_not_reported(self) -> None:
         from godmode_runtime.godmode_guardrails import meter_tool_call, read_meter
