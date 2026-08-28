@@ -715,6 +715,50 @@ class SkillsHostNeutralityTests(unittest.TestCase):
             self.assertTrue((project / ".grok" / "skills" / "test-skill" / "SKILL.md").is_file())
 
 
+class CodexProjectFallbackTests(unittest.TestCase):
+    """Codex CLI 0.150.1 ignores plugin-bundled hook manifests (its own
+    bundled plugins show Installed: 0), so the shared file projects into the
+    project-level `.codex/hooks.json` its runtime does load."""
+
+    def test_projection_carries_every_event_with_absolute_commands(self) -> None:
+        from godmode_runtime.godmode_host_manifests import codex_project_hooks
+
+        doc = codex_project_hooks(PLUGIN_ROOT)
+        shared = json.loads(
+            (PLUGIN_ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+        self.assertEqual(sorted(doc["hooks"]), sorted(shared["hooks"]))
+        for blocks in doc["hooks"].values():
+            for block in blocks:
+                for entry in block["hooks"]:
+                    self.assertNotIn("${CLAUDE_PLUGIN_ROOT}", entry["command"])
+                    self.assertIn(PLUGIN_ROOT.as_posix(), entry["command"])
+                    self.assertNotIn("timeout", entry)
+                    self.assertNotIn("async", entry)
+
+    def test_matcher_survives_projection(self) -> None:
+        from godmode_runtime.godmode_host_manifests import codex_project_hooks
+
+        doc = codex_project_hooks(PLUGIN_ROOT)
+        matchers = [b["matcher"] for b in doc["hooks"]["PreToolUse"]
+                    if "matcher" in b]
+        self.assertTrue(matchers)
+        self.assertIn("apply_patch", matchers[0])
+
+    def test_write_refuses_a_differing_file_without_force(self) -> None:
+        import tempfile
+        from godmode_runtime.godmode_host_manifests import write_codex_project_hooks
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / ".codex").mkdir()
+            (project / ".codex" / "hooks.json").write_text("{}", encoding="utf-8")
+            refused = write_codex_project_hooks(PLUGIN_ROOT, project)
+            forced = write_codex_project_hooks(PLUGIN_ROOT, project, force=True)
+        self.assertFalse(refused["written"])
+        self.assertTrue(forced["written"])
+        self.assertIn("trust", forced["note"].lower())
+
+
 class EveryShippedMatcherResolvesInItsAdapter(unittest.TestCase):
     """Sprint 4's generalisation: a manifest and an adapter are two
     authorities over one list of tool names, and nothing compared them.

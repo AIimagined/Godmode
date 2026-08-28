@@ -1811,6 +1811,19 @@ def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             )
         report = run_probe(Path(runtime.anchor.project_root), runtime.archive, host)
         return CommandResult(report, exit_code=0 if report["state"] == "HARD" else 1)
+    if args.hooks_command == "wire":
+        # Codex CLI 0.150.1 ignores plugin-bundled hook manifests (host bug,
+        # 2026-08-28); the project-level file is what its runtime loads.
+        from .godmode_host_manifests import write_codex_project_hooks
+
+        if (getattr(args, "host", None) or "codex") != "codex":
+            return CommandResult(
+                {"error": "only codex needs a project-level fallback today"},
+                exit_code=1)
+        plugin_root = Path(__file__).resolve().parents[2]
+        return CommandResult(write_codex_project_hooks(
+            plugin_root, Path(runtime.anchor.project_root),
+            force=getattr(args, "force", False)))
     if args.hooks_command == "install":
         if getattr(args, "git", False):
             _require_archive(runtime)
@@ -4205,6 +4218,15 @@ def _build_parser() -> argparse.ArgumentParser:
     hooks_probe.add_argument(
         "--host", help="Host label to record the proof under (default: detected)")
     hooks_probe.set_defaults(handler=cmd_hooks)
+    hooks_wire = hooks_sub.add_parser(
+        "wire",
+        help="Write the project-level .codex/hooks.json fallback - Codex CLI "
+             "0.150.1 ignores plugin-bundled hooks but loads project config; "
+             "the operator reviews and Trusts each command in codex afterwards")
+    hooks_wire.add_argument("--host", help="Only codex today")
+    hooks_wire.add_argument(
+        "--force", action="store_true", help="Overwrite a differing existing file")
+    hooks_wire.set_defaults(handler=cmd_hooks)
     hooks_install = hooks_sub.add_parser(
         "install",
         help="Verify each declared hook for one host appears in that host's own runtime "
