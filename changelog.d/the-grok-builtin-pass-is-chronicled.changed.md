@@ -1,0 +1,1 @@
+The Grok read-only-builtin pass is chronicled live (Grok 1.0.5, 2026-08-29): the previously denied builtin ran, and hooks status reads HARD with the full declared-event list - the host table's claim now stands on that session.
