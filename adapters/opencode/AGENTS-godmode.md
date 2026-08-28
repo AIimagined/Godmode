@@ -8,8 +8,14 @@ optional shim: copy `adapters/opencode/godmode.opencode.js` to
 `hooks/godmode_gate_fast.py`. The shim runs the real gate on every `bash`,
 `write`, `edit` and `patch` call through OpenCode's `tool.execute.before`
 hook and throws on a deny - OpenCode's documented way to stop a tool - so
-it fails closed: an `ask` folds to deny naming the staged-capability
-remedy, and a missing interpreter or root refuses the call.
+a CONFIGURED gate fails closed: an `ask` folds to deny naming the
+staged-capability remedy, and a missing interpreter or gate file refuses
+the call. An UNSET `GODMODE_PLUGIN_ROOT` warns once and allows instead of
+refusing everything (field report 2026-08-29: the old behaviour bricked a
+live session, `dir` included). The root must point at a real Godmode
+checkout or install; the environment variable must be set in the shell
+that LAUNCHES OpenCode, and plugins load at startup, so a restart follows
+any change. Runs under Bun or Node.
 
 ## Session contract
 
@@ -26,8 +32,12 @@ claims through `claim --cite ...`, gate mutations through
 
 ## Enforcement on this host
 
-Configure OpenCode's permission model to `ask` for shell and edit tools; that
-prompt is what makes authorization HARD here.
+Interactive authorization is OpenCode's own permission model, not this
+adapter: configure OpenCode to `ask` for shell and edit tools yourself,
+and verify the prompt actually appears before relying on it (field report
+2026-08-29: a session with the shim installed saw throws, never prompts).
+The HARD grade in the table below holds only where that prompt is
+observed working; state which applies in the first session report.
 
 | Control | Level |
 | --- | --- |

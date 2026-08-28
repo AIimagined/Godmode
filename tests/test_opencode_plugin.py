@@ -106,7 +106,10 @@ class BunBehaviourTests(unittest.TestCase):
             self.assertTrue(result["blocked"], result)
             self.assertIn("authorize stage", result["message"])
 
-    def test_a_missing_root_fails_closed(self) -> None:
+    def test_a_missing_root_warns_and_allows(self) -> None:
+        # Field report 2026-08-29: the old fail-closed-on-unset-root bricked
+        # a live session down to `dir`. Unconfigured is not hostile: the call
+        # passes, and the warning names exactly what is not running.
         with tempfile.TemporaryDirectory() as raw:
             project = Path(raw)
             harness = project / "harness.mjs"
@@ -119,8 +122,40 @@ class BunBehaviourTests(unittest.TestCase):
                                   capture_output=True, text=True, encoding="utf-8",
                                   errors="replace", timeout=60, env=env, cwd=str(project))
             result = json.loads(done.stdout.strip().splitlines()[-1])
+            self.assertFalse(result["blocked"], result)
+            self.assertIn("GODMODE_PLUGIN_ROOT", done.stderr)
+            self.assertIn("NOT", done.stderr)
+
+    def test_the_node_runtime_blocks_the_same_deny(self) -> None:
+        # Field report 2026-08-29: the host ran Node while the shim called
+        # Bun.spawn. The same protected command must block under Node.
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not installed on this machine")
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw)
+            project = base / "project"
+            project.mkdir()
+            state = base / "state"
+            with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(state)}, clear=False):
+                Chronicle(resolve_anchor(project)).initialize()
+            harness = project / "harness.mjs"
+            # Node's ESM loader refuses a bare Windows absolute path
+            # (ERR_UNSUPPORTED_ESM_URL_SCHEME); a file:// URL loads on both.
+            harness.write_text(HARNESS % {
+                "shim": json.dumps(SHIM.as_uri()),
+                "directory": json.dumps(project.as_posix()),
+            }, encoding="utf-8")
+            env = {**os.environ, "GODMODE_PLUGIN_ROOT": PLUGIN_ROOT.as_posix(),
+                   "GODMODE_STATE_HOME": str(state), "GODMODE_PYTHON": sys.executable}
+            env.pop("GODMODE_HOST", None)
+            done = subprocess.run([node, str(harness), "bash",
+                                   json.dumps({"command": "rm -rf build"})],
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=180, env=env, cwd=str(project))
+            self.assertEqual(done.returncode, 0, done.stderr)
+            result = json.loads(done.stdout.strip().splitlines()[-1])
             self.assertTrue(result["blocked"], result)
-            self.assertIn("GODMODE_PLUGIN_ROOT", result["message"])
 
 
 if __name__ == "__main__":
