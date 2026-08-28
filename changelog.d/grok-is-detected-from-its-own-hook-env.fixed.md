@@ -1,0 +1,1 @@
+Grok is detected from the variables its hook subprocess actually injects (GROK_PLUGIN_ROOT/GROK_HOOK_EVENT) and from its read-only builtin names at the shape step - the builtins classify read-kind in the live hook, not only under GROK_AGENT; the Grok declared-events list adds Stop and PostToolUse, and the host table holds the builtin-pass claim until a live session chronicles it.

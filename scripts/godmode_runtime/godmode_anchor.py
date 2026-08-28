@@ -346,6 +346,10 @@ def current_host() -> str:
         return os.environ["GODMODE_HOST"]
     if os.environ.get("GROK_AGENT"):
         return "grok"
+    if os.environ.get("GROK_PLUGIN_ROOT") or os.environ.get("GROK_HOOK_EVENT"):
+        # The variables Grok injects into its hook subprocess (live field
+        # report 2026-08-29); same step, same position as `detect_host`.
+        return "grok"
     if os.environ.get("CLAUDE_CODE_ENTRYPOINT"):
         return "claude"
     if is_copilot_environment():
