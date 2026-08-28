@@ -60,7 +60,7 @@ def _guarded_lessons(archive: Any) -> list[dict[str, Any]]:
         if record.get("kind") != "lesson":
             continue
         data = record.get("data") or {}
-        if str(data.get("status", "active")) == "retired":
+        if str(data.get("status", "active")) in ("retired", "candidate"):
             continue
         guard = str(data.get("generalized_guard") or "").strip()
         if not guard:
@@ -76,11 +76,23 @@ def _guarded_lessons(archive: Any) -> list[dict[str, Any]]:
     return lessons
 
 
+def _delivered_seqs(archive: Any) -> set[int]:
+    delivered: set[int] = set()
+    for record in archive.read_events():
+        if record.get("kind") == "action" and record.get("subject") == "laws-delivered":
+            for seq in (record.get("data") or {}).get("law_seqs") or []:
+                delivered.add(int(seq))
+    return delivered
+
+
 def top_laws(archive: Any, k: int) -> list[dict[str, Any]]:
-    """The k newest laws, bounded for the brief's budget."""
+    """The k newest laws, bounded for the brief's budget. `dormant` means no
+    delivery receipt has ever named this law - L3's decay input, flagged
+    rather than silently carried."""
+    delivered = _delivered_seqs(archive)
     return [
         {"subject": lesson["subject"], "guard": _ellipsize(lesson["guard"], GUARD_CHARS),
-         "seq": lesson["sequence"]}
+         "seq": lesson["sequence"], "dormant": lesson["sequence"] not in delivered}
         for lesson in _guarded_lessons(archive)[: max(0, k)]
     ]
 
@@ -116,6 +128,150 @@ archive provenance. Follow each law's guard; when one seems wrong, say so
 and retire the underlying lesson (`godmode lessons`) rather than silently
 ignoring it. Regenerate after new lessons with `godmode law compile`.
 """
+
+
+_CORRECTION_MARKERS = frozenset({
+    "wrong", "again", "missed", "incorrect", "mistake", "revert", "undo",
+})
+_CORRECTION_THRESHOLD = 2
+
+# loop-engineering's reliability discipline, absorbed 2026-08-28: nothing
+# escalates on one observation. A candidate cluster is promotable only after
+# the same correction recurs in this many DISTINCT sessions.
+PROMOTION_SESSIONS = 3
+
+
+def record_correction_candidate(archive: Any, prompt: str, *,
+                                session: str | None = None) -> dict[str, Any] | None:
+    """The operator-correction detector (Sprint L2, decision 4114).
+
+    A correction-shaped prompt - at least two distinct correction markers -
+    writes a law CANDIDATE: a lesson with status "candidate", carrying the
+    prompt's keywords and digest, never its sentence (the 4018 privacy
+    decision holds here too). A candidate has no guard, so `law compile`
+    never renders it; review drafts the guard, the ladder (L3) promotes it.
+    Returns None for an ordinary prompt, a secret-shaped one, or an empty
+    one - the detector is quiet by contract.
+    """
+    from .godmode_requests import _keywords, digest
+    from .godmode_sentinel import find_secret_shapes
+
+    flattened = " ".join(str(prompt).split())
+    if not flattened or find_secret_shapes(flattened):
+        return None
+    words = {w.lower() for w in flattened.replace(",", " ").split()}
+    markers = sorted(_CORRECTION_MARKERS & words)
+    if len(markers) < _CORRECTION_THRESHOLD:
+        return None
+    identifier = digest(flattened)
+    return archive.append(
+        "lesson",
+        f"correction:{identifier[:12]}",
+        {
+            "status": "candidate",
+            "value": "operator corrected the agent (counts only); draft a guard "
+                     "at review, promote via the ladder",
+            "keywords": sorted(_keywords(flattened))[:24],
+            "markers": markers,
+            "session": session,
+            "digest": identifier,
+        },
+        evidence=[],
+    )
+
+
+def law_candidates(archive: Any) -> list[dict[str, Any]]:
+    """Candidates clustered read-time by keyword identity, so a repeated
+    correction increments a counter instead of splitting the promotion
+    ladder's own evidence across duplicates (dedup-or-increment)."""
+    clusters: dict[frozenset[str], dict[str, Any]] = {}
+    for record in archive.read_events():
+        if record.get("kind") != "lesson":
+            continue
+        data = record.get("data") or {}
+        if str(data.get("status")) != "candidate":
+            continue
+        key = frozenset(str(k) for k in (data.get("keywords") or []))
+        if not key:
+            continue
+        cluster = clusters.setdefault(key, {
+            "keywords": sorted(key), "occurrences": 0, "sessions": set(),
+            "first_seq": int(record.get("sequence", 0)),
+        })
+        cluster["occurrences"] += 1
+        cluster["last_seq"] = int(record.get("sequence", 0))
+        session = data.get("session")
+        if session:
+            cluster["sessions"].add(str(session))
+    ranked = []
+    for cluster in clusters.values():
+        cluster["distinct_sessions"] = len(cluster.pop("sessions"))
+        cluster["promotable"] = cluster["distinct_sessions"] >= PROMOTION_SESSIONS
+        ranked.append(cluster)
+    ranked.sort(key=lambda c: (-c["occurrences"], c["first_seq"]))
+    return ranked
+
+
+def promote_candidate(archive: Any, first_seq: int, *, guard: str,
+                      subject: str) -> dict[str, Any]:
+    """Promote a candidate cluster into a law - a guarded, active lesson.
+
+    The guard is REVIEWED prose written at promotion time (a candidate
+    carries keywords, never a sentence worth enshrining verbatim), and the
+    ladder holds: below PROMOTION_SESSIONS distinct sessions, promotion is
+    refused rather than discouraged. HARD enforcement stays with the
+    charter; every promoted law is ADVISORY here.
+    """
+    from .godmode_errors import ArchiveError
+
+    guard = " ".join(str(guard).split())
+    subject = str(subject).strip()
+    if not guard or not subject:
+        raise ArchiveError("Promotion needs --guard and --subject, both non-empty")
+    cluster = next(
+        (c for c in law_candidates(archive) if c["first_seq"] == int(first_seq)), None)
+    if cluster is None:
+        raise ArchiveError(
+            f"No candidate cluster starts at seq {first_seq}; `law candidates` lists them")
+    if not cluster["promotable"]:
+        raise ArchiveError(
+            f"Cluster at seq {first_seq} has recurred in {cluster['distinct_sessions']} "
+            f"distinct session(s); the ladder requires {PROMOTION_SESSIONS} - "
+            "reliability first, promotion second")
+    return archive.append(
+        "lesson", subject,
+        {
+            "status": "active",
+            "value": ("promoted from a correction cluster (keywords: "
+                      + ", ".join(cluster["keywords"][:10]) + ")"),
+            "generalized_guard": guard,
+            "promoted_from": cluster["first_seq"],
+            "occurrences": cluster["occurrences"],
+            "distinct_sessions": cluster["distinct_sessions"],
+        },
+        evidence=[f"seq:{cluster['first_seq']}", f"seq:{cluster['last_seq']}"],
+    )
+
+
+def record_delivery(archive: Any, laws: list[dict[str, Any]], *,
+                    session: str | None = None) -> dict[str, Any] | None:
+    """The delivery receipt: which laws the brief carried, counts only.
+
+    The denominator (loopy's receipts, via the L2 spec): without a record
+    of delivery, "violated 0" cannot be told apart from "never seen".
+    """
+    if not laws:
+        return None
+    return archive.append(
+        "action",
+        "laws-delivered",
+        {
+            "delivered": len(laws),
+            "law_seqs": [int(law.get("seq", 0)) for law in laws],
+            "session": session,
+        },
+        evidence=[],
+    )
 
 
 def compile_laws(archive: Any, project: Path | str, *, cap: int = LAW_CAP) -> dict[str, Any]:

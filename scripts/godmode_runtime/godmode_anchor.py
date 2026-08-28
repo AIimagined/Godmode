@@ -31,6 +31,13 @@ def run_git(project: Path, *arguments: str) -> str | None:
             check=False,
             capture_output=True,
             text=True,
+            # 2026-08-28: on Windows, text=True decodes with the locale code
+            # page (cp1252), and a staged diff carrying any non-ASCII byte
+            # crashed the reader thread - which took `egress --staged` down
+            # with it. A crashed scanner is not a verdict. UTF-8 with
+            # replacement keeps every caller reading what git actually wrote.
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
             env=environment,
         )
