@@ -58,7 +58,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|write|search_replace",
         "hooks": [
           {
             "type": "command",
@@ -70,7 +70,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|PowerShell|Write|Edit|NotebookEdit|apply_patch|functions.exec|shell_command|run_terminal_command|search_replace|write",
+        "matcher": "Bash|PowerShell|Write|Edit|NotebookEdit|apply_patch|functions\\.exec|shell_command|run_terminal_command|search_replace|write",
         "hooks": [
           {
             "type": "command",

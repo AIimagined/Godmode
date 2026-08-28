@@ -541,6 +541,17 @@ def cmd_init(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 
 def cmd_adopt(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if getattr(args, "from_docs", False):
+        # Obligation 4097: a late install into a mature repo starts with an
+        # empty archive while the project's own documents hold months of
+        # truth. Seed counts-only adoption records citing each bound
+        # authority document, so the brief and the required-sources counter
+        # start populated on day one.
+        from .godmode_sources import adopt_from_docs
+
+        runtime.archive.initialize()
+        return CommandResult(
+            adopt_from_docs(runtime.archive, Path(runtime.anchor.project_root)))
     orphaned = runtime.archive.orphaned()
     source = args.source or (orphaned or {}).get("source")
     if not source:
@@ -3442,6 +3453,10 @@ def _build_parser() -> argparse.ArgumentParser:
     adopt = sub.add_parser("adopt", help="Relink records stranded by an identity change (e.g. git init)")
     adopt.add_argument("--source", help="Archive root to adopt; defaults to the detected one")
     adopt.add_argument("--confirm", action="store_true", help="Perform the relink, not just preview it")
+    adopt.add_argument(
+        "--from-docs", action="store_true",
+        help="Seed a late install: counts-only adoption records citing each "
+             "bound authority document")
     adopt.set_defaults(handler=cmd_adopt)
     roles = sub.add_parser("roles", help="Resolve authority documents by role")
     roles.add_argument("--check", action="store_true", help="Exit non-zero when two roles claim one path")

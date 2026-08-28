@@ -1,0 +1,1 @@
+The pre-tool gate asks, once per session, while a bound authority document is uncited - naming the unread files, with citation or an on-the-record exemption (`sources-exemption:<path>`) as the escape.

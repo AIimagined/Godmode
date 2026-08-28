@@ -693,6 +693,21 @@ class GrokAdapterTests(unittest.TestCase):
             })
         self.assertEqual(event.tool_kind, he.TOOL_KIND_UNRECOGNIZED)
 
+    def test_a_grok_readonly_builtin_is_read_kind(self) -> None:
+        # Field report 2026-08-28: fail-closing on Grok's own read-only
+        # builtins (get_command_or_subagent_output) blocked ordinary work.
+        with mock.patch.dict(os.environ, {"GROK_AGENT": "1"}, clear=False):
+            event = he.parse_host_payload({
+                "hookEventName": "pre_tool_use",
+                "toolName": "get_command_or_subagent_output",
+                "toolInput": {},
+            })
+        self.assertEqual(event.host, "grok")
+        self.assertEqual(event.tool_kind, he.TOOL_KIND_READ)
+
+    def test_readonly_names_stay_out_of_the_mutating_map(self) -> None:
+        self.assertFalse(he._GROK_READONLY_TOOLS & he.GROK_TOOLS)
+
 
 class UnrecognizedToolTests(unittest.TestCase):
     def test_preview_is_protected_and_fail_closed(self) -> None:

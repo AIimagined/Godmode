@@ -238,6 +238,14 @@ _CLAUDE_TOOLS = frozenset({
 _CODEX_TOOLS = frozenset({"shell_command", "apply_patch", "functions.exec"})
 # Grok tool map, Addendum 6 verbatim: run_terminal_command/write/search_replace.
 _GROK_TOOLS = frozenset({"run_terminal_command", "write", "search_replace"})
+# Field report 2026-08-28 (live Grok session): the adapter knew only the
+# three mutating names, so Grok's own read-only builtins arrived as
+# `unrecognized-tool` and fail-closed - the gate blocked ordinary reads.
+# Observed names only; a read-kind event is allow by construction (the
+# hook's own early branch), and unknown names still fail closed.
+_GROK_READONLY_TOOLS = frozenset({
+    "get_command_or_subagent_output", "read_file", "grep", "spawn_subagent",
+})
 # Addendum 5: Cursor's pre-tool events, camelCase, a fourth dialect.
 _CURSOR_EVENTS = frozenset({"preToolUse", "beforeShellExecution"})
 # Addendum 4a: Gemini CLI's pre-tool event is BeforeTool, not PreToolUse.
@@ -879,6 +887,12 @@ def _adapt_grok(raw: Any) -> HostEvent:
             schema=SCHEMA, event=event_name, host="grok", tool=tool,
             operation=f"{verb} file {target}", targets=[target], cwd=cwd,
             request_id=request_id, tool_kind=TOOL_KIND_FENCED,
+        )
+    if tool in _GROK_READONLY_TOOLS:
+        return HostEvent(
+            schema=SCHEMA, event=event_name, host="grok", tool=tool,
+            operation=f"{tool} (grok built-in, read-only)", targets=[],
+            cwd=cwd, request_id=request_id, tool_kind=TOOL_KIND_READ,
         )
     return _unrecognized("grok", tool, raw)
 

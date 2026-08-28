@@ -32,7 +32,7 @@ from godmode_runtime.godmode_hookproof import (  # noqa: E402
     interception_state, record_hook_degradation, record_interception_proof,
     record_session_anchor)
 from godmode_runtime.godmode_hostevent import (  # noqa: E402
-    HOSTS_WITH_ASK, TOOL_KIND_MALFORMED, TOOL_KIND_UNRECOGNIZED,
+    HOSTS_WITH_ASK, TOOL_KIND_MALFORMED, TOOL_KIND_READ, TOOL_KIND_UNRECOGNIZED,
     capture_payload_probe, field as host_field, is_pretool_event,
     malformed_apply_patch_preview, parse_host_payload,
     record_malformed_apply_patch, record_unrecognized_tool, render_decision,
@@ -639,6 +639,49 @@ def _broker(archive: Chronicle) -> Any:
     return CapabilityBroker(archive)
 
 
+def _sources_gate_reason(archive: Chronicle, anchor: Any,
+                         session: str | None) -> str | None:
+    """Obligation 4094 (S5): the required-sources counter gates, not only
+    reports. Returns the ask reason for the first otherwise-allowed pre-tool
+    call of a session while a bound authority document is uncited and
+    unexempted - naming the unread files and both escapes - and None ever
+    after: once per session by contract, so the gate informs without nagging.
+    """
+    if not session:
+        return None
+    try:
+        for record in archive.select(kind="action", limit=150):
+            if (record.get("subject") == "sources-gate"
+                    and (record.get("data") or {}).get("session") == session):
+                return None
+    except Exception:
+        return None
+    try:
+        from godmode_runtime.godmode_sources import required_sources_view
+
+        view = required_sources_view(Path(anchor.project_root), archive)
+    except Exception:
+        return None
+    unread = view.get("unread") or []
+    if not unread:
+        return None
+    try:
+        archive.append("action", "sources-gate",
+                       {"session": session, "unread": len(unread),
+                        "documents": view.get("documents", 0)},
+                       evidence=[])
+    except Exception:
+        pass
+    named = ", ".join(unread[:5])
+    return (
+        f"required sources unread ({len(unread)} of {view.get('documents', 0)}): "
+        f"{named}. Read them and cite each with file:<path> evidence, or exempt "
+        "one on the record: `godmode remember --kind decision --subject "
+        '"sources-exemption:<path>" --value "<why>"`. Asked once per session; '
+        "approve to proceed without."
+    )
+
+
 def _decision_for(preview: dict[str, Any]) -> str:
     """`ask` or `deny`, from the tier the classifier already computed.
 
@@ -1169,6 +1212,15 @@ def main(argv: list[str] | None = None) -> int:
             record_malformed_apply_patch(archive, event.host, tool)
             if capture_payload:
                 capture_payload_probe(archive, submitted, event)
+        elif event.tool_kind == TOOL_KIND_READ:
+            # Field report 2026-08-28 (Grok live): a host's own read-only
+            # builtin (get_command_or_subagent_output) arrived unrecognized
+            # and fail-closed, blocking ordinary work. An adapter that
+            # POSITIVELY identified a read-kind tool is allow by
+            # construction - reads mutate nothing the tiers protect - while
+            # unknown names keep failing closed one branch above.
+            preview = {"protected": False, "category": "host-read-tool",
+                       "impact": []}
         elif operation:
             preview = classify_action(
                 operation, project_root=Path(anchor.project_root),
@@ -1358,6 +1410,18 @@ def main(argv: list[str] | None = None) -> int:
                         )
                     except Exception:  # noqa: BLE001
                         pass
+
+        # Obligation 4094 (S5): the required-sources gate, before the fence.
+        # Once per session, the first pre-tool call that would otherwise be
+        # allowed while a bound authority document is uncited becomes an ask
+        # naming the unread files and both escapes (cite it, or exempt it on
+        # the record). Observe mode converts it like every other would-ask.
+        if pretool and preview.get("allow") and not preview.get("capability_consumed"):
+            sources_reason = _sources_gate_reason(archive, anchor, session)
+            if sources_reason is not None:
+                preview["allow"] = False
+                preview["sources_gate"] = True
+                preview["reason"] = sources_reason
 
         # The fence, applied last and only to what would otherwise proceed. It
         # answers a question none of the checks above ask: not `is this

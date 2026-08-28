@@ -98,7 +98,11 @@ class CodexManifestTests(unittest.TestCase):
         matcher = [b["matcher"] for b in manifest["hooks"]["PreToolUse"]
                    if "matcher" in b][0]
         for tool in ("shell_command", "apply_patch", "functions.exec"):
-            self.assertIn(tool, matcher)
+            self.assertIn(tool, matcher.replace("\\.", "."))
+        # The dotted wrapper ships REGEX-ESCAPED (field report 2026-08-28):
+        # the matcher is a regex to Claude-family hosts, and a bare dot
+        # matched any character.
+        self.assertIn("functions\\.exec", matcher)
 
 
 class SharedHooksFileTests(unittest.TestCase):
@@ -133,7 +137,7 @@ class SharedHooksFileTests(unittest.TestCase):
         with _built_project() as project:
             manifest = self._shared(project)
         matcher = [b["matcher"] for b in manifest["hooks"]["PreToolUse"] if "matcher" in b][0]
-        names = set(matcher.split("|"))
+        names = {n.replace("\\.", ".") for n in matcher.split("|")}
         for tool in ("Bash", "shell_command", "apply_patch", "functions.exec",
                      "run_terminal_command", "search_replace", "write"):
             self.assertIn(tool, names, tool)
@@ -787,7 +791,8 @@ class EveryShippedMatcherResolvesInItsAdapter(unittest.TestCase):
                     matcher = block.get("matcher")
                     if not matcher or matcher == ".*":
                         continue
-                    for name in (n for n in matcher.split("|") if n):
+                    # Names ship regex-escaped; adapters speak the raw name.
+                    for name in (n.replace("\\.", ".") for n in matcher.split("|") if n):
                         resolved_by = []
                         for host in hosts:
                             with mock.patch.dict(os.environ,
