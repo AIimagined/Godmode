@@ -271,6 +271,14 @@ def detect_host(raw: Any) -> str:
         return os.environ["GODMODE_HOST"]
     if os.environ.get("GROK_AGENT"):
         return "grok"
+    if os.environ.get("GROK_PLUGIN_ROOT") or os.environ.get("GROK_HOOK_EVENT"):
+        # Live field report 2026-08-29 (Grok 1.0.5): the hook SUBPROCESS is
+        # given GROK_PLUGIN_ROOT / GROK_HOOK_EVENT, not GROK_AGENT - so a
+        # Grok builtin outside the three mutating names detected as no host
+        # at all and fail-closed on an allowed tool. The variables Grok
+        # itself injects into its hooks are as much its markers as
+        # GROK_AGENT is; the pins for this path run WITHOUT GROK_AGENT.
+        return "grok"
     if os.environ.get("CLAUDE_CODE_ENTRYPOINT"):
         return "claude"
     # Same chain as `godmode_anchor.current_host`, same position: the two
@@ -311,7 +319,9 @@ def _detect_from_shape(raw: Any) -> str | None:
     if isinstance(tool, str) and tool:
         if tool in _CODEX_TOOLS:
             return "codex"
-        if tool in _GROK_TOOLS:
+        if tool in _GROK_TOOLS or tool in _GROK_READONLY_TOOLS:
+            # The read-only builtins are Grok's own names too (2026-08-29):
+            # cursor/gemini were already decided by their event names above.
             return "grok"
         if tool in _CLAUDE_TOOLS:
             return "claude"

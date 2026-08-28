@@ -90,6 +90,10 @@ CODEX_HOOK_EVENTS = frozenset({"SessionStart", "UserPromptSubmit", "PreToolUse"}
 # `hookEventName` VALUE is snake_case, never the hooks.json KEY.
 GROK_HOOK_EVENTS = frozenset({
     "SessionStart", "UserPromptSubmit", "PreToolUse", "PreCompact", "SessionEnd",
+    # Field report 2026-08-29: the shipped shared file carries Stop and
+    # PostToolUse, and `hooks status` said Grok declared neither - the list
+    # lagged the manifest it describes.
+    "Stop", "PostToolUse",
 })
 
 # Addendum 5 (spec, verified fetch): Cursor's own camelCase dialect names

@@ -709,6 +709,45 @@ class GrokAdapterTests(unittest.TestCase):
         self.assertFalse(he._GROK_READONLY_TOOLS & he.GROK_TOOLS)
 
 
+class GrokHookEnvironmentTests(unittest.TestCase):
+    """Live field report 2026-08-29: Grok's hook subprocess carries
+    GROK_PLUGIN_ROOT / GROK_HOOK_EVENT and NOT GROK_AGENT, so every pin
+    here runs with GROK_AGENT absent - the exact env the claim failed in."""
+
+    _PAYLOAD = {
+        "hookEventName": "pre_tool_use",
+        "toolName": "get_command_or_subagent_output",
+        "toolInput": {},
+    }
+
+    def test_grok_plugin_root_detects_grok_without_grok_agent(self) -> None:
+        with mock.patch.dict(os.environ, {"GROK_PLUGIN_ROOT": "C:/x"},
+                             clear=True):
+            event = he.parse_host_payload(dict(self._PAYLOAD))
+        self.assertEqual(event.host, "grok")
+        self.assertEqual(event.tool_kind, he.TOOL_KIND_READ)
+
+    def test_grok_hook_event_detects_grok_without_grok_agent(self) -> None:
+        with mock.patch.dict(os.environ, {"GROK_HOOK_EVENT": "pre_tool_use"},
+                             clear=True):
+            event = he.parse_host_payload(dict(self._PAYLOAD))
+        self.assertEqual(event.host, "grok")
+        self.assertEqual(event.tool_kind, he.TOOL_KIND_READ)
+
+    def test_a_bare_env_still_resolves_the_builtin_by_shape(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            event = he.parse_host_payload(dict(self._PAYLOAD))
+        self.assertEqual(event.host, "grok")
+        self.assertEqual(event.tool_kind, he.TOOL_KIND_READ)
+
+    def test_current_host_agrees_with_the_same_markers(self) -> None:
+        from godmode_runtime.godmode_anchor import current_host
+
+        with mock.patch.dict(os.environ, {"GROK_PLUGIN_ROOT": "C:/x"},
+                             clear=True):
+            self.assertEqual(current_host(), "grok")
+
+
 class UnrecognizedToolTests(unittest.TestCase):
     def test_preview_is_protected_and_fail_closed(self) -> None:
         preview = he.unrecognized_tool_preview("mystery_tool")
