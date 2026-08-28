@@ -85,6 +85,31 @@ surface (postgres table)` - which graded thirteen fully judged items as
 half judged; the checker now reads the first token as the verdict and
 keeps the text after it on the record as the reason.
 
+## The Code of Law: the loop that maintains the project's own rules
+
+Nine field reports in one day agreed on the mechanism and on the gap: the
+one feature that changed outcomes was a rule written down before the work,
+and the one line every report repeated was "claim still unused". This
+release ships the loop that closes both. `godmode law compile` folds every
+guarded lesson into a bounded `GODMODE-CODE-OF-LAW.md` - guard first,
+archive provenance beside it - and a wrapper skill carries it to hosts
+where hooks are weak; the file is a bound authority document, so the
+charter, `attest` and the required-sources counter consume it unchanged,
+and the SessionStart brief delivers the top laws inside its budget. A
+correction-shaped prompt becomes a law candidate (keywords and a digest,
+never the sentence); candidates cluster so repetition increments one
+counter; `law promote` writes a reviewed guard and refuses below three
+distinct sessions of recurrence; delivery receipts record which laws each
+session was shown, and a law no receipt has named shows as dormant. The
+claim gate reaches the message boundary: a Stop hook names any
+claim-shaped sentence in the turn's final text that has no record behind
+it - advisory, bounded, silent on prose and on the host's re-fire. An
+enforce-mode ask is chronicled, counts only, so tuning can learn from
+what the operator actually approves; the observe notice states its own
+age; a claim resting on a test file that was read but not run grades
+hypothesis until the run stands beside it; and `init --roles` generates
+the law file on day one in its honest empty form.
+
 ## Absorbed from the upstream sweep
 
 `NonFinite` stops an experiment on a non-finite metric; VS Code Copilot is
@@ -96,7 +121,7 @@ and returns an advisory, silent unless `post_edit_quality: true`.
 
 ## Verifying
 
-- `python -m unittest discover -s tests` - 2718 tests across four shards
+- `python -m unittest discover -s tests` - 2755 tests across four shards
   at the release commit (`scripts/dev/run-suite.ps1`).
 - `godmode bindings` - every generated manifest current, 0 drifted.
 - `godmode version --reconcile` - ten surfaces agree, tagged tree checked.
