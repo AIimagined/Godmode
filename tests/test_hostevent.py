@@ -800,10 +800,10 @@ class RenderDecisionTests(unittest.TestCase):
                 self.assertNotEqual(code, 3)
 
     def test_claude_and_cursor_keep_ask_as_ask(self) -> None:
-        for host in ("claude", "cursor"):
-            body, _code = he.render_decision(host, "PreToolUse", "ask", "why")
-            self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "ask")
-            self.assertEqual(body["permission"], "ask")
+        body, _code = he.render_decision("claude", "PreToolUse", "ask", "why")
+        self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "ask")
+        body, _code = he.render_decision("cursor", "PreToolUse", "ask", "why")
+        self.assertEqual(body["permission"], "ask")
 
     def test_hosts_without_ask_receive_deny_naming_the_staged_remedy_style(self) -> None:
         # render_decision itself only folds the DECISION, not the reason text
@@ -814,17 +814,39 @@ class RenderDecisionTests(unittest.TestCase):
         for host in ("grok", "codex", "gemini", "unknown"):
             body, _code = he.render_decision(host, "PreToolUse", "ask", reason)
             self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "deny")
+            self.assertEqual(body["hookSpecificOutput"]["permissionDecisionReason"], reason)
+        for host in ("grok", "gemini", "unknown"):
+            body, _code = he.render_decision(host, "PreToolUse", "ask", reason)
             self.assertEqual(body["decision"], "deny")
             self.assertEqual(body["reason"], reason)
 
-    def test_the_response_body_carries_every_hosts_key_at_once(self) -> None:
-        """Addendum 6's DUAL-OUTPUT requirement, generalised: a host reads
-        only its own key and ignores the rest, so shipping every documented
-        dialect's key in one object is always safe."""
-        body, _code = he.render_decision("grok", "PreToolUse", "deny", "why")
-        for key in ("hookSpecificOutput", "decision", "reason", "permission",
-                    "user_message", "agent_message"):
-            self.assertIn(key, body)
+    def test_a_known_host_receives_only_the_keys_its_contract_documents(self) -> None:
+        """Live on Claude Code, 2026-08-28: the gate wrote refusal record
+        4001 and returned a deny carrying every dialect's keys at once, and
+        the host ran the command. Claude documents `hookSpecificOutput`,
+        `systemMessage` and `terminalSequence` at top level - no `decision`
+        - and Codex documents that a legacy `decision` makes it "mark the
+        hook run as failed... and continue". "A host ignores the keys it
+        does not read" was an assumption; the record says otherwise."""
+        cases = {
+            "claude": {"hookSpecificOutput"},
+            "codex": {"hookSpecificOutput"},
+            # Grok: its own {decision, reason} contract, plus Claude's key it
+            # documents as "largely compatible" and was captured live with.
+            "grok": {"hookSpecificOutput", "decision", "reason"},
+            "cursor": {"permission", "user_message", "agent_message"},
+        }
+        for host, keys in cases.items():
+            body, _code = he.render_decision(host, "PreToolUse", "deny", "why")
+            self.assertEqual(set(body), keys, host)
+
+    def test_an_undetected_host_still_receives_every_dialects_key(self) -> None:
+        # Only where detection failed is the union the best available bet.
+        for host in ("gemini", "unknown"):
+            body, _code = he.render_decision(host, "PreToolUse", "deny", "why")
+            for key in ("hookSpecificOutput", "decision", "reason", "permission",
+                        "user_message", "agent_message"):
+                self.assertIn(key, body, host)
 
 
 class BareOperationTests(unittest.TestCase):
