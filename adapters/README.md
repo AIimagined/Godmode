@@ -14,6 +14,6 @@ resting on it stay unverified.
 
 | Host | Wire it via | File |
 | --- | --- | --- |
-| OpenCode | project `AGENTS.md` (append or include) | `opencode/AGENTS-godmode.md` |
+| OpenCode | project `AGENTS.md` (append or include); gate via `.opencode/plugins/godmode.js` | `opencode/AGENTS-godmode.md`, `opencode/godmode.opencode.js` |
 | Cursor | `.cursor/rules/godmode.mdc` | `cursor/godmode.mdc` |
 | Gemini CLI | project `GEMINI.md` (append or include) | `gemini/GEMINI-godmode.md` |

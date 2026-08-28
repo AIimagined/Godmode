@@ -1,7 +1,15 @@
 # Godmode adapter for OpenCode
 
 Append this file's contents to the project's `AGENTS.md` (or reference it from
-there). It drives Godmode through the CLI; OpenCode needs no plugin.
+there). It drives Godmode through the CLI. The pre-tool gate is a separate,
+optional shim: copy `adapters/opencode/godmode.opencode.js` to
+`.opencode/plugins/godmode.js` (project) or `~/.config/opencode/plugins/`
+(global) and set `GODMODE_PLUGIN_ROOT` to the directory that contains
+`hooks/godmode_gate_fast.py`. The shim runs the real gate on every `bash`,
+`write`, `edit` and `patch` call through OpenCode's `tool.execute.before`
+hook and throws on a deny - OpenCode's documented way to stop a tool - so
+it fails closed: an `ask` folds to deny naming the staged-capability
+remedy, and a missing interpreter or root refuses the call.
 
 ## Session contract
 
@@ -29,9 +37,11 @@ prompt is what makes authorization HARD here.
 | status_reopen_guard | HARD |
 | authority_claim_detection | HARD |
 | interactive_authorization | HARD |
-| tool_call_interception | UNAVAILABLE |
+| tool_call_interception | SOFT |
 
-tool_call_interception is UNAVAILABLE: a pre-tool hook is possible via an
-OpenCode JS plugin, but no shim ships, so nothing intercepts a tool call the
-agent chooses not to route through the CLI. State this limit in the first
-session report.
+tool_call_interception is SOFT: with the shim installed, every gated tool
+call runs through the real gate and a deny throws before the tool runs;
+without it, nothing intercepts a call the agent does not route through the
+CLI. It becomes HARD only when a live OpenCode session's block is
+chronicled as a proof (`hooks status`). State which of the two applies in
+the first session report.

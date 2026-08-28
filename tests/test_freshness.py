@@ -106,8 +106,32 @@ class FreshnessTests(unittest.TestCase):
                 code = console.main(["--project", str(root), "freshness"])
         payload = json.loads(out.getvalue())
         self.assertTrue(payload["partial"])
-        self.assertEqual(payload["verdict"], "fresh")
+        # Nothing local was reachable, so this run says nothing about
+        # staleness - it must not answer in the reassuring direction.
+        self.assertEqual(payload["verdict"], "unchecked")
         self.assertEqual(code, 0)
+
+    def test_a_run_that_checked_nothing_says_so_instead_of_fresh(self) -> None:
+        """Field report 2026-08-28: `freshness` on a project whose records
+        carry no local citations returned `{"verdict": "fresh", "checked":
+        {"commit": 0, "file": 0}}` and was nearly quoted as evidence that
+        nothing had gone stale. A probe that reached nothing cannot
+        distinguish clean from unchecked, so it says `unchecked` and names
+        the reach it had."""
+        with _git_project() as (root, archive):
+            archive.append("lesson", "no citations here", {"status": "active"})
+            report = freshness_report(archive, root)
+        self.assertEqual(report["checked"], {"file": 0, "commit": 0})
+        self.assertEqual(report["verdict"], "unchecked")
+        self.assertIn("nothing locally checkable", " ".join(report["not_checked"]).lower())
+
+    def test_one_reachable_citation_is_enough_to_answer_fresh(self) -> None:
+        with _git_project() as (root, archive):
+            archive.append("claim", "one local", {"grade": "verified"},
+                           evidence=["file:src.py", "url:https://example.invalid/x"])
+            report = freshness_report(archive, root)
+        self.assertEqual(report["verdict"], "fresh")
+        self.assertTrue(report["partial"])
 
 
 if __name__ == "__main__":

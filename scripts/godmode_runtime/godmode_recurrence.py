@@ -169,7 +169,13 @@ def mine_recurring_asks(archive: Chronicle, *, threshold: int = DEFAULT_THRESHOL
             continue
         sessions_seen.add(session)
 
-        terms = frozenset(_terms(subject))
+        # The subject is `ask:<digest>` since 2026-08-28 - unique per ask,
+        # so clustering on it would never find a repeat. The keywords are
+        # the ask's own words minus stopwords, which is what the terms were
+        # always meant to be; the subject is the fallback for records
+        # written before the ledger stopped storing prompt text.
+        keywords = [str(k) for k in (data.get("keywords") or [])]
+        terms = frozenset(_terms(" ".join(keywords))) if keywords else frozenset(_terms(subject))
         if not terms:
             # Nothing left after normalization - a request that was entirely
             # stopwords cannot support a cluster either, but its session still

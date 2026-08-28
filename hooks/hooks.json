@@ -1,5 +1,4 @@
 {
-  "description": "Load bounded Godmode continuity at session start, and decide protected tool calls at the pre-tool boundary. One shell-form command string per entry: the shape Claude, Codex and Grok all parse.",
   "hooks": {
     "SessionStart": [
       {

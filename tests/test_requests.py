@@ -100,8 +100,11 @@ class RecordingTests(unittest.TestCase):
         thing to leak."""
         long_prompt = "please " + ("verify the gate " * 60)
         record = record_request(Ledger(), long_prompt)
-        self.assertLessEqual(len(record["subject"]), 161)
-        self.assertTrue(record["subject"].endswith("…"))
+        # 2026-08-28: not even a bounded copy - the subject is the digest,
+        # the keywords carry the meaning (GODMODE_PRIVACY.md).
+        self.assertEqual(record["subject"], "ask:" + record["data"]["digest"][:12])
+        self.assertNotIn("verify the gate", record["subject"])
+        self.assertIn("gate", record["data"]["keywords"])
 
     def test_the_digest_ignores_case_and_spacing_only(self) -> None:
         self.assertEqual(digest("Do The Thing"), digest("do  the thing"))
