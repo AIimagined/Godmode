@@ -231,3 +231,27 @@ What this fix round changed and what it deliberately left alone:
    icon/logo field was added there either. Both are gaps for whoever can
    check against each host's actual current documentation, not decisions
    made here without evidence.
+
+## awesome-opencode (community catalog)
+
+Submission is a YAML file under `data/plugins/` in
+`awesome-opencode/awesome-opencode` (kebab-case filename; the README
+regenerates from the YAML, never edit it). Criteria: relevant to OpenCode,
+public repository, commits within six months, not a duplicate, all fields
+present. Automated YAML validation, then maintainer review.
+
+`data/plugins/godmode.yaml`:
+
+```yaml
+name: Godmode
+repo: https://github.com/AIimagined/Godmode
+tagline: A local, tamper-evident record of what a coding agent did, what it claimed, and what was verified.
+description: >-
+  Godmode keeps a hash-chained local record of what a coding agent did,
+  what it claimed, and what was verified, and refuses "done" without a
+  citation. On OpenCode it runs as an AGENTS.md instruction adapter plus an
+  optional Bun plugin shim (adapters/opencode/godmode.opencode.js) that
+  routes every bash, write, edit and patch call through the same pre-tool
+  gate the other hosts use and throws before a refused tool runs. Zero
+  runtime dependencies, zero network use, nothing leaves the machine.
+```

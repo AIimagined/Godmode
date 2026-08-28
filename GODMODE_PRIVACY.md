@@ -6,6 +6,8 @@ bodies, environment dumps, API keys, passwords, or authentication tokens.
 
 The local continuity store contains only structured operational facts intentionally
 submitted through Godmode plus file metadata and hashes produced by explicit inspection.
+The request ledger records each operator ask as a digest and up to 24 keywords drawn from
+it - never the sentence itself - so an ask stays reviewable without the prompt being stored.
 Secret-shaped values are rejected before persistence. Repository remote addresses are
 represented only by one-way hashes.
 

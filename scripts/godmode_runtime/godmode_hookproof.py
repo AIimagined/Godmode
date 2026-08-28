@@ -270,7 +270,14 @@ _PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 # +CLI core therefore runs on all six TODAY"). Grading a host outside this
 # set never rests on SOFT - an unrecognised host has no established floor
 # to credit it with.
-_SOFT_ELIGIBLE_HOSTS = frozenset({"claude", "codex", "grok", "cursor", "gemini"})
+_SOFT_ELIGIBLE_HOSTS = frozenset({"claude", "codex", "grok", "cursor", "gemini", "opencode"})
+
+# Adapted hosts whose pre-tool boundary declares no timeout of its own, so
+# `_PRETOOL_MANIFEST_SPECS` has nothing to read. OpenCode's boundary is the
+# shipped Bun shim (`adapters/opencode/godmode.opencode.js`): it awaits the
+# gate and throws, and OpenCode documents no hook timeout, so the honest
+# answer is "no declared budget" rather than a number invented here.
+NO_DECLARED_PRETOOL_BUDGET = frozenset({"opencode"})
 
 # Fail-open hosts (Addenda 5/6/4a, quoted verbatim in each): Grok's default
 # timeout path allows the action; Gemini treats any exit other than 0/2 as a

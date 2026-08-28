@@ -38,10 +38,16 @@ from godmode_runtime.godmode_hostevent import _ADAPTERS  # noqa: E402
 
 class VocabularyTests(unittest.TestCase):
     def test_every_adapted_host_has_a_manifest_spec(self) -> None:
+        from godmode_runtime.godmode_hookproof import NO_DECLARED_PRETOOL_BUDGET
+
         self.assertEqual(
-            set(_ADAPTERS), set(_PRETOOL_MANIFEST_SPECS),
+            set(_ADAPTERS), set(_PRETOOL_MANIFEST_SPECS) | NO_DECLARED_PRETOOL_BUDGET,
             "a host whose events are adapted but whose manifest is unnamed "
             "answers 'budget unknown' from `hooks proof` instead of failing")
+        # The exemption is for a boundary that declares no timeout at all
+        # (OpenCode's shim awaits the gate), never a way to skip naming one.
+        self.assertEqual(
+            NO_DECLARED_PRETOOL_BUDGET & set(_PRETOOL_MANIFEST_SPECS), frozenset())
 
     def test_every_adapted_host_may_reach_a_soft_grade(self) -> None:
         self.assertEqual(

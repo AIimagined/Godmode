@@ -450,7 +450,18 @@ class AdapterHonestyTests(unittest.TestCase):
             if host.startswith("_"):
                 continue
             self.assertIn("tool_call_interception", declared["controls"])
-            self.assertEqual(declared["controls"]["tool_call_interception"], "UNAVAILABLE")
+            # An instruction-file adapter cannot intercept a tool call on its
+            # own. It may rise to SOFT only when the host's own plugin API
+            # gives it a pre-tool boundary AND this repository ships the shim
+            # that reaches it - OpenCode, 2026-08-28. Never HARD without a
+            # live chronicled block.
+            level = declared["controls"]["tool_call_interception"]
+            if level == "SOFT":
+                shim = declared.get("shim")
+                self.assertTrue(shim, f"{host}: SOFT with no shim declared")
+                self.assertTrue((PLUGIN_ROOT / shim).is_file(), f"{host}: {shim} is not shipped")
+            else:
+                self.assertEqual(level, "UNAVAILABLE", host)
             self.assertTrue((PLUGIN_ROOT / declared["wiring"]).is_file(), host)
 
 

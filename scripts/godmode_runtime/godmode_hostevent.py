@@ -1113,6 +1113,22 @@ def _adapt_bare(raw: Any, host: str) -> HostEvent:
 # Entry point.
 # ---------------------------------------------------------------------------
 
+def _adapt_opencode(raw: Any) -> HostEvent:
+    """OpenCode has no hook dialect of its own: the shipped Bun shim
+    (`adapters/opencode/godmode.opencode.js`) maps OpenCode's `bash`/`write`/
+    `edit`/`patch` onto Claude's tool names and sends a Claude-shaped
+    payload. So Claude's adapter reads it verbatim - but the event keeps
+    the OpenCode label, because OpenCode has no `ask` decision (its only
+    documented way to stop a tool is a throw) and the ask-to-deny fold keys
+    on the host. Relabelling here is what makes an R3/R4 land as a deny
+    naming the staged-capability remedy rather than an approval prompt the
+    host cannot render.
+    """
+    from dataclasses import replace
+
+    return replace(_adapt_claude(raw), host="opencode")
+
+
 _ADAPTERS = {
     "claude": _adapt_claude,
     "codex": _adapt_codex,
@@ -1122,6 +1138,7 @@ _ADAPTERS = {
     # Addendum 4a and is not tool-type-matched the way Cursor's is).
     "cursor": _adapt_cursor,
     "gemini": _adapt_gemini,
+    "opencode": _adapt_opencode,
 }
 
 

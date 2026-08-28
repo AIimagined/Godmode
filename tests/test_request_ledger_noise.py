@@ -122,25 +122,21 @@ class LongPromptClosureTests(unittest.TestCase):
     the reader to use it, and using it does nothing.
     """
 
-    def test_a_truncated_subject_can_still_be_closed(self) -> None:
-        from godmode_runtime.godmode_requests import SUBJECT_LIMIT, summarise
+    def test_a_digest_subject_can_still_be_closed(self) -> None:
+        from godmode_runtime.godmode_requests import digest
 
         long_prompt = "please review " + ("the release checklist line by line " * 12)
-        flattened = " ".join(long_prompt.split())
-        subject = summarise(flattened)
-        self.assertLess(len(subject), len(flattened),
-                        "this test needs a prompt longer than the subject limit")
+        full = digest(" ".join(long_prompt.split()))
+        subject = "ask:" + full[:12]   # what the ledger shows (2026-08-28)
         records = [
             {"kind": "request", "sequence": 1, "subject": subject,
-             "data": {"status": "open", "digest": "full-text-digest",
-                      "keywords": ["release"]}},
+             "data": {"status": "open", "digest": full, "keywords": ["release"]}},
             # The closure a person writes: it carries the subject they can
-            # see, never the full-text digest they cannot.
+            # see - the digest prefix - never the full digest they cannot.
             {"kind": "request", "sequence": 2, "subject": subject,
              "data": {"status": "answered"}},
         ]
         self.assertEqual(review_requests(records)["findings"], [])
-        self.assertGreater(SUBJECT_LIMIT, 0)
 
 
 if __name__ == "__main__":

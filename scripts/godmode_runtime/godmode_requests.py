@@ -103,6 +103,16 @@ def _keywords(text: str) -> frozenset[str]:
     return frozenset({w.lower() for w in _WORD.findall(text)} - _STOPWORDS)
 
 
+def _reviewable(record: dict[str, Any]) -> str:
+    """The line a reviewer recognises an ask by, now that the subject is a
+    digest: `ask:<digest> - <keywords>`. Keywords are the words the
+    operator used minus stopwords, never the sentence."""
+    data = record.get("data") or {}
+    keywords = [str(k) for k in (data.get("keywords") or [])]
+    subject = str(record.get("subject", ""))
+    return f"{subject} - {' '.join(keywords)}" if keywords else subject
+
+
 # `UserPromptSubmit` is the only input a host cannot reconstruct later, so
 # every prompt is recorded - but the host delivers more than typed asks
 # through that door. A tool-permission prompt, a task-completion
@@ -188,11 +198,27 @@ def record_request(archive: Any, text: str, *, session: str | None = None,
         # notifications stops being a ledger of asks.
         return None
 
+    # A spoken secret used to be caught downstream: the subject carried the
+    # sentence, and the archive's own scan refused the append. The subject
+    # is a digest now, so nothing downstream can see it - the scan happens
+    # here, on the text, and a secret-shaped prompt is still REFUSED rather
+    # than quietly dropped (an operator who pasted a token should be told).
+    from .godmode_errors import PrivacyError
+    from .godmode_sentinel import find_secret_shapes
+
+    if find_secret_shapes(flattened):
+        raise PrivacyError(
+            "this prompt carries secret-shaped content; it is not recorded. "
+            "Rotate anything that was pasted, then restate the ask without it.")
+
     identifier = digest(flattened)
 
+    # GODMODE_PRIVACY.md: the store holds no prompts. The ask is reviewable
+    # by its digest and keywords - never by the sentence the operator typed
+    # (2026-08-28, obligation 4018, operator chose the digest form).
     return archive.append(
         "request",
-        summarise(flattened),
+        f"ask:{identifier[:12]}",
         {
             "digest": identifier,
             "status": "open",
@@ -293,7 +319,9 @@ def review_requests(records: list[dict[str, Any]],
         interrupted = bool(data.get("interrupted_work"))
         findings.append({
             "code": "request-interrupted-work" if interrupted else "request-open",
-            "request": record.get("subject", ""),
+            # The subject is a digest (no prompt text in the store); the
+            # keywords are what a reviewer recognises the ask by.
+            "request": _reviewable(record),
             "digest": identifier,
             "sequence": int(record.get("sequence", 0)),
             "coverage": round(coverage, 2),

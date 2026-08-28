@@ -71,6 +71,25 @@ def freshness_report(archive: Any, project: Path | str) -> dict[str, Any]:
             "history to compare against")
         checked = {"file": 0, "commit": 0}
 
+    # Field report 2026-08-28: a run over records with no local citations
+    # returned `fresh` with `checked: {file: 0, commit: 0}` and was nearly
+    # quoted as proof that nothing had gone stale. A probe with no reach
+    # cannot tell clean from unchecked, so it says which one it is - the
+    # counters were always in the payload, and the verdict now agrees with
+    # them instead of answering in the reassuring direction.
+    reached = checked["file"] + checked["commit"]
+    if not reached:
+        not_checked.append(
+            "nothing locally checkable: no file: or commit: citation was "
+            "reachable, so this run says nothing about staleness")
+
+    if stale or unreachable:
+        verdict = "stale"
+    elif reached:
+        verdict = "fresh"
+    else:
+        verdict = "unchecked"
+
     return {
         "checked": checked,
         "unverifiable": unverifiable,
@@ -78,6 +97,8 @@ def freshness_report(archive: Any, project: Path | str) -> dict[str, Any]:
         "partial": bool(not_checked),
         "stale_files": stale,
         "unreachable_commits": unreachable,
-        "verdict": "stale" if stale or unreachable else "fresh",
-        "note": "partial is not a failure; it is the list of what was not checked",
+        "verdict": verdict,
+        "note": "partial is not a failure; it is the list of what was not "
+                "checked. 'unchecked' means this run reached nothing - read "
+                "`checked` before quoting any verdict here",
     }

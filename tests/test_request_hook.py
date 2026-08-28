@@ -71,11 +71,17 @@ class RequestHookTests(unittest.TestCase):
         archive = Chronicle(resolve_anchor(str(self.project)))
         return [r for r in archive.read_events() if r.get("kind") == "request"]
 
-    def test_the_hook_records_the_prompt(self) -> None:
+    def test_the_hook_records_the_ask_without_its_text(self) -> None:
+        # GODMODE_PRIVACY.md: no prompts in the store. The ledger keeps the
+        # ask reviewable by digest and keywords, never by the sentence.
         self._submit("check the marketplace documentation")
         records = self._requests()
         self.assertEqual(len(records), 1)
-        self.assertIn("marketplace", records[0]["subject"])
+        subject = records[0]["subject"]
+        self.assertTrue(subject.startswith("ask:"), subject)
+        self.assertNotIn("marketplace documentation", subject)
+        self.assertIn("marketplace", records[0]["data"]["keywords"])
+        self.assertIn(records[0]["data"]["digest"][:12], subject)
 
     def test_the_hook_records_that_work_was_interrupted(self) -> None:
         self._submit("also check the readme", tools_in_flight=2)

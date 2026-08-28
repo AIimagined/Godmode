@@ -311,9 +311,13 @@ def inferred_ask_blocking(records: list[dict[str, Any]]) -> list[dict[str, Any]]
             continue
         findings.append({
             "detector": "inferred-ask-blocking", "blocking": False,
-            "detail": f"the session is waiting on '{record['subject'][:60]}', which the "
-                      "agent inferred rather than the operator stating; state the "
-                      "assumption and carry on under it, or ask without stopping",
+            # The subject is a digest (no prompt text in the store); the
+            # keywords are what identifies the ask to a reader.
+            "detail": "the session is waiting on '"
+                      + " ".join([str(record.get("subject", ""))]
+                                 + [str(k) for k in ((record.get("data") or {}).get("keywords") or [])])[:90]
+                      + "', which the agent inferred rather than the operator stating; "
+                      "state the assumption and carry on under it, or ask without stopping",
             "citations": [f"seq:{sequence}"],
         })
     return findings

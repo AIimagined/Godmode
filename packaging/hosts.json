@@ -140,12 +140,13 @@
         "status_reopen_guard": "HARD",
         "authority_claim_detection": "HARD",
         "interactive_authorization": "HARD",
-        "tool_call_interception": "UNAVAILABLE"
+        "tool_call_interception": "SOFT"
       },
       "why": {
         "interactive_authorization": "OpenCode's permission model (ask/allow/deny per tool) prompts the user outside model judgment",
-        "tool_call_interception": "possible via a JS plugin hook, but no shim ships; unavailable until one does"
-      }
+        "tool_call_interception": "a Bun plugin shim ships (adapters/opencode/godmode.opencode.js): OpenCode's documented `tool.execute.before` throw stops the tool, and the shim throws on every gate deny, on `ask` (folded to deny with the staged-capability remedy), on a missing interpreter and on a missing root - fail-closed. SOFT, not HARD, until a live OpenCode session's block is chronicled as a proof"
+      },
+      "shim": "adapters/opencode/godmode.opencode.js"
     },
     "cursor": {
       "wiring": "adapters/cursor/godmode.mdc",
