@@ -1,0 +1,1 @@
+A deny relayed through the OpenCode shim records an acknowledged interception proof (the shim's documented throw stops the tool), so one live blocked call upgrades the grade the way the host table promises - a self-injected probe still cannot.

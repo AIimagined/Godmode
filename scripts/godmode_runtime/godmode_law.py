@@ -130,6 +130,13 @@ ignoring it. Regenerate after new lessons with `godmode law compile`.
 """
 
 
+# Obligation 4521: a candidate was built from a passage the operator
+# explicitly said to disregard. A prompt that carries a disregard marker
+# feeds neither detector - the operator already ruled on it.
+_DISREGARD_MARKERS = ("ignore this", "disregard this", "by mistake",
+                      "entered here by mistake")
+
+
 _CORRECTION_MARKERS = frozenset({
     "wrong", "again", "missed", "incorrect", "mistake", "revert", "undo",
 })
@@ -158,6 +165,8 @@ def record_correction_candidate(archive: Any, prompt: str, *,
 
     flattened = " ".join(str(prompt).split())
     if not flattened or find_secret_shapes(flattened):
+        return None
+    if any(marker in flattened.lower() for marker in _DISREGARD_MARKERS):
         return None
     words = {w.lower() for w in flattened.replace(",", " ").split()}
     markers = sorted(_CORRECTION_MARKERS & words)
@@ -207,6 +216,8 @@ def record_instruction_candidate(archive: Any, prompt: str, *,
     if not flattened or find_secret_shapes(flattened):
         return None
     low = flattened.lower()
+    if any(marker in low for marker in _DISREGARD_MARKERS):
+        return None
     if len(low.split()) < 4:
         return None
     words = {w.strip(".,;:!?") for w in low.split()}

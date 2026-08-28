@@ -682,6 +682,14 @@ def _sources_gate_reason(archive: Chronicle, anchor: Any,
     )
 
 
+# Obligation 4516: twice in one day a removal-shaped operation was saved by
+# reading discipline while the governance preview - the designed net - sat
+# uninvoked. The boundary now carries the skill's name to the moment.
+_REMOVAL_SHAPED = frozenset({
+    "filesystem-mutation", "worktree-discard", "local-repository-change",
+})
+
+
 def _decision_for(preview: dict[str, Any]) -> str:
     """`ask` or `deny`, from the tier the classifier already computed.
 
@@ -1315,12 +1323,15 @@ def main(argv: list[str] | None = None) -> int:
             # sentence could give and the likeliest to be taken.
             impact = _ellipsize(
                 "; ".join(str(item) for item in preview.get("impact", ())), 160)
+            governance_note = (
+                " Preview it first with the godmode-governance skill."
+                if str(preview.get("category")) in _REMOVAL_SHAPED else "")
             # A question, phrased as one - what a host that actually has an
             # `ask` decision (Claude, Cursor) shows the operator.
             ask_reason = (
                 f"{preview['category']} ({preview.get('tier', 'R?')})"
                 + (f" - touches {impact}" if impact else "")
-                + ". Approve to run it."
+                + ". Approve to run it." + governance_note
             )
             if operation:
                 deny_reason = (
@@ -1335,7 +1346,7 @@ def main(argv: list[str] | None = None) -> int:
                     "In a hosted session, type it with a leading '!' to run it "
                     "from the prompt without leaving the conversation.\n"
                     "! godmode authorize stage --from-last-refusal"
-                )
+                ) + governance_note
             else:
                 # CX-2: an unrecognized tool (or any other no-operation-text
                 # case) has nothing to stage an exact command for - naming
@@ -1416,6 +1427,25 @@ def main(argv: list[str] | None = None) -> int:
                         )
                     except Exception:  # noqa: BLE001
                         pass
+                    # Obligation 4523: a LIVE shim block is the proof the
+                    # grade was waiting for. The OpenCode shim marks its
+                    # spawns (GODMODE_SHIM_BOUNDARY), and its documented
+                    # throw stops the tool - so a deny relayed through it
+                    # IS host-acknowledged, recorded TTL-bounded like every
+                    # other proof. A self-injected probe still cannot claim
+                    # this: it does not run under the shim's marker.
+                    if os.environ.get("GODMODE_SHIM_BOUNDARY") == "opencode":
+                        try:
+                            record_interception_proof(
+                                archive, host="opencode",
+                                tool=tool or "operation",
+                                request_id=(
+                                    f"live-shim-{event.request_id or 'call'}")[:200],
+                                hook_script=Path(__file__).resolve(),
+                                host_acknowledgement=True,
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
 
         # Obligation 4094 (S5): the required-sources gate, before the fence.
         # Once per session, the first pre-tool call that would otherwise be
