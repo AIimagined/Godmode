@@ -254,9 +254,12 @@ def codex_project_hooks(plugin_root) -> dict:
     with its documented plugin-hook behaviour (host bug, confirmed
     2026-08-28 by an isolated review against the installed cache). What it
     DOES load is project-level config, so the same events and matchers ship
-    there with absolute commands into THIS install. `py -3` on Windows:
-    Codex's sandbox users see only the machine PATH, where the launcher
-    lives and python.exe often does not. Timeout/async keys are dropped -
+    there with absolute commands into THIS install. `python` on Windows,
+    NOT `py -3` (Codex retest 2026-08-29): the launcher resolves to the
+    USER-local AppData interpreter, which Codex's sandbox accounts are
+    denied - law 12 already ruled it: the sandbox sees only the machine
+    PATH, so the interpreter must be the machine-scope `python` that this
+    project's Codex row requires. Timeout/async keys are dropped -
     Codex's bundled hooks carry neither and its 600s default exceeds every
     declared budget.
     """
@@ -266,7 +269,7 @@ def codex_project_hooks(plugin_root) -> dict:
 
     root = _Path(plugin_root)
     shared = _json.loads((root / "hooks" / "hooks.json").read_text(encoding="utf-8"))
-    interpreter = "py -3" if _os.name == "nt" else "python3"
+    interpreter = "python" if _os.name == "nt" else "python3"
     projected: dict = {"hooks": {}}
     for event, blocks in shared["hooks"].items():
         out_blocks = []

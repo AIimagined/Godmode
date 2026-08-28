@@ -1,0 +1,1 @@
+The Codex project fallback invokes machine-PATH python instead of py -3: the launcher resolves to the user-local interpreter, which Codex's sandbox accounts are denied - the machine-scope requirement law 12 already recorded.
