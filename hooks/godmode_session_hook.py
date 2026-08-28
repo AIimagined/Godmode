@@ -933,6 +933,21 @@ def main(argv: list[str] | None = None) -> int:
                 _emit_claude_context(brief)
             else:
                 print(json.dumps({"godmode": "context", "brief": brief}))
+                # S8 addendum (three Grok field reports in a row): Grok
+                # ignores SessionStart stdout, so the brief never reached
+                # the model and resume stayed a manual step. Park a bounded
+                # copy beside the archive; the first prompt boundary
+                # delivers it as context exactly once, then deletes it -
+                # the same parking contract as the claim echo.
+                if current_host() == "grok":
+                    try:
+                        rendered = json.dumps(
+                            brief, ensure_ascii=False, default=str)[:4000]
+                        (archive.root / "godmode-brief-echo.json").write_text(
+                            json.dumps({"brief": rendered}, ensure_ascii=False),
+                            encoding="utf-8")
+                    except OSError:
+                        pass
             return 0
 
         if args.event == "stop":
@@ -1009,6 +1024,27 @@ def main(argv: list[str] | None = None) -> int:
                                 "`godmode claim --cite <evidence>` (it grades "
                                 "honestly) or soften the wording this turn.")}},
                             ensure_ascii=False))
+            except Exception:  # noqa: BLE001
+                pass
+            # S8 addendum: the parked continuity brief, for hosts that
+            # ignore SessionStart stdout (Grok). Delivered once; both the
+            # Claude-dialect key and a top-level additionalContext ride the
+            # same object so whichever the host reads, it reads.
+            brief_echo = archive.root / "godmode-brief-echo.json"
+            try:
+                if brief_echo.exists():
+                    parked = json.loads(brief_echo.read_text(encoding="utf-8"))
+                    brief_echo.unlink()
+                    rendered = str(parked.get("brief") or "")[:4000]
+                    if rendered:
+                        print(json.dumps({
+                            "hookSpecificOutput": {
+                                "hookEventName": "UserPromptSubmit",
+                                "additionalContext":
+                                    "godmode continuity brief: " + rendered},
+                            "additionalContext":
+                                "godmode continuity brief: " + rendered,
+                        }, ensure_ascii=False))
             except Exception:  # noqa: BLE001
                 pass
             prompt = str(submitted.get("prompt", ""))

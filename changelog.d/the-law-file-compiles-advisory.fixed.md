@@ -1,0 +1,1 @@
+The generated Code of Law compiles ADVISORY at most: its guard sentences are records of guards, not directives, and the first committed law file had minted seven unattested HARD rules that blocked status remaining.

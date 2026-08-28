@@ -156,5 +156,54 @@ class ClaimEchoTests(unittest.TestCase):
             self.assertFalse((archive.root / "godmode-claim-echo.json").exists())
 
 
+class BriefEchoTests(unittest.TestCase):
+    """S8 addendum: Grok ignores SessionStart stdout, so the brief is
+    parked and the first prompt boundary delivers it to the model once."""
+
+    def _session_start(self, project: Path, state: Path,
+                       extra_env: dict) -> subprocess.CompletedProcess:
+        environment = dict(os.environ)
+        environment["GODMODE_STATE_HOME"] = str(state)
+        environment.pop("CLAUDE_CODE_ENTRYPOINT", None)
+        environment.pop("GODMODE_HOST", None)
+        environment.update(extra_env)
+        return subprocess.run(
+            [sys.executable, str(HOOK), "session-start",
+             "--project", str(project)],
+            input="{}", capture_output=True, text=True, encoding="utf-8",
+            timeout=180, env=environment,
+        )
+
+    def _prompt2(self, project: Path, state: Path) -> subprocess.CompletedProcess:
+        environment = dict(os.environ)
+        environment["GODMODE_STATE_HOME"] = str(state)
+        return subprocess.run(
+            [sys.executable, str(HOOK), "user-prompt", "--project", str(project)],
+            input=json.dumps({"prompt": "resume the work"}),
+            capture_output=True, text=True, encoding="utf-8", timeout=180,
+            env=environment,
+        )
+
+    def test_a_grok_session_start_parks_the_brief_and_the_prompt_delivers_it(self) -> None:
+        with _project() as (project, state, archive):
+            done = self._session_start(project, state,
+                                       {"GROK_PLUGIN_ROOT": "C:/x"})
+            self.assertEqual(done.returncode, 0, done.stderr)
+            echo = archive.root / "godmode-brief-echo.json"
+            self.assertTrue(echo.exists())
+            first = self._prompt2(project, state)
+            self.assertIn("continuity brief", first.stdout)
+            self.assertIn("additionalContext", first.stdout)
+            self.assertFalse(echo.exists())
+            second = self._prompt2(project, state)
+            self.assertNotIn("continuity brief", second.stdout)
+
+    def test_a_bare_host_parks_nothing(self) -> None:
+        with _project() as (project, state, archive):
+            self._session_start(project, state, {})
+            self.assertFalse(
+                (archive.root / "godmode-brief-echo.json").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
