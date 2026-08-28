@@ -242,6 +242,61 @@ def merge_host_tools_into_shared(existing: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
+def codex_project_hooks(plugin_root) -> dict:
+    """Project the shared hooks file into the `.codex/hooks.json` Codex loads.
+
+    Codex CLI 0.150.1 ignores plugin-bundled hook manifests entirely - its
+    own bundled plugins' hooks show Installed: 0 in /hooks - which conflicts
+    with its documented plugin-hook behaviour (host bug, confirmed
+    2026-08-28 by an isolated review against the installed cache). What it
+    DOES load is project-level config, so the same events and matchers ship
+    there with absolute commands into THIS install. `py -3` on Windows:
+    Codex's sandbox users see only the machine PATH, where the launcher
+    lives and python.exe often does not. Timeout/async keys are dropped -
+    Codex's bundled hooks carry neither and its 600s default exceeds every
+    declared budget.
+    """
+    import json as _json
+    import os as _os
+    from pathlib import Path as _Path
+
+    root = _Path(plugin_root)
+    shared = _json.loads((root / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+    interpreter = "py -3" if _os.name == "nt" else "python3"
+    projected: dict = {"hooks": {}}
+    for event, blocks in shared["hooks"].items():
+        out_blocks = []
+        for block in blocks:
+            entries = [{
+                "type": "command",
+                "command": entry["command"].replace(
+                    'python "${CLAUDE_PLUGIN_ROOT}/',
+                    interpreter + ' "' + root.as_posix() + "/"),
+            } for entry in block.get("hooks", [])]
+            out = {"matcher": block["matcher"]} if "matcher" in block else {}
+            out["hooks"] = entries
+            out_blocks.append(out)
+        projected["hooks"][event] = out_blocks
+    return projected
+
+
+def write_codex_project_hooks(plugin_root, project, *, force: bool = False) -> dict:
+    import json as _json
+    from pathlib import Path as _Path
+
+    target = _Path(project) / ".codex" / "hooks.json"
+    rendered = _json.dumps(codex_project_hooks(plugin_root), indent=2) + "\n"
+    if target.exists() and target.read_text(encoding="utf-8") != rendered and not force:
+        return {"written": False, "path": str(target),
+                "reason": "exists with different content; pass --force to overwrite"}
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(rendered, encoding="utf-8")
+    return {"written": True, "path": str(target),
+            "events": sorted(codex_project_hooks(plugin_root)["hooks"]),
+            "note": "Codex requires explicit trust: open codex, review each "
+                    "command, Trust, then restart - hooks run outside its sandbox"}
+
+
 def codex_emitted_events() -> frozenset[str]:
     return frozenset(CODEX_HOOK_EVENTS)
 
