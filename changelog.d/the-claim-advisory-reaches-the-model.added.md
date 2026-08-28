@@ -1,0 +1,1 @@
+The Stop hook's unrecorded-claim advisory now reaches the model as well as the operator: the flagged sentences (the model's own output, bounded, never archived) are parked and delivered back as context at the next prompt boundary, exactly once - fifteen sessions of 'claim unused' measured an advisory pointed at the wrong audience.

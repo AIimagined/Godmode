@@ -961,6 +961,20 @@ def main(argv: list[str] | None = None) -> int:
                     f"reply have no record: {shown} - record with `godmode claim "
                     "--cite <evidence>` (grades honestly, downgrades what the "
                     "citations cannot carry) or soften the sentence.")}))
+                # S8 (obligation 4538, self-census 2026-08-29): the
+                # systemMessage above reaches the OPERATOR; the model that
+                # made the claim never sees it, so nothing changes next turn
+                # (fifteen sessions of "claim unused" measured exactly this).
+                # The flagged sentences - the model's OWN output, bounded -
+                # are parked beside the archive, outside it, and deleted the
+                # moment the next prompt boundary delivers them back.
+                try:
+                    (archive.root / "godmode-claim-echo.json").write_text(
+                        json.dumps({"sentences": [s[:200] for s in unsupported[:3]]},
+                                   ensure_ascii=False),
+                        encoding="utf-8")
+                except OSError:
+                    pass
             return 0
 
         if args.event == "user-prompt":
@@ -970,9 +984,33 @@ def main(argv: list[str] | None = None) -> int:
             # indistinguishable afterwards from one that waited its turn - and
             # the mid-task ones are exactly the ones that get lost.
             #
-            # Silent by contract: this hook adds no context and blocks nothing.
-            # A ledger of asks that interrupts to announce itself would be one
-            # more thing to answer beside the work already running.
+            # Silent by contract, with ONE exception (S8, obligation 4538):
+            # when the previous turn's Stop hook parked unrecorded claim
+            # sentences, they are delivered here as context TO THE MODEL -
+            # the audience that can actually record or soften them - exactly
+            # once, and the parking file is deleted before anything else can
+            # read it. Otherwise this hook adds no context and blocks
+            # nothing.
+            echo_path = archive.root / "godmode-claim-echo.json"
+            try:
+                if echo_path.exists():
+                    parked = json.loads(echo_path.read_text(encoding="utf-8"))
+                    echo_path.unlink()
+                    sentences = [str(s)[:200]
+                                 for s in (parked.get("sentences") or [])][:3]
+                    if sentences:
+                        listed = "; ".join(f"'{s}'" for s in sentences)
+                        print(json.dumps({"hookSpecificOutput": {
+                            "hookEventName": "UserPromptSubmit",
+                            "additionalContext": (
+                                "godmode: your previous reply made "
+                                f"{len(sentences)} claim-shaped statement(s) "
+                                f"with no record: {listed}. Record each with "
+                                "`godmode claim --cite <evidence>` (it grades "
+                                "honestly) or soften the wording this turn.")}},
+                            ensure_ascii=False))
+            except Exception:  # noqa: BLE001
+                pass
             prompt = str(submitted.get("prompt", ""))
             try:
                 from godmode_runtime.godmode_requests import record_request
