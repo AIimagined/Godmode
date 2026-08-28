@@ -35,6 +35,16 @@ and `turn_id` in the payload, in both host chains. Codex receives `deny`
 with the staged-capability remedy, the way the Grok contract already folds
 it; two tests run the hook on the documented payload with no override.
 
+The decision body carried every host dialect's keys in one object, on the
+assumption that a host ignores keys it does not read. Codex's reference
+says a legacy `decision` field is "parsed but not supported yet" and makes
+it mark the hook failed and continue - a deny turned into a fail-open. A
+positively detected host now receives exactly the keys its own contract
+documents; only an undetected host still receives the union. On Claude
+Code the live test of this release is on the record: a `git push --force`
+in a real session was refused with the R5 reason and `git status` ran
+silently (refusal records 4001 and later).
+
 What this release does not claim: a live, chronicled proof that Codex's or
 Grok's runtime calls the gate. `hooks probe` self-injects and proves the
 script, not the wiring. The README host table still says which hosts are

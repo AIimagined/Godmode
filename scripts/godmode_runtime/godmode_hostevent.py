@@ -1247,19 +1247,33 @@ def render_decision(host: str, event_name: str, base_decision: str,
         return {}, 0
     effective = base_decision if (base_decision != "ask" or host in HOSTS_WITH_ASK) else "deny"
     grok_decision = "deny" if base_decision == "ask" else base_decision
-    body = {
+    claude_key = {
         "hookSpecificOutput": {
             "hookEventName": event_name or "PreToolUse",
             "permissionDecision": effective,
             "permissionDecisionReason": reason,
         },
-        "decision": grok_decision,
-        "reason": reason,
-        "permission": base_decision,
-        "user_message": reason,
-        "agent_message": reason,
     }
-    return body, 0
+    grok_keys = {"decision": grok_decision, "reason": reason}
+    cursor_keys = {"permission": base_decision, "user_message": reason,
+                   "agent_message": reason}
+    # Live on Claude Code, 2026-08-28: a deny carrying every dialect's keys
+    # at once was written to the archive as refusal 4001 - and the host ran
+    # the command. Claude documents `hookSpecificOutput`, `systemMessage`
+    # and `terminalSequence` at top level and nothing else; Codex documents
+    # that a legacy `decision` makes it "mark the hook run as failed...
+    # and continue". So a positively detected host receives exactly the
+    # keys its own contract documents. Grok keeps Claude's key beside its
+    # own {decision, reason}: its docs call the config "largely
+    # Claude-compatible" and the live capture on Grok carried both. Only
+    # where detection failed is the union still the best available bet.
+    if host in ("claude", "codex"):
+        return claude_key, 0
+    if host == "grok":
+        return {**claude_key, **grok_keys}, 0
+    if host == "cursor":
+        return cursor_keys, 0
+    return {**claude_key, **grok_keys, **cursor_keys}, 0
 
 
 # ---------------------------------------------------------------------------
