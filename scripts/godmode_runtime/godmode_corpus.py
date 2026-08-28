@@ -30,6 +30,9 @@ DEFAULT_WEIGHTS: dict[str, float] = {
     "checklist": 0.7,
     "decisions": 0.6,
     "inventory": 0.5,
+    # Compiled from the archive's own guarded lessons; weighted beside
+    # invariants because a law is a guard the project has already paid for.
+    "code-of-law": 0.95,
 }
 
 # Zero-config default: patterns a project is likely to already use. A project that

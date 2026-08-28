@@ -53,9 +53,11 @@ class InitRolesTests(unittest.TestCase):
         with isolated_project() as (project, _s, anchor, archive):
             result = _init_roles(project, anchor, archive)
         written = result.payload["roles_scaffolded"]["written"]
-        self.assertEqual(len(written), 9)
+        # Nine hand stubs plus the generated Code of Law (empty, honest form).
+        self.assertEqual(len(written), 10)
         self.assertIn("GODMODE.md", written)
         self.assertIn("docs/STATE.md", written)
+        self.assertIn("GODMODE-CODE-OF-LAW.md", written)
 
     def test_assess_reports_zero_missing_after_scaffold(self) -> None:
         with isolated_project() as (project, _s, anchor, archive):
