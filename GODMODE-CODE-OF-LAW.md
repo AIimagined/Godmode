@@ -8,107 +8,122 @@ it back). Laws are ADVISORY until the promotion ladder ships; follow the
 guard, and when a guard is wrong, retire the lesson rather than ignoring
 the law.
 
-## Law 1 - this-repo-records-its-claims-before-stating-them  [ADVISORY]
+## Law 1 - governance-preview-before-destructive-removal  [ADVISORY]
+Guard: Run the godmode-governance preview before any multi-file removal, untracking, or destructive filesystem change; reading discipline is the backup, not the net.
+Why: promoted from a correction cluster (keywords: assessment, because, build., call, caught, claim, criterion, depend, designed, destructive)
+Provenance: seq:4563, recorded 2026-08-28
+
+## Law 2 - governance-preview-before-destructive-removal  [ADVISORY]
+Guard: Run the godmode-governance preview before any multi-file removal, untracking, or destructive filesystem change; reading discipline is the backup, not the net.
+Why: promoted from a correction cluster (keywords: assessment, because, build., call, caught, claim, criterion, depend, designed, destructive)
+Provenance: seq:4562, recorded 2026-08-28
+
+## Law 3 - brief-law-test-times-out-under-concurrent-suite-load  [ADVISORY]
+Guard: When this test errors in a batch, rerun it isolated at a quiet moment before treating it as a regression; a 180s wall against a sub-second isolated pass is the load signature, not a code fault.
+Why: 2026-08-29: test_session_start_brief_carries_the_top_laws ERRORs at its 180s subprocess wall whenever other agent sessions run suites on this machine (includin…
+Provenance: seq:4554, recorded 2026-08-28
+
+## Law 4 - this-repo-records-its-claims-before-stating-them  [ADVISORY]
 Guard: In this repository, a test-count, gate-verdict, or host-behaviour statement destined for a reply is recorded first through godmode claim with its cmd: citation; a criterion precedes every sprint-size…
 Why: Self-census 2026-08-29: 284 records tonight, 0 claims, 0 criteria - the maintainer session shows the same disease its fourteen field reports diagnose. The verb…
 Provenance: seq:4537, recorded 2026-08-28
 
-## Law 2 - live-claims-need-the-live-environment-pinned  [ADVISORY]
+## Law 5 - live-claims-need-the-live-environment-pinned  [ADVISORY]
 Guard: A host-table claim about live behaviour requires a pin that reproduces the host's OWN injected environment (the variables its hook subprocess actually carries), never only a lab override; until then…
 Why: 2026-08-29: the README said Grok's read-only builtins pass while the pin ran under GROK_AGENT - a variable Grok never injects into its hook subprocess; a live…
 Provenance: seq:4528, recorded 2026-08-28
 
-## Law 3 - parallel-gated-calls-race-the-chain-anchor  [ADVISORY]
+## Law 6 - parallel-gated-calls-race-the-chain-anchor  [ADVISORY]
 Guard: Archive-touching commands (godmode CLI, unittest over hook tests) run ONE per message, never batched in parallel; only ungated reads (Read/Grep/Glob) may accompany them.
 Why: 2026-08-28: batching several archive-touching commands in one agent message spawns concurrent pre-tool hooks; one verifies the chain while another appends, and…
 Provenance: seq:4313, recorded 2026-08-28
 
-## Law 4 - chain-anchor-read-during-append-race-2026-08-28  [ADVISORY]
+## Law 7 - chain-anchor-read-during-append-race-2026-08-28  [ADVISORY]
 Guard: The chain check re-reads once after a short beat before declaring truncation; a persisting mismatch is the alarm. S6 candidate alongside the counter doctrine.
 Why: During parallel tool calls the pre-action gate refused an Edit with tail-truncated: anchor 4127 vs 4126 records; seconds later doctor read anchored/valid with…
 Provenance: seq:4128, recorded 2026-08-28
 
-## Law 5 - ledger-not-guard-the-measurement-2026-08-28  [ADVISORY]
+## Law 8 - ledger-not-guard-the-measurement-2026-08-28  [ADVISORY]
 Guard: Any capability that depends on an agent volunteering a command is unbuilt until a hook writes it: measure kinds-ever-written before shipping another verb.
 Why: Measured in godmode's own archive (500 records, the most godmode-fluent project on this machine): claims 0, verdicts 0, criteria 0, plans 0, metrics 0, inciden…
 Provenance: seq:4099, recorded 2026-08-28
 
-## Law 6 - three-field-reports-one-shape-2026-08-28  [ADVISORY]
+## Law 9 - three-field-reports-one-shape-2026-08-28  [ADVISORY]
 Guard: A verdict that cannot vary is not a verdict: every summary godmode emits must be derivable from a counter it also prints, and any counter that cannot change must be deleted rather than displayed.
 Why: Three reports in one day, one mechanism: an artefact's summary of itself was read as the artefact. freshness said 'fresh' having checked 0 citations (fixed: ve…
 Provenance: seq:4095, recorded 2026-08-28
 
-## Law 7 - operator-question-why-so-many-slips-2026-08-28  [ADVISORY]
+## Law 10 - operator-question-why-so-many-slips-2026-08-28  [ADVISORY]
 Guard: Repeat a live observation before changing a contract; every git-state command runs alone; adopt enforce + ask_only on this repo so R2 asks surface instead of being observed away.
 Why: Operator asked why development of godmode itself produced so many mistakes with the plugin on. Honest split: process slips (git stash in a parallel batch -> em…
 Provenance: seq:4031, recorded 2026-08-28
 
-## Law 8 - live-deny-on-claude-2026-08-28-and-one-unexplained-miss  [ADVISORY]
+## Law 11 - live-deny-on-claude-2026-08-28-and-one-unexplained-miss  [ADVISORY]
 Guard: A single miss immediately after a plugin reload is not evidence about the body shape; repeat the live call before changing the contract. Keep 4001 on the watch list until a second miss or a reload-ra…
 Why: Supersedes lesson 4017. Live in a real Claude Code session on 0.3.1 with the dual-key body still installed: git push --force was refused with the R5 reason and…
 Provenance: seq:4020, recorded 2026-08-28
 
-## Law 9 - dual-output-deny-was-discarded-by-claude-2026-08-28  [ADVISORY]
+## Law 12 - dual-output-deny-was-discarded-by-claude-2026-08-28  [ADVISORY]
 Guard: A decision body for a positively detected host carries only that host's documented keys; the union is for undetected hosts only. Every host claim of HARD needs a live tool call that was actually bloc…
 Why: First live gate test on Claude Code after the hooks fix: the gate wrote refusal 4001 (R5) and returned a deny carrying every dialect's keys; Claude ran the com…
 Provenance: seq:4017, recorded 2026-08-28
 
-## Law 10 - field-review-claude-other-project-2026-08-28  [ADVISORY]
+## Law 13 - field-review-claude-other-project-2026-08-28  [ADVISORY]
 Guard: The observe-mode line in the brief must report would-haves by tier (R4/R5 count, or zero) and never a raw edit count; a stale checkpoint must name the project's own resume doc when one exists.
 Why: A Claude session on another project reported godmode changed zero decisions: the brief carried an 11-day-stale checkpoint, a no-baseline warning, 95 unattested…
 Provenance: seq:3941, recorded 2026-08-27
 
-## Law 11 - field-review-grok-2026-08-28  [ADVISORY]
+## Law 14 - field-review-grok-2026-08-28  [ADVISORY]
 Guard: Public copy must not imply value on a default turn without records or without an enforcing hook; the on-ramp must be tier 1 only.
 Why: Grok Build 1.0.5 review of 0.3.0 (hook excluded): CLI 8/10, six skills 6/10, default-turn value 4/10, combined ~6/10. Unique: a claim that cannot be walked bac…
 Provenance: seq:3940, recorded 2026-08-27
 
-## Law 12 - codex-windows-sandbox-needs-machine-scope-python  [ADVISORY]
+## Law 15 - codex-windows-sandbox-needs-machine-scope-python  [ADVISORY]
 Guard: Codex host readiness row and DEMO: state that Python must be on the machine PATH and readable by CodexSandboxUsers; verify with a machine-PATH-only Get-Command python before claiming Codex is wired.
 Why: Codex CLI 0.150 on Windows runs agent commands as separate local accounts (CodexSandboxOnline/Offline, group CodexSandboxUsers). They inherit only the MACHINE…
 Provenance: seq:3917, recorded 2026-08-27
 
-## Law 13 - test_the_host_can_still_do_ordinary_work fails intermittently in full-suite runs only, cause not yet identified  [ADVISORY]
+## Law 16 - test_the_host_can_still_do_ordinary_work fails intermittently in full-suite runs only, cause not yet identified  [ADVISORY]
 Guard: Failed twice in full-suite runs (blocking 'edit a project file' once, 'write a project file' once) and passed every isolated run, including immediately after each failure. Ruled out by experiment, no…
 Why: 
 Provenance: seq:3407, recorded 2026-08-22
 
-## Law 14 - The charter compiler makes one rule per physical line, so a hard-wrapped directive compiles as several fragments  [ADVISORY]
+## Law 17 - The charter compiler makes one rule per physical line, so a hard-wrapped directive compiles as several fragments  [ADVISORY]
 Guard: _directives walks segment.body.splitlines(), so an editor's line wrap splits one directive into separate rules. This repo's own charter shows it: 'Protected operations receive a preview and require a…
 Why: 
 Provenance: seq:3039, recorded 2026-08-20
 
-## Law 15 - GODMODE_STATE_HOME is silently ignored on a git project, so B5-A smoke tests wrote four fleet: records (seq 2648, 2649,   [ADVISORY]
+## Law 18 - GODMODE_STATE_HOME is silently ignored on a git project, so B5-A smoke tests wrote four fleet: records (seq 2648, 2649,   [ADVISORY]
 Guard: For a git checkout the archive anchors at .git/godmode-state and the env override does not apply - it is honoured only for non-git projects, which is why the test harness isolates by creating a NON-g…
 Why: 
 Provenance: seq:2779, recorded 2026-08-20
 
-## Law 16 - A self-injecting probe never proves the host called you  [ADVISORY]
+## Law 19 - A self-injecting probe never proves the host called you  [ADVISORY]
 Guard: Never derive a host-wiring or enforcement claim from godmode hooks probe: it invokes the hook script itself, and run_probe's own docstring says it does not prove a live host calls that script on real…
 Why: 
 Provenance: seq:2584, recorded 2026-08-19
 
-## Law 17 - A measurement that cannot distinguish the two outcomes is not evidence  [ADVISORY]
+## Law 20 - A measurement that cannot distinguish the two outcomes is not evidence  [ADVISORY]
 Guard: Before reporting a verification result, state which observation would appear if the claim were FALSE. If the same observation appears either way, the test is invalid. Today: piping unittest through t…
 Why: 
 Provenance: seq:2582, recorded 2026-08-19
 
-## Law 18 - an analysis that reverses every pass was never an analysis  [ADVISORY]
+## Law 21 - an analysis that reverses every pass was never an analysis  [ADVISORY]
 Guard: godmode_mistakes.root_without_code; godmode_mistakes.unretracted_reversal; godmode_mistakes.claim_from_a_sample; godmode_precheck.precheck already_reported
 Why: Publishing when a story first fits rather than when the read set is closed produces an UNSTABLE root, not merely a wrong one. Each pass overturns the previous…
 Provenance: seq:92, recorded 2026-08-11
 
-## Law 19 - an analysis that reverses every pass was never an analysis  [ADVISORY]
+## Law 22 - an analysis that reverses every pass was never an analysis  [ADVISORY]
 Guard: godmode_mistakes.root_without_code; godmode_mistakes.unretracted_reversal
 Why: Publishing when a story first fits rather than when the read set is closed produces an UNSTABLE root, not merely a wrong one: each pass overturns the previous…
 Provenance: seq:90, recorded 2026-08-11
 
-## Law 20 - a supported claim can still be incommensurable with its sentence  [ADVISORY]
+## Law 23 - a supported claim can still be incommensurable with its sentence  [ADVISORY]
 Guard: godmode_mistakes.unframed_clock; godmode_mistakes.stale_runtime; godmode_lens._parse_time
 Why: Citation binding checks that a claim is SUPPORTED, never that it is commensurable with the frame of the sentence carrying it. Stores write UTC, operator surfac…
 Provenance: seq:89, recorded 2026-08-11
 
-## Law 21 - external state restated from memory when a check was one call away  [ADVISORY]
+## Law 24 - external state restated from memory when a check was one call away  [ADVISORY]
 Guard: godmode release --status must answer 'which tags are unpublished' from the API, so no handover restates it
 Why: Asserted which releases were published from 17-hour-old recall while holding working API access used minutes earlier for CI. The external-claim detector exists…
 Provenance: seq:54, recorded 2026-08-08
