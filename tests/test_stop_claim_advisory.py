@@ -210,8 +210,12 @@ class BriefEchoTests(unittest.TestCase):
                        extra_env: dict) -> subprocess.CompletedProcess:
         environment = dict(os.environ)
         environment["GODMODE_STATE_HOME"] = str(state)
-        environment.pop("CLAUDE_CODE_ENTRYPOINT", None)
-        environment.pop("GODMODE_HOST", None)
+        # Field report 2026-08-29: run inside a live Grok session, the
+        # "bare host" control inherited GROK_AGENT and parked a brief -
+        # the control must strip every host marker detection now reads.
+        for marker in ("CLAUDE_CODE_ENTRYPOINT", "GODMODE_HOST", "GROK_AGENT",
+                       "GROK_PLUGIN_ROOT", "GROK_HOOK_EVENT", "PLUGIN_ROOT"):
+            environment.pop(marker, None)
         environment.update(extra_env)
         return subprocess.run(
             [sys.executable, str(HOOK), "session-start",

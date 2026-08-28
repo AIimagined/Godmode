@@ -28,6 +28,12 @@ turn. The first live use of `claim --grade hypothesis` elsewhere showed
 what the nudge buys: a graded hypothesis that was later refuted cost
 nothing to retract.
 
+One honesty line on the Grok brief: the parking and one-shot delivery are
+pinned in tests, and Grok documents UserPromptSubmit as observe-only -
+whether its live runtime surfaces the delivered context to the model
+awaits a fresh session's chronicle. Until that lands, resume on Grok
+remains a skill step, and this document does not claim otherwise.
+
 ## The law loop, hardened by its own first week
 
 A standing instruction lands as a candidate on first telling and promotes
