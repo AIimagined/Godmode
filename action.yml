@@ -1,8 +1,8 @@
 name: Godmode Gates
+# Marketplace caps this field at 125 characters (publish form, 2026-08-29).
 description: >-
-  Run Godmode's deterministic gates on a pull request without a local install.
-  Check out your repository, then this action; the runtime is standard-library
-  Python only.
+  Run Godmode's deterministic gates on a pull request with no local
+  install. Standard-library Python only.
 author: AIimagined
 branding:
   icon: shield
