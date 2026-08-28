@@ -134,12 +134,38 @@ def opening_handshake(archive: Chronicle, anchor: Any, project: Path) -> dict[st
         for record in archive.select(kind="invariant", limit=200)
         if record["data"].get("status") != "retired"
     ]
+    # Field report 2026-08-28: `read` was the literal 0. The line "read 0 of
+    # 8 required sources" could never have said anything else, so an agent
+    # that quoted it and an agent that obeyed it produced the same number -
+    # a counter that cannot move is decoration, and this one was read aloud
+    # in a status report and stepped past. A source counts as read when any
+    # record in this archive cites it (`file:<path>`), which is the same
+    # evidence class every other check here trusts; the unread ones are
+    # named, because a count with no list is not actionable.
+    required_paths: list[str] = []
     try:
         from .godmode_corpus import resolve_roles
 
-        sources_total = len(resolve_roles(project).bindings)
+        resolution = resolve_roles(project)
+        required_paths = sorted(
+            binding.path.relative_to(resolution.project).as_posix()
+            if binding.path.is_absolute() else binding.path.as_posix()
+            for binding in resolution.bindings
+        )
     except Exception:
-        sources_total = 0
+        required_paths = []
+    sources_total = len(required_paths)
+    cited: set[str] = set()
+    try:
+        for record in archive.read_events():
+            for reference in record.get("evidence", []) or []:
+                text = str(reference)
+                if text.startswith("file:"):
+                    cited.add(text[len("file:"):].replace("\\", "/").lstrip("./"))
+    except Exception:
+        cited = set()
+    unread = [path for path in required_paths if path not in cited]
+    sources_read = sources_total - len(unread)
     handshake: dict[str, Any] = {
         "identity": anchor.public_view() if anchor is not None else None,
         "branch": getattr(anchor, "branch", None),
@@ -153,8 +179,15 @@ def opening_handshake(archive: Chronicle, anchor: Any, project: Path) -> dict[st
         "protected_invariants": sorted(set(invariants))[:20],
         "required_sources": {
             "documents": sources_total,
-            "read": 0,
-            "statement": f"read 0 of {sources_total} required sources",
+            "read": sources_read,
+            "unread": unread[:20],
+            "statement": (
+                f"read {sources_read} of {sources_total} required sources"
+                + (f"; unread: {', '.join(unread[:5])}" if unread else "")
+                + ("" if not unread else
+                   " - read them before the first mutation, or say which one "
+                   "you are proceeding without and why")
+            ),
         },
         "enforcement": host_capabilities(
             tool_call_interception=interception_state(archive, current_host()))["controls"],
