@@ -1,1 +1,0 @@
-`godmode hooks wire` writes the project-level `.codex/hooks.json` fallback: Codex CLI 0.150.1 ignores plugin-bundled hook manifests (its own bundled plugins' hooks show 0), but loads project config - the operator still reviews and trusts each command inside codex.

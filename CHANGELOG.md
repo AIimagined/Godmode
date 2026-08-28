@@ -6,6 +6,30 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-29
+
+### Added
+
+- A state-is-a-gap claim is checked against the tests that name its surface and the lessons ledger; an uncited pin downgrades the claim to hypothesis, naming the pin whose provenance answers it.
+- An instruction-shaped prompt (always/never/from now on/every time) becomes a law candidate on FIRST telling - keywords and digest only - and its cluster promotes after one session instead of the correction ladder's three.
+- `adopt --from-docs` seeds a late install: counts-only adoption records citing each bound authority document, so the brief and the required-sources counter start populated on day one.
+- `context why --about <symbol>` carries a guards section naming the tests that mention the symbol, so a gap claim meets its pin at design time.
+- `doctor --deep` lists every cached godmode install whose version differs from the running one - stale caches share the archive and race its chain.
+- `godmode hooks wire --host opencode` installs the Bun shim into the project's `.opencode/plugins/` and names the exact GODMODE_PLUGIN_ROOT to export - the manual copy step the field verdict called out is gone.
+- `godmode hooks wire` writes the project-level `.codex/hooks.json` fallback: Codex CLI 0.150.1 ignores plugin-bundled hook manifests (its own bundled plugins' hooks show 0), but loads project config - the operator still reviews and trusts each command inside codex.
+- The pre-tool gate asks, once per session, while a bound authority document is uncited - naming the unread files, with citation or an on-the-record exemption (`sources-exemption:<path>`) as the escape.
+
+### Changed
+
+- The host table records Grok as live-proven: a real session's denies were honored by the host, read-only builtins pass, and hooks status reads HARD from a fresh acknowledged probe.
+
+### Fixed
+
+- Grok's own read-only builtins (get_command_or_subagent_output, read_file, grep, spawn_subagent) classify as read-kind and pass; unknown tool names still fail closed.
+- A positively identified read-kind tool is allowed by construction at the pre-tool boundary, on every host adapter.
+- The shared PreToolUse matcher ships its dotted tool name regex-escaped, and the PostToolUse matcher also names the lowercase write and search_replace tools.
+- The tail-truncation alarm re-reads fresh disk state once, after a short beat, before it fires - a concurrent append no longer reads as tampering, while a real truncation still raises.
+
 ## [0.3.1] - 2026-08-28
 
 ### Added
