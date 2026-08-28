@@ -1,13 +1,14 @@
 # Godmode v0.3.1
 
-The hooks run where they are loaded. Three field reports, one day.
+The hooks run where they are loaded, and the law arrives before the work.
 
 v0.3.0 shipped one `hooks/hooks.json` that every host discovers and only
-Claude could read. Codex and Grok reported it from opposite sides on the
-same evening; a Claude session on another project reported what the brief
-reads like when nothing has been recorded. Eight changelog fragments fold
-into this release - three added, five fixed - each written before its
-commit, per the changelog gate this repository enforces on itself.
+Claude could read. Nine field reports across one day - from Codex, Grok,
+and Claude sessions on other projects - drove everything here: the shared
+hooks file every host parses, the per-host decision bodies, the Code of
+Law loop, and the claim gate at the message boundary. Seventeen changelog
+fragments fold into this release, each written before its commit, per the
+changelog gate this repository enforces on itself.
 
 ## One hooks file, parsed by every host
 
