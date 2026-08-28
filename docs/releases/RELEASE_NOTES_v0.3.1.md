@@ -110,7 +110,7 @@ age; a claim resting on a test file that was read but not run grades
 hypothesis until the run stands beside it; and `init --roles` generates
 the law file on day one in its honest empty form.
 
-## Absorbed from the upstream sweep
+## Also in this release
 
 `NonFinite` stops an experiment on a non-finite metric; VS Code Copilot is
 detected by the install path it actually presents; `experiment holdout`
