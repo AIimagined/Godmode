@@ -1,0 +1,1 @@
+An instruction-shaped prompt (always/never/from now on/every time) becomes a law candidate on FIRST telling - keywords and digest only - and its cluster promotes after one session instead of the correction ladder's three.

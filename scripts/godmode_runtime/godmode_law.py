@@ -180,6 +180,59 @@ def record_correction_candidate(archive: Any, prompt: str, *,
     )
 
 
+_INSTRUCTION_PHRASES = ("from now on", "going forward", "every time",
+                        "each time", "in every", "make sure you always")
+_INSTRUCTION_WORDS = frozenset({"always", "never", "whenever"})
+
+
+def record_instruction_candidate(archive: Any, prompt: str, *,
+                                 session: str | None = None) -> dict[str, Any] | None:
+    """S6 (obligation 4435): the FIRST telling, not the second.
+
+    Field report 2026-08-28: an operator's standing instruction lived in
+    harness memory godmode cannot read, and was dropped for three reports;
+    the correction detector only fires when the operator has to say it
+    AGAIN. An instruction-shaped prompt - a standing-rule marker like
+    "always"/"from now on" - becomes a candidate on first utterance, same
+    privacy contract as corrections (keywords and digest, never the
+    sentence). An explicit directive is stronger evidence than an inferred
+    correction, so its cluster is promotable after ONE session instead of
+    the correction ladder's three; the guard is still reviewed prose at
+    promotion time.
+    """
+    from .godmode_requests import _keywords, digest
+    from .godmode_sentinel import find_secret_shapes
+
+    flattened = " ".join(str(prompt).split())
+    if not flattened or find_secret_shapes(flattened):
+        return None
+    low = flattened.lower()
+    if len(low.split()) < 4:
+        return None
+    words = {w.strip(".,;:!?") for w in low.split()}
+    hit = next((phrase for phrase in _INSTRUCTION_PHRASES if phrase in low), None)
+    if hit is None:
+        hit = next((w for w in sorted(_INSTRUCTION_WORDS) if w in words), None)
+    if hit is None:
+        return None
+    identifier = digest(flattened)
+    return archive.append(
+        "lesson",
+        f"instruction:{identifier[:12]}",
+        {
+            "status": "candidate",
+            "origin": "instruction",
+            "value": "operator stated a standing instruction (counts only); "
+                     "draft a guard at review - promotable after one session",
+            "keywords": sorted(_keywords(flattened))[:24],
+            "markers": [hit],
+            "session": session,
+            "digest": identifier,
+        },
+        evidence=[],
+    )
+
+
 def law_candidates(archive: Any) -> list[dict[str, Any]]:
     """Candidates clustered read-time by keyword identity, so a repeated
     correction increments a counter instead of splitting the promotion
@@ -197,7 +250,10 @@ def law_candidates(archive: Any) -> list[dict[str, Any]]:
         cluster = clusters.setdefault(key, {
             "keywords": sorted(key), "occurrences": 0, "sessions": set(),
             "first_seq": int(record.get("sequence", 0)),
+            "origin": "correction",
         })
+        if str(data.get("origin") or "") == "instruction":
+            cluster["origin"] = "instruction"
         cluster["occurrences"] += 1
         cluster["last_seq"] = int(record.get("sequence", 0))
         session = data.get("session")
@@ -206,7 +262,10 @@ def law_candidates(archive: Any) -> list[dict[str, Any]]:
     ranked = []
     for cluster in clusters.values():
         cluster["distinct_sessions"] = len(cluster.pop("sessions"))
-        cluster["promotable"] = cluster["distinct_sessions"] >= PROMOTION_SESSIONS
+        # An explicit standing instruction promotes after one session; an
+        # inferred correction still climbs the three-session ladder.
+        needed = 1 if cluster.get("origin") == "instruction" else PROMOTION_SESSIONS
+        cluster["promotable"] = cluster["distinct_sessions"] >= needed
         ranked.append(cluster)
     ranked.sort(key=lambda c: (-c["occurrences"], c["first_seq"]))
     return ranked

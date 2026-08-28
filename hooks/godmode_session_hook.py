@@ -976,8 +976,14 @@ def main(argv: list[str] | None = None) -> int:
                 # L2: the operator-correction detector rides the same guarded
                 # block - a correction-shaped prompt becomes a law candidate,
                 # keywords and digest only, never the sentence.
-                from godmode_runtime.godmode_law import record_correction_candidate
+                from godmode_runtime.godmode_law import (
+                    record_correction_candidate, record_instruction_candidate)
                 record_correction_candidate(
+                    archive, prompt,
+                    session=str(submitted.get("session_id") or "") or None)
+                # S6 (obligation 4435): the first telling of a standing rule
+                # lands in the archive without the agent volunteering it.
+                record_instruction_candidate(
                     archive, prompt,
                     session=str(submitted.get("session_id") or "") or None)
             except Exception:  # noqa: BLE001

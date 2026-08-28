@@ -2360,6 +2360,14 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             "severity": "warning",
             "detail": f"Continued past a failure while {reason}.",
         })
+    if args.deep:
+        # S6 (obligation 4436): name every cached runtime that is not this
+        # one - stale installs share the archive and race its chain. Behind
+        # --deep because it reads the user's home caches, not the project.
+        from .godmode_constants import RUNTIME_VERSION
+        from .godmode_host_manifests import runtime_census_issues
+
+        issues.extend(runtime_census_issues(RUNTIME_VERSION))
     healthy = not any(issue["severity"] == "error" for issue in issues)
     return CommandResult(
         {
