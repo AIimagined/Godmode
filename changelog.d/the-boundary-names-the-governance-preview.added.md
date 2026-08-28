@@ -1,0 +1,1 @@
+A removal-shaped ask or deny (filesystem-mutation, worktree-discard, local-repository-change) names the godmode-governance preview in its reason - the designed net reaches the moment instead of waiting to be invoked.

@@ -57,7 +57,7 @@ export const GodmodePlugin = async ({ directory }) => {
         stdout: "pipe",
         stderr: "pipe",
         cwd: directory,
-        env: { ...process.env, GODMODE_HOST: "opencode" },
+        env: { ...process.env, GODMODE_HOST: "opencode", GODMODE_SHIM_BOUNDARY: "opencode" },
       });
       proc.stdin.write(payload);
       proc.stdin.end();

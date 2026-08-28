@@ -100,7 +100,17 @@ def summarise(text: str) -> str:
 
 
 def _keywords(text: str) -> frozenset[str]:
-    return frozenset({w.lower() for w in _WORD.findall(text)} - _STOPWORDS)
+    # Field report 2026-08-29 (obligation 4521): the token regex admits
+    # trailing punctuation, so "continue." and "here." rode into candidate
+    # clusters as distinct keywords - noise no promotion could turn into a
+    # rule. Trailing ._- is stripped and anything shorter than four chars
+    # after the strip is dropped.
+    words = set()
+    for match in _WORD.findall(text):
+        token = match.lower().rstrip("._-")
+        if len(token) >= 4 and token not in _STOPWORDS:
+            words.add(token)
+    return frozenset(words)
 
 
 def _reviewable(record: dict[str, Any]) -> str:
