@@ -6,6 +6,28 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-08-29
+
+### Added
+
+- A deny relayed through the OpenCode shim records an acknowledged interception proof (the shim's documented throw stops the tool), so one live blocked call upgrades the grade the way the host table promises - a self-injected probe still cannot.
+- An open obligation whose vocabulary the turn's final reply touches is named at the Stop boundary and delivered to the model at the next prompt - obligations stop being inert between resume and session close, which a field report measured as the entire useful middle.
+- A removal-shaped ask or deny (filesystem-mutation, worktree-discard, local-repository-change) names the godmode-governance preview in its reason - the designed net reaches the moment instead of waiting to be invoked.
+- On Grok, which ignores SessionStart stdout, the continuity brief is parked at session start and delivered to the model as context at the first prompt boundary, exactly once - resume stops being a manual step on the one host where three field reports said it still was.
+- The Stop hook's unrecorded-claim advisory now reaches the model as well as the operator: the flagged sentences (the model's own output, bounded, never archived) are parked and delivered back as context at the next prompt boundary, exactly once - fifteen sessions of 'claim unused' measured an advisory pointed at the wrong audience.
+
+### Changed
+
+- The Grok read-only-builtin pass is chronicled live (Grok 1.0.5, 2026-08-29): the previously denied builtin ran, and hooks status reads HARD with the full declared-event list - the host table's claim now stands on that session.
+
+### Fixed
+
+- A promoted candidate cluster is consumed: promotion left the candidate records standing, so the cluster stayed promotable forever and invited a duplicate law.
+- Candidate keywords strip trailing punctuation and require four characters, and a prompt carrying an ignore-this marker feeds neither detector - a cluster of stopwords and disregarded text cannot promote.
+- Grok is detected from the variables its hook subprocess actually injects (GROK_PLUGIN_ROOT/GROK_HOOK_EVENT) and from its read-only builtin names at the shape step - the builtins classify read-kind in the live hook, not only under GROK_AGENT; the Grok declared-events list adds Stop and PostToolUse, and the host table holds the builtin-pass claim until a live session chronicles it.
+- The law compiler keeps one law per subject - the newest record wins, so a retried promotion cannot double a law and appending a retired record actually retires it.
+- The generated Code of Law compiles ADVISORY at most: its guard sentences are records of guards, not directives, and the first committed law file had minted seven unattested HARD rules that blocked status remaining.
+
 ## [0.3.2] - 2026-08-29
 
 ### Added

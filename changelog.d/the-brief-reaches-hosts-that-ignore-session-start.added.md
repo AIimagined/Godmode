@@ -1,1 +1,0 @@
-On Grok, which ignores SessionStart stdout, the continuity brief is parked at session start and delivered to the model as context at the first prompt boundary, exactly once - resume stops being a manual step on the one host where three field reports said it still was.

@@ -1,1 +1,0 @@
-An open obligation whose vocabulary the turn's final reply touches is named at the Stop boundary and delivered to the model at the next prompt - obligations stop being inert between resume and session close, which a field report measured as the entire useful middle.

@@ -1,1 +1,0 @@
-Candidate keywords strip trailing punctuation and require four characters, and a prompt carrying an ignore-this marker feeds neither detector - a cluster of stopwords and disregarded text cannot promote.
