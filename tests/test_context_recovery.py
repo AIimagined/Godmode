@@ -219,6 +219,31 @@ class HandshakeCrisisTests(unittest.TestCase):
             self.assertFalse(handshake["repo_state"]["crisis"])
             self.assertNotIn("warning", handshake)
 
+    def test_the_read_count_is_measured_and_names_what_is_unread(self) -> None:
+        """Field report 2026-08-28: a session read `read 0 of 8 required
+        sources`, quoted the line in its own status report, and carried on.
+        The 0 was a hard-coded literal - it could never have said anything
+        else, so obeying it and ignoring it produced the same number. It is
+        a measurement now: a source counts as read when a record in this
+        session cites it, and the unread ones are named so the line is
+        actionable rather than decorative."""
+        with isolated_git_project() as (project, archive, anchor, _git):
+            (project / "CLAUDE.md").write_text("# rules\n", encoding="utf-8")
+            (project / "README.md").write_text("# readme\n", encoding="utf-8")
+            handshake = opening_handshake(archive, anchor, project)
+            required = handshake["required_sources"]
+            self.assertGreater(required["documents"], 0)
+            self.assertEqual(required["read"], 0)
+            self.assertIn("CLAUDE.md", required["unread"])
+
+            archive.append("attestation", "read the rules",
+                           {"session": "S-test", "status": "ok"},
+                           evidence=["file:CLAUDE.md"])
+            after = opening_handshake(archive, anchor, project)["required_sources"]
+            self.assertEqual(after["read"], 1)
+            self.assertNotIn("CLAUDE.md", after["unread"])
+            self.assertIn("1 of", after["statement"])
+
 
 class ScopedLessonTests(unittest.TestCase):
     def test_lessons_are_filtered_by_project_tag(self) -> None:
