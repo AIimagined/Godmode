@@ -55,10 +55,23 @@ def _ellipsize(text: str, limit: int) -> str:
 
 
 def _guarded_lessons(archive: Any) -> list[dict[str, Any]]:
-    lessons = []
+    # Dedup by subject, newest record wins (2026-08-29): a promotion retried
+    # after a parse error wrote the same law twice, and two 2026-08-11
+    # lessons had shared a subject since before the compiler existed - each
+    # rendered as its own law. One subject, one law, and appending a
+    # retired record now actually retires the law (the newest record is the
+    # subject's state, the same rule status remaining already follows).
+    by_subject: dict[str, dict[str, Any]] = {}
     for record in archive.read_events():
         if record.get("kind") != "lesson":
             continue
+        current = by_subject.get(str(record.get("subject", "")))
+        if current is None or int(record.get("sequence", 0)) > current["sequence"]:
+            by_subject[str(record.get("subject", ""))] = {
+                "sequence": int(record.get("sequence", 0)), "record": record}
+    lessons = []
+    for kept in by_subject.values():
+        record = kept["record"]
         data = record.get("data") or {}
         if str(data.get("status", "active")) in ("retired", "candidate"):
             continue

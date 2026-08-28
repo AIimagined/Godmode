@@ -24,5 +24,33 @@ class LawFileCompilesAdvisoryTests(unittest.TestCase):
         self.assertIn("code-of-law", RECORD_ROLES)
 
 
+class LawDedupTests(unittest.TestCase):
+    """One subject, one law: a retried promotion wrote the same law twice,
+    and two pre-compiler lessons shared a subject - each rendered twice."""
+
+    def test_the_newest_record_per_subject_is_the_law(self) -> None:
+        import sys as _sys
+        from pathlib import Path as _Path
+        _sys.path.insert(0, str(_Path(__file__).parent))
+        from test_godmode_runtime import isolated_project
+        from godmode_runtime.godmode_law import top_laws
+
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            archive.append("lesson", "one-subject",
+                           {"status": "active", "generalized_guard": "old guard"},
+                           evidence=[])
+            archive.append("lesson", "one-subject",
+                           {"status": "active", "generalized_guard": "new guard"},
+                           evidence=[])
+            laws = top_laws(archive, 10)
+            self.assertEqual(
+                [l["subject"] for l in laws].count("one-subject"), 1)
+            self.assertIn("new guard", laws[0]["guard"])
+            archive.append("lesson", "one-subject", {"status": "retired"},
+                           evidence=[])
+            self.assertEqual(top_laws(archive, 10), [])
+
+
 if __name__ == "__main__":
     unittest.main()
