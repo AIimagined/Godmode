@@ -3509,6 +3509,66 @@ class _GuideText:
 
 GUIDE_TEXT = _GuideText()
 
+# S12-A (the listing risk, Grok field report): bare `godmode` used to print
+# the argparse firehose - a hundred verbs as the first impression. The
+# day-one face names the eight that matter on day one; everything else sits
+# behind `--all`, whose listing is GENERATED from the registered subparsers
+# so it can never drift from the real CLI.
+_DAY_ONE_VERBS = (
+    ("init", "start the private local archive for this project"),
+    ("resume", "rebuild what is true now from recorded evidence"),
+    ("status", "the single writable status store"),
+    ("doctor", "health-check the installation and archive"),
+    ("forecast", "classify a risky operation before it runs"),
+    ("checkpoint", "record a recoverable state with next actions"),
+    ("capabilities", "what is actually enforced on this host"),
+    ("guide", "the one-page orientation; --tier N for the ladder"),
+)
+
+
+def _subparser_action(parser: argparse.ArgumentParser):
+    return next(a for a in parser._actions
+                if isinstance(a, argparse._SubParsersAction))
+
+
+def _day_one_text(parser: argparse.ArgumentParser) -> str:
+    from .godmode_anchor import current_host
+    from .godmode_hostevent import HOSTS_WITH_ASK
+
+    total = len(_subparser_action(parser).choices)
+    host = current_host()
+    if host in HOSTS_WITH_ASK or host == "unknown":
+        posture = ("risky operations ask first; irreversible ones need the "
+                   "one-time password")
+    else:
+        posture = (f"this host ({host}) has no ask: a recoverable refusal is "
+                   "denied and names `godmode authorize stage` as the remedy")
+    lines = ["GODMODE - DAY ONE", ""]
+    for name, blurb in _DAY_ONE_VERBS:
+        lines.append(f"  godmode {name:<13} {blurb}")
+    lines += [
+        "",
+        f"  {posture}",
+        "",
+        f"  {total - len(_DAY_ONE_VERBS)} more verbs: `godmode --all` lists "
+        "every one; `godmode guide --tier 2`",
+        "  climbs the ladder when the first eight feel small.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _all_verbs_text(parser: argparse.ArgumentParser) -> str:
+    action = _subparser_action(parser)
+    helps = {ca.dest: (ca.help or "") for ca in action._choices_actions}
+    lines = ["GODMODE - EVERY VERB", ""]
+    for name in sorted(action.choices):
+        blurb = helps.get(name, "")
+        entry = f"  {name:<18} {blurb}"
+        lines.append(entry[:100])
+    lines += ["", "  `godmode <verb> --help` documents any of them.", ""]
+    return "\n".join(lines)
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -5008,6 +5068,16 @@ def main(argv: list[str] | None = None) -> int:
     raw = [token for token in raw if token not in ("--brief", "--json", "--terse")]
 
     parser = _build_parser()
+    # S12-A: presentation only - no verb changes behavior. Bare invocation
+    # shows the day-one face instead of an argparse error; `--all` shows the
+    # generated full listing. Any real command token falls through to
+    # argparse untouched.
+    if not raw and not lifted:
+        print(_day_one_text(parser), end="")
+        return 0
+    if raw == ["--all"]:
+        print(_all_verbs_text(parser), end="")
+        return 0
     args = parser.parse_args(lifted + raw)
     if args.command == "guide":
         tier = getattr(args, "tier", None)
