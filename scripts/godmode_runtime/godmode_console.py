@@ -1464,6 +1464,13 @@ def cmd_law_candidates(args: argparse.Namespace, runtime: Runtime) -> CommandRes
     return CommandResult({"candidates": law_candidates(runtime.archive)})
 
 
+def cmd_law_debrief(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    from .godmode_law import debrief
+
+    return CommandResult(debrief(runtime.archive))
+
+
 def cmd_law_promote(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     from .godmode_law import promote_candidate
 
@@ -4463,6 +4470,11 @@ def _build_parser() -> argparse.ArgumentParser:
     law_show = law_sub.add_parser("show", help="The top laws, as the brief carries them")
     law_show.add_argument("--top", type=int, default=5)
     law_show.set_defaults(handler=cmd_law_show)
+    law_debrief = law_sub.add_parser(
+        "debrief",
+        help="The amendment loop: per law, delivered/cited/recurred counts and "
+             "triaged recommendations; receipted so staleness is measurable")
+    law_debrief.set_defaults(handler=cmd_law_debrief)
     law_candidates_parser = law_sub.add_parser(
         "candidates",
         help="Correction candidates clustered by keywords, with recurrence counts")

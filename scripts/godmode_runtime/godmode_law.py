@@ -348,6 +348,100 @@ def promote_candidate(archive: Any, first_seq: int, *, guard: str,
     )
 
 
+def debrief(archive: Any) -> dict[str, Any]:
+    """The amendment loop (S10; loopy 4112's adopted-but-unbuilt half).
+
+    Reads the archive once and answers, per law: how often was it DELIVERED
+    (receipts), was it ever CITED (a later record naming its seq), and did
+    the SAME correction recur AFTER a delivery (the law was shown and the
+    behaviour repeated - a law that is not working). Recommendations are
+    triaged the maintainer-orchestrator way: promoting a ready candidate is
+    autonomous (the ladder already gates it); amending or retiring a law is
+    needs-operator, because a guard is reviewed prose. The report states
+    its own read window and stopping reason (loop-engineering's honest
+    stops), and a counts-only receipt is appended so the next debrief
+    starts where this one ended and staleness is measurable.
+    """
+    records = archive.read_events()
+    last_debrief = 0
+    for record in records:
+        if record.get("kind") == "action" and record.get("subject") == "law-debrief":
+            last_debrief = int(record.get("sequence", 0))
+    laws = _guarded_lessons(archive)
+    delivered: dict[int, int] = {}
+    last_delivery: dict[int, int] = {}
+    for record in records:
+        if record.get("kind") == "action" and record.get("subject") == "laws-delivered":
+            for seq in (record.get("data") or {}).get("law_seqs") or []:
+                delivered[int(seq)] = delivered.get(int(seq), 0) + 1
+                last_delivery[int(seq)] = int(record.get("sequence", 0))
+    cited: dict[int, int] = {}
+    for record in records:
+        for reference in record.get("evidence") or []:
+            text = str(reference)
+            if text.startswith("seq:"):
+                try:
+                    cited[int(text[4:])] = cited.get(int(text[4:]), 0) + 1
+                except ValueError:
+                    pass
+    from .godmode_sources import _salient_words
+
+    candidates = [r for r in records
+                  if r.get("kind") == "lesson"
+                  and str((r.get("data") or {}).get("status")) == "candidate"]
+    entries = []
+    amend, retire = [], []
+    for law in laws:
+        seq = law["sequence"]
+        vocabulary = _salient_words(f"{law['subject']} {law['guard']}")
+        recurrences = [
+            int(c.get("sequence", 0)) for c in candidates
+            if int(c.get("sequence", 0)) > last_delivery.get(seq, 0)
+            and last_delivery.get(seq)
+            and len(_salient_words(" ".join(
+                str(k) for k in (c.get("data") or {}).get("keywords") or []))
+                & vocabulary) >= 3
+        ]
+        entry = {
+            "seq": seq,
+            "subject": law["subject"][:80],
+            "delivered": delivered.get(seq, 0),
+            "cited": cited.get(seq, 0),
+            "recurred_after_delivery": recurrences[:5],
+        }
+        if len(recurrences) >= 2:
+            entry["recommendation"] = "amend-guard"
+            amend.append(entry)
+        elif delivered.get(seq, 0) >= 3 and not cited.get(seq) and not recurrences:
+            entry["recommendation"] = "retire-candidate"
+            retire.append(entry)
+        else:
+            entry["recommendation"] = "keep"
+        entries.append(entry)
+    promotable = [c["first_seq"] for c in law_candidates(archive) if c["promotable"]]
+    receipt = archive.append("action", "law-debrief", {
+        "window": [last_debrief, int(records[-1]["sequence"]) if records else 0],
+        "laws": len(laws), "amend": len(amend), "retire": len(retire),
+        "promotable": len(promotable),
+    }, evidence=[])
+    return {
+        "window": {"from_seq": last_debrief,
+                   "to_seq": int(records[-1]["sequence"]) if records else 0},
+        "stopping_reason": "window-exhausted",
+        "laws": entries,
+        "autonomous": {"promote_ready": promotable,
+                       "note": "the ladder already gates these; `law promote` acts"},
+        "needs_operator": {
+            "amend_guard": [e["seq"] for e in amend],
+            "retire_candidate": [e["seq"] for e in retire],
+            "note": "a guard is reviewed prose - amend by appending a lesson "
+                    "with the same subject (newest record wins), retire by "
+                    "appending status retired",
+        },
+        "receipt_seq": receipt["sequence"],
+    }
+
+
 def record_delivery(archive: Any, laws: list[dict[str, Any]], *,
                     session: str | None = None) -> dict[str, Any] | None:
     """The delivery receipt: which laws the brief carried, counts only.

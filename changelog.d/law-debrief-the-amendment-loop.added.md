@@ -1,0 +1,1 @@
+`law debrief` closes the amendment loop: per law it measures delivered, cited, and recurred-after-delivery, triages recommendations (promoting a ready candidate is autonomous via the ladder; amending or retiring a guard needs the operator), states its own read window and stopping reason, and receipts itself counts-only so staleness is measurable.
