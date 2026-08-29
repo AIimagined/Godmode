@@ -268,6 +268,66 @@ class GeminiFragmentTests(unittest.TestCase):
         self.assertIn("single JSON object", fragment["_note"])
 
 
+class AntigravityArtifactTests(unittest.TestCase):
+    """Fragment shape and the project wire's merge contract. The schema is
+    transcribed from antigravity.google/docs/hooks (2026-08-29) and the
+    registry entry names it unprobed - these pins hold the transcription
+    steady, not the host's behaviour."""
+
+    def test_emitted_events_equal_the_allowlist(self) -> None:
+        fragment = host_manifests.build_antigravity_fragment()
+        self.assertEqual(
+            host_manifests.antigravity_emitted_events(fragment),
+            host_manifests.ANTIGRAVITY_HOOK_EVENTS)
+
+    def test_timeouts_are_seconds_and_bounded(self) -> None:
+        entry = host_manifests.build_antigravity_fragment()["godmode"]
+        handlers = [h for event in ("PreToolUse", "Stop") for h in entry[event]]
+        for handler in handlers:
+            self.assertLessEqual(handler["timeout"], 30)
+
+    def test_the_note_documents_the_stdout_contract_and_the_probe_rule(self) -> None:
+        fragment = host_manifests.build_antigravity_fragment()
+        self.assertIn("{decision, reason}", fragment["_note"])
+        self.assertIn("probe", fragment["_note"])
+
+    def test_wire_merges_without_clobbering_foreign_hooks(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            target = project / ".agents" / "hooks.json"
+            target.parent.mkdir(parents=True)
+            target.write_text(json.dumps({"their-linter": {"enabled": True}}),
+                              encoding="utf-8")
+            report = host_manifests.write_antigravity_project_hooks(
+                PLUGIN_ROOT, project)
+            self.assertTrue(report["written"])
+            merged = json.loads(target.read_text(encoding="utf-8"))
+            self.assertIn("their-linter", merged)
+            self.assertIn("godmode", merged)
+            self.assertNotIn("${godmodePluginRoot}",
+                             json.dumps(merged["godmode"]))
+
+    def test_wire_refuses_a_differing_godmode_entry_without_force(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            target = project / ".agents" / "hooks.json"
+            target.parent.mkdir(parents=True)
+            target.write_text(json.dumps({"godmode": {"enabled": False}}),
+                              encoding="utf-8")
+            refused = host_manifests.write_antigravity_project_hooks(
+                PLUGIN_ROOT, project)
+            self.assertFalse(refused["written"])
+            forced = host_manifests.write_antigravity_project_hooks(
+                PLUGIN_ROOT, project, force=True)
+            self.assertTrue(forced["written"])
+
+
 class EventAllowlistTraceabilityTests(unittest.TestCase):
     """The governing rule `godmode_host_manifests.py`'s own module docstring
     states: every emitted event name is traceable to an addendum, and the

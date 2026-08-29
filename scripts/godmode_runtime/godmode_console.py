@@ -1833,7 +1833,8 @@ def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         # Codex CLI 0.150.1 ignores plugin-bundled hook manifests (host bug,
         # 2026-08-28); the project-level file is what its runtime loads.
         from .godmode_host_manifests import (
-            write_codex_project_hooks, write_opencode_project_shim)
+            write_antigravity_project_hooks, write_codex_project_hooks,
+            write_opencode_project_shim)
 
         plugin_root = Path(__file__).resolve().parents[2]
         wire_host = getattr(args, "host", None) or "codex"
@@ -1845,9 +1846,14 @@ def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             return CommandResult(write_opencode_project_shim(
                 plugin_root, Path(runtime.anchor.project_root),
                 force=getattr(args, "force", False)))
+        if wire_host == "antigravity":
+            return CommandResult(write_antigravity_project_hooks(
+                plugin_root, Path(runtime.anchor.project_root),
+                force=getattr(args, "force", False)))
         return CommandResult(
-            {"error": "hooks wire knows codex (project hooks fallback) and "
-                      "opencode (Bun shim install) today"},
+            {"error": "hooks wire knows codex (project hooks fallback), "
+                      "opencode (Bun shim install), and antigravity "
+                      "(.agents/hooks.json merge) today"},
             exit_code=1)
     if args.hooks_command == "install":
         if getattr(args, "git", False):
