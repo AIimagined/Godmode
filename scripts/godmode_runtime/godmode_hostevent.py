@@ -257,6 +257,15 @@ _GEMINI_EVENTS = frozenset({"BeforeTool"})
 # Grok adapter its read-only builtins.
 _ANTIGRAVITY_SHELL_TOOLS = frozenset({"run_command"})
 _ANTIGRAVITY_READONLY_TOOLS = frozenset({"view_file"})
+# Field report 2026-08-29 (live Antigravity agent, its own tool vocabulary):
+# the mutating file tools are write_to_file / replace_file_content with a
+# PascalCase `TargetFile` arg - names no other documented host uses, so
+# they also serve shape detection. The same report shows the live envelope
+# as FLAT (`hook_event_name: "BeforeTool"`, `tool_name`, `tool_input`), not
+# the nested `toolCall` the official docs describe - both dialects are
+# mapped, and the envelope shape stays unverified-live until a wired hook
+# actually fires (the reporting session had no hooks registered).
+_ANTIGRAVITY_FENCED_TOOLS = frozenset({"write_to_file", "replace_file_content"})
 
 
 def detect_host(raw: Any) -> str:
@@ -283,6 +292,15 @@ def detect_host(raw: Any) -> str:
         # event in hand - an Antigravity workspace opened from inside a
         # Claude or Grok session still speaks Antigravity to its own hooks.
         # GODMODE_HOST above stays the explicit operator override.
+        return "antigravity"
+    if os.environ.get("ANTIGRAVITY_AGENT") or os.environ.get(
+            "ANTIGRAVITY_CONVERSATION_ID"):
+        # Field report 2026-08-29: Antigravity injects ANTIGRAVITY_AGENT,
+        # ANTIGRAVITY_CONVERSATION_ID, ANTIGRAVITY_PROJECT_ID (and more)
+        # into its agent subprocesses - names captured live from an env
+        # dump. A hook subprocess is expected to inherit them; that
+        # expectation is unproven until a live hook fires, which is why
+        # shape detection below stands on its own without these.
         return "antigravity"
     if os.environ.get("GROK_AGENT"):
         return "grok"
@@ -336,6 +354,12 @@ def _detect_from_shape(raw: Any) -> str | None:
     if event_name in _GEMINI_EVENTS:
         return "gemini"
     if isinstance(tool, str) and tool:
+        if tool in (_ANTIGRAVITY_SHELL_TOOLS | _ANTIGRAVITY_FENCED_TOOLS
+                    | _ANTIGRAVITY_READONLY_TOOLS):
+            # Antigravity's own vocabulary (field report 2026-08-29) - no
+            # other documented host names a tool run_command, view_file,
+            # write_to_file, or replace_file_content.
+            return "antigravity"
         if tool in _CODEX_TOOLS:
             return "codex"
         if tool in _GROK_TOOLS or tool in _GROK_READONLY_TOOLS:
@@ -1148,14 +1172,22 @@ def _adapt_antigravity(raw: Any) -> HostEvent:
     tool_name routing (a payload with no flat `tool_name` key would
     otherwise fall into the bare-operation branch and lose the tool)."""
     call = raw.get("toolCall")
-    call = call if isinstance(call, dict) else {}
-    tool = str(call.get("name") or "").strip()
-    args = call.get("args")
-    args = args if isinstance(args, dict) else {}
+    if isinstance(call, dict):
+        # Nested dialect, as the official docs describe it.
+        tool = str(call.get("name") or "").strip()
+        args = call.get("args")
+        args = args if isinstance(args, dict) else {}
+    else:
+        # Flat dialect, as the live host actually spoke it (field report
+        # 2026-08-29): hook_event_name/tool_name/tool_input at top level,
+        # PascalCase arg names inside.
+        tool = str(field(raw, "tool_name") or "").strip()
+        args = field(raw, "tool_input")
+        args = args if isinstance(args, dict) else {}
     event_name = str(field(raw, "hook_event_name") or "PreToolUse")
     paths = raw.get("workspacePaths")
     first_path = str(paths[0]) if isinstance(paths, list) and paths else ""
-    cwd = str(args.get("Cwd") or "") or first_path
+    cwd = str(args.get("Cwd") or "") or str(field(raw, "cwd") or "") or first_path
     request_id = str(field(raw, "request_id") or "")
     if tool in _ANTIGRAVITY_READONLY_TOOLS:
         return HostEvent(
@@ -1169,6 +1201,16 @@ def _adapt_antigravity(raw: Any) -> HostEvent:
             schema=SCHEMA, event=event_name, host="antigravity", tool=tool,
             operation=command, targets=[], cwd=cwd, request_id=request_id,
             tool_kind=TOOL_KIND_SHELL,
+        )
+    if tool in _ANTIGRAVITY_FENCED_TOOLS:
+        target = str(args.get("TargetFile") or "").strip()
+        if not target:
+            return _unrecognized("antigravity", tool, raw)
+        verb = "write" if tool == "write_to_file" else "edit"
+        return HostEvent(
+            schema=SCHEMA, event=event_name, host="antigravity", tool=tool,
+            operation=f"{verb} file {target}", targets=[target], cwd=cwd,
+            request_id=request_id, tool_kind=TOOL_KIND_FENCED,
         )
     return _unrecognized("antigravity", tool, raw)
 
@@ -1392,6 +1434,7 @@ def render_decision(host: str, event_name: str, base_decision: str,
 CODEX_TOOLS = _CODEX_TOOLS
 ANTIGRAVITY_SHELL_TOOLS = _ANTIGRAVITY_SHELL_TOOLS
 ANTIGRAVITY_READONLY_TOOLS = _ANTIGRAVITY_READONLY_TOOLS
+ANTIGRAVITY_FENCED_TOOLS = _ANTIGRAVITY_FENCED_TOOLS
 GROK_TOOLS = _GROK_TOOLS
 CLAUDE_TOOLS = _CLAUDE_TOOLS
 CURSOR_EVENTS = _CURSOR_EVENTS

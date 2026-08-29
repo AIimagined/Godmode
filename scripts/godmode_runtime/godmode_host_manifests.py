@@ -342,8 +342,8 @@ def build_antigravity_fragment() -> dict:
             f"{ANTIGRAVITY_ROOT_TOKEN} replaced by the absolute install "
             "path. stdout for PreToolUse must be a single JSON object "
             "{decision, reason}. Never claim HARD interception without a "
-            "fresh probe proof; a community report (Antigravity IDE "
-            "1.107.0, Windows) says Stop hooks may not fire there."
+            "fresh probe proof; Stop hooks not firing on Windows (IDE "
+            "1.107.0) is field-confirmed, 2026-08-29."
         ),
         "godmode": {
             "enabled": True,
@@ -705,8 +705,8 @@ HOOK_ARTIFACTS: dict[str, dict[str, Any]] = {
         "gap": "schema transcribed from antigravity.google/docs/hooks, never "
                "probed live - the handler nesting and the {decision, reason} "
                "stdout contract hold on paper only until a live deny is "
-               "chronicled; a community report says Stop hooks may not fire "
-               "on Windows (IDE 1.107.0)",
+               "chronicled; Stop not firing on Windows is field-confirmed "
+               "(2026-08-29, IDE 1.107.0)",
     },
     "gemini": {
         "mode": "dedicated",

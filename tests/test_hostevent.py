@@ -1049,3 +1049,70 @@ class AntigravityAdapterTests(unittest.TestCase):
 
         event = parse_host_payload(self._payload("run_command", {"CommandLine": "ls"}))
         self.assertEqual(event.cwd, "C:/w")
+
+
+class AntigravityFlatDialectTests(unittest.TestCase):
+    """Field report 2026-08-29: the LIVE host speaks a flat BeforeTool
+    envelope with PascalCase args - not the nested toolCall the official
+    docs show. Both dialects map to the same events. Parsing runs under
+    the live subprocess env the field report captured (ANTIGRAVITY_*
+    present, no Claude/Grok markers) - patched in `_parse` so the test
+    session's own env cannot leak into detection."""
+
+    def _flat(self, tool, tool_input):
+        return {"hook_event_name": "BeforeTool", "tool_name": tool,
+                "tool_input": tool_input, "cwd": "C:/w/p",
+                "session_id": "s-1", "request_id": "r-1"}
+
+    def _parse(self, payload):
+        import os
+        from unittest import mock
+
+        from godmode_runtime.godmode_hostevent import parse_host_payload
+
+        with mock.patch.dict(os.environ, {"ANTIGRAVITY_AGENT": "1"}):
+            return parse_host_payload(payload)
+
+    def test_flat_run_command_gates_the_command_line(self) -> None:
+        from godmode_runtime.godmode_hostevent import TOOL_KIND_SHELL
+
+        event = self._parse(self._flat(
+            "run_command", {"CommandLine": "git push --force", "Cwd": "C:/x"}))
+        self.assertEqual(event.host, "antigravity")
+        self.assertEqual(event.tool_kind, TOOL_KIND_SHELL)
+        self.assertEqual(event.operation, "git push --force")
+        self.assertEqual(event.cwd, "C:/x")
+
+    def test_write_to_file_is_fenced_with_the_target(self) -> None:
+        from godmode_runtime.godmode_hostevent import TOOL_KIND_FENCED
+
+        event = self._parse(self._flat(
+            "write_to_file", {"TargetFile": "C:/w/p/a.py", "CodeContent": "x"}))
+        self.assertEqual(event.host, "antigravity")
+        self.assertEqual(event.tool_kind, TOOL_KIND_FENCED)
+        self.assertEqual(event.targets, ["C:/w/p/a.py"])
+        self.assertIn("write file", event.operation)
+
+    def test_replace_file_content_is_a_fenced_edit(self) -> None:
+        from godmode_runtime.godmode_hostevent import TOOL_KIND_FENCED
+
+        event = self._parse(self._flat(
+            "replace_file_content",
+            {"TargetFile": "C:/w/p/b.py", "TargetContent": "old",
+             "ReplacementContent": "new"}))
+        self.assertEqual(event.tool_kind, TOOL_KIND_FENCED)
+        self.assertIn("edit file", event.operation)
+
+    def test_a_fenced_tool_without_a_target_fails_closed(self) -> None:
+        from godmode_runtime.godmode_hostevent import TOOL_KIND_UNRECOGNIZED
+
+        event = self._parse(self._flat("write_to_file", {"CodeContent": "x"}))
+        self.assertEqual(event.tool_kind, TOOL_KIND_UNRECOGNIZED)
+
+    def test_the_env_marker_detects_an_ambiguous_payload(self) -> None:
+        event = self._parse(self._flat("browser_navigate", {}))
+        self.assertEqual(event.host, "antigravity")
+
+    def test_flat_cwd_falls_back_to_the_envelope_cwd(self) -> None:
+        event = self._parse(self._flat("run_command", {"CommandLine": "ls"}))
+        self.assertEqual(event.cwd, "C:/w/p")
