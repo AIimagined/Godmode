@@ -205,6 +205,23 @@ def record_correction_candidate(archive: Any, prompt: str, *,
 _INSTRUCTION_PHRASES = ("from now on", "going forward", "every time",
                         "each time", "in every", "make sure you always")
 _INSTRUCTION_WORDS = frozenset({"always", "never", "whenever"})
+# S11-E (two live chat-noise captures 2026-08-29, e.g. "whenever ready: 9
+# fragments ..."): a standing rule has a marker AND an imperative verb close
+# behind it; a marker floating in conversation does not.
+_INSTRUCTION_VERBS = frozenset({
+    "run", "include", "record", "keep", "use", "check", "preview", "write",
+    "add", "grade", "read", "cite", "update", "close", "open", "test",
+    "verify", "review", "follow", "state",
+})
+
+
+def _verb_follows_marker(low: str, hit: str) -> bool:
+    index = low.find(hit)
+    if index < 0:
+        return False
+    tail = low[index + len(hit):].split()
+    window = {token.strip(".,;:!?\"'()") for token in tail[:5]}
+    return bool(window & _INSTRUCTION_VERBS)
 
 
 def record_instruction_candidate(archive: Any, prompt: str, *,
@@ -234,10 +251,18 @@ def record_instruction_candidate(archive: Any, prompt: str, *,
     if len(low.split()) < 4:
         return None
     words = {w.strip(".,;:!?") for w in low.split()}
-    hit = next((phrase for phrase in _INSTRUCTION_PHRASES if phrase in low), None)
+    # S11-E fix within the fix: check EVERY matching marker for a following
+    # imperative verb, not only the first - "always include X in every
+    # report" matches the phrase "in every" first, whose window holds no
+    # verb, while "always" a few words earlier does.
+    hits = [phrase for phrase in _INSTRUCTION_PHRASES if phrase in low]
+    hits += [w for w in sorted(_INSTRUCTION_WORDS) if w in words]
+    if not hits:
+        return None
+    hit = next((h for h in hits if _verb_follows_marker(low, h)), None)
     if hit is None:
-        hit = next((w for w in sorted(_INSTRUCTION_WORDS) if w in words), None)
-    if hit is None:
+        # No marker has an imperative verb behind it: conversation, not a
+        # standing rule (S11-E) - the live false captures all fail here.
         return None
     identifier = digest(flattened)
     return archive.append(
@@ -440,6 +465,67 @@ def debrief(archive: Any) -> dict[str, Any]:
         },
         "receipt_seq": receipt["sequence"],
     }
+
+
+_DEBRIEF_STALE_AFTER = 300
+
+
+def debrief_status(archive: Any) -> dict[str, Any]:
+    """S11-A: the meta-loop's own staleness gauge. The first live debrief ran
+    2026-08-29 and nothing would have prompted a second - now `law show` and
+    the brief carry how many records have landed since the last receipt."""
+    records = archive.read_events()
+    last = 0
+    for record in records:
+        if record.get("kind") == "action" and record.get("subject") == "law-debrief":
+            last = int(record.get("sequence", 0))
+    latest = int(records[-1]["sequence"]) if records else 0
+    since = latest - last if last else latest
+    return {
+        "last_receipt_seq": last or None,
+        "records_since": since,
+        "stale": last == 0 or since > _DEBRIEF_STALE_AFTER,
+    }
+
+
+def amend_law(archive: Any, law_seq: int, guard: str) -> dict[str, Any]:
+    """S11-D: execute a debrief amendment without hand-crafted appends.
+
+    Appends a lesson with the SAME subject as the law at `law_seq` carrying
+    the new reviewed guard; newest-wins dedup makes it the law. Refuses an
+    empty guard, an unknown sequence, and a subject whose current state is
+    retired or candidate - amendment is for living laws."""
+    from .godmode_errors import ArchiveError
+
+    guard = " ".join(str(guard).split())
+    if not guard:
+        raise ArchiveError("Amendment needs a non-empty reviewed guard")
+    target = None
+    latest_by_subject: dict[str, dict[str, Any]] = {}
+    for record in archive.read_events():
+        if record.get("kind") != "lesson":
+            continue
+        latest_by_subject[str(record.get("subject", ""))] = record
+        if int(record.get("sequence", 0)) == int(law_seq):
+            target = record
+    if target is None:
+        raise ArchiveError(f"No lesson record at seq {law_seq}")
+    subject = str(target.get("subject", ""))
+    current = latest_by_subject.get(subject) or {}
+    status = str((current.get("data") or {}).get("status", "active"))
+    if status in ("retired", "candidate"):
+        raise ArchiveError(
+            f"'{subject[:60]}' is {status}; amendment is for living laws")
+    return archive.append(
+        "lesson", subject,
+        {
+            "status": "active",
+            "generalized_guard": guard,
+            "value": f"amended from seq {int(law_seq)} (S11 law amend)",
+            "amended_from": int(law_seq),
+        },
+        evidence=[f"seq:{int(law_seq)}"],
+    )
 
 
 def record_delivery(archive: Any, laws: list[dict[str, Any]], *,

@@ -431,6 +431,53 @@ def would_have_summary(archive: Chronicle) -> dict[str, Any]:
     return summary
 
 
+def enforce_digest(archive: Chronicle) -> dict[str, Any] | None:
+    """S11-B: the posture loop's second half. Enforce-era gate-asked and
+    silenced records exist so tuning could learn from what the operator
+    actually approves - this reads them, and re-proposes ask_only over BOTH
+    eras, diffed against the installed policy. Proposal-only, like the
+    observe tune; counts and categories, never operations."""
+    asked: dict[str, int] = {}
+    asked_tiers: dict[str, set] = {}
+    silenced: dict[str, int] = {}
+    for record in archive.read_events():
+        if record.get("kind") != "action":
+            continue
+        data = record.get("data") or {}
+        if record.get("subject") == "gate-asked":
+            category = str(data.get("category") or "unclassified")
+            asked[category] = asked.get(category, 0) + 1
+            asked_tiers.setdefault(category, set()).add(str(data.get("tier") or ""))
+        elif data.get("silenced_by") == "ask_only":
+            category = str(data.get("category") or "unclassified")
+            silenced[category] = silenced.get(category, 0) + 1
+    if not asked and not silenced:
+        return None
+    combined = dict(asked)
+    tiers = {c: set(t) for c, t in asked_tiers.items()}
+    proposal = _tune(combined, tiers)
+    installed: list[str] = []
+    try:
+        from .godmode_sentinel import local_authorization_policy
+
+        installed = sorted(local_authorization_policy(archive).get("ask_only") or [])
+    except Exception:  # noqa: BLE001
+        installed = []
+    proposed = sorted((proposal or {}).get("ask_only") or [])
+    return {
+        "asked_by_category": dict(sorted(asked.items())),
+        "silenced_by_category": dict(sorted(silenced.items())),
+        "installed_ask_only": installed,
+        "re_proposal": proposal,
+        "drift": {
+            "added": [c for c in proposed if c not in installed],
+            "removable": [c for c in installed if c not in proposed],
+        },
+        "note": "proposal only; recomputed from enforce-era asks - adopt by "
+                "editing .godmode-authorization-policy.json by hand",
+    }
+
+
 def render_digest(digest: dict[str, Any]) -> str:
     """Prose rendering: counts, categories, and `seq:` refs only - the same
     content-free discipline `render_roi` holds, never a record's free-text
@@ -465,6 +512,17 @@ def render_digest(digest: dict[str, Any]) -> str:
             f"{tune['asks_kept']} of these asks and silences {tune['asks_silenced']}; "
             "R4 still asks, R5 still denies. Adopt by writing "
             f"{json.dumps(tune['policy'])} into .godmode-authorization-policy.json.")
+        lines.append("")
+    enforce = digest.get("enforce")
+    if enforce:
+        lines.append(
+            "Enforce era: asks by category "
+            + json.dumps(enforce["asked_by_category"])
+            + "; silenced " + json.dumps(enforce["silenced_by_category"]))
+        drift = enforce["drift"]
+        lines.append(
+            f"Re-proposal drift vs installed ask_only: added={drift['added']} "
+            f"removable={drift['removable']} (proposal only)")
         lines.append("")
     lines.append("Basis: " + (", ".join(digest["basis"]) if digest["basis"] else "(none)"))
 

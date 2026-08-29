@@ -947,10 +947,15 @@ def main(argv: list[str] | None = None) -> int:
             # rather than skipped on failure - an absent `laws` block would
             # read as "no laws", which is a claim.
             try:
-                from godmode_runtime.godmode_law import record_delivery, top_laws
+                from godmode_runtime.godmode_law import (
+                    debrief_status, record_delivery, top_laws)
                 laws = top_laws(archive, 3)
                 if laws:
                     brief["laws"] = laws
+                    # S11-A: the meta-loop's staleness gauge, three bounded
+                    # fields - the first live debrief had nothing prompting
+                    # a second.
+                    brief["law_debrief"] = debrief_status(archive)
                     # L2: the delivery receipt - the denominator without
                     # which "violated 0" cannot be told from "never seen".
                     record_delivery(
