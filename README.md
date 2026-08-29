@@ -136,6 +136,29 @@ The record carries the product; the gate is one consumer of it. Each
 mechanism below has a command that shows its own current state, not a
 claim about it.
 
+### Continuity across sessions
+
+The archive lives outside the working tree (under the repository's own
+git directory), hash-chained, so it survives whatever a session does to
+files. At session start the hook renders a bounded brief from it -
+identity, last checkpoint, next actions, top laws, open obligations - as
+additional context on hosts that read it, parked to a side file and
+delivered on the first prompt for hosts that ignore session-start output.
+`godmode resume` rebuilds "what is true now" from recorded evidence:
+identity and drift from inspection, filesystem changes from `inventory
+diff`, state from checkpoints and claims - never from prose memory. A
+PreCompact hook records a recovery point before the host summarizes
+context away, and session end auto-checkpoints. When no valid baseline
+exists, `resume` says so and names the rebuild action instead of
+pretending: a `complete` status needs fresh evidence to survive a
+restart, and stale claims land in `status remaining`, not in the brief
+as fact.
+
+```console
+$ godmode resume
+$ godmode status remaining
+```
+
 ### Verdicts
 
 A "confirmed" claim needs a witness and an independent checker that
@@ -270,6 +293,21 @@ attribution language it never measured.
 
 ```console
 $ godmode roi
+```
+
+### The privacy contract
+
+Records hold relative paths, statuses, hashes, keywords, and digests -
+never prompts, conversations, source bodies, or environment dumps. A law
+candidate keeps keywords and a digest of the correction, not the
+sentence. `godmode egress --staged` scans staged and untracked content
+for secret shapes before a commit, and `godmode netgate` differentially
+proves the CLI opens no network connection. Nothing phones home; the
+archive never leaves the machine unless you copy it.
+
+```console
+$ godmode egress --staged
+$ godmode netgate
 ```
 
 ### The loops
@@ -451,6 +489,7 @@ is pinned by a mocked unit test, not live-probed on a POSIX host.
 | [GODMODE.md](GODMODE.md) | Product guarantees, gates, and the start sequence |
 | [GODMODE_PRIVACY.md](GODMODE_PRIVACY.md) | What is stored, where, and what never leaves |
 | [THREAT-MODEL.md](THREAT-MODEL.md) | Threats, controls, and stated non-goals |
+| [skills/](./skills/) | The seven agent skills hosts discover natively - the layer a session actually follows - with routing evals pinning them |
 | [CHANGELOG.md](CHANGELOG.md) | Released changes |
 
 Run `python -m unittest discover -s tests` to see today's pass count for
