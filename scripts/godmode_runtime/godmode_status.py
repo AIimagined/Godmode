@@ -455,7 +455,14 @@ def remaining(
                                    "detail": f"contract field '{field}' is empty"})
 
         consulted.append("downgraded claims")
+        # A later claim on the same subject supersedes (observed live
+        # 2026-08-29: two hypothesis-graded retries sat listed beside their
+        # own verified successor). The latest record per subject is the
+        # claim's state - the same rule obligations already follow.
+        latest_claim: dict[str, dict[str, Any]] = {}
         for record in archive.select(kind="claim", limit=500):
+            latest_claim[str(record["subject"])] = record
+        for record in latest_claim.values():
             data = record["data"]
             if data.get("session") == session and data.get("downgraded"):
                 items_left.append({"source": "claim", "id": record["subject"][:60],

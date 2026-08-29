@@ -134,5 +134,35 @@ class FlakyRegistryTests(unittest.TestCase):
                           "tests.test_other.OtherTests.test_y"])
 
 
+class ClaimSupersessionTests(unittest.TestCase):
+    def test_a_verified_retry_clears_the_downgraded_listing(self) -> None:
+        # Observed live 2026-08-29: two hypothesis-graded retries sat in
+        # `status remaining` beside their own verified successor.
+        import inspect
+
+        from godmode_runtime.godmode_attest import open_session, record_claim
+        from godmode_runtime.godmode_status import remaining
+
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            session = open_session(archive, "supersede")
+            text = "the queue holds three commits tonight"
+            record_claim(archive, project, session, text, "verified", cites=[])
+            parameters = set(inspect.signature(remaining).parameters)
+            kwargs = {}
+            if "session" in parameters:
+                kwargs["session"] = session
+            if "project" in parameters:
+                kwargs["project"] = project
+            listed = remaining(archive, **kwargs)
+            self.assertTrue(any(
+                e["source"] == "claim" for e in listed["remaining"]))
+            archive.append("action", "attest-cmd", {}, evidence=[])
+            record_claim(archive, project, session, text, "observed", cites=[])
+            cleared = remaining(archive, **kwargs)
+            self.assertFalse(any(
+                e["source"] == "claim" for e in cleared["remaining"]))
+
+
 if __name__ == "__main__":
     unittest.main()
