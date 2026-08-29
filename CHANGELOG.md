@@ -6,6 +6,19 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-08-29
+
+### Added
+
+- Antigravity support, end to end and in both its dialects: the adapter reads the nested `toolCall` shape the official docs describe AND the flat BeforeTool envelope the live host actually speaks (field report 2026-08-29) - `run_command` gates as shell on `CommandLine`, `view_file` reads, `write_to_file`/`replace_file_content` are fenced mutations on `TargetFile`, unknown names fail closed. Detection keys on the unique tool vocabulary, the `toolCall` nesting, and the live-captured `ANTIGRAVITY_*` env markers. `render_decision` speaks its documented `{decision, reason}` contract with a real ask, `.antigravity-plugin/hooks-fragment.json` carries the reference artifact, and `godmode hooks wire --host antigravity` merges the godmode entry into the project's `.agents/hooks.json` without clobbering foreign hooks. Interception stays SOFT until a live deny is chronicled; Stop not firing on Windows is field-confirmed.
+
+### Fixed
+
+- Bare `godmode version` prints the package version and writes nothing; recording a version fact now explicitly needs --name and --value. And GODMODE.md's first line names all four hosts instead of one.
+- The pre-push hook test resolves `sh`/`bash` from PATH and skips with a stated reason on a pure-Windows host without Git Bash (an Antigravity field report hit WinError 2); the real-push half of the contract still runs everywhere, inside git's own bundled shell.
+- The enforce section renders from real denials alone - a no-ask host folds every would-ask into a deny, so refusal records are its enforce-era evidence (the first live Grok project held 16 and saw nothing); R2/R3-tier denials feed the ask_only tune, R4/R5 are counted and never proposed for silencing.
+- The day-one guide is host-aware: on a host with no ask decision it says deny-not-ask and names the staging remedy on the first screen, instead of promising a dialog that never appears.
+
 ## [0.3.4] - 2026-08-29
 
 ### Added

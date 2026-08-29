@@ -1,4 +1,4 @@
-# Godmode v0.3.5 (draft)
+# Godmode v0.3.5
 
 The night the field reports came from five hosts.
 
