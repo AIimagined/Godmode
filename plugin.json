@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "godmode",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "A local, tamper-evident record of what a coding agent did, what it claimed, and what was verified. The portable package carries skills; the action gate needs a host with hook support.",
   "author": {
     "name": "AIimagined",

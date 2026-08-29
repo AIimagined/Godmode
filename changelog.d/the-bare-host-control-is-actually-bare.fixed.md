@@ -1,1 +1,0 @@
-The bare-host control in the brief-echo pins strips every host marker (it inherited GROK_AGENT inside a live Grok session and parked a brief), and the Grok brief-ingest claim is softened to what is proven: parking and delivery pinned, live ingest awaiting a fresh session.

@@ -6,6 +6,31 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-08-29
+
+### Added
+
+- tests/KNOWN-FLAKY.txt names batch-load flakes with their justifying lesson, and scripts/dev/run_with_flaky_retry.py reruns only registered failures isolated, reporting every retry - an unregistered failure still fails the run.
+- `law debrief` closes the amendment loop: per law it measures delivered, cited, and recurred-after-delivery, triages recommendations (promoting a ready candidate is autonomous via the ladder; amending or retiring a guard needs the operator), states its own read window and stopping reason, and receipts itself counts-only so staleness is measurable.
+- `law show` and the session brief carry the debrief gauge (last receipt, records since, stale) - the first live debrief had nothing prompting a second; `law amend --law --guard` executes a recommendation without hand-crafted appends.
+- roi --digest gains an enforce section: asks and silences by category from the era the gate actually ran, an ask_only re-proposal computed over both eras, and the drift against the installed policy - proposal only, the operator still edits the file.
+
+### Changed
+
+- The landing page installs all four hosts as peers - Claude Code, Grok, Codex, OpenCode each get their own install block - instead of leading Claude-first with the rest as an aside.
+
+### Fixed
+
+- A candidate cluster can be dismissed: retiring its subject removes it from law candidates - the pre-precision chat-noise captures finally have an exit that is not promotion.
+- An instruction candidate now requires an imperative verb within five tokens of its marker - two live chat-noise captures (a 'whenever ready:' aside among them) fail that bar; real standing rules pass it.
+- A downgraded claim superseded by a later claim on the same subject leaves status remaining - two hypothesis-graded retries had sat listed beside their own verified successor.
+- The OpenCode shim with no GODMODE_PLUGIN_ROOT set warns once and allows instead of refusing every tool call (a live session was bricked down to dir); a configured gate still fails closed with no bypass variable, and the shim now runs under Node as well as Bun.
+- SessionEnd's budget rises from 3s to 10s: a live Claude exit on a large archive was cancelled mid-checkpoint at 3s, and the bound's original reason - Codex's 3-second budget - is moot because Codex ignores plugin-bundled hooks and its project fallback carries no timeouts.
+- The action's description fits the GitHub Marketplace 125-character cap, so the publish checkbox validates.
+- The bare-host control in the brief-echo pins strips every host marker (it inherited GROK_AGENT inside a live Grok session and parked a brief), and the Grok brief-ingest claim is softened to what is proven: parking and delivery pinned, live ingest awaiting a fresh session.
+- The charter never mints rules from the generated Code of Law: the ADVISORY cap still produced twenty rules the checkability review then demanded per-law decisions for; the law file is delivery (the brief and the wrapper skill), not charter source, and its role stays bound for attest and the sources counter.
+- The Codex project fallback invokes machine-PATH python instead of py -3: the launcher resolves to the user-local interpreter, which Codex's sandbox accounts are denied - the machine-scope requirement law 12 already recorded.
+
 ## [0.3.3] - 2026-08-29
 
 ### Added
