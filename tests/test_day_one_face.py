@@ -69,5 +69,13 @@ class DayOneFaceTests(unittest.TestCase):
         self.assertIn("0.3.", done.stdout)
 
 
+class FirstWeekBlockTests(unittest.TestCase):
+    def test_the_guide_sets_first_week_expectations_on_both_dialects(self) -> None:
+        for env in ({"CLAUDE_CODE_ENTRYPOINT": "cli"}, {"GROK_PLUGIN_ROOT": "C:/x"}):
+            done = _run(["guide"], env)
+            self.assertIn("YOUR FIRST WEEK", done.stdout)
+            self.assertIn("honestly empty", done.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

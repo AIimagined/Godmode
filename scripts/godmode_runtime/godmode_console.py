@@ -3493,6 +3493,10 @@ WHAT NEEDS THE PASSWORD      irreversible forms only (force-push, rm -rf on a
 WHERE THINGS LIVE            state under the git metadata dir - never in your
                              tracked files; nothing leaves the machine.
 
+YOUR FIRST WEEK              day one is the gate, doctor, and resume; the
+                             loops (laws, roi digest, debrief) fill as the
+                             record grows and read honestly empty before that.
+
 MORE                         README.md (concepts) - godmode <cmd> --help (any
                              command) - godmode capabilities (what is enforced
                              on this host)
