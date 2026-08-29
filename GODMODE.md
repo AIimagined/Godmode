@@ -1,6 +1,6 @@
 # Godmode
 
-Godmode is a local-first plugin for Claude Code, Grok, Codex, and OpenCode - continuity and control during coding work.
+Godmode is a local-first plugin for Claude Code, Grok, Codex, OpenCode, and Antigravity - continuity and control during coding work.
 It reconstructs repository reality from inspectable evidence, keeps operational
 memory outside tracked files, and makes risky actions explicit before they happen.
 

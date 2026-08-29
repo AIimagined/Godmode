@@ -3,9 +3,9 @@
 </h1>
 
 <p align="center">
-  <b>A local, tamper-evident record of what a coding agent did, what it claimed, and what was verified.</b><br>
+  <b>A local, tamper-evident record of what a coding agent did, what it claimed, and what was verified - with a gate that classifies risky actions before they run.</b><br>
   Zero runtime dependencies · zero network use · nothing leaves your machine.<br>
-  Claude Code · Grok · Codex · OpenCode
+  Claude Code · Grok · Codex · OpenCode · Antigravity
 </p>
 
 <p align="center">
@@ -271,6 +271,31 @@ attribution language it never measured.
 ```console
 $ godmode roi
 ```
+
+### The loops
+
+Three loops keep the record teaching the project instead of just growing.
+
+The **law loop**: operator corrections and standing instructions become
+candidate lessons (keywords and digest only, never the sentence), repeat
+occurrences climb a promotion ladder, and promoted laws compile into the
+project's `GODMODE-CODE-OF-LAW.md`. `godmode law debrief` then measures
+each law - delivered, cited, recurred-after-delivery - and recommends
+promotions (autonomous, behind the ladder) or amendments and retirements
+(`godmode law amend`, operator-reviewed, newest record per subject wins).
+A candidate that was noise can be dismissed by retiring its subject.
+
+The **posture loop**: run the gate in observe mode, read
+`godmode roi --digest` for would-have-denied counts by category, and let
+its enforce section - built from real asks and real denials, including the
+no-ask hosts whose every would-ask folds to a deny - propose `ask_only`
+tuning and policy drift. Proposal only; the operator edits the policy
+file.
+
+The **echo loop**: claim-shaped sentences in a reply that never became
+records, and open obligations the turn touched, are parked at Stop and
+delivered back to the model on the next prompt - so unrecorded claims get
+recorded or softened instead of accumulating.
 
 ### Trust
 

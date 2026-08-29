@@ -72,15 +72,15 @@
       "trigger": "always",
       "verify": "none"
     },
-    "R-c090d76ad2": {
+    "R-bd5009bae6": {
       "enforcement": "ADVISORY",
-      "text_hash": "49e4f75d39f9d434",
+      "text_hash": "4c2a55ae626ad020",
       "trigger": "always",
       "verify": "none"
     },
-    "R-ce64ff1115": {
+    "R-c090d76ad2": {
       "enforcement": "ADVISORY",
-      "text_hash": "4ddc55591ae3a971",
+      "text_hash": "49e4f75d39f9d434",
       "trigger": "always",
       "verify": "none"
     },
