@@ -108,6 +108,12 @@ _GIT_FLOOR = [
 _READ_HEADS = [
     "ls", "cat", "head", "tail", "wc", "grep", "rg", "find", "pwd", "which",
     "echo", "sort", "uniq", "cut", "tr", "file", "stat", "du", "df",
+    # S12-B (corpus-driven widening, 2026-08-29): the highest-frequency
+    # escalating-but-allow-verdicted heads in the 184-entry corpus and this
+    # repo's own sessions. Each is verified R0 by classify_action at
+    # generation time exactly like the originals - a wrong guess fails the
+    # build loudly, not the table silently.
+    "rev", "date", "basename", "dirname", "realpath",
 ]
 
 # --- git_ask / git_refuse: curated candidates, bucketed by the sentinel's

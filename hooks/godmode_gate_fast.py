@@ -108,6 +108,20 @@ _EXACT_ONLY_GIT_PHRASES = frozenset({"git branch", "git remote -v"})
 # digit exclusion added nothing `(?!&)` didn't already cover.
 _REDIRECT_PRESENT = re.compile(r"(?<![<>])>{1,2}(?!&)")
 
+# S12-B (corpus-driven widening, 2026-08-29): a redirect whose target is
+# exactly /dev/null mutates nothing - `ls > /dev/null` and `grep -c x f
+# 2>/dev/null` are R0 read-only-inspection in the full sentinel (verified
+# live before this rule was added), yet the blunt redirect check above
+# escalated every one, and they are among the most frequent shapes in the
+# corpus's expected-allow set. The match is blanked BEFORE the per-segment
+# redirect check, so any remaining `>` still escalates; the optional
+# leading digit keeps `2>/dev/null` whole (in the pathological `abc2>` case
+# the digit lexes with the word, but eating it here only shortens a token
+# in a command that still writes nowhere). `>&` duplication was never
+# matched by the check above; `&>/dev/null` still escalates (its `&` is a
+# separator to this module and the shapes differ across shells).
+_NULL_REDIRECT = re.compile(r"(?:^|(?<=\s))\d?>{1,2}\s*/dev/null(?=$|[\s;&|])")
+
 _SEPARATORS = re.compile(r"[ \t]*(?:\|\||&&|[;|\r\n]|(?<![<>])&)[ \t\r\n]*")
 
 # Final review, Critical finding C1: `$(...)`, backtick, `<(...)`, `>(...)`
@@ -392,6 +406,7 @@ def fast_verdict(payload: dict[str, Any], table: dict[str, Any] | None) -> str:
         if not segments:
             return "escalate"
         for segment in segments:
+            segment = _NULL_REDIRECT.sub(" ", segment)
             if _REDIRECT_PRESENT.search(segment):
                 return "escalate"
             tokens = segment.split()

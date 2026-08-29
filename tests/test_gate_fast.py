@@ -524,3 +524,40 @@ class EndToEndSmoke(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class S12BWidening(unittest.TestCase):
+    """Corpus-driven widening: null-target redirects and five new floor
+    heads resolve fast; every other redirect and every protected shape
+    still escalates. The full sentinel graded each widened shape R0 before
+    the rule existed - the fast path only caught up."""
+
+    def _fast(self, command):
+        return fast.fast_verdict(payload(command), TABLE)
+
+    def test_null_target_redirects_resolve_fast(self) -> None:
+        for command in ("ls > /dev/null", "grep -c x f 2>/dev/null",
+                        "git status >/dev/null 2>/dev/null",
+                        "wc -l f >> /dev/null"):
+            self.assertEqual(self._fast(command), "allow", command)
+
+    def test_a_file_target_still_escalates(self) -> None:
+        for command in ("ls > out.txt", "ls 2> err.log",
+                        "cat f >> notes.md", "sort f > /dev/null.bak"):
+            self.assertEqual(self._fast(command), "escalate", command)
+
+    def test_the_new_heads_resolve_fast_and_stay_r0_in_the_sentinel(self) -> None:
+        for command in ("rev f", "date +%s", "basename /a/b",
+                        "dirname /a/b", "realpath ."):
+            self.assertEqual(self._fast(command), "allow", command)
+            self.assertEqual(_decision(command), "allow", command)
+
+    def test_a_protected_tail_behind_a_null_redirect_still_escalates(self) -> None:
+        self.assertEqual(
+            self._fast("cat f > /dev/null && git push --force origin main"),
+            "escalate")
+
+    def test_an_output_flag_behind_a_null_redirect_still_escalates(self) -> None:
+        # sort -o writes a file regardless of where stdout goes.
+        self.assertEqual(self._fast("sort -o /etc/hosts f 2>/dev/null"),
+                         "escalate")

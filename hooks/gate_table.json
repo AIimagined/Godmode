@@ -36,7 +36,12 @@
     "file",
     "stat",
     "du",
-    "df"
+    "df",
+    "rev",
+    "date",
+    "basename",
+    "dirname",
+    "realpath"
   ],
   "mutation_heads": {
     "filesystem-mutation": [
