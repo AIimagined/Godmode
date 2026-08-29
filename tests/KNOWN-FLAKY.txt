@@ -1,0 +1,5 @@
+# One dotted unittest id per line. Every entry cites the lesson that
+# justifies it; an entry with no living lesson should be removed.
+# law seq 4554 (and law 13 before it): batch-fail/isolated-pass under
+# concurrent suite load - three occurrences on 2026-08-29 alone.
+tests.test_law.BriefTests.test_session_start_brief_carries_the_top_laws

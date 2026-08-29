@@ -1,0 +1,1 @@
+tests/KNOWN-FLAKY.txt names batch-load flakes with their justifying lesson, and scripts/dev/run_with_flaky_retry.py reruns only registered failures isolated, reporting every retry - an unregistered failure still fails the run.

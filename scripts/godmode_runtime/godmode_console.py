@@ -1453,9 +1453,20 @@ def cmd_law_compile(args: argparse.Namespace, runtime: Runtime) -> CommandResult
 
 
 def cmd_law_show(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
-    from .godmode_law import top_laws
+    from .godmode_law import debrief_status, top_laws
 
-    return CommandResult({"laws": top_laws(runtime.archive, args.top)})
+    return CommandResult({"laws": top_laws(runtime.archive, args.top),
+                          "debrief": debrief_status(runtime.archive)})
+
+
+def cmd_law_amend(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    from .godmode_law import amend_law
+
+    return CommandResult({"amended": amend_law(
+        runtime.archive, args.law, args.guard)["sequence"],
+        "note": "newest record per subject is the law; run `law compile` to "
+                "regenerate the file"})
 
 
 def cmd_law_candidates(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -2845,6 +2856,12 @@ def cmd_roi(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     if getattr(args, "digest", False):
         digest = roi_digest(runtime.archive, sessions=args.sessions)
+        # S11-B: the enforce-era section rides the same digest.
+        from .godmode_roi import enforce_digest
+
+        enforce = enforce_digest(runtime.archive)
+        if enforce:
+            digest["enforce"] = enforce
         if getattr(args, "json", False):
             return CommandResult(digest)
         return CommandResult({"report": render_roi_digest(digest)})
@@ -4475,6 +4492,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="The amendment loop: per law, delivered/cited/recurred counts and "
              "triaged recommendations; receipted so staleness is measurable")
     law_debrief.set_defaults(handler=cmd_law_debrief)
+    law_amend = law_sub.add_parser(
+        "amend", help="Append a reviewed replacement guard for a living law "
+                      "(newest record per subject wins)")
+    law_amend.add_argument("--law", type=int, required=True)
+    law_amend.add_argument("--guard", required=True)
+    law_amend.set_defaults(handler=cmd_law_amend)
     law_candidates_parser = law_sub.add_parser(
         "candidates",
         help="Correction candidates clustered by keywords, with recurrence counts")

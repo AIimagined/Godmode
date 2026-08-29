@@ -1,0 +1,1 @@
+roi --digest gains an enforce section: asks and silences by category from the era the gate actually ran, an ask_only re-proposal computed over both eras, and the drift against the installed policy - proposal only, the operator still edits the file.

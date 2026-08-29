@@ -1,0 +1,1 @@
+An instruction candidate now requires an imperative verb within five tokens of its marker - two live chat-noise captures (a 'whenever ready:' aside among them) fail that bar; real standing rules pass it.
