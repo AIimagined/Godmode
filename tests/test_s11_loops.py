@@ -98,6 +98,21 @@ class InstructionPrecisionTests(unittest.TestCase):
                          "and flaky suites did the batch run clean", session="S-1"))
 
 
+class CandidateDismissalTests(unittest.TestCase):
+    def test_a_retired_candidate_leaves_the_cluster_list(self) -> None:
+        from godmode_runtime.godmode_law import law_candidates
+
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            record = record_instruction_candidate(
+                archive, "always run the preview before removals",
+                session="S-1")
+            self.assertEqual(len(law_candidates(archive)), 1)
+            archive.append("lesson", record["subject"],
+                           {"status": "retired"}, evidence=[])
+            self.assertEqual(law_candidates(archive), [])
+
+
 class FlakyRegistryTests(unittest.TestCase):
     def test_registry_parses_and_names_the_known_flake(self) -> None:
         sys.path.insert(0, str(PLUGIN_ROOT / "scripts" / "dev"))
