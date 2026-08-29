@@ -1,0 +1,1 @@
+The pre-push hook test resolves `sh`/`bash` from PATH and skips with a stated reason on a pure-Windows host without Git Bash (an Antigravity field report hit WinError 2); the real-push half of the contract still runs everywhere, inside git's own bundled shell.

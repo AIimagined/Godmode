@@ -473,9 +473,18 @@ class PrePushBlockingTests(unittest.TestCase):
 
             hook_path = project / ".git" / "hooks" / "pre-push"
             stdin_text = f"refs/heads/main {commit_c} refs/heads/main {commit_b}\n"
+            # Antigravity field report 2026-08-29: a pure-Windows host
+            # without Git Bash has no `sh` on PATH (WinError 2). The hook
+            # still runs inside git's own bundled shell during a real push -
+            # the direct invocation below is the only part that needs one.
+            import shutil
+            shell = shutil.which("sh") or shutil.which("bash")
+            if shell is None:
+                self.skipTest("no POSIX shell on PATH; the real-push half "
+                              "of this contract runs in git's bundled shell")
             direct = subprocess.run(
-                ["sh", str(hook_path)], input=stdin_text, capture_output=True, text=True,
-                cwd=str(project), env=os.environ.copy(), timeout=30,
+                [shell, str(hook_path)], input=stdin_text, capture_output=True,
+                text=True, cwd=str(project), env=os.environ.copy(), timeout=30,
             )
             self.assertNotEqual(direct.returncode, 0, direct.stderr)
 
