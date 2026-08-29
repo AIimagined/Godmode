@@ -297,11 +297,21 @@ def law_candidates(archive: Any) -> list[dict[str, Any]]:
         origin = (record.get("data") or {}).get("promoted_from")
         if origin is not None:
             promoted.add(int(origin))
+    dismissed: dict[str, bool] = {}
+    for record in archive.read_events():
+        if record.get("kind") == "lesson":
+            dismissed[str(record.get("subject", ""))] = (
+                str((record.get("data") or {}).get("status")) == "retired")
     for record in archive.read_events():
         if record.get("kind") != "lesson":
             continue
         data = record.get("data") or {}
         if str(data.get("status")) != "candidate":
+            continue
+        if dismissed.get(str(record.get("subject", ""))):
+            # S11 follow-up: a candidate whose subject was later retired is
+            # DISMISSED - the pre-precision chat-noise captures needed a way
+            # out that was not promotion.
             continue
         key = frozenset(str(k) for k in (data.get("keywords") or []))
         if not key:
