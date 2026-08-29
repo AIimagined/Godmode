@@ -1,1 +1,0 @@
-`law show` and the session brief carry the debrief gauge (last receipt, records since, stale) - the first live debrief had nothing prompting a second; `law amend --law --guard` executes a recommendation without hand-crafted appends.
