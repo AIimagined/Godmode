@@ -3,7 +3,9 @@
 </h1>
 
 <p align="center">
-  <b>A local, tamper-evident record of what a coding agent did, what it claimed, and what was verified - with a gate that classifies risky actions before they run.</b><br>
+  <b>Your coding agent says "done." Godmode is how you know.</b><br>
+  A local, tamper-evident record of what the agent did, what it claimed, and what was verified -<br>
+  with a gate that classifies risky actions before they run.<br>
   Zero runtime dependencies · zero network use · nothing leaves your machine.<br>
   Claude Code · Grok · Codex · OpenCode · Antigravity
 </p>
