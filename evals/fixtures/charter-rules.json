@@ -12,12 +12,6 @@
       "trigger": "before_completion",
       "verify": "citation_resolves"
     },
-    "R-42b5713ae4": {
-      "enforcement": "ADVISORY",
-      "text_hash": "c628013ecad522ce",
-      "trigger": "always",
-      "verify": "none"
-    },
     "R-4783f0d508": {
       "enforcement": "HARD",
       "text_hash": "4a4d32c8e4fa96f5",
@@ -81,6 +75,12 @@
     "R-c090d76ad2": {
       "enforcement": "ADVISORY",
       "text_hash": "49e4f75d39f9d434",
+      "trigger": "always",
+      "verify": "none"
+    },
+    "R-ce64ff1115": {
+      "enforcement": "ADVISORY",
+      "text_hash": "4ddc55591ae3a971",
       "trigger": "always",
       "verify": "none"
     },

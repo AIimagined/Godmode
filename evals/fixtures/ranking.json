@@ -42,7 +42,7 @@
       ],
       [
         "GODMODE.md",
-        23
+        1
       ]
     ],
     "investigate a regression in context continuity after a branch switch": [
@@ -67,12 +67,12 @@
         81
       ],
       [
-        "GODMODE-CODE-OF-LAW.md",
-        56
-      ],
-      [
         "GODMODE.md",
         34
+      ],
+      [
+        "GODMODE-CODE-OF-LAW.md",
+        56
       ],
       [
         "GODMODE-CODE-OF-LAW.md",
@@ -93,12 +93,12 @@
         1
       ],
       [
-        "GODMODE-CODE-OF-LAW.md",
-        116
-      ],
-      [
         "GODMODE.md",
         34
+      ],
+      [
+        "GODMODE-CODE-OF-LAW.md",
+        116
       ],
       [
         "docs/RELEASE-CHECKLIST.md",
@@ -114,7 +114,7 @@
       ],
       [
         "GODMODE.md",
-        42
+        23
       ]
     ]
   }
