@@ -1,0 +1,1 @@
+The enforce section renders from real denials alone - a no-ask host folds every would-ask into a deny, so refusal records are its enforce-era evidence (the first live Grok project held 16 and saw nothing); R2/R3-tier denials feed the ask_only tune, R4/R5 are counted and never proposed for silencing.

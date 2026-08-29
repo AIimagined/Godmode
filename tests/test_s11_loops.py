@@ -164,5 +164,50 @@ class ClaimSupersessionTests(unittest.TestCase):
                 e["source"] == "claim" for e in cleared["remaining"]))
 
 
+class HostAwareGuideTests(unittest.TestCase):
+    def _guide(self, env_extra: dict) -> str:
+        import os
+        import subprocess
+
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("GODMODE_HOST", "GROK_AGENT", "GROK_PLUGIN_ROOT",
+                            "GROK_HOOK_EVENT", "CLAUDE_CODE_ENTRYPOINT",
+                            "PLUGIN_ROOT")}
+        env.update(env_extra)
+        done = subprocess.run(
+            [sys.executable, str(PLUGIN_ROOT / "scripts" / "godmode.py"),
+             "guide"], capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=120, env=env)
+        return done.stdout
+
+    def test_a_no_ask_host_sees_deny_not_ask(self) -> None:
+        text = self._guide({"GROK_PLUGIN_ROOT": "C:/x"})
+        self.assertIn("HAS NO ASK", text)
+        self.assertIn("authorize stage", text)
+        self.assertNotIn("WHAT ASKS FIRST", text)
+
+    def test_an_ask_host_keeps_the_dialog_line(self) -> None:
+        text = self._guide({"CLAUDE_CODE_ENTRYPOINT": "cli"})
+        self.assertIn("WHAT ASKS FIRST", text)
+        self.assertNotIn("HAS NO ASK", text)
+
+
+class VersionOneLinerTests(unittest.TestCase):
+    def test_bare_version_prints_the_package_and_writes_nothing(self) -> None:
+        import subprocess
+
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            before = len(archive.read_events())
+            done = subprocess.run(
+                [sys.executable, str(PLUGIN_ROOT / "scripts" / "godmode.py"),
+                 "--project", str(project), "version"],
+                capture_output=True, text=True, encoding="utf-8", timeout=120)
+            archive._events_cache_key = None
+            after = len(archive.read_events())
+        self.assertIn("0.3.", done.stdout)
+        self.assertEqual(before, after)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -39,5 +39,33 @@ class EnforceDigestTests(unittest.TestCase):
         self.assertIn("worktree-discard", report["drift"]["added"])
 
 
+class DenialOnlyEnforceTests(unittest.TestCase):
+    def test_a_no_ask_host_project_renders_from_denials_alone(self) -> None:
+        # Grok 0.3.4 field report: 16 real denials, section stayed None.
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            for tier, category in (("R2", "interpreter-opaque-inline"),
+                                   ("R2", "interpreter-opaque-inline"),
+                                   ("R5", "git-history-or-remote")):
+                archive.append("refusal", category,
+                               {"category": category, "tier": tier,
+                                "tool": "run_terminal_command",
+                                "operation": "x"}, evidence=[])
+            report = enforce_digest(archive)
+        self.assertIsNotNone(report)
+        self.assertEqual(report["denied_by_category"]["interpreter-opaque-inline"], 2)
+        self.assertEqual(report["denied_by_category"]["git-history-or-remote"], 1)
+        # R2 folded asks feed the tune; R5 never proposes silencing.
+        self.assertEqual(report["asked_by_category"]["interpreter-opaque-inline"], 2)
+
+    def test_observed_refusals_stay_out_of_the_enforce_section(self) -> None:
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            archive.append("refusal", "filesystem-mutation",
+                           {"category": "filesystem-mutation", "tier": "R2",
+                            "observed": True, "operation": "x"}, evidence=[])
+            self.assertIsNone(enforce_digest(archive))
+
+
 if __name__ == "__main__":
     unittest.main()

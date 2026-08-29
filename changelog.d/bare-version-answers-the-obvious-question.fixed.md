@@ -1,0 +1,1 @@
+Bare `godmode version` prints the package version and writes nothing; recording a version fact now explicitly needs --name and --value. And GODMODE.md's first line names all four hosts instead of one.
