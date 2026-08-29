@@ -175,6 +175,18 @@ $ godmode verdict record --claim "<claim>" --value <value> \
 Full walk-through with both dispositions:
 [docs/DEMO.md](docs/DEMO.md#4-one-verdict-walk-through-record-a-claim-watch-it-get-checked).
 
+### Attestation and the plan gate
+
+A step is attested by running it, not by describing it: the command and
+exit code land on the record, and a claim graded `cmd:` resolves only
+after an in-session attestation. Plan mode gates mutation behind a
+spec-backed, approved plan - specify, start, approve, check - and the
+approval is a record, not a vibe.
+
+```console
+$ godmode planmode check
+```
+
 ### Register
 
 Findings, fixes, and rejected approaches outlive the session that produced
@@ -422,6 +434,24 @@ must never read as "yes".
 ```console
 $ godmode experiment holdout --name terse-brief --metric tokens --epsilon 5 \
     --control 100 --control 110 --treatment 70 --treatment 72 --lower-is-better
+```
+
+### Minimality and upstream drift
+
+One ranked minimality report aggregates duplicate symbols, orphans,
+unexercised surfaces, speculative seams, and charter decay - and its
+counts carry a recorded ceiling that only ratchets down, so growth past
+it is reported until a reason is recorded. Two in-repo sources of truth
+for the same decision are flagged until a paired artifact names the
+winner. An AST scan catches exception handlers that silence failures,
+with the same tighten-only baseline. When the project tracks or vendors
+an external codebase, paired verdicts compare what was imported against
+how it now behaves - an unexamined difference is not a decision.
+
+```console
+$ godmode minimality
+$ godmode swallow
+$ godmode upstream
 ```
 
 ## The numbers
