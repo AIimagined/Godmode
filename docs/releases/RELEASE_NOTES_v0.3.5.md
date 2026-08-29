@@ -11,15 +11,20 @@ release is those reports closed, plus the fifth host wired.
 An Antigravity agent cloned the repo, ran `godmode init`, the full unit
 suite, the 23-scenario battery, and observe mode entirely through its own
 tools - skills discovered natively from `.agents/skills/`, no installer.
-This release meets it halfway on the gate: the host adapter reads
-Antigravity's nested `toolCall` dialect (`run_command` gates as shell,
-`view_file` reads, unknown names fail closed), `render_decision` speaks
-its documented `{decision, reason}` stdout contract - with a real `ask`,
-the third host to have one - and `godmode hooks wire --host antigravity`
+This release meets it halfway on the gate: the host adapter reads BOTH
+dialects - the nested `toolCall` shape the official docs describe and the
+flat BeforeTool envelope the live host actually speaks, with its own
+vocabulary the same day's report captured (`run_command` gates as shell on
+`CommandLine`, `view_file` reads, `write_to_file`/`replace_file_content`
+are fenced mutations on `TargetFile`, unknown names fail closed).
+Detection keys on the unique tool names, the `toolCall` nesting, and the
+live-captured `ANTIGRAVITY_*` env markers. `render_decision` speaks the
+documented `{decision, reason}` stdout contract - with a real `ask`, the
+third host to have one - and `godmode hooks wire --host antigravity`
 merges the godmode entry into the project's `.agents/hooks.json` without
-clobbering foreign hooks. The schema is transcribed from Antigravity's
-published hooks documentation and the artifact registry names it unprobed:
-interception stays SOFT until a live deny is chronicled.
+clobbering foreign hooks. The artifact registry stays honest: interception
+is SOFT until a live deny is chronicled, and Stop not firing on Windows is
+field-confirmed.
 
 ## The digest reads a no-ask host's real evidence
 
