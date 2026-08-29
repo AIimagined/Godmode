@@ -2819,6 +2819,14 @@ def cmd_version(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     if args.reconcile:
         report = reconcile_versions(Path(runtime.anchor.project_root))
         return CommandResult(report, exit_code=0 if report["verdict"] == "agreed" else 1)
+    if not args.name and not args.value:
+        # Grok 0.3.4 field report: bare `version` tried to record a fact
+        # and failed on a consumer project; the obvious reading of the bare
+        # command is "what version am I running" - answer it, write nothing.
+        from .godmode_constants import RUNTIME_VERSION
+
+        return CommandResult({"version": RUNTIME_VERSION,
+                              "note": "recording a version fact needs --name and --value"})
     return CommandResult(
         {"record": _append(runtime, "version", args.name, {"value": args.value, "status": args.status}, args.evidence)}
     )
@@ -3440,7 +3448,28 @@ def _evidence(parser: argparse.ArgumentParser) -> None:
 # escaped \n that no one reads comfortably. No runtime/archive needed
 # either - unlike every other command here, this one names nothing about
 # THIS project.
-GUIDE_TEXT = """\
+def _guide_text() -> str:
+    """The day-one page, host-aware (Grok 0.3.4 field report: the old
+    'runs without asking' line was Claude-shaped and misleading on a host
+    with no ask decision, where a recoverable R2/R3 becomes a hard deny)."""
+    from .godmode_anchor import current_host
+    from .godmode_hostevent import HOSTS_WITH_ASK
+
+    host = current_host()
+    if host in HOSTS_WITH_ASK or host == "unknown":
+        middle = (
+            "WHAT RUNS WITHOUT ASKING     reads, edits, commits - tier R0-R2\n"
+            "WHAT ASKS FIRST              push, deploy, db migrations - your "
+            "host shows a dialog")
+    else:
+        middle = (
+            f"THIS HOST ({host}) HAS NO ASK  a recoverable refusal (R2/R3) is "
+            "DENIED, not asked -\n"
+            "                             the refusal names `godmode authorize "
+            "stage` as the remedy\n"
+            "WHAT RUNS FREELY             reads and allow-tier work; unknown "
+            "mutating tools deny")
+    return f"""\
 GODMODE IN FIVE COMMANDS
 
   godmode init             start the private local archive for this project
@@ -3449,8 +3478,7 @@ GODMODE IN FIVE COMMANDS
   godmode doctor           health-check the installation and archive
   godmode authorize setup  one-time password for IRREVERSIBLE operations
 
-WHAT RUNS WITHOUT ASKING     reads, edits, commits - tier R0-R2
-WHAT ASKS FIRST              push, deploy, db migrations - your host shows a dialog
+{middle}
 WHAT NEEDS THE PASSWORD      irreversible forms only (force-push, rm -rf on a
                              root, DROP TABLE): the refusal names the exact
                              staging command; in a hosted session run it with a
@@ -3463,6 +3491,17 @@ MORE                         README.md (concepts) - godmode <cmd> --help (any
                              command) - godmode capabilities (what is enforced
                              on this host)
 """
+
+
+class _GuideText:
+    """Lazy stand-in so every existing GUIDE_TEXT print site stays valid
+    while the text itself is computed per host at print time."""
+
+    def __str__(self) -> str:
+        return _guide_text()
+
+
+GUIDE_TEXT = _GuideText()
 
 
 def _build_parser() -> argparse.ArgumentParser:

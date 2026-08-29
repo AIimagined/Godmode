@@ -440,10 +440,25 @@ def enforce_digest(archive: Chronicle) -> dict[str, Any] | None:
     asked: dict[str, int] = {}
     asked_tiers: dict[str, set] = {}
     silenced: dict[str, int] = {}
+    denied: dict[str, int] = {}
     for record in archive.read_events():
+        data = record.get("data") or {}
+        if record.get("kind") == "refusal" and not data.get("observed"):
+            # Grok 0.3.4 field report: the first live Grok project held 16
+            # real denials and this section stayed None, because a no-ask
+            # host folds every would-ask into a DENY - refusal records ARE
+            # that host's enforce-era evidence. R2/R3-tier refusals are
+            # folded asks and feed the tune; R4/R5 are counted, never
+            # proposed for silencing.
+            category = str(data.get("category") or "unclassified")
+            tier = str(data.get("tier") or "")
+            denied[category] = denied.get(category, 0) + 1
+            if tier in ("R2", "R3"):
+                asked[category] = asked.get(category, 0) + 1
+                asked_tiers.setdefault(category, set()).add(tier)
+            continue
         if record.get("kind") != "action":
             continue
-        data = record.get("data") or {}
         if record.get("subject") == "gate-asked":
             category = str(data.get("category") or "unclassified")
             asked[category] = asked.get(category, 0) + 1
@@ -451,7 +466,7 @@ def enforce_digest(archive: Chronicle) -> dict[str, Any] | None:
         elif data.get("silenced_by") == "ask_only":
             category = str(data.get("category") or "unclassified")
             silenced[category] = silenced.get(category, 0) + 1
-    if not asked and not silenced:
+    if not asked and not silenced and not denied:
         return None
     combined = dict(asked)
     tiers = {c: set(t) for c, t in asked_tiers.items()}
@@ -467,6 +482,7 @@ def enforce_digest(archive: Chronicle) -> dict[str, Any] | None:
     return {
         "asked_by_category": dict(sorted(asked.items())),
         "silenced_by_category": dict(sorted(silenced.items())),
+        "denied_by_category": dict(sorted(denied.items())),
         "installed_ask_only": installed,
         "re_proposal": proposal,
         "drift": {
@@ -518,7 +534,8 @@ def render_digest(digest: dict[str, Any]) -> str:
         lines.append(
             "Enforce era: asks by category "
             + json.dumps(enforce["asked_by_category"])
-            + "; silenced " + json.dumps(enforce["silenced_by_category"]))
+            + "; silenced " + json.dumps(enforce["silenced_by_category"])
+            + "; denied " + json.dumps(enforce.get("denied_by_category", {})))
         drift = enforce["drift"]
         lines.append(
             f"Re-proposal drift vs installed ask_only: added={drift['added']} "
