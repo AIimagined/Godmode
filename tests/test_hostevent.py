@@ -1000,3 +1000,52 @@ class EmptyToolNameTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AntigravityAdapterTests(unittest.TestCase):
+    """The fifth wired host (antigravity.google/docs/hooks, 2026-08-29):
+    a NESTED toolCall dialect - flat-field routing never sees its tool."""
+
+    def _payload(self, name, args):
+        return {"toolCall": {"name": name, "args": args},
+                "workspacePaths": ["C:/w"], "conversationId": "c-1"}
+
+    def test_run_command_is_a_shell_event_with_the_command_line(self) -> None:
+        from godmode_runtime.godmode_hostevent import (
+            TOOL_KIND_SHELL, parse_host_payload)
+
+        event = parse_host_payload(self._payload(
+            "run_command", {"CommandLine": "git status", "Cwd": "C:/w/p"}))
+        self.assertEqual(event.host, "antigravity")
+        self.assertEqual(event.tool_kind, TOOL_KIND_SHELL)
+        self.assertEqual(event.operation, "git status")
+        self.assertEqual(event.cwd, "C:/w/p")
+
+    def test_view_file_is_a_read(self) -> None:
+        from godmode_runtime.godmode_hostevent import (
+            TOOL_KIND_READ, parse_host_payload)
+
+        event = parse_host_payload(self._payload("view_file", {"AbsolutePath": "C:/w/a.py"}))
+        self.assertEqual(event.tool_kind, TOOL_KIND_READ)
+
+    def test_an_undocumented_tool_fails_closed_as_unrecognized(self) -> None:
+        from godmode_runtime.godmode_hostevent import (
+            TOOL_KIND_UNRECOGNIZED, parse_host_payload)
+
+        event = parse_host_payload(self._payload("browser_navigate", {}))
+        self.assertEqual(event.tool_kind, TOOL_KIND_UNRECOGNIZED)
+        self.assertEqual(event.host, "antigravity")
+
+    def test_the_decision_dialect_is_decision_reason_and_ask_survives(self) -> None:
+        from godmode_runtime.godmode_hostevent import render_decision
+
+        body, code = render_decision("antigravity", "PreToolUse", "ask", "why")
+        self.assertEqual(code, 0)
+        self.assertEqual(body, {"decision": "ask", "reason": "why"})
+        self.assertNotIn("hookSpecificOutput", body)
+
+    def test_missing_cwd_falls_back_to_the_first_workspace_path(self) -> None:
+        from godmode_runtime.godmode_hostevent import parse_host_payload
+
+        event = parse_host_payload(self._payload("run_command", {"CommandLine": "ls"}))
+        self.assertEqual(event.cwd, "C:/w")

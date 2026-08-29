@@ -1,0 +1,21 @@
+{
+  "_note": "Antigravity loads hooks.json from the workspace's .agents/ directory (or ~/.gemini/config/). This file is the reference shape; `godmode hooks wire --host antigravity` merges the godmode key into the project's .agents/hooks.json with ${godmodePluginRoot} replaced by the absolute install path. stdout for PreToolUse must be a single JSON object {decision, reason}. Never claim HARD interception without a fresh probe proof; a community report (Antigravity IDE 1.107.0, Windows) says Stop hooks may not fire there.",
+  "godmode": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "type": "command",
+        "command": "python ${godmodePluginRoot}/hooks/godmode_gate_fast.py",
+        "timeout": 8
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "python ${godmodePluginRoot}/hooks/godmode_session_hook.py stop",
+        "timeout": 10
+      }
+    ]
+  }
+}

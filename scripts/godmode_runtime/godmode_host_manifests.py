@@ -109,6 +109,14 @@ CURSOR_HOOK_EVENTS = frozenset({"sessionStart", "preToolUse", "beforeShellExecut
 # emitting names this module has no builder logic for would be exactly the
 # "declare it, never call it" honesty gap CX-1 exists to prevent elsewhere.
 GEMINI_HOOK_EVENTS = frozenset({"SessionStart", "BeforeTool"})
+# Antigravity (antigravity.google/docs/hooks, fetched 2026-08-29): five
+# lifecycle events (PreToolUse, PostToolUse, PreInvocation, PostInvocation,
+# Stop). Only the two below are emitted: PreToolUse is the gate, Stop is
+# the claim-echo parking pass. A community report (Antigravity IDE 1.107.0
+# on Windows, discuss.ai.google.dev) says Stop/PostToolUse hooks may never
+# fire there - shipped anyway because the contract is documented, with the
+# gap named on the artifact registry entry.
+ANTIGRAVITY_HOOK_EVENTS = frozenset({"PreToolUse", "Stop"})
 
 # Addendum 2 confirmed fact + CX-3's own instruction: Codex's matcher is the
 # union of every tool `godmode_hostevent._adapt_codex` recognises, including
@@ -167,6 +175,11 @@ CURSOR_SHELL_TEXT_MATCHER = ".*"
 # vocabulary is undocumented (Addendum 4a), so `BeforeTool`'s regex matcher
 # over-triggers rather than guesses at names.
 GEMINI_TOOL_MATCHER = ".*"
+# Same reasoning again for Antigravity: its docs show run_command/view_file/
+# browser_.* as matcher examples but publish no closed tool vocabulary, so
+# the matcher subscribes to everything and the adapter fails unknown names
+# closed itself.
+ANTIGRAVITY_TOOL_MATCHER = ".*"
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +315,105 @@ def write_codex_project_hooks(plugin_root, project, *, force: bool = False) -> d
             "events": sorted(codex_project_hooks(plugin_root)["hooks"]),
             "note": "Codex requires explicit trust: open codex, review each "
                     "command, Trust, then restart - hooks run outside its sandbox"}
+
+
+# No plugin-root variable is documented for Antigravity's hooks.json - the
+# fragment carries this placeholder and `hooks wire --host antigravity`
+# substitutes the absolute install path per project.
+ANTIGRAVITY_ROOT_TOKEN = "${godmodePluginRoot}"
+
+
+def build_antigravity_fragment() -> dict:
+    """The `.agents/hooks.json`-shaped artifact for Antigravity
+    (antigravity.google/docs/hooks, fetched 2026-08-29): the file maps HOOK
+    NAMES to event configurations - so the note travels under a `_note` key
+    an installer strips, and godmode's own entry is the `godmode` key.
+    Handlers are `{type: "command", command, timeout}` with timeouts in
+    SECONDS (default 30); tool-use handlers carry a regex `matcher`.
+    PreToolUse stdout is one JSON object `{decision, reason}` - the dialect
+    `render_decision` speaks for this host."""
+    root = ANTIGRAVITY_ROOT_TOKEN
+    return {
+        "_note": (
+            "Antigravity loads hooks.json from the workspace's .agents/ "
+            "directory (or ~/.gemini/config/). This file is the reference "
+            "shape; `godmode hooks wire --host antigravity` merges the "
+            "godmode key into the project's .agents/hooks.json with "
+            f"{ANTIGRAVITY_ROOT_TOKEN} replaced by the absolute install "
+            "path. stdout for PreToolUse must be a single JSON object "
+            "{decision, reason}. Never claim HARD interception without a "
+            "fresh probe proof; a community report (Antigravity IDE "
+            "1.107.0, Windows) says Stop hooks may not fire there."
+        ),
+        "godmode": {
+            "enabled": True,
+            "PreToolUse": [
+                {
+                    "matcher": ANTIGRAVITY_TOOL_MATCHER,
+                    "type": "command",
+                    "command": f"python {root}/{GATE_FAST_HOOK}",
+                    "timeout": 8,
+                },
+            ],
+            "Stop": [
+                {
+                    "type": "command",
+                    "command": f"python {root}/{SESSION_HOOK} stop",
+                    "timeout": 10,
+                },
+            ],
+        },
+    }
+
+
+def antigravity_emitted_events(fragment: dict[str, Any]) -> frozenset[str]:
+    entry = fragment.get("godmode", {})
+    return frozenset(k for k in entry if k != "enabled")
+
+
+def write_antigravity_project_hooks(plugin_root, project, *,
+                                    force: bool = False) -> dict:
+    """Merge godmode's hook entry into `<project>/.agents/hooks.json`.
+
+    The file maps hook names to configs, so foreign hooks are preserved and
+    only the `godmode` key is owned here. Same overwrite contract as the
+    Codex fallback: an existing `godmode` key with different content is
+    refused without force. Interpreter is machine-PATH `python` on Windows
+    (law 12: a sandboxed host account sees only the machine PATH).
+    """
+    import json as _json
+    import os as _os
+    from pathlib import Path as _Path
+
+    root = _Path(plugin_root)
+    interpreter = "python" if _os.name == "nt" else "python3"
+    fragment = build_antigravity_fragment()
+    entry = _json.loads(_json.dumps(fragment["godmode"]).replace(
+        "python " + ANTIGRAVITY_ROOT_TOKEN + "/",
+        interpreter + " " + root.as_posix() + "/"))
+    target = _Path(project) / ".agents" / "hooks.json"
+    existing: dict = {}
+    if target.exists():
+        try:
+            existing = _json.loads(target.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001 - a corrupt file is refused, never clobbered
+            return {"written": False, "path": str(target),
+                    "reason": "exists but is not valid JSON; fix or remove it first"}
+        if not isinstance(existing, dict):
+            return {"written": False, "path": str(target),
+                    "reason": "exists but is not a JSON object; fix or remove it first"}
+        if existing.get("godmode") not in (None, entry) and not force:
+            return {"written": False, "path": str(target),
+                    "reason": "a different godmode entry exists; pass --force to overwrite"}
+    existing["godmode"] = entry
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(_json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+    return {"written": True, "path": str(target),
+            "events": sorted(antigravity_emitted_events(fragment)),
+            "note": "restart Antigravity, then run a protected command to "
+                    "probe; interception stays SOFT until a live deny is "
+                    "chronicled (Stop may not fire on Windows per a "
+                    "community report)"}
 
 
 def write_opencode_project_shim(plugin_root, project, *, force: bool = False) -> dict:
@@ -584,6 +696,17 @@ HOOK_ARTIFACTS: dict[str, dict[str, Any]] = {
                "Specification v1.0.0 (the source of ${PLUGIN_ROOT}) "
                "explicitly excludes hooks from v1; unverified until a live "
                "probe confirms Cursor's hook loader expands it",
+    },
+    "antigravity": {
+        "mode": "dedicated",
+        "build": build_antigravity_fragment,
+        "emitted": antigravity_emitted_events,
+        "allowed_events": ANTIGRAVITY_HOOK_EVENTS,
+        "gap": "schema transcribed from antigravity.google/docs/hooks, never "
+               "probed live - the handler nesting and the {decision, reason} "
+               "stdout contract hold on paper only until a live deny is "
+               "chronicled; a community report says Stop hooks may not fire "
+               "on Windows (IDE 1.107.0)",
     },
     "gemini": {
         "mode": "dedicated",

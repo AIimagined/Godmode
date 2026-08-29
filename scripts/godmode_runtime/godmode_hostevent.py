@@ -250,6 +250,13 @@ _GROK_READONLY_TOOLS = frozenset({
 _CURSOR_EVENTS = frozenset({"preToolUse", "beforeShellExecution"})
 # Addendum 4a: Gemini CLI's pre-tool event is BeforeTool, not PreToolUse.
 _GEMINI_EVENTS = frozenset({"BeforeTool"})
+# Antigravity (antigravity.google/docs/hooks, fetched 2026-08-29): the tool
+# rides a NESTED `toolCall` object, not flat tool_name/tool_input fields.
+# Only the names its docs actually show are mapped; everything else fails
+# closed as unrecognized - the same discipline whose live misses taught the
+# Grok adapter its read-only builtins.
+_ANTIGRAVITY_SHELL_TOOLS = frozenset({"run_command"})
+_ANTIGRAVITY_READONLY_TOOLS = frozenset({"view_file"})
 
 
 def detect_host(raw: Any) -> str:
@@ -269,6 +276,14 @@ def detect_host(raw: Any) -> str:
     """
     if os.environ.get("GODMODE_HOST"):
         return os.environ["GODMODE_HOST"]
+    if isinstance(raw, dict) and isinstance(raw.get("toolCall"), dict):
+        # Unmistakable, so it outranks the env fallbacks below: no other
+        # documented dialect nests the tool under `toolCall`, and an env
+        # marker describes the shell a process was LAUNCHED from, not the
+        # event in hand - an Antigravity workspace opened from inside a
+        # Claude or Grok session still speaks Antigravity to its own hooks.
+        # GODMODE_HOST above stays the explicit operator override.
+        return "antigravity"
     if os.environ.get("GROK_AGENT"):
         return "grok"
     if os.environ.get("GROK_PLUGIN_ROOT") or os.environ.get("GROK_HOOK_EVENT"):
@@ -310,6 +325,10 @@ def _detect_from_shape(raw: Any) -> str | None:
         # "turn_id (string, Codex-specific extension)" of the PreToolUse
         # input - no other host's payload carries it.
         return "codex"
+    if isinstance(raw.get("toolCall"), dict):
+        # Antigravity nests the tool under `toolCall` - no other documented
+        # dialect does (antigravity.google/docs/hooks, fetched 2026-08-29).
+        return "antigravity"
     event_name = field(raw, "hook_event_name")
     tool = field(raw, "tool_name")
     if event_name in _CURSOR_EVENTS or "beforeShellExecution" in raw:
@@ -1121,6 +1140,39 @@ def _adapt_generic(raw: Any, host: str) -> HostEvent:
 # ---------------------------------------------------------------------------
 
 
+def _adapt_antigravity(raw: Any) -> HostEvent:
+    """Antigravity's PreToolUse dialect (antigravity.google/docs/hooks,
+    fetched 2026-08-29): `{"toolCall": {"name": "run_command", "args":
+    {"CommandLine": ..., "Cwd": ...}}}` plus `workspacePaths` - a nested
+    shape, so `parse_host_payload` dispatches here by host, before its flat
+    tool_name routing (a payload with no flat `tool_name` key would
+    otherwise fall into the bare-operation branch and lose the tool)."""
+    call = raw.get("toolCall")
+    call = call if isinstance(call, dict) else {}
+    tool = str(call.get("name") or "").strip()
+    args = call.get("args")
+    args = args if isinstance(args, dict) else {}
+    event_name = str(field(raw, "hook_event_name") or "PreToolUse")
+    paths = raw.get("workspacePaths")
+    first_path = str(paths[0]) if isinstance(paths, list) and paths else ""
+    cwd = str(args.get("Cwd") or "") or first_path
+    request_id = str(field(raw, "request_id") or "")
+    if tool in _ANTIGRAVITY_READONLY_TOOLS:
+        return HostEvent(
+            schema=SCHEMA, event=event_name, host="antigravity", tool=tool,
+            operation="", targets=[], cwd=cwd, request_id=request_id,
+            tool_kind=TOOL_KIND_READ,
+        )
+    if tool in _ANTIGRAVITY_SHELL_TOOLS:
+        command = str(args.get("CommandLine") or "").strip()
+        return HostEvent(
+            schema=SCHEMA, event=event_name, host="antigravity", tool=tool,
+            operation=command, targets=[], cwd=cwd, request_id=request_id,
+            tool_kind=TOOL_KIND_SHELL,
+        )
+    return _unrecognized("antigravity", tool, raw)
+
+
 def _adapt_bare(raw: Any, host: str) -> HostEvent:
     return HostEvent(
         schema=SCHEMA,
@@ -1188,7 +1240,11 @@ def parse_host_payload(raw: Any) -> HostEvent:
     # what `field` reads back as its value.
     tool_name = field(raw, "tool_name")
     tool_name_given = isinstance(tool_name, str) and tool_name.strip()
-    if not field_present(raw, "tool_name"):
+    if host == "antigravity":
+        # Nested `toolCall` dialect: no flat `tool_name` key exists, so the
+        # field_present routing below cannot see the tool at all.
+        event = _adapt_antigravity(raw)
+    elif not field_present(raw, "tool_name"):
         event = _adapt_bare(raw, host)
     elif not tool_name_given:
         event = _unrecognized(host, str(tool_name) if tool_name is not None else "", raw)
@@ -1275,7 +1331,9 @@ def capture_payload_probe(archive: Any, raw: Any, event: HostEvent) -> None:
 # Addenda 4a/2 document no ask for Gemini/Codex either) - `render_decision`
 # folds `ask` down to `deny` for those, with a remedy that names the staged-
 # capability escape hatch by its exact command.
-HOSTS_WITH_ASK = frozenset({"claude", "cursor"})
+# Antigravity belongs here: its documented decision vocabulary includes a
+# real "ask" (and "force_ask") - antigravity.google/docs/hooks.
+HOSTS_WITH_ASK = frozenset({"claude", "cursor", "antigravity"})
 
 
 def render_decision(host: str, event_name: str, base_decision: str,
@@ -1310,6 +1368,11 @@ def render_decision(host: str, event_name: str, base_decision: str,
     # where detection failed is the union still the best available bet.
     if host in ("claude", "codex"):
         return claude_key, 0
+    if host == "antigravity":
+        # Its documented stdout contract is exactly {decision, reason}
+        # (antigravity.google/docs/hooks) - and it has a real "ask", so the
+        # base decision travels unfolded.
+        return {"decision": base_decision, "reason": reason}, 0
     if host == "grok":
         return {**claude_key, **grok_keys}, 0
     if host == "cursor":
@@ -1327,6 +1390,8 @@ def render_decision(host: str, event_name: str, base_decision: str,
 # just re-exported without the leading underscore for cross-module use.
 # ---------------------------------------------------------------------------
 CODEX_TOOLS = _CODEX_TOOLS
+ANTIGRAVITY_SHELL_TOOLS = _ANTIGRAVITY_SHELL_TOOLS
+ANTIGRAVITY_READONLY_TOOLS = _ANTIGRAVITY_READONLY_TOOLS
 GROK_TOOLS = _GROK_TOOLS
 CLAUDE_TOOLS = _CLAUDE_TOOLS
 CURSOR_EVENTS = _CURSOR_EVENTS
