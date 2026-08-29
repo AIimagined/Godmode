@@ -1,0 +1,1 @@
+Bare `godmode` prints the day-one face - the eight verbs that matter on day one, the host's own ask-or-deny posture, and one line pointing at the rest - instead of the hundred-verb argparse firehose; `godmode --all` lists every verb, generated from the registered subparsers so the listing can never drift from the real CLI. Presentation only: no verb changed, moved, or grew.
