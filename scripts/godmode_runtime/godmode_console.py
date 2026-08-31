@@ -2407,6 +2407,12 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             "severity": "warning",
             "detail": f"Continued past a failure while {reason}.",
         })
+    # Advisory, never a health flip: a record window where nothing ever
+    # failed is evidence about the checks, not about the work.
+    from .godmode_attest import dissent_check
+    dissent = dissent_check(runtime.archive)
+    if dissent:
+        issues.append({"code": "no-dissent", "severity": "warning", "detail": dissent})
     if args.deep:
         # S6 (obligation 4436): name every cached runtime that is not this
         # one - stale installs share the archive and race its chain. Behind
