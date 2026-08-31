@@ -309,9 +309,13 @@ def economics(archive: Chronicle, project: Path) -> dict[str, Any]:
         else "declining"
     )
 
+    # The whole archive, not a recent window: a strike counter over a
+    # bounded window is a decaying monitor, and a patient failure mode
+    # simply waits the window out. Incident counts never decay.
     strikes: dict[str, list[dict[str, Any]]] = {}
-    for record in archive.select(kind="incident", limit=500):
-        strikes.setdefault(record["subject"], []).append(record)
+    for record in archive.read_events(verify=False):
+        if record.get("kind") == "incident":
+            strikes.setdefault(record["subject"], []).append(record)
     trip_wires = []
     for subject, records in sorted(strikes.items()):
         if len(records) < 3:
