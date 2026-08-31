@@ -229,3 +229,29 @@ class PreflightCensusTests(unittest.TestCase):
             report = push_preflight(project, archive=archive)
             details = " ".join(f["detail"] for f in report["judgment"])
             self.assertIn("dormant-with-demand", details)
+
+
+class TerminalWorkIsNotDemandTests(unittest.TestCase):
+    """A criterion for work already verified and shipped is ritual, not
+    rigor: criteria/planning demand counts OPEN items only, the same
+    unresolved-only semantic evidence debt uses (operator clearing,
+    2026-09-01)."""
+
+    def test_terminal_items_stop_demanding(self) -> None:
+        from godmode_runtime.godmode_status import record_item
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            record_item(archive, "done-1", "old work", "verified",
+                        evidence=["cmd:true"])
+            fams = utilization(archive)["families"]
+            self.assertEqual(fams["criteria"]["verdict"], "idle")
+            self.assertEqual(fams["planning"]["verdict"], "idle")
+
+    def test_open_items_still_demand(self) -> None:
+        from godmode_runtime.godmode_status import record_item
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            record_item(archive, "open-1", "new work", "active")
+            self.assertEqual(
+                utilization(archive)["families"]["criteria"]["verdict"],
+                "dormant-with-demand")
