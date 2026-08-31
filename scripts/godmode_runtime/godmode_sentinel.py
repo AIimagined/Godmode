@@ -1911,10 +1911,11 @@ def _pin_key(target: str, root: Path | None) -> str | None:
     """The project-relative, OS-normalized key a pin is stored and looked up
     under, or `None` when `target` resolves outside the project.
 
-    Mirrors `_contained`'s own normalization (`os.path.normcase` +
-    `os.path.normpath`, no symlink resolution) rather than inventing a
-    second convention: the same path spelled two ways must fold to the same
-    pin key that `_contained` would already treat as the same file.
+    Mirrors `_contained`'s own normalization (`_canonical_path_text`:
+    realpath - resolving 8.3 aliases and symlinks - then normcase+normpath)
+    rather than inventing a second convention: the same path spelled two
+    ways must fold to the same pin key that `_contained` would already
+    treat as the same file.
     """
     root = Path.cwd() if root is None else root
     cleaned = str(target).strip().strip("\"'")
