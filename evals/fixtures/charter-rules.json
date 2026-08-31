@@ -12,9 +12,9 @@
       "trigger": "before_completion",
       "verify": "citation_resolves"
     },
-    "R-4783f0d508": {
+    "R-242ba2f803": {
       "enforcement": "HARD",
-      "text_hash": "4a4d32c8e4fa96f5",
+      "text_hash": "b041ef5867573b09",
       "trigger": "before_mutation",
       "verify": "attestation_present"
     },
@@ -30,9 +30,9 @@
       "trigger": "before_mutation",
       "verify": "attestation_present"
     },
-    "R-720cc85a48": {
+    "R-5dec6166e2": {
       "enforcement": "HARD",
-      "text_hash": "782cc9812b18fc2d",
+      "text_hash": "b0221d43a6d5fbb6",
       "trigger": "before_mutation",
       "verify": "attestation_present"
     },

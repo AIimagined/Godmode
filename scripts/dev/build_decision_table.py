@@ -89,6 +89,51 @@ assert set(_OUTPUT_FLAGS_BY_HEAD) >= {"git", "sort"}, (
 SENTINEL_PATH = SCRIPTS_DIR / "godmode_runtime" / "godmode_sentinel.py"
 TABLE_PATH = REPO_ROOT / "hooks" / "gate_table.json"
 
+
+def both_ends_pick(observations, k: int = 5) -> dict:
+    """Mining heuristic for the NEXT widening pass: pick from both ends.
+
+    `observations` is an iterable of {"command": str, "verdict": str} rows
+    from a gate corpus or archive sweep. The certain end - heads whose
+    every observed verdict is allow, ranked by frequency - are fast-path
+    candidates: each still has to survive `classify_action` at generation
+    time like every current entry, this only ranks who gets tried. The
+    ambiguous end - heads observed with two or more distinct verdicts,
+    ranked by how split they are - are PIN candidates: a head the corpus
+    itself cannot agree on is exactly the one that needs a falsifiability
+    test, not a table entry. Frequency-only mining looks at neither tail
+    honestly; both ends carry the signal.
+    """
+    by_head: dict[str, dict[str, int]] = {}
+    for row in observations:
+        command = str(row.get("command", "")).strip()
+        verdict = str(row.get("verdict", "")).strip().lower()
+        if not command or not verdict:
+            continue
+        head = command.split()[0]
+        by_head.setdefault(head, {})
+        by_head[head][verdict] = by_head[head].get(verdict, 0) + 1
+
+    certain = sorted(
+        ((head, counts["allow"]) for head, counts in by_head.items()
+         if set(counts) == {"allow"}),
+        key=lambda item: (-item[1], item[0]),
+    )
+    ambiguous = sorted(
+        ((head, counts) for head, counts in by_head.items()
+         if len(counts) >= 2),
+        key=lambda item: (-len(item[1]), -sum(item[1].values()), item[0]),
+    )
+    return {
+        "fast_path_candidates": [
+            {"head": head, "allow_count": count} for head, count in certain[:k]
+        ],
+        "pin_candidates": [
+            {"head": head, "verdicts": dict(sorted(counts.items()))}
+            for head, counts in ambiguous[:k]
+        ],
+    }
+
 # --- Step 1: the reference floor (see module docstring for source + date) --
 _GIT_FLOOR = [
     "git status",

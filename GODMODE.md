@@ -36,7 +36,7 @@ skills route agent work to continuity, investigation, governance, or skill forgi
 - Commit only with a changelog fragment and a passing integrity check.
 - Never weaken a test without a recorded rationale; a guard must be observed failing before it counts.
 - Never claim verified without a citation that resolves; an absence claim requires the search that would disprove it.
-- Mutate production or an unknown environment only through an authorized capability.
+- Never mutate production or an unknown environment; proceed only with an authorized capability.
 - Only close a session after every mandated step is attested with evidence.
 
 ## Private-by-construction state
