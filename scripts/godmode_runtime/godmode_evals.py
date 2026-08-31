@@ -554,9 +554,24 @@ def _ranking_view(project: Path) -> dict[str, Any]:
         tasks[task] = [
             [entry["path"], entry["lines"][0]] for entry in brief["context"]
         ]
+    # The freshness instrument is part of the ranking's identity, exactly
+    # like the scorer: full-git commit time, shallow-git (history the walk
+    # cannot reach reads as absent), and path-sort are three different
+    # instruments free to disagree on tie order for the same content. A
+    # snapshot is only comparable within its own mode (field report,
+    # 2026-08-31: a shallow CI checkout reordered two tasks against a
+    # full-clone snapshot and read as drift).
+    git_dir = project / ".git"
+    if not git_dir.exists():
+        freshness_mode = "path"
+    elif (git_dir / "shallow").is_file() if git_dir.is_dir() else False:
+        freshness_mode = "git-shallow"
+    else:
+        freshness_mode = "git"
     return {
         "schema": RANKING_SNAPSHOT_SCHEMA,
         "scorer": scorer,
+        "freshness_mode": freshness_mode,
         "budget": RANKING_BUDGET,
         "tasks": tasks,
     }
@@ -590,6 +605,23 @@ def ranking_snapshot(project: Path, write: bool = False) -> dict[str, Any]:
         stored = json.loads(fixture.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise GodmodeError(f"Unreadable snapshot {fixture.name}: {exc}")
+
+    # Cross-instrument comparison is out of contract, not a failure: a
+    # snapshot generated under one scorer or freshness mode says nothing
+    # about rankings computed under another. Reported as its own verdict so
+    # a CI runner on a different Python build or a shallow checkout reads
+    # "not comparable here" instead of "the ranking drifted".
+    for field in ("scorer", "freshness_mode"):
+        stored_mode = stored.get(field)
+        if stored_mode is not None and stored_mode != current[field]:
+            return {
+                "fixture": str(fixture),
+                "missing_snapshot": False,
+                "mode_mismatch": {"field": field, "snapshot": stored_mode,
+                                  "here": current[field]},
+                "diffs": [],
+                "verdict": "ranking-mode-differs",
+            }
 
     diffs: list[dict[str, Any]] = []
     for field in ("scorer", "budget"):

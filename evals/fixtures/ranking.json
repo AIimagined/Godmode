@@ -1,5 +1,6 @@
 {
   "budget": 1200,
+  "freshness_mode": "git",
   "schema": "godmode-ranking-snapshot-v1",
   "scorer": "fts5-bm25",
   "tasks": {

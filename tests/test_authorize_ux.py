@@ -73,14 +73,22 @@ class AuthorizeHelpTests(unittest.TestCase):
 class HostedEscapeHintTests(unittest.TestCase):
     def test_the_hook_refusal_mentions_the_bang_prefix(self) -> None:
         import json
+        import os
         payload = json.dumps({
             "hook_event_name": "PreToolUse", "tool_name": "Bash",
             "tool_input": {"command": "git push --force origin main"},
         })
+        # The bang-prefix hint is Claude dialect; run under another host
+        # (a Codex or Grok session running this suite) the hook rightly
+        # renders that host's envelope and this assertion read an empty
+        # field (field report, 2026-08-31). Pin the host the assertion is
+        # about instead of inheriting whichever host runs the tests.
+        environment = {**os.environ, "GODMODE_HOST": "claude"}
         result = subprocess.run(
             [sys.executable, str(PLUGIN_ROOT / "hooks" / "godmode_session_hook.py"),
              "pre-action"],
-            input=payload, capture_output=True, text=True, timeout=30, cwd=PLUGIN_ROOT)
+            input=payload, capture_output=True, text=True, timeout=30,
+            cwd=PLUGIN_ROOT, env=environment)
         decision = json.loads(result.stdout)
         reason = decision.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
         self.assertIn("leading '!'", reason)
