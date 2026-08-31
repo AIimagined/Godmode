@@ -89,3 +89,36 @@ class UtilizationCensusTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DbFamilyTests(unittest.TestCase):
+    """The db family joins the census the way the operator's own audit
+    demonstrated: demand is detectable (database files exist in the tree),
+    so dormancy is measured, never assumed."""
+
+    def test_database_files_without_records_read_dormant(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            (project / "app.sqlite3").write_bytes(b"SQLite format 3\x00" + b"\x00" * 90)
+            family = utilization(archive, project)["families"]["db"]
+            self.assertEqual(family["verdict"], "dormant-with-demand")
+
+    def test_a_database_record_satisfies_it(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            (project / "app.sqlite3").write_bytes(b"SQLite format 3\x00" + b"\x00" * 90)
+            archive.append("database", "app.sqlite3",
+                           {"engine": "sqlite", "status": "inventoried"})
+            family = utilization(archive, project)["families"]["db"]
+            self.assertEqual(family["verdict"], "satisfied")
+
+    def test_no_database_files_reads_idle(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            family = utilization(archive, project)["families"]["db"]
+            self.assertEqual(family["verdict"], "idle")
+
+    def test_without_a_project_the_family_is_absent(self) -> None:
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            self.assertNotIn("db", utilization(archive)["families"])

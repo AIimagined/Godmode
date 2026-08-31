@@ -424,7 +424,7 @@ def economics(archive: Chronicle, project: Path) -> dict[str, Any]:
     }
 
 
-def utilization(archive: Chronicle) -> dict[str, Any]:
+def utilization(archive: Chronicle, project: Path | None = None) -> dict[str, Any]:
     """Demand-vs-use census: dormancy with demand is the alarm.
 
     Absolute usage tracking is wrong - a project with no databases should
@@ -485,6 +485,19 @@ def utilization(archive: Chronicle) -> dict[str, Any]:
         "verification": family(
             downgraded, counts["verdict"] + counts["attestation"]),
     }
+    # The db family joins only when a project is given, because its demand
+    # is detected from the tree, not the archive: database files present
+    # with no database-kind records is machinery sleeping through its own
+    # use case (the operator's own audit question, 2026-09-01).
+    if project is not None:
+        try:
+            from .godmode_dbmgr import _candidate_files
+
+            found = len(_candidate_files(Path(project)))
+        except Exception:  # noqa: BLE001 - detection failing is not demand
+            found = 0
+        db_records = sum(1 for r in records if r.get("kind") == "database")
+        families["db"] = family(found, db_records)
     return {
         "families": families,
         "basis": "record kinds only; dormancy with demand is the alarm, "
