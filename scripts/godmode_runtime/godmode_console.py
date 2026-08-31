@@ -2363,6 +2363,15 @@ def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # hand-written request therefore landed in the archive and was read by
     # nothing. The default is now per-kind; an explicit --status still wins,
     # which is what keeps `--kind request --status closed` a closure.
+    if args.kind == "incident":
+        from .godmode_mistakes import record_incident
+        record = record_incident(
+            runtime.archive, args.subject, args.value,
+            failure_class=getattr(args, "failure_class", None),
+            turning_point=getattr(args, "turning_point", False),
+            cites=args.evidence,
+        )
+        return CommandResult({"record": _event_view(record)})
     status = args.status or ("open" if args.kind == "request" else "active")
     data: dict[str, Any] = {"value": args.value, "status": status}
     if args.kind == "lesson":
@@ -4646,8 +4655,15 @@ def _build_parser() -> argparse.ArgumentParser:
         # U-S4 - "assumption" added for the assumption gate
         # (`godmode_attest.assumption_gate`); the record kind itself lives
         # in EVENT_KINDS (godmode_constants.py).
-        choices=["decision", "invariant", "lesson", "obligation", "assumption", "request"],
+        choices=["decision", "invariant", "lesson", "obligation", "assumption", "request",
+                 "incident"],
         required=True)
+    remember.add_argument("--failure-class", dest="failure_class", default=None,
+                          help="incident only: one of the closed failure classes "
+                               "(off-list refused with the list rendered)")
+    remember.add_argument("--turning-point", dest="turning_point", action="store_true",
+                          help="incident only: the first failure the run never recovered "
+                               "from; requires --evidence")
     remember.add_argument("--subject", required=True, type=subject_text)
     remember.add_argument("--value", required=True)
     remember.add_argument("--status", default=None,

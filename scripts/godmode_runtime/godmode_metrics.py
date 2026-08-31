@@ -309,21 +309,26 @@ def economics(archive: Chronicle, project: Path) -> dict[str, Any]:
         else "declining"
     )
 
-    strikes: dict[str, int] = {}
+    strikes: dict[str, list[dict[str, Any]]] = {}
     for record in archive.select(kind="incident", limit=500):
-        strikes[record["subject"]] = strikes.get(record["subject"], 0) + 1
-    trip_wires = [
-        {
+        strikes.setdefault(record["subject"], []).append(record)
+    trip_wires = []
+    for subject, records in sorted(strikes.items()):
+        if len(records) < 3:
+            continue
+        # The class turns "same error three times" into a named failure
+        # shape, which names the fix layer. Latest record's word wins.
+        classed = [r["data"].get("failure_class") for r in records
+                   if r["data"].get("failure_class")]
+        label = f" ({classed[-1]})" if classed else ""
+        trip_wires.append({
             "code": "third-strike",
             "detail": (
-                f"'{subject}' has {count} incident records; a third strike "
-                "is a pattern - open a godmode investigation instead of "
-                "another fix in place"
+                f"'{subject}'{label} has {len(records)} incident records; a "
+                "third strike is a pattern - open a godmode investigation "
+                "instead of another fix in place"
             ),
-        }
-        for subject, count in sorted(strikes.items())
-        if count >= 3
-    ]
+        })
 
     return {
         "evidence_debt": debt,
