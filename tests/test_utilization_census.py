@@ -122,3 +122,51 @@ class DbFamilyTests(unittest.TestCase):
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
             self.assertNotIn("db", utilization(archive)["families"])
+
+
+class FourMoreFamiliesTests(unittest.TestCase):
+    """The audit's worst offenders join the census where their demand is
+    already recordable: criterion (work items tracked), plan (same),
+    verdict (verified-grade claims staked), assumption (incidents opened)."""
+
+    def test_tracked_work_without_criteria_or_plans_reads_dormant(self) -> None:
+        from godmode_runtime.godmode_status import record_item
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            record_item(archive, "feat-1", "a feature", "active")
+            fams = utilization(archive)["families"]
+            self.assertEqual(fams["criteria"]["verdict"], "dormant-with-demand")
+            self.assertEqual(fams["planning"]["verdict"], "dormant-with-demand")
+
+    def test_criterion_and_plan_records_satisfy_them(self) -> None:
+        from godmode_runtime.godmode_status import record_item
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            record_item(archive, "feat-1", "a feature", "active")
+            archive.append("criterion", "feat-1",
+                           {"task": "feat-1", "text": "all pins green"})
+            archive.append("plan", "feat-1-plan",
+                           {"state": "approved", "contract": {}})
+            fams = utilization(archive)["families"]
+            self.assertEqual(fams["criteria"]["verdict"], "satisfied")
+            self.assertEqual(fams["planning"]["verdict"], "satisfied")
+
+    def test_verified_claims_without_verdicts_read_dormant(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            (project / "README.md").write_text("x", encoding="utf-8")
+            record_claim(archive, project, "S-test", "the fix holds",
+                         "verified", cites=["file:README.md"])
+            fams = utilization(archive)["families"]
+            self.assertEqual(fams["independent-check"]["verdict"],
+                             "dormant-with-demand")
+
+    def test_incidents_without_assumptions_read_dormant(self) -> None:
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            archive.append("incident", "export broke",
+                           {"detail": "boom", "failure_class": None,
+                            "turning_point": False})
+            fams = utilization(archive)["families"]
+            self.assertEqual(fams["assumptions"]["verdict"],
+                             "dormant-with-demand")
