@@ -485,6 +485,24 @@ def utilization(archive: Chronicle, project: Path | None = None) -> dict[str, An
         "verification": family(
             downgraded, counts["verdict"] + counts["attestation"]),
     }
+    # The audit's worst offenders, censused where their demand is already
+    # recordable (2026-09-01): tracked work items demand criteria and
+    # plans; a verified-grade claim stakes something an independent
+    # checker should have re-derived; an opened incident is an
+    # investigation running on assumptions worth stating.
+    tracked_items = len({r["subject"] for r in records
+                         if r.get("kind") == "sprint"
+                         and "state" in (r.get("data") or {})})
+    verified_claims = sum(
+        1 for r in claims
+        if (r.get("data") or {}).get("claimed_grade") == "verified"
+        and (r.get("data") or {}).get("resolves") is None)
+    kind_counts = {kind: sum(1 for r in records if r.get("kind") == kind)
+                   for kind in ("criterion", "plan", "assumption")}
+    families["criteria"] = family(tracked_items, kind_counts["criterion"])
+    families["planning"] = family(tracked_items, kind_counts["plan"])
+    families["independent-check"] = family(verified_claims, counts["verdict"])
+    families["assumptions"] = family(len(incident_seqs), kind_counts["assumption"])
     # The db family joins only when a project is given, because its demand
     # is detected from the tree, not the archive: database files present
     # with no database-kind records is machinery sleeping through its own
