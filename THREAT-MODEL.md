@@ -11,7 +11,7 @@ language model choosing to comply.
 | Excessive agency | Least-privilege tool policy, workspace-scoped operation, and the local password broker (`godmode authorize`) for protected actions. |
 | Sensitive-information disclosure | Secret and path classifiers, pre-egress preview (`godmode egress`), and local-only memory below Git metadata or the OS application-data directory. |
 | Improper output handling | Generated shell, SQL, paths, code, and config are validated before execution; a preview precedes every protected operation. |
-| Plugin / MCP compromise | No MCP servers, listeners, or daemons ship with Godmode; any future surface requires an explicit allowlist and permission manifest (see `GOVERNANCE.md`). |
+| Plugin / MCP compromise | No MCP servers, listeners, or daemons ship with Godmode; `GOVERNANCE.md` gates any future surface behind an explicit allowlist and permission manifest. |
 | Supply-chain package | Zero runtime dependencies (`godmode sbom` publishes the claim; CI enforces it), checksummed releases, and a documented dependency budget in `CONTRIBUTING.md`. |
 | Phishing / social engineering | Godmode never requests third-party credentials; the local approval prompt is clearly branded and runs on the user's machine only. |
 | Local privilege escalation | No sudo/admin request by default; an operation needing elevation states the exact need and safer alternatives before proceeding. |

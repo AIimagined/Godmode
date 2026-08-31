@@ -30,9 +30,9 @@ Read [godmode-protection-matrix.md](references/godmode-protection-matrix.md) whe
 
 - Treat an unknown mutation as protected.
 - Preserve unrelated user changes and existing worktrees.
-- Never rewrite history, remove data, publish, install, release, or change a database from an inferred intention.
+- Rewrite history, remove data, publish, install, release, or change a database only from an explicit instruction, never an inferred intention.
 - Reject a capability whose action, project, expiry, nonce, or signature does not match.
-- Do not represent a preview as approval or a guard result as automatic enforcement.
+- Represent a preview as a preview and a guard result as advisory - neither is approval or automatic enforcement.
 - Require a rollback or recovery statement for schema, history, release, and destructive filesystem changes.
 
 ## Gate routing
