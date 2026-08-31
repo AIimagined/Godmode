@@ -185,7 +185,11 @@ standing debt of scored claims nothing ever resolved. Status renders
 carry the same discipline as wording: `verified` is reserved for a
 verified state with cited evidence, and a completion nothing was cited
 for renders `declared` - said, not shown. All of it is advisory; no
-gate verdict reads a calibration number.
+gate verdict reads a calibration number. The doctor also carries the
+demand-vs-use census: per capability family, what the record demanded
+against what fired - dormant machinery with standing demand is named,
+idle reads as health, and the push preflight repeats any dormant family
+as a judgment finding before a password is ever typed.
 
 ```console
 $ godmode claim "the fix holds" --confidence 0.9 --cite cmd:"pytest -q"

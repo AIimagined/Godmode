@@ -1,1 +1,0 @@
-docs --emit-agentsmd carries the project's top laws into a Learnings section: a hookless agent reads AGENTS.md, and a law that never reaches it governs nothing. Bounded by the brief's own top-laws budget; a project with no laws reads honestly empty.

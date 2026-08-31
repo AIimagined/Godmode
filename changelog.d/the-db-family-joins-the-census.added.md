@@ -1,1 +1,0 @@
-The db family joins the demand-vs-use census: database files present in the tree with no database-kind records reads dormant-with-demand - demand detected from the tree itself, the way the audit question that prompted it was answered.
