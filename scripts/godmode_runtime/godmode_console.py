@@ -3166,7 +3166,79 @@ def cmd_docs_reconcile(args: argparse.Namespace, runtime: Runtime) -> CommandRes
     return CommandResult(report, exit_code=0 if report["verdict"] == "reconciled" else 1)
 
 
+# Boundary tiers for hosts that read AGENTS.md and wire no hooks. One
+# table; the emitter renders it and the traceability test reads it - the
+# wording is host-neutral because AGENTS.md cannot know which dialect the
+# reading agent speaks.
+_BOUNDARY_TIERS = (
+    ("Always fine", "reads, edits, commits, tests - allow-tier work is "
+     "recorded, not asked about"),
+    ("Ask first", "push, deploy, database migrations, history rewrites - a "
+     "host with an ask dialog asks; a host without one denies and names "
+     "`godmode authorize stage` as the remedy"),
+    ("Never", "irreversible forms without the authorization password "
+     "(force-push, rm -rf on a root, DROP TABLE); secrets in the record; "
+     "project state outside this machine"),
+)
+_AGENTS_BEGIN = "<!-- godmode:agents begin -->"
+_AGENTS_END = "<!-- godmode:agents end -->"
+
+
+def agentsmd_section(parser: argparse.ArgumentParser) -> str:
+    """The AGENTS.md section, generated - never hand-typed - so it cannot
+    drift from the CLI it describes. Commands come from the registered
+    day-one verbs (each checked against the live subparsers), boundaries
+    from the one tier table the traceability test also reads."""
+    registered = set(_subparser_action(parser).choices)
+    lines = [_AGENTS_BEGIN, "## Godmode", "",
+             "A local, tamper-evident record of what the agent did, what it "
+             "claimed, and what was verified. State lives under the git "
+             "metadata directory; nothing leaves the machine.", "",
+             "### Commands", ""]
+    for name, blurb in _DAY_ONE_VERBS:
+        if name not in registered:
+            raise ArchiveError(
+                f"day-one verb '{name}' is not a registered subparser; "
+                "the generated section refuses to describe a command that "
+                "does not exist")
+        lines.append(f"- `godmode {name}` - {blurb}")
+    lines += ["", "### Boundaries", ""]
+    for tier, detail in _BOUNDARY_TIERS:
+        lines.append(f"- **{tier}**: {detail}")
+    lines += ["", _AGENTS_END]
+    return "\n".join(lines)
+
+
+def emit_agentsmd(parser: argparse.ArgumentParser, project_root: Path) -> dict[str, Any]:
+    """Write or refresh the godmode section of AGENTS.md, touching nothing else.
+
+    Between the markers is godmode's; everything outside them is the
+    project's and survives byte-for-byte. Re-emitting is idempotent.
+    """
+    section = agentsmd_section(parser)
+    target = project_root / "AGENTS.md"
+    if target.is_file():
+        existing = target.read_text(encoding="utf-8")
+        if _AGENTS_BEGIN in existing and _AGENTS_END in existing:
+            head, _, rest = existing.partition(_AGENTS_BEGIN)
+            _, _, tail = rest.partition(_AGENTS_END)
+            merged = head + section + tail
+            action = "refreshed"
+        else:
+            merged = existing.rstrip("\n") + "\n\n" + section + "\n"
+            action = "appended"
+    else:
+        merged = "# AGENTS\n\n" + section + "\n"
+        action = "created"
+    target.write_text(merged, encoding="utf-8")
+    return {"action": action, "path": "AGENTS.md",
+            "commands": len(_DAY_ONE_VERBS), "tiers": len(_BOUNDARY_TIERS)}
+
+
 def cmd_docs(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if getattr(args, "emit_agentsmd", False):
+        report = emit_agentsmd(_build_parser(), Path(runtime.anchor.project_root))
+        return CommandResult(report)
     if getattr(args, "lint", False):
         report = lint_docs(Path(runtime.anchor.project_root))
         # High severity means something shipped that was never meant to; the
@@ -5015,6 +5087,10 @@ def _build_parser() -> argparse.ArgumentParser:
     sprint.set_defaults(handler=cmd_sprint)
 
     docs = sub.add_parser("docs", help="Record documentation obligations, or reconcile the trigger table")
+    docs.add_argument("--emit-agentsmd", dest="emit_agentsmd", action="store_true",
+                      help="Write or refresh the godmode section of AGENTS.md - generated "
+                           "from the registered verbs and the boundary tier table, "
+                           "merge-not-overwrite")
     docs.add_argument("--lint", action="store_true",
                       help="Check public prose for leaked rationale and unverifiable claims")
     docs.add_argument("--reconcile", action="store_true",
