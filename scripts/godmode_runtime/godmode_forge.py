@@ -226,6 +226,81 @@ def forge_skill(destination_root: str | Path, proposal: SkillProposal) -> Path:
     return skill_dir
 
 
+# Safety hard-fails. Narrow on purpose: each pattern is content no honest
+# skill body carries - piping a remote script straight into a shell,
+# instruction-override language, or reaching for credential files.
+_SKILL_SAFETY_FLAGS = (
+    ("pipe-to-shell", re.compile(r"(?:curl|wget)[^\n|]*\|\s*(?:ba|z|da)?sh\b", re.IGNORECASE)),
+    ("instruction-override", re.compile(
+        r"(?:ignore|disregard)\s+(?:all\s+)?(?:previous|prior|earlier)\s+instructions",
+        re.IGNORECASE)),
+    ("credential-reach", re.compile(
+        r"(?:\.aws/credentials|id_rsa\b|\.netrc\b|\.npmrc\b.*_authToken)", re.IGNORECASE)),
+    ("destructive-sweep", re.compile(r"\brm\s+-rf\s+[/~]", re.IGNORECASE)),
+)
+
+_TRIGGER = re.compile(r"(?i)\buse\s+(?:when|before|for|whenever|at|on|after)\b")
+_BACKTICKED = re.compile(r"`([^`\n]{2,60})`")
+
+
+def lint_skill(skill_dir: str | Path) -> dict[str, Any]:
+    """Three structural facets on one skill; the verdict names its own scope.
+
+    `scope` reads the description alone: a skill without an explicit
+    trigger cannot be routed to. `delivery` reads the body against the
+    description's promise: every backticked term advertised up front must
+    appear in the body, because a body silently narrower than its
+    description is the mismatch that survives review. `safety` hard-fails
+    on injection-shaped content - there is no soft pass on that facet.
+
+    The report carries `verdict_scope: structural`: a lint pass is a
+    statement about text shape, never a claim the skill helps a live task.
+    """
+    root = Path(skill_dir).resolve(strict=True)
+    content = (root / "SKILL.md").read_text(encoding="utf-8")
+    match = _FRONTMATTER.match(content)
+    description = ""
+    if match:
+        for line in match.group("body").splitlines():
+            key, separator, value = line.partition(":")
+            if separator and key.strip() == "description":
+                description = value.strip()
+    body = content[match.end():] if match else content
+
+    facets: dict[str, dict[str, Any]] = {}
+
+    if not description:
+        facets["scope"] = {"passed": False, "why": "no description in frontmatter"}
+    elif not _TRIGGER.search(description):
+        facets["scope"] = {
+            "passed": False,
+            "why": "description names no explicit trigger (use when/before/for)",
+        }
+    else:
+        facets["scope"] = {"passed": True, "why": ""}
+
+    promised = [term for term in _BACKTICKED.findall(description)]
+    undelivered = [term for term in promised if term.split()[0] not in body]
+    facets["delivery"] = (
+        {"passed": False,
+         "why": "advertised but absent from the body: " + ", ".join(undelivered)}
+        if undelivered else {"passed": True, "why": ""}
+    )
+
+    fired = [name for name, pattern in _SKILL_SAFETY_FLAGS if pattern.search(content)]
+    facets["safety"] = (
+        {"passed": False, "why": "hard flag(s): " + ", ".join(fired)}
+        if fired else {"passed": True, "why": ""}
+    )
+
+    return {
+        "skill": root.name,
+        "facets": facets,
+        "passed": all(facet["passed"] for facet in facets.values()),
+        "verdict_scope": "structural",
+    }
+
+
 def validate_skill(skill_dir: str | Path) -> dict[str, Any]:
     root = Path(skill_dir).resolve(strict=True)
     skill_file = root / "SKILL.md"
