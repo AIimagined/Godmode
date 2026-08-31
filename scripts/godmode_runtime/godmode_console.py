@@ -2521,6 +2521,11 @@ def cmd_precheck(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     project = Path(runtime.anchor.project_root)
     changed = list(args.changed) if args.changed else _working_tree_changes(project)
     report = run_precheck(project, runtime.archive, args.about, changed_files=changed)
+    # Patterns the record already holds, delivered before the action -
+    # advisory, once per session per pattern, never part of the exit code.
+    from .godmode_precheck import recurrence_nudges
+    report["recurrence_advisories"] = recurrence_nudges(
+        runtime.archive, args.about, changed, _session(runtime, getattr(args, "session", None)))
     # Non-zero on a hit so a script can stop, but the payload is a question and
     # never a refusal: prior work is a reason to look, not grounds to decline.
     # A paired-artifact hit never contributes to this exit code either - v1

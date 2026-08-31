@@ -202,6 +202,65 @@ def paired_artifact_findings(archive: Chronicle, changed_files: Iterable[str]) -
     }
 
 
+def recurrence_nudges(archive: Chronicle, task: str,
+                      changed_files: Iterable[str] | None,
+                      session: str) -> list[dict[str, Any]]:
+    """Patterns the archive already holds, delivered BEFORE the action.
+
+    Two sources, both requiring at least two recorded occurrences (one
+    observation is an event; two are a pattern - the same floor the skill
+    ladder uses): repeated incidents by subject, and controls that blocked
+    the same cause more than once. Matching is the precheck's own weak
+    term overlap, on purpose. Once per session per pattern: a delivery
+    receipt is recorded and consulted, because a nudge that nags is a
+    nudge that gets ignored.
+    """
+    if not archive.initialized():
+        return []
+    context = task + " " + " ".join(str(f) for f in (changed_files or []))
+    terms = _terms(context)
+    if not terms:
+        return []
+
+    candidates: list[dict[str, Any]] = []
+    incidents: dict[str, list[int]] = {}
+    for record in archive.select(kind="incident", limit=500):
+        incidents.setdefault(str(record["subject"]), []).append(record["sequence"])
+    for subject, seqs in sorted(incidents.items()):
+        if len(seqs) >= 2:
+            candidates.append({"pattern": subject, "occurrences": len(seqs),
+                               "evidence": [f"seq:{s}" for s in seqs[-3:]]})
+
+    from .godmode_attest import recurrences as _recurrences
+    for entry in _recurrences(archive).get("repeated", []):
+        candidates.append({
+            "pattern": f"{entry['step']}: {entry['cause']}",
+            "occurrences": entry["occurrences"],
+            "evidence": [],
+        })
+
+    delivered: set[str] = set()
+    for record in archive.select(kind="action", limit=500):
+        if record["subject"] == "recurrence-nudge" and \
+                record["data"].get("session") == session:
+            delivered.add(str(record["data"].get("pattern", "")))
+
+    nudges = []
+    for candidate in candidates:
+        if candidate["pattern"] in delivered:
+            continue
+        if _overlap(terms, candidate["pattern"]) < 2:
+            continue
+        nudges.append({
+            **candidate,
+            "why": "this pattern has recurred in the record; read it before "
+                   "the action repeats it",
+        })
+        archive.append("action", "recurrence-nudge",
+                       {"session": session, "pattern": candidate["pattern"]})
+    return nudges
+
+
 def precheck(project_root: Path | str, archive: Chronicle, task: str,
             changed_files: Iterable[str] | None = None) -> dict[str, Any]:
     """What already exists and what was already refused, for this task.
