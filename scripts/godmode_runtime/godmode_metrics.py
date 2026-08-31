@@ -270,6 +270,62 @@ def _documentation_parity(archive: Chronicle) -> tuple[float | None, str]:
     return _ratio(satisfied, satisfied + missing), f"{satisfied} of {satisfied + missing} triggers satisfied"
 
 
+def branch_complexity(project: Path, top: int = 10) -> dict[str, Any]:
+    """Per-function decision-point count over the project's own Python.
+
+    Decision points + 1, counted natively from the ast: if/elif, loops,
+    except handlers, boolean operator branches, conditional expressions,
+    comprehension filters, match cases. Advisory only - the report names
+    the worst offenders so a refactor distributes complexity into named
+    functions; no gate reads the number, and collapsing a function into
+    an unreadable one-liner to lower it is gaming the count, not fixing
+    the code.
+    """
+    import ast
+
+    from .godmode_constants import IGNORED_DIRECTORY_NAMES
+
+    def _score(node: ast.AST) -> int:
+        count = 1
+        for child in ast.walk(node):
+            if isinstance(child, (ast.If, ast.For, ast.While, ast.AsyncFor,
+                                  ast.ExceptHandler, ast.IfExp)):
+                count += 1
+            elif isinstance(child, ast.BoolOp):
+                count += max(0, len(child.values) - 1)
+            elif isinstance(child, ast.comprehension):
+                count += len(child.ifs)
+            elif isinstance(child, ast.match_case):
+                count += 1
+        return count
+
+    functions: list[dict[str, Any]] = []
+    files_scanned = 0
+    for path in sorted(Path(project).rglob("*.py")):
+        if any(part in IGNORED_DIRECTORY_NAMES for part in path.parts):
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, SyntaxError):
+            continue
+        files_scanned += 1
+        relative = str(path.relative_to(project)).replace("\\", "/")
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                functions.append({
+                    "function": node.name,
+                    "where": f"{relative}:{node.lineno}",
+                    "complexity": _score(node),
+                })
+    functions.sort(key=lambda f: (-f["complexity"], f["where"]))
+    return {
+        "files_scanned": files_scanned,
+        "functions_counted": len(functions),
+        "worst": functions[:max(0, top)],
+        "basis": "decision points + 1, counted from the ast; advisory only",
+    }
+
+
 def economics(archive: Chronicle, project: Path) -> dict[str, Any]:
     """Verified-result economics, read entirely from existing records.
 
