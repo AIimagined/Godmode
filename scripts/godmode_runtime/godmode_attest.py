@@ -1806,6 +1806,20 @@ def calibration_summary(archive: Chronicle) -> dict[str, Any]:
             "error_rate": round(failures / len(members), 6),
         })
     summary["bands"] = bands
+    # Advisory only, and only from RESOLVED records - open predictions can
+    # never trip it, and below the sample floor silence is honest, not
+    # generous. The floor and window are one pair of numbers, here.
+    window, floor, sample_floor = 5, 0.5, 3
+    recent = scored[-window:]
+    if len(recent) >= sample_floor:
+        recent_mean = sum(r["data"]["score"] for r in recent) / len(recent)
+        if recent_mean < floor:
+            seqs = ", ".join(f"seq:{r['sequence']}" for r in recent)
+            summary["advisory"] = (
+                f"calibration low: the last {len(recent)} resolved scored "
+                f"claims ({seqs}) average {recent_mean:.2f}; prefer fresh "
+                "evidence over stale where the choice exists"
+            )
     return summary
 
 

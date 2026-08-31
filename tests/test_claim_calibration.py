@@ -189,3 +189,42 @@ class SummaryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ForecastAdvisoryTests(unittest.TestCase):
+    """S13-B: the advisory fires only from RESOLVED records, never from
+    open predictions, and only once enough of them exist to mean anything."""
+
+    def _resolve_n(self, archive, project, pairs):
+        (project / "README.md").write_text("x", encoding="utf-8")
+        for confidence, outcome in pairs:
+            resolve_claim(archive, project, "S-test",
+                          _scored_claim(archive, project, confidence)["sequence"],
+                          outcome, cites=["file:README.md"])
+
+    def test_no_advisory_below_the_sample_floor(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            self._resolve_n(archive, project, [(0.9, "failed")] * 2)
+            self.assertEqual(calibration_summary(archive).get("advisory"), None)
+
+    def test_advisory_names_the_records_it_derives_from(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            self._resolve_n(archive, project, [(0.9, "failed")] * 3)
+            advisory = calibration_summary(archive)["advisory"]
+            self.assertIn("seq:", advisory)
+            self.assertIn("calibration", advisory)
+
+    def test_well_calibrated_records_stay_silent(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            self._resolve_n(archive, project, [(0.9, "held")] * 4)
+            self.assertEqual(calibration_summary(archive).get("advisory"), None)
+
+    def test_open_predictions_never_trigger_it(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            for _ in range(6):
+                _scored_claim(archive, project, 0.9)
+            self.assertEqual(calibration_summary(archive).get("advisory"), None)
