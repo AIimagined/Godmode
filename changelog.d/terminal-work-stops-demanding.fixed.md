@@ -1,0 +1,1 @@
+Criteria and planning census demand counts open work items only - the same unresolved-only semantic evidence debt uses. A criterion for work already verified and shipped is ritual, not rigor; open items still demand, and the demand-moment finding at the write is unchanged.

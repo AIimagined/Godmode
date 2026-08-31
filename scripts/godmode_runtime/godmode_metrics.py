@@ -490,9 +490,15 @@ def utilization(archive: Chronicle, project: Path | None = None) -> dict[str, An
     # plans; a verified-grade claim stakes something an independent
     # checker should have re-derived; an opened incident is an
     # investigation running on assumptions worth stating.
-    tracked_items = len({r["subject"] for r in records
-                         if r.get("kind") == "sprint"
-                         and "state" in (r.get("data") or {})})
+    # OPEN items only, the same unresolved-only semantic evidence debt
+    # uses: a criterion for work already verified and shipped is ritual,
+    # not rigor (operator clearing, 2026-09-01).
+    item_states: dict[str, str] = {}
+    for r in records:
+        if r.get("kind") == "sprint" and "state" in (r.get("data") or {}):
+            item_states[r["subject"]] = r["data"]["state"]
+    tracked_items = sum(1 for state in item_states.values()
+                        if state not in ("verified", "closed"))
     verified_claims = sum(
         1 for r in claims
         if (r.get("data") or {}).get("claimed_grade") == "verified"
