@@ -108,6 +108,9 @@ class GrokForcePushTests(unittest.TestCase):
             )
         self.assertNotEqual(done.returncode, 3, done.stdout)
         self.assertIn(done.returncode, (0, 2), done.stdout)
+        self.assertTrue(
+            (done.stdout or "").strip(),
+            f"empty stdout; exit={done.returncode} stderr={done.stderr[:300]!r}")
         body = json.loads(done.stdout)
         self.assertEqual(body["decision"], "deny")
         self.assertNotEqual(body["decision"], "unclassified-mutation")
@@ -119,6 +122,9 @@ class GrokForcePushTests(unittest.TestCase):
                  "toolInput": {"command": "git push --force origin main"}},
                 project, state, extra_env={"GROK_AGENT": "1"},
             )
+        self.assertTrue(
+            (done.stdout or "").strip(),
+            f"empty stdout; exit={done.returncode} stderr={done.stderr[:300]!r}")
         body = json.loads(done.stdout)
         self.assertIn("git-history-or-remote", body["reason"])
 
@@ -148,6 +154,9 @@ class GrokWriteAndSearchReplaceTests(unittest.TestCase):
                  "toolInput": {"file_path": str(outside)}},
                 project, state, extra_env={"GROK_AGENT": "1"},
             )
+        self.assertTrue(
+            (done.stdout or "").strip(),
+            f"empty stdout; exit={done.returncode} stderr={done.stderr[:300]!r}")
         body = json.loads(done.stdout)
         self.assertEqual(body["decision"], "deny")
         self.assertNotIn("unclassified-mutation", json.dumps(body))
@@ -176,6 +185,9 @@ class GrokHostDetectionTests(unittest.TestCase):
                  "toolInput": {"command": "git push --force origin main"}},
                 project, state, extra_env={"GROK_AGENT": "1"},
             )
+        self.assertTrue(
+            (done.stdout or "").strip(),
+            f"empty stdout; exit={done.returncode} stderr={done.stderr[:300]!r}")
         body = json.loads(done.stdout)
         # The response body always carries the dual/multi-host keys - `decision`
         # is Grok's own contract key, present regardless of whether detection
@@ -195,6 +207,9 @@ class GrokAskFoldsToDenyTests(unittest.TestCase):
                  "toolInput": {"command": "rm -rf build"}},
                 project, state, extra_env={"GROK_AGENT": "1"},
             )
+        self.assertTrue(
+            (done.stdout or "").strip(),
+            f"empty stdout; exit={done.returncode} stderr={done.stderr[:300]!r}")
         body = json.loads(done.stdout)
         # On Claude this exact command asks; on Grok (no ask) it must deny.
         self.assertEqual(body["decision"], "deny")
@@ -212,6 +227,9 @@ class ClaudeRegressionLockTests(unittest.TestCase):
                  "tool_input": {"command": "git push --force origin main"}},
                 project, state,
             )
+        self.assertTrue(
+            (done.stdout or "").strip(),
+            f"empty stdout; exit={done.returncode} stderr={done.stderr[:300]!r}")
         body = json.loads(done.stdout)
         self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "deny")
         self.assertEqual(body["hookSpecificOutput"]["hookEventName"], "PreToolUse")
@@ -223,6 +241,9 @@ class ClaudeRegressionLockTests(unittest.TestCase):
                  "tool_input": {"command": "rm -rf build"}},
                 project, state,
             )
+        self.assertTrue(
+            (done.stdout or "").strip(),
+            f"empty stdout; exit={done.returncode} stderr={done.stderr[:300]!r}")
         body = json.loads(done.stdout)
         # Claude HAS ask - this must not have been folded to deny the way the
         # Grok fixture above is.
@@ -261,6 +282,9 @@ class CodexShellCommandTests(unittest.TestCase):
             with _hosted() as (project, state):
                 done = _run(self._codex_bash(command), project, state,
                             extra_env=self._CODEX_ENV)
+            self.assertTrue(
+                (done.stdout or "").strip(),
+                f"empty stdout; exit={done.returncode} stderr={done.stderr[:300]!r}")
             body = json.loads(done.stdout)
             self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "deny",
                              (command, body))
@@ -270,6 +294,9 @@ class CodexShellCommandTests(unittest.TestCase):
         # payload's own Codex extension decides.
         with _hosted() as (project, state):
             done = _run(self._codex_bash("rm -rf build"), project, state)
+        self.assertTrue(
+            (done.stdout or "").strip(),
+            f"empty stdout; exit={done.returncode} stderr={done.stderr[:300]!r}")
         body = json.loads(done.stdout)
         self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "deny", body)
 
@@ -280,6 +307,9 @@ class CodexShellCommandTests(unittest.TestCase):
                  "tool_input": {"command": "git push --force origin main"}},
                 project, state, extra_env={"GODMODE_HOST": "codex"},
             )
+        self.assertTrue(
+            (done.stdout or "").strip(),
+            f"empty stdout; exit={done.returncode} stderr={done.stderr[:300]!r}")
         body = json.loads(done.stdout)
         self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "deny")
         self.assertIn("git-history-or-remote", body["hookSpecificOutput"]["permissionDecisionReason"])
@@ -331,6 +361,9 @@ class UnrecognizedToolAcrossHostsTests(unittest.TestCase):
                  "tool_input": {"anything": "shape"}},
                 project, state,
             )
+        self.assertTrue(
+            (done.stdout or "").strip(),
+            f"empty stdout; exit={done.returncode} stderr={done.stderr[:300]!r}")
         body = json.loads(done.stdout)
         self.assertIn(body["hookSpecificOutput"]["permissionDecision"], ("ask", "deny"))
         self.assertIn("unrecognized-tool", body["hookSpecificOutput"]["permissionDecisionReason"])
@@ -352,6 +385,9 @@ class CodexApplyPatchMalformedDirectiveTests(unittest.TestCase):
                  "tool_input": {"input": patch}},
                 project, state, extra_env={"GODMODE_HOST": "codex"},
             )
+        self.assertTrue(
+            (done.stdout or "").strip(),
+            f"empty stdout; exit={done.returncode} stderr={done.stderr[:300]!r}")
         body = json.loads(done.stdout)
         decision = body["hookSpecificOutput"]["permissionDecision"]
         # Malformed-directive fails closed at R3 (ask/deny, recoverable) -
@@ -368,6 +404,9 @@ class CodexApplyPatchMalformedDirectiveTests(unittest.TestCase):
                  "tool_input": {"input": patch}},
                 project, state, extra_env={"GODMODE_HOST": "codex"},
             )
+        self.assertTrue(
+            (done.stdout or "").strip(),
+            f"empty stdout; exit={done.returncode} stderr={done.stderr[:300]!r}")
         body = json.loads(done.stdout)
         self.assertIn(body["hookSpecificOutput"]["permissionDecision"], ("ask", "deny"))
 
@@ -511,6 +550,9 @@ class LiveGrokHarnessShapeTests(unittest.TestCase):
                  "tool_input": {"command": "git push --force origin main"}},
                 project, state, extra_env={"GODMODE_HOST": "grok"},
             )
+        self.assertTrue(
+            (done.stdout or "").strip(),
+            f"empty stdout; exit={done.returncode} stderr={done.stderr[:300]!r}")
         body = json.loads(done.stdout)
         self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "deny")
 

@@ -28,6 +28,14 @@ def setUpModule() -> None:
     # local observe-mode declaration replaces the refusal it asserts on
     # with an advisory - see _gate_mode_isolation's docstring.
     park_local_policy()
+    # And an initialized archive: on a fresh CI checkout no archive exists
+    # and the hook rightly reports not-initialized instead of gating - the
+    # empty-reason failures on every CI platform were this (instrumented
+    # run 33413975881). A developer machine always has one, which is why
+    # no local run ever saw it. initialize() is idempotent.
+    from godmode_runtime.godmode_anchor import resolve_anchor
+    from godmode_runtime.godmode_chronicle import Chronicle
+    Chronicle(resolve_anchor(PLUGIN_ROOT)).initialize()
 
 
 def tearDownModule() -> None:

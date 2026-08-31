@@ -337,7 +337,13 @@ def _build_mutation_heads() -> dict[str, list[str]]:
 
 
 def _generated_from() -> str:
-    return hashlib.sha256(SENTINEL_PATH.read_bytes()).hexdigest()[:12]
+    # Line-ending-proof: a checkout under autocrlf carries CRLF where CI's
+    # carries LF, and hashing raw bytes made the committed table stale on
+    # every platform but the one that built it (matrix run, 2026-08-31).
+    # The vocabulary this digest protects is text; hash the text.
+    return hashlib.sha256(
+        SENTINEL_PATH.read_bytes().replace(b"\r\n", b"\n")
+    ).hexdigest()[:12]
 
 
 def build_table() -> dict[str, object]:
