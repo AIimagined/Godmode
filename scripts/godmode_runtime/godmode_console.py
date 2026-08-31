@@ -3268,13 +3268,31 @@ def agentsmd_section(parser: argparse.ArgumentParser) -> str:
     return "\n".join(lines)
 
 
-def emit_agentsmd(parser: argparse.ArgumentParser, project_root: Path) -> dict[str, Any]:
+def emit_agentsmd(parser: argparse.ArgumentParser, project_root: Path,
+                  archive: Any = None) -> dict[str, Any]:
     """Write or refresh the godmode section of AGENTS.md, touching nothing else.
 
     Between the markers is godmode's; everything outside them is the
     project's and survives byte-for-byte. Re-emitting is idempotent.
     """
     section = agentsmd_section(parser)
+    # The learnings travel too: a hookless agent reads AGENTS.md and a law
+    # that never reaches it governs nothing. Bounded by the brief's own
+    # top-laws budget; empty reads honestly empty, never a bare heading.
+    if archive is not None:
+        from .godmode_law import top_laws
+        laws = top_laws(archive, 5) if archive.initialized() else []
+        lines = ["", "### Learnings", ""]
+        if laws:
+            lines += [f"- {law['guard']}" for law in laws]
+        else:
+            lines.append("_no laws recorded yet - they accumulate as this "
+                         "project corrects its agents_")
+        newline = chr(10)
+        section = section.replace(
+            newline + _AGENTS_END,
+            newline + newline.join(lines) + newline + newline + _AGENTS_END)
+
     target = project_root / "AGENTS.md"
     if target.is_file():
         existing = target.read_text(encoding="utf-8")
@@ -3296,7 +3314,8 @@ def emit_agentsmd(parser: argparse.ArgumentParser, project_root: Path) -> dict[s
 
 def cmd_docs(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     if getattr(args, "emit_agentsmd", False):
-        report = emit_agentsmd(_build_parser(), Path(runtime.anchor.project_root))
+        report = emit_agentsmd(_build_parser(), Path(runtime.anchor.project_root),
+                               archive=runtime.archive)
         return CommandResult(report)
     if getattr(args, "lint", False):
         report = lint_docs(Path(runtime.anchor.project_root))
