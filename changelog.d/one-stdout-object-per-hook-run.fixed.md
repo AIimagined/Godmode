@@ -1,0 +1,1 @@
+The Stop hook printed two JSON objects when one reply both touched an open obligation and made an unrecorded claim; the host parses hook stdout as a single value, so the whole delivery was dropped as invalid JSON. Notices now accumulate into one systemMessage printed once, and the parked echo file is written in one pass.
