@@ -451,7 +451,7 @@ class DogfoodingTests(unittest.TestCase):
     """
 
     PLANTS = [
-        dict(name="changelog-fragment-category", rule="R-720cc85a48",
+        dict(name="changelog-fragment-category", rule="R-5dec6166e2",
              target="scripts/godmode_runtime/godmode_changelog.py",
              command=[sys.executable, "-m", "unittest", "tests.test_changelog_gate"],
              replace='"added", "changed", "fixed", "removed", "deprecated", "security"',
@@ -468,7 +468,7 @@ class DogfoodingTests(unittest.TestCase):
                       "tests.test_godmode_runtime.AttestationTests"],
              replace='    return "corroborated" if terms & window else "unsupported"',
              with_text='    return "corroborated"'),
-        dict(name="environment-production-marker", rule="R-4783f0d508",
+        dict(name="environment-production-marker", rule="R-242ba2f803",
              target="scripts/godmode_runtime/godmode_reconcile.py",
              command=[sys.executable, "-m", "unittest", "tests.test_environment_markers"],
              replace='prod(?:uction)?|prd|live|release',
