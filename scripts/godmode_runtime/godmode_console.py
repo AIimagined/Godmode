@@ -1498,6 +1498,13 @@ def cmd_law_candidates(args: argparse.Namespace, runtime: Runtime) -> CommandRes
     return CommandResult({"candidates": law_candidates(runtime.archive)})
 
 
+def cmd_law_hygiene(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    from .godmode_law import hygiene
+
+    _require_archive(runtime)
+    return CommandResult(hygiene(runtime.archive))
+
+
 def cmd_law_debrief(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     from .godmode_law import debrief
@@ -4728,6 +4735,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "candidates",
         help="Correction candidates clustered by keywords, with recurrence counts")
     law_candidates_parser.set_defaults(handler=cmd_law_candidates)
+    law_hygiene = law_sub.add_parser(
+        "hygiene",
+        help="Maintenance scan: laws with no recorded origin, contradictory "
+             "pairs, and guards a recorded check now enforces mechanically - "
+             "names candidates, never retires")
+    law_hygiene.set_defaults(handler=cmd_law_hygiene)
     law_promote = law_sub.add_parser(
         "promote",
         help="Promote a promotable candidate cluster into a guarded law "

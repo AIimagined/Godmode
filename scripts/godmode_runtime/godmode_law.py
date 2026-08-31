@@ -26,6 +26,7 @@ it came from.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -130,7 +131,7 @@ def _render(laws: list[dict[str, Any]], dropped: int, cap: int) -> str:
 
 _SKILL_BODY = f"""---
 name: {SKILL_DIRNAME}
-description: Use at the start of every session and before every new task - the project's generated Code of Law; read {LAW_FILENAME} at the project root and follow its guards before acting.
+description: Use at the start of every session and before every new task - read {LAW_FILENAME} at the project root, the project's generated Code of Law, and follow its guards before acting.
 ---
 
 # The project's Code of Law
@@ -159,6 +160,87 @@ _CORRECTION_THRESHOLD = 2
 # escalates on one observation. A candidate cluster is promotable only after
 # the same correction recurs in this many DISTINCT sessions.
 PROMOTION_SESSIONS = 3
+
+
+_HYGIENE_NEGATION = re.compile(
+    r"\b(?:not|never|no|don't|cannot|must\s+not|avoid|without)\b", re.IGNORECASE
+)
+_HYGIENE_STOPWORDS = frozenset(
+    "the a an and or of to in for with must never always not no every any "
+    "this that from by on at is are be do".split()
+)
+
+
+def _hygiene_terms(text: str) -> set[str]:
+    return {
+        token for token in re.findall(r"[a-z][a-z-]{3,}", text.lower())
+        if token not in _HYGIENE_STOPWORDS
+    }
+
+
+def hygiene(archive: Any) -> dict[str, Any]:
+    """Maintenance scan over the living laws. Names candidates; never retires.
+
+    Three checks, each about a different way a ratchet rots: a law with no
+    recorded origin cannot be re-validated when the world changes; two
+    active laws sharing their subject matter with opposite polarity are a
+    disagreement waiting for a release to expose it; and a law whose guard
+    a pin now enforces mechanically is a retirement candidate - prose
+    duplicating a sensor is debt, not protection. (Staleness and dormancy
+    already live in `law debrief`; this scan does not repeat them.)
+    """
+    lessons = _guarded_lessons(archive)
+    findings: list[dict[str, Any]] = []
+
+    for lesson in lessons:
+        if not str(lesson.get("why", "")).strip():
+            findings.append({
+                "check": "no-recorded-origin",
+                "detail": f"law '{lesson['subject']}' (seq:{lesson['sequence']}) "
+                          "records no originating failure; add the why, or retire it",
+            })
+
+    terms = {lesson["sequence"]: _hygiene_terms(lesson["guard"]) for lesson in lessons}
+    for i, first in enumerate(lessons):
+        for second in lessons[i + 1:]:
+            shared = terms[first["sequence"]] & terms[second["sequence"]]
+            if len(shared) < 3:
+                continue
+            polarity_first = bool(_HYGIENE_NEGATION.search(first["guard"]))
+            polarity_second = bool(_HYGIENE_NEGATION.search(second["guard"]))
+            if polarity_first != polarity_second:
+                findings.append({
+                    "check": "contradictory-pair",
+                    "detail": f"laws '{first['subject']}' (seq:{first['sequence']}) and "
+                              f"'{second['subject']}' (seq:{second['sequence']}) share "
+                              f"{len(shared)} terms with opposite polarity; one of them "
+                              "is wrong, or one needs a scope clause",
+                })
+
+    checks = [
+        (str(record.get("subject", "")),
+         _hygiene_terms(str(record.get("subject", "")) + " "
+                        + str((record.get("data") or {}).get("value", ""))))
+        for record in archive.read_events()
+        if record.get("kind") == "checklist"
+    ]
+    for lesson in lessons:
+        for check_subject, check_terms in checks:
+            if len(terms[lesson["sequence"]] & check_terms) >= 3:
+                findings.append({
+                    "check": "sensor-superseded",
+                    "detail": f"law '{lesson['subject']}' (seq:{lesson['sequence']}) "
+                              f"overlaps check '{check_subject}'; a mechanically "
+                              "enforced guard no longer needs its prose twin - "
+                              "retirement candidate",
+                })
+                break
+
+    return {
+        "laws_scanned": len(lessons),
+        "findings": findings,
+        "verdict": "clean" if not findings else "candidates-found",
+    }
 
 
 def record_correction_candidate(archive: Any, prompt: str, *,
