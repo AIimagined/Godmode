@@ -25,6 +25,13 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          # Full history: the ranking gate's freshness instrument reads git
+          # commit time, and a shallow checkout is a different instrument
+          # than the committed snapshot was generated under - the comparison
+          # would honestly skip itself (ranking-mode-differs) instead of
+          # verifying anything.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -98,6 +105,13 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          # Full history: the ranking gate's freshness instrument reads git
+          # commit time, and a shallow checkout is a different instrument
+          # than the committed snapshot was generated under - the comparison
+          # would honestly skip itself (ranking-mode-differs) instead of
+          # verifying anything.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -129,6 +143,13 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          # Full history: the ranking gate's freshness instrument reads git
+          # commit time, and a shallow checkout is a different instrument
+          # than the committed snapshot was generated under - the comparison
+          # would honestly skip itself (ranking-mode-differs) instead of
+          # verifying anything.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -163,6 +184,13 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          # Full history: the ranking gate's freshness instrument reads git
+          # commit time, and a shallow checkout is a different instrument
+          # than the committed snapshot was generated under - the comparison
+          # would honestly skip itself (ranking-mode-differs) instead of
+          # verifying anything.
+          fetch-depth: 0
         with:
           fetch-depth: 0
 

@@ -35,7 +35,6 @@ if str(PLUGIN_ROOT) not in sys.path:
 
 from tests._gate_mode_isolation import park_local_policy, restore_local_policy  # noqa: E402
 
-
 def setUpModule() -> None:
     # These tests cross the boundary against THIS repo, so a local
     # observe-mode declaration turns every decision envelope into an
@@ -144,6 +143,10 @@ def _decide(tool: str, tool_input: dict) -> tuple[str, str]:
     # A CI runner has no host env markers at all, and an unknown host's
     # posture legitimately differs (field report, 2026-08-31) - inherit the
     # environment and the test asserts whatever box it runs on.
+    # No state-home isolation here: a git project's archive lives under
+    # its git dir regardless of GODMODE_STATE_HOME, so the honest fix for
+    # cross-test session state lives at the writer
+    # (test_capability_register marks its own session's sources-gate).
     environment = {**os.environ, "GODMODE_HOST": "claude"}
     done = subprocess.run(
         [sys.executable, str(HOOK), "pre-action", "--project", str(PLUGIN_ROOT)],
@@ -360,8 +363,13 @@ class ApprovalRequiredHookTests(unittest.TestCase):
 
     def test_without_the_policy_the_same_operation_is_unaffected(self) -> None:
         self.POLICY.unlink(missing_ok=True)
-        decision, _reason = _decide("Bash", {"command": self.OPERATION})
-        self.assertEqual(decision, "allow")
+        decision, reason = _decide("Bash", {"command": self.OPERATION})
+        # The reason and the policy file's state ride in the failure message:
+        # this assertion has failed in full-suite order while passing alone
+        # and in a direct probe (2026-08-31), and the discarded reason was
+        # the one instrument that would have named the leftover state.
+        self.assertEqual(decision, "allow",
+                         f"reason={reason!r} policy_exists={self.POLICY.exists()}")
 
     def test_a_malformed_policy_file_degrades_this_call_not_the_whole_gate(self) -> None:
         # The broad GodmodeError handler around the hook's whole decision
