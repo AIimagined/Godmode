@@ -1,0 +1,1 @@
+Path canonicalization resolves aliases on every platform, not Windows alone: macOS reaches every temp path through the /var -> /private/var symlink, and a pin recorded under one spelling stopped matching a lookup under the other - the same deny-became-allow the 8.3 fix closed on Windows. The decision table regenerated with the unified helper.
