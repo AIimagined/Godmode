@@ -74,3 +74,51 @@ class MergeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LawsSectionTests(unittest.TestCase):
+    """The learnings a project recorded travel with the emitted section:
+    hookless agents read AGENTS.md, and a law that never reaches them
+    governs nothing. Bounded by the same top-laws cap the brief uses;
+    absent laws render an honest empty note, never an empty heading."""
+
+    def test_recorded_laws_are_rendered(self) -> None:
+        from godmode_runtime.godmode_anchor import resolve_anchor
+        from godmode_runtime.godmode_chronicle import Chronicle
+        import os
+        import tempfile as tf
+        from unittest import mock
+        with tf.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "p"
+            root.mkdir()
+            state = Path(tmp) / "state"
+            with mock.patch.dict(os.environ,
+                                 {"GODMODE_STATE_HOME": str(state)}, clear=False):
+                archive = Chronicle(resolve_anchor(root))
+                archive.initialize()
+                archive.append("lesson", "quote-paths", {
+                    "value": "a space broke the loop",
+                    "generalized_guard": "quote every path passed to the shell",
+                    "status": "active"})
+                emit_agentsmd(_build_parser(), root, archive=archive)
+                text = (root / "AGENTS.md").read_text(encoding="utf-8")
+                self.assertIn("### Learnings", text)
+                self.assertIn("quote every path", text)
+
+    def test_no_laws_reads_honestly_empty(self) -> None:
+        from godmode_runtime.godmode_anchor import resolve_anchor
+        from godmode_runtime.godmode_chronicle import Chronicle
+        import os
+        import tempfile as tf
+        from unittest import mock
+        with tf.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "p"
+            root.mkdir()
+            state = Path(tmp) / "state"
+            with mock.patch.dict(os.environ,
+                                 {"GODMODE_STATE_HOME": str(state)}, clear=False):
+                archive = Chronicle(resolve_anchor(root))
+                archive.initialize()
+                emit_agentsmd(_build_parser(), root, archive=archive)
+                text = (root / "AGENTS.md").read_text(encoding="utf-8")
+                self.assertIn("no laws recorded yet", text)
