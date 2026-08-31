@@ -6,6 +6,24 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-09-01
+
+### Added
+
+- The demand-vs-use census: the doctor pairs what the record demanded (fix-loop subjects, repeated incidents, downgraded claims) with what fired (incidents opened, differentials, lessons, verdicts, attestations), per capability family. Dormant machinery with standing demand is named; dormant machinery with no demand is health; a fresh archive reads idle. The investigation skill closes its loop by contrasting the failed attempt with the nearest succeeding one - the difference is what generalizes into a guard.
+- Four more families join the demand-vs-use census where their demand was already recordable: tracked work items demand criteria and plans; a verified-grade claim stakes something an independent checker should re-derive; an opened incident runs on assumptions worth stating. On the repository's own archive the new families read dormant-with-demand on arrival - the census now reports the very audit that motivated it.
+- The db family joins the demand-vs-use census: database files present in the tree with no database-kind records reads dormant-with-demand - demand detected from the tree itself, the way the audit question that prompted it was answered.
+- The stop hook reads the fix-loop shape out of the session's own timeline: one command failing three or more times with edits between the failures draws a single notice naming the godmode-investigation workflow - reproduce first, bounded hypotheses, evidence per fix - unless an incident record shows the loop is already being investigated. Counts only, never the command text. The diagnosis discipline's own trigger, compiled into the hook instead of left to willpower.
+- docs --emit-agentsmd carries the project's top laws into a Learnings section: a hookless agent reads AGENTS.md, and a law that never reaches it governs nothing. Bounded by the brief's own top-laws budget; a project with no laws reads honestly empty.
+- The fix-loop wire: a scored claim resolved failed is a recorded reversal, and when two reversals share their subject matter, the next verified-or-scored claim on that subject downgrades with both named - until the record shows the reading happened (an incident or decision recorded after the second reversal, cited by seq on the new claim). Rewording the subject does not clear a wire that matches on salient terms. The doctor's trip wires carry the same families, so the loop is visible even to a reader who never tries a third claim.
+
+### Fixed
+
+- Path canonicalization resolves aliases on every platform, not Windows alone: macOS reaches every temp path through the /var -> /private/var symlink, and a pin recorded under one spelling stopped matching a lookup under the other - the same deny-became-allow the 8.3 fix closed on Windows. The decision table regenerated with the unified helper.
+- The CI matrix's residual failures traced to one cross-test leak: a dogfooding test opened a real session in the repository's own archive (a git project's state lives under its git dir, beyond any state-home isolation) and never marked the once-per-session required-sources ask delivered, so three later boundary-crossing modules received a sources ask in place of their expected decisions - three different symptoms, one open session. The writer now marks its own session's gate delivered; the decision table is regenerated after the containment change (its freshness gate caught the stale copy); ranking tests skip with the mode named when the snapshot's instrument differs; the workflow checks out full history so CI compares rankings for real; and the three formerly opaque failures now carry reason, policy state, and stderr in their own messages.
+- Criteria and planning census demand counts open work items only - the same unresolved-only semantic evidence debt uses. A criterion for work already verified and shipped is ritual, not rigor; open items still demand, and the demand-moment finding at the write is unchanged.
+- The scratch allowance's anti-swallow guard compared unresolved path spellings, so on a machine whose temp directory is reached through an alias (a Windows runner's 8.3 RUNNER~1, macOS's /var -> /private/var symlink) a project genuinely under temp was not recognized as such - the allowance stayed armed and an outside-the-tree write was silently scratch-allowed. All three paths in the check now canonicalize the same way containment does; a project under temp keeps containment in charge under every spelling, and real scratch writes stay allowed.
+
 ## [0.3.7] - 2026-08-31
 
 ### Fixed
