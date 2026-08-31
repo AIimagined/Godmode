@@ -2463,6 +2463,12 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             # how well declared confidence has tracked outcomes, and the
             # standing debt of scored claims nothing ever resolved.
             "calibration": calibration_summary(runtime.archive),
+            # Demand-vs-use census: which machinery families the record
+            # demanded versus which fired. Dormancy WITH demand is the
+            # alarm; idle is health. Advisory - never flips health.
+            "utilization": __import__(
+                "godmode_runtime.godmode_metrics", fromlist=["utilization"]
+            ).utilization(runtime.archive),
             "issues": issues,
             "deep_scan": args.deep,
             "network_used": False,

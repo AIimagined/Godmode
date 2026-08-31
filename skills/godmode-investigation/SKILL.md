@@ -76,3 +76,5 @@ it.
 
 Read [godmode-evidence-cycle.md](references/godmode-evidence-cycle.md) for the attempt
 record and completion checklist.
+
+Before recording the closing lesson, contrast the failed attempt with the nearest succeeding one - the difference between the two trajectories, not the failure alone, is what generalizes into a guard.

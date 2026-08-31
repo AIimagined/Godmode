@@ -424,6 +424,74 @@ def economics(archive: Chronicle, project: Path) -> dict[str, Any]:
     }
 
 
+def utilization(archive: Chronicle) -> dict[str, Any]:
+    """Demand-vs-use census: dormancy with demand is the alarm.
+
+    Absolute usage tracking is wrong - a project with no databases should
+    never touch `db`. The honest question pairs what the record DEMANDED
+    with what FIRED, per capability family: `investigation` (demand:
+    fix-loop subjects with two failed resolutions, third-strike subjects;
+    fired: incidents opened, differentials recorded), `learning` (demand:
+    incidents; fired: lessons at or after them), `verification` (demand:
+    downgraded claims; fired: verdict records and attestations). A family
+    with demand and nothing fired reads dormant-with-demand; with neither
+    it reads idle - which is health, not neglect. Advisory always.
+    """
+    records = archive.read_events(verify=False)
+    claims = [r for r in records if r.get("kind") == "claim"]
+    by_seq = {r["sequence"]: r for r in claims}
+
+    reversal_subjects: dict[str, int] = {}
+    downgraded = 0
+    for record in claims:
+        data = record.get("data") or {}
+        if data.get("downgraded"):
+            downgraded += 1
+        if data.get("resolves") is not None and data.get("outcome") == "failed":
+            original = by_seq.get(data["resolves"])
+            if original is not None:
+                subject = str(original.get("subject", ""))[:80]
+                reversal_subjects[subject] = reversal_subjects.get(subject, 0) + 1
+
+    incident_subjects: dict[str, int] = {}
+    incident_seqs: list[int] = []
+    for record in records:
+        if record.get("kind") == "incident":
+            incident_seqs.append(record["sequence"])
+            incident_subjects[record["subject"]] = (
+                incident_subjects.get(record["subject"], 0) + 1)
+
+    counts = {kind: sum(1 for r in records if r.get("kind") == kind)
+              for kind in ("differential", "lesson", "verdict", "attestation")}
+    last_lesson = max((r["sequence"] for r in records
+                       if r.get("kind") == "lesson"), default=0)
+
+    def family(demand: int, fired: int) -> dict[str, Any]:
+        verdict = ("idle" if not demand and not fired
+                   else "dormant-with-demand" if demand and not fired
+                   else "satisfied")
+        return {"demand": demand, "fired": fired, "verdict": verdict}
+
+    investigation_demand = (
+        sum(1 for c in reversal_subjects.values() if c >= 2)
+        + sum(1 for c in incident_subjects.values() if c >= 3))
+    families = {
+        "investigation": family(
+            investigation_demand,
+            len(incident_seqs) + counts["differential"]),
+        "learning": family(
+            sum(1 for seq in incident_seqs if seq > last_lesson),
+            counts["lesson"]),
+        "verification": family(
+            downgraded, counts["verdict"] + counts["attestation"]),
+    }
+    return {
+        "families": families,
+        "basis": "record kinds only; dormancy with demand is the alarm, "
+                 "idle is health",
+    }
+
+
 def metrics(archive: Chronicle, project: Path, window: int = 500) -> dict[str, Any]:
     """The twelve product metrics, computed locally from the archive."""
     records = archive.read_events()[-max(1, window):] if archive.initialized() else []
