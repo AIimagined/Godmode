@@ -70,10 +70,20 @@ def record_incident(
             "a turning point is a causal claim - cite the record or artifact "
             "that shows the run never recovered past it"
         )
+    advisories: list[str] = []
+    # An investigation opened is an investigation running on assumptions;
+    # unstated ones are the six-round failure mode (audit 2026-09-01).
+    if not any(r.get("kind") == "assumption"
+               for r in archive.select(kind="assumption", limit=50)):
+        advisories.append(
+            "no assumption records exist - state the assumptions this "
+            "investigation rests on (godmode remember --kind assumption) "
+            "so a wrong one can be found instead of lived in")
     return archive.append(
         "incident", subject,
         {"detail": detail, "failure_class": failure_class,
-         "turning_point": bool(turning_point)},
+         "turning_point": bool(turning_point),
+         "advisories": advisories},
         evidence=cites or [],
     )
 

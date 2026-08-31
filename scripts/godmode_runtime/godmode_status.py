@@ -157,6 +157,15 @@ def record_item(
             )
 
     findings: list[str] = []
+    # The demand-moment nudge the census alone could not give: work
+    # entering active without a pre-registered criterion is the exact
+    # moment the criterion is cheapest to write and most often skipped
+    # (audit 2026-09-01: 16 items, zero criteria). A finding, never a block.
+    if state == "active" and not any(
+        (r.get("data") or {}).get("task") == item
+        for r in archive.select(kind="criterion", limit=200)
+    ):
+        findings.append("criterion-missing")
     if effective_type == "story" and isinstance(effective_points, int):
         if effective_points >= 8:
             findings.append("split-recommended")
