@@ -1822,12 +1822,19 @@ def _canonical_path_text(path: Path) -> str:
     existing prefix of a not-yet-existing path); applied on Windows only
     so posix containment semantics are untouched.
     """
+    # All platforms, not Windows alone: macOS aliases every temp path
+    # through the /var -> /private/var symlink, and a pin recorded under
+    # one spelling stopped matching a lookup under the other - the same
+    # deny-became-allow the 8.3 fix closed on Windows (matrix run
+    # 33418723383: 'worktree-file-mutation' != 'pinned-evaluator-mutation'
+    # on macOS only). realpath resolves the existing prefix of a
+    # not-yet-existing path, so a target that does not exist yet still
+    # canonicalizes consistently with its directory.
     text = str(path)
-    if os.name == "nt":
-        try:
-            text = os.path.realpath(text)
-        except (OSError, ValueError):
-            pass
+    try:
+        text = os.path.realpath(text)
+    except (OSError, ValueError):
+        pass
     return os.path.normcase(os.path.normpath(text))
 
 
