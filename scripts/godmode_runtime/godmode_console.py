@@ -2322,6 +2322,22 @@ def cmd_checkpoint(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # over - the suggestion measures distance from THIS moment now.
     from .godmode_guardrails import reset_mutation_counter
     reset_mutation_counter(runtime.archive)
+    # What was learned, beside what was verified: an incident newer than the
+    # newest lesson is a failure that taught nothing on the record yet.
+    # Advisory - the checkpoint itself is already written above.
+    last_incident = max(
+        (r["sequence"] for r in runtime.archive.select(kind="incident", limit=500)),
+        default=None)
+    if last_incident is not None:
+        last_lesson = max(
+            (r["sequence"] for r in runtime.archive.select(kind="lesson", limit=500)),
+            default=0)
+        if last_incident > last_lesson:
+            result.payload["advisories"] = [
+                f"incident seq:{last_incident} postdates the newest lesson; "
+                "if it taught something, record it now "
+                "(godmode remember --kind lesson) while the evidence is fresh"
+            ]
     return result
 
 
@@ -2526,6 +2542,10 @@ def cmd_precheck(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     from .godmode_precheck import recurrence_nudges
     report["recurrence_advisories"] = recurrence_nudges(
         runtime.archive, args.about, changed, _session(runtime, getattr(args, "session", None)))
+    # Lessons recorded since the last law compile, load-bearing NOW rather
+    # than after the next regen. Marked fresh-uncompiled; advisory only.
+    from .godmode_law import fresh_laws
+    report["fresh_lessons"] = fresh_laws(runtime.archive, project)
     # Non-zero on a hit so a script can stop, but the payload is a question and
     # never a refusal: prior work is a reason to look, not grounds to decline.
     # A paired-artifact hit never contributes to this exit code either - v1

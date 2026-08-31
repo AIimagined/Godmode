@@ -641,6 +641,36 @@ def record_delivery(archive: Any, laws: list[dict[str, Any]], *,
     )
 
 
+_PROVENANCE = re.compile(r"^Provenance: seq:(\d+),", re.MULTILINE)
+
+
+def fresh_laws(archive: Any, project: Path | str) -> list[dict[str, Any]]:
+    """Guarded lessons the compiled law file does not carry yet.
+
+    Knowledge recorded at the moment of discovery is load-bearing NOW, not
+    after the next compile: this overlay reads the law file's own
+    provenance lines and returns every living guarded lesson missing from
+    them, marked fresh-uncompiled. Advisory by construction - the overlay
+    feeds pre-action advisories only and no gate verdict reads it. No law
+    file at all means every guarded lesson is fresh.
+    """
+    law_file = Path(project) / LAW_FILENAME
+    compiled: set[int] = set()
+    if law_file.is_file():
+        compiled = {
+            int(seq) for seq in _PROVENANCE.findall(
+                law_file.read_text(encoding="utf-8"))
+        }
+    return [
+        {"subject": lesson["subject"],
+         "guard": _ellipsize(lesson["guard"], GUARD_CHARS),
+         "seq": lesson["sequence"],
+         "marker": "fresh-uncompiled"}
+        for lesson in _guarded_lessons(archive)
+        if lesson["sequence"] not in compiled
+    ]
+
+
 def compile_laws(archive: Any, project: Path | str, *, cap: int = LAW_CAP) -> dict[str, Any]:
     """Fold guarded lessons into the law file and its wrapper skill."""
     root = Path(project)
