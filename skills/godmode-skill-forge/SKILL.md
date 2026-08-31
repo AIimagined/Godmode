@@ -33,7 +33,7 @@ Read [godmode-forge-contract.md](references/godmode-forge-contract.md) before ap
 - Use lowercase hyphen-case and make the description state both capability and trigger.
 - Prefer progressive disclosure: compact `SKILL.md`, detailed references only when needed.
 - Generate original project language and organization. Do not include external URLs, source-project names, copied templates, or imported implementation text.
-- Do not invoke a model subprocess, fetch network content, install dependencies, or update itself.
+- Runs with no model subprocess, no network fetch, no dependency install, and no self-update.
 - If two proposals overlap, synthesize one coherent skill using the strongest compatible behaviors and one routing boundary.
 - Preserve failed evaluations as evidence; never rewrite a baseline to manufacture improvement.
 

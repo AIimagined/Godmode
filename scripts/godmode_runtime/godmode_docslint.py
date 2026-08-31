@@ -52,6 +52,26 @@ _PRIVATE_PARTS = frozenset({
 })
 
 CHECKS: dict[str, dict[str, Any]] = {
+    "prohibition-without-alternative": {
+        # A guide rule that only forbids drags the forbidden shape into the
+        # reader's head with nothing to do instead. Bullet-shaped rules only:
+        # prose narrates, but a bulleted "never X" is a rule, and a rule
+        # steers better by naming the affirmative form.
+        "pattern": re.compile(r"(?i)^\s*[-*]\s*(?:do\s+not|don't|never)\b"),
+        "unless": re.compile(r"(?i)\b(?:instead|prefer|use\b|rather|;|:)"),
+        "why": "a rule that only forbids leaves the reader holding the forbidden shape",
+        "remedy": "name what to do instead on the same line (instead/prefer/use ...)",
+        "severity": "low",
+    },
+    "buried-pointer": {
+        # A pointer does its routing work with its leading words; one parked
+        # at the end of a long sentence is found only after the reader no
+        # longer needs it.
+        "pattern": re.compile(r".{80,}\b(?:see|read)\s+\S+\.mdx?\b"),
+        "why": "the pointer's trigger arrives after the prose it should have routed",
+        "remedy": "front-load: lead the line with what the reader is looking for, then the pointer",
+        "severity": "low",
+    },
     "rationale-leak": {
         "pattern": re.compile(
             r"(?i)\b(?:chosen|picked|selected|opted|went)\s+(?:for\s+)?"
