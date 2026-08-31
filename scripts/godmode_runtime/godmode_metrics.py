@@ -390,6 +390,32 @@ def economics(archive: Chronicle, project: Path) -> dict[str, Any]:
             ),
         })
 
+    # The fix-loop wire's doctor face: subjects whose scored claims failed
+    # their outcomes twice are named here as well as at claim time, so the
+    # loop is visible even to a reader who never tries a third claim.
+    claims = archive.select(kind="claim", limit=500)
+    by_seq = {r["sequence"]: r for r in claims}
+    failed_subjects: dict[str, int] = {}
+    for record in claims:
+        data = record.get("data") or {}
+        if data.get("resolves") is None or data.get("outcome") != "failed":
+            continue
+        original = by_seq.get(data["resolves"])
+        if original is None:
+            continue
+        subject = str(original.get("subject", ""))[:80]
+        failed_subjects[subject] = failed_subjects.get(subject, 0) + 1
+    for subject, count in sorted(failed_subjects.items()):
+        if count >= 2:
+            trip_wires.append({
+                "code": "fix-loop",
+                "detail": (
+                    f"'{subject}' carries {count} reversals (scored claims "
+                    "that failed their outcomes); the analysis is the defect "
+                    "- open a godmode investigation before a third try"
+                ),
+            })
+
     return {
         "evidence_debt": debt,
         "verified_completion_rate": rate,
