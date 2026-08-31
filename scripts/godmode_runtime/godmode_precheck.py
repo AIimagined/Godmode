@@ -223,9 +223,12 @@ def recurrence_nudges(archive: Chronicle, task: str,
         return []
 
     candidates: list[dict[str, Any]] = []
+    # Full archive, never a window: a pattern counter that forgets is a
+    # monitor a patient failure mode simply waits out.
     incidents: dict[str, list[int]] = {}
-    for record in archive.select(kind="incident", limit=500):
-        incidents.setdefault(str(record["subject"]), []).append(record["sequence"])
+    for record in archive.read_events(verify=False):
+        if record.get("kind") == "incident":
+            incidents.setdefault(str(record["subject"]), []).append(record["sequence"])
     for subject, seqs in sorted(incidents.items()):
         if len(seqs) >= 2:
             candidates.append({"pattern": subject, "occurrences": len(seqs),
