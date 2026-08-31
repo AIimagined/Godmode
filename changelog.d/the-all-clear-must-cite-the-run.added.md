@@ -1,0 +1,1 @@
+A verified claim whose text is a review's pass verdict (review passed, looks correct, no issues found) downgrades unless a `cmd:` citation shows the checks were run, not read. The doctor gains the dissent check: a record window where no check ever failed, past a sample floor, is reported as evidence about the checks rather than the work - a warning, never a health flip.

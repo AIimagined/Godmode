@@ -1,0 +1,1 @@
+`docs --emit-agentsmd` writes or refreshes a godmode section in AGENTS.md for hosts that read the file and wire no hooks: commands generated from the registered day-one verbs, boundaries from one host-neutral tier table, merge-not-overwrite with everything outside the markers preserved byte-for-byte.

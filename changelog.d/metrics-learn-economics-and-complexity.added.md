@@ -1,0 +1,1 @@
+`metrics` gains verified-result economics - evidence debt, verified completion rate, rule-growth direction, and third-strike trip wires that count over the whole archive (never a decaying window) and name the failure class when the record carries one - plus opt-in `--complexity`: per-function branch counts from the ast, worst offenders first, advisory only.
