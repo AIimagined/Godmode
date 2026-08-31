@@ -982,6 +982,54 @@ def looks_like_fix_claim(text: str) -> tuple[bool, str]:
     return (True, f"asserts a fix: {match.group(0)}") if match else (False, "")
 
 
+# A pass verdict is a review's terminal sentence: everything is fine. The
+# vocabulary is deliberately narrow - "review found three problems" must
+# never match - and each alternative asserts wholesale cleanliness, not a
+# specific behaviour.
+_PASS_VERDICT_VOCAB = re.compile(
+    r"(?:review\s+passed|looks\s+correct|looks\s+good|lgtm|"
+    r"all\s+checks?\s+pass(?:ed)?|no\s+issues?\s+found|"
+    r"no\s+problems?\s+found|review\s+(?:is\s+)?clean)",
+    re.IGNORECASE,
+)
+
+
+def looks_like_pass_verdict(text: str) -> tuple[bool, str]:
+    """Whether a claim is a review's all-clear rather than a specific fact."""
+    match = _PASS_VERDICT_VOCAB.search(text)
+    return (True, f"asserts an all-clear: {match.group(0)}") if match else (False, "")
+
+
+def dissent_check(archive: Chronicle, window: int = 25, sample_floor: int = 8) -> str | None:
+    """Advisory when the recent record contains no failed check at all.
+
+    Reads the last `window` outcome-bearing records - attestations
+    (passed), verdicts (disposition), claim resolutions (outcome). If at
+    least `sample_floor` exist and every one passed, that is not evidence
+    of flawless work; it is evidence that no check able to fail is being
+    run, and the advisory says so. One real failure anywhere in the window
+    keeps it silent. Never a health flip - the caller renders it as a
+    warning, nothing more.
+    """
+    outcomes: list[bool] = []
+    for record in archive.read_events(verify=False):
+        kind, data = record.get("kind"), record.get("data", {})
+        if kind == "attestation" and "passed" in data:
+            outcomes.append(bool(data["passed"]))
+        elif kind == "verdict" and "disposition" in data:
+            outcomes.append(data["disposition"] == "confirmed")
+        elif kind == "claim" and data.get("resolves") is not None:
+            outcomes.append(data.get("outcome") == "held")
+    recent = outcomes[-window:]
+    if len(recent) < sample_floor or not all(recent):
+        return None
+    return (
+        f"no check has failed in the last {len(recent)} outcome-bearing "
+        "records; either the work is flawless or nothing being run can "
+        "fail - point one check at something expected to break"
+    )
+
+
 # E4 R4 / E6 tdd, superpowers-class: a completion claim citing a test command
 # is admissible only when the SAME command is observed failing before the
 # fix-edit and passing after - the temporal shape, not just the citation.
@@ -1522,6 +1570,7 @@ def record_claim(
         and _position_support(project, citation, text) == "unsupported"
     ]
     fix_claim, _fix_why = looks_like_fix_claim(text)
+    pass_verdict, _pass_why = looks_like_pass_verdict(text)
     cmd_citations = [c for c in citations if str(c).startswith("cmd:")]
     effective = grade
     reason = ""
@@ -1573,6 +1622,15 @@ def record_claim(
             temporal_reason = _temporal_violation(timeline, cmd_citations)
             if temporal_reason:
                 effective, reason = "hypothesis", temporal_reason
+        elif pass_verdict and not cmd_citations:
+            # An all-clear earned by reading is an opinion about appearance.
+            # The bar the fix-claim already carries, widened to the review's
+            # terminal sentence: run the thing, cite the run.
+            effective, reason = (
+                "hypothesis",
+                "a pass verdict rests on reading alone - run the checks and "
+                "cite cmd:<the command that ran them> beside the file citations",
+            )
         elif absence and not _probed_twice(archive, citations):
             # One probe that found nothing is evidence about where it looked.
             # A second, different probe is what turns that into a fact about
