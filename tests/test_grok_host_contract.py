@@ -316,6 +316,9 @@ class CodexApplyPatchTests(unittest.TestCase):
                  "tool_input": {"input": patch}},
                 project, state, extra_env={"GODMODE_HOST": "codex"},
             )
+        self.assertTrue(
+            (done.stdout or "").strip(),
+            f"empty stdout; exit={done.returncode} stderr={done.stderr[:300]!r}")
         body = json.loads(done.stdout)
         self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "deny")
 

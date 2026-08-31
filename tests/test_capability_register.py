@@ -560,6 +560,17 @@ class DogfoodingTests(unittest.TestCase):
         archive = Chronicle(resolve_anchor(PLUGIN_ROOT))
         archive.initialize()
         session = open_session(archive, "capability-register-dogfooding-test")
+        # This session is real and lands in the repository's own archive (a
+        # git project's state lives under the git dir, so no state-home env
+        # can isolate it). Left bare, the hook's once-per-session
+        # required-sources ask fires on the NEXT boundary-crossing test in
+        # the suite and replaces its expected decision (bisected
+        # 2026-08-31: three modules failed three different ways from this
+        # one open session). Mark the gate delivered for this session -
+        # the same record the hook itself writes after asking.
+        archive.append("action", "sources-gate",
+                       {"session": session, "unread": 0, "documents": 0},
+                       evidence=[])
         for plant in self.PLANTS:
             with self.subTest(plant=plant["name"]):
                 outcome = plant_and_observe(

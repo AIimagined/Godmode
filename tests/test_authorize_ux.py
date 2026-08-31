@@ -91,8 +91,12 @@ class HostedEscapeHintTests(unittest.TestCase):
             cwd=PLUGIN_ROOT, env=environment)
         decision = json.loads(result.stdout)
         reason = decision.get("hookSpecificOutput", {}).get("permissionDecisionReason", "")
-        self.assertIn("leading '!'", reason)
-        self.assertIn("authorize stage", reason)
+        # Full stdout and stderr ride in the failure: on CI this read an
+        # empty reason while every local probe denied with a full one
+        # (2026-08-31), and the discarded body was the missing instrument.
+        context = f"stdout={result.stdout[:400]!r} stderr={result.stderr[:200]!r}"
+        self.assertIn("leading '!'", reason, context)
+        self.assertIn("authorize stage", reason, context)
 
 
 class EllipsizeTests(unittest.TestCase):
