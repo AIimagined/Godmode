@@ -115,6 +115,34 @@ def record_item(
             f"Moving '{item}' to blocked requires blocked_on naming the exact missing "
             "dependency; a blocked item that names no blocker is unactionable"
         )
+    if depends_on:
+        # Existence-checked at write time, the same discipline pending items
+        # already get: a phantom blocker would freeze this item forever with
+        # nothing anyone could ever resolve.
+        known = items(archive)
+        missing = [d for d in depends_on if d != item and d not in known]
+        if missing:
+            raise ArchiveError(
+                f"'{item}' depends on unknown item(s): {', '.join(missing)}. "
+                "Record the dependency first, or fix the name."
+            )
+        if item in depends_on:
+            raise ArchiveError(f"'{item}' cannot depend on itself")
+        # A dependency chain that loops back makes every member unstartable
+        # forever, so the write that would close the loop is the one refused.
+        stack = list(depends_on)
+        seen: set[str] = set()
+        while stack:
+            node = stack.pop()
+            if node == item:
+                raise ArchiveError(
+                    f"'{item}' -> {', '.join(depends_on)} closes a dependency "
+                    "cycle; a cycle makes every member unstartable"
+                )
+            if node in seen:
+                continue
+            seen.add(node)
+            stack.extend(known.get(node, {}).get("depends_on", []) or [])
     if state == "verified" and (effective_acceptance or "").strip() and not evidence:
         raise ArchiveError(
             f"'{item}' declares acceptance criteria; moving to verified requires evidence "
@@ -172,7 +200,7 @@ def items(archive: Chronicle) -> dict[str, dict[str, Any]]:
         }
         # §19 fields ride along when declared, so gates and point sums read the
         # same view every other consumer does instead of re-parsing records.
-        for key in ("item_type", "points", "acceptance", "root_cause", "blocked_on"):
+        for key in ("item_type", "points", "acceptance", "root_cause", "blocked_on", "depends_on"):
             if key in data:
                 entry[key] = data[key]
         latest[record["subject"]] = entry
@@ -492,8 +520,31 @@ def remaining(
     for entry in items_left:
         by_source[entry["source"]] = by_source.get(entry["source"], 0) + 1
 
+    # The ready set is derived, never hand-picked: an item is blocked by
+    # its blocked_on note or by any dependency not yet terminal; everything
+    # else still open is ready. Next action = the top of `ready`.
+    ready: list[dict[str, Any]] = []
+    blocked: list[dict[str, Any]] = []
+    for name, entry in sorted(current.items()):
+        if entry["state"] in TERMINAL:
+            continue
+        blockers: list[str] = []
+        if (entry.get("blocked_on") or "").strip() and entry["state"] == "blocked":
+            blockers.append(entry["blocked_on"])
+        for dependency in entry.get("depends_on") or []:
+            target = current.get(dependency)
+            if target is None or target["state"] not in TERMINAL:
+                blockers.append(dependency)
+        row = {"id": name, "title": entry["title"], "state": entry["state"]}
+        if blockers:
+            blocked.append({**row, "blocked_by": ", ".join(blockers)})
+        else:
+            ready.append(row)
+
     return {
         "remaining": items_left,
+        "ready": ready,
+        "blocked": blocked,
         "count": len(items_left),
         "by_source": dict(sorted(by_source.items())),
         "phantoms_closed": verification["auto_closed"],
