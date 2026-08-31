@@ -13,6 +13,7 @@ import re
 from typing import Any
 
 from .godmode_chronicle import Chronicle
+from .godmode_errors import ArchiveError
 from .godmode_constants import CODE_SUFFIXES, IGNORED_DIRECTORY_NAMES
 
 # Records that prove the session kept moving, named in the kinds the archive
@@ -25,6 +26,57 @@ from .godmode_constants import CODE_SUFFIXES, IGNORED_DIRECTORY_NAMES
 # A checkpoint is deliberately excluded: writing down that you are stuck is not
 # the same as continuing.
 _WORK_KINDS = frozenset({"action", "attestation", "change", "plan"})
+
+# The closed failure-class table. One list, one place: a free-text class
+# cannot be trended, and an open list grows a synonym per author until no
+# two records match. Extend by recorded precedent, never in passing.
+FAILURE_CLASSES = (
+    "plan-departure",        # required direction or agreed plan not followed
+    "invented-information",  # content grounded in no input, context, or output
+    "malformed-invocation",  # tool called with inputs its schema refuses
+    "misread-tool-output",   # correct output, wrong conclusion drawn from it
+    "goal-misread",          # the ask itself was misunderstood; plan was wrong
+    "underspecified-ask",    # the record shows the information was never there
+    "capability-gap",        # the needed tool or capability does not exist
+    "blocked-by-guard",      # a control stopped the run; the guard is the story
+    "environment-failure",   # the world broke: connectivity, host, filesystem
+)
+
+
+def record_incident(
+    archive: Chronicle,
+    subject: str,
+    detail: str,
+    *,
+    failure_class: str | None = None,
+    turning_point: bool = False,
+    cites: list[str] | None = None,
+) -> dict[str, Any]:
+    """One incident, optionally classed, optionally the turning point.
+
+    The class comes from `FAILURE_CLASSES` or is absent - an off-list word
+    is refused with the list rendered, because the whole value of a class
+    is that two records can share it. `turning_point` marks the first
+    failure the run never recovered from; it is a causal claim, so it
+    requires at least one citation.
+    """
+    if failure_class is not None and failure_class not in FAILURE_CLASSES:
+        raise ArchiveError(
+            f"Unknown failure class '{failure_class}'; expected one of: "
+            + ", ".join(FAILURE_CLASSES)
+        )
+    if turning_point and not (cites or []):
+        raise ArchiveError(
+            "a turning point is a causal claim - cite the record or artifact "
+            "that shows the run never recovered past it"
+        )
+    return archive.append(
+        "incident", subject,
+        {"detail": detail, "failure_class": failure_class,
+         "turning_point": bool(turning_point)},
+        evidence=cites or [],
+    )
+
 
 _CLAIM_SPLIT = re.compile(r";\s+|\b(?:and also|as well as)\b|\n\s*\d+[.)]\s")
 _VERBISH = re.compile(r"\b(?:is|are|was|were|works|passes|fixed|fails|blocks|returns)\b")
