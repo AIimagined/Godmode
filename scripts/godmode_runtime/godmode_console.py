@@ -2927,6 +2927,11 @@ def cmd_fuzz(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 
 def cmd_metrics(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if getattr(args, "complexity", False):
+        # Tree scan, so opt-in rather than folded into every metrics call.
+        from .godmode_metrics import branch_complexity
+        return CommandResult(
+            branch_complexity(Path(runtime.anchor.project_root)))
     _require_archive(runtime)
     report = product_metrics(
         runtime.archive, Path(runtime.anchor.project_root), window=args.window)
@@ -5019,6 +5024,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     metrics_parser = sub.add_parser(
         "metrics", help="Measure whether the product works, from local records only")
+    metrics_parser.add_argument(
+        "--complexity", action="store_true",
+        help="Per-function branch complexity (decision points + 1, from the "
+             "ast) over the project's Python; worst offenders first, advisory")
     metrics_parser.add_argument("--window", type=int, default=500)
     metrics_parser.add_argument("--markdown", action="store_true")
     metrics_parser.set_defaults(handler=cmd_metrics)
