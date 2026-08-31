@@ -270,6 +270,69 @@ def _documentation_parity(archive: Chronicle) -> tuple[float | None, str]:
     return _ratio(satisfied, satisfied + missing), f"{satisfied} of {satisfied + missing} triggers satisfied"
 
 
+def economics(archive: Chronicle, project: Path) -> dict[str, Any]:
+    """Verified-result economics, read entirely from existing records.
+
+    The count that matters is not how much ran but how much finished
+    verified. Four readings, all advisory: evidence debt (the calibration
+    ledger's scored-but-unresolved claims, a liability with an age);
+    verified completion rate (verified-tier items over all terminal items -
+    shown over shown-plus-said); rule growth (whether the lesson/invariant
+    ratchet is still accelerating - a maturing ratchet's rate declines);
+    and trip wires - any failure subject recorded three times is named and
+    pointed at the investigation workflow, because the third strike is a
+    pattern, not a coincidence.
+    """
+    from .godmode_attest import calibration_summary
+    from .godmode_status import evidence_tier, items as status_items
+
+    calibration = calibration_summary(archive)
+    debt = {
+        "count": calibration["unresolved_scored"],
+        "oldest_seq": calibration["oldest_unresolved_seq"],
+    }
+
+    current = status_items(archive)
+    terminal = [e for e in current.values() if e["state"] in ("verified", "closed")]
+    shown = [e for e in terminal if evidence_tier(e) == "verified"]
+    rate = round(len(shown) / len(terminal), 6) if terminal else None
+
+    rule_records = [
+        r for r in archive.read_events(verify=False)
+        if r.get("kind") in ("lesson", "invariant")
+    ]
+    recent, prior = rule_records[-25:], rule_records[-50:-25]
+    growth = (
+        "no rules recorded" if not rule_records
+        else "accelerating" if len(recent) > len(prior)
+        else "steady" if len(recent) == len(prior)
+        else "declining"
+    )
+
+    strikes: dict[str, int] = {}
+    for record in archive.select(kind="incident", limit=500):
+        strikes[record["subject"]] = strikes.get(record["subject"], 0) + 1
+    trip_wires = [
+        {
+            "code": "third-strike",
+            "detail": (
+                f"'{subject}' has {count} incident records; a third strike "
+                "is a pattern - open a godmode investigation instead of "
+                "another fix in place"
+            ),
+        }
+        for subject, count in sorted(strikes.items())
+        if count >= 3
+    ]
+
+    return {
+        "evidence_debt": debt,
+        "verified_completion_rate": rate,
+        "rule_growth": growth,
+        "trip_wires": trip_wires,
+    }
+
+
 def metrics(archive: Chronicle, project: Path, window: int = 500) -> dict[str, Any]:
     """The twelve product metrics, computed locally from the archive."""
     records = archive.read_events()[-max(1, window):] if archive.initialized() else []
@@ -302,6 +365,7 @@ def metrics(archive: Chronicle, project: Path, window: int = 500) -> dict[str, A
         "records_considered": len(records),
         "window": window,
         "metrics": report,
+        "economics": economics(archive, project),
         "summary": {
             "measured": len(measured),
             "meeting_target": len(meeting),
