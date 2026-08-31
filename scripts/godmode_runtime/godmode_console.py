@@ -3440,6 +3440,12 @@ def cmd_skill_validate(args: argparse.Namespace, runtime: Runtime) -> CommandRes
     return CommandResult(validate_skill(args.path))
 
 
+def cmd_skill_lint(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    from .godmode_forge import lint_skill
+    report = lint_skill(args.path)
+    return CommandResult(report, exit_code=0 if report["passed"] else 1)
+
+
 def cmd_skill_forge(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     proposal = SkillProposal(
@@ -5075,6 +5081,10 @@ def _build_parser() -> argparse.ArgumentParser:
     skill_validate = skill_sub.add_parser("validate")
     skill_validate.add_argument("--path", required=True)
     skill_validate.set_defaults(handler=cmd_skill_validate)
+    skill_lint = skill_sub.add_parser(
+        "lint", help="Three structural facets: scope, delivery, safety; verdict is structural only")
+    skill_lint.add_argument("--path", required=True)
+    skill_lint.set_defaults(handler=cmd_skill_lint)
     skill_forge = skill_sub.add_parser("forge")
     skill_forge.add_argument(
         "--destination", default=None,
