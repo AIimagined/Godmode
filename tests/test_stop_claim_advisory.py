@@ -257,3 +257,28 @@ class BriefEchoTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SingleObjectStdoutTests(unittest.TestCase):
+    """A hook's stdout is one JSON object or nothing - two valid objects
+    concatenated read as 'looks like JSON but is not valid JSON' to the
+    host and the whole delivery is dropped (field-observed 2026-08-31, the
+    turn where a reply both touched an obligation and made a claim)."""
+
+    def test_both_notices_arrive_as_one_parseable_object(self) -> None:
+        with _project() as (project, state, archive):
+            archive.append(
+                "obligation", "effectiveness-section-in-every-report",
+                {"status": "open",
+                 "value": "every published report carries the godmode "
+                          "effectiveness section before the verdict"},
+                evidence=[])
+            reply = ("I published the report without the effectiveness "
+                     f"section. {CLAIM_SENTENCE}.")
+            done = _run(project, state, {
+                "transcript_path": str(_transcript(project, reply))})
+            self.assertEqual(done.returncode, 0, done.stderr)
+            payload = json.loads(done.stdout)  # exactly one object, or raises
+            message = payload["systemMessage"]
+            self.assertIn("obligation", message)
+            self.assertIn("claim-shaped", message)

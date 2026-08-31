@@ -1004,45 +1004,49 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             unsupported = _unrecorded_claims(archive, reply_text)
             touched = _open_obligations_touched(archive, reply_text)
+            # One stdout object or nothing: the host parses hook stdout as a
+            # single JSON value, and two valid objects concatenated read as
+            # "looks like JSON but is not valid JSON" - the whole delivery
+            # is then dropped (field-observed 2026-08-31, the turn a reply
+            # both touched an obligation and made a claim). Notices
+            # accumulate; the print happens once.
+            notices: list[str] = []
             if touched:
-                print(json.dumps({"systemMessage": (
+                notices.append(
                     "godmode: open obligation(s) this turn touches: "
                     + ", ".join(touched)
-                    + " - update or close them, or they resurface.")}))
-                try:
-                    echo = archive.root / "godmode-claim-echo.json"
-                    parked = {}
-                    if echo.exists():
-                        parked = json.loads(echo.read_text(encoding="utf-8"))
-                    parked["obligations"] = touched
-                    echo.write_text(json.dumps(parked, ensure_ascii=False),
-                                    encoding="utf-8")
-                except Exception:  # noqa: BLE001
-                    pass
+                    + " - update or close them, or they resurface.")
             if unsupported:
                 shown = "; ".join(f"'{s[:160]}'" for s in unsupported[:2])
-                print(json.dumps({"systemMessage": (
+                notices.append(
                     f"godmode: {len(unsupported)} claim-shaped sentence(s) in this "
                     f"reply have no record: {shown} - record with `godmode claim "
                     "--cite <evidence>` (grades honestly, downgrades what the "
-                    "citations cannot carry) or soften the sentence.")}))
+                    "citations cannot carry) or soften the sentence.")
+            if touched or unsupported:
                 # S8 (obligation 4538, self-census 2026-08-29): the
-                # systemMessage above reaches the OPERATOR; the model that
-                # made the claim never sees it, so nothing changes next turn
-                # (fifteen sessions of "claim unused" measured exactly this).
-                # The flagged sentences - the model's OWN output, bounded -
-                # are parked beside the archive, outside it, and deleted the
-                # moment the next prompt boundary delivers them back.
+                # systemMessage reaches the OPERATOR; the model that made
+                # the claim never sees it, so nothing changes next turn
+                # (fifteen sessions of "claim unused" measured exactly
+                # this). The flagged sentences - the model's OWN output,
+                # bounded - are parked beside the archive, outside it, and
+                # deleted the moment the next prompt boundary delivers
+                # them back.
                 try:
                     echo = archive.root / "godmode-claim-echo.json"
                     parked = {}
                     if echo.exists():
                         parked = json.loads(echo.read_text(encoding="utf-8"))
-                    parked["sentences"] = [s[:200] for s in unsupported[:3]]
+                    if touched:
+                        parked["obligations"] = touched
+                    if unsupported:
+                        parked["sentences"] = [s[:200] for s in unsupported[:3]]
                     echo.write_text(json.dumps(parked, ensure_ascii=False),
                                     encoding="utf-8")
                 except Exception:  # noqa: BLE001
                     pass
+            if notices:
+                print(json.dumps({"systemMessage": " ".join(notices)}))
             return 0
 
         if args.event == "user-prompt":
