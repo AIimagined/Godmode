@@ -36,7 +36,9 @@ from .godmode_attest import (
     latest_session,
     open_session,
     opening_handshake,
+    calibration_summary,
     record_claim,
+    resolve_claim,
     record_criterion,
     record_differential,
     record_step,
@@ -49,7 +51,10 @@ from .godmode_assess import assurance_case
 from .godmode_assess import selftest as run_selftest
 from .godmode_atlas import build as build_atlas
 from .godmode_atlas import load_index, save_index, slice_file
-from .godmode_attest import GRADES, STATUSES, plant_and_observe, recurrences, reflect, run_check
+from .godmode_attest import (
+    GRADES, RESOLUTION_OUTCOMES, STATUSES, plant_and_observe, recurrences,
+    reflect, run_check,
+)
 from .godmode_bindings import check as bindings_check
 from .godmode_bindings import dependency_gate, release_checksums, sbom_cyclonedx, sbom_spdx
 from .godmode_bindings import install_verify as hooks_install_verify
@@ -871,6 +876,23 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         # names a reproduction or whose text a claim record carries.
         report = scan_public_surfaces(Path(runtime.anchor.project_root), runtime.archive)
         return CommandResult(report, exit_code=1 if report["uncovered"] else 0)
+    if getattr(args, "resolve", None) is not None:
+        if not args.outcome:
+            return CommandResult(
+                {"refused": "--resolve needs --outcome held|failed"}, exit_code=1)
+        _require_archive(runtime)
+        record = resolve_claim(
+            runtime.archive, Path(runtime.anchor.project_root),
+            _session(runtime, args.session), args.resolve, args.outcome,
+            cites=args.cite,
+        )
+        data = record["data"]
+        return CommandResult(
+            {"resolves": data["resolves"], "outcome": data["outcome"],
+             "confidence": data["confidence"], "score": data["score"],
+             "sequence": record["sequence"]},
+            exit_code=0,
+        )
     if not args.text:
         return CommandResult({"refused": "claim needs the claim text, or --scan"}, exit_code=1)
     _require_archive(runtime)
@@ -884,6 +906,7 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         external=args.external,
         timeline=_load_timeline(getattr(args, "transcript", None)),
         blast_radius=getattr(args, "blast_radius", None),
+        confidence=getattr(args, "confidence", None),
     )
     data = record["data"]
     # A downgrade is a finding, so it must be visible in the exit status too.
@@ -2398,6 +2421,10 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             "project": project,
             "healthy": healthy,
             "archive": verification,
+            # Advisory always - calibration never flips health. It reports
+            # how well declared confidence has tracked outcomes, and the
+            # standing debt of scored claims nothing ever resolved.
+            "calibration": calibration_summary(runtime.archive),
             "issues": issues,
             "deep_scan": args.deep,
             "network_used": False,
@@ -3809,6 +3836,12 @@ def _build_parser() -> argparse.ArgumentParser:
                             "GODMODE.md) whose line names no reproduction and no claim "
                             "record carries")
     claim.add_argument("--grade", choices=list(GRADES), default="observed")
+    claim.add_argument("--confidence", type=float, default=None,
+                       help="How sure, 0..1; scored against the outcome when the claim is later resolved")
+    claim.add_argument("--resolve", type=int, default=None, metavar="SEQ",
+                       help="Close the claim at SEQ with --outcome and evidence; a claim resolves at most once")
+    claim.add_argument("--outcome", choices=list(RESOLUTION_OUTCOMES), default=None,
+                       help="With --resolve: held (the claim survived the check) or failed")
     claim.add_argument("--cite", action="append", default=[], help="rec:<hash> or file:<path>#L<n>; repeatable")
     claim.add_argument("--external", action="store_true",
                        help="Claim about an external API/library; requires a doc:/url: primary source")

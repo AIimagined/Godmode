@@ -1416,6 +1416,7 @@ def record_claim(
     external: bool = False,
     timeline: dict[str, Any] | None = None,
     blast_radius: str | None = None,
+    confidence: float | None = None,
 ) -> dict[str, Any]:
     """Persist a claim, downgrading it when its citations do not resolve.
 
@@ -1446,6 +1447,15 @@ def record_claim(
     """
     if grade not in GRADES:
         raise ArchiveError(f"Unknown claim grade '{grade}'; expected one of {', '.join(GRADES)}")
+    if confidence is not None:
+        # The calibration ledger only works if the number means one thing:
+        # a probability. Out-of-range values are refused, not clamped -
+        # clamping would silently rewrite what the author said they believed.
+        if not isinstance(confidence, (int, float)) or not 0.0 <= float(confidence) <= 1.0:
+            raise ArchiveError(
+                f"confidence must be a number in [0, 1]; got {confidence!r}"
+            )
+        confidence = float(confidence)
     if blast_radius is not None and blast_radius not in BLAST_RADIUS_KINDS:
         raise ArchiveError(
             f"Unknown blast_radius '{blast_radius}'; expected one of "
@@ -1468,7 +1478,7 @@ def record_claim(
                 "claim", text[:120],
                 {"text": text, "grade": "hypothesis", "claimed_grade": grade,
                  "session": session, "downgraded": True, "unresolved": [],
-                 "operator_asserted": [], "blast_radius": blast_radius,
+                 "operator_asserted": [], "blast_radius": blast_radius, "confidence": confidence,
                  "reason": differential_reason},
                 evidence=citations,
             )
@@ -1483,7 +1493,7 @@ def record_claim(
                 "claim", text[:120],
                 {"text": text, "grade": "hypothesis", "claimed_grade": grade,
                  "session": session, "downgraded": True, "unresolved": [],
-                 "operator_asserted": [], "blast_radius": blast_radius,
+                 "operator_asserted": [], "blast_radius": blast_radius, "confidence": confidence,
                  "reason": metric_reason},
                 evidence=citations,
             )
@@ -1493,7 +1503,7 @@ def record_claim(
             record = archive.append(
                 "claim", text[:120],
                 {"text": text, "grade": "hypothesis", "claimed_grade": grade, "session": session,
-                 "downgraded": True, "unresolved": [], "blast_radius": blast_radius,
+                 "downgraded": True, "unresolved": [], "blast_radius": blast_radius, "confidence": confidence,
                  "reason": "external claim without a primary source read this session; "
                            "cite doc:<path> or url:<address> from a source actually opened"},
                 evidence=citations,
@@ -1640,7 +1650,7 @@ def record_claim(
             # record carries the same field set - a reader never has to
             # guess whether an absent key means "not declared" or "not yet
             # this schema version".
-            "blast_radius": blast_radius,
+            "blast_radius": blast_radius, "confidence": confidence,
             # Named rather than implied: a later reader can see which part of
             # the support was machine-checked and which was taken on the
             # author's word, instead of reading one uniform "verified".
@@ -1652,6 +1662,151 @@ def record_claim(
         evidence=citations,
     )
     return record
+
+
+RESOLUTION_OUTCOMES = ("held", "failed")
+
+
+def resolve_claim(
+    archive: Chronicle,
+    project: Path,
+    session: str,
+    seq: int,
+    outcome: str,
+    cites: list[str] | None = None,
+) -> dict[str, Any]:
+    """Close one claim with an outcome and the evidence that decided it.
+
+    The calibration ledger's second half: a claim recorded with a
+    confidence eventually meets what actually happened. `held` means the
+    claim survived contact with the check; `failed` means it did not. The
+    pair yields a score, 1 - (confidence - outcome)^2, stored on the
+    resolution so the doctor can read calibration straight off the record.
+
+    Resolutions are claims too (same kind, `resolves` field) - no new
+    record schema, and the privacy/verification machinery covers them for
+    free. Three refusals keep the ledger honest: a resolution needs the
+    claim to exist, needs evidence of the outcome (an outcome nobody can
+    check is just a second claim), and lands at most once - recalibrating
+    history would defeat the point of measuring it.
+    """
+    if outcome not in RESOLUTION_OUTCOMES:
+        raise ArchiveError(
+            f"Unknown outcome '{outcome}'; expected one of {', '.join(RESOLUTION_OUTCOMES)}"
+        )
+    citations = cites or []
+    if not citations:
+        raise ArchiveError(
+            "a resolution needs at least one citation: the evidence that "
+            "decided the outcome, not the outcome alone"
+        )
+    target: dict[str, Any] | None = None
+    for record in archive.select(kind="claim", limit=500):
+        if record["sequence"] == seq:
+            target = record
+        if record["data"].get("resolves") == seq:
+            raise ArchiveError(
+                f"claim seq:{seq} is already resolved by seq:{record['sequence']}; "
+                "a claim resolves at most once"
+            )
+    if target is None:
+        raise ArchiveError(f"No claim record at seq:{seq}")
+    if target["data"].get("resolves") is not None:
+        raise ArchiveError(
+            f"seq:{seq} is itself a resolution; resolutions are terminal"
+        )
+    unresolved = [
+        citation for citation in citations
+        if not _citation_resolves(project, archive, citation, session)
+    ]
+    if unresolved:
+        raise ArchiveError(
+            f"resolution evidence does not resolve: {', '.join(unresolved)}"
+        )
+    confidence = target["data"].get("confidence")
+    outcome_value = 1.0 if outcome == "held" else 0.0
+    score = (
+        None if confidence is None
+        else round(1.0 - (float(confidence) - outcome_value) ** 2, 6)
+    )
+    return archive.append(
+        "claim",
+        f"resolution of seq:{seq}: {outcome}",
+        {
+            "session": session,
+            "text": f"claim seq:{seq} {outcome}",
+            "resolves": seq,
+            "outcome": outcome,
+            # Copied down so the summary never joins across records to score.
+            "confidence": confidence,
+            "score": score,
+            "grade": "observed",
+            "claimed_grade": "observed",
+            "downgraded": False,
+            "unresolved": [],
+            "unsupported": [],
+            "reason": "",
+            "advisories": [],
+            "blast_radius": None,
+            "operator_asserted": [],
+        },
+        evidence=citations,
+    )
+
+
+# Confidence bands for the calibration summary. One table, one place -
+# the render and any future tier threshold read these, never re-derive.
+_CALIBRATION_BANDS = (("high", 0.8, 1.01), ("mid", 0.5, 0.8), ("low", 0.0, 0.5))
+
+
+def calibration_summary(archive: Chronicle) -> dict[str, Any]:
+    """Read the whole calibration ledger into one doctor-ready block.
+
+    Reports the mean score over resolved scored claims, the error rate
+    per confidence band (how often each band's claims failed - the number
+    that makes any tier threshold auditable instead of aesthetic), and
+    the standing debt: scored claims never resolved. Honest-empty when
+    nothing is scored yet.
+    """
+    records = archive.select(kind="claim", limit=500)
+    resolutions = [r for r in records if r["data"].get("resolves") is not None]
+    resolved_seqs = {r["data"]["resolves"] for r in resolutions}
+    scored = [r for r in resolutions if r["data"].get("score") is not None]
+    debt = [
+        r for r in records
+        if r["data"].get("resolves") is None
+        and r["data"].get("confidence") is not None
+        and r["sequence"] not in resolved_seqs
+    ]
+    summary: dict[str, Any] = {
+        "scored_resolved": len(scored),
+        "unresolved_scored": len(debt),
+        "oldest_unresolved_seq": min((r["sequence"] for r in debt), default=None),
+    }
+    if not scored and not debt:
+        summary["note"] = "no scored claims yet - claims carry no confidence until one is declared"
+        summary["bands"] = []
+        return summary
+    if scored:
+        summary["mean_score"] = round(
+            sum(r["data"]["score"] for r in scored) / len(scored), 6
+        )
+    bands = []
+    for name, floor, ceiling in _CALIBRATION_BANDS:
+        members = [
+            r for r in scored
+            if floor <= float(r["data"]["confidence"]) < ceiling
+        ]
+        if not members:
+            continue
+        failures = sum(1 for r in members if r["data"]["outcome"] == "failed")
+        bands.append({
+            "band": name,
+            "resolved": len(members),
+            "error_rate": round(failures / len(members), 6),
+        })
+    summary["bands"] = bands
+    return summary
 
 
 _NEGATION = re.compile(
