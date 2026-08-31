@@ -71,3 +71,42 @@ class ShortPathTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ScratchGuardAliasTests(unittest.TestCase):
+    """The scratch allowance's anti-swallow guard must see through the same
+    aliases containment does: with the temp dir spelled one way and the
+    project root resolved another, the guard missed a project genuinely
+    under temp, re-armed the allowance, and an outside-the-tree write was
+    silently scratch-allowed (matrix runs, 2026-08-31; reproduced locally
+    by aliasing %TMP%)."""
+
+    def test_a_project_under_an_aliased_temp_keeps_containment_in_charge(self) -> None:
+        import tempfile
+        from unittest import mock
+        from godmode_runtime.godmode_sentinel import _is_scratch
+
+        with tempfile.TemporaryDirectory(
+                prefix="a-long-temp-alias-root-") as raw:
+            hidden_root = Path(raw)
+            short = _short_form(str(hidden_root))
+            if short is None:
+                self.skipTest("no 8.3 short name available on this volume")
+            project = hidden_root / "project"
+            project.mkdir()
+            outside = hidden_root / "elsewhere.py"
+            with mock.patch.object(tempfile, "gettempdir",
+                                   return_value=short):
+                # Project truly lives under temp: the guard must disarm the
+                # allowance regardless of spelling on either side.
+                self.assertFalse(_is_scratch(outside, project))
+                self.assertFalse(_is_scratch(Path(short) / "elsewhere.py",
+                                             project.resolve()))
+
+    def test_the_allowance_still_works_for_real_scratch_paths(self) -> None:
+        import tempfile
+        from godmode_runtime.godmode_sentinel import _is_scratch
+
+        scratch_file = Path(tempfile.gettempdir()) / "godmode-scratch-probe.txt"
+        project_elsewhere = Path(__file__).resolve().parents[1]
+        self.assertTrue(_is_scratch(scratch_file, project_elsewhere))
