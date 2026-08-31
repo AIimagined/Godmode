@@ -3387,12 +3387,29 @@ def cmd_evals(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     ranking = ranking_snapshot(project)
     payload = {**routing, "snapshots": snapshots, "assertions": assertions,
                "charter": charter, "ranking": ranking}
-    sound = (routing["verdict"] == "routing-sound"
-             and snapshots["verdict"] == "behaviour-stable"
-             and assertions["verdict"] == "assertions-held"
-             and charter["verdict"] == "charter-stable"
-             and ranking["verdict"] == "ranking-stable")
-    return CommandResult(payload, exit_code=0 if sound else 1)
+    # A mode-differing ranking comparison is out of contract, not a failure:
+    # the snapshot and this environment hold different instruments, and
+    # neither is wrong about the other.
+    gates = {
+        "routing": routing["verdict"] == "routing-sound",
+        "snapshots": snapshots["verdict"] == "behaviour-stable",
+        "assertions": assertions["verdict"] == "assertions-held",
+        "charter": charter["verdict"] == "charter-stable",
+        "ranking": ranking["verdict"] in ("ranking-stable", "ranking-mode-differs"),
+    }
+    failing = sorted(name for name, held in gates.items() if not held)
+    # The headline names what failed. The old spread left routing's own
+    # verdict as the top-level one, so --brief printed "routing-sound"
+    # while the command exited 1 on a different gate entirely (field
+    # report, 2026-08-31).
+    payload["routing_verdict"] = routing["verdict"]
+    payload["verdict"] = (
+        "evals-sound" if not failing
+        else "evals-unsound: " + ", ".join(
+            f"{name}={payload[name]['verdict'] if name != 'routing' else routing['verdict']}"
+            for name in failing)
+    )
+    return CommandResult(payload, exit_code=0 if not failing else 1)
 
 
 def cmd_grid(args: argparse.Namespace, runtime: Runtime) -> CommandResult:

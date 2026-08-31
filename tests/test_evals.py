@@ -15,6 +15,7 @@ SCRIPTS = PLUGIN_ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
+import godmode_runtime.godmode_evals as evals_module  # noqa: E402
 from godmode_runtime.godmode_evals import (  # noqa: E402
     ASSERTION_SCHEMA,
     CHARTER_SNAPSHOT_SCHEMA,
@@ -467,3 +468,45 @@ class AdapterHonestyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RankingModeContractTests(unittest.TestCase):
+    """A snapshot is comparable only within its own instruments: scorer and
+    freshness mode. A mismatch reads 'not comparable here', never 'drifted'
+    (field report 2026-08-31: a shallow CI checkout reordered two tasks
+    against a full-clone snapshot and was called drift)."""
+
+    def _snapshot_with(self, view, stored):
+        import json as _json
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            fixture = root / "evals" / "fixtures" / "ranking.json"
+            fixture.parent.mkdir(parents=True)
+            fixture.write_text(_json.dumps(stored), encoding="utf-8")
+            with mock.patch.object(evals_module, "_ranking_view",
+                                   return_value=view):
+                return evals_module.ranking_snapshot(root)
+
+    def test_a_mode_mismatch_is_not_drift(self) -> None:
+        view = {"schema": 1, "scorer": "fts5", "freshness_mode": "git",
+                "budget": 4000, "tasks": {"t": [["a.md", 1]]}}
+        stored = {**view, "freshness_mode": "git-shallow"}
+        report = self._snapshot_with(view, stored)
+        self.assertEqual(report["verdict"], "ranking-mode-differs")
+        self.assertEqual(report["diffs"], [])
+
+    def test_same_mode_reorder_is_still_drift(self) -> None:
+        view = {"schema": 1, "scorer": "fts5", "freshness_mode": "git",
+                "budget": 4000, "tasks": {"t": [["a.md", 1], ["b.md", 1]]}}
+        stored = {**view, "tasks": {"t": [["b.md", 1], ["a.md", 1]]}}
+        report = self._snapshot_with(view, stored)
+        self.assertEqual(report["verdict"], "ranking-changed")
+
+    def test_an_old_snapshot_without_mode_fields_still_compares(self) -> None:
+        view = {"schema": 1, "scorer": "fts5", "freshness_mode": "git",
+                "budget": 4000, "tasks": {"t": [["a.md", 1]]}}
+        stored = {"schema": 1, "scorer": "fts5", "budget": 4000,
+                  "tasks": {"t": [["a.md", 1]]}}
+        report = self._snapshot_with(view, stored)
+        self.assertEqual(report["verdict"], "ranking-stable")
