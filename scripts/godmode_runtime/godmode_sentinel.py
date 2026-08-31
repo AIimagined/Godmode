@@ -1772,8 +1772,17 @@ def _is_scratch(target: Path, project_root: Path | None = None) -> bool:
     can widen it.
     """
     try:
-        scratch = Path(os.path.normcase(os.path.normpath(tempfile.gettempdir())))
-        candidate = Path(os.path.normcase(os.path.normpath(str(target))))
+        # _canonical_path_text, not bare normcase/normpath: the temp dir is
+        # the most alias-prone path on any machine (Windows spells it
+        # RUNNER~1 on CI runners, macOS reaches it through the
+        # /var -> /private/var symlink), and comparing unresolved spellings
+        # let the anti-swallow guard below MISS a project that really lives
+        # under temp - re-arming the scratch allowance and silently
+        # allowing the exact outside-the-tree writes containment refuses
+        # (matrix runs 33382312683..33424085756, reproduced locally by
+        # aliasing %TMP%).
+        scratch = Path(_canonical_path_text(Path(tempfile.gettempdir())))
+        candidate = Path(_canonical_path_text(Path(str(target))))
     except (OSError, ValueError):
         return False
 
@@ -1784,7 +1793,7 @@ def _is_scratch(target: Path, project_root: Path | None = None) -> bool:
     # would overlap, containment governs alone.
     if project_root is not None:
         try:
-            root = Path(os.path.normcase(os.path.normpath(str(project_root))))
+            root = Path(_canonical_path_text(Path(str(project_root))))
         except (OSError, ValueError):
             return False
         if scratch == root or scratch in root.parents:
