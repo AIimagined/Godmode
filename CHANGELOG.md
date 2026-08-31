@@ -6,6 +6,14 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-08-31
+
+### Fixed
+
+- Three same-day field findings against v0.3.6 closed: the hosted-escape-hint test pins GODMODE_HOST=claude so a suite run inside another host's session no longer reads that host's (correct) dialect as a regression; the ranking snapshot records its freshness mode (full git, shallow git, path) beside its scorer and a cross-mode comparison reports ranking-mode-differs instead of drift; and the evals verdict names its failing gates instead of echoing routing-sound while exiting non-zero.
+- The Stop hook printed two JSON objects when one reply both touched an open obligation and made an unrecorded claim; the host parses hook stdout as a single value, so the whole delivery was dropped as invalid JSON. Notices now accumulate into one systemMessage printed once, and the parked echo file is written in one pass.
+- Two containment gaps the CI matrix exposed, both security-relevant: a Windows 8.3 short-name spelling (RUNNER~1) of an in-tree path read as outside the working tree - absorption misjudged in-tree writes and a pinned path stopped matching, turning a deny into an allow - and on a posix host a drive-lettered Windows path read as relative, so a PowerShell mutation aimed at C:\Windows passed containment. Canonicalization now expands short names before comparing (Windows only), a mid-name tilde is a literal filename character rather than an unexpanded home marker, and a drive-lettered path is absolute wherever the gate runs. Host-sensitive tests pin the dialect they assert.
+
 ## [0.3.6] - 2026-08-31
 
 ### Added
