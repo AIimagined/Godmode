@@ -1742,7 +1742,13 @@ def _first_heredoc_interpreter(operation: str) -> tuple[str, str, str] | None:
 # contained. The cost is that a legitimate `> "$OUT/report.txt"` now needs the
 # literal path; the alternative is an allowance that means nothing, because the
 # one thing the target definitely is not is the text we are looking at.
-_UNRESOLVED_EXPANSION = re.compile(r"[~$`]|%[A-Za-z_][A-Za-z0-9_]*%")
+# A tilde is a home expansion only where a shell would expand it: at the
+# start of the path, or opening a segment (`~user/...`). Mid-name tildes
+# are literal filename characters - Windows 8.3 aliases (RUNNER~1) carry
+# one in every generated name, and flagging those as unexpanded is what
+# made an in-tree short-spelled path unclassifiable (CI, 2026-08-31).
+# Dollar, backtick, and %VAR% stay flagged anywhere: they expand mid-word.
+_UNRESOLVED_EXPANSION = re.compile(r"(?:^|[\\/])~|[$`]|%[A-Za-z_][A-Za-z0-9_]*%")
 
 # Writing to the null device discards the bytes: `integrity > /dev/null` runs a
 # check and keeps nothing. It was refused as a write outside the working tree,
@@ -1803,6 +1809,28 @@ def _is_scratch(target: Path, project_root: Path | None = None) -> bool:
     return posix_form.startswith("/tmp/") and posix_form != "/tmp/"
 
 
+def _canonical_path_text(path: Path) -> str:
+    """normcase+normpath, with Windows 8.3 short names expanded first.
+
+    Field-observed (CI, 2026-08-31): a runner's temp directory came back
+    in short form (RUNNER~1), normcase/normpath left it unexpanded, and
+    files inside the project read as outside - absorption misjudged an
+    in-tree write and a pinned path stopped matching, turning a deny into
+    an allow. The same gap is an evasion vector on any Windows volume
+    that keeps 8.3 aliases: a protected path spelled short slips the
+    match. `os.path.realpath` expands short names (and resolves the
+    existing prefix of a not-yet-existing path); applied on Windows only
+    so posix containment semantics are untouched.
+    """
+    text = str(path)
+    if os.name == "nt":
+        try:
+            text = os.path.realpath(text)
+        except (OSError, ValueError):
+            pass
+    return os.path.normcase(os.path.normpath(text))
+
+
 def _contained(target: str, root: Path | None) -> bool:
     """Whether an edit lands inside the working tree.
 
@@ -1823,12 +1851,18 @@ def _contained(target: str, root: Path | None) -> bool:
     # and treating it as relative is what let one out of the tree.
     if _UNRESOLVED_EXPANSION.search(cleaned):
         return False
+    # A drive-lettered path is absolute wherever the gate runs: on a posix
+    # host Path("C:\x") reads as relative, was joined under the root, and a
+    # PowerShell mutation aimed at C:\Windows passed containment (CI field
+    # report, 2026-08-31). It can never be inside a posix root.
+    if os.name != "nt" and re.match(r"^[A-Za-z]:[\\/]", cleaned):
+        return False
     try:
         candidate = Path(cleaned)
         if not candidate.is_absolute():
             candidate = Path(root) / candidate
-        normalised = Path(os.path.normcase(os.path.normpath(str(candidate))))
-        base = Path(os.path.normcase(os.path.normpath(str(root))))
+        normalised = Path(_canonical_path_text(candidate))
+        base = Path(_canonical_path_text(Path(root)))
     except (OSError, ValueError):
         return False
     return normalised == base or base in normalised.parents
@@ -1870,12 +1904,18 @@ def _pin_key(target: str, root: Path | None) -> str | None:
     cleaned = str(target).strip().strip("\"'")
     if _UNRESOLVED_EXPANSION.search(cleaned):
         return None
+    # A drive-lettered path is absolute wherever the gate runs: on a posix
+    # host Path("C:\x") reads as relative, was joined under the root, and a
+    # PowerShell mutation aimed at C:\Windows passed containment (CI field
+    # report, 2026-08-31). It can never be inside a posix root.
+    if os.name != "nt" and re.match(r"^[A-Za-z]:[\\/]", cleaned):
+        return None
     try:
         candidate = Path(cleaned)
         if not candidate.is_absolute():
             candidate = Path(root) / candidate
-        normalised = os.path.normcase(os.path.normpath(str(candidate)))
-        base = os.path.normcase(os.path.normpath(str(root)))
+        normalised = _canonical_path_text(candidate)
+        base = _canonical_path_text(Path(root))
     except (OSError, ValueError):
         return None
     if normalised != base and not normalised.startswith(base + os.sep):

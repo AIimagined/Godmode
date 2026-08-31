@@ -82,13 +82,14 @@ class WitnessIdentityTests(unittest.TestCase):
         self.assertEqual(_independent_witness_count(["file:x", "file:a/../x"]), 1)
         self.assertEqual(_independent_witness_count(["file:x", "file:x/../x"]), 1)
 
+    @unittest.skipUnless(__import__("os").name == "nt",
+                         "8.3-casefold collapse only exists on Windows")
     def test_windows_case_insensitive_spelling_is_one_witness(self) -> None:
-        # Casefolded only on a case-insensitive host (os.name == "nt"); this
-        # suite runs on Windows, where file:X and file:x name the same file
-        # on disk and must collapse to one witness.
-        import os
-
-        self.assertEqual(os.name, "nt", "this probe assumes the Windows CI host")
+        # Casefolded only on a case-insensitive host (os.name == "nt"): file:X
+        # and file:x name the same file on disk and must collapse to one
+        # witness. On posix they are two files, so the probe is skipped, not
+        # asserted (the CI matrix runs all three platforms - field report
+        # 2026-08-31).
         self.assertEqual(_independent_witness_count(["file:X", "file:x"]), 1)
 
     def test_normalization_does_not_collapse_genuinely_different_files(self) -> None:

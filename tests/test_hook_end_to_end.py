@@ -20,6 +20,7 @@ to say.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -139,10 +140,16 @@ def _decide(tool: str, tool_input: dict) -> tuple[str, str]:
         "tool_input": tool_input,
         "cwd": str(PLUGIN_ROOT),
     }
+    # Pinned host: these assertions describe the Claude dialect's decisions.
+    # A CI runner has no host env markers at all, and an unknown host's
+    # posture legitimately differs (field report, 2026-08-31) - inherit the
+    # environment and the test asserts whatever box it runs on.
+    environment = {**os.environ, "GODMODE_HOST": "claude"}
     done = subprocess.run(
         [sys.executable, str(HOOK), "pre-action", "--project", str(PLUGIN_ROOT)],
         input=json.dumps(payload), capture_output=True, text=True,
         encoding="utf-8", errors="replace", timeout=180, cwd=str(PLUGIN_ROOT),
+        env=environment,
     )
     body = (done.stdout or "").strip()
     if not body:
