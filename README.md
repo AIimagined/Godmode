@@ -174,6 +174,25 @@ $ godmode verdict record --claim "<claim>" --value <value> \
     --witness file:<path> --checker "<command>"
 ```
 
+### Calibration: the record learns how much to trust itself
+
+A claim can declare how sure it is (`--confidence 0..1`). When the
+claim later meets its outcome, `claim --resolve` closes it - held or
+failed, with the evidence that decided it - and the pair leaves a
+calibration score on the record. `godmode doctor` reads the whole
+ledger back: mean score, error rate per confidence band, and the
+standing debt of scored claims nothing ever resolved. Status renders
+carry the same discipline as wording: `verified` is reserved for a
+verified state with cited evidence, and a completion nothing was cited
+for renders `declared` - said, not shown. All of it is advisory; no
+gate verdict reads a calibration number.
+
+```console
+$ godmode claim "the fix holds" --confidence 0.9 --cite cmd:"pytest -q"
+$ godmode claim --resolve <seq> --outcome held --cite file:<proof>
+$ godmode doctor
+```
+
 Full walk-through with both dispositions:
 [docs/DEMO.md](docs/DEMO.md#4-one-verdict-walk-through-record-a-claim-watch-it-get-checked).
 
