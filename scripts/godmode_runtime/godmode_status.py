@@ -214,6 +214,19 @@ def verify_pending(archive: Chronicle, project: Path) -> dict[str, Any]:
     return {"checked": checked, "auto_closed": closed}
 
 
+# One table decides the rendered word; renders read it, never re-derive.
+# `verified` is reserved for a verified state WITH cited evidence. A
+# verified state nobody cited anything for is `declared` - said, not
+# shown - so restating a belief can never launder it into a fact.
+# Evidence still awaiting the verified transition reads `likely`;
+# neither reads `unproven`.
+def evidence_tier(entry: dict[str, Any]) -> str:
+    has_evidence = bool(entry.get("evidence"))
+    if entry.get("state") == "verified":
+        return "verified" if has_evidence else "declared"
+    return "likely" if has_evidence else "unproven"
+
+
 def render_view(archive: Chronicle) -> str:
     """The status document, rendered from the store. Read-only downstream."""
     current = items(archive)
@@ -221,7 +234,7 @@ def render_view(archive: Chronicle) -> str:
     by_state: dict[str, list[str]] = {}
     for name, entry in sorted(current.items()):
         by_state.setdefault(entry["state"], []).append(
-            f"- **{name}** {entry['title'] or ''} "
+            f"- [{evidence_tier(entry)}] **{name}** {entry['title'] or ''} "
             f"({', '.join(entry['evidence'][:2]) or 'no evidence cited'})"
         )
     for state in STATES:
@@ -310,7 +323,14 @@ def handover(
             for name, entry in sorted(current.items())
         },
         "verified_completed": sorted(
-            name for name, entry in current.items() if entry["state"] == "verified"
+            name for name, entry in current.items()
+            if evidence_tier(entry) == "verified"
+        ),
+        # Said, not shown: verified states with nothing cited. Kept apart so
+        # a handover reader knows which completions rest on a statement.
+        "declared_completed": sorted(
+            name for name, entry in current.items()
+            if evidence_tier(entry) == "declared"
         ),
         "unverified": sorted(
             name for name, entry in current.items() if entry["state"] not in TERMINAL
