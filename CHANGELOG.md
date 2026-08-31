@@ -6,6 +6,25 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-08-31
+
+### Added
+
+- `docs --emit-agentsmd` writes or refreshes a godmode section in AGENTS.md for hosts that read the file and wire no hooks: commands generated from the registered day-one verbs, boundaries from one host-neutral tier table, merge-not-overwrite with everything outside the markers preserved byte-for-byte.
+- A claim can declare how sure it is (`--confidence 0..1`) and later be closed with `claim --resolve SEQ --outcome held|failed` plus the evidence that decided it; the pair yields a calibration score on the record. The doctor reports the ledger - mean score, error rate per confidence band, and the standing debt of scored claims never resolved - and warns, advisory only, when recent confidence stops tracking outcomes.
+- `metrics` gains verified-result economics - evidence debt, verified completion rate, rule-growth direction, and third-strike trip wires that count over the whole archive (never a decaying window) and name the failure class when the record carries one - plus opt-in `--complexity`: per-function branch counts from the ast, worst offenders first, advisory only.
+- `precheck --preflight` validates HEAD in a disposable worktree before the push password is ever typed: the banned-term scan (private list resolved outside the repo; absent reports itself skipped) plus a designated `--suite` command, findings triaged mechanical (a scrub fixes them, named by file and count, never by term) versus judgment (a person decides). Feeds the password gate; never bypasses it.
+- `skill lint` reads three structural facets - scope (an explicit trigger), delivery (every backticked term the description advertises appears in the body), safety (injection-shaped content hard-fails) - and names its own limit: the verdict is structural, never a deployment-value claim. The docs linter learns two pointer rules (a bulleted rule that only forbids must name the affirmative form; a pointer parked after long prose must lead with its trigger), and the shipped docs obey both.
+- Status renders carry evidence tiers from one table: `verified` is reserved for a verified state with cited evidence; a verified state nothing was cited for renders `declared` - said, not shown; open items read `likely` or `unproven`. The handover splits verified_completed from declared_completed, and `status remaining` derives ready and blocked sections from `--blocked-by` notes and dependency edges - phantom and cyclic dependencies are refused at write time.
+- A verified claim whose text is a review's pass verdict (review passed, looks correct, no issues found) downgrades unless a `cmd:` citation shows the checks were run, not read. The doctor gains the dissent check: a record window where no check ever failed, past a sample floor, is reported as evidence about the checks rather than the work - a warning, never a health flip.
+- Bare `godmode` prints the day-one face - the eight verbs that matter on day one, the host's own ask-or-deny posture, and one line pointing at the rest - instead of the hundred-verb argparse firehose; `godmode --all` lists every verb, generated from the registered subparsers so the listing can never drift from the real CLI. Presentation only: no verb changed, moved, or grew.
+- The guide sets first-week expectations: day one is the gate, doctor, and resume; the loops fill as the record grows and read honestly empty before that.
+- Lessons become load-bearing at the moment of recording: precheck surfaces guarded lessons the compiled law file does not carry yet (marked fresh-uncompiled, advisory path only), carries recurring incident patterns forward before the action (once per session per pattern), and a checkpoint written while the newest incident postdates the newest lesson says so. `law hygiene` names the three ways a ratchet rots: no recorded origin, contradictory pairs, and guards a recorded check now enforces mechanically. Incidents can carry one of nine closed failure classes and a cited turning point.
+
+### Fixed
+
+- The in-process fast path resolves what the full sentinel already graded R0: redirects targeting /dev/null stop escalating, and rev, date, basename, dirname, and realpath join the read floor - each verified read-only at table-generation time like every original entry. Expected-allow corpus coverage measured before and after in the release notes; every other redirect, substitution, and protected shape escalates exactly as before.
+
 ## [0.3.5] - 2026-08-29
 
 ### Added
