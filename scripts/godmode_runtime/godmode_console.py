@@ -2542,6 +2542,13 @@ def cmd_precheck(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     - precheck already runs before work starts, which is also the moment a
     one-sided diff against a declared pair is still cheap to fix.
     """
+    if getattr(args, "preflight", False):
+        from .godmode_preflight import push_preflight
+        report = push_preflight(Path(runtime.anchor.project_root),
+                                suite=getattr(args, "suite", None))
+        return CommandResult(report, exit_code=1 if report["verdict"] == "findings" else 0)
+    if not args.about:
+        raise ArchiveError("precheck requires --about (or --preflight)")
     _require_archive(runtime)
     project = Path(runtime.anchor.project_root)
     changed = list(args.changed) if args.changed else _working_tree_changes(project)
@@ -4722,11 +4729,20 @@ def _build_parser() -> argparse.ArgumentParser:
 
     precheck_parser = sub.add_parser(
         "precheck", help="Whether this was already built or already refused")
-    precheck_parser.add_argument("--about", required=True,
+    precheck_parser.add_argument("--about", default=None,
                                  help="The task, in the words you would describe it")
     precheck_parser.add_argument("--changed", nargs="+", default=None,
                                  help="Changed paths, for the paired-artifact check "
                                       "(GAP-2); defaults to the working tree")
+    precheck_parser.add_argument("--preflight", action="store_true",
+                                 help="Push preflight instead: validate HEAD in a "
+                                      "disposable worktree - banned-term scan plus the "
+                                      "designated --suite - findings triaged mechanical "
+                                      "vs judgment; feeds the password gate, never "
+                                      "bypasses it")
+    precheck_parser.add_argument("--suite", nargs="+", default=None,
+                                 help="With --preflight: the command to run inside the "
+                                      "worktree (e.g. python -m unittest ...)")
     precheck_parser.set_defaults(handler=cmd_precheck)
 
     # A sibling top-level command, not a `precheck` subcommand: `precheck`
