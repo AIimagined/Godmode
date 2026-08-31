@@ -191,8 +191,6 @@ jobs:
           # would honestly skip itself (ranking-mode-differs) instead of
           # verifying anything.
           fetch-depth: 0
-        with:
-          fetch-depth: 0
 
       # The action resolves python3 on its own, but pinning the version here
       # exercises the path a consumer repository is most likely to use.
