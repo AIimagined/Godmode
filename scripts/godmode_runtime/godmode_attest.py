@@ -1510,6 +1510,22 @@ def record_claim(
             f"{', '.join(BLAST_RADIUS_KINDS)}"
         )
     citations = cites or []
+    # The fix-loop wire, checked before every other discipline and for any
+    # claim that stakes something - a verified grade or a declared
+    # confidence: two recorded reversals on this subject mean the third try
+    # does not get to assert until the record shows the reading happened.
+    if grade == "verified" or confidence is not None:
+        loop_reason = _fix_loop_reason(archive, text, citations)
+        if loop_reason:
+            return archive.append(
+                "claim", text[:120],
+                {"text": text, "grade": "hypothesis", "claimed_grade": grade,
+                 "session": session, "downgraded": True, "unresolved": [],
+                 "unsupported": [], "operator_asserted": [],
+                 "blast_radius": blast_radius, "confidence": confidence,
+                 "advisories": [], "reason": loop_reason},
+                evidence=citations,
+            )
     # Detected as well as declared: the check protected whoever remembered to
     # pass the flag, which is not the person who needs it.
     if not external and grade == "verified":
@@ -1723,6 +1739,67 @@ def record_claim(
 
 
 RESOLUTION_OUTCOMES = ("held", "failed")
+
+# The convergence law's numbers, in one place: how many failed outcomes on
+# one subject arm the fix-loop wire, and how many shared salient terms make
+# two claims "one subject".
+_FIX_LOOP_REVERSALS = 2
+_FIX_LOOP_SHARED_TERMS = 3
+
+
+def _fix_loop_reason(archive: Chronicle, text: str,
+                     citations: list[str]) -> str | None:
+    """The convergence law, wired: two reversals mean stop and go read.
+
+    A scored claim resolved `failed` IS a recorded reversal - the analysis
+    that produced it did not survive contact with the outcome. When two of
+    them share their subject matter with a new claim, the new claim is the
+    third try of a loop, and it downgrades with both reversals named until
+    the record shows the reading happened: an incident or decision recorded
+    AFTER the second reversal, cited on the new claim by seq. The escape is
+    deliberate evidence, never wording - rephrasing the subject does not
+    clear a wire that matches on salient terms.
+    """
+    terms = _salient(text)
+    if not terms:
+        return None
+    records = archive.select(kind="claim", limit=500)
+    by_seq = {record["sequence"]: record for record in records}
+    reversals: list[dict[str, Any]] = []
+    for record in records:
+        data = record.get("data") or {}
+        if data.get("resolves") is None or data.get("outcome") != "failed":
+            continue
+        original = by_seq.get(data["resolves"])
+        if original is None:
+            continue
+        shared = terms & _salient(str(original["data"].get("text", "")))
+        if len(shared) >= _FIX_LOOP_SHARED_TERMS:
+            reversals.append(original)
+    if len(reversals) < _FIX_LOOP_REVERSALS:
+        return None
+    second_reversal_seq = sorted(record["sequence"] for record in reversals)[
+        _FIX_LOOP_REVERSALS - 1]
+    cited_seqs = {
+        int(citation[4:]) for citation in citations
+        if str(citation).startswith("seq:") and str(citation)[4:].isdigit()
+    }
+    for record in archive.read_events(verify=False):
+        if record.get("kind") not in ("incident", "decision"):
+            continue
+        if record["sequence"] <= second_reversal_seq:
+            continue
+        if record["sequence"] in cited_seqs:
+            return None
+    named = ", ".join(
+        f"seq:{record['sequence']}" for record in reversals[:3])
+    return (
+        f"fix-loop: {len(reversals)} prior claims on this subject failed "
+        f"their outcomes ({named}) - two reversals mean the analysis is the "
+        "defect; run a godmode investigation or sweep the whole class, "
+        "record what was read (incident or decision), and cite it by seq: "
+        "on the next claim"
+    )
 
 
 def resolve_claim(
