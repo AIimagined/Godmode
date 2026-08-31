@@ -443,6 +443,53 @@ def _final_reply_text(submitted: dict[str, Any]) -> str:
     return ""
 
 
+def _investigation_nudge(archive: Any, submitted: dict) -> str | None:
+    """The fix-loop shape in the session's own timeline, named at the stop.
+
+    One command observed failing three or more times with at least one
+    mutation between the first and last failure is a fix loop in progress:
+    edits are being tried against a red signal without the loop being
+    treated as an incident. If any incident record already sits in the
+    recent archive, the loop is being investigated and the nudge stays
+    silent - it points once, it never nags. Counts only, never the command
+    text: the timeline stores digests (the 4018 privacy decision).
+    """
+    transcript = submitted.get("transcript_path") or submitted.get("transcriptPath")
+    if not transcript:
+        return None
+    try:
+        from godmode_runtime.godmode_session_log import session_timeline
+
+        timeline = session_timeline(Path(transcript))
+    except Exception:  # noqa: BLE001 - a missing instrument is never a penalty
+        return None
+    mutations = timeline.get("mutation_turns") or []
+    worst = 0
+    for entries in (timeline.get("commands") or {}).values():
+        failures = [turn for turn, code in entries
+                    if code is not None and code != 0]
+        if len(failures) < 3:
+            continue
+        if not any(first < m < last for m in mutations
+                   for first, last in [(min(failures), max(failures))]):
+            continue
+        worst = max(worst, len(failures))
+    if not worst:
+        return None
+    try:
+        for record in archive.select(kind="incident", limit=50):
+            return None
+    except Exception:  # noqa: BLE001
+        return None
+    return (
+        f"godmode: one command has failed {worst} times this session with "
+        "edits between the failures - that shape is a fix loop, and the "
+        "analysis is now the suspect. Open the loop as an incident and run "
+        "the godmode-investigation workflow (reproduce first, bounded "
+        "hypotheses, evidence per fix) before the next edit."
+    )
+
+
 def _open_obligations_touched(archive: Any, reply_text: str) -> list[str]:
     """Open obligations whose vocabulary the turn's final text shares (S9,
     report 16 2026-08-29): an obligation recorded mid-session surfaced only
@@ -1004,6 +1051,15 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             unsupported = _unrecorded_claims(archive, reply_text)
             touched = _open_obligations_touched(archive, reply_text)
+            # The investigation nudge: the timeline the temporal claim check
+            # already reads also carries the fix-loop shape - one command
+            # red three times with mutations between the failures. That
+            # shape is the diagnosis skill's own trigger, compiled into the
+            # hook instead of left to willpower (six consecutive red CI
+            # rounds, 2026-08-31, proved willpower is not a control).
+            # Counts and points only; the timeline stores digests, so the
+            # command text never appears (the 4018 privacy decision).
+            nudge = _investigation_nudge(archive, submitted)
             # One stdout object or nothing: the host parses hook stdout as a
             # single JSON value, and two valid objects concatenated read as
             # "looks like JSON but is not valid JSON" - the whole delivery
@@ -1011,6 +1067,8 @@ def main(argv: list[str] | None = None) -> int:
             # both touched an obligation and made a claim). Notices
             # accumulate; the print happens once.
             notices: list[str] = []
+            if nudge:
+                notices.append(nudge)
             if touched:
                 notices.append(
                     "godmode: open obligation(s) this turn touches: "
