@@ -170,3 +170,62 @@ class FourMoreFamiliesTests(unittest.TestCase):
             fams = utilization(archive)["families"]
             self.assertEqual(fams["assumptions"]["verdict"],
                              "dormant-with-demand")
+
+
+class DemandMomentNudgeTests(unittest.TestCase):
+    """Detection alone was the gap the operator named: the census read
+    dormant-with-demand while nothing fired AT the moment of demand. The
+    writers now nudge: a work item entering active without a criterion
+    carries a finding; an incident recorded without a stated assumption
+    carries an advisory. Findings inform, they never block."""
+
+    def test_activating_an_item_without_a_criterion_is_named(self) -> None:
+        from godmode_runtime.godmode_status import record_item
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            record = record_item(archive, "feat-1", "a feature", "active")
+            self.assertIn("criterion-missing", record["data"].get("findings", []))
+
+    def test_a_preregistered_criterion_silences_it(self) -> None:
+        from godmode_runtime.godmode_status import record_item
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            archive.append("criterion", "feat-1",
+                           {"task": "feat-1", "text": "all pins green"})
+            record = record_item(archive, "feat-1", "a feature", "active")
+            self.assertNotIn("criterion-missing",
+                             record["data"].get("findings", []))
+
+    def test_an_incident_without_assumptions_carries_the_advisory(self) -> None:
+        from godmode_runtime.godmode_mistakes import record_incident
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            record = record_incident(archive, "export broke", "boom")
+            self.assertTrue(any("assumption" in a for a in
+                                record["data"].get("advisories", [])))
+
+
+class PreflightCensusTests(unittest.TestCase):
+    """A push preflight that never mentions standing process debt is how
+    eleven commits queue over a dormant census: the families now ride the
+    preflight as judgment findings - a person decides, nothing blocks."""
+
+    def test_dormant_families_appear_as_judgment_findings(self) -> None:
+        import subprocess
+        from godmode_runtime.godmode_status import record_item
+        from godmode_runtime.godmode_preflight import push_preflight
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            record_item(archive, "feat-1", "a feature", "active")
+            subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+            subprocess.run(["git", "config", "user.email", "t@example.invalid"],
+                           cwd=project, check=True)
+            subprocess.run(["git", "config", "user.name", "t"],
+                           cwd=project, check=True)
+            (project / "a.txt").write_text("x", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=project, check=True)
+            subprocess.run(["git", "commit", "-qm", "seed"], cwd=project,
+                           check=True)
+            report = push_preflight(project, archive=archive)
+            details = " ".join(f["detail"] for f in report["judgment"])
+            self.assertIn("dormant-with-demand", details)

@@ -2551,7 +2551,8 @@ def cmd_precheck(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     if getattr(args, "preflight", False):
         from .godmode_preflight import push_preflight
         report = push_preflight(Path(runtime.anchor.project_root),
-                                suite=getattr(args, "suite", None))
+                                suite=getattr(args, "suite", None),
+                                archive=runtime.archive)
         return CommandResult(report, exit_code=1 if report["verdict"] == "findings" else 0)
     if not args.about:
         raise ArchiveError("precheck requires --about (or --preflight)")

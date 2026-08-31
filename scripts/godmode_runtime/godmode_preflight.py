@@ -53,7 +53,8 @@ def _term_list(repo: Path) -> Path | None:
 
 
 def push_preflight(project: Path | str,
-                   suite: list[str] | None = None) -> dict[str, Any]:
+                   suite: list[str] | None = None,
+                   archive: Any = None) -> dict[str, Any]:
     repo = Path(project)
     status = _git(repo, "status", "--porcelain=v1")
     if status.returncode != 0:
@@ -123,6 +124,26 @@ def push_preflight(project: Path | str,
                 })
         else:
             skipped.append("suite: no command designated (--suite)")
+        # Standing process debt rides the preflight as judgment findings:
+        # a push that never saw the dormant census is how commit stacks
+        # queue over unstated criteria and assumptions (operator finding,
+        # 2026-09-01). A person decides; nothing here blocks.
+        if archive is not None:
+            try:
+                from .godmode_metrics import utilization
+
+                census = utilization(archive, Path(project))
+                for name, fam in sorted(census["families"].items()):
+                    if fam["verdict"] == "dormant-with-demand":
+                        judgment.append({
+                            "check": "census",
+                            "detail": f"family '{name}' is dormant-with-demand "
+                                      f"(demand {fam['demand']}, fired "
+                                      f"{fam['fired']}); pushing anyway is a "
+                                      "decision - make it knowingly",
+                        })
+            except Exception:  # noqa: BLE001 - census failing never blocks a push
+                skipped.append("census: unavailable")
     finally:
         _git(repo, "worktree", "remove", "--force", str(worktree))
         _git(repo, "worktree", "prune")
