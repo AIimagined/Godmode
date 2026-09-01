@@ -294,3 +294,42 @@ class AttestationFingerprintTests(unittest.TestCase):
         with isolated_project() as (_p, _s, _a, archive):
             record = record_step(archive, "S", "unit suite", "ran")
             self.assertNotIn("worktree", record["data"])
+
+
+class AsymmetricScoreTests(unittest.TestCase):
+    """Loss-averse calibration, ADDITIVE: overconfident failure costs more
+    than underconfident holding saves (lambda 2.25 on the failure side).
+    The symmetric score is untouched - history stays comparable - and the
+    asymmetric reading rides beside it as its own field.
+    """
+
+    def test_failure_is_penalized_harder_than_symmetric(self) -> None:
+        from test_godmode_runtime import isolated_project
+        from godmode_runtime.godmode_attest import record_claim, resolve_claim
+        with isolated_project() as (project, _s, _a, archive):
+            (project / "README.md").write_text("x", encoding="utf-8")
+            record = record_claim(archive, project, "S", "the risky bet holds",
+                                  "observed", cites=["file:README.md"],
+                                  confidence=0.9)
+            resolution = resolve_claim(archive, project, "S",
+                                       record["sequence"], "failed",
+                                       cites=["file:README.md"])
+            data = resolution.get("data", resolution)
+            self.assertAlmostEqual(data["score"], 1 - 0.9 ** 2, places=4)
+            self.assertAlmostEqual(data["asymmetric_score"],
+                                   1 - 2.25 * (0.9 ** 2), places=4)
+
+    def test_held_matches_the_symmetric_score(self) -> None:
+        from test_godmode_runtime import isolated_project
+        from godmode_runtime.godmode_attest import record_claim, resolve_claim
+        with isolated_project() as (project, _s, _a, archive):
+            (project / "README.md").write_text("x", encoding="utf-8")
+            record = record_claim(archive, project, "S", "the safe bet holds",
+                                  "observed", cites=["file:README.md"],
+                                  confidence=0.7)
+            resolution = resolve_claim(archive, project, "S",
+                                       record["sequence"], "held",
+                                       cites=["file:README.md"])
+            data = resolution.get("data", resolution)
+            self.assertAlmostEqual(data["asymmetric_score"], data["score"],
+                                   places=6)
