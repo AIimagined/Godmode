@@ -882,8 +882,9 @@ def _sources_gate_reason(archive: Chronicle, anchor: Any,
         f"required sources unread ({len(unread)} of {view.get('documents', 0)}): "
         f"{named}. Read them and cite each with file:<path> evidence, or exempt "
         "one on the record: `godmode remember --kind decision --subject "
-        '"sources-exemption:<path>" --value "<why>"`. Asked once per session; '
-        "approve to proceed without."
+        '"sources-exemption:<path>" --value "<why>"` - a project rule that '
+        "forbids bulk-reading these is itself a valid <why>. Asked once per "
+        "session; approve to proceed without."
     )
 
 

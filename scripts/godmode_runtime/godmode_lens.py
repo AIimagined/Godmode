@@ -871,6 +871,8 @@ _FAMILY_VERBS = {
     "independent-check": "record the review verdict: `godmode verdict record`",
     "assumptions": "state what the fix assumes: `godmode remember --kind assumption`",
     "db": "record database governance state: `godmode db`",
+    "atlas": "ask the map before editing blind: `godmode atlas affected <symbol>`",
+    "checklist": "give the release its standing rows: `godmode checklist update`",
 }
 
 

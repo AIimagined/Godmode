@@ -205,25 +205,46 @@ def record_step(
     evidence: list[str] | None = None,
     rule_ids: list[str] | None = None,
     reason: str = "",
+    project: Path | None = None,
 ) -> dict[str, Any]:
     if status not in STATUSES:
         raise ArchiveError(f"Unknown attestation status '{status}'; expected one of {', '.join(STATUSES)}")
     if status == "skipped" and not reason.strip():
         # A skip without a reason is the failure this module exists to stop.
         raise ArchiveError("A skipped step requires --reason stating why it was skipped")
-    return archive.append(
-        "attestation",
-        step,
-        {
-            "session": session,
-            "status": status,
-            "result": result,
-            "reason": reason,
-            "rule_ids": sorted(rule_ids or []),
-            "agent": agent_fingerprint(),
-        },
-        evidence=evidence or [],
-    )
+    data: dict[str, Any] = {
+        "session": session,
+        "status": status,
+        "result": result,
+        "reason": reason,
+        "rule_ids": sorted(rule_ids or []),
+        "agent": agent_fingerprint(),
+    }
+    # The tree state this attestation attested, coarse and honest: which
+    # FILES a check covered is not always knowable, so the record carries
+    # HEAD and the dirty count instead - enough for a later reader to say
+    # "this green predates your edits" without claiming file coverage it
+    # cannot prove. Absent (a stated gap) when there is no project or no
+    # git; never a crash.
+    if project is not None:
+        try:
+            import subprocess
+
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=project,
+                capture_output=True, text=True, timeout=30)
+            porcelain = subprocess.run(
+                ["git", "status", "--porcelain=v1"], cwd=project,
+                capture_output=True, text=True, timeout=30)
+            if head.returncode == 0 and porcelain.returncode == 0:
+                data["worktree"] = {
+                    "head": head.stdout.strip()[:12],
+                    "dirty": len([l for l in porcelain.stdout.splitlines()
+                                  if l.strip()]),
+                }
+        except Exception:  # noqa: BLE001
+            pass
+    return archive.append("attestation", step, data, evidence=evidence or [])
 
 
 def run_check(
@@ -280,6 +301,7 @@ def run_check(
         session,
         f"check:{name}",
         "ran" if passed else "blocked",
+        project=project,
         result=(f"exit {code}: {detail}"
                 + ("; this check changed the working tree while running, so its "
                    "result describes a tree that no longer exists" if mutated else "")),
