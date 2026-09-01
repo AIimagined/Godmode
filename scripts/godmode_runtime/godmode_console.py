@@ -2409,9 +2409,22 @@ def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         # line enough to close the prompt it came from.
         data["digest"] = request_digest(args.subject)
         data["source"] = getattr(args, "source", "stated")
-    return CommandResult(
-        {"record": _append(runtime, args.kind, args.subject, data, args.evidence)}
-    )
+    payload: dict[str, Any] = {
+        "record": _append(runtime, args.kind, args.subject, data, args.evidence)
+    }
+    # Sibling advisory (field report, 2026-09-01): an obligation recorded
+    # over an open one with the same vocabulary is usually the same duty
+    # in new clothes - name the elder now, or both nag forever.
+    if args.kind == "obligation" and status not in ("closed", "done", "retired"):
+        try:
+            from .godmode_mistakes import obligation_sibling_advisory
+            advisory = obligation_sibling_advisory(
+                runtime.archive, args.subject, args.value)
+            if advisory:
+                payload["advisory"] = advisory
+        except Exception:  # noqa: BLE001
+            pass
+    return CommandResult(payload)
 
 
 def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:

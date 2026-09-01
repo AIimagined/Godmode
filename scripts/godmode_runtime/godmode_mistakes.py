@@ -767,3 +767,41 @@ def analyze(archive: Chronicle) -> dict[str, Any]:
         "blocking": bool(blocking),
         "verdict": "mistake-class-detected" if blocking else "clean",
     }
+
+
+def obligation_sibling_advisory(archive: Any, subject: str,
+                                value: str) -> str | None:
+    """One sentence when a new obligation is an open one in new clothes.
+
+    Field report (2026-09-01): a version-bearing subject mints a fresh
+    obligation every bump, subject-keyed supersession never links them,
+    and the corpses nag beside the living one. At record time the overlap
+    is cheapest to name: >=3 shared salient words with an OPEN obligation
+    of a different subject means close or supersede the elder now.
+    """
+    from .godmode_sources import _salient_words
+
+    new_vocab = _salient_words(f"{subject} {value}")
+    if not new_vocab:
+        return None
+    try:
+        latest: dict[str, dict] = {}
+        for record in archive.select(kind="obligation", limit=200):
+            latest[str(record.get("subject", ""))] = record
+    except Exception:  # noqa: BLE001
+        return None
+    for elder_subject, record in latest.items():
+        if elder_subject == subject:
+            continue
+        data = record.get("data") or {}
+        if str(data.get("status", "open")) in ("closed", "done", "retired"):
+            continue
+        vocab = _salient_words(f"{elder_subject} {data.get('value', '')}")
+        if len(new_vocab & vocab) >= 3:
+            return (
+                f"an open obligation '{elder_subject}' shares this one's "
+                "vocabulary - if this replaces it, supersede or close the "
+                "elder now (`godmode remember --kind obligation --subject "
+                f"\"{elder_subject}\" --status closed`), or the nag will "
+                "surface both forever.")
+    return None
