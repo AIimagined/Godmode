@@ -2437,6 +2437,25 @@ def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult(payload)
 
 
+
+def cmd_loop_contract(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    from .godmode_loop import close_loop, declare_loop, tick_loop
+    if args.loop_command == "declare":
+        record = declare_loop(runtime.archive, args.name,
+                              max_iterations=args.max_iterations,
+                              stop_when=args.stop_when)
+        return CommandResult({"record": _event_view(record)})
+    if args.loop_command == "tick":
+        report = tick_loop(runtime.archive, args.name,
+                           progress=not args.empty, note=args.note,
+                           evidence=args.evidence)
+        return CommandResult(report, exit_code=1 if report["escalation"] else 0)
+    record = close_loop(runtime.archive, args.name, outcome=args.outcome,
+                        evidence=args.evidence)
+    return CommandResult({"record": _event_view(record)})
+
+
 def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # Scope-explicit (B4-8 ext.): every status answer names the project it
     # is about, in JSON and in prose.
@@ -4992,6 +5011,30 @@ def _build_parser() -> argparse.ArgumentParser:
                       help="Task 10b: audit .godmode-loop.json readiness (stop contract, "
                            "budget, verdict path, escalation thresholds) before cycle one")
     loop.set_defaults(handler=cmd_loop)
+    # S16: the loop CONTRACT verbs live under the same noun - `godmode loop`
+    # bare keeps the detector behavior; declare/tick/close carry the bounded
+    # contract (readiness at declaration, graduated stall escalation,
+    # terminated-vs-truncated at close).
+    loop_sub = loop.add_subparsers(dest="loop_command", required=False)
+    loop_declare = loop_sub.add_parser("declare")
+    loop_declare.add_argument("name")
+    loop_declare.add_argument("--max-iterations", type=int, required=True)
+    loop_declare.add_argument("--stop-when", action="append", default=[],
+                              help="A condition that ends the loop; repeatable")
+    loop_declare.set_defaults(handler=cmd_loop_contract)
+    loop_tick = loop_sub.add_parser("tick")
+    loop_tick.add_argument("name")
+    loop_tick.add_argument("--empty", action="store_true",
+                           help="This iteration made no progress")
+    loop_tick.add_argument("--note", default="")
+    _evidence(loop_tick)
+    loop_tick.set_defaults(handler=cmd_loop_contract)
+    loop_close = loop_sub.add_parser("close")
+    loop_close.add_argument("name")
+    loop_close.add_argument("--outcome", choices=["finished", "cut-off"],
+                            required=True)
+    _evidence(loop_close)
+    loop_close.set_defaults(handler=cmd_loop_contract)
 
     environment = sub.add_parser(
         "environment", help="Classify a mutation target's blast radius; unknown fails closed"
