@@ -144,6 +144,25 @@ def push_preflight(project: Path | str,
                         })
             except Exception:  # noqa: BLE001 - census failing never blocks a push
                 skipped.append("census: unavailable")
+            # The reasoning probe at the one genuinely high-stakes moment:
+            # a push resting on zero recorded assumptions gets asked what
+            # it rests on. One real assumption on record silences it -
+            # this is a probe, not a quota.
+            try:
+                has_assumption = any(
+                    r.get("kind") == "assumption"
+                    for r in archive.read_events(verify=False))
+                if not has_assumption:
+                    judgment.append({
+                        "check": "assumptions",
+                        "detail": "no assumption is on record - what does "
+                                  "this push rest on that is not written "
+                                  "down? `godmode remember --kind "
+                                  "assumption` if there is one; push "
+                                  "knowingly if there is not",
+                    })
+            except Exception:  # noqa: BLE001
+                skipped.append("assumption probe: unavailable")
     finally:
         _git(repo, "worktree", "remove", "--force", str(worktree))
         _git(repo, "worktree", "prune")
@@ -153,5 +172,9 @@ def push_preflight(project: Path | str,
         "judgment": judgment,
         "skipped": skipped,
         "verdict": ("findings" if mechanical or judgment else "clean"),
+        # The effect of a control action is confirmed, never assumed: the
+        # cleanup claim is checked against the filesystem, and an
+        # unconfirmed removal is stated rather than silently believed.
+        "cleanup": "confirmed" if not worktree.exists() else "unconfirmed",
         "feeds": "the password gate; preflight never bypasses it",
     }

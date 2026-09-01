@@ -1,0 +1,1 @@
+The push preflight now carries a reasoning probe: when zero assumptions are on record, one judgment finding asks what the push rests on that is not written down - silenced by a single real assumption record, because it is a probe, not a quota. The report also confirms its own cleanup ("cleanup": confirmed/unconfirmed) instead of assuming the disposable worktree removal worked.
