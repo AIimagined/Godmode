@@ -7,7 +7,8 @@
   A local, tamper-evident record of what the agent did, what it claimed, and what was verified -<br>
   with a gate that classifies risky actions before they run.<br>
   Zero runtime dependencies · zero network use · nothing leaves your machine.<br>
-  Claude Code · Grok · Codex · OpenCode · Antigravity
+  Claude Code · Grok · Codex · OpenCode · Antigravity —
+  <a href="#host-support">enforcement graded per host</a>
 </p>
 
 <p align="center">
