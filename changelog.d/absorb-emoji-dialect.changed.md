@@ -1,0 +1,1 @@
+`status absorb-docs` learned the emoji dialect real status files speak: a bullet whose content starts with a status emoji absorbs (green and check marks as claims-of-done, every other color as open work), beside the original checkbox reading. The file that taught it carried 404 emoji-status lines and exactly one checkbox; unmarked prose bullets still never absorb.

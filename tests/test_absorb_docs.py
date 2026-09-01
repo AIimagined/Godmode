@@ -92,3 +92,35 @@ class AbsorbDocsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+EMOJI_DOC = """# Sprint truth
+
+## Hotfix wave
+- ✅ **the tokenizer rewrite shipped:** verified against upstream
+- \U0001f534 **L-386 lock drift:** quoted as current for four bumps
+- ⏳ **corpus re-fetch:** only phase three remains
+- plain prose bullet without any status marker stays out
+"""
+
+
+class EmojiDialectTests(unittest.TestCase):
+    """Field lesson (a live project's SSOT, 2026-09-01): real status files mark
+    state with lead emoji on bold-titled bullets, not checkboxes - 404
+    status lines, one checkbox. The conservative read: only bullets whose
+    content STARTS with a status emoji absorb; green/check marks are
+    claims of done (review), everything else is open (proposed); unmarked
+    prose bullets never absorb."""
+
+    def test_lead_emoji_bullets_absorb_with_honest_states(self) -> None:
+        with _project() as (root, archive):
+            doc = root / "SPRINT-SSOT.md"
+            doc.write_text(EMOJI_DOC, encoding="utf-8")
+            report = absorb_docs(archive, doc, write=False)
+            self.assertEqual(report["proposed"], 3)
+            states = {item["title"]: item["state"] for item in report["items"]}
+            done_key = next(k for k in states if "tokenizer" in k)
+            open_key = next(k for k in states if "L-386" in k)
+            self.assertEqual(states[done_key], "review")
+            self.assertEqual(states[open_key], "proposed")
+            self.assertFalse(any("plain prose" in t for t in states))
