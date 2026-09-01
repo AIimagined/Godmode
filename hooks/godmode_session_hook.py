@@ -1150,6 +1150,16 @@ def main(argv: list[str] | None = None) -> int:
                     }
             except Exception:  # noqa: BLE001
                 pass
+            # The oversight pulse rides only when its advisory is live -
+            # a session that opens knowing approvals have been running on
+            # autopilot treats the next ask differently.
+            try:
+                from godmode_runtime.godmode_metrics import oversight_pulse
+                pulse = oversight_pulse(archive)
+                if pulse.get("advisory"):
+                    brief["oversight"] = pulse
+            except Exception:  # noqa: BLE001
+                pass
             if claude_session:
                 _emit_claude_context(brief)
             else:
