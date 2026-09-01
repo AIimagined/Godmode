@@ -643,3 +643,125 @@ def repeated_repairs(project: Path, threshold: int = REPAIR_THRESHOLD) -> list[d
             "citations": [],
         })
     return findings
+
+
+# ---- Loop contracts (S16): declared bounds, ticked iterations, honest ends.
+# Godmode never runs the loop - the agent drives; these record the contract
+# and enforce readiness-at-declaration, graduated stall escalation (2 -> 
+# direction change, 4 -> operator), and the terminated-vs-truncated split
+# (finished at the cap needs evidence).
+
+
+
+
+
+_PREFIX = "loop:"
+_DIRECTION_AT = 2
+_OPERATOR_AT = 4
+OUTCOMES = ("finished", "cut-off")
+
+
+def _state(archive: Chronicle, name: str) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """(latest contract record, tick records after it) for one loop name."""
+    contract = None
+    ticks: list[dict[str, Any]] = []
+    for record in archive.read_events(verify=False):
+        if record.get("kind") != "plan":
+            continue
+        subject = str(record.get("subject", ""))
+        if subject == f"{_PREFIX}{name}":
+            data = record.get("data") or {}
+            if data.get("loop_event") == "declare":
+                contract = record
+                ticks = []
+            elif data.get("loop_event") == "close":
+                contract = None
+                ticks = []
+            elif data.get("loop_event") == "tick" and contract is not None:
+                ticks.append(record)
+    return contract, ticks
+
+
+def declare_loop(archive: Chronicle, name: str, *, max_iterations: int,
+                 stop_when: list[str]) -> dict[str, Any]:
+    conditions = [str(c).strip() for c in (stop_when or []) if str(c).strip()]
+    if max_iterations < 1:
+        raise ArchiveError(
+            "a loop contract needs a positive iteration cap - an unbounded "
+            "loop is hope, not a contract")
+    if not conditions:
+        raise ArchiveError(
+            "a loop contract needs at least one stop condition - without "
+            "one, only exhaustion can end it, and exhaustion is not success")
+    return archive.append("plan", f"{_PREFIX}{name}", {
+        "loop_event": "declare",
+        "max_iterations": int(max_iterations),
+        "stop_when": conditions[:8],
+        "direction_change_at": _DIRECTION_AT,
+        "operator_at": _OPERATOR_AT,
+    })
+
+
+def tick_loop(archive: Chronicle, name: str, *, progress: bool,
+              note: str = "", evidence: list[str] | None = None) -> dict[str, Any]:
+    contract, ticks = _state(archive, name)
+    if contract is None:
+        raise ArchiveError(f"no open loop contract named '{name}' - declare first")
+    cap = int(contract["data"]["max_iterations"])
+    if len(ticks) >= cap:
+        raise ArchiveError(
+            f"loop '{name}' has used its {cap} iterations - close it "
+            "(finished with evidence, or cut-off honestly) before anything else")
+    streak = 0
+    for record in reversed(ticks):
+        if (record.get("data") or {}).get("progress"):
+            break
+        streak += 1
+    streak = streak + (0 if progress else 1)
+    if progress:
+        streak = 0
+    escalation = None
+    if streak >= _OPERATOR_AT:
+        escalation = (f"{streak} consecutive empty iterations - stop and "
+                      "escalate to the operator; the loop is not converging "
+                      "and more of the same is spend, not progress")
+    elif streak >= _DIRECTION_AT:
+        escalation = (f"{streak} consecutive empty iterations - state a "
+                      "direction change before the next tick (same approach "
+                      "again is the definition of a stall)")
+    archive.append("plan", f"{_PREFIX}{name}", {
+        "loop_event": "tick",
+        "iteration": len(ticks) + 1,
+        "progress": bool(progress),
+        "note": note[:300],
+        "empty_streak": streak,
+    }, evidence=evidence or [])
+    return {
+        "loop": name,
+        "iteration": len(ticks) + 1,
+        "of": cap,
+        "empty_streak": streak,
+        "escalation": escalation,
+    }
+
+
+def close_loop(archive: Chronicle, name: str, *, outcome: str,
+               evidence: list[str] | None = None) -> dict[str, Any]:
+    if outcome not in OUTCOMES:
+        raise ArchiveError(
+            f"unknown loop outcome '{outcome}'; expected one of {', '.join(OUTCOMES)}")
+    contract, ticks = _state(archive, name)
+    if contract is None:
+        raise ArchiveError(f"no open loop contract named '{name}'")
+    cap = int(contract["data"]["max_iterations"])
+    if outcome == "finished" and len(ticks) >= cap and not evidence:
+        raise ArchiveError(
+            "closing 'finished' at the iteration cap needs evidence - "
+            "budget exhaustion may never impersonate completion; close "
+            "'cut-off' if the budget is what ended it")
+    return archive.append("plan", f"{_PREFIX}{name}", {
+        "loop_event": "close",
+        "outcome": outcome,
+        "iterations_used": len(ticks),
+        "of": cap,
+    }, evidence=evidence or [])
