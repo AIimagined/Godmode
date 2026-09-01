@@ -1065,6 +1065,20 @@ def main(argv: list[str] | None = None) -> int:
                     brief["next_actions"] = demanded
             except Exception:  # noqa: BLE001
                 pass
+            # The calibration advisory rides too, only when it is live: a
+            # session that opens knowing its confidence runs hot claims
+            # differently from one that finds out at the next doctor run.
+            try:
+                from godmode_runtime.godmode_attest import calibration_summary
+                gauge = calibration_summary(archive)
+                if gauge.get("advisory"):
+                    brief["calibration"] = {
+                        "advisory": gauge["advisory"],
+                        "mean_score": gauge.get("mean_score"),
+                        "unresolved_scored": gauge.get("unresolved_scored"),
+                    }
+            except Exception:  # noqa: BLE001
+                pass
             if claude_session:
                 _emit_claude_context(brief)
             else:

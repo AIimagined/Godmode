@@ -79,5 +79,37 @@ class NextActionsTests(unittest.TestCase):
             self.assertEqual(next_actions(archive, root), [])
 
 
+class BriefCalibrationTests(unittest.TestCase):
+    def test_a_live_calibration_advisory_rides_the_brief(self) -> None:
+        # Three high-confidence claims resolved failed put the last-5 mean
+        # under 0.5; the session-start brief must carry that advisory so
+        # the next session opens knowing its own confidence runs hot.
+        import json
+        import subprocess
+        from godmode_runtime.godmode_attest import record_claim, resolve_claim
+        with _project() as (root, archive):
+            (root / "README.md").write_text("x", encoding="utf-8")
+            for index in range(3):
+                record = record_claim(
+                    archive, root, "S-c", f"hot claim number {index} holds",
+                    "observed", cites=["file:README.md"], confidence=0.95)
+                resolve_claim(archive, root, "S-c", record["sequence"],
+                              "failed", cites=["file:README.md"])
+            environment = dict(os.environ)
+            environment["GODMODE_STATE_HOME"] = os.environ["GODMODE_STATE_HOME"]
+            hook = Path(__file__).resolve().parents[1] / "hooks" / "godmode_session_hook.py"
+            done = subprocess.run(
+                [sys.executable, str(hook), "session-start",
+                 "--project", str(root)],
+                input="{}", capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=180,
+                env=environment)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            body = json.loads(done.stdout)
+            brief = body.get("brief") or {}
+            self.assertIn("calibration", brief)
+            self.assertTrue(brief["calibration"].get("advisory"))
+
+
 if __name__ == "__main__":
     unittest.main()
