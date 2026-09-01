@@ -99,6 +99,41 @@ class PreflightTests(unittest.TestCase):
                 capture_output=True, text=True, check=True).stdout
             self.assertEqual(len(listing.strip().splitlines()), 1)
 
+    def test_cleanup_is_confirmed_not_assumed(self) -> None:
+        # The effect of a control action is confirmed, never assumed: the
+        # report states whether the disposable worktree is actually gone.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp))
+            report = push_preflight(repo)
+            self.assertEqual(report["cleanup"], "confirmed")
+
+    def test_zero_assumptions_on_record_draws_the_probe(self) -> None:
+        # The reasoning probe at the one genuinely high-stakes moment:
+        # a push resting on no recorded assumption gets asked what it
+        # rests on. One recorded assumption silences it.
+        from unittest import mock
+        from godmode_runtime.godmode_anchor import resolve_anchor
+        from godmode_runtime.godmode_chronicle import Chronicle
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp))
+            state = Path(tmp) / "state"
+            with mock.patch.dict(os.environ,
+                                 {"GODMODE_STATE_HOME": str(state)},
+                                 clear=False):
+                archive = Chronicle(resolve_anchor(repo))
+                archive.initialize()
+                report = push_preflight(repo, archive=archive)
+                probes = [f for f in report["judgment"]
+                          if f["check"] == "assumptions"]
+                self.assertEqual(len(probes), 1)
+                self.assertIn("rest", probes[0]["detail"])
+                archive.append("assumption", "the bed assumes nothing moves",
+                               {"detail": "test fixture"})
+                report = push_preflight(repo, archive=archive)
+                probes = [f for f in report["judgment"]
+                          if f["check"] == "assumptions"]
+                self.assertEqual(probes, [])
+
 
 if __name__ == "__main__":
     unittest.main()
