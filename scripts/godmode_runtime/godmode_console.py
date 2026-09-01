@@ -2469,6 +2469,11 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             "utilization": __import__(
                 "godmode_runtime.godmode_metrics", fromlist=["utilization"]
             ).utilization(runtime.archive),
+            # Approval quality from the host-approval rows: a long unbroken
+            # approval streak reads as automation bias. Advisory always.
+            "oversight": __import__(
+                "godmode_runtime.godmode_metrics", fromlist=["oversight_pulse"]
+            ).oversight_pulse(runtime.archive),
             "issues": issues,
             "deep_scan": args.deep,
             "network_used": False,

@@ -590,3 +590,42 @@ def render_markdown(report: dict[str, Any]) -> str:
         meets = {True: "yes", False: "no", None: "-"}[entry["meets_target"]]
         lines.append(f"| {name} | {value} | {entry['target']} | {meets} | {entry['basis']} |")
     return "\n".join(lines) + "\n"
+
+
+_PULSE_WINDOW = 20
+_PULSE_STREAK = 8
+
+
+def oversight_pulse(archive: Chronicle) -> dict[str, Any]:
+    """Approval quality from the host-approval rows, advisory only.
+
+    A long unbroken run of host approvals with zero denials in the recent
+    window is the measurable signature of rubber-stamping - approval
+    running on automation bias rather than judgment. One advisory naming
+    the streak; never a verdict on any single decision, and honest-empty
+    below the streak threshold. Reads only records already written.
+    """
+    rows: list[bool] = []
+    for record in archive.read_events(verify=False):
+        if record.get("kind") != "decision":
+            continue
+        if not str(record.get("subject", "")).startswith("host-approval:"):
+            continue
+        verdict = (record.get("data") or {}).get("host_approved")
+        if isinstance(verdict, bool):
+            rows.append(verdict)
+    recent = rows[-_PULSE_WINDOW:]
+    streak = 0
+    for verdict in reversed(recent):
+        if not verdict:
+            break
+        streak += 1
+    advisory = None
+    if streak >= _PULSE_STREAK:
+        advisory = (
+            f"the last {streak} asked operations were all approved with no "
+            "denial in the window - approval may be running on automation "
+            "bias. Either widen bounded autonomy deliberately (policy file) "
+            "so these stop asking, or slow down on the asks that remain.")
+    return {"approvals_seen": len(rows), "recent_streak": streak,
+            "advisory": advisory}
