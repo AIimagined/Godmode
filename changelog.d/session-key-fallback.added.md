@@ -1,0 +1,1 @@
+Receipt-bounded advisories and the claim echo now work on hosts that send a transcript path but no session id: the receipt key falls back to a hash of the transcript path, which is session-scoped on every observed host. A host sending neither still gets silence - a bound that cannot be scoped to a session is a bound that lies.
