@@ -45,3 +45,14 @@ class ReplySentenceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SeparatorTableTests(unittest.TestCase):
+    def test_dot_separator_status_lines_are_layout(self) -> None:
+        # Field report #4: "tsc 0 · suite 3706 pass · parity 97/97" is a
+        # status table drawn with middle dots, not prose - two or more
+        # separators mean layout, same as a pipe row.
+        sentences = _reply_sentences(
+            "Gates green: tsc 0 · suite 3706 pass · parity 97/97.\n"
+            "The build finished cleanly after the fix.")
+        self.assertEqual(sentences, ["The build finished cleanly after the fix"])

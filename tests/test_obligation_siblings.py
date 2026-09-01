@@ -94,3 +94,60 @@ class RecordTimeAdvisoryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EchoSessionScopeTests(unittest.TestCase):
+    """A parked claim echo belongs to the session that wrote the reply.
+
+    Field report #4: after a restart, the echo nagged a NEW session about
+    a sentence it never wrote and could not verify. Delivery now requires
+    the same session; a mismatch deletes the parking file undelivered -
+    continuity across restarts is the resume path's job.
+    """
+
+    def test_cross_session_echo_is_dropped_undelivered(self) -> None:
+        import json
+        import subprocess
+        with _archive() as archive:
+            echo = archive.root / "godmode-claim-echo.json"
+            echo.write_text(json.dumps({
+                "sentences": ["the guard count is 55 of 55"],
+                "session": "S-old"}), encoding="utf-8")
+            hook = PLUGIN_ROOT / "hooks" / "godmode_session_hook.py"
+            environment = dict(os.environ)
+            done = subprocess.run(
+                [sys.executable, str(hook), "user-prompt",
+                 "--project", str(_project_of(archive))],
+                input=json.dumps({"prompt": "continue", "session_id": "S-new",
+                                  "hook_event_name": "UserPromptSubmit"}),
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=180, env=environment)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertNotIn("55", done.stdout or "")
+            self.assertFalse(echo.exists())
+
+    def test_same_session_echo_still_delivers(self) -> None:
+        import json
+        import subprocess
+        with _archive() as archive:
+            echo = archive.root / "godmode-claim-echo.json"
+            echo.write_text(json.dumps({
+                "sentences": ["the guard count is 55 of 55"],
+                "session": "S-same"}), encoding="utf-8")
+            hook = PLUGIN_ROOT / "hooks" / "godmode_session_hook.py"
+            done = subprocess.run(
+                [sys.executable, str(hook), "user-prompt",
+                 "--project", str(_project_of(archive))],
+                input=json.dumps({"prompt": "continue", "session_id": "S-same",
+                                  "hook_event_name": "UserPromptSubmit"}),
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=180, env=os.environ.copy())
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertIn("55", done.stdout or "")
+
+
+def _project_of(archive) -> Path:
+    # The bed project root: _archive() creates <tmp>/project and resolves
+    # the anchor from it; the chronicle root sits under the state home, so
+    # walk from the anchor instead of guessing.
+    return Path(archive.anchor.project_root)
