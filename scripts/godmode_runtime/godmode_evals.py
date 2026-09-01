@@ -947,3 +947,61 @@ def _self_check() -> None:
 
 if __name__ == "__main__":
     _self_check()
+
+
+_STABILITY_FIXTURE = "routing-stability.json"
+
+
+def routing_stability(project: Path, write: bool = False) -> dict[str, Any]:
+    """Per-case route stability across runs: flips with no rule change are
+    config-fragile cases (S17; the harness-fragility study's item-level
+    finding). The snapshot stores every prompt's routed skill plus a digest
+    of the authored suites; a later run under the SAME suites digest whose
+    route differs is a fragile case - it flips on incidental conditions,
+    and a case that flips must not decide a gate. A run under a different
+    digest is a rule change, compared as `suites-changed`, never as
+    fragility.
+    """
+    import hashlib as _hashlib
+
+    project = Path(project)
+    suites_digest = _hashlib.sha256()
+    for path in sorted((project / "skills").glob("*/godmode-evals.json")):
+        suites_digest.update(path.read_bytes())
+    digest = suites_digest.hexdigest()[:16]
+
+    current = run_routing_evals(project)
+    routes: dict[str, str] = {}
+    for skill, block in current["skills"].items():
+        for kind in ("positive", "near_negative"):
+            for prompt, routed in block["routes"][kind].items():
+                key = _hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
+                routes[key] = str(routed)
+
+    fixture = project / "evals" / "fixtures" / _STABILITY_FIXTURE
+    if write or not fixture.is_file():
+        fixture.parent.mkdir(parents=True, exist_ok=True)
+        fixture.write_text(json.dumps(
+            {"schema": "godmode-routing-stability-v1",
+             "suites_digest": digest, "routes": routes},
+            indent=1, sort_keys=True), encoding="utf-8")
+        return {"verdict": "stability-snapshot-written",
+                "cases": len(routes), "suites_digest": digest}
+
+    stored = json.loads(fixture.read_text(encoding="utf-8"))
+    if stored.get("suites_digest") != digest:
+        return {"verdict": "suites-changed", "cases": len(routes),
+                "note": "the authored suites differ from the snapshot; "
+                        "rerun with --write after judging the change - a "
+                        "rule change is not fragility"}
+    fragile = sorted(
+        key for key, routed in routes.items()
+        if key in stored["routes"] and stored["routes"][key] != routed)
+    return {
+        "verdict": "fragile-cases-found" if fragile else "routing-stable",
+        "cases": len(routes),
+        "fragile": fragile,
+        "note": ("a flipped case decides nothing until it stabilizes - "
+                 "treat it like a registered flaky test" if fragile else
+                 "every case routed as the snapshot recorded"),
+    }

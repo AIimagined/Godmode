@@ -1,0 +1,29 @@
+{
+ "routes": {
+  "039ab8e80d34a08f": "godmode-repair",
+  "05a6c0d73a9b2f61": "godmode-governance",
+  "07a2e8f8b27c0e4d": "godmode",
+  "1826bdf5055b2559": "godmode-skill-forge",
+  "23e76dfaaed7e4ad": "godmode-skill-forge",
+  "419b4d652b76b2e5": "godmode",
+  "64ede67b9e9c7b60": "godmode-investigation",
+  "7a89878364089cfe": "godmode-investigation",
+  "82a896836405685d": "godmode",
+  "886a292c4afe4f3d": "godmode",
+  "959c31c1c0a6e771": "godmode-repair",
+  "a31b4959666afcce": "godmode-investigation",
+  "abf70176e7a69434": "godmode",
+  "af960e68fe5dba08": "godmode-continuity",
+  "b0abde3033c40097": "godmode-repair",
+  "b187d1a28e5ddf1b": "godmode-continuity",
+  "c4637e69ab5fd0a6": "godmode-governance",
+  "ca29dd443c5b921d": "godmode-continuity",
+  "cb354f4d0d174f89": "godmode-skill-forge",
+  "d0c705ba59bb6cd4": "godmode-repair",
+  "da27bf92bee0938e": "None",
+  "eb114006207a6797": "godmode-skill-forge",
+  "ec9e17e2444dc917": "godmode-continuity"
+ },
+ "schema": "godmode-routing-stability-v1",
+ "suites_digest": "69009a20af536a5c"
+}
