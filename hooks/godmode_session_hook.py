@@ -621,7 +621,7 @@ def _reply_sentences(reply_text: str) -> list[str]:
     found: list[str] = []
     for raw_line in reply_text.splitlines():
         line = raw_line.strip().lstrip("-*#>").strip()
-        if not line or "|" in line:
+        if not line or "|" in line or line.count("·") >= 2:
             continue
         for chunk in _SENTENCE_SPLIT.split(line):
             sentence = chunk.strip().strip("*_`").strip()
@@ -1281,6 +1281,8 @@ def main(argv: list[str] | None = None) -> int:
                         parked["obligations"] = touched
                     if unsupported:
                         parked["sentences"] = [s[:200] for s in unsupported[:3]]
+                    parked["session"] = (
+                        str(submitted.get("session_id") or "") or None)
                     echo.write_text(json.dumps(parked, ensure_ascii=False),
                                     encoding="utf-8")
                 except Exception:  # noqa: BLE001
@@ -1336,6 +1338,14 @@ def main(argv: list[str] | None = None) -> int:
                 if echo_path.exists():
                     parked = json.loads(echo_path.read_text(encoding="utf-8"))
                     echo_path.unlink()
+                    # Field report #4 (2026-09-01): after a restart the echo
+                    # nagged a session about a reply it never wrote. The
+                    # correction belongs to the session that owns the
+                    # context; a mismatch (or an unstamped park) deletes the
+                    # file undelivered - restarts resume via the brief.
+                    current = str(submitted.get("session_id") or "") or None
+                    if parked.get("session") != current:
+                        parked = {}
                     sentences = [str(s)[:200]
                                  for s in (parked.get("sentences") or [])][:3]
                     touched = [str(s)[:120]
