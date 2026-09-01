@@ -591,6 +591,33 @@ def _open_obligations_touched(archive: Any, reply_text: str) -> list[str]:
         return []
 
 
+_SENTENCE_SPLIT = re.compile(r"[.!?](?:\s+|$)")
+
+
+def _reply_sentences(reply_text: str) -> list[str]:
+    """Sentences worth judging, from a markdown-shaped reply.
+
+    Field-observed 2026-09-01: the naive per-period split manufactured
+    claims out of typography - "0.3.9" chopped into "of 0", a table row
+    flagged as prose, and a reply QUOTING a godmode nag re-flagged by the
+    next nag. A terminator counts only when followed by whitespace or the
+    end; table rows (|) are layout, not statements; and a sentence naming
+    godmode is the hook talking to itself - skipped so the nag can never
+    recurse on its own vocabulary.
+    """
+    found: list[str] = []
+    for raw_line in reply_text.splitlines():
+        line = raw_line.strip().lstrip("-*#>").strip()
+        if not line or "|" in line:
+            continue
+        for chunk in _SENTENCE_SPLIT.split(line):
+            sentence = chunk.strip().strip("*_`").strip()
+            if len(sentence) < 15 or "godmode" in sentence.lower():
+                continue
+            found.append(sentence)
+    return found
+
+
 def _unrecorded_claims(archive: Any, reply_text: str) -> list[str]:
     """Claim-shaped sentences in the reply with no claim record behind them.
     Reuses the public-surface claim definition (`claimscan.is_claim`) and
@@ -602,17 +629,12 @@ def _unrecorded_claims(archive: Any, reply_text: str) -> list[str]:
     except Exception:  # noqa: BLE001 - an unreadable archive silences the advisory
         return []
     found: list[str] = []
-    for raw_line in reply_text.splitlines():
-        line = raw_line.strip().lstrip("-*#>| ").strip()
-        if not line:
+    for sentence in _reply_sentences(reply_text):
+        if not is_claim(sentence):
             continue
-        for chunk in line.replace("!", ".").replace("?", ".").split("."):
-            sentence = chunk.strip()
-            if len(sentence) < 15 or not is_claim(sentence):
-                continue
-            if _normalise(sentence) in recorded:
-                continue
-            found.append(sentence)
+        if _normalise(sentence) in recorded:
+            continue
+        found.append(sentence)
     return found
 
 
@@ -640,21 +662,14 @@ def _unrecorded_done_claims(archive: Any, reply_text: str) -> list[str]:
     except Exception:  # noqa: BLE001 - an unreadable archive silences the gate
         return []
     found: list[str] = []
-    for raw_line in reply_text.splitlines():
-        line = raw_line.strip().lstrip("-*#>| ").strip()
-        if not line:
+    for sentence in _reply_sentences(reply_text):
+        if not (_COMPLETION_VOCAB.search(sentence)
+                or looks_like_fix_claim(sentence)[0]
+                or looks_like_pass_verdict(sentence)[0]):
             continue
-        for chunk in line.replace("!", ".").replace("?", ".").split("."):
-            sentence = chunk.strip()
-            if len(sentence) < 15:
-                continue
-            if not (_COMPLETION_VOCAB.search(sentence)
-                    or looks_like_fix_claim(sentence)[0]
-                    or looks_like_pass_verdict(sentence)[0]):
-                continue
-            if _normalise(sentence) in recorded:
-                continue
-            found.append(sentence)
+        if _normalise(sentence) in recorded:
+            continue
+        found.append(sentence)
     return found
 
 
