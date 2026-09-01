@@ -1837,9 +1837,23 @@ def main(argv: list[str] | None = None) -> int:
                 # denied/asked about and observe mode let it through anyway -
                 # the classifier cannot know which run is the deciding one,
                 # and observe mode cannot be silent about looser enforcement.
+                # The verify promotion: a raw check-shaped command gets one
+                # sentence pointing at `godmode verify`, receipt-bounded to
+                # once per session. Best-effort like every advisory here.
+                promotion = None
+                if tool in ("Bash", "PowerShell", "shell"):
+                    try:
+                        from godmode_runtime.godmode_precheck import (
+                            verify_promotion_advisory)
+                        promotion = verify_promotion_advisory(
+                            archive, operation,
+                            str(submitted.get("session_id") or "") or None)
+                    except Exception:  # noqa: BLE001
+                        promotion = None
                 advisory = (preview.get("observe_advisory")
                             or evidence_pipe_advisory(operation)
-                            or checkpoint_advisory)
+                            or checkpoint_advisory
+                            or promotion)
                 if advisory:
                     print(json.dumps({"systemMessage": advisory},
                                      ensure_ascii=False))
