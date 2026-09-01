@@ -1,0 +1,1 @@
+`checkpoint --review` now clusters open obligation-kind records alongside checkpoint next-lists - version-bearing subjects that minted open siblings per bump were invisible to the reviewer, which read only handover lists. The existing version-supersession finding now names the stale elders; a recorded closure is honoured before clustering ever sees the text.
