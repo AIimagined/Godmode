@@ -3240,6 +3240,30 @@ _BOUNDARY_TIERS = (
      "(force-push, rm -rf on a root, DROP TABLE); secrets in the record; "
      "project state outside this machine"),
 )
+# Rules teach WHEN, hooks capture WHAT (the compiled half already lives at
+# the boundaries). Each moment names exactly one verb; the emitter checks
+# the verb against the live subparsers, so a rule cannot describe a command
+# that does not exist.
+_WHEN_RULES = (
+    ("a session starts or resumes", "resume",
+     "read the recorded state before trusting memory of it"),
+    ("you are about to say done, fixed, or passing", "claim",
+     "record it with citations first - the stop gate blocks an unrecorded "
+     "done once"),
+    ("a check decides anything", "verify",
+     "run it as `godmode verify <name> -- <command>` so the outcome is "
+     "attested, not evaporated"),
+    ("the same command fails twice with edits between", "remember",
+     "open an incident (`--kind incident`) - the third try without one is "
+     "a fix loop"),
+    ("an incident closes", "remember",
+     "distill the lesson (`--kind lesson --guard <rule>`) so the next "
+     "session inherits the guard"),
+    ("work item goes active", "criterion",
+     "give it a pass condition before building toward it"),
+    ("a review or audit concludes", "verdict",
+     "record the verdict so the all-clear is a record, not a sentence"),
+)
 _AGENTS_BEGIN = "<!-- godmode:agents begin -->"
 _AGENTS_END = "<!-- godmode:agents end -->"
 
@@ -3262,6 +3286,15 @@ def agentsmd_section(parser: argparse.ArgumentParser) -> str:
                 "the generated section refuses to describe a command that "
                 "does not exist")
         lines.append(f"- `godmode {name}` - {blurb}")
+    lines += ["", "### When", ""]
+    for moment, verb, blurb in _WHEN_RULES:
+        root = verb.split()[0]
+        if root not in registered:
+            raise ArchiveError(
+                f"when-rule verb '{root}' is not a registered subparser; "
+                "the generated section refuses to describe a command that "
+                "does not exist")
+        lines.append(f"- When {moment}: `godmode {verb}` - {blurb}")
     lines += ["", "### Boundaries", ""]
     for tier, detail in _BOUNDARY_TIERS:
         lines.append(f"- **{tier}**: {detail}")
