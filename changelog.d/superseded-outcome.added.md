@@ -1,1 +1,0 @@
-Claim resolutions gain a third outcome: `superseded` - the claim held at its time and was later improved upon. It scores as held (the declared confidence was justified), is recorded distinctly so replacement is never mistaken for reversal, and can never arm the fix-loop wire, which counts failures only.

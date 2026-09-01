@@ -1,1 +1,0 @@
-The session-end measurement now persists the fix-loop shape as three integers - distinct commands that failed repeatedly, the worst failure streak, and mutated turns - never the commands themselves. A loop that ended without an incident record is now visible to cross-session economics.

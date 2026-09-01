@@ -1,1 +1,0 @@
-The session-start brief now closes with `next_actions`: at most five commands the archive's own state demands - each unresolved scored claim names its `godmode claim --resolve N --outcome held|failed`, and each census family sitting dormant-with-demand names the one verb that feeds it. Inventory reads as scenery; a command list gets acted on.
