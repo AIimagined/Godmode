@@ -175,3 +175,22 @@ class BriefOrderingTests(unittest.TestCase):
         context = _json.loads(out.getvalue())["hookSpecificOutput"]["additionalContext"]
         self.assertLess(context.index("next_actions"), context.index("alpha_bulk"))
         self.assertLess(context.index("calibration"), context.index("zeta_bulk"))
+
+
+class EnforcementFreshnessTests(unittest.TestCase):
+    def test_an_unproven_host_is_a_stated_gap_on_the_brief(self) -> None:
+        # A fresh bed has no interception proof: the grade is not HARD and
+        # the brief must say so rather than let disarm stay invisible.
+        import json
+        import subprocess
+        with _project() as (root, _archive):
+            hook = Path(__file__).resolve().parents[1] / "hooks" / "godmode_session_hook.py"
+            done = subprocess.run(
+                [sys.executable, str(hook), "session-start", "--project", str(root)],
+                input="{}", capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=180,
+                env=dict(os.environ))
+            brief = json.loads(done.stdout).get("brief") or {}
+            enforcement = brief.get("enforcement") or {}
+            self.assertNotEqual(enforcement.get("grade"), "HARD")
+            self.assertIn("hooks", enforcement.get("advisory", ""))

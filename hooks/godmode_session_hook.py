@@ -1219,6 +1219,24 @@ def main(argv: list[str] | None = None) -> int:
                     }
             except Exception:  # noqa: BLE001
                 pass
+            # Enforcement freshness (S15 item 10): an invisible disarm
+            # becomes a stated gap. One line, only when the grade on this
+            # host is not HARD - a proven boundary adds nothing by
+            # restating itself.
+            try:
+                from godmode_runtime.godmode_hookproof import interception_state
+                grade = interception_state(archive, current_host())
+                if grade != "HARD":
+                    brief["enforcement"] = {
+                        "grade": grade,
+                        "advisory": (
+                            f"enforcement on this host reads {grade} - no "
+                            "current live-deny proof. `godmode hooks "
+                            "status` shows why; a genuinely denied "
+                            "protected call upgrades it."),
+                    }
+            except Exception:  # noqa: BLE001
+                pass
             # Doc-sprawl detection (S15 item 2): many large status-shaped
             # markdown files are the multiple-writable-truths disease -
             # whichever was read last wins. One line with the numbers and
