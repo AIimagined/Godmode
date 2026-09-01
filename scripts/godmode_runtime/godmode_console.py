@@ -1393,6 +1393,16 @@ def cmd_method(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     )
 
 
+def cmd_status_absorb_docs(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    from .godmode_status import absorb_docs
+    target = Path(runtime.anchor.project_root) / args.path
+    if not target.is_file():
+        return CommandResult({"refused": f"not a file: {args.path}"}, exit_code=1)
+    report = absorb_docs(runtime.archive, target, write=args.write)
+    return CommandResult(report)
+
+
 def cmd_status_set(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     record = record_item(
@@ -4465,6 +4475,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     status_handover.add_argument("--session")
     status_handover.set_defaults(handler=cmd_status_handover)
+    status_absorb = status_sub.add_parser(
+        "absorb-docs",
+        help="Map a status-shaped markdown file into proposed status items; "
+             "--write records them, the file itself is never touched")
+    status_absorb.add_argument("path")
+    status_absorb.add_argument("--write", action="store_true")
+    status_absorb.set_defaults(handler=cmd_status_absorb_docs)
 
     # Named `planmode` rather than extending `plan`: `plan` is part of the released
     # command surface and converting it to subcommands would break existing callers.
