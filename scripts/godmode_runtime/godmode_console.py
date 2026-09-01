@@ -2504,18 +2504,18 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             # Advisory always - calibration never flips health. It reports
             # how well declared confidence has tracked outcomes, and the
             # standing debt of scored claims nothing ever resolved.
-            "calibration": calibration_summary(runtime.archive),
+            "calibration": calibration_summary(runtime.archive, records=records),
             # Demand-vs-use census: which machinery families the record
             # demanded versus which fired. Dormancy WITH demand is the
             # alarm; idle is health. Advisory - never flips health.
             "utilization": __import__(
                 "godmode_runtime.godmode_metrics", fromlist=["utilization"]
-            ).utilization(runtime.archive),
+            ).utilization(runtime.archive, records=records),
             # Approval quality from the host-approval rows: a long unbroken
             # approval streak reads as automation bias. Advisory always.
             "oversight": __import__(
                 "godmode_runtime.godmode_metrics", fromlist=["oversight_pulse"]
-            ).oversight_pulse(runtime.archive),
+            ).oversight_pulse(runtime.archive, records=records),
             "issues": issues,
             "deep_scan": args.deep,
             "network_used": False,

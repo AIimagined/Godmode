@@ -1920,7 +1920,8 @@ def resolve_claim(
 _CALIBRATION_BANDS = (("high", 0.8, 1.01), ("mid", 0.5, 0.8), ("low", 0.0, 0.5))
 
 
-def calibration_summary(archive: Chronicle) -> dict[str, Any]:
+def calibration_summary(archive: Chronicle,
+                        records: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Read the whole calibration ledger into one doctor-ready block.
 
     Reports the mean score over resolved scored claims, the error rate
@@ -1929,7 +1930,10 @@ def calibration_summary(archive: Chronicle) -> dict[str, Any]:
     the standing debt: scored claims never resolved. Honest-empty when
     nothing is scored yet.
     """
-    records = archive.select(kind="claim", limit=500)
+    if records is None:
+        records = archive.select(kind="claim", limit=500)
+    else:
+        records = [r for r in records if r.get("kind") == "claim"][-500:]
     resolutions = [r for r in records if r["data"].get("resolves") is not None]
     resolved_seqs = {r["data"]["resolves"] for r in resolutions}
     scored = [r for r in resolutions if r["data"].get("score") is not None]

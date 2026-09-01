@@ -424,7 +424,8 @@ def economics(archive: Chronicle, project: Path) -> dict[str, Any]:
     }
 
 
-def utilization(archive: Chronicle, project: Path | None = None) -> dict[str, Any]:
+def utilization(archive: Chronicle, project: Path | None = None,
+                records: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Demand-vs-use census: dormancy with demand is the alarm.
 
     Absolute usage tracking is wrong - a project with no databases should
@@ -437,7 +438,8 @@ def utilization(archive: Chronicle, project: Path | None = None) -> dict[str, An
     with demand and nothing fired reads dormant-with-demand; with neither
     it reads idle - which is health, not neglect. Advisory always.
     """
-    records = archive.read_events(verify=False)
+    if records is None:
+        records = archive.read_events(verify=False)
     claims = [r for r in records if r.get("kind") == "claim"]
     by_seq = {r["sequence"]: r for r in claims}
 
@@ -638,7 +640,8 @@ _PULSE_WINDOW = 20
 _PULSE_STREAK = 8
 
 
-def oversight_pulse(archive: Chronicle) -> dict[str, Any]:
+def oversight_pulse(archive: Chronicle,
+                    records: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Approval quality from the host-approval rows, advisory only.
 
     A long unbroken run of host approvals with zero denials in the recent
@@ -648,7 +651,9 @@ def oversight_pulse(archive: Chronicle) -> dict[str, Any]:
     below the streak threshold. Reads only records already written.
     """
     rows: list[bool] = []
-    for record in archive.read_events(verify=False):
+    if records is None:
+        records = archive.read_events(verify=False)
+    for record in records:
         if record.get("kind") != "decision":
             continue
         if not str(record.get("subject", "")).startswith("host-approval:"):
