@@ -328,6 +328,24 @@ def record_measurement(
         return _gap(archive, session, REASON_UNREADABLE)
 
     data = dict(counts)
+    # The fix-loop shape, persisted as counts (never commands - the 4018
+    # privacy decision): how many distinct commands failed repeatedly, the
+    # worst streak, and how many turns mutated files. A loop that ended
+    # with no incident record becomes visible to cross-session economics
+    # only through these three integers. Best-effort: a second read of a
+    # transcript that just measured cleanly can still fail, and the
+    # measurement must land either way.
+    try:
+        commands, mutations = _scan_timeline(Path(path_text))
+        failure_streaks = [
+            sum(1 for _turn, code in entries if code != 0)
+            for entries in commands.values()]
+        repeated = [streak for streak in failure_streaks if streak >= 2]
+        data["failing_commands"] = len(repeated)
+        data["max_command_failures"] = max(failure_streaks, default=0)
+        data["mutation_turns"] = len(mutations)
+    except Exception:  # noqa: BLE001
+        pass
     data["measured"] = True
     data["session"] = str(session)[:80] if session else None
     return archive.append("metric", _SUBJECT, data, evidence=[])

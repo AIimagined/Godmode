@@ -205,6 +205,31 @@ class RecordMeasurementTests(unittest.TestCase):
         self.assertEqual(record["data"]["tool_calls"], {"Read": 1})
         self.assertEqual(record["data"]["session"], "S-1")
 
+    def test_the_fix_loop_shape_rides_the_measurement(self) -> None:
+        # The stop hook's timeline already carries the fix-loop shape;
+        # persisting its COUNTS (never the commands - the 4018 privacy
+        # decision) lets cross-session economics see a loop that ended
+        # without an incident. Same command failing twice, one mutation.
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            with tempfile.TemporaryDirectory() as raw:
+                path = Path(raw) / "t.jsonl"
+                fail = {"type": "tool_result", "content": "boom",
+                        "is_error": True, "tool_use_id": "toolu_0"}
+                _write_transcript(path, [
+                    _assistant_line(tool_uses=[("Bash", {"command": "make test"})]),
+                    {"type": "user", "message": {"role": "user", "content": [fail]}},
+                    _assistant_line(tool_uses=[("Edit", {"file_path": "a.py"})]),
+                    _assistant_line(tool_uses=[("Bash", {"command": "make test"})]),
+                    {"type": "user", "message": {"role": "user", "content": [dict(fail)]}},
+                ])
+                record = record_measurement(archive, path, session="S-loop")
+        data = record["data"]
+        self.assertEqual(data["failing_commands"], 1)
+        self.assertEqual(data["max_command_failures"], 2)
+        self.assertEqual(data["mutation_turns"], 1)
+        self.assertNotIn("make test", json.dumps(data))
+
     def test_a_missing_transcript_is_a_stated_gap_not_an_error(self) -> None:
         with isolated_project() as (_project, _state, _anchor, archive):
             archive.initialize()
