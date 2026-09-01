@@ -1,0 +1,1 @@
+The session-start brief now detects the multiple-writable-truths disease: six or more sizeable status-shaped markdown files at the project root (SPRINT*, HANDOVER*, TODO*, *-SSOT*, ABSORPTION*) draw one line with the file count, total size, and the cure - one writable store (`godmode status set`, `godmode checkpoint`) with files regenerated as views, scored by `godmode assess`.

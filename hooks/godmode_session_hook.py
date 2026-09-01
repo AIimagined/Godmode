@@ -1202,6 +1202,38 @@ def main(argv: list[str] | None = None) -> int:
                     }
             except Exception:  # noqa: BLE001
                 pass
+            # Doc-sprawl detection (S15 item 2): many large status-shaped
+            # markdown files are the multiple-writable-truths disease -
+            # whichever was read last wins. One line with the numbers and
+            # the cure; below threshold, silence (two sprint files are a
+            # convention, not a disease). Root level only - a docs/archive
+            # of generated views is the healthy end state, not sprawl.
+            try:
+                root_path = Path(anchor.project_root)
+                shaped = [
+                    f for pattern in ("SPRINT*.md", "HANDOVER*.md",
+                                      "TODO*.md", "*-SSOT*.md",
+                                      "ABSORPTION*.md")
+                    for f in root_path.glob(pattern)
+                    if f.is_file() and f.stat().st_size >= 2048
+                ]
+                shaped = sorted(set(shaped))
+                if len(shaped) >= 6:
+                    total_kb = sum(f.stat().st_size for f in shaped) // 1024
+                    brief["doc_sprawl"] = {
+                        "files": len(shaped),
+                        "kilobytes": total_kb,
+                        "advisory": (
+                            f"{len(shaped)} status-shaped markdown files "
+                            f"({total_kb} KB) hold writable truth side by "
+                            "side - whichever was read last wins. One "
+                            "writable store beats them: `godmode status "
+                            "set` for items, `godmode checkpoint` for "
+                            "handovers, files regenerated as views; "
+                            "`godmode assess` scores the sprawl."),
+                    }
+            except Exception:  # noqa: BLE001
+                pass
             # The oversight pulse rides only when its advisory is live -
             # a session that opens knowing approvals have been running on
             # autopilot treats the next ask differently.
