@@ -113,3 +113,43 @@ class BriefCalibrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DocSprawlTests(unittest.TestCase):
+    """The SPRINT-SSOT disease self-surfaces: many large status-shaped
+    markdown files at session start draw one brief line with the numbers
+    and the migration verb. Below threshold, silence - two sprint files
+    are a convention, not a disease."""
+
+    def test_sprawl_past_threshold_rides_the_brief(self) -> None:
+        import json
+        import subprocess
+        with _project() as (root, archive):
+            for index in range(7):
+                (root / f"SPRINT-AREA-{index}.md").write_text(
+                    ("# sprint\n" + "- item\n" * 400), encoding="utf-8")
+            hook = Path(__file__).resolve().parents[1] / "hooks" / "godmode_session_hook.py"
+            done = subprocess.run(
+                [sys.executable, str(hook), "session-start", "--project", str(root)],
+                input="{}", capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=180,
+                env=dict(os.environ))
+            brief = json.loads(done.stdout).get("brief") or {}
+            sprawl = brief.get("doc_sprawl") or {}
+            self.assertEqual(sprawl.get("files"), 7)
+            self.assertIn("status", sprawl.get("advisory", ""))
+
+    def test_two_files_stay_silent(self) -> None:
+        import json
+        import subprocess
+        with _project() as (root, archive):
+            (root / "SPRINT-A.md").write_text("# a\n" + "- x\n" * 400, encoding="utf-8")
+            (root / "HANDOVER-B.md").write_text("# b\n" + "- x\n" * 400, encoding="utf-8")
+            hook = Path(__file__).resolve().parents[1] / "hooks" / "godmode_session_hook.py"
+            done = subprocess.run(
+                [sys.executable, str(hook), "session-start", "--project", str(root)],
+                input="{}", capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=180,
+                env=dict(os.environ))
+            brief = json.loads(done.stdout).get("brief") or {}
+            self.assertNotIn("doc_sprawl", brief)
