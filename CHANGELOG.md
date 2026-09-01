@@ -6,6 +6,28 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.3.10] - 2026-09-01
+
+### Added
+
+- `godmode status absorb-docs <file>` is the door through the adoption wall: a status-shaped markdown file (headings + checkbox lists) maps into proposed status items - dry-run by default, `--write` records them through the same path `status set` uses. A checked box absorbs as review (a claim of done, unverified), never as verified or closed, which demand evidence; the file itself is never touched.
+- Three refinements: stop notices cap at two per turn (plus "N more in doctor" - skimmed is dismissed); two new prompt shapes deliver their verbs (review-shaped work names `godmode verdict record`, done-check names `godmode status remaining` with its evidence tiers); and the sibling-obligation collapse states its own audit trail ("N older sibling(s) muted") so a wrong merge is visible in place. Echo delivery drops only on a DEFINITE session mismatch - a host stating no identity at the prompt boundary keeps the delivery contract.
+- The emitted AGENTS.md section declares its own approximate token cost in a footer line - a reader budgeting a context window deserves the number where the cost is incurred.
+- The session-start brief now detects the multiple-writable-truths disease: six or more sizeable status-shaped markdown files at the project root (sprint, handover, task-list, and single-source-of-truth naming shapes) draw one line with the file count, total size, and the cure - one writable store (`godmode status set`, `godmode checkpoint`) with files regenerated as views, scored by `godmode assess`.
+- The session-start brief states the enforcement grade whenever it is not HARD on this host - no current live-deny proof becomes a visible line with the upgrade path (`godmode hooks status`, then a genuinely denied protected call), instead of an invisible disarm. A proven boundary stays silent about itself.
+- The loop family unparks: `godmode loop declare/tick/close` records a bounded loop contract beside the existing repetition detectors (bare `godmode loop` unchanged). Declaration refuses a contract without an iteration cap or a stop condition; two consecutive empty ticks demand a stated direction change and four demand the operator; and closing `finished` at the iteration cap requires evidence, because budget exhaustion may never impersonate completion - `cut-off` states the truncation honestly. Godmode records and gates the loop; the agent drives it. Contracts ride the plan kind, so the planning census family counts the discipline.
+- Receipt-bounded advisories and the claim echo now work on hosts that send a transcript path but no session id: the receipt key falls back to a hash of the transcript path, which is session-scoped on every observed host. A host sending neither still gets silence - a bound that cannot be scoped to a session is a bound that lies.
+- `godmode hooks statusline` prints one compact plain-text segment - presence plus the live enforcement grade (`[GM ✓ HARD]`, `[GM ? SOFT]`) - for wiring into a terminal statusline. Godmode still paints no ambient UI itself: silence when things are fine is the contract, but a disarmed or degraded hook cannot report its own absence, and this is the one ambient signal that carries that information. Poll it at relaxed intervals; it reads the archive.
+- Declarative per-tool gates: the authorization policy may declare `tool_gates: {"ToolName": "ask"|"deny"}` and every call of that tool then asks or denies at its declaration, composing with the classifier - including tools on the read-only fast path, which falls through only when a gate is declared. Tighten-only by construction: any other value refuses loudly at policy validation, because a policy file must never become a second place allow decisions come from.
+
+### Changed
+
+- Doctor now reads the archive once and hands the same records list to the census, calibration, and oversight blocks instead of each rescanning - scale headroom on append-only archives that only grow.
+
+### Fixed
+
+- The Claude context emitter serializes the brief's command and advisory sections (next_actions, calibration, oversight, doc_sprawl, laws, obligations, resume) before inventory, so the context cap truncates scenery, never the commands - alphabetical ordering had left them wherever the cap happened to fall.
+
 ## [0.3.9] - 2026-09-01
 
 ### Added

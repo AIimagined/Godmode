@@ -1,1 +1,0 @@
-The Claude context emitter serializes the brief's command and advisory sections (next_actions, calibration, oversight, doc_sprawl, laws, obligations, resume) before inventory, so the context cap truncates scenery, never the commands - alphabetical ordering had left them wherever the cap happened to fall.

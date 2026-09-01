@@ -1,1 +1,0 @@
-The session-start brief states the enforcement grade whenever it is not HARD on this host - no current live-deny proof becomes a visible line with the upgrade path (`godmode hooks status`, then a genuinely denied protected call), instead of an invisible disarm. A proven boundary stays silent about itself.
