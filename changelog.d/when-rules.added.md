@@ -1,0 +1,1 @@
+The generated AGENTS.md section now carries a `### When` table - seven moment-to-verb rules (about to say done → `claim`; a check decides anything → `verify`; same command fails twice with edits between → incident; and kin). Rules teach when, hooks capture what; each rule's verb is checked against the live CLI, so the section cannot describe a command that does not exist.

@@ -44,6 +44,19 @@ class TraceabilityTests(unittest.TestCase):
         for tier, _detail in _BOUNDARY_TIERS:
             self.assertIn(f"**{tier}**", section)
 
+    def test_when_rules_are_rendered_and_their_verbs_exist(self) -> None:
+        # Rules teach WHEN, hooks capture WHAT: each moment names its verb,
+        # and a rule naming a verb that does not exist must refuse to emit.
+        from godmode_runtime.godmode_console import _WHEN_RULES
+        parser = _build_parser()
+        registered = set(_subparser_action(parser).choices)
+        section = agentsmd_section(parser)
+        self.assertIn("### When", section)
+        self.assertGreaterEqual(len(_WHEN_RULES), 5)
+        for moment, verb, _blurb in _WHEN_RULES:
+            self.assertIn(moment, section)
+            self.assertIn(verb.split()[0], registered)
+
 
 class MergeTests(unittest.TestCase):
     def test_a_fresh_file_is_created(self) -> None:
