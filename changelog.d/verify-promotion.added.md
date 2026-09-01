@@ -1,0 +1,1 @@
+The first raw check-shaped command of a session (pytest, npm test, mypy, and kin) now draws one advisory pointing at `godmode verify <name> -- <command>` - the wrapped form leaves an attestation claims can cite, where a raw exit code evaporates. Receipt-bounded to once per session; commands already invoking godmode stay silent.

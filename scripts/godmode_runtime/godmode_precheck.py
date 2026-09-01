@@ -499,3 +499,42 @@ def _paired_artifact_lines(report: dict[str, Any]) -> list[str]:
         f"  [paired-artifact, advisory] {hit['question']} ({hit['where']})"
         for hit in hits
     ]
+
+
+# Raw check runners only - godmode's own verdict-bearing subcommands are
+# deliberately absent, and any command that already says `godmode` is
+# already on the wrapped path.
+_RAW_CHECK = re.compile(
+    r"(?i)\b(?:pytest|py\.test|unittest|vitest|jest|mocha|rspec|phpunit|"
+    r"cargo\s+test|go\s+test|dotnet\s+test|tsc\b|mypy|pyright|"
+    r"npm\s+(?:test|run\s+test\S*)|yarn\s+test|pnpm\s+test)")
+
+
+def verify_promotion_advisory(archive: Chronicle, command: str,
+                              session: str | None) -> str | None:
+    """One sentence, once per session, when a check runs raw.
+
+    A raw test run's exit code evaporates; the same run under `godmode
+    verify <name> -- <command>` leaves an attestation the claim gate can
+    cite. Advisory only, receipt-bounded exactly like the recurrence
+    nudge: the first raw check-shaped command of a session speaks, every
+    later one is silent - a nag on every test run teaches dismissal.
+    """
+    if not command or "godmode" in command.lower():
+        return None
+    if not _RAW_CHECK.search(command):
+        return None
+    key = session or "unkeyed"
+    try:
+        for record in archive.select(kind="action", limit=200):
+            if record["subject"] == "verify-promotion-nudge" and \
+                    record["data"].get("session") == key:
+                return None
+        archive.append("action", "verify-promotion-nudge", {"session": key})
+    except Exception:  # noqa: BLE001 - an unwritable receipt silences the nudge
+        return None
+    return (
+        "godmode: this check runs raw - its exit code leaves no record. "
+        "`godmode verify <name> -- <command>` runs the same check and "
+        "attests the outcome, which claims can then cite. Once per "
+        "session; carry on if this run is exploratory.")
