@@ -879,7 +879,8 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     if getattr(args, "resolve", None) is not None:
         if not args.outcome:
             return CommandResult(
-                {"refused": "--resolve needs --outcome held|failed"}, exit_code=1)
+                {"refused": "--resolve needs --outcome held|failed|superseded"},
+                exit_code=1)
         _require_archive(runtime)
         record = resolve_claim(
             runtime.archive, Path(runtime.anchor.project_root),

@@ -228,3 +228,29 @@ class ForecastAdvisoryTests(unittest.TestCase):
             for _ in range(6):
                 _scored_claim(archive, project, 0.9)
             self.assertEqual(calibration_summary(archive).get("advisory"), None)
+
+
+class SupersededOutcomeTests(unittest.TestCase):
+    """A claim that was true and later got improved upon is not a failure.
+
+    The disposition vocabulary gains `superseded`: the claim HELD at its
+    time (scores as held - the confidence was justified), and the state
+    is recorded distinctly so a later reader never mistakes replacement
+    for reversal. The fix-loop wire counts failed resolutions only;
+    superseding a claim must never arm it.
+    """
+
+    def test_superseded_scores_as_held_and_keeps_its_name(self) -> None:
+        from test_godmode_runtime import isolated_project
+        from godmode_runtime.godmode_attest import record_claim, resolve_claim
+        with isolated_project() as (project, _s, _a, archive):
+            (project / "README.md").write_text("x", encoding="utf-8")
+            record = record_claim(
+                archive, project, "S", "the old ranking beat the baseline",
+                "observed", cites=["file:README.md"], confidence=0.8)
+            resolution = resolve_claim(
+                archive, project, "S", record["sequence"], "superseded",
+                cites=["file:README.md"])
+            data = resolution["data"] if "data" in resolution else resolution
+            self.assertEqual(data.get("outcome"), "superseded")
+            self.assertAlmostEqual(data.get("score"), 1 - (0.8 - 1.0) ** 2)

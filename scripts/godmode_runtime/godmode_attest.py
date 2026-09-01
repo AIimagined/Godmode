@@ -1738,7 +1738,11 @@ def record_claim(
     return record
 
 
-RESOLUTION_OUTCOMES = ("held", "failed")
+# `superseded`: the claim HELD at its time and was later improved upon -
+# replacement, never reversal. Scores as held (the confidence was
+# justified when declared), and the fix-loop wire ignores it (it counts
+# `failed` only), so superseding a claim can never arm the wire.
+RESOLUTION_OUTCOMES = ("held", "failed", "superseded")
 
 # The convergence law's numbers, in one place: how many failed outcomes on
 # one subject arm the fix-loop wire, and how many shared salient terms make
@@ -1859,7 +1863,7 @@ def resolve_claim(
             f"resolution evidence does not resolve: {', '.join(unresolved)}"
         )
     confidence = target["data"].get("confidence")
-    outcome_value = 1.0 if outcome == "held" else 0.0
+    outcome_value = 0.0 if outcome == "failed" else 1.0
     score = (
         None if confidence is None
         else round(1.0 - (float(confidence) - outcome_value) ** 2, 6)
