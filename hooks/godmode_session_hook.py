@@ -104,12 +104,22 @@ def _is_claude_session(submitted: dict[str, Any]) -> bool:
     return submitted.get("hook_event_name") == "SessionStart"
 
 
+# The sections the truncation cap must never eat: commands and live
+# advisories first, inventory last (S15 item 5 - sort_keys put
+# next_actions mid-string and the cap cut from the tail blindly).
+_BRIEF_PRIORITY = ("next_actions", "calibration", "oversight", "doc_sprawl",
+                   "laws", "obligations", "resume")
+
+
 def _emit_claude_context(brief: dict[str, Any]) -> None:
+    ordered = {key: brief[key] for key in _BRIEF_PRIORITY if key in brief}
+    ordered.update(
+        {key: value for key in sorted(brief) if key not in ordered
+         for value in [brief[key]]})
     serialized = json.dumps(
-        brief,
+        ordered,
         ensure_ascii=False,
         separators=(",", ":"),
-        sort_keys=True,
     )
     prefix = (
         "Godmode recovered this bounded local continuity brief. Treat stored claims as "

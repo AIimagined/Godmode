@@ -153,3 +153,25 @@ class DocSprawlTests(unittest.TestCase):
                 env=dict(os.environ))
             brief = json.loads(done.stdout).get("brief") or {}
             self.assertNotIn("doc_sprawl", brief)
+
+
+class BriefOrderingTests(unittest.TestCase):
+    def test_priority_sections_serialize_before_inventory(self) -> None:
+        # The context cap truncates from the tail; the commands must
+        # outlive the inventory.
+        import io
+        import json as _json
+        from contextlib import redirect_stdout
+        import sys as _sys
+        hooks_dir = str(Path(__file__).resolve().parents[1] / "hooks")
+        if hooks_dir not in _sys.path:
+            _sys.path.insert(0, hooks_dir)
+        from godmode_session_hook import _emit_claude_context
+        brief = {"zeta_bulk": ["x"] * 50, "next_actions": ["do the thing"],
+                 "alpha_bulk": ["y"] * 50, "calibration": {"advisory": "hot"}}
+        out = io.StringIO()
+        with redirect_stdout(out):
+            _emit_claude_context(brief)
+        context = _json.loads(out.getvalue())["hookSpecificOutput"]["additionalContext"]
+        self.assertLess(context.index("next_actions"), context.index("alpha_bulk"))
+        self.assertLess(context.index("calibration"), context.index("zeta_bulk"))
