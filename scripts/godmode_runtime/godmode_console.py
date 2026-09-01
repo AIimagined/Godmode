@@ -1825,6 +1825,31 @@ def _hooks_health_fields(archive: Any, host: str, level: str) -> dict[str, Any]:
     }
 
 
+
+def cmd_hooks_statusline(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """A statusline segment: the one ambient signal that carries information.
+
+    Persona modes decorate every prompt because visibility IS their
+    function; godmode stays silent when things are fine - except that a
+    disarmed hook cannot report its own absence (silence-audit A3), so the
+    operator gets one compact, cheap line to wire into their statusline:
+    presence plus the enforcement grade. Plain text on stdout, no JSON,
+    because statusline consumers concatenate strings.
+    """
+    grade = "UNAVAILABLE"
+    try:
+        if runtime.archive.initialized():
+            from .godmode_hookproof import interception_state
+            grade = interception_state(runtime.archive, current_host())
+    except Exception:  # noqa: BLE001
+        grade = "UNAVAILABLE"
+    marker = {"HARD": "✓", "DEGRADED": "~", "PARTIAL": "~",
+              "SOFT": "?", "UNAVAILABLE": "!"}.get(grade, "?")
+    # A string payload prints as-is at the dispatcher - plain text, no
+    # JSON, because statusline consumers concatenate strings.
+    return CommandResult(f"[GM {marker} {grade}]")
+
+
 def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     """CX-1: `status` reads the chronicled proof back; `probe` produces a fresh one.
 
@@ -4697,6 +4722,12 @@ def _build_parser() -> argparse.ArgumentParser:
     hooks_probe.add_argument(
         "--host", help="Host label to record the proof under (default: detected)")
     hooks_probe.set_defaults(handler=cmd_hooks)
+    hooks_sub.add_parser(
+        "statusline",
+        help="One compact plain-text segment for a terminal statusline: "
+             "presence + enforcement grade. Wire it into the host's "
+             "statusline config; godmode never paints ambient UI itself"
+    ).set_defaults(handler=cmd_hooks_statusline)
     hooks_wire = hooks_sub.add_parser(
         "wire",
         help="Write the project-level .codex/hooks.json fallback - Codex CLI "
