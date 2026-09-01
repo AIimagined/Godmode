@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import sys
 from typing import Any
@@ -537,6 +538,48 @@ def _unrecorded_claims(archive: Any, reply_text: str) -> list[str]:
         for chunk in line.replace("!", ".").replace("?", ".").split("."):
             sentence = chunk.strip()
             if len(sentence) < 15 or not is_claim(sentence):
+                continue
+            if _normalise(sentence) in recorded:
+                continue
+            found.append(sentence)
+    return found
+
+
+_COMPLETION_VOCAB = re.compile(
+    r"(?i)\b(?:complete[d]?|finished|done|shipped|released|"
+    r"all\s+tests\s+pass(?:ed)?)\b")
+
+
+def _unrecorded_done_claims(archive: Any, reply_text: str) -> list[str]:
+    """DONE-shaped sentences in the reply with no claim record behind them.
+
+    Deliberately a separate detector from `_unrecorded_claims`: `is_claim`
+    defines a public-surface claim (a measured number, a promise verb),
+    and a completion declaration - "the migration is complete", "all tests
+    pass" - matches neither, which is exactly why it slid past the advisory
+    for fifteen sessions. Completion vocabulary plus the attest module's
+    fix/pass-verdict shapes, filtered against the archive's own recorded
+    claim set so a recorded done is never re-litigated."""
+    from godmode_runtime.godmode_attest import (
+        looks_like_fix_claim, looks_like_pass_verdict)
+    from godmode_runtime.godmode_claimscan import _normalise, _recorded_claims
+
+    try:
+        recorded = _recorded_claims(archive)
+    except Exception:  # noqa: BLE001 - an unreadable archive silences the gate
+        return []
+    found: list[str] = []
+    for raw_line in reply_text.splitlines():
+        line = raw_line.strip().lstrip("-*#>| ").strip()
+        if not line:
+            continue
+        for chunk in line.replace("!", ".").replace("?", ".").split("."):
+            sentence = chunk.strip()
+            if len(sentence) < 15:
+                continue
+            if not (_COMPLETION_VOCAB.search(sentence)
+                    or looks_like_fix_claim(sentence)[0]
+                    or looks_like_pass_verdict(sentence)[0]):
                 continue
             if _normalise(sentence) in recorded:
                 continue
@@ -1103,6 +1146,29 @@ def main(argv: list[str] | None = None) -> int:
                                     encoding="utf-8")
                 except Exception:  # noqa: BLE001
                     pass
+            # The completion gate: a DONE-shaped sentence among the
+            # unrecorded claims is the one case advisory is too late for -
+            # the turn is ending and the operator is about to trust it.
+            # Blocked ONCE with the recording commands as the corrective
+            # reason; the host re-fires with stop_hook_active set and that
+            # path returned clean above, so the bound costs nothing. Every
+            # other notice stays advisory in the same single object.
+            done_shaped = _unrecorded_done_claims(archive, reply_text)
+            if done_shaped:
+                shown = "; ".join(f"'{s[:120]}'" for s in done_shaped[:2])
+                print(json.dumps({
+                    "decision": "block",
+                    "reason": (
+                        f"godmode: this reply declares completion on "
+                        f"{len(done_shaped)} unrecorded claim(s): {shown}. "
+                        "Record with `godmode claim <text> --cite <evidence>` "
+                        "(grades honestly) or soften the wording, then finish. "
+                        "This gate fires once per stop."),
+                    "systemMessage": " ".join(notices) if notices else
+                        "godmode: completion blocked once pending a record; "
+                        "the re-fire passes.",
+                }))
+                return 0
             if notices:
                 print(json.dumps({"systemMessage": " ".join(notices)}))
             return 0
