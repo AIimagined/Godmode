@@ -860,3 +860,59 @@ def compare_local_reference(project: str | Path, reference: str | Path) -> dict[
         "content_copied": False,
         "network_used": False,
     }
+
+
+_FAMILY_VERBS = {
+    "investigation": "open the loop as an incident: `godmode remember --kind incident`",
+    "learning": "distill the incident: `godmode remember --kind lesson --guard <rule>`",
+    "verification": "attest a real check: `godmode verify <name> -- <command>`",
+    "criteria": "give the active item a pass condition: `godmode criterion`",
+    "planning": "record the contract before executing: `godmode plan`",
+    "independent-check": "record the review verdict: `godmode verdict record`",
+    "assumptions": "state what the fix assumes: `godmode remember --kind assumption`",
+    "db": "record database governance state: `godmode db`",
+}
+
+
+def next_actions(archive: Chronicle, project: Path | None = None,
+                 limit: int = 5) -> list[str]:
+    """The commands the archive's own state demands, bounded.
+
+    A brief that describes state gets read as scenery (fifteen sessions of
+    "claim unused" measured exactly that); a brief that ends with the
+    specific command each open loop demands gets acted on. Two sources,
+    oldest debts first: scored claims nobody resolved name their own
+    `claim --resolve N --outcome held|failed`, and each census family
+    sitting dormant-with-demand names the one verb that feeds it.
+    Best-effort and advisory: any failure returns what was gathered.
+    """
+    actions: list[str] = []
+    try:
+        claims = [r for r in archive.read_events(verify=False)
+                  if r.get("kind") == "claim"]
+        resolved = {(r.get("data") or {}).get("resolves") for r in claims}
+        for record in claims:
+            data = record.get("data") or {}
+            if data.get("confidence") is None or data.get("resolves") is not None:
+                continue
+            if record["sequence"] in resolved:
+                continue
+            actions.append(
+                f"resolve scored claim {record['sequence']} "
+                f"('{str(record.get('subject', ''))[:60]}'): `godmode claim "
+                f"--resolve {record['sequence']} --outcome held|failed`")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from .godmode_metrics import utilization
+
+        census = utilization(archive, project)
+        for name, family in (census.get("families") or {}).items():
+            if family.get("verdict") != "dormant-with-demand":
+                continue
+            verb = _FAMILY_VERBS.get(name)
+            if verb:
+                actions.append(f"{name} demanded and never fired - {verb}")
+    except Exception:  # noqa: BLE001
+        pass
+    return actions[:limit]
