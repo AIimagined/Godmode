@@ -533,8 +533,10 @@ def _marginal_return_nudges(archive: Any, submitted: dict,
         for earlier, later in zip(failures, failures[1:]):
             if not any(earlier < m < later for m in mutations):
                 stale_retry += 1
+    if not session:
+        return []
     notices: list[str] = []
-    key = session or "unkeyed"
+    key = session
     for shape, hit, text in (
         ("green-streak", green_streak,
          f"godmode: one command has passed {green_streak} consecutive times "
@@ -1145,7 +1147,7 @@ def main(argv: list[str] | None = None) -> int:
             # claims, dormant-with-demand census families). Best-effort -
             # an empty list is omitted, and a failure never blocks the open.
             try:
-                from godmode_runtime.godmode_lens import next_actions
+                from godmode_runtime.godmode_metrics import next_actions
                 demanded = next_actions(
                     archive, Path(anchor.project_root))
                 if demanded:
