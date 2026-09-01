@@ -255,3 +255,38 @@ class TerminalWorkIsNotDemandTests(unittest.TestCase):
             self.assertEqual(
                 utilization(archive)["families"]["criteria"]["verdict"],
                 "dormant-with-demand")
+
+
+class EvidenceRichnessTests(unittest.TestCase):
+    """Executor-grade signal beats self-declaration - the census now says
+    which one a project's claims actually run on."""
+
+    def test_buckets_split_by_citation_grade(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            (project / "README.md").write_text("x", encoding="utf-8")
+            record_claim(archive, project, "S", "the suite passes end to end",
+                         "observed", cites=["cmd:python -m unittest"])
+            record_claim(archive, project, "S", "the readme documents the flag",
+                         "observed", cites=["file:README.md"])
+            record_claim(archive, project, "S", "the parser is fine I think",
+                         "observed", cites=[])
+            richness = utilization(archive, project)["evidence_richness"]
+            self.assertEqual(richness["executor"], 1)
+            self.assertEqual(richness["cited"], 1)
+            self.assertEqual(richness["bare"], 1)
+
+    def test_all_bare_claims_draw_the_advisory(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            for index in range(5):
+                record_claim(archive, project, "S",
+                             f"unbacked statement number {index} here",
+                             "observed", cites=[])
+            richness = utilization(archive, project)["evidence_richness"]
+            self.assertIn("self-declared", richness["advisory"])
+
+    def test_a_healthy_mix_is_quiet(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            record_claim(archive, project, "S", "the suite passes end to end",
+                         "observed", cites=["cmd:python -m unittest"])
+            richness = utilization(archive, project)["evidence_richness"]
+            self.assertIsNone(richness["advisory"])

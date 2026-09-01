@@ -1,0 +1,1 @@
+The census now grades evidence richness: claims split into executor-grade (a cmd: citation - the check itself is the witness), cited (file/seq/doc/url), and bare self-declaration. An archive running entirely on bare claims at volume draws one advisory pointing at `godmode verify` - executor-grade signal is the strongest feedback there is, self-declaration the weakest.

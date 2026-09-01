@@ -522,8 +522,35 @@ def utilization(archive: Chronicle, project: Path | None = None) -> dict[str, An
             found = 0
         db_records = sum(1 for r in records if r.get("kind") == "database")
         families["db"] = family(found, db_records)
+    # Evidence richness: which grade of signal the claims actually run on.
+    # Executor-grade (a cmd: citation - the check itself is the witness)
+    # beats cited (file/seq/doc/url - real but static) beats bare (nothing
+    # but the sentence). Advisory only when the record is all
+    # self-declaration at meaningful volume.
+    executor = cited = bare = 0
+    for record in claims:
+        cites = [str(c) for c in (record.get("evidence") or [])]
+        if any(c.startswith("cmd:") for c in cites):
+            executor += 1
+        elif cites:
+            cited += 1
+        else:
+            bare += 1
+    richness_advisory = None
+    if executor == 0 and bare >= 5:
+        richness_advisory = (
+            f"all {bare} uncited claims are self-declared and none of "
+            f"{len(claims)} carries executor-grade evidence (a cmd: "
+            "citation) - run the deciding checks via `godmode verify` and "
+            "cite them; self-declaration is the weakest feedback there is.")
+    evidence_richness = {
+        "executor": executor, "cited": cited, "bare": bare,
+        "advisory": richness_advisory,
+    }
+
     return {
         "families": families,
+        "evidence_richness": evidence_richness,
         "basis": "record kinds only; dormancy with demand is the alarm, "
                  "idle is health",
     }
