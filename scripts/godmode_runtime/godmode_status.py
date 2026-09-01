@@ -666,19 +666,31 @@ def absorb_docs(archive: Chronicle, path: Path, *, write: bool = False) -> dict[
             section = _re.sub(r"[^a-z0-9]+", "-", heading.group(1).strip().lower()).strip("-")
             continue
         box = _re.match(r"^\s*[-*]\s*\[([ xX])\]\s+(.+)", line)
-        if not box:
+        emoji = _re.match(
+            "^\s*[-*]\s*([✅❌⏳🔴🟡"
+            "🟢⬜])\s*(.+)", line)
+        if box:
+            marker, title = box.group(1).strip(), box.group(2).strip()
+            claimed_done = bool(marker)
+        elif emoji:
+            # Field lesson (2026-09-01): real status files mark state with a
+            # LEAD emoji on bold-titled bullets - 404 such lines against one
+            # checkbox in the file that taught this. Green/check marks are
+            # claims of done; every other status color is open work.
+            marker, title = emoji.group(1), emoji.group(2).strip()
+            claimed_done = marker in ("✅", "🟢")
+        else:
             continue
-        title = box.group(2).strip()
         if len(title) < 3:
             continue
         items.append({
             "key": (f"{section}:{title}" if section else title)[:180],
             "title": title[:200],
             "section": section,
-            # A checked box in a hand-edited file is a CLAIM of done, not
+            # A done mark in a hand-edited file is a CLAIM of done, not
             # proof - absorbed as review (claimed, unverified), never as
-            # verified/closed, which demand evidence. Unchecked -> proposed.
-            "state": "review" if box.group(1).strip() else "proposed",
+            # verified/closed, which demand evidence. Open marks -> proposed.
+            "state": "review" if claimed_done else "proposed",
         })
     written = 0
     if write:
