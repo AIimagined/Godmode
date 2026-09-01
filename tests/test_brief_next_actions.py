@@ -28,7 +28,7 @@ for entry in (SCRIPTS, PLUGIN_ROOT):
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_attest import record_claim  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
-from godmode_runtime.godmode_lens import next_actions  # noqa: E402
+from godmode_runtime.godmode_metrics import next_actions  # noqa: E402
 
 
 @contextmanager

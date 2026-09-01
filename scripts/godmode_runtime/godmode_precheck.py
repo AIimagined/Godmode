@@ -520,11 +520,16 @@ def verify_promotion_advisory(archive: Chronicle, command: str,
     nudge: the first raw check-shaped command of a session speaks, every
     later one is silent - a nag on every test run teaches dismissal.
     """
-    if not command or "godmode" in command.lower():
+    # No session key means no honest once-per-session bound: the receipt
+    # would become once-per-archive-forever (field-diagnosed 2026-09-01 -
+    # the advisory fired exactly once in the dev archive's whole life and
+    # then never again, and one hook e2e test paid for it). Silence beats
+    # a bound that lies.
+    if not session or not command or "godmode" in command.lower():
         return None
     if not _RAW_CHECK.search(command):
         return None
-    key = session or "unkeyed"
+    key = session
     try:
         for record in archive.select(kind="action", limit=200):
             if record["subject"] == "verify-promotion-nudge" and \
@@ -573,7 +578,9 @@ def prompt_shape_nudge(archive: Chronicle, prompt: str,
     if not matched:
         return None
     shape, text = matched
-    key = session or "unkeyed"
+    if not session:
+        return None
+    key = session
     try:
         for record in archive.select(kind="action", limit=200):
             if record["subject"] == "prompt-shape-nudge" and \
