@@ -587,8 +587,19 @@ def _open_obligations_touched(archive: Any, reply_text: str) -> list[str]:
                 continue
             vocab = _salient_words(f"{subject} {data.get('value', '')}")
             if len(reply_words & vocab) >= 3:
-                touched.append(subject)
-        return touched[:2]
+                touched.append((record.get("sequence", 0), subject, vocab))
+        # Sibling collapse (field report, 2026-09-01): a version-bearing
+        # subject mints a NEW obligation every bump and subject-keyed state
+        # never links them, so the nag surfaced corpses beside the living
+        # one. Two touched obligations sharing >=3 salient words are one
+        # duty in different clothes - only the newest speaks.
+        touched.sort(reverse=True)
+        survivors: list[tuple[int, str, set]] = []
+        for entry in touched:
+            if any(len(entry[2] & kept[2]) >= 3 for kept in survivors):
+                continue
+            survivors.append(entry)
+        return [subject for _seq, subject, _vocab in survivors[:2]]
     except Exception:  # noqa: BLE001
         return []
 

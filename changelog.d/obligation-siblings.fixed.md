@@ -1,0 +1,1 @@
+Obligations that are one duty in different clothes (a version-bearing subject mints a fresh record every bump) no longer accumulate in the nags: the turn advisory collapses open obligations sharing three or more salient words to the newest, and recording such a sibling draws an advisory naming the elder with the exact close command - supersede it now, or both nag forever.
