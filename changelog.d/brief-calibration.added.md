@@ -1,0 +1,1 @@
+When the calibration ledger's advisory is live (recent resolved claims scoring under the honesty line), the session-start brief now carries it - mean score and unresolved-scored debt included - so a session opens knowing its confidence runs hot instead of finding out at the next doctor run.
