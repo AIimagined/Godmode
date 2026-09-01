@@ -966,6 +966,10 @@ def _decision_for(preview: dict[str, Any]) -> str:
     # is not permission. It moves by staged capability or not at all.
     if preview.get("design_block"):
         return "deny"
+    # A declared per-tool gate names its own decision; tighten-only was
+    # enforced where it was set (only ask/deny ever land here).
+    if preview.get("decision_override") in ("ask", "deny"):
+        return str(preview["decision_override"])
     return "deny" if preview.get("tier") in _REFUSE_OUTRIGHT else "ask"
 
 
@@ -1087,7 +1091,23 @@ def main(argv: list[str] | None = None) -> int:
     # call into the silent-allow read-only path - it always falls through to the
     # full classify path below, which fails closed on an empty operation.
     if args.event == "pre-action" and str(host_field(submitted, "tool_name") or "") in _READ_ONLY_TOOLS:
-        return 0
+        # The read-only fast path pays nothing - unless the project has
+        # DECLARED a gate on this very tool (S16/E56), in which case the
+        # call falls through to the full evaluation. Stat-gated: projects
+        # without a policy file keep the zero-cost exit.
+        _gated = False
+        try:
+            _policy_path = Path(project) / ".godmode-authorization-policy.json"
+            if _policy_path.is_file():
+                _declared = json.loads(
+                    _policy_path.read_text(encoding="utf-8")).get("tool_gates", {})
+                _gated = str(_declared.get(
+                    str(host_field(submitted, "tool_name") or ""), "")
+                ).lower() in ("ask", "deny")
+        except Exception:  # noqa: BLE001
+            _gated = False
+        if not _gated:
+            return 0
     try:
         anchor = resolve_anchor(project)
         archive = Chronicle(anchor)
@@ -2030,6 +2050,30 @@ def main(argv: list[str] | None = None) -> int:
                     preview["fence"] = fenced["fence"]
                     preview["reason"] = f"{fenced['detail']}. {fenced['remedy']}"
                     break
+
+        # S16 (E56): declarative per-tool gates. The policy file may declare
+        # `tool_gates: {"ToolName": "ask"|"deny"}` - approval demanded at the
+        # tool's DECLARATION, composing with everything above. Tighten-only
+        # by construction: a declared gate can escalate an allow to ask/deny
+        # and can never loosen a deny the classifier already made - any other
+        # value in the file is ignored, because a policy file must not be a
+        # second place allow decisions come from.
+        if preview.get("allow", True) and tool:
+            try:
+                declared_gate = str(
+                    (policy_for_tool_gates := local_authorization_policy(archive))
+                    .get("tool_gates", {}).get(tool, "")).lower()
+                if declared_gate in ("ask", "deny"):
+                    preview["allow"] = False
+                    preview["tier"] = preview.get("tier") or "R3"
+                    preview["decision_override"] = declared_gate
+                    preview["reason"] = (
+                        f"declared tool gate: this project's authorization "
+                        f"policy gates every '{tool}' call at '{declared_gate}' "
+                        "(tool_gates in .godmode-authorization-policy.json); "
+                        "remove the entry or approve to proceed")
+            except Exception:  # noqa: BLE001
+                pass
 
         # U-E7 observe mode: the single point every check above converges at.
         # Ceilings, the watchdog, the classifier's ask/deny split, the design
