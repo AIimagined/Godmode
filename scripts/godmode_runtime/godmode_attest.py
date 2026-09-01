@@ -1890,6 +1890,17 @@ def resolve_claim(
         None if confidence is None
         else round(1.0 - (float(confidence) - outcome_value) ** 2, 6)
     )
+    # Loss-averse reading, ADDITIVE (S17): overconfident failure costs
+    # 2.25x what the symmetric quadratic charges - the asymmetry of real
+    # trust, from the behavioral study in the ledger. A second field, not
+    # a formula change: history stays comparable, and any future tier
+    # threshold can choose which score it reads.
+    asymmetric = (
+        None if confidence is None
+        else round(1.0 - 2.25 * (float(confidence) - outcome_value) ** 2, 6)
+        if outcome == "failed"
+        else score
+    )
     return archive.append(
         "claim",
         f"resolution of seq:{seq}: {outcome}",
@@ -1901,6 +1912,7 @@ def resolve_claim(
             # Copied down so the summary never joins across records to score.
             "confidence": confidence,
             "score": score,
+            "asymmetric_score": asymmetric,
             "grade": "observed",
             "claimed_grade": "observed",
             "downgraded": False,
