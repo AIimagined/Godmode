@@ -1,0 +1,1 @@
+The user-prompt hook's timeout doubles to 60s: a post-install cold start (first import of the runtime on a machine that just fetched the plugin) was field-observed once at just over 30s; steady state stays ~350ms, and the hook is async so the headroom costs the prompt nothing.
