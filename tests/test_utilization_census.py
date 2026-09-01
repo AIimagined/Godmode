@@ -290,3 +290,43 @@ class EvidenceRichnessTests(unittest.TestCase):
                          "observed", cites=["cmd:python -m unittest"])
             richness = utilization(archive, project)["evidence_richness"]
             self.assertIsNone(richness["advisory"])
+
+
+class AtlasAndChecklistFamilyTests(unittest.TestCase):
+    """S13 census next rows: the atlas verb leaves a record so its family
+    can exist, and checklist demand is release-shaped (version records)."""
+
+    def test_incidents_without_atlas_queries_read_dormant(self) -> None:
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.append("incident", "the gate broke on posix",
+                           {"failure_class": "environment-drift",
+                            "turning_point": "reproduced on aliased TMP"})
+            families = utilization(archive)["families"]
+            self.assertEqual(families["atlas"]["verdict"], "dormant-with-demand")
+
+    def test_an_atlas_query_satisfies_the_demand(self) -> None:
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.append("incident", "the gate broke on posix",
+                           {"failure_class": "environment-drift",
+                            "turning_point": "reproduced"})
+            archive.append("action", "atlas-query",
+                           {"verb": "affected", "symbol_count": 1})
+            families = utilization(archive)["families"]
+            self.assertEqual(families["atlas"]["verdict"], "satisfied")
+
+    def test_versions_without_checklist_rows_read_dormant(self) -> None:
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.append("version", "0.9.9",
+                           {"component": "bed", "value": "0.9.9"})
+            families = utilization(archive)["families"]
+            self.assertEqual(families["checklist"]["verdict"],
+                             "dormant-with-demand")
+
+    def test_a_checklist_row_satisfies_release_demand(self) -> None:
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.append("version", "0.9.9",
+                           {"component": "bed", "value": "0.9.9"})
+            archive.append("checklist", "release-gates",
+                           {"item": "docs lint", "status": "pass"})
+            families = utilization(archive)["families"]
+            self.assertEqual(families["checklist"]["verdict"], "satisfied")

@@ -254,3 +254,43 @@ class SupersededOutcomeTests(unittest.TestCase):
             data = resolution["data"] if "data" in resolution else resolution
             self.assertEqual(data.get("outcome"), "superseded")
             self.assertAlmostEqual(data.get("score"), 1 - (0.8 - 1.0) ** 2)
+
+
+class AttestationFingerprintTests(unittest.TestCase):
+    """An attestation names the tree state it attested (obligation
+    attestation-fingerprint-staleness, bounded form).
+
+    Which FILES a check covered is not always knowable, so the fingerprint
+    is the honest coarser thing: HEAD and the dirty count at attestation
+    time. A later reader comparing against the current tree can tell "this
+    green predates your edits" - the staleness signal the study's receipt
+    pattern exists for - without the record ever claiming file coverage it
+    cannot prove.
+    """
+
+    def test_record_step_carries_the_worktree_fingerprint(self) -> None:
+        import subprocess
+        from test_godmode_runtime import isolated_project
+        from godmode_runtime.godmode_attest import record_step
+        with isolated_project() as (project, _s, _a, archive):
+            subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+            subprocess.run(["git", "config", "user.email", "t@example.invalid"],
+                           cwd=project, check=True)
+            subprocess.run(["git", "config", "user.name", "t"],
+                           cwd=project, check=True)
+            (project / "a.py").write_text("x = 1\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=project, check=True)
+            subprocess.run(["git", "commit", "-qm", "seed"], cwd=project,
+                           check=True)
+            record = record_step(archive, "S", "unit suite", "ran",
+                                 result="green", project=project)
+            fingerprint = record["data"]["worktree"]
+            self.assertEqual(len(fingerprint["head"]), 12)
+            self.assertEqual(fingerprint["dirty"], 0)
+
+    def test_no_project_is_a_stated_gap_not_a_crash(self) -> None:
+        from test_godmode_runtime import isolated_project
+        from godmode_runtime.godmode_attest import record_step
+        with isolated_project() as (_p, _s, _a, archive):
+            record = record_step(archive, "S", "unit suite", "ran")
+            self.assertNotIn("worktree", record["data"])

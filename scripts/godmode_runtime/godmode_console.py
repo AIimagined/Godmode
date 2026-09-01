@@ -814,6 +814,7 @@ def cmd_attest(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         evidence=args.evidence,
         rule_ids=args.rule,
         reason=args.reason,
+        project=Path(runtime.anchor.project_root),
     )
     return CommandResult({"record": _event_view(record)})
 
@@ -2090,6 +2091,19 @@ def cmd_atlas(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
                             Path(runtime.anchor.project_root))
         return CommandResult(report, exit_code=0 if report["confidence"] == 1.0 else 1)
     atlas = build_atlas(Path(runtime.anchor.project_root))
+    # The verb leaves a receipt (S13 audit: it fired constantly as a
+    # library and never as a verb, and without a record the census could
+    # not even ask). Best-effort, counts only, query verbs only - save/map
+    # are maintenance, not diagnosis.
+    if args.atlas_command in ("affected", "diagnose", "closure", "seams",
+                              "cycles"):
+        try:
+            if runtime.archive.initialized():
+                runtime.archive.append(
+                    "action", "atlas-query",
+                    {"verb": args.atlas_command}, evidence=[])
+        except Exception:  # noqa: BLE001
+            pass
     if args.atlas_command == "save":
         return CommandResult(save_index(atlas, Path(runtime.anchor.project_root) / args.to))
     if args.atlas_command == "map":

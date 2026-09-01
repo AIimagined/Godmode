@@ -509,6 +509,21 @@ def utilization(archive: Chronicle, project: Path | None = None) -> dict[str, An
     families["planning"] = family(tracked_items, kind_counts["plan"])
     families["independent-check"] = family(verified_claims, counts["verdict"])
     families["assumptions"] = family(len(incident_seqs), kind_counts["assumption"])
+    # S13 census next rows. Atlas: every incident is a diagnose-demand
+    # moment (the spec's ideal demand - guarded-file edits - is not a
+    # record, so incidents stand proxy, stated here rather than implied);
+    # fired = the atlas verb's own action receipts. Checklist: a release
+    # is the moment the standing rows should re-run, so version records
+    # are the demand. Pin deliberately has NO family: no record-detectable
+    # demand exists today, and a contrived one would corrupt the census's
+    # honesty (decision recorded 2026-09-01).
+    atlas_queries = sum(
+        1 for r in records
+        if r.get("kind") == "action" and r.get("subject") == "atlas-query")
+    families["atlas"] = family(len(incident_seqs), atlas_queries)
+    version_records = sum(1 for r in records if r.get("kind") == "version")
+    checklist_rows = sum(1 for r in records if r.get("kind") == "checklist")
+    families["checklist"] = family(version_records, checklist_rows)
     # The db family joins only when a project is given, because its demand
     # is detected from the tree, not the archive: database files present
     # with no database-kind records is machinery sleeping through its own
