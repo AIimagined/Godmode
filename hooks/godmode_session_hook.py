@@ -1053,6 +1053,18 @@ def main(argv: list[str] | None = None) -> int:
                         session=str(submitted.get("session_id") or "") or None)
             except Exception as exc:  # noqa: BLE001
                 brief["laws"] = {"unavailable": str(exc)[:120]}
+            # The brief's closing section is commands, not inventory: each
+            # open loop names the verb that closes it (unresolved scored
+            # claims, dormant-with-demand census families). Best-effort -
+            # an empty list is omitted, and a failure never blocks the open.
+            try:
+                from godmode_runtime.godmode_lens import next_actions
+                demanded = next_actions(
+                    archive, Path(anchor.project_root))
+                if demanded:
+                    brief["next_actions"] = demanded
+            except Exception:  # noqa: BLE001
+                pass
             if claude_session:
                 _emit_claude_context(brief)
             else:
