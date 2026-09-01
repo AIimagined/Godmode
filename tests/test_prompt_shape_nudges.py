@@ -98,3 +98,15 @@ class PromptShapeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NewShapeTests(unittest.TestCase):
+    def test_review_shaped_prompt_names_the_verdict_verb(self) -> None:
+        with _project() as (project, state):
+            done = _fire(project, state, "can you review the parser changes")
+            self.assertIn("verdict", _context(done))
+
+    def test_done_check_names_the_frontier(self) -> None:
+        with _project() as (project, state):
+            done = _fire(project, state, "is it done? anything pending")
+            self.assertIn("status remaining", _context(done))

@@ -54,7 +54,10 @@ class SiblingCollapseTests(unittest.TestCase):
                            {"value": "run the live verify pass against the engine"})
             touched = _open_obligations_touched(
                 archive, "next step is the live verify pass against the engine build")
-            self.assertEqual(touched, ["live-verify engine version 0.8.22"])
+            self.assertEqual(len(touched), 1)
+            self.assertTrue(touched[0].startswith(
+                "live-verify engine version 0.8.22"), touched)
+            self.assertIn("muted", touched[0])
 
     def test_unrelated_obligations_still_both_surface(self) -> None:
         with _archive() as archive:

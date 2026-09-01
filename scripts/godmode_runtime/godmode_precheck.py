@@ -563,6 +563,15 @@ _PROMPT_SHAPES = (
                           r"continue\s+from|what.s\s+the\s+status)"),
      "godmode: resume-shaped work - `godmode resume` reads the recorded "
      "state; trust it over memory of the last session."),
+    ("review", re.compile(r"(?i)\b(?:review|audit|critique|second\s+opinion|"
+                          r"look\s+over)\b"),
+     "godmode: review-shaped work - record the conclusion with `godmode "
+     "verdict record` (witness + independent checker) so the all-clear "
+     "is a record, not a sentence."),
+    ("done-check", re.compile(r"(?i)\b(?:is\s+it\s+done|are\s+we\s+done|"
+                              r"anything\s+pending|what.s\s+left)\b"),
+     "godmode: done-check - `godmode status remaining` lists the frontier "
+     "with evidence tiers; declared and verified are different columns."),
 )
 
 

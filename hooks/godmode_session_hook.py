@@ -628,11 +628,18 @@ def _open_obligations_touched(archive: Any, reply_text: str) -> list[str]:
         # duty in different clothes - only the newest speaks.
         touched.sort(reverse=True)
         survivors: list[tuple[int, str, set]] = []
+        muted = 0
         for entry in touched:
             if any(len(entry[2] & kept[2]) >= 3 for kept in survivors):
+                muted += 1
                 continue
             survivors.append(entry)
-        return [subject for _seq, subject, _vocab in survivors[:2]]
+        names = [subject for _seq, subject, _vocab in survivors[:2]]
+        # The collapse is auditable in place: a wrong merge shows itself
+        # as a muted count beside the survivor (S15 item 9).
+        if names and muted:
+            names[-1] += f" ({muted} older sibling(s) muted)"
+        return names
     except Exception:  # noqa: BLE001
         return []
 
@@ -1374,7 +1381,14 @@ def main(argv: list[str] | None = None) -> int:
                 }))
                 return 0
             if notices:
-                print(json.dumps({"systemMessage": " ".join(notices)}))
+                # At most two notices per stop (S15 item 6): skimmed is
+                # dismissed, and every wire's receipt already guarantees
+                # its own turn will come.
+                shown_notices = notices[:2]
+                if len(notices) > 2:
+                    shown_notices.append(
+                        f"({len(notices) - 2} more in `godmode doctor`)")
+                print(json.dumps({"systemMessage": " ".join(shown_notices)}))
             return 0
 
         if args.event == "user-prompt":
@@ -1407,7 +1421,13 @@ def main(argv: list[str] | None = None) -> int:
                     # context; a mismatch (or an unstamped park) deletes the
                     # file undelivered - restarts resume via the brief.
                     current = _session_key(submitted)
-                    if parked.get("session") != current:
+                    # Drop on a DEFINITE mismatch only. A delivery payload
+                    # carrying no identity at all cannot distinguish a
+                    # restart, and killing S8 for every such host costs
+                    # more than the rare stale echo; a stamped park meeting
+                    # a differently-stamped prompt (the field case: restart
+                    # on a host that states identity) still dies unread.
+                    if current is not None and parked.get("session") != current:
                         parked = {}
                     sentences = [str(s)[:200]
                                  for s in (parked.get("sentences") or [])][:3]
