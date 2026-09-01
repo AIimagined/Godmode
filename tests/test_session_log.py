@@ -230,6 +230,27 @@ class RecordMeasurementTests(unittest.TestCase):
         self.assertEqual(data["mutation_turns"], 1)
         self.assertNotIn("make test", json.dumps(data))
 
+    def test_tail_checks_count_verification_past_the_last_change(self) -> None:
+        # Checks run AFTER the session's last mutation are verification past
+        # the convergence point - the structural definition of an over-long
+        # tail. One check before the edit, two after: tail_checks == 2.
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            with tempfile.TemporaryDirectory() as raw:
+                path = Path(raw) / "t.jsonl"
+                lines = [
+                    _assistant_line(tool_uses=[("Bash", {"command": "pytest tests/"})]),
+                    _user_line(),
+                    _assistant_line(tool_uses=[("Edit", {"file_path": "a.py"})]),
+                    _assistant_line(tool_uses=[("Bash", {"command": "pytest tests/"})]),
+                    _user_line(),
+                    _assistant_line(tool_uses=[("Bash", {"command": "pytest tests/"})]),
+                    _user_line(),
+                ]
+                _write_transcript(path, lines)
+                record = record_measurement(archive, path, session="S-tail")
+        self.assertEqual(record["data"]["tail_checks"], 2)
+
     def test_a_missing_transcript_is_a_stated_gap_not_an_error(self) -> None:
         with isolated_project() as (_project, _state, _anchor, archive):
             archive.initialize()

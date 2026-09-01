@@ -204,7 +204,7 @@ def command_digest(command_text: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8", errors="replace")).hexdigest()
 
 
-def _scan_timeline(transcript_path: Path) -> tuple[dict[str, list[tuple[int, int]]], list[int]]:
+def _scan_timeline(transcript_path: Path) -> tuple[dict[str, list[tuple[int, int]]], list[int], list[int]]:
     """One streaming pass producing both the command timeline and mutation turns.
 
     Shares `measure`'s turn-counting rule (increment on each assistant-role
@@ -217,6 +217,7 @@ def _scan_timeline(transcript_path: Path) -> tuple[dict[str, list[tuple[int, int
     """
     commands: dict[str, list[tuple[int, int]]] = {}
     mutations: list[int] = []
+    check_turns: list[int] = []
     pending: dict[str, tuple[str, int]] = {}
     turn = 0
 
@@ -255,6 +256,8 @@ def _scan_timeline(transcript_path: Path) -> tuple[dict[str, list[tuple[int, int
                         tool_id = block.get("id")
                         if tool_id is not None and command_text.strip():
                             pending[str(tool_id)] = (command_digest(command_text), turn)
+                            if _TEST_RUN_PATTERN.search(command_text):
+                                check_turns.append(turn)
             elif role == "user":
                 for block in content:
                     if not isinstance(block, dict) or block.get("type") != "tool_result":
@@ -267,7 +270,7 @@ def _scan_timeline(transcript_path: Path) -> tuple[dict[str, list[tuple[int, int
                     exit_code = 1 if block.get("is_error") is True else 0
                     commands.setdefault(digest, []).append((observed_turn, exit_code))
 
-    return commands, mutations
+    return commands, mutations, check_turns
 
 
 # `command_timeline` and `mutation_turns` lived here as separate one-line
@@ -287,7 +290,7 @@ def session_timeline(transcript_path: Path) -> dict[str, Any]:
     passes `None`, which both consumers treat as a stated gap, never a
     penalty.
     """
-    commands, mutations = _scan_timeline(Path(transcript_path))
+    commands, mutations, _checks = _scan_timeline(Path(transcript_path))
     return {"commands": commands, "mutation_turns": mutations}
 
 
@@ -336,7 +339,7 @@ def record_measurement(
     # transcript that just measured cleanly can still fail, and the
     # measurement must land either way.
     try:
-        commands, mutations = _scan_timeline(Path(path_text))
+        commands, mutations, check_turns = _scan_timeline(Path(path_text))
         failure_streaks = [
             sum(1 for _turn, code in entries if code != 0)
             for entries in commands.values()]
@@ -344,6 +347,11 @@ def record_measurement(
         data["failing_commands"] = len(repeated)
         data["max_command_failures"] = max(failure_streaks, default=0)
         data["mutation_turns"] = len(mutations)
+        # Verification past the last change: checks after the final
+        # mutation are the structural over-long tail (marginal return of
+        # a check on unchanged code is zero once one pass is recorded).
+        last_mutation = max(mutations, default=0)
+        data["tail_checks"] = sum(1 for t in check_turns if t > last_mutation)
     except Exception:  # noqa: BLE001
         pass
     data["measured"] = True
