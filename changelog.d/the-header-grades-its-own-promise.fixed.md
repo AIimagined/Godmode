@@ -1,1 +1,0 @@
-The five-host header line links to the host-support matrix it was always answerable to: an external review read the bare list as a uniform enforcement promise, and the matrix's own SOFT/PARTIAL/HARD grades are the honest reading - now one click from the first line.

@@ -1,1 +1,0 @@
-The session measurement now records `tail_checks` - check-shaped commands run after the session's last file mutation. A large tail is verification past the point where it can change anything: the structural over-long tail, now visible as one integer.
