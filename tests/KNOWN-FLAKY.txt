@@ -3,3 +3,4 @@
 # law seq 4554 (and law 13 before it): batch-fail/isolated-pass under
 # concurrent suite load - three occurrences on 2026-08-29 alone.
 tests.test_law.BriefTests.test_session_start_brief_carries_the_top_laws
+tests.test_hook_end_to_end.WorkingSessionTests.test_the_host_can_still_do_ordinary_work

@@ -3364,7 +3364,13 @@ def agentsmd_section(parser: argparse.ArgumentParser) -> str:
     lines += ["", "### Boundaries", ""]
     for tier, detail in _BOUNDARY_TIERS:
         lines.append(f"- **{tier}**: {detail}")
-    lines += ["", _AGENTS_END]
+    # The section declares its own context cost (S16 nicety, absorbed from
+    # the size-tiered-artifacts convention): a reader budgeting a context
+    # window deserves the number where the cost is incurred. Rough bytes/4
+    # estimate, rounded to keep the line stable across small edits.
+    approximate_tokens = (sum(len(line) for line in lines) // 4 // 50 + 1) * 50
+    lines += ["", f"_this section costs roughly {approximate_tokens} tokens_",
+              "", _AGENTS_END]
     return "\n".join(lines)
 
 
