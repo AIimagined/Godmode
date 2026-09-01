@@ -1199,6 +1199,11 @@ def main(argv: list[str] | None = None) -> int:
             # once, and the parking file is deleted before anything else can
             # read it. Otherwise this hook adds no context and blocks
             # nothing.
+            # One stdout object or nothing - the same single-print law the
+            # stop path learned in the field (two concatenated objects read
+            # as invalid JSON and the whole delivery is dropped). Every
+            # context source below accumulates; the print happens once.
+            contexts: list[str] = []
             echo_path = archive.root / "godmode-claim-echo.json"
             try:
                 if echo_path.exists():
@@ -1208,32 +1213,23 @@ def main(argv: list[str] | None = None) -> int:
                                  for s in (parked.get("sentences") or [])][:3]
                     touched = [str(s)[:120]
                                for s in (parked.get("obligations") or [])][:2]
-                    parts = []
                     if sentences:
                         listed = "; ".join(f"'{s}'" for s in sentences)
-                        parts.append(
+                        contexts.append(
                             "godmode: your previous reply made "
                             f"{len(sentences)} claim-shaped statement(s) "
                             f"with no record: {listed}. Record each with "
                             "`godmode claim --cite <evidence>` (it grades "
                             "honestly) or soften the wording this turn.")
                     if touched:
-                        parts.append(
+                        contexts.append(
                             "godmode: open obligation(s) the previous turn "
                             "touched: " + ", ".join(touched)
                             + " - act on them or close them on the record.")
-                    if parts:
-                        joined = " ".join(parts)
-                        print(json.dumps({"hookSpecificOutput": {
-                            "hookEventName": "UserPromptSubmit",
-                            "additionalContext": joined}},
-                            ensure_ascii=False))
             except Exception:  # noqa: BLE001
                 pass
             # S8 addendum: the parked continuity brief, for hosts that
-            # ignore SessionStart stdout (Grok). Delivered once; both the
-            # Claude-dialect key and a top-level additionalContext ride the
-            # same object so whichever the host reads, it reads.
+            # ignore SessionStart stdout (Grok). Delivered once.
             brief_echo = archive.root / "godmode-brief-echo.json"
             try:
                 if brief_echo.exists():
@@ -1241,17 +1237,34 @@ def main(argv: list[str] | None = None) -> int:
                     brief_echo.unlink()
                     rendered = str(parked.get("brief") or "")[:4000]
                     if rendered:
-                        print(json.dumps({
-                            "hookSpecificOutput": {
-                                "hookEventName": "UserPromptSubmit",
-                                "additionalContext":
-                                    "godmode continuity brief: " + rendered},
-                            "additionalContext":
-                                "godmode continuity brief: " + rendered,
-                        }, ensure_ascii=False))
+                        contexts.append(
+                            "godmode continuity brief: " + rendered)
             except Exception:  # noqa: BLE001
                 pass
             prompt = str(submitted.get("prompt", ""))
+            # The prompt's own shape names the verb - fix work names the
+            # incident, ship work names the preflight - once per shape per
+            # session, delivered to the model as context.
+            try:
+                from godmode_runtime.godmode_precheck import prompt_shape_nudge
+                shaped = prompt_shape_nudge(
+                    archive, prompt,
+                    str(submitted.get("session_id") or "") or None)
+                if shaped:
+                    contexts.append(shaped)
+            except Exception:  # noqa: BLE001
+                pass
+            if contexts:
+                joined = " ".join(contexts)
+                # Both the Claude-dialect key and a top-level
+                # additionalContext ride the same object so whichever the
+                # host reads, it reads.
+                print(json.dumps({
+                    "hookSpecificOutput": {
+                        "hookEventName": "UserPromptSubmit",
+                        "additionalContext": joined},
+                    "additionalContext": joined,
+                }, ensure_ascii=False))
             try:
                 from godmode_runtime.godmode_requests import record_request
                 record_request(

@@ -538,3 +538,50 @@ def verify_promotion_advisory(archive: Chronicle, command: str,
         "`godmode verify <name> -- <command>` runs the same check and "
         "attests the outcome, which claims can then cite. Once per "
         "session; carry on if this run is exploratory.")
+
+
+# The prompt's own shape names the verb. Three shapes only - a vocabulary
+# that grows past what a session can absorb teaches dismissal.
+_PROMPT_SHAPES = (
+    ("fix", re.compile(r"(?i)\b(?:fix|debug|broken|not\s+working|failing|"
+                       r"keeps?\s+fail|crash)"),
+     "godmode: fix-shaped work - if one check has already failed twice with "
+     "edits between, open `godmode remember --kind incident` before the next "
+     "attempt, and run the deciding check via `godmode verify` so its "
+     "outcome is attested."),
+    ("ship", re.compile(r"(?i)\b(?:push|release|ship|deploy|publish|"
+                        r"cut\s+(?:a\s+)?(?:release|version|tag))"),
+     "godmode: ship-shaped work - `godmode precheck --preflight` runs the "
+     "scans and the demand-vs-use census on a disposable worktree before "
+     "anything leaves the machine."),
+    ("resume", re.compile(r"(?i)\b(?:where\s+(?:are|were)\s+we|pick\s+up|"
+                          r"continue\s+from|what.s\s+the\s+status)"),
+     "godmode: resume-shaped work - `godmode resume` reads the recorded "
+     "state; trust it over memory of the last session."),
+)
+
+
+def prompt_shape_nudge(archive: Chronicle, prompt: str,
+                       session: str | None) -> str | None:
+    """One sentence when the prompt's shape names a verb, once per shape
+    per session - the receipt contract `verify_promotion_advisory` uses,
+    keyed additionally by shape so fix and ship each get their one say."""
+    if not prompt:
+        return None
+    matched = next(((name, text) for name, pattern, text in _PROMPT_SHAPES
+                    if pattern.search(prompt)), None)
+    if not matched:
+        return None
+    shape, text = matched
+    key = session or "unkeyed"
+    try:
+        for record in archive.select(kind="action", limit=200):
+            if record["subject"] == "prompt-shape-nudge" and \
+                    record["data"].get("session") == key and \
+                    record["data"].get("shape") == shape:
+                return None
+        archive.append("action", "prompt-shape-nudge",
+                       {"session": key, "shape": shape})
+    except Exception:  # noqa: BLE001
+        return None
+    return text
