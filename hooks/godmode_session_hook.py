@@ -491,6 +491,77 @@ def _investigation_nudge(archive: Any, submitted: dict) -> str | None:
     )
 
 
+def _marginal_return_nudges(archive: Any, submitted: dict,
+                            session: str | None) -> list[str]:
+    """Two zero-information shapes in the timeline, one sentence each.
+
+    A green streak (>=3 consecutive passes of one command with no mutation
+    between them) and a stale retry (a failure re-run with no mutation
+    since the failure) both carry zero marginal information - the first is
+    over-verification of an already-green check, the second re-asks a
+    question whose answer cannot have changed. Counts only (the timeline
+    stores digests), receipt-bounded to once per session per shape, and
+    the complement of the fix-loop shapes: edits between runs make a rerun
+    informative, and these two fire exactly when there were none.
+    """
+    transcript = submitted.get("transcript_path") or submitted.get("transcriptPath")
+    if not transcript:
+        return []
+    try:
+        from godmode_runtime.godmode_session_log import session_timeline
+
+        timeline = session_timeline(Path(transcript))
+    except Exception:  # noqa: BLE001
+        return []
+    mutations = timeline.get("mutation_turns") or []
+    green_streak = 0
+    stale_retry = 0
+    for entries in (timeline.get("commands") or {}).values():
+        ordered = sorted(entries)
+        run = 0
+        run_start = None
+        for turn, code in ordered:
+            if code == 0:
+                run_start = turn if run == 0 else run_start
+                run += 1
+                if run >= 3 and not any(run_start < m < turn for m in mutations):
+                    green_streak = max(green_streak, run)
+            else:
+                run = 0
+                run_start = None
+        failures = [turn for turn, code in ordered if code is not None and code != 0]
+        for earlier, later in zip(failures, failures[1:]):
+            if not any(earlier < m < later for m in mutations):
+                stale_retry += 1
+    notices: list[str] = []
+    key = session or "unkeyed"
+    for shape, hit, text in (
+        ("green-streak", green_streak,
+         f"godmode: one command has passed {green_streak} consecutive times "
+         "with no edits between the runs - a green check re-run adds no "
+         "information. Record the claim it supports (`godmode claim --cite "
+         "<the check>`) and move on."),
+        ("stale-retry", stale_retry,
+         "godmode: a failed command was re-run with nothing changed since "
+         "the failure - the verdict cannot change. Change something first, "
+         "or treat the failure as the answer."),
+    ):
+        if not hit:
+            continue
+        try:
+            delivered = any(
+                record["subject"] == f"{shape}-nudge"
+                and record["data"].get("session") == key
+                for record in archive.select(kind="action", limit=200))
+            if delivered:
+                continue
+            archive.append("action", f"{shape}-nudge", {"session": key})
+        except Exception:  # noqa: BLE001
+            continue
+        notices.append(text)
+    return notices
+
+
 def _open_obligations_touched(archive: Any, reply_text: str) -> list[str]:
     """Open obligations whose vocabulary the turn's final text shares (S9,
     report 16 2026-08-29): an obligation recorded mid-session surfaced only
@@ -1138,6 +1209,9 @@ def main(argv: list[str] | None = None) -> int:
             notices: list[str] = []
             if nudge:
                 notices.append(nudge)
+            notices.extend(_marginal_return_nudges(
+                archive, submitted,
+                str(submitted.get("session_id") or "") or None))
             if touched:
                 notices.append(
                     "godmode: open obligation(s) this turn touches: "
