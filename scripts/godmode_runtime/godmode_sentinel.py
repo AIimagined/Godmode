@@ -4058,6 +4058,21 @@ class CapabilityBroker:
             ):
                 raise AuthorizationError("approval_required must be a list of category names")
             policy["approval_required"] = tuple(approval)
+        # S16 (E56): declarative per-tool gates - approval demanded at the
+        # tool's DECLARATION. Tighten-only like everything in this file:
+        # only "ask" and "deny" survive validation; any other value refuses
+        # loudly rather than silently becoming a second allow source.
+        tool_gates = raw.get("tool_gates")
+        if tool_gates is not None:
+            if not isinstance(tool_gates, dict) or not all(
+                isinstance(k, str) and str(v).lower() in ("ask", "deny")
+                for k, v in tool_gates.items()
+            ):
+                raise AuthorizationError(
+                    "tool_gates must map tool names to 'ask' or 'deny' - a "
+                    "policy file can tighten, never loosen")
+            policy["tool_gates"] = {
+                k: str(v).lower() for k, v in tool_gates.items()}
         # `ask_only` (field report 2026-08-27): the focused posture. The
         # categories that keep asking; every other R2/R3 ask becomes an
         # allow with an `action` record naming the silence. R4 still asks
