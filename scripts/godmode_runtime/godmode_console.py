@@ -870,6 +870,8 @@ def _load_timeline(transcript_path: str | None) -> dict[str, Any] | None:
 
 
 def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if getattr(args, "text_flag", None) and not args.text:
+        args.text = args.text_flag
     if getattr(args, "scan", False):
         # Public-surface enforcement: the sentences on README and its
         # siblings that are claims by definition, minus the ones whose line
@@ -2295,6 +2297,8 @@ def cmd_checkpoint(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         # Reported, never failed: a standing obligation that looks stale is a
         # question for the operator, not a verdict the runtime is entitled to.
         return CommandResult(report, exit_code=0)
+    if getattr(args, "summary_positional", None) and not args.summary:
+        args.summary = args.summary_positional
     # Naming the missing flag rather than letting argparse describe a
     # requirement that only applies when not reviewing.
     if not args.summary or not args.status:
@@ -4049,6 +4053,12 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     claim.add_argument("text", nargs="?", default=None)
+    # Field report 2026-09-01: an agent typed `claim --text ...`, got an
+    # argparse rejection, and burned a retry. The flag is accepted as an
+    # alias for the positional - one meaning, two spellings, because the
+    # sibling verbs (checkpoint --summary) taught flag-shaped muscle memory.
+    claim.add_argument("--text", dest="text_flag", default=None,
+                       help="Alias for the positional claim text")
     claim.add_argument("--scan", action="store_true",
                        help="Instead of recording: list every claim-shaped sentence on "
                             "the public surfaces (README, LISTING, coverage map, llms.txt, "
@@ -4724,6 +4734,11 @@ def _build_parser() -> argparse.ArgumentParser:
     checkpoint.add_argument(
         "--review", action="store_true",
         help="Report carried obligations a later handoff may have made moot")
+    # Field report 2026-09-01: `checkpoint "summary text"` was rejected while
+    # the sibling verb `claim` takes its text positionally. One meaning, two
+    # spellings, same as claim's --text alias.
+    checkpoint.add_argument("summary_positional", nargs="?", default=None,
+                            help="Alias for --summary")
     checkpoint.add_argument("--summary", required=False)
     checkpoint.add_argument("--status", required=False)
     checkpoint.add_argument("--next", dest="next_action", action="append", default=[])
