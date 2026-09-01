@@ -643,3 +643,59 @@ def _self_check() -> None:
 
 if __name__ == "__main__":
     _self_check()
+
+
+def absorb_docs(archive: Chronicle, path: Path, *, write: bool = False) -> dict[str, Any]:
+    """A status-shaped markdown file becomes proposed status items.
+
+    The door through the adoption wall (S15 item 3): headings scope the
+    item keys, checkboxes carry state (checked -> done, unchecked ->
+    pending). Dry-run by default so the mapping is judged before anything
+    lands; --write records through the same path `status set` uses. The
+    FILE is never touched - turning it into a generated view is the
+    operator's edit, deliberately not this verb's.
+    """
+    import re as _re
+
+    text = Path(path).read_text(encoding="utf-8", errors="replace")
+    section = ""
+    items: list[dict[str, str]] = []
+    for line in text.splitlines():
+        heading = _re.match(r"^#{1,6}\s+(.*)", line)
+        if heading:
+            section = _re.sub(r"[^a-z0-9]+", "-", heading.group(1).strip().lower()).strip("-")
+            continue
+        box = _re.match(r"^\s*[-*]\s*\[([ xX])\]\s+(.+)", line)
+        if not box:
+            continue
+        title = box.group(2).strip()
+        if len(title) < 3:
+            continue
+        items.append({
+            "key": (f"{section}:{title}" if section else title)[:180],
+            "title": title[:200],
+            "section": section,
+            # A checked box in a hand-edited file is a CLAIM of done, not
+            # proof - absorbed as review (claimed, unverified), never as
+            # verified/closed, which demand evidence. Unchecked -> proposed.
+            "state": "review" if box.group(1).strip() else "proposed",
+        })
+    written = 0
+    if write:
+        for item in items:
+            record_item(archive, item["key"], item["title"], item["state"],
+                        extra={"absorbed_from": Path(path).name,
+                               "section": item["section"]})
+            written += 1
+    report: dict[str, Any] = {
+        "source": Path(path).name,
+        "proposed": len(items),
+        "written": written,
+        "items": items,
+        "file_untouched": True,
+    }
+    if not items:
+        report["note"] = ("no status-shaped items found (headings + "
+                         "checkbox lists are what this reads); the file "
+                         "may be prose, or its truth may live elsewhere")
+    return report
