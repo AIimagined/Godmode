@@ -129,6 +129,32 @@ def review_obligations(records: list[dict[str, Any]]) -> dict[str, Any]:
     clusters: list[tuple[frozenset[str], list[tuple[int, str]]]] = []
     handovers = 0
     total = 0
+    # Obligation-KIND records join the same clustering (three field reports,
+    # 2026-09-01: version-bearing subjects mint open siblings the reviewer
+    # never saw, because it read only checkpoint next-lists). Latest record
+    # per subject is the state, same as everywhere else; only open ones
+    # enter, so a closure is honoured before clustering ever sees the text.
+    latest_by_subject: dict[str, dict[str, Any]] = {}
+    for record in records:
+        if record.get("kind") == "obligation":
+            latest_by_subject[str(record.get("subject", ""))] = record
+    for subject, record in latest_by_subject.items():
+        data = record.get("data") or {}
+        if str(data.get("status", "open")).lower() in {
+                "closed", "done", "retired", "superseded"}:
+            continue
+        text = f"{subject} {data.get('value', '')}".strip()
+        tokens = _tokens(normalise_obligation(text))
+        if not tokens:
+            continue
+        total += 1
+        sequence = int(record.get("sequence", 0))
+        for existing, members in clusters:
+            if _overlap(existing, tokens) >= SIMILARITY:
+                members.append((sequence, subject))
+                break
+        else:
+            clusters.append((tokens, [(sequence, subject)]))
     for record in records:
         if record.get("kind") != "checkpoint" and "next" not in (record.get("data") or {}):
             continue

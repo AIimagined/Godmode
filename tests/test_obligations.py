@@ -248,3 +248,42 @@ class RetirementTests(unittest.TestCase):
         still_open = [{"sequence": 4, "kind": "obligation",
                        "subject": "publish the page", "data": {"status": "open"}}]
         self.assertTrue(review_obligations(records + still_open)["findings"])
+
+
+class ObligationKindSiblingTests(unittest.TestCase):
+    """Three field reports in one day: obligation-KIND records with
+    version-bearing subjects accumulate as open siblings, and the reviewer
+    never saw them because it read only checkpoint next-lists."""
+
+    def test_open_obligation_records_join_the_review(self) -> None:
+        records = [
+            {"sequence": 10, "kind": "obligation",
+             "subject": "live-verify engine version 0.7.109",
+             "data": {"value": "run the live verify pass", "status": "open"}},
+            {"sequence": 20, "kind": "obligation",
+             "subject": "live-verify engine version 0.8.17",
+             "data": {"value": "run the live verify pass", "status": "open"}},
+            {"sequence": 30, "kind": "obligation",
+             "subject": "live-verify engine version 0.8.22",
+             "data": {"value": "run the live verify pass", "status": "open"}},
+        ]
+        report = review_obligations(records)
+        superseded = [f for f in report["findings"]
+                      if f["code"] == "version-superseded"]
+        named = " ".join(f["obligation"] for f in superseded)
+        self.assertIn("0.7.109", named)
+        self.assertIn("0.8.17", named)
+        self.assertNotIn("0.8.22", named)
+
+    def test_closed_obligation_records_stay_out(self) -> None:
+        records = [
+            {"sequence": 10, "kind": "obligation",
+             "subject": "live-verify engine version 0.7.109",
+             "data": {"value": "run the live verify pass", "status": "closed"}},
+            {"sequence": 30, "kind": "obligation",
+             "subject": "live-verify engine version 0.8.22",
+             "data": {"value": "run the live verify pass", "status": "open"}},
+        ]
+        report = review_obligations(records)
+        self.assertEqual([f for f in report["findings"]
+                          if f["code"] == "version-superseded"], [])
