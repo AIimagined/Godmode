@@ -90,3 +90,30 @@ class VerifyPromotionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TranscriptKeyFallbackTests(unittest.TestCase):
+    """A host sending transcript_path but no session_id still gets the
+    advisory, bounded by a key derived from the transcript path."""
+
+    def test_transcript_path_scopes_the_receipt(self) -> None:
+        with _project() as (project, state):
+            transcript = project / "t.jsonl"
+            transcript.write_text("{}", encoding="utf-8")
+            environment = dict(os.environ)
+            environment["GODMODE_STATE_HOME"] = str(state)
+            payload = {"tool_name": "Bash",
+                       "tool_input": {"command": "python -m pytest tests/"},
+                       "cwd": str(project), "hook_event_name": "PreToolUse",
+                       "transcript_path": str(transcript)}
+            first = subprocess.run(
+                [sys.executable, str(HOOK), "pre-action", "--project", str(project)],
+                input=json.dumps(payload), capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=180, env=environment)
+            self.assertIn("godmode verify", first.stdout or "")
+            payload["tool_input"] = {"command": "npm test"}
+            second = subprocess.run(
+                [sys.executable, str(HOOK), "pre-action", "--project", str(project)],
+                input=json.dumps(payload), capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=180, env=environment)
+            self.assertNotIn("godmode verify", second.stdout or "")

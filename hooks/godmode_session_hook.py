@@ -410,6 +410,29 @@ def project_resume_doc(project_root: Path) -> str | None:
     return None
 
 
+
+def _session_key(submitted: dict[str, Any]) -> str | None:
+    """A stable per-session receipt key, from the host's own fields.
+
+    session_id when the host sends one; otherwise a hash of the transcript
+    path, which is session-scoped on every observed host that writes one
+    (Claude, Codex). A host sending neither gets None and the receipt-
+    bounded advisories stay silent - a bound that cannot be scoped to a
+    session is a bound that lies (S15 item 1; the field diagnosis was an
+    advisory that fired once per archive-lifetime and never again).
+    """
+    direct = str(submitted.get("session_id") or "") or None
+    if direct:
+        return direct
+    transcript = submitted.get("transcript_path") or submitted.get("transcriptPath")
+    if transcript:
+        import hashlib
+
+        return "tp:" + hashlib.sha256(
+            str(transcript).encode("utf-8", "replace")).hexdigest()[:16]
+    return None
+
+
 def _final_reply_text(submitted: dict[str, Any]) -> str:
     """The turn's final assistant text, bounded, from the payload itself
     (Grok sends `lastAssistantMessage`) or the host transcript's tail
@@ -1249,8 +1272,7 @@ def main(argv: list[str] | None = None) -> int:
             if nudge:
                 notices.append(nudge)
             notices.extend(_marginal_return_nudges(
-                archive, submitted,
-                str(submitted.get("session_id") or "") or None))
+                archive, submitted, _session_key(submitted)))
             if touched:
                 notices.append(
                     "godmode: open obligation(s) this turn touches: "
@@ -1281,8 +1303,7 @@ def main(argv: list[str] | None = None) -> int:
                         parked["obligations"] = touched
                     if unsupported:
                         parked["sentences"] = [s[:200] for s in unsupported[:3]]
-                    parked["session"] = (
-                        str(submitted.get("session_id") or "") or None)
+                    parked["session"] = _session_key(submitted)
                     echo.write_text(json.dumps(parked, ensure_ascii=False),
                                     encoding="utf-8")
                 except Exception:  # noqa: BLE001
@@ -1343,7 +1364,7 @@ def main(argv: list[str] | None = None) -> int:
                     # correction belongs to the session that owns the
                     # context; a mismatch (or an unstamped park) deletes the
                     # file undelivered - restarts resume via the brief.
-                    current = str(submitted.get("session_id") or "") or None
+                    current = _session_key(submitted)
                     if parked.get("session") != current:
                         parked = {}
                     sentences = [str(s)[:200]
@@ -1385,8 +1406,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 from godmode_runtime.godmode_precheck import prompt_shape_nudge
                 shaped = prompt_shape_nudge(
-                    archive, prompt,
-                    str(submitted.get("session_id") or "") or None)
+                    archive, prompt, _session_key(submitted))
                 if shaped:
                     contexts.append(shaped)
             except Exception:  # noqa: BLE001
@@ -1996,8 +2016,7 @@ def main(argv: list[str] | None = None) -> int:
                         from godmode_runtime.godmode_precheck import (
                             verify_promotion_advisory)
                         promotion = verify_promotion_advisory(
-                            archive, operation,
-                            str(submitted.get("session_id") or "") or None)
+                            archive, operation, _session_key(submitted))
                     except Exception:  # noqa: BLE001
                         promotion = None
                 advisory = (preview.get("observe_advisory")
