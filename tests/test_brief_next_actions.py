@@ -216,3 +216,25 @@ class DoctrineBlockTests(unittest.TestCase):
             self.assertIn("evidence-first", doctrine)
             self.assertIn("TWO-REVERSALS", doctrine)
             self.assertLess(len(doctrine), 1200)
+
+
+class RedFlagsTests(unittest.TestCase):
+    def test_the_brief_carries_the_red_flags_table(self) -> None:
+        # Rationalization detection as a lookup, not willpower: the
+        # thoughts that precede violations, each mapped to its reality.
+        # Rows sourced from recorded field lessons before invented ones.
+        import json
+        import subprocess
+        with _project() as (root, _archive):
+            hook = Path(__file__).resolve().parents[1] / "hooks" / "godmode_session_hook.py"
+            done = subprocess.run(
+                [sys.executable, str(hook), "session-start", "--project", str(root)],
+                input="{}", capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=180,
+                env=dict(os.environ))
+            brief = json.loads(done.stdout).get("brief") or {}
+            flags = brief.get("red_flags", "")
+            self.assertIn("too simple to record", flags)
+            self.assertIn("call-site", flags)
+            self.assertIn("uniform result", flags)
+            self.assertLess(len(flags), 1100)
