@@ -559,6 +559,22 @@ def _position_support(project: Path, citation: str, claim: str) -> str | None:
     possible - a claim with no distinctive terms cannot be corroborated or refuted,
     and guessing either way would be worse than abstaining.
     """
+    # A doc: cite naming a local file gets the same honesty check over its
+    # WHOLE content - "any citation passes" was the field's sharpest trust
+    # complaint (reports 16/18, 2026-09-03): doc:docs/CHANGELOG.md was
+    # accepted for a claim the changelog never mentions. A doc: pointing
+    # off-disk (a URL-ish or external reference) still abstains.
+    if citation.startswith("doc:"):
+        doc_path = project / citation[len("doc:"):]
+        terms = _salient(claim)
+        if not terms or not doc_path.is_file():
+            return None
+        try:
+            content = doc_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        return ("corroborated" if terms & _salient(content)
+                else "unsupported")
     match = _FILE_CITE.match(citation)
     if not match or match.group("start") is None:
         return None
@@ -1749,6 +1765,17 @@ def record_claim(
                 "them - this claim is the author's word about a run the "
                 "record cannot see; `godmode verify --command \"...\"` "
                 "attests it and upgrades the support")
+    # "Any citation passes" (field reports 16/18): a doc: cite whose file
+    # never mentions the claim's subject is decoration. Named below
+    # verified; at verified the unsupported ladder already downgrades.
+    if grade != "verified":
+        decorative = [c for c in unsupported if str(c).startswith("doc:")]
+        if decorative:
+            advisories.append(
+                f"{len(decorative)} doc citation(s) do not mention this "
+                "claim's subject - cite the document that does, or the "
+                "line that does; a citation that merely exists is "
+                "decoration, not support")
     # A theory nothing could kill is a story, not a finding (field corpus,
     # 2026-09-03): a hypothesis names the one observation that would refute
     # it, or the gap is named. Advisory only - a hypothesis is already the

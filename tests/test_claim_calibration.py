@@ -543,3 +543,41 @@ class ReversalAccountingTests(unittest.TestCase):
 
     def test_superseded_is_clean(self) -> None:
         self.assertEqual(self._resolve("superseded"), [])
+
+
+class DocCiteSupportTests(unittest.TestCase):
+    """'Any citation passes' ends: a doc: cite whose file never mentions
+    the claim's subject is decoration, and gets named."""
+
+    def _record(self, doc_content, text, grade="observed"):
+        from test_godmode_runtime import isolated_project
+        from godmode_runtime.godmode_attest import record_claim
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            docs = project / "docs"
+            docs.mkdir(exist_ok=True)
+            (docs / "CHANGELOG.md").write_text(doc_content, encoding="utf-8")
+            record = record_claim(archive, project, "S", text, grade,
+                                  cites=["doc:docs/CHANGELOG.md"])
+            return record.get("data", record)
+
+    def test_unrelated_doc_cite_is_named(self) -> None:
+        data = self._record(
+            "release notes about the payment webhook rollout",
+            "the render queue drains jobs in submission order")
+        self.assertTrue(any("decoration" in a
+                            for a in data.get("advisories", [])), data)
+
+    def test_supporting_doc_cite_is_clean(self) -> None:
+        data = self._record(
+            "the render queue drains jobs in submission order since 1.2",
+            "the render queue drains jobs in submission order")
+        self.assertFalse(any("decoration" in a
+                             for a in data.get("advisories", [])), data)
+
+    def test_verified_with_unrelated_doc_downgrades(self) -> None:
+        data = self._record(
+            "release notes about the payment webhook rollout",
+            "the render queue drains jobs in submission order",
+            grade="verified")
+        self.assertEqual(data.get("grade"), "hypothesis")
