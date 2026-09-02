@@ -1,0 +1,1 @@
+THE RATCHET RULE joins the doctrine as its eighth reflex: a miss that recurs gets a guard that fails on the next instance, not a lesson telling you to be careful. Flows from the one canonical source into the session brief and every emitted host-rules file.
