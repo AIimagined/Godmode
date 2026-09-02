@@ -163,6 +163,26 @@ def push_preflight(project: Path | str,
                     })
             except Exception:  # noqa: BLE001
                 skipped.append("assumption probe: unavailable")
+        # History-scope scan (field miss, 2026-09-02): a scrub that reads
+        # the tree misses every deletion diff and old commit message - the
+        # exposure surface is `log -p --all`, so that is what gets scanned.
+        # Counts and commit ids only, never the term.
+        if terms_path is not None:
+            try:
+                history = _git(repo, "log", "-p", "--all").stdout.decode(
+                    "utf-8", errors="replace").lower()
+                history_hits = sum(
+                    1 for pattern in patterns if pattern.search(history))
+                if history_hits:
+                    mechanical.append({
+                        "check": "history-terms",
+                        "detail": f"{history_hits} private term(s) appear in "
+                                  "commit HISTORY (diffs or messages) - the "
+                                  "tree is not the exposure surface; a "
+                                  "history rewrite is the only removal",
+                    })
+            except Exception:  # noqa: BLE001
+                skipped.append("history-terms scan: unavailable")
     finally:
         _git(repo, "worktree", "remove", "--force", str(worktree))
         _git(repo, "worktree", "prune")
