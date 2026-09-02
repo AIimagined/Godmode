@@ -416,3 +416,36 @@ def validate_skill(skill_dir: str | Path) -> dict[str, Any]:
         "assertions": len(evals["behavior_assertions"]),
         "fixture_hosts": fixture_hosts,
     }
+
+
+def lint_skill_names(skills_root: str | Path) -> dict[str, Any]:
+    """Project-wide collision check: two skills sharing a frontmatter name.
+
+    The host resolves a name collision silently - one skill loads, its
+    twin is discarded in readdir order, and which one wins can differ
+    between machines. Per-bundle lint cannot see it; only a walk of the
+    whole skills tree can.
+    """
+    root = Path(skills_root).resolve(strict=True)
+    names: dict[str, list[str]] = {}
+    for skill_file in sorted(root.glob("*/SKILL.md")):
+        content = skill_file.read_text(encoding="utf-8", errors="replace")
+        match = _FRONTMATTER.match(content)
+        if not match:
+            continue
+        for line in match.group("body").splitlines():
+            key, separator, value = line.partition(":")
+            if separator and key.strip() == "name":
+                names.setdefault(value.strip(), []).append(
+                    skill_file.parent.name)
+                break
+    collisions = {name: dirs for name, dirs in names.items()
+                  if len(dirs) > 1}
+    return {
+        "skills": sum(len(d) for d in names.values()),
+        "collisions": collisions,
+        "passed": not collisions,
+        "verdict": "unique" if not collisions else
+                   f"{len(collisions)} name collision(s) - the host keeps "
+                   "one silently; rename until every name is unique",
+    }

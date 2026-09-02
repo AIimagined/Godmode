@@ -146,3 +146,47 @@ class BundleReachabilityTests(unittest.TestCase):
                                                            encoding="utf-8")
             report = lint_skill(root)
             self.assertTrue(report["facets"]["bundle"]["passed"])
+
+
+class NameCollisionTests(unittest.TestCase):
+    """Two skills sharing a frontmatter name: the host keeps one silently,
+    in readdir order, differing between machines. Only a project-wide walk
+    can see it."""
+
+    def test_collision_detected(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from godmode_runtime.godmode_forge import lint_skill_names
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for directory in ("alpha", "beta"):
+                d = root / directory
+                d.mkdir()
+                (d / "SKILL.md").write_text(
+                    "---\nname: shared-name\ndescription: d\n---\nbody\n",
+                    encoding="utf-8")
+            report = lint_skill_names(root)
+            self.assertFalse(report["passed"])
+            self.assertIn("shared-name", report["collisions"])
+
+    def test_unique_names_pass(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from godmode_runtime.godmode_forge import lint_skill_names
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name in ("one", "two"):
+                d = root / name
+                d.mkdir()
+                (d / "SKILL.md").write_text(
+                    f"---\nname: {name}\ndescription: d\n---\nbody\n",
+                    encoding="utf-8")
+            report = lint_skill_names(root)
+            self.assertTrue(report["passed"])
+
+    def test_shipped_tree_is_unique(self) -> None:
+        from pathlib import Path
+        from godmode_runtime.godmode_forge import lint_skill_names
+        root = Path(__file__).resolve().parents[1] / "skills"
+        report = lint_skill_names(root)
+        self.assertTrue(report["passed"], report)
