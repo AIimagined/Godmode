@@ -1007,6 +1007,27 @@ def record_differential(
 # was actually run failing, not merely cited), and holding every verified
 # claim to it would be the over-gating that gets a check switched off. Only
 # claims using this vocabulary are held to the temporal shape.
+# A universal quantifier asserting coverage. Deliberately narrow: "every"
+# and "all" only when they quantify the claim's own subject matter in an
+# asserting position - "never blocks" describing a mechanism, quoted
+# spans, and attributed speech are all excluded at the call site.
+_UNIVERSAL_CLAIM = re.compile(
+    # "all 97 sources" / "all ten remedies" is count-scoped - already an
+    # enumeration in miniature - so numeric and number-word quantifiers
+    # are excluded; the bare universal is the unproven shape.
+    r"(?i)\b(?:100%|complete\s+coverage|nothing\s+(?:left|remains|missing)|"
+    r"zero\s+gap|(?:every|all)\s+"
+    r"(?!\d|one\b|two\b|three\b|four\b|five\b|six\b|seven\b|eight\b|"
+    r"nine\b|ten\b)\w+)")
+# An enumeration signal: a list of three or more items, an explicit lane
+# word, or a count-plus-breakdown - the shapes an honest coverage claim
+# actually takes.
+_ENUMERATION_SIGNAL = re.compile(
+    r"(?:\b(?:lanes?|surfaces?|modalit|enumerat)\w*\b|"
+    r"(?::|-)\s*[^,;]+(?:[,;]\s*[^,;]+){2,}|"
+    r"\b\d+\s*(?:of|/)\s*\d+\b)", re.IGNORECASE)
+
+
 # A sweep verdict is a judgment about an upstream body of work - the claim
 # class the reading-depth bar applies to. Deliberately narrow: ordinary
 # progress claims must never trip it.
@@ -1765,6 +1786,17 @@ def record_claim(
                 "them - this claim is the author's word about a run the "
                 "record cannot see; `godmode verify --command \"...\"` "
                 "attests it and upgrades the support")
+    # A grep proves existence; an enumeration proves coverage (field
+    # corpus, 2026-09-03). A claim quantifying universally with no
+    # enumeration beside it gets the bar named. Judged on the unquoted
+    # text so a mention is never a claim.
+    stripped_for_universal = _strip_quoted(text)
+    if (_UNIVERSAL_CLAIM.search(stripped_for_universal)
+            and not _ENUMERATION_SIGNAL.search(text)):
+        advisories.append(
+            "a universal claim (every/all/100%) enumerates its lanes - a "
+            "grep proves existence, an enumeration proves coverage; list "
+            "what was covered, or scope the claim to what was")
     # "Any citation passes" (field reports 16/18): a doc: cite whose file
     # never mentions the claim's subject is decoration. Named below
     # verified; at verified the unsupported ladder already downgrades.

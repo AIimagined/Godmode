@@ -620,3 +620,47 @@ class ClaimVerifyTests(unittest.TestCase):
                       "the probe prints the answer",
                       "--cite", f"cmd:{_sys2.executable} -c print(42)"])
             self.assertIn("no attestation behind", out.getvalue())
+
+
+class UniversalClaimTests(unittest.TestCase):
+    """A grep proves existence; an enumeration proves coverage."""
+
+    def _advisories(self, text):
+        from test_godmode_runtime import isolated_project
+        from godmode_runtime.godmode_attest import record_claim
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            record = record_claim(archive, project, "S", text, "observed",
+                                  cites=["file:README.md"])
+            return record.get("data", record).get("advisories", [])
+
+    def test_bare_universal_is_named(self) -> None:
+        advisories = self._advisories(
+            "every provider call is metered into the ledger")
+        self.assertTrue(any("enumerates its lanes" in a
+                            for a in advisories), advisories)
+
+    def test_enumerated_universal_is_clean(self) -> None:
+        advisories = self._advisories(
+            "every provider call is metered: generation, edit, audio, "
+            "image, and critique lanes each end at the ledger writer")
+        self.assertFalse(any("enumerates its lanes" in a
+                             for a in advisories), advisories)
+
+    def test_count_breakdown_is_clean(self) -> None:
+        advisories = self._advisories(
+            "all 14 gates re-ran green, 14 of 14 on the release build")
+        self.assertFalse(any("enumerates its lanes" in a
+                             for a in advisories), advisories)
+
+    def test_quoted_universal_is_clean(self) -> None:
+        advisories = self._advisories(
+            'the reviewer wrote "all tests pass" in the summary field')
+        self.assertFalse(any("enumerates its lanes" in a
+                             for a in advisories), advisories)
+
+    def test_plain_claim_is_clean(self) -> None:
+        advisories = self._advisories(
+            "the parser accepts trailing commas since the grammar change")
+        self.assertFalse(any("enumerates its lanes" in a
+                             for a in advisories), advisories)
