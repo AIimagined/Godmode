@@ -1,0 +1,1 @@
+Resolving a claim as failed carries an accounting ask in the resolution itself: a withdrawn claim may have carried weight - name what was built on it, or say nothing was. Held and superseded resolutions stay clean.

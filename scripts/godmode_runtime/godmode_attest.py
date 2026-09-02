@@ -2013,7 +2013,14 @@ def resolve_claim(
             "unresolved": [],
             "unsupported": [],
             "reason": "",
-            "advisories": [],
+            # A withdrawn claim may have carried weight while it stood
+            # (field corpus, 2026-09-03): the reversal is accounted for at
+            # the moment of withdrawal, not rediscovered later.
+            "advisories": (
+                ["a withdrawn claim may have carried weight - name what "
+                 "was built on it (a fix, a doc, an ops action, an "
+                 "operator decision), or say nothing was"]
+                if outcome == "failed" else []),
             "blast_radius": None,
             "operator_asserted": [],
         },
