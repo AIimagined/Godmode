@@ -4,7 +4,7 @@
     "name": "godmode",
     "displayName": "Godmode",
     "version": "0.3.13",
-    "description": "A local, tamper-evident record of what a coding agent did, what it claimed, and what was verified.",
+    "description": "Your coding agent says \"done.\" Godmode is how you know: a local, tamper-evident evidence ledger of what it did, claimed, and verified - with gates and a completion bar enforced in hooks at runtime. Zero deps, zero network.",
     "author": {
       "name": "AIimagined",
       "url": "https://github.com/AIimagined"
@@ -67,7 +67,7 @@
           "skill-authoring"
         ],
         "author_url": false,
-        "description": "Skills for a local, tamper-evident record of what a coding agent did, what it claimed, and what was verified.",
+        "description": "Skills for a local, tamper-evident evidence ledger of what a coding agent did, claimed, and verified - gates enforced in hooks.",
         "hooks": "./hooks/hooks.json",
         "interface": {
           "displayName": "Godmode",
