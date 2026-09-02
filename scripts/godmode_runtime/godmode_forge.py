@@ -293,6 +293,55 @@ def lint_skill(skill_dir: str | Path) -> dict[str, Any]:
         if fired else {"passed": True, "why": ""}
     )
 
+    # S19 item 5 - the bundle facet: a skill is a directory, and its graph
+    # must hold. A referenced file that does not exist is a dead link the
+    # agent hits at load time; a bundled file nothing references is an
+    # orphan paying storage and context for no path that reaches it.
+    # Links are read from every markdown file in the bundle, so a
+    # reference reached through references/ still anchors its own links.
+    findings: list[str] = []
+    referenced: set[str] = set()
+    link = re.compile(r"\[[^\]]*\]\(([^)#\s]+)\)|`((?:references|scripts|assets)/[^`\s]+)`")
+    markdown_files = [root / "SKILL.md"] + sorted(root.rglob("*.md"))
+    seen_md: set[Path] = set()
+    for md in markdown_files:
+        if md in seen_md or not md.is_file():
+            continue
+        seen_md.add(md)
+        for m in link.finditer(md.read_text(encoding="utf-8", errors="replace")):
+            target = (m.group(1) or m.group(2) or "").strip()
+            if not target or target.startswith(("http://", "https://", "mailto:")):
+                continue
+            resolved = (md.parent / target)
+            # A markdown LINK asserts a bundle-relative path - missing is
+            # a dead link. A backticked path is a HINT: it counts as a
+            # reference when the file exists in the bundle, and stays
+            # silent when it does not (prose legitimately backticks
+            # plugin-root paths like scripts/godmode.py).
+            if resolved.is_file():
+                referenced.add(str(resolved.resolve()))
+            elif m.group(1):
+                findings.append(
+                    f"dead link: {md.relative_to(root)} -> {target}")
+    for bundled in sorted(root.rglob("*")):
+        if not bundled.is_file() or bundled.name == "SKILL.md":
+            continue
+        relative = bundled.relative_to(root).as_posix()
+        # Convention-loaded files are reachable by NAME, not by reference:
+        # the evals machinery reads godmode-evals.json and host adapters
+        # read agents/*.yaml without any prose link existing.
+        if (bundled.name == "godmode-evals.json"
+                or relative.startswith("agents/")):
+            continue
+        if str(bundled.resolve()) not in referenced:
+            findings.append(f"orphan: {relative} is "
+                            "reachable from no reference")
+    facets["bundle"] = (
+        {"passed": False, "findings": findings,
+         "why": f"{len(findings)} graph finding(s)"}
+        if findings else {"passed": True, "findings": [], "why": ""}
+    )
+
     return {
         "skill": root.name,
         "facets": facets,
