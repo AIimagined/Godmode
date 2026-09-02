@@ -657,12 +657,21 @@ def _open_obligations_touched(archive: Any, reply_text: str) -> list[str]:
             # Requests store no raw prompt text (privacy) - only a digest
             # and the extracted keywords, which are exactly the match
             # vocabulary this surface needs.
-            vocab = {str(w).lower() for w in (data.get("keywords") or [])}
+            keywords = [str(w).lower() for w in (data.get("keywords") or [])]
+            vocab = set(keywords)
             if len(reply_words & vocab) >= 3:
-                shown = ", ".join(sorted(vocab)[:5])
+                # Field report 2026-09-03: a hash plus a sorted keyword bag
+                # is not actionable and trains dismissal. No raw prompt is
+                # stored (privacy), so the closest honest rendering is the
+                # keywords in the order the operator said them, plus the
+                # exact paste-ready closure.
+                phrase = " ".join(keywords[:7])
+                subject = record.get("subject", "")
                 touched.append((record.get("sequence", 0),
-                                f"stated request {record.get('subject', '')} "
-                                f"(about: {shown})", vocab))
+                                f"operator ask '{phrase}' - close with "
+                                f"`godmode remember --kind request --subject "
+                                f"\"{subject}\" --status closed` once served",
+                                vocab))
         touched.sort(reverse=True)
         survivors: list[tuple[int, str, set]] = []
         muted = 0
