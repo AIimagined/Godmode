@@ -126,7 +126,7 @@ def serve(project: str) -> None:
             result = {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "godmode", "version": "0.3.10"},
+                "serverInfo": {"name": "godmode", "version": "0.3.11"},
             }
         elif method == "tools/list":
             result = {"tools": TOOLS}

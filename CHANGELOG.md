@@ -6,6 +6,21 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.3.11] - 2026-09-02
+
+### Added
+
+- Claim resolutions carry a second, loss-averse reading beside the symmetric score: `asymmetric_score` charges an overconfident failure 2.25x the quadratic penalty while a held claim scores identically. Additive by design - the symmetric ledger stays comparable across its whole history, and any future tier threshold can choose which score it reads.
+- The session brief now opens with the doctrine block: godmode's discipline compressed to an identity the way persona modes carry one reflex - evidence-first, completion is a record, two reversals mean go read, a green re-run adds nothing, replacement is not reversal, end by recording. Instruction-only compliance runs about sixty percent in the study on record; the hooks catch the rest, and the doctrine fires in the one place no hook can reach - while the reply is still being written. Bounded invariant text, first in truncation priority.
+- Two new host adapters ship. The pi extension shim (`adapters/pi/godmode-pi-extension.ts`) registers on pi's pre-execution tool_call event and relays every mapped call to the gate - fail-closed once configured, warn-once-and-allow when the root is unset, ask folded to deny, no decision logic in the shim; pi ships no approval flow of its own, so godmode becomes it. The MCP ledger server (`adapters/goose/godmode_mcp_server.py`) offers claim, checkpoint, status-remaining, and resume as MCP tools for goose and any MCP host, opening the session at the protocol's initialize - and states its own bound honestly: MCP tools are additive, the protocol has no hook over a host's other tools, so an MCP host grades ledger-only, never gated. Both remain unverified-live until a real session chronicles their first block or record.
+- Drip-fed operator requests now resurface mid-work, not only at handover: an open stated request whose keywords a reply touches joins the same turn notice obligations use (sibling collapse included). Requests store no prompt text - the match runs on the keywords the record already keeps, and the notice shows the digest id plus those keywords.
+- Config-fragile eval cases now have their detector: a routing-stability snapshot records every case's routed skill under a digest of the authored suites, and a later run under the same digest that routes a case differently names it fragile - a flipped case decides nothing until it stabilizes, the same posture as a registered flaky test. A changed digest reports suites-changed, never fragility.
+
+### Changed
+
+- `status absorb-docs` learned the emoji dialect real status files speak: a bullet whose content starts with a status emoji absorbs (green and check marks as claims-of-done, every other color as open work), beside the original checkbox reading. The file that taught it carried 404 emoji-status lines and exactly one checkbox; unmarked prose bullets still never absorb.
+- The doctrine reflexes now carry names - THE RECORD RULE, THE DONE BAR, THE TWO-REVERSALS LAW, GREEN ADDS NOTHING, SUPERSEDE DON'T RE-LITIGATE, ASK THE RECORD FIRST, LEAVE A TRAIL - so a reply can credit the reflex that decided something, the way a memorable law gets cited. Every user-facing notice also got a plain-language pass: action first, jargon out, the exact fix command spelled out ("this reply says work is done, but these statements have no evidence on record - save each as a claim with its proof, or soften the wording").
+
 ## [0.3.10] - 2026-09-01
 
 ### Added
