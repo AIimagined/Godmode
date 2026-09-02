@@ -2481,6 +2481,12 @@ def cmd_loop_contract(args: argparse.Namespace, runtime: Runtime) -> CommandResu
     return CommandResult({"record": _event_view(record)})
 
 
+def cmd_digest(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    from .godmode_digest import render_digest
+    return CommandResult(render_digest(runtime.archive, since=args.since))
+
+
 def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # Scope-explicit (B4-8 ext.): every status answer names the project it
     # is about, in JSON and in prose.
@@ -4889,6 +4895,13 @@ def _build_parser() -> argparse.ArgumentParser:
     _evidence(remember)
     remember.set_defaults(handler=cmd_remember)
 
+    digest_parser = sub.add_parser(
+        "digest",
+        help="The archive told as dated prose - what happened, in order, "
+             "assembled verbatim from record fields; no model, no paraphrase")
+    digest_parser.add_argument("--since", type=int, default=0,
+                               help="Start the story at this sequence")
+    digest_parser.set_defaults(handler=cmd_digest)
     doctor = sub.add_parser("doctor", help="Verify archive and continuity health")
     doctor.add_argument("--deep", action="store_true")
     doctor.set_defaults(handler=cmd_doctor)
