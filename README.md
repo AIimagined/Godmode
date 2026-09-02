@@ -480,6 +480,43 @@ $ godmode swallow
 $ godmode upstream
 ```
 
+## What works on day one, and what grows
+
+Godmode is two halves on different clocks.
+
+**Enforcement is instant.** The action gate's risk tiers, the protected-operation
+refusals, the completion gate (an unrecorded "done" blocks once at the stop with
+the recording command as the reason), the doctrine block on the session brief,
+prompt-shape nudges, and automatic capture of every operator request all work at
+full strength from the first prompt of the first session. None of them needs
+history.
+
+**Intelligence compounds.** The ledger's judgment grows with records, and an
+empty archive is correct silence, not weakness: calibration reports only once
+resolved scored claims exist (`godmode claim --confidence`, then `--resolve`),
+the fix-loop wire arms only after two failed resolutions are on record, laws
+distill only from recorded corrections, and the demand-vs-use census can only
+measure demand the record actually states. Each threshold is a named constant
+in the source, not a vibe - read them in `scripts/godmode_runtime/`.
+
+**Fresh project or mid-project - both work, differently.** A fresh project gets
+full enforcement immediately and earns the memory half organically. A
+mid-project install can backfill instead: `godmode status absorb-docs <file>`
+maps an existing status-shaped markdown file (checkboxes or lead-emoji bullets)
+into proposed store items - dry-run first, a checked box absorbs as a claim of
+done rather than verified truth, and the source file is never touched. Feeding
+an existing backlog reaches useful judgment faster than waiting for it to
+accumulate.
+
+**The honest curve, from this repository's own use**: the claim and checkpoint
+ledger is useful within the first session; calibration and recurrence signals
+need a handful of working sessions; laws and census verdicts firm up over weeks
+of real use. Loop contracts (`godmode loop declare/tick/close`) ship tested but
+young - the bounded-loop discipline they enforce (no contract without an
+iteration cap and stop condition; empty iterations escalate; exhaustion may
+never impersonate completion) is the newest surface here. Verify any of this
+against the commands in the section below.
+
 ## The numbers
 
 Every row below was run against this repository to write this document.
