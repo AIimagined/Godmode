@@ -216,3 +216,58 @@ class RequestTurnSurfaceTests(unittest.TestCase):
                 capture_output=True, text=True, encoding="utf-8",
                 errors="replace", timeout=180, env=dict(os.environ))
             self.assertNotIn("stated request", done.stdout or "")
+
+
+class StandingObligationTests(unittest.TestCase):
+    """The L-381/L-382 field pair: a standing per-task obligation has no
+    subject for salient matching, so it died on every long turn despite
+    being recorded. A record carrying standing: true surfaces at EVERY
+    stop unconditionally - and ignores the quiet posture, because an
+    operator-mandated per-task duty is definition-of-done, not advisory."""
+
+    def _stop(self, archive, session="S-standing"):
+        import json
+        import subprocess
+        transcript = Path(archive.anchor.project_root) / "t.jsonl"
+        transcript.write_text("\n".join([
+            json.dumps({"type": "user", "message": {"content": "go"}}),
+            json.dumps({"type": "assistant", "message": {
+                "role": "assistant", "content": [{"type": "text",
+                "text": "Progress on the completely unrelated widget work."}]}}),
+        ]), encoding="utf-8")
+        hook = PLUGIN_ROOT / "hooks" / "godmode_session_hook.py"
+        return subprocess.run(
+            [sys.executable, str(hook), "stop",
+             "--project", str(_project_of(archive))],
+            input=json.dumps({"transcript_path": str(transcript),
+                              "session_id": session}),
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=180, env=dict(os.environ))
+
+    def test_a_standing_obligation_surfaces_without_any_match(self) -> None:
+        with _archive() as archive:
+            archive.append("obligation", "per-task effectiveness report",
+                           {"value": "one verdict paragraph after every task",
+                            "standing": True})
+            done = self._stop(archive)
+            self.assertIn("per-task effectiveness report", done.stdout or "")
+
+    def test_standing_survives_quiet_posture(self) -> None:
+        import json
+        with _archive() as archive:
+            root = _project_of(archive)
+            (root / ".godmode-authorization-policy.json").write_text(
+                json.dumps({"nag_posture": "quiet"}), encoding="utf-8")
+            archive.append("obligation", "per-task effectiveness report",
+                           {"value": "one verdict paragraph after every task",
+                            "standing": True})
+            done = self._stop(archive)
+            self.assertIn("per-task effectiveness report", done.stdout or "")
+
+    def test_a_closed_standing_obligation_stays_silent(self) -> None:
+        with _archive() as archive:
+            archive.append("obligation", "per-task effectiveness report",
+                           {"value": "duty", "standing": True,
+                            "status": "closed"})
+            done = self._stop(archive)
+            self.assertNotIn("per-task effectiveness report", done.stdout or "")
