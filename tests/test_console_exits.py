@@ -285,3 +285,27 @@ class ScopeExplicitResponseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InvocationDiscoveryTests(unittest.TestCase):
+    """Field report 2026-09-03: `npx godmode resume` hit a squatted npm
+    name and printed nothing. The orientation screen now states the only
+    resolvable invocation, and PATH shims exist for both shells."""
+
+    def test_day_one_states_the_real_invocation(self) -> None:
+        import subprocess, sys
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [sys.executable, str(root / "scripts" / "godmode.py")],
+            capture_output=True, text=True, timeout=120)
+        self.assertIn("run as: python", result.stdout)
+        self.assertIn("godmode.py", result.stdout)
+        self.assertIn("not on npm", result.stdout)
+
+    def test_path_shims_exist_for_both_shells(self) -> None:
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1]
+        for shim in ("bin/godmode.cmd", "bin/godmode"):
+            self.assertTrue((root / shim).is_file(), shim)
+            self.assertIn("scripts", (root / shim).read_text(encoding="utf-8"))
