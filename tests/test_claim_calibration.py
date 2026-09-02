@@ -465,3 +465,49 @@ class SweepDepthTests(unittest.TestCase):
                 ["file:README.md"])
             self.assertFalse(any("reading depth" in a for a in advisories),
                              advisories)
+
+
+class FalsifierAdvisoryTests(unittest.TestCase):
+    """A theory nothing could kill is a story, not a finding - a
+    hypothesis names its falsifier or the gap is named."""
+
+    def _record(self, archive, project, **kw):
+        from godmode_runtime.godmode_attest import record_claim
+        record = record_claim(archive, project, "S",
+                              kw.pop("text"), kw.pop("grade"), **kw)
+        return record.get("data", record).get("advisories", [])
+
+    def test_bare_hypothesis_is_named(self) -> None:
+        from test_godmode_runtime import isolated_project
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            advisories = self._record(
+                archive, project,
+                text="the cache is probably dropping the second write",
+                grade="hypothesis")
+            self.assertTrue(any("falsifier" in a for a in advisories),
+                            advisories)
+
+    def test_refuted_by_is_clean(self) -> None:
+        from test_godmode_runtime import isolated_project
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            advisories = self._record(
+                archive, project,
+                text="the cache is probably dropping the second write",
+                grade="hypothesis",
+                refuted_by="run the write twice and read the store back")
+            self.assertFalse(any("falsifier" in a for a in advisories),
+                             advisories)
+
+    def test_downgraded_hypothesis_is_named(self) -> None:
+        from test_godmode_runtime import isolated_project
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            advisories = self._record(
+                archive, project,
+                text="the parser is verified to drop trailing commas",
+                grade="verified",
+                cites=["cmd:python parse_check.py"])
+            self.assertTrue(any("falsifier" in a for a in advisories),
+                            advisories)

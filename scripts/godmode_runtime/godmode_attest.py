@@ -1504,6 +1504,7 @@ def record_claim(
     timeline: dict[str, Any] | None = None,
     blast_radius: str | None = None,
     confidence: float | None = None,
+    refuted_by: str | None = None,
 ) -> dict[str, Any]:
     """Persist a claim, downgrading it when its citations do not resolve.
 
@@ -1748,6 +1749,17 @@ def record_claim(
                 "them - this claim is the author's word about a run the "
                 "record cannot see; `godmode verify --command \"...\"` "
                 "attests it and upgrades the support")
+    # A theory nothing could kill is a story, not a finding (field corpus,
+    # 2026-09-03): a hypothesis names the one observation that would refute
+    # it, or the gap is named. Advisory only - a hypothesis is already the
+    # honest weak tier.
+    if effective == "hypothesis" and not refuted_by \
+            and not re.search(r"(?i)\brefut|falsif|would (?:be )?kill",
+                              text):
+        advisories.append(
+            "a hypothesis names its falsifier - add `--refuted-by \"<the "
+            "one command or observation that would kill it>\"`; a theory "
+            "nothing could refute is a story, not a finding")
     # Operator challenge 2026-09-03: sweep verdicts about upstream repos
     # were recorded from README reads with nothing naming the depth - and
     # one code-level pass then found an importable mechanism the README
@@ -1828,6 +1840,7 @@ def record_claim(
             # guess whether an absent key means "not declared" or "not yet
             # this schema version".
             "blast_radius": blast_radius, "confidence": confidence,
+            "refuted_by": refuted_by,
             # Named rather than implied: a later reader can see which part of
             # the support was machine-checked and which was taken on the
             # author's word, instead of reading one uniform "verified".
