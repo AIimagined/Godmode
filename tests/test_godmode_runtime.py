@@ -2625,3 +2625,28 @@ class RunnableChecklistTests(unittest.TestCase):
                 main(["--project", str(project), "checklist", "update",
                       "--item", "pending row", "--status", "active"])
             self.assertNotIn("no runnable command", out.getvalue())
+
+
+class EnforcementHonestyTests(unittest.TestCase):
+    """'The CLI refused this' and 'the host prevented this' are different
+    claims - a CLI-bound control never outranks interception reality."""
+
+    def test_without_interception_hard_is_capped(self) -> None:
+        from godmode_runtime.godmode_anchor import host_capabilities
+        report = host_capabilities(tool_call_interception="UNAVAILABLE")
+        self.assertEqual(report["controls"]["attestation_gate"],
+                         "HARD-IN-CLI")
+        self.assertIn("attestation_gate", report["capped"])
+        self.assertIn("cannot stop an action taken outside",
+                      report["capped"]["attestation_gate"])
+
+    def test_with_hard_interception_hard_stands(self) -> None:
+        from godmode_runtime.godmode_anchor import host_capabilities
+        report = host_capabilities(tool_call_interception="HARD")
+        self.assertEqual(report["controls"]["attestation_gate"], "HARD")
+        self.assertEqual(report["capped"], {})
+
+    def test_distinction_is_stated(self) -> None:
+        from godmode_runtime.godmode_anchor import host_capabilities
+        report = host_capabilities(tool_call_interception="SOFT")
+        self.assertIn("HARD-IN-CLI", report["enforcement_distinction"])
