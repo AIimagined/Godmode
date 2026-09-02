@@ -28,7 +28,7 @@ ADVISORY = "ADVISORY"
 # shape it matched so the cap is visible. The directive-bearing roles - the
 # operating guide, the operator profile, the invariants, the checklist -
 # are untouched. Field report, 2026-08-27: "508 unattested hard rules",
-# 308 of them from a project's LESSONS.md.
+# most of them compiled from a project's lessons ledger.
 RECORD_ROLES: frozenset[str] = frozenset(
     {"lessons", "state", "sprint-truth", "decisions", "inventory"})
 

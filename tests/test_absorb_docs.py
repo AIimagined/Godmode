@@ -98,7 +98,7 @@ EMOJI_DOC = """# Sprint truth
 
 ## Hotfix wave
 - ✅ **the tokenizer rewrite shipped:** verified against upstream
-- \U0001f534 **L-386 lock drift:** quoted as current for four bumps
+- \U0001f534 **R-386 lock drift:** quoted as current for four bumps
 - ⏳ **corpus re-fetch:** only phase three remains
 - plain prose bullet without any status marker stays out
 """
@@ -120,7 +120,7 @@ class EmojiDialectTests(unittest.TestCase):
             self.assertEqual(report["proposed"], 3)
             states = {item["title"]: item["state"] for item in report["items"]}
             done_key = next(k for k in states if "tokenizer" in k)
-            open_key = next(k for k in states if "L-386" in k)
+            open_key = next(k for k in states if "R-386" in k)
             self.assertEqual(states[done_key], "review")
             self.assertEqual(states[open_key], "proposed")
             self.assertFalse(any("plain prose" in t for t in states))

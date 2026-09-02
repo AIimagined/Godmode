@@ -623,7 +623,7 @@ def _open_obligations_touched(archive: Any, reply_text: str) -> list[str]:
             data = record.get("data") or {}
             if str(data.get("status", "open")) in ("closed", "done", "retired"):
                 continue
-            # A STANDING obligation (the L-381/L-382 field pair) has no
+            # A STANDING obligation (a recorded field pair: a standing duty that died on busy turns, twice) has no
             # subject to match - it applies to every task - so it surfaces
             # at every stop unconditionally, ahead of the cap.
             if data.get("standing"):
@@ -1498,7 +1498,7 @@ def main(argv: list[str] | None = None) -> int:
             if quiet:
                 # Standing duties survive quiet: an operator-mandated
                 # per-task obligation is definition-of-done, not advisory
-                # (the L-381/L-382 field pair died exactly this way).
+                # (the recorded field pair died exactly this way: trimmed from the longest turns).
                 touched = [t for t in touched if t.startswith("standing duty:")]
             # The investigation nudge: the timeline the temporal claim check
             # already reads also carries the fix-loop shape - one command
