@@ -1,1 +1,0 @@
-Claim resolutions carry a second, loss-averse reading beside the symmetric score: `asymmetric_score` charges an overconfident failure 2.25x the quadratic penalty while a held claim scores identically. Additive by design - the symmetric ledger stays comparable across its whole history, and any future tier threshold can choose which score it reads.
