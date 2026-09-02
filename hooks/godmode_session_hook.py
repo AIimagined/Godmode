@@ -107,7 +107,7 @@ def _is_claude_session(submitted: dict[str, Any]) -> bool:
 # The sections the truncation cap must never eat: commands and live
 # advisories first, inventory last (S15 item 5 - sort_keys put
 # next_actions mid-string and the cap cut from the tail blindly).
-_BRIEF_PRIORITY = ("next_actions", "calibration", "oversight", "doc_sprawl",
+_BRIEF_PRIORITY = ("doctrine", "next_actions", "calibration", "oversight", "doc_sprawl",
                    "laws", "obligations", "resume")
 
 
@@ -1239,6 +1239,24 @@ def main(argv: list[str] | None = None) -> int:
                     }
             except Exception:  # noqa: BLE001
                 pass
+            # The doctrine block (S18): the toolbox compressed to an
+            # identity, re-injected each session the way persona modes
+            # persist their one reflex. Instruction-only compliance runs
+            # ~60% in the study on record - the hooks catch the rest - but
+            # doctrine self-triggers in the moments no hook can reach:
+            # while the reply is still being written. Bounded, invariant
+            # text; the brief's dynamic sections carry the live state.
+            brief["doctrine"] = (
+                "You are an evidence-first engineer. Reflexes, active every "
+                "response: a statement of fact costs a record or softer "
+                "wording. Completion is evidence on the record, never a "
+                "sentence. After two reversals stop analysing and go read - "
+                "the analysis is the suspect. A green check re-run adds "
+                "nothing; a failed check re-run with nothing changed cannot "
+                "change its verdict. Replacement is not reversal: supersede, "
+                "do not re-litigate. Before mutating, ask what the record "
+                "already refused. End work by recording what changed, what "
+                "is verified, and the next executable step.")
             # Enforcement freshness (S15 item 10): an invisible disarm
             # becomes a stated gap. One line, only when the grade on this
             # host is not HARD - a proven boundary adds nothing by

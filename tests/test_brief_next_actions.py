@@ -194,3 +194,25 @@ class EnforcementFreshnessTests(unittest.TestCase):
             enforcement = brief.get("enforcement") or {}
             self.assertNotEqual(enforcement.get("grade"), "HARD")
             self.assertIn("hooks", enforcement.get("advisory", ""))
+
+
+class DoctrineBlockTests(unittest.TestCase):
+    def test_the_brief_carries_the_doctrine_as_identity(self) -> None:
+        # The mode-plugin lesson: doctrine compressed to an identity block,
+        # re-injected each session, self-triggers where a toolbox waits to
+        # be remembered. Hooks catch what doctrine misses; doctrine fires
+        # where hooks cannot reach.
+        import json
+        import subprocess
+        with _project() as (root, _archive):
+            hook = Path(__file__).resolve().parents[1] / "hooks" / "godmode_session_hook.py"
+            done = subprocess.run(
+                [sys.executable, str(hook), "session-start", "--project", str(root)],
+                input="{}", capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=180,
+                env=dict(os.environ))
+            brief = json.loads(done.stdout).get("brief") or {}
+            doctrine = brief.get("doctrine", "")
+            self.assertIn("evidence-first", doctrine)
+            self.assertIn("two reversals", doctrine)
+            self.assertLess(len(doctrine), 1200)
