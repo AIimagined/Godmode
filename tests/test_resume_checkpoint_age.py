@@ -92,3 +92,28 @@ class CheckpointAgeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LongSummaryCheckpointTests(unittest.TestCase):
+    """Field report 2026-09-02: a handoff summary is naturally longer than
+    the 200-char subject slot; the refusal took three tries to decode. The
+    subject is a label derived from the opening words; the full summary
+    rides in the data."""
+
+    def test_long_summary_records_with_derived_label(self) -> None:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).parent))
+        from test_godmode_runtime import isolated_project
+        from godmode_runtime.godmode_console import main
+        long_summary = ("shipped the engine manual-edit channel for canvas "
+                        "moves with flag enumeration and error capture " * 5)
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            code = main(["--project", str(project), "checkpoint",
+                         long_summary, "--status", "progress"])
+            self.assertEqual(code, 0)
+            written = [r for r in archive.read_events()
+                       if r["kind"] == "checkpoint"]
+        self.assertEqual(len(written), 1)
+        self.assertLessEqual(len(written[0]["subject"]), 200)
+        self.assertEqual(written[0]["data"]["summary"], long_summary)

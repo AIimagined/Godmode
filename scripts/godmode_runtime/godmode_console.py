@@ -2355,20 +2355,30 @@ def cmd_checkpoint(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         raise ArchiveError("checkpoint requires --summary and --status (or --review)")
     if args.status in {"complete", "fixed"} and not args.evidence:
         raise ArchiveError("Completion requires at least one --evidence reference")
+    # Field report 2026-09-02: a handoff summary is naturally longer than
+    # the archive's 200-char subject slot, and the refusal took three tries
+    # to decode. The subject is a label - derived from the opening words
+    # when the summary overflows - and the FULL summary rides in the data,
+    # so nothing is lost to the cap.
+    subject = args.summary
+    data: dict[str, Any] = {
+        "status": args.status,
+        "next": args.next_action,
+        "hypothesis": args.hypothesis,
+        "outcome": args.outcome or args.status,
+        # Recorded so a rewind preview can name the exact commit.
+        "head": runtime.anchor.head,
+    }
+    if len(subject.strip()) > MAX_SUBJECT:
+        subject = " ".join(args.summary.split()[:8])[:MAX_SUBJECT].strip()
+        data["summary"] = args.summary
     result = CommandResult(
         {
             "record": _append(
                 runtime,
                 "checkpoint",
-                args.summary,
-                {
-                    "status": args.status,
-                    "next": args.next_action,
-                    "hypothesis": args.hypothesis,
-                    "outcome": args.outcome or args.status,
-                    # Recorded so a rewind preview can name the exact commit.
-                    "head": runtime.anchor.head,
-                },
+                subject,
+                data,
                 args.evidence,
             )
         }
