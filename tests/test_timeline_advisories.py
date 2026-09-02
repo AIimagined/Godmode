@@ -176,3 +176,46 @@ class StaleRetryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NagPostureTests(unittest.TestCase):
+    def test_quiet_posture_silences_advisories_but_not_the_gate(self) -> None:
+        import json as _json
+        with _project() as (project, state, _archive):
+            (project / ".godmode-authorization-policy.json").write_text(
+                _json.dumps({"nag_posture": "quiet"}), encoding="utf-8")
+            lines: list[str] = []
+            for i in range(3):
+                lines += _bash_call(i, "python -m unittest tests.test_thing", ok=True)
+            done = _run(project, state, _write(project, lines))
+            self.assertNotIn("GREEN ADDS NOTHING", _message(done))
+            # The completion gate still blocks under quiet - enforcement
+            # is not an advisory.
+            transcript = project / "done.jsonl"
+            transcript.write_text("\n".join([
+                _json.dumps({"type": "user", "message": {"content": "go"}}),
+                _json.dumps({"type": "assistant", "message": {
+                    "role": "assistant", "content": [{"type": "text",
+                    "text": "The migration is complete and all tests pass."}]}}),
+            ]), encoding="utf-8")
+            import subprocess, sys as _s, os as _os
+            environment = dict(_os.environ)
+            environment["GODMODE_STATE_HOME"] = str(state)
+            gate = subprocess.run(
+                [_s.executable, str(HOOK), "stop", "--project", str(project)],
+                input=_json.dumps({"transcript_path": str(transcript),
+                                   "session_id": "S-quiet2"}),
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=180, env=environment)
+            self.assertIn('"decision": "block"', gate.stdout)
+
+    def test_strict_posture_fires_the_streak_at_two(self) -> None:
+        import json as _json
+        with _project() as (project, state, _archive):
+            (project / ".godmode-authorization-policy.json").write_text(
+                _json.dumps({"nag_posture": "strict"}), encoding="utf-8")
+            lines: list[str] = []
+            for i in range(2):
+                lines += _bash_call(i, "python -m unittest tests.test_thing", ok=True)
+            done = _run(project, state, _write(project, lines))
+            self.assertIn("GREEN ADDS NOTHING", _message(done))
