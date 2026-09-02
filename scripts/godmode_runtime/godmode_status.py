@@ -667,8 +667,8 @@ def absorb_docs(archive: Chronicle, path: Path, *, write: bool = False) -> dict[
             continue
         box = _re.match(r"^\s*[-*]\s*\[([ xX])\]\s+(.+)", line)
         emoji = _re.match(
-            "^\s*[-*]\s*([✅❌⏳🔴🟡"
-            "🟢⬜])\s*(.+)", line)
+            r"^\s*[-*]\s*([✅❌⏳🔴🟡"
+            r"🟢⬜])\s*(.+)", line)
         if box:
             marker, title = box.group(1).strip(), box.group(2).strip()
             claimed_done = bool(marker)
