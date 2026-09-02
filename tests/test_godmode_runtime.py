@@ -2549,3 +2549,36 @@ class ExternalClaimTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StagedReleaseWindowTests(unittest.TestCase):
+    """The pre-tag release window: every source surface unanimous and
+    strictly ahead of the tag is 'staged', not drift - CI runs before the
+    tag moves, so the window is lawful. A stale surface still drifts."""
+
+    def test_unanimous_sources_ahead_of_tag_is_staged(self) -> None:
+        from godmode_runtime.godmode_reconcile import _release_staged
+        surfaces = [
+            {"surface": "plugin.json", "version": "0.3.12"},
+            {"surface": "CHANGELOG.md latest release", "version": "0.3.12"},
+            {"surface": "latest git tag", "version": "0.3.11"},
+            {"surface": "plugin.json at tag v0.3.11", "version": "0.3.11"},
+        ]
+        self.assertTrue(_release_staged(surfaces))
+
+    def test_disagreeing_sources_still_drift(self) -> None:
+        from godmode_runtime.godmode_reconcile import _release_staged
+        surfaces = [
+            {"surface": "plugin.json", "version": "0.3.12"},
+            {"surface": "CHANGELOG.md latest release", "version": "0.3.11"},
+            {"surface": "latest git tag", "version": "0.3.11"},
+        ]
+        self.assertFalse(_release_staged(surfaces))
+
+    def test_sources_behind_tag_still_drift(self) -> None:
+        from godmode_runtime.godmode_reconcile import _release_staged
+        surfaces = [
+            {"surface": "plugin.json", "version": "0.3.10"},
+            {"surface": "latest git tag", "version": "0.3.11"},
+        ]
+        self.assertFalse(_release_staged(surfaces))
