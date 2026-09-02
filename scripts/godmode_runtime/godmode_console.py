@@ -3964,7 +3964,14 @@ def _day_one_text(parser: argparse.ArgumentParser) -> str:
     else:
         posture = (f"this host ({host}) has no ask: a recoverable refusal is "
                    "denied and names `godmode authorize stage` as the remedy")
-    lines = ["GODMODE - DAY ONE", ""]
+    # Field report 2026-09-03: an agent guessed `npx godmode resume`,
+    # hit a squatted npm name, and got silence. godmode is not an npm
+    # package; the ONLY resolvable spelling is this file's own path, so
+    # the orientation screen states it before anything else.
+    entry = Path(__file__).resolve().parents[1] / "godmode.py"
+    lines = ["GODMODE - DAY ONE", "",
+             f'  run as: python "{entry}" <verb>   (godmode is not on npm; '
+             "`godmode` below abbreviates that command)", ""]
     for name, blurb in _DAY_ONE_VERBS:
         lines.append(f"  godmode {name:<13} {blurb}")
     lines += [
