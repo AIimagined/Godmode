@@ -1,1 +1,0 @@
-A claim quantifying universally - every, all, 100%, complete coverage - with no enumeration beside it draws an advisory: a grep proves existence, an enumeration proves coverage. Count-scoped quantifiers ("all 97 sources") and quoted mentions stay clean; tuned on this archive's own last 170 claims where every fire on manual review was a true positive.

@@ -6,6 +6,35 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.3.15] - 2026-09-03
+
+### Added
+
+- `godmode claim --verify` runs every cmd: citation through the attested checker first and records the claim on the attestation-backed citations in one command - the verify-then-claim two-step, collapsed; a failing check still records, as a claim about a failing check.
+- A correction-shaped prompt - the operator catching a miss - draws a once-per-session nudge to record the miss as an incident while the evidence is fresh: the largest lesson source in every field corpus is the operator catch, and the catch-moment is when it enters the record or evaporates.
+- A doc: citation naming a local file is now content-checked against the claim: zero salient overlap draws an advisory below the verified grade and a downgrade at it - a citation that merely exists is decoration, not support. "Any citation passes" was the field's sharpest trust complaint, twice.
+- A hypothesis-grade claim that names no falsifier draws an advisory asking for the one command or observation that would refute it (`--refuted-by`) - a theory nothing could kill is a story, not a finding.
+- The post-edit hook pushes the recorded neighbors of an edited file at the edit moment: invariants, incidents, lessons, and claims citing the file surface as one bounded line naming the newest and the `context why` command that lists the rest - blast radius was queryable but pull-only, and the pull always happened after the regression. Once per file per session, fail-silent, never blocking an edit.
+- THE RATCHET RULE joins the doctrine as its eighth reflex: a miss that recurs gets a guard that fails on the next instance, not a lesson telling you to be careful. Flows from the one canonical source into the session brief and every emitted host-rules file.
+- A build-shaped obligation overlapping a SHIPPED capability - a version note, a closed duty, a ship-vocabulary claim - names the elder at write time: reuse it, or say what differs. Discovering the original mid-implementation is the expensive way. Saying what differs silences it; tuned to one fire across sixty recent obligations, a true positive.
+- Resolving a claim as failed carries an accounting ask in the resolution itself: a withdrawn claim may have carried weight - name what was built on it, or say nothing was. Held and superseded resolutions stay clean.
+- A complete checklist row whose evidence carries no runnable command draws an advisory - a row nobody can re-run is a suggestion, not a gate; cite the command that re-proves it.
+- `godmode skill names` walks the whole skills tree and fails on two bundles sharing a frontmatter name - the host resolves a collision silently, keeping one twin in directory order that can differ between machines.
+- The re-fire after a completion block now notices when nothing was recorded in between: passing the done-bar by rewording draws a one-line advisory - softer words do not create evidence. Never a second block, once per block.
+- A sweep verdict about an upstream repo now names its own reading depth: recorded with no path-shaped source citation and no declared depth (README-level, code-level, no code published), the claim carries an advisory saying so - a shallow read may be the right call, but it may not masquerade as a code-verified verdict (operator challenge, 2026-09-03).
+- A claim quantifying universally - every, all, 100%, complete coverage - with no enumeration beside it draws an advisory: a grep proves existence, an enumeration proves coverage. Count-scoped quantifiers ("all 97 sources") and quoted mentions stay clean; tuned on this archive's own last 170 claims where every fire on manual review was a true positive.
+
+### Changed
+
+- "The CLI refused this" and "the host prevented this" are different claims, and capabilities now says which is which: on a host without proven tool-call interception, CLI-bound controls read HARD-IN-CLI with the cap reason named, never bare HARD - the field battery called the bare label misleading, and it was.
+
+### Fixed
+
+- The inventory-age warning stays quiet when the live tree diffs clean against the baseline - age alone is not staleness on a dormant repo - and a charter compiling zero rules now says so at session OPEN, where it can still change the session, instead of only at close.
+- The orientation screen states the one resolvable invocation - `run as: python "<plugin>/scripts/godmode.py"` - before listing any verb, and PATH shims for both shells make a guessed invocation land loudly on the real entry point. An agent guessed npx, hit a squatted npm name, and got silence at the moment continuity was needed (field report, 2026-09-03); godmode is not an npm package and now says so.
+- A sentence carrying its own incompleteness marker - still running, not yet, in progress, so far, awaiting, except - is a progress report, not a completion declaration, and no longer arms the done-bar; honest mid-task updates stop costing a claim each (field report, 2026-09-03).
+- A touched operator request surfaces as its keywords in SPOKEN order plus the paste-ready closure command - the hash-plus-sorted-bag rendering was unactionable and trained dismissal (field reports, 2026-09-03). The raw prompt stays unstored; the phrase is the words the operator used, minus stopwords, in the order they said them.
+
 ## [0.3.14] - 2026-09-03
 
 ### Fixed

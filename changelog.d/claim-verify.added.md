@@ -1,1 +1,0 @@
-`godmode claim --verify` runs every cmd: citation through the attested checker first and records the claim on the attestation-backed citations in one command - the verify-then-claim two-step, collapsed; a failing check still records, as a claim about a failing check.

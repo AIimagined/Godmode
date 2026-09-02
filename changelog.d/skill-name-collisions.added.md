@@ -1,1 +1,0 @@
-`godmode skill names` walks the whole skills tree and fails on two bundles sharing a frontmatter name - the host resolves a collision silently, keeping one twin in directory order that can differ between machines.

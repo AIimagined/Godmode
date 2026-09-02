@@ -1,1 +1,0 @@
-The re-fire after a completion block now notices when nothing was recorded in between: passing the done-bar by rewording draws a one-line advisory - softer words do not create evidence. Never a second block, once per block.

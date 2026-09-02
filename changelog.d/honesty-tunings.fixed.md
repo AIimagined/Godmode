@@ -1,1 +1,0 @@
-The inventory-age warning stays quiet when the live tree diffs clean against the baseline - age alone is not staleness on a dormant repo - and a charter compiling zero rules now says so at session OPEN, where it can still change the session, instead of only at close.

@@ -1,1 +1,0 @@
-"The CLI refused this" and "the host prevented this" are different claims, and capabilities now says which is which: on a host without proven tool-call interception, CLI-bound controls read HARD-IN-CLI with the cap reason named, never bare HARD - the field battery called the bare label misleading, and it was.
