@@ -912,6 +912,7 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         timeline=_load_timeline(getattr(args, "transcript", None)),
         blast_radius=getattr(args, "blast_radius", None),
         confidence=getattr(args, "confidence", None),
+        refuted_by=getattr(args, "refuted_by", None),
     )
     data = record["data"]
     # A downgrade is a finding, so it must be visible in the exit status too.
@@ -4275,6 +4276,9 @@ def _build_parser() -> argparse.ArgumentParser:
     claim.add_argument("--transcript",
                        help="This session's transcript path; enables the U-T2 red-before-green "
                             "check on a fix claim citing cmd:<command>")
+    claim.add_argument("--refuted-by", dest="refuted_by", default=None,
+                       help="Hypotheses only: the one command or observation "
+                            "that would refute this claim")
     claim.add_argument("--blast-radius", dest="blast_radius", choices=list(BLAST_RADIUS_KINDS),
                        help="PARTIAL-P2: opt in to the scaled evidence bar - a 'verified' grade "
                             "then needs >=2 INDEPENDENT --cite witnesses (distinct citation "
