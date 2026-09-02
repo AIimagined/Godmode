@@ -1,0 +1,1 @@
+The stop gate no longer judges fenced code blocks (a reply SHOWS code, it does not state it) or sentences that open on a condition - both were observed arming the completion gate on an offered shell one-liner and on "that works too" advice.

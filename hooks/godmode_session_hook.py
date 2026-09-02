@@ -715,8 +715,17 @@ def _reply_sentences(reply_text: str) -> list[str]:
     recurse on its own vocabulary.
     """
     found: list[str] = []
+    fenced = False
     for raw_line in reply_text.splitlines():
         stripped = raw_line.strip()
+        # A fenced code block is something the reply SHOWS, not something
+        # it states (self-observed 2026-09-02: a shell one-liner offered
+        # to the operator was flagged as a completion claim).
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
         # A markdown heading is a section label, not a statement (field
         # report 8: a title containing 'shipped' armed the gate).
         if stripped.startswith("#"):
@@ -804,6 +813,12 @@ def _unrecorded_done_claims(archive: Any, reply_text: str) -> list[str]:
     found: list[str] = []
     for sentence in _reply_sentences(reply_text):
         judged = _strip_quoted(sentence)
+        # A sentence that opens on a condition offers the OPERATOR a
+        # choice; it cannot declare this agent's work finished
+        # (self-observed 2026-09-02: "If you'd rather X, that works too"
+        # armed the gate on the word "works").
+        if judged.lstrip().lower().startswith(("if ", "when ", "unless ")):
+            continue
         if not (_COMPLETION_VOCAB.search(judged)
                 or looks_like_fix_claim(judged)[0]
                 or looks_like_pass_verdict(judged)[0]):
