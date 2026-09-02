@@ -3038,7 +3038,12 @@ def cmd_branches(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 def cmd_version(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     if args.reconcile:
         report = reconcile_versions(Path(runtime.anchor.project_root))
-        return CommandResult(report, exit_code=0 if report["verdict"] == "agreed" else 1)
+        # "staged" is the pre-tag release window: every source surface
+        # unanimous and strictly ahead of the tag. CI runs before the tag
+        # moves (the release ritual), so this window is lawful, not drift.
+        return CommandResult(
+            report,
+            exit_code=0 if report["verdict"] in ("agreed", "staged") else 1)
     if not args.name and not args.value:
         # Grok 0.3.4 field report: bare `version` tried to record a fact
         # and failed on a consumer project; the obvious reading of the bare

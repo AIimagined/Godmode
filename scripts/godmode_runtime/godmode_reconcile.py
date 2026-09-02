@@ -145,22 +145,50 @@ def version_surfaces(project: Path) -> list[dict[str, str]]:
     return deduped
 
 
+def _release_staged(surfaces: list[dict[str, str]]) -> bool:
+    """Every source surface agrees on one version strictly ahead of the tag.
+
+    Drift is surfaces DISAGREEING among themselves. A cut awaiting its tag
+    is not that: the bump lands, CI must pass BEFORE the tag moves (the
+    release ritual), and during that window the tag lawfully trails. Only
+    that exact shape passes - one unanimous source version, newer than the
+    tag by semver - so a stale surface still reads as drift.
+    """
+    tag_versions = {s["version"] for s in surfaces
+                    if s["surface"].startswith(("latest git tag", "plugin.json at tag"))}
+    source_versions = {s["version"] for s in surfaces
+                       if not s["surface"].startswith(("latest git tag", "plugin.json at tag"))}
+    if len(source_versions) != 1 or len(tag_versions) != 1:
+        return False
+
+    def _key(value: str) -> tuple[int, ...] | None:
+        parts = value.split(".")
+        return tuple(int(p) for p in parts) if all(p.isdigit() for p in parts) else None
+
+    source, tagged = _key(source_versions.pop()), _key(tag_versions.pop())
+    return source is not None and tagged is not None and source > tagged
+
+
 def reconcile_versions(project: Path) -> dict[str, Any]:
     surfaces = version_surfaces(project)
     if not surfaces:
         raise ArchiveError("No version surfaces found to reconcile")
     values = {s["version"] for s in surfaces}
     drifted = sorted(values) if len(values) > 1 else []
+    if drifted and _release_staged(surfaces):
+        verdict = "staged"
+    else:
+        verdict = "agreed" if not drifted else "version-drift"
     return {
         "surfaces": surfaces,
         "distinct_versions": sorted(values),
-        "drift": drifted,
+        "drift": drifted if verdict == "version-drift" else [],
         # Stated, because the tagged tree is the one surface that can be
         # missing for a reason unrelated to the release, and an agreement
         # reached without it is a weaker claim than one reached with it.
         "tagged_tree_checked": any(
             s["surface"].startswith("plugin.json at tag") for s in surfaces),
-        "verdict": "agreed" if not drifted else "version-drift",
+        "verdict": verdict,
     }
 
 

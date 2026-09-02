@@ -1,0 +1,1 @@
+version --reconcile knows the pre-tag release window: every source surface unanimous and strictly ahead of the tag reads "staged" (exit 0), because CI must pass before the tag moves - a stale surface still reads as drift. And the host manifest description drift is fixed at its source, packaging/hosts.json.
