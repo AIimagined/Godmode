@@ -174,3 +174,21 @@ class RulesAdapterTests(unittest.TestCase):
             emit_rules(Path(tmp), host="generic")
             self.assertEqual(first,
                              (Path(tmp) / "GODMODE-RULES.md").read_text(encoding="utf-8"))
+
+
+class RatchetReflexTests(unittest.TestCase):
+    """THE RATCHET RULE joins the doctrine: a miss that recurs gets a
+    guard that fails on the next instance, not a lesson."""
+
+    def test_doctrine_carries_the_ratchet_rule(self) -> None:
+        from godmode_runtime.godmode_constants import DOCTRINE_TEXT
+        self.assertIn("THE RATCHET RULE", DOCTRINE_TEXT)
+        self.assertIn("guard that fails on the next instance", DOCTRINE_TEXT)
+
+    def test_reflex_count_is_eight(self) -> None:
+        from godmode_runtime.godmode_constants import DOCTRINE_TEXT
+        import re
+        names = re.findall(r"(?:THE [A-Z][A-Z' ,-]+?|GREEN ADDS NOTHING|"
+                           r"SUPERSEDE, DON'T RE-LITIGATE|ASK THE RECORD FIRST|"
+                           r"LEAVE A TRAIL):", DOCTRINE_TEXT)
+        self.assertEqual(len(names), 8, names)

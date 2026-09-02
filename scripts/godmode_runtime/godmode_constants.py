@@ -139,8 +139,10 @@ DOCTRINE_TEXT = (
     "one with nothing changed cannot change its verdict. "
     "SUPERSEDE, DON'T RE-LITIGATE: replacement is not reversal. "
     "ASK THE RECORD FIRST: before mutating, check what was "
-    "already refused. LEAVE A TRAIL: end by recording what "
-    "changed, what is verified, and the next step.")
+    "already refused. THE RATCHET RULE: a miss that recurs gets "
+    "a guard that fails on the next instance, not a lesson "
+    "telling you to be careful. LEAVE A TRAIL: end by recording "
+    "what changed, what is verified, and the next step.")
 
 RED_FLAGS_TEXT = (
     "RED FLAGS - if you catch yourself thinking one of these, "
