@@ -219,7 +219,7 @@ class RequestTurnSurfaceTests(unittest.TestCase):
 
 
 class StandingObligationTests(unittest.TestCase):
-    """The L-381/L-382 field pair: a standing per-task obligation has no
+    """The recorded field pair: a standing per-task obligation has no
     subject for salient matching, so it died on every long turn despite
     being recorded. A record carrying standing: true surfaces at EVERY
     stop unconditionally - and ignores the quiet posture, because an
