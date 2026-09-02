@@ -214,5 +214,5 @@ class DoctrineBlockTests(unittest.TestCase):
             brief = json.loads(done.stdout).get("brief") or {}
             doctrine = brief.get("doctrine", "")
             self.assertIn("evidence-first", doctrine)
-            self.assertIn("two reversals", doctrine)
+            self.assertIn("TWO-REVERSALS", doctrine)
             self.assertLess(len(doctrine), 1200)

@@ -118,7 +118,7 @@ class GreenStreakTests(unittest.TestCase):
                 lines += _bash_call(i, "python -m unittest tests.test_thing", ok=True)
             done = _run(project, state, _write(project, lines))
             self.assertEqual(done.returncode, 0, done.stderr)
-            self.assertIn("green", _message(done))
+            self.assertIn("GREEN ADDS NOTHING", _message(done))
 
     def test_passes_with_a_mutation_between_stay_silent(self) -> None:
         # Edit between passes = re-verification after a change: information.
@@ -129,7 +129,7 @@ class GreenStreakTests(unittest.TestCase):
             lines += _bash_call(2, "python -m unittest tests.test_thing", ok=True)
             done = _run(project, state, _write(project, lines))
             self.assertEqual(done.returncode, 0, done.stderr)
-            self.assertNotIn("green", _message(done))
+            self.assertNotIn("GREEN ADDS NOTHING", _message(done))
 
     def test_two_passes_stay_silent(self) -> None:
         with _project() as (project, state, _archive):
@@ -137,7 +137,7 @@ class GreenStreakTests(unittest.TestCase):
             for i in range(2):
                 lines += _bash_call(i, "python -m unittest tests.test_thing", ok=True)
             done = _run(project, state, _write(project, lines))
-            self.assertNotIn("green", _message(done))
+            self.assertNotIn("GREEN ADDS NOTHING", _message(done))
 
     def test_once_per_session(self) -> None:
         with _project() as (project, state, _archive):
@@ -157,7 +157,7 @@ class StaleRetryTests(unittest.TestCase):
             lines += _bash_call(1, "python -m unittest tests.test_thing", ok=False)
             done = _run(project, state, _write(project, lines))
             self.assertEqual(done.returncode, 0, done.stderr)
-            self.assertIn("nothing changed", _message(done))
+            self.assertIn("cannot be different", _message(done))
 
     def test_failure_rerun_after_mutation_is_a_legitimate_retry(self) -> None:
         with _project() as (project, state, _archive):
@@ -165,13 +165,13 @@ class StaleRetryTests(unittest.TestCase):
             lines += _edit_call(0)
             lines += _bash_call(1, "python -m unittest tests.test_thing", ok=False)
             done = _run(project, state, _write(project, lines))
-            self.assertNotIn("nothing changed", _message(done))
+            self.assertNotIn("cannot be different", _message(done))
 
     def test_single_failure_stays_silent(self) -> None:
         with _project() as (project, state, _archive):
             lines = _bash_call(0, "python -m unittest tests.test_thing", ok=False)
             done = _run(project, state, _write(project, lines))
-            self.assertNotIn("nothing changed", _message(done))
+            self.assertNotIn("cannot be different", _message(done))
 
 
 if __name__ == "__main__":

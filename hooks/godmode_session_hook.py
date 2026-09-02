@@ -572,14 +572,14 @@ def _marginal_return_nudges(archive: Any, submitted: dict,
     key = session
     for shape, hit, text in (
         ("green-streak", green_streak,
-         f"godmode: one command has passed {green_streak} consecutive times "
-         "with no edits between the runs - a green check re-run adds no "
-         "information. Record the claim it supports (`godmode claim --cite "
-         "<the check>`) and move on."),
+         f"godmode - GREEN ADDS NOTHING: the same check has passed "
+         f"{green_streak} times in a row with no code changes between runs. "
+         "More re-runs prove nothing new. Save the result as a claim "
+         "(`godmode claim --cite <the check>`) and move on."),
         ("stale-retry", stale_retry,
-         "godmode: a failed command was re-run with nothing changed since "
-         "the failure - the verdict cannot change. Change something first, "
-         "or treat the failure as the answer."),
+         "godmode: a failing command was re-run without changing "
+         "anything first - the result cannot be different. Change "
+         "something, or accept the failure as the answer."),
     ):
         if not hit:
             continue
@@ -1247,16 +1247,19 @@ def main(argv: list[str] | None = None) -> int:
             # while the reply is still being written. Bounded, invariant
             # text; the brief's dynamic sections carry the live state.
             brief["doctrine"] = (
-                "You are an evidence-first engineer. Reflexes, active every "
-                "response: a statement of fact costs a record or softer "
-                "wording. Completion is evidence on the record, never a "
-                "sentence. After two reversals stop analysing and go read - "
-                "the analysis is the suspect. A green check re-run adds "
-                "nothing; a failed check re-run with nothing changed cannot "
-                "change its verdict. Replacement is not reversal: supersede, "
-                "do not re-litigate. Before mutating, ask what the record "
-                "already refused. End work by recording what changed, what "
-                "is verified, and the next executable step.")
+                "You are an evidence-first engineer. Named reflexes, active "
+                "every response - cite one by name when it decides "
+                "something. THE RECORD RULE: a statement of fact costs a "
+                "record or softer wording. THE DONE BAR: completion is "
+                "evidence on the record, never a sentence. THE TWO-REVERSALS "
+                "LAW: after two failed fixes, stop analysing and go read - "
+                "the analysis is the suspect. GREEN ADDS NOTHING: re-running "
+                "a passing check tells you nothing new; re-running a failing "
+                "one with nothing changed cannot change its verdict. "
+                "SUPERSEDE, DON'T RE-LITIGATE: replacement is not reversal. "
+                "ASK THE RECORD FIRST: before mutating, check what was "
+                "already refused. LEAVE A TRAIL: end by recording what "
+                "changed, what is verified, and the next step.")
             # Enforcement freshness (S15 item 10): an invisible disarm
             # becomes a stated gap. One line, only when the grade on this
             # host is not HARD - a proven boundary adds nothing by
@@ -1380,16 +1383,20 @@ def main(argv: list[str] | None = None) -> int:
                 archive, submitted, _session_key(submitted)))
             if touched:
                 notices.append(
-                    "godmode: open obligation(s) this turn touches: "
-                    + ", ".join(touched)
-                    + " - update or close them, or they resurface.")
+                    "godmode: this reply relates to unfinished "
+                    "promises on record: " + ", ".join(touched)
+                    + ". Act on them, or close them with `godmode remember "
+                    "--kind obligation --subject \"<name>\" --status "
+                    "closed` - otherwise they keep coming back.")
             if unsupported:
                 shown = "; ".join(f"'{s[:160]}'" for s in unsupported[:2])
                 notices.append(
                     f"godmode: {len(unsupported)} claim-shaped sentence(s) in this "
-                    f"reply have no record: {shown} - record with `godmode claim "
-                    "--cite <evidence>` (grades honestly, downgrades what the "
-                    "citations cannot carry) or soften the sentence.")
+                    f"reply have nothing backing them on record: {shown}. "
+                    "Either save each as a claim with its proof (`godmode "
+                    "claim \"<text>\" --cite <evidence>`) or use softer "
+                    "wording. Recording is honest: weak proof gets a weak "
+                    "grade automatically.")
             if touched or unsupported:
                 # S8 (obligation 4538, self-census 2026-08-29): the
                 # systemMessage reaches the OPERATOR; the model that made
@@ -1426,11 +1433,12 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps({
                     "decision": "block",
                     "reason": (
-                        f"godmode: this reply declares completion on "
-                        f"{len(done_shaped)} unrecorded claim(s): {shown}. "
-                        "Record with `godmode claim <text> --cite <evidence>` "
-                        "(grades honestly) or soften the wording, then finish. "
-                        "This gate fires once per stop."),
+                        f"godmode - THE DONE BAR: this reply says work is "
+                        f"done, but {len(done_shaped)} of those statements "
+                        f"have no evidence on record: {shown}. Save each as "
+                        "a claim with its proof (`godmode claim \"<text>\" "
+                        "--cite <evidence>`) or soften the wording, then "
+                        "finish. This check blocks only once."),
                     "systemMessage": " ".join(notices) if notices else
                         "godmode: completion blocked once pending a record; "
                         "the re-fire passes.",
