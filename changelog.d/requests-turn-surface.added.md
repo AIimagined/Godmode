@@ -1,0 +1,1 @@
+Drip-fed operator requests now resurface mid-work, not only at handover: an open stated request whose keywords a reply touches joins the same turn notice obligations use (sibling collapse included). Requests store no prompt text - the match runs on the keywords the record already keeps, and the notice shows the digest id plus those keywords.

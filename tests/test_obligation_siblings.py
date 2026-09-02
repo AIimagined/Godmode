@@ -154,3 +154,65 @@ def _project_of(archive) -> Path:
     # the anchor from it; the chronicle root sits under the state home, so
     # walk from the anchor instead of guessing.
     return Path(archive.anchor.project_root)
+
+
+class RequestTurnSurfaceTests(unittest.TestCase):
+    """S18: a stated-but-unactioned operator request joins the same
+    per-turn surface obligations use - drip-fed mid-task asks resurface
+    when a reply touches their subject, not only at handover review."""
+
+    def test_a_related_reply_surfaces_the_open_request(self) -> None:
+        import json
+        import subprocess
+        with _archive() as archive:
+            from godmode_runtime.godmode_requests import record_request
+            record_request(archive, "also sweep the engine repo and check "
+                                    "parity without missing upgrades",
+                           session="S-req")
+            transcript = Path(archive.anchor.project_root) / "t.jsonl"
+            transcript.write_text("\n".join([
+                json.dumps({"type": "user", "message": {"content": "go"}}),
+                json.dumps({"type": "assistant", "message": {
+                    "role": "assistant", "content": [{"type": "text",
+                    "text": "Finished the brand axis; the engine repo parity "
+                            "sweep for upgrades is still ahead of us."}]}}),
+            ]), encoding="utf-8")
+            hook = PLUGIN_ROOT / "hooks" / "godmode_session_hook.py"
+            done = subprocess.run(
+                [sys.executable, str(hook), "stop",
+                 "--project", str(_project_of(archive))],
+                input=json.dumps({"transcript_path": str(transcript),
+                                  "session_id": "S-req2"}),
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=180, env=dict(os.environ))
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertIn("stated request", done.stdout or "")
+
+    def test_a_closed_request_stays_silent(self) -> None:
+        import json
+        import subprocess
+        with _archive() as archive:
+            from godmode_runtime.godmode_requests import record_request
+            record = record_request(archive, "also sweep the engine repo and "
+                                             "check parity for upgrades",
+                                    session="S-req")
+            archive.append("request", record["subject"],
+                           {"digest": record["data"]["digest"],
+                            "status": "closed", "value": "done"})
+            transcript = Path(archive.anchor.project_root) / "t.jsonl"
+            transcript.write_text("\n".join([
+                json.dumps({"type": "user", "message": {"content": "go"}}),
+                json.dumps({"type": "assistant", "message": {
+                    "role": "assistant", "content": [{"type": "text",
+                    "text": "The engine repo parity sweep for upgrades went "
+                            "well today."}]}}),
+            ]), encoding="utf-8")
+            hook = PLUGIN_ROOT / "hooks" / "godmode_session_hook.py"
+            done = subprocess.run(
+                [sys.executable, str(hook), "stop",
+                 "--project", str(_project_of(archive))],
+                input=json.dumps({"transcript_path": str(transcript),
+                                  "session_id": "S-req2"}),
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=180, env=dict(os.environ))
+            self.assertNotIn("stated request", done.stdout or "")

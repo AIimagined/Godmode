@@ -626,6 +626,30 @@ def _open_obligations_touched(archive: Any, reply_text: str) -> list[str]:
         # never links them, so the nag surfaced corpses beside the living
         # one. Two touched obligations sharing >=3 salient words are one
         # duty in different clothes - only the newest speaks.
+        # S18: stated operator requests join the same surface - a drip-fed
+        # mid-task ask resurfaces when a reply touches its subject, not
+        # only at handover review. Latest record per digest is the state;
+        # only operator-stated, still-open requests enter.
+        latest_requests: dict[str, dict] = {}
+        for record in archive.select(kind="request", limit=200):
+            digest = str((record.get("data") or {}).get("digest", ""))
+            if digest:
+                latest_requests[digest] = record
+        for record in latest_requests.values():
+            data = record.get("data") or {}
+            if str(data.get("status", "open")) != "open":
+                continue
+            if str(data.get("source", "stated")) != "stated":
+                continue
+            # Requests store no raw prompt text (privacy) - only a digest
+            # and the extracted keywords, which are exactly the match
+            # vocabulary this surface needs.
+            vocab = {str(w).lower() for w in (data.get("keywords") or [])}
+            if len(reply_words & vocab) >= 3:
+                shown = ", ".join(sorted(vocab)[:5])
+                touched.append((record.get("sequence", 0),
+                                f"stated request {record.get('subject', '')} "
+                                f"(about: {shown})", vocab))
         touched.sort(reverse=True)
         survivors: list[tuple[int, str, set]] = []
         muted = 0
