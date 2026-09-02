@@ -1,1 +1,0 @@
-`godmode topology` maps the archive's record-kind transitions per session and names the ones seen mostly in sessions that ended with an incident or failed resolution - counts and shares from the local record, association not cause, and an honest refusal below four sessions.

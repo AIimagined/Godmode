@@ -1,6 +1,6 @@
 {
   "name": "godmode",
-  "version": "0.3.11",
+  "version": "0.3.12",
   "description": "Skills for a local, tamper-evident record of what a coding agent did, what it claimed, and what was verified.",
   "author": {
     "name": "AIimagined"
