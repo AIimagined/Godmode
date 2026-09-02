@@ -3,7 +3,7 @@
   "identity": {
     "name": "godmode",
     "displayName": "Godmode",
-    "version": "0.3.13",
+    "version": "0.3.14",
     "description": "Your coding agent says \"done.\" Godmode is how you know: a local, tamper-evident evidence ledger of what it did, claimed, and verified - with gates and a completion bar enforced in hooks at runtime. Zero deps, zero network.",
     "author": {
       "name": "AIimagined",

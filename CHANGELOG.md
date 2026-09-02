@@ -6,6 +6,12 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.3.14] - 2026-09-03
+
+### Fixed
+
+- The listing description lives in packaging/hosts.json identity.description - the one field the manifest writer actually renders; editing the manifests directly, or the wrong description key in the source, was silently reverted on the next regeneration. All host manifests now carry the evidence-ledger copy.
+
 ## [0.3.13] - 2026-09-02
 
 ### Fixed
