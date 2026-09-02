@@ -844,6 +844,14 @@ def _unrecorded_done_claims(archive: Any, reply_text: str) -> list[str]:
         # armed the gate on the word "works").
         if judged.lstrip().lower().startswith(("if ", "when ", "unless ")):
             continue
+        # A sentence that carries its own incompleteness marker is a
+        # progress report, not a completion declaration (field report
+        # 2026-09-03: honest mid-task updates cost a claim each).
+        if re.search(r"(?i)\b(?:still\s+(?:running|pending|open|ahead)|"
+                     r"not\s+yet|in\s+progress|so\s+far|mid-flight|"
+                     r"remaining|awaiting|until|once\s+the|except)\b",
+                     judged):
+            continue
         if not (_COMPLETION_VOCAB.search(judged)
                 or looks_like_fix_claim(judged)[0]
                 or looks_like_pass_verdict(judged)[0]):

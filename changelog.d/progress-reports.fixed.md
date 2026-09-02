@@ -1,0 +1,1 @@
+A sentence carrying its own incompleteness marker - still running, not yet, in progress, so far, awaiting, except - is a progress report, not a completion declaration, and no longer arms the done-bar; honest mid-task updates stop costing a claim each (field report, 2026-09-03).
