@@ -64,4 +64,6 @@ an unattested HARD rule, an uncited claim, or a half-done pair blocks closure.
 configuration; `locale check` validates translated guidance.
 
 Read [godmode-command-surface.md](references/godmode-command-surface.md) only when the
-requested operation needs exact CLI syntax.
+requested operation needs exact CLI syntax. On a host with no godmode hook
+support, read [godmode-generic-adapter.md](references/godmode-generic-adapter.md)
+for the manual wiring path.

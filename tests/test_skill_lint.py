@@ -108,3 +108,41 @@ class ShippedSkillsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BundleReachabilityTests(unittest.TestCase):
+    """S19 item 5: a skill is a directory bundle, and nothing audited its
+    graph - a referenced file that does not exist is a dead link the
+    agent hits at load time, and a bundled file nothing references is an
+    orphan paying context for no path that reaches it."""
+
+    def test_a_dead_reference_fails_the_bundle_facet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _skill(Path(tmp), "Use when auditing bundles.",
+                          "Read [the schema](references/schema.md) first.")
+            report = lint_skill(root)
+            facet = report["facets"]["bundle"]
+            self.assertFalse(facet["passed"])
+            self.assertTrue(any("references/schema.md" in f
+                                for f in facet["findings"]))
+
+    def test_an_orphan_file_is_flagged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _skill(Path(tmp), "Use when auditing bundles.",
+                          "The body references nothing.")
+            (root / "references").mkdir()
+            (root / "references" / "unused.md").write_text("orphan",
+                                                           encoding="utf-8")
+            report = lint_skill(root)
+            facet = report["facets"]["bundle"]
+            self.assertTrue(any("unused.md" in f for f in facet["findings"]))
+
+    def test_a_wired_bundle_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _skill(Path(tmp), "Use when auditing bundles.",
+                          "Read [the schema](references/schema.md) first.")
+            (root / "references").mkdir()
+            (root / "references" / "schema.md").write_text("schema",
+                                                           encoding="utf-8")
+            report = lint_skill(root)
+            self.assertTrue(report["facets"]["bundle"]["passed"])
