@@ -901,6 +901,33 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     if not args.text:
         return CommandResult({"refused": "claim needs the claim text, or --scan"}, exit_code=1)
     _require_archive(runtime)
+    # --verify collapses the verify-then-claim two-step (field battery,
+    # 2026-09-03: "improves auditability but the workflow is cumbersome"):
+    # every cmd: citation is run through the attested checker FIRST, so the
+    # recorded claim stands on attestations instead of drawing the
+    # unbacked-cmd advisory. A failing check still records - as a claim
+    # about a failing check, downgraded by its own evidence.
+    check_results: list[dict[str, Any]] = []
+    if getattr(args, "verify", False):
+        for cite in list(args.cite or []):
+            if not str(cite).startswith("cmd:"):
+                continue
+            outcome = run_check(
+                runtime.archive, _session(runtime, args.session),
+                Path(runtime.anchor.project_root),
+                f"claim-verify-{len(check_results) + 1}",
+                shlex.split(str(cite)[len("cmd:"):]),
+                timeout=getattr(args, "timeout", 900) or 900,
+            )
+            check_results.append({"citation": outcome.get("citation"),
+                                  "passed": outcome.get("passed")})
+            # The claim cites exactly what was attested - shell-splitting
+            # can normalise the command string, and a near-miss cite would
+            # resolve nothing.
+            attested = outcome.get("citation")
+            if attested and attested != cite:
+                args.cite = [attested if c == cite else c
+                             for c in (args.cite or [])]
     record = record_claim(
         runtime.archive,
         Path(runtime.anchor.project_root),
@@ -915,13 +942,17 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         refuted_by=getattr(args, "refuted_by", None),
     )
     data = record["data"]
+    if check_results:
+        data = dict(data)
+        data["verified_checks"] = check_results
     # A downgrade is a finding, so it must be visible in the exit status too.
     return CommandResult(
         {"claim": data["text"], "grade": data["grade"], "claimed": data["claimed_grade"],
          "downgraded": data["downgraded"], "reason": data.get("reason", ""),
          "unresolved": data["unresolved"], "unsupported": data.get("unsupported", []),
          "blast_radius": data.get("blast_radius"),
-         "advisories": data.get("advisories", [])},
+         "advisories": data.get("advisories", []),
+         **({"verified_checks": check_results} if check_results else {})},
         exit_code=1 if data["downgraded"] else 0,
     )
 
@@ -4276,6 +4307,12 @@ def _build_parser() -> argparse.ArgumentParser:
     claim.add_argument("--transcript",
                        help="This session's transcript path; enables the U-T2 red-before-green "
                             "check on a fix claim citing cmd:<command>")
+    claim.add_argument("--verify", action="store_true",
+                       help="Run every cmd: citation through the attested "
+                            "checker first, so the claim stands on "
+                            "attestations in one command")
+    claim.add_argument("--timeout", type=int, default=900,
+                       help="--verify only: seconds per check (default 900)")
     claim.add_argument("--refuted-by", dest="refuted_by", default=None,
                        help="Hypotheses only: the one command or observation "
                             "that would refute this claim")
