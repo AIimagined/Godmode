@@ -10,17 +10,19 @@
 # is proven, yellow when partial, dim when soft, red when unavailable.
 # Override with GODMODE_STATUSLINE_COLOR=off for a monochrome terminal.
 $cache = Join-Path $env:USERPROFILE ".claude\godmode-statusline.txt"
-$badge = if (Test-Path $cache) { (Get-Content $cache -Raw).Trim() } else { "[GM ]" }
+$badge = if (Test-Path $cache) { (Get-Content $cache -Raw).Trim() } else { "[GODMODE ]" }
 if ($env:GODMODE_STATUSLINE_COLOR -eq "off") {
   [Console]::Write($badge)
 } else {
   $esc = [char]27
+  # Matched on the marker alone so cached badges from either label era
+  # ([GM ~] and [GODMODE ~]) both color correctly.
   $color = switch -Regex ($badge) {
-    "\[GM ✓" { "38;5;42" }   # proven HARD: green
-    "\[GM ~"      { "38;5;178" }  # partial/degraded: amber
-    "\[GM \?"     { "38;5;245" }  # soft: dim gray
-    "\[GM !"      { "38;5;196" }  # unavailable: red
-    default       { "38;5;245" }
+    "✓"     { "38;5;118" }  # proven HARD: lime
+    "~"     { "38;5;42" }   # partial/degraded: green (operator-picked)
+    "\?"    { "38;5;245" }  # soft: dim gray
+    "!"     { "38;5;196" }  # unavailable: red
+    default { "38;5;245" }
   }
   [Console]::Write("$esc[$color" + "m$badge$esc[0m")
 }

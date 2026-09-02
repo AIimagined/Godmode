@@ -1370,7 +1370,7 @@ def main(argv: list[str] | None = None) -> int:
                           "SOFT": "?", "UNAVAILABLE": "!"}.get(
                               grade_for_badge, "?")
                 (Path.home() / ".claude" / "godmode-statusline.txt").write_text(
-                    f"[GM {marker}]", encoding="utf-8")
+                    f"[GODMODE {marker}]", encoding="utf-8")
             except Exception:  # noqa: BLE001
                 pass
             # Enforcement freshness (S15 item 10): an invisible disarm

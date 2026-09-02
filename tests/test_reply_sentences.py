@@ -131,3 +131,22 @@ class FenceAndConditionalTests(unittest.TestCase):
             _Archive(),
             "If you'd rather have one fixed color always, that works too.")
         self.assertEqual(found, [])
+
+
+class AdjectivalFixedTests(unittest.TestCase):
+    """Self-observed 2026-09-02: "one fixed color always" armed the gate -
+    "fixed" after a determiner is a property, not a repair event."""
+
+    def test_determiner_fixed_is_a_property(self) -> None:
+        from godmode_runtime.godmode_attest import looks_like_fix_claim
+        for phrase in ("sets one fixed color for every grade",
+                       "uses a fixed width layout",
+                       "the fixed color survives restarts"):
+            self.assertFalse(looks_like_fix_claim(phrase)[0], phrase)
+
+    def test_verbal_fixed_still_matches(self) -> None:
+        from godmode_runtime.godmode_attest import looks_like_fix_claim
+        for phrase in ("I fixed the encoding bug",
+                       "the bug is fixed now",
+                       "commit 83eb0e3 fixed both defects"):
+            self.assertTrue(looks_like_fix_claim(phrase)[0], phrase)
