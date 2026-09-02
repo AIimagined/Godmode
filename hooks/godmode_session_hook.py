@@ -1504,6 +1504,29 @@ def main(argv: list[str] | None = None) -> int:
             # the host's own transcript and never stored (the 4018 privacy
             # decision governs here too).
             if submitted.get("stop_hook_active") or submitted.get("stopHookActive"):
+                # Field report 2026-09-03: "a softened rewording would have
+                # passed the same gate." Detectable at exactly this moment:
+                # the re-fire after a block, with no claim recorded since.
+                # Advisory, never a second block, once per block marker.
+                try:
+                    marker = archive.root / "godmode-done-block.json"
+                    if marker.exists():
+                        parked = json.loads(
+                            marker.read_text(encoding="utf-8"))
+                        marker.unlink(missing_ok=True)
+                        seq_then = int(parked.get("sequence", 0))
+                        claimed_since = any(
+                            r.get("sequence", 0) > seq_then
+                            for r in archive.select(kind="claim", limit=20))
+                        if not claimed_since:
+                            print(json.dumps({"systemMessage": (
+                                "godmode: the done-bar was passed by "
+                                "rewording - the work this session still "
+                                "has no claim on record; softer words do "
+                                "not create evidence")}))
+                            return 0
+                except Exception:  # noqa: BLE001
+                    pass
                 return 0
             reply_text = _final_reply_text(submitted)
             if not reply_text:
@@ -1591,6 +1614,17 @@ def main(argv: list[str] | None = None) -> int:
             # other notice stays advisory in the same single object.
             done_shaped = _unrecorded_done_claims(archive, reply_text)
             if done_shaped:
+                # Marker for the re-fire: if no claim lands between this
+                # block and the re-fire, the gate was passed by rewording
+                # and the re-fire says so (advisory, never a second block).
+                try:
+                    last = 0
+                    for r in archive.select(limit=1):
+                        last = int(r.get("sequence", 0))
+                    (archive.root / "godmode-done-block.json").write_text(
+                        json.dumps({"sequence": last}), encoding="utf-8")
+                except Exception:  # noqa: BLE001
+                    pass
                 shown = "; ".join(
                     f"'{_ascii_echo(s)[:120]}'" for s in done_shaped[:2])
                 print(json.dumps({
