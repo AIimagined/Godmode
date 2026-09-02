@@ -674,7 +674,9 @@ class Chronicle:
             raise ArchiveError(f"Unsupported Godmode record kind: {kind}")
         subject = subject.strip()
         if not subject or len(subject) > 200:
-            raise ArchiveError("Record subject must contain 1-200 characters")
+            raise ArchiveError(
+                "Record subject must contain 1-200 characters - the subject "
+                "is a label; put the detail in the record's value or data")
         validator = KIND_INVARIANTS.get(kind)
         if validator is not None:
             validator(data)

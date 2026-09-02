@@ -1,0 +1,1 @@
+A checkpoint whose summary overflows the 200-char subject slot records anyway: the subject becomes a label derived from the opening words and the full summary rides in the record data - the refusal that took a field agent three tries to decode is gone, and the archive error now says the subject is a label (field report, 2026-09-02).
