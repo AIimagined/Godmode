@@ -1,0 +1,1 @@
+A build-shaped obligation overlapping a SHIPPED capability - a version note, a closed duty, a ship-vocabulary claim - names the elder at write time: reuse it, or say what differs. Discovering the original mid-implementation is the expensive way. Saying what differs silences it; tuned to one fire across sixty recent obligations, a true positive.

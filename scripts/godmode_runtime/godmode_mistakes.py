@@ -805,3 +805,71 @@ def obligation_sibling_advisory(archive: Any, subject: str,
                 f"\"{elder_subject}\" --status closed`), or the nag will "
                 "surface both forever.")
     return None
+
+
+import re as _re
+
+_BUILD_VOCAB = _re.compile(
+    r"(?i)\b(?:build|implement|add|create|wire|introduce|design|ship)\b")
+
+_DIFFERS_VOCAB = _re.compile(
+    r"(?i)\b(?:differs?|unlike|replaces?|supersedes?|extends?|beyond)\b")
+
+
+def reinvention_advisory(archive: Any, subject: str, value: str) -> str | None:
+    """One sentence when a build-shaped record overlaps a shipped capability.
+
+    The agent that reinvents discovers the original mid-implementation,
+    after the cost (operator challenge, 2026-09-03; the corpus's
+    inventory-preflight rule as machinery). At record time: >=4 shared
+    salient words with a SHIPPED capability - a version record's note, a
+    closed obligation, or a ship-vocabulary claim - and the elder is
+    named. Saying what differs silences it: a deliberate replacement is
+    not a reinvention.
+    """
+    from .godmode_sources import _salient_words
+
+    text = f"{subject} {value}"
+    if not _BUILD_VOCAB.search(text) or _DIFFERS_VOCAB.search(text):
+        return None
+    new_vocab = _salient_words(text)
+    if len(new_vocab) < 4:
+        return None
+    best: tuple[int, int, str] | None = None
+    try:
+        candidates: list[dict] = []
+        for record in archive.select(kind="version", limit=100):
+            candidates.append(record)
+        for record in archive.select(kind="obligation", limit=200):
+            data = record.get("data") or {}
+            if str(data.get("status", "open")) in ("closed", "done",
+                                                   "resolved"):
+                candidates.append(record)
+        for record in archive.select(kind="claim", limit=200):
+            data = record.get("data") or {}
+            if data.get("resolves"):
+                continue
+            if _re.search(r"(?i)\b(?:shipped|built|landed|wired)\b",
+                                   str(data.get("text", ""))):
+                candidates.append(record)
+    except Exception:  # noqa: BLE001
+        return None
+    for record in candidates:
+        data = record.get("data") or {}
+        elder_text = " ".join(
+            str(data.get(field) or "")
+            for field in ("value", "text", "note")) + \
+            f" {record.get('subject', '')}"
+        vocab = _salient_words(elder_text)
+        overlap = len(new_vocab & vocab)
+        if overlap >= 4:
+            key = (overlap, int(record.get("sequence", 0)),
+                   str(record.get("subject", ""))[:80])
+            if best is None or key > best:
+                best = key
+    if best is None:
+        return None
+    return (
+        f"the record already holds this capability at seq {best[1]} "
+        f"('{best[2]}') - reuse it, or say what differs; discovering the "
+        "original mid-implementation is the expensive way")

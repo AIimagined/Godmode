@@ -298,3 +298,60 @@ class RequestRenderingTests(unittest.TestCase):
             self.assertIn("--status closed", line)
             self.assertNotRegex(line, r"\(about:")
             self.assertIn("document", line.split("close with")[0])
+
+
+class ReinventionTests(unittest.TestCase):
+    """A build-shaped record overlapping a shipped capability names the
+    elder at write time - not mid-implementation."""
+
+    def _setup(self):
+        import sys as _sys
+        from pathlib import Path as _P
+        _sys.path.insert(0, str(_P(__file__).parent))
+        from test_godmode_runtime import isolated_project
+        return isolated_project
+
+    def test_rebuild_of_shipped_capability_is_named(self) -> None:
+        isolated_project = self._setup()
+        from godmode_runtime.godmode_mistakes import reinvention_advisory
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            archive.append("version", "exporter",
+                           {"value": "1.2", "status": "cut",
+                            "note": "shipped the csv export writer for the "
+                                    "ledger table with headers"})
+            advisory = reinvention_advisory(
+                archive, "build csv export",
+                "implement a csv export writer for the ledger table "
+                "with headers")
+            self.assertIsNotNone(advisory)
+            self.assertIn("already holds this capability", advisory)
+
+    def test_saying_what_differs_silences(self) -> None:
+        isolated_project = self._setup()
+        from godmode_runtime.godmode_mistakes import reinvention_advisory
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            archive.append("version", "exporter",
+                           {"value": "1.2", "status": "cut",
+                            "note": "shipped the csv export writer for the "
+                                    "ledger table with headers"})
+            advisory = reinvention_advisory(
+                archive, "build streaming csv export",
+                "implement a csv export writer for the ledger table - "
+                "differs from the shipped one by streaming rows")
+            self.assertIsNone(advisory)
+
+    def test_disjoint_build_is_clean(self) -> None:
+        isolated_project = self._setup()
+        from godmode_runtime.godmode_mistakes import reinvention_advisory
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            archive.append("version", "exporter",
+                           {"value": "1.2", "status": "cut",
+                            "note": "shipped the csv export writer for the "
+                                    "ledger table with headers"})
+            advisory = reinvention_advisory(
+                archive, "build the retry queue",
+                "implement exponential backoff for the render worker pool")
+            self.assertIsNone(advisory)

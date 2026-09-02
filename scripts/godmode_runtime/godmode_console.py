@@ -2519,11 +2519,19 @@ def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # in new clothes - name the elder now, or both nag forever.
     if args.kind == "obligation" and status not in ("closed", "done", "retired"):
         try:
-            from .godmode_mistakes import obligation_sibling_advisory
+            from .godmode_mistakes import (
+                obligation_sibling_advisory, reinvention_advisory)
             advisory = obligation_sibling_advisory(
                 runtime.archive, args.subject, args.value)
             if advisory:
                 payload["advisory"] = advisory
+            # The reinvention check rides the same write: a build-shaped
+            # duty overlapping a SHIPPED capability names the elder now,
+            # not mid-implementation (operator challenge, 2026-09-03).
+            rebuilt = reinvention_advisory(
+                runtime.archive, args.subject, args.value)
+            if rebuilt:
+                payload.setdefault("advisories", []).append(rebuilt)
         except Exception:  # noqa: BLE001
             pass
     return CommandResult(payload)
