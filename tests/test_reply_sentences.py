@@ -101,3 +101,33 @@ class AsciiEchoTests(unittest.TestCase):
         flattened = _ascii_echo("café résumé 中文")
         self.assertTrue(flattened.isascii())
         self.assertIn("caf", flattened)
+
+
+class FenceAndConditionalTests(unittest.TestCase):
+    """Self-observed 2026-09-02: the gate flagged a shell one-liner shown in
+    a code fence and a conditional advice sentence as completion claims."""
+
+    def test_fenced_code_is_shown_not_stated(self) -> None:
+        reply = ("Run this:\n```\nfor c in 1 2 3; do echo done; done. All "
+                 "tests pass here.\n```\nThen pick a number.")
+        sentences = _reply_sentences(reply)
+        self.assertFalse(any("tests pass" in s for s in sentences), sentences)
+        self.assertTrue(any("pick a number" in s for s in sentences))
+
+    def test_unclosed_fence_swallows_to_end(self) -> None:
+        sentences = _reply_sentences("```\nthe fix is complete and shipped.")
+        self.assertEqual(sentences, [])
+
+    def test_conditional_advice_is_not_a_done_claim(self) -> None:
+        import godmode_session_hook as hook
+
+        class _Archive:
+            def read_events(self, **kwargs):
+                return []
+            def select(self, **kwargs):
+                return []
+
+        found = hook._unrecorded_done_claims(
+            _Archive(),
+            "If you'd rather have one fixed color always, that works too.")
+        self.assertEqual(found, [])
