@@ -385,3 +385,36 @@ class NumericContradictionTests(unittest.TestCase):
                                   "observed", cites=["file:README.md"])
             advisories = second.get("data", second).get("advisories", [])
             self.assertFalse(any("disagree" in a for a in advisories))
+
+
+class UnbackedCommandCiteTests(unittest.TestCase):
+    """Field report 2026-09-02: an observed-grade claim citing a command that
+    was never attested recorded clean - the grade silently read as checked."""
+
+    def test_observed_claim_with_unattested_cmd_is_named(self) -> None:
+        from test_godmode_runtime import isolated_project
+        from godmode_runtime.godmode_attest import record_claim
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            record = record_claim(
+                archive, project, "S", "the suite is green across all modules",
+                "observed", cites=["cmd:python -m unittest discover"])
+            advisories = record.get("data", record).get("advisories", [])
+            self.assertTrue(any("no attestation behind" in a
+                                for a in advisories), advisories)
+            self.assertEqual(record.get("data", record).get("grade"),
+                             "observed")
+
+    def test_attested_cmd_cite_stays_clean(self) -> None:
+        from test_godmode_runtime import isolated_project
+        from godmode_runtime.godmode_attest import record_claim, run_check
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            outcome = run_check(archive, "S", project, "truthy",
+                                ["python", "-c", "print('ok')"])
+            record = record_claim(
+                archive, project, "S", "the probe printed ok",
+                "observed", cites=[outcome["citation"]])
+            advisories = record.get("data", record).get("advisories", [])
+            self.assertFalse(any("no attestation" in a for a in advisories),
+                             advisories)

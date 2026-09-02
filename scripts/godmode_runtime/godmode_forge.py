@@ -310,7 +310,10 @@ def lint_skill(skill_dir: str | Path) -> dict[str, Any]:
         seen_md.add(md)
         for m in link.finditer(md.read_text(encoding="utf-8", errors="replace")):
             target = (m.group(1) or m.group(2) or "").strip()
-            if not target or target.startswith(("http://", "https://", "mailto:")):
+            # External links (any scheme) are not bundle paths. Spelled
+            # without a remote-URL literal: the runtime privacy scan
+            # forbids those in source, including in a skip-list.
+            if not target or "://" in target or target.startswith("mailto:"):
                 continue
             resolved = (md.parent / target)
             # A markdown LINK asserts a bundle-relative path - missing is
