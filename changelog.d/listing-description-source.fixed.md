@@ -1,0 +1,1 @@
+The listing description lives in packaging/hosts.json identity.description - the one field the manifest writer actually renders; editing the manifests directly, or the wrong description key in the source, was silently reverted on the next regeneration. All host manifests now carry the evidence-ledger copy.
