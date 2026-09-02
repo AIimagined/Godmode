@@ -6,6 +6,14 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.3.13] - 2026-09-02
+
+### Fixed
+
+- A checkpoint whose summary overflows the 200-char subject slot records anyway: the subject becomes a label derived from the opening words and the full summary rides in the record data - the refusal that took a field agent three tries to decode is gone, and the archive error now says the subject is a label (field report, 2026-09-02).
+- The shipped package compiles with zero SyntaxWarnings, pinned by a test that compiles every source file with warnings as errors - 0.3.12 printed one on first import from a stray non-raw escape, observed by the operator minutes after installing.
+- version --reconcile knows the pre-tag release window: every source surface unanimous and strictly ahead of the tag reads "staged" (exit 0), because CI must pass before the tag moves - a stale surface still reads as drift. And the host manifest description drift is fixed at its source, packaging/hosts.json.
+
 ## [0.3.12] - 2026-09-02
 
 ### Added
