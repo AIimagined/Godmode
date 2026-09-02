@@ -1457,7 +1457,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps({
                     "decision": "block",
                     "reason": (
-                        f"godmode - THE DONE BAR: this reply says work is "
+                        f"godmode gate, deliberate block, not a crash - THE DONE BAR: this reply says work is "
                         f"done, but {len(done_shaped)} of those statements "
                         f"have no evidence on record: {shown}. Save each as "
                         "a claim with its proof (`godmode claim \"<text>\" "
