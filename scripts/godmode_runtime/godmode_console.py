@@ -2428,6 +2428,8 @@ def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         return CommandResult({"record": _event_view(record)})
     status = args.status or ("open" if args.kind == "request" else "active")
     data: dict[str, Any] = {"value": args.value, "status": status}
+    if args.kind == "obligation" and getattr(args, "standing", False):
+        data["standing"] = True
     if args.kind == "lesson":
         data["generalized_guard"] = args.guard
     if args.kind == "assumption":
@@ -4924,6 +4926,11 @@ def _build_parser() -> argparse.ArgumentParser:
     remember.add_argument("--status", default=None,
                           help="Default: active, or open for a request")
     remember.add_argument("--guard")
+    remember.add_argument("--standing", action="store_true",
+                          help="Obligations only: a per-task duty with no "
+                               "subject to match - surfaces at every stop, "
+                               "survives quiet posture (definition-of-done, "
+                               "not advisory)")
     remember.add_argument("--source", choices=["stated", "inferred"], default="stated",
                           help="Requests only: whether the operator stated this ask "
                                "or the agent inferred it on their behalf")

@@ -618,9 +618,18 @@ def _open_obligations_touched(archive: Any, reply_text: str) -> list[str]:
         if not reply_words:
             return []
         touched = []
+        standing_notices: list[str] = []
         for subject, record in latest.items():
             data = record.get("data") or {}
             if str(data.get("status", "open")) in ("closed", "done", "retired"):
+                continue
+            # A STANDING obligation (the L-381/L-382 field pair) has no
+            # subject to match - it applies to every task - so it surfaces
+            # at every stop unconditionally, ahead of the cap.
+            if data.get("standing"):
+                standing_notices.append(
+                    f"standing duty: {subject} - part of this task's "
+                    "definition of done")
                 continue
             vocab = _salient_words(f"{subject} {data.get('value', '')}")
             if len(reply_words & vocab) >= 3:
@@ -667,7 +676,9 @@ def _open_obligations_touched(archive: Any, reply_text: str) -> list[str]:
         # as a muted count beside the survivor (S15 item 9).
         if names and muted:
             names[-1] += f" ({muted} older sibling(s) muted)"
-        return names
+        # Standing duties lead and never compete with the cap: they are
+        # the definition-of-done class, not the relevance class.
+        return standing_notices + names
     except Exception:  # noqa: BLE001
         return []
 
@@ -1435,7 +1446,12 @@ def main(argv: list[str] | None = None) -> int:
             # advisory, and quiet must never mean unguarded.
             quiet = _nag_posture(archive) == "quiet"
             unsupported = [] if quiet else _unrecorded_claims(archive, reply_text)
-            touched = [] if quiet else _open_obligations_touched(archive, reply_text)
+            touched = _open_obligations_touched(archive, reply_text)
+            if quiet:
+                # Standing duties survive quiet: an operator-mandated
+                # per-task obligation is definition-of-done, not advisory
+                # (the L-381/L-382 field pair died exactly this way).
+                touched = [t for t in touched if t.startswith("standing duty:")]
             # The investigation nudge: the timeline the temporal claim check
             # already reads also carries the fix-loop shape - one command
             # red three times with mutations between the failures. That
