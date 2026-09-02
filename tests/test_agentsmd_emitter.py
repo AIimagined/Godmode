@@ -135,3 +135,42 @@ class LawsSectionTests(unittest.TestCase):
                 emit_agentsmd(_build_parser(), root, archive=archive)
                 text = (root / "AGENTS.md").read_text(encoding="utf-8")
                 self.assertIn("no laws recorded yet", text)
+
+
+class RulesAdapterTests(unittest.TestCase):
+    """S19 item 4: the doctrine renders into per-host instruction files
+    from the same canonical constants the brief injects - generated,
+    never hand-edited, so a hook-less host reads the identity block
+    through the one surface it actually loads."""
+
+    def test_cursor_adapter_renders_the_canonical(self) -> None:
+        import tempfile
+        from godmode_runtime.godmode_console import emit_rules
+        with tempfile.TemporaryDirectory() as tmp:
+            report = emit_rules(Path(tmp), host="cursor")
+            target = Path(tmp) / ".cursor" / "rules" / "godmode.mdc"
+            self.assertTrue(target.is_file())
+            text = target.read_text(encoding="utf-8")
+            self.assertIn("THE RECORD RULE", text)
+            self.assertIn("RED FLAGS", text)
+            self.assertIn("godmode claim", text)  # the When rules ride too
+            self.assertEqual(report["host"], "cursor")
+
+    def test_generic_adapter_writes_a_plain_rules_file(self) -> None:
+        import tempfile
+        from godmode_runtime.godmode_console import emit_rules
+        with tempfile.TemporaryDirectory() as tmp:
+            report = emit_rules(Path(tmp), host="generic")
+            target = Path(tmp) / "GODMODE-RULES.md"
+            self.assertTrue(target.is_file())
+            self.assertIn("TWO-REVERSALS", target.read_text(encoding="utf-8"))
+
+    def test_reemit_is_idempotent(self) -> None:
+        import tempfile
+        from godmode_runtime.godmode_console import emit_rules
+        with tempfile.TemporaryDirectory() as tmp:
+            emit_rules(Path(tmp), host="generic")
+            first = (Path(tmp) / "GODMODE-RULES.md").read_text(encoding="utf-8")
+            emit_rules(Path(tmp), host="generic")
+            self.assertEqual(first,
+                             (Path(tmp) / "GODMODE-RULES.md").read_text(encoding="utf-8"))
