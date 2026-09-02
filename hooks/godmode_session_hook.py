@@ -1284,6 +1284,21 @@ def main(argv: list[str] | None = None) -> int:
                 "ASK THE RECORD FIRST: before mutating, check what was "
                 "already refused. LEAVE A TRAIL: end by recording what "
                 "changed, what is verified, and the next step.")
+            # Statusline cache (S20, operator ask): the badge row is the
+            # host's statusLine command, which needs milliseconds - so the
+            # session-start hook (already running, already knowing the
+            # grade) caches the segment to a file the statusline script
+            # just prints. Best-effort; last session on this machine wins.
+            try:
+                from godmode_runtime.godmode_hookproof import interception_state
+                grade_for_badge = interception_state(archive, current_host())
+                marker = {"HARD": "✓", "DEGRADED": "~", "PARTIAL": "~",
+                          "SOFT": "?", "UNAVAILABLE": "!"}.get(
+                              grade_for_badge, "?")
+                (Path.home() / ".claude" / "godmode-statusline.txt").write_text(
+                    f"[GM {marker}]", encoding="utf-8")
+            except Exception:  # noqa: BLE001
+                pass
             # Enforcement freshness (S15 item 10): an invisible disarm
             # becomes a stated gap. One line, only when the grade on this
             # host is not HARD - a proven boundary adds nothing by
