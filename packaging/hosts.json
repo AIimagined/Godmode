@@ -3,7 +3,7 @@
   "identity": {
     "name": "godmode",
     "displayName": "Godmode",
-    "version": "0.3.12",
+    "version": "0.3.13",
     "description": "A local, tamper-evident record of what a coding agent did, what it claimed, and what was verified.",
     "author": {
       "name": "AIimagined",
