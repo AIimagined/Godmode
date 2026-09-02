@@ -511,3 +511,35 @@ class FalsifierAdvisoryTests(unittest.TestCase):
                 cites=["cmd:python parse_check.py"])
             self.assertTrue(any("falsifier" in a for a in advisories),
                             advisories)
+
+
+class ReversalAccountingTests(unittest.TestCase):
+    """A withdrawn claim may have carried weight - accounted at the
+    moment of withdrawal."""
+
+    def _resolve(self, outcome):
+        from test_godmode_runtime import isolated_project
+        from godmode_runtime.godmode_attest import record_claim, resolve_claim
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            (project / "README.md").write_text("the flag gates the export "
+                                               "lane", encoding="utf-8")
+            claim = record_claim(archive, project, "S",
+                                 "the flag gates the export lane",
+                                 "observed", cites=["file:README.md"],
+                                 confidence=0.9)
+            record = resolve_claim(archive, project, "S",
+                                   claim["sequence"], outcome,
+                                   cites=["file:README.md"])
+            return record.get("data", record).get("advisories", [])
+
+    def test_failed_carries_the_accounting_ask(self) -> None:
+        advisories = self._resolve("failed")
+        self.assertTrue(any("withdrawn claim" in a for a in advisories),
+                        advisories)
+
+    def test_held_is_clean(self) -> None:
+        self.assertEqual(self._resolve("held"), [])
+
+    def test_superseded_is_clean(self) -> None:
+        self.assertEqual(self._resolve("superseded"), [])
