@@ -438,3 +438,50 @@ class ArchiveContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DictationFormTests(unittest.TestCase):
+    """Field report 2026-09-02: an agent dictated `remember --kind incident
+    "<prose>"` the way `claim` accepts prose, hit a usage error, and the
+    incident lived outside the record. A refusal that loses the record is
+    worse than a derived subject."""
+
+    def test_dictated_prose_becomes_a_record(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            from godmode_runtime.godmode_console import main
+
+            main(["--project", str(project), "remember", "--kind", "lesson",
+                  "the deploy script assumes the staging bucket exists and "
+                  "fails silently when it does not"])
+            written = [r for r in archive.read_events() if r["kind"] == "lesson"]
+        self.assertEqual(len(written), 1, written)
+        self.assertEqual(written[0]["subject"],
+                         "the deploy script assumes the staging bucket exists")
+        self.assertIn("fails silently", written[0]["data"]["value"])
+
+    def test_dictated_incident_reaches_the_record(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            from godmode_runtime.godmode_console import main
+
+            main(["--project", str(project), "remember", "--kind", "incident",
+                  "--failure-class", "environment-failure",
+                  "the CLI rejected the recording invocation so the incident "
+                  "lived in prose instead of the archive"])
+            written = [r for r in archive.read_events()
+                       if r["kind"] == "incident"]
+        self.assertEqual(len(written), 1, written)
+
+    def test_no_text_and_no_subject_fails_with_both_shapes_named(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            from godmode_runtime.godmode_console import main
+
+            code = main(["--project", str(project), "remember",
+                         "--kind", "lesson"])
+        self.assertNotEqual(code, 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

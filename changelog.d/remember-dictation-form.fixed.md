@@ -1,0 +1,1 @@
+`godmode remember` now accepts the whole record as one quoted string, the way `claim` always has - the subject is derived from the opening words. An agent that dictated an incident in prose used to hit a usage error and the incident never reached the record (field report, 2026-09-02); a refusal that loses the record is worse than a derived subject.

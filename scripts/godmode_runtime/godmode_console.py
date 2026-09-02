@@ -2417,6 +2417,16 @@ def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # hand-written request therefore landed in the archive and was read by
     # nothing. The default is now per-kind; an explicit --status still wins,
     # which is what keeps `--kind request --status closed` a closure.
+    text = getattr(args, "text", None)
+    if args.value is None and text:
+        args.value = text
+        if args.subject is None:
+            args.subject = " ".join(text.split()[:8])[:MAX_SUBJECT].strip()
+    if args.subject is None or args.value is None:
+        raise ArchiveError(
+            "remember needs either the whole record as one quoted string "
+            "(godmode remember --kind lesson \"<what happened and what to "
+            "do>\") or --subject plus --value")
     if args.kind == "incident":
         from .godmode_mistakes import record_incident
         record = record_incident(
@@ -4927,8 +4937,17 @@ def _build_parser() -> argparse.ArgumentParser:
     remember.add_argument("--turning-point", dest="turning_point", action="store_true",
                           help="incident only: the first failure the run never recovered "
                                "from; requires --evidence")
-    remember.add_argument("--subject", required=True, type=subject_text)
-    remember.add_argument("--value", required=True)
+    # Field report 2026-09-02: an agent dictated `remember --kind incident
+    # "<prose>"` the way `claim` accepts prose, hit a usage error, and the
+    # incident never reached the record. A refusal that loses the record is
+    # worse than a derived subject - the positional text form now works for
+    # every kind, deriving the subject from the opening words.
+    remember.add_argument("text", nargs="?", default=None,
+                          help="Dictation form: the whole record as one quoted "
+                               "string; the subject is derived from its opening "
+                               "words when --subject is not given")
+    remember.add_argument("--subject", default=None, type=subject_text)
+    remember.add_argument("--value", default=None)
     remember.add_argument("--status", default=None,
                           help="Default: active, or open for a request")
     remember.add_argument("--guard")
