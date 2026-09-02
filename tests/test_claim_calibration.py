@@ -581,3 +581,42 @@ class DocCiteSupportTests(unittest.TestCase):
             "the render queue drains jobs in submission order",
             grade="verified")
         self.assertEqual(data.get("grade"), "hypothesis")
+
+
+class ClaimVerifyTests(unittest.TestCase):
+    """One command runs the cited checks attested and records - the
+    verify-then-claim two-step collapsed."""
+
+    def test_verify_green_clears_the_unbacked_advisory(self) -> None:
+        import io, sys as _sys2
+        from contextlib import redirect_stdout
+        from test_godmode_runtime import isolated_project
+        from godmode_runtime.godmode_console import main
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            main(["--project", str(project), "session", "open",
+                  "--label", "t"])
+            out = io.StringIO()
+            with redirect_stdout(out):
+                main(["--project", str(project), "claim",
+                      "the probe prints the answer", "--verify",
+                      "--cite", f"cmd:{_sys2.executable} -c print(42)"])
+            text = out.getvalue()
+            self.assertNotIn("no attestation behind", text)
+            self.assertIn("verified_checks", text)
+
+    def test_without_verify_the_advisory_stands(self) -> None:
+        import io, sys as _sys2
+        from contextlib import redirect_stdout
+        from test_godmode_runtime import isolated_project
+        from godmode_runtime.godmode_console import main
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            main(["--project", str(project), "session", "open",
+                  "--label", "t"])
+            out = io.StringIO()
+            with redirect_stdout(out):
+                main(["--project", str(project), "claim",
+                      "the probe prints the answer",
+                      "--cite", f"cmd:{_sys2.executable} -c print(42)"])
+            self.assertIn("no attestation behind", out.getvalue())
