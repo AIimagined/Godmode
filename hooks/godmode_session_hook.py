@@ -741,6 +741,20 @@ def _reply_sentences(reply_text: str) -> list[str]:
     return found
 
 
+# Reported speech is someone else's assertion, not this agent's: "the
+# vendor claims the API is thread-safe" describes a claim, it does not
+# make one (field report 9, 2026-09-01, second occurrence in report 11).
+# The frame is a subject of a few words followed by a speech verb near
+# the sentence start - deliberately narrow so "all tests pass" can never
+# hide behind it.
+# "reports"/"documents" stay OUT of the verb list: "the suite reports
+# zero failures" is this agent vouching for a result, not reported speech.
+_ATTRIBUTED_SPEECH = re.compile(
+    r"(?i)^(?:the\s+|their\s+|its\s+)?\w+(?:\s+\w+){0,3}\s+"
+    r"(?:claims?|says?|said|states?|stated|asserts?|announced?s?)\s+"
+    r"(?:that\s+)?\S")
+
+
 def _unrecorded_claims(archive: Any, reply_text: str) -> list[str]:
     """Claim-shaped sentences in the reply with no claim record behind them.
     Reuses the public-surface claim definition (`claimscan.is_claim`) and
@@ -753,6 +767,8 @@ def _unrecorded_claims(archive: Any, reply_text: str) -> list[str]:
         return []
     found: list[str] = []
     for sentence in _reply_sentences(reply_text):
+        if _ATTRIBUTED_SPEECH.match(sentence.strip()):
+            continue
         if not is_claim(sentence):
             continue
         if _normalise(sentence) in recorded:
