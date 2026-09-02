@@ -1,0 +1,1 @@
+The push preflight now scans commit HISTORY for private terms, not only the tree - a scrub that deletes a name leaves it visible in the deletion diff, and old commit messages were never scanned at all (the field miss that let 32 leaking lines reach public history). Counts only, never the term; the finding states plainly that a history rewrite is the only removal.
