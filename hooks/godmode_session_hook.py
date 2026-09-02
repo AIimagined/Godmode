@@ -107,7 +107,7 @@ def _is_claude_session(submitted: dict[str, Any]) -> bool:
 # The sections the truncation cap must never eat: commands and live
 # advisories first, inventory last (S15 item 5 - sort_keys put
 # next_actions mid-string and the cap cut from the tail blindly).
-_BRIEF_PRIORITY = ("doctrine", "next_actions", "calibration", "oversight", "doc_sprawl",
+_BRIEF_PRIORITY = ("doctrine", "red_flags", "next_actions", "calibration", "oversight", "doc_sprawl",
                    "laws", "obligations", "resume")
 
 
@@ -1284,6 +1284,22 @@ def main(argv: list[str] | None = None) -> int:
                 "ASK THE RECORD FIRST: before mutating, check what was "
                 "already refused. LEAVE A TRAIL: end by recording what "
                 "changed, what is verified, and the next step.")
+            # Red flags (S19 item 1): rationalization detection as a
+            # lookup, not willpower - the thoughts that precede violations,
+            # each mapped to its reality. Rows sourced from recorded field
+            # lessons first (the guard on record demands it); invariant
+            # text, second in truncation priority behind the doctrine.
+            brief["red_flags"] = (
+                "RED FLAGS - if you catch yourself thinking one of these, "
+                "stop: 'this is too simple to record' (the record rule "
+                "exists for exactly this size of fact). 'I remember how "
+                "this works' (memory of state is a lead; read the current "
+                "state). 'one more rerun to be sure' (green adds nothing). "
+                "'the definition says it does not run' (a gating claim is a "
+                "call-site claim - read the callers). 'every probe returned "
+                "zero' (a uniform result across many inputs is a tooling "
+                "smell - check the instrument). 'the lesson does not apply "
+                "here' (it was written because someone thought that).")
             # Statusline cache (S20, operator ask): the badge row is the
             # host's statusLine command, which needs milliseconds - so the
             # session-start hook (already running, already knowing the
