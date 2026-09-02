@@ -87,3 +87,69 @@ class PostEditHookTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ImpactBriefTests(unittest.TestCase):
+    """The recorded neighbors of an edited file, pushed at the edit moment
+    - once per file per session, fail-silent."""
+
+    def _archive_project(self):
+        import tempfile
+        from contextlib import contextmanager
+        from unittest import mock
+        import os as _os
+        for entry in (str(PLUGIN_ROOT / "scripts"),):
+            if entry not in sys.path:
+                sys.path.insert(0, entry)
+        from godmode_runtime.godmode_anchor import resolve_anchor
+        from godmode_runtime.godmode_chronicle import Chronicle
+
+        @contextmanager
+        def ctx():
+            with tempfile.TemporaryDirectory(prefix="gm-impact-") as tmp:
+                base = Path(tmp)
+                root = base / "p"
+                root.mkdir()
+                state = base / "state"
+                with mock.patch.dict(_os.environ,
+                                     {"GODMODE_STATE_HOME": str(state)},
+                                     clear=False):
+                    archive = Chronicle(resolve_anchor(root))
+                    archive.initialize()
+                    yield root, state, archive
+        return ctx()
+
+    def _run_with_state(self, project, state, target, session="S1"):
+        payload = {"hook_event_name": "PostToolUse", "tool_name": "Edit",
+                   "tool_input": {"file_path": str(target)},
+                   "cwd": str(project), "session_id": session}
+        import os as _os
+        env = dict(_os.environ)
+        env["GODMODE_STATE_HOME"] = str(state)
+        done = subprocess.run(
+            [sys.executable, str(HOOK)], input=json.dumps(payload),
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=60, cwd=str(project), env=env)
+        return (done.stdout or "").strip()
+
+    def test_cited_file_surfaces_once_then_dedupes(self) -> None:
+        with self._archive_project() as (project, state, archive):
+            target = project / "lib" / "gate.py"
+            target.parent.mkdir()
+            target.write_text("x = 1\n", encoding="utf-8")
+            archive.append("invariant", "the gate never fails open",
+                           {"value": "wrap the header, not the gate"},
+                           evidence=["file:lib/gate.py#L1"])
+            first = self._run_with_state(project, state, target)
+            self.assertIn("recorded fact", first)
+            self.assertIn("lib/gate.py", first)
+            second = self._run_with_state(project, state, target)
+            self.assertNotIn("recorded fact", second)
+
+    def test_uncited_file_is_silent(self) -> None:
+        with self._archive_project() as (project, state, _archive):
+            target = project / "lib" / "other.py"
+            target.parent.mkdir()
+            target.write_text("y = 2\n", encoding="utf-8")
+            out = self._run_with_state(project, state, target)
+            self.assertNotIn("recorded fact", out)
