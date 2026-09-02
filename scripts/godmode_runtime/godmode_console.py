@@ -824,6 +824,7 @@ def cmd_verify(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     outcome = run_check(
         runtime.archive, _session(runtime, args.session), Path(runtime.anchor.project_root),
         args.name, shlex.split(args.command), rule_ids=args.rule,
+        timeout=getattr(args, "timeout", 900),
     )
     # The runner decides, not the caller: a failing check exits non-zero here too.
     # `citation` is returned so a later claim quotes what was stored rather than
@@ -1847,7 +1848,7 @@ def cmd_hooks_statusline(args: argparse.Namespace, runtime: Runtime) -> CommandR
               "SOFT": "?", "UNAVAILABLE": "!"}.get(grade, "?")
     # A string payload prints as-is at the dispatcher - plain text, no
     # JSON, because statusline consumers concatenate strings.
-    return CommandResult(f"[GM {marker} {grade}]")
+    return CommandResult(f"[GODMODE {marker} {grade}]")
 
 
 def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -4139,6 +4140,11 @@ def _build_parser() -> argparse.ArgumentParser:
     # Not argparse.REMAINDER: a REMAINDER positional swallows the options that
     # follow the first positional, so --rule would land inside the command.
     verify.add_argument("--command", required=True, help="Command to run, as one quoted string")
+    # A full-suite attestation is a legitimate half-hour command; the fixed
+    # 900s default killed honest runs (self-observed 2026-09-02, twice).
+    verify.add_argument("--timeout", type=int, default=900,
+                        help="Seconds before the check is recorded as timed "
+                             "out (default 900)")
     verify.set_defaults(handler=cmd_verify)
 
     plant = sub.add_parser("plant", help="Prove a guard fails by planting a violation")

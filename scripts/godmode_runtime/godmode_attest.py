@@ -992,7 +992,13 @@ def record_differential(
 # claim to it would be the over-gating that gets a check switched off. Only
 # claims using this vocabulary are held to the temporal shape.
 _FIX_VOCAB = re.compile(
-    r"(?i)\bfix(?:e[sd]|ing)?\b|\bresolv(?:e[sd]?|ing)\b|\brepair(?:ed|s|ing)?\b"
+    # "fixed" after a determiner is a property, not a repair event - "one
+    # fixed color", "a fixed width" (self-observed 2026-09-02: an offer of
+    # "one fixed color always" armed the completion gate). Each lookbehind
+    # is its own fixed width because the re module demands it.
+    r"(?i)\bfix(?:es|ing)?\b"
+    r"|(?<!\ba )(?<!\bone )(?<!\bthe )(?<!\bany )(?<!\bsome )(?<!\bevery )\bfixed\b"
+    r"|\bresolv(?:e[sd]?|ing)\b|\brepair(?:ed|s|ing)?\b"
     r"|\bpatch(?:ed|es|ing)?\b|\bcorrect(?:ed|s|ing)?\b|\bnow pass(?:es|ing)?\b"
     r"|\bbug is (?:fixed|gone)\b"
 )
