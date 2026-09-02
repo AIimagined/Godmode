@@ -123,3 +123,49 @@ class CompletionGateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SoftenedDodgeTests(unittest.TestCase):
+    """'A softened rewording would have passed the same gate' - the
+    re-fire after a block, with no claim recorded since, says so."""
+
+    def test_reword_without_claim_is_named_on_refire(self) -> None:
+        with _project() as (project, state, _archive):
+            transcript = _transcript(project, DONE_CLAIM)
+            blocked = _run(project, state, {
+                "transcript_path": str(transcript), "session_id": "S1",
+                "cwd": str(project)})
+            self.assertIn('"block"', blocked.stdout)
+            refire = _run(project, state, {
+                "transcript_path": str(transcript), "session_id": "S1",
+                "cwd": str(project), "stop_hook_active": True})
+            self.assertIn("passed by rewording", refire.stdout)
+
+    def test_claim_between_block_and_refire_is_clean(self) -> None:
+        with _project() as (project, state, archive):
+            transcript = _transcript(project, DONE_CLAIM)
+            _run(project, state, {
+                "transcript_path": str(transcript), "session_id": "S1",
+                "cwd": str(project)})
+            archive.append("claim", "migration complete",
+                           {"text": DONE_CLAIM, "grade": "observed",
+                            "session": "S1"})
+            refire = _run(project, state, {
+                "transcript_path": str(transcript), "session_id": "S1",
+                "cwd": str(project), "stop_hook_active": True})
+            self.assertNotIn("passed by rewording", refire.stdout)
+
+    def test_second_refire_is_silent(self) -> None:
+        with _project() as (project, state, _archive):
+            transcript = _transcript(project, DONE_CLAIM)
+            _run(project, state, {
+                "transcript_path": str(transcript), "session_id": "S1",
+                "cwd": str(project)})
+            first = _run(project, state, {
+                "transcript_path": str(transcript), "session_id": "S1",
+                "cwd": str(project), "stop_hook_active": True})
+            second = _run(project, state, {
+                "transcript_path": str(transcript), "session_id": "S1",
+                "cwd": str(project), "stop_hook_active": True})
+            self.assertIn("passed by rewording", first.stdout)
+            self.assertNotIn("passed by rewording", second.stdout)
