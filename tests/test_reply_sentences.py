@@ -81,3 +81,23 @@ class HeadingAndQuoteTests(unittest.TestCase):
             _s.path.insert(0, hooks_dir)
         from godmode_session_hook import _strip_quoted
         self.assertNotIn("fixed", _strip_quoted(sentences[0]))
+
+
+class AsciiEchoTests(unittest.TestCase):
+    """Echoed claim text crosses a host codepage godmode does not control.
+
+    Field-observed 2026-09-02: a Windows terminal rendered a reply's section
+    sign and em dash as mojibake inside the gate's echo. The echo is now
+    flattened to ASCII with readable stand-ins; the record keeps the original.
+    """
+
+    def test_typography_gets_readable_stand_ins(self) -> None:
+        from godmode_session_hook import _ascii_echo
+        flattened = _ascii_echo("The §6a read settles it — E-17 done…")
+        self.assertEqual(flattened, "The S.6a read settles it  -  E-17 done...")
+
+    def test_everything_else_survives_ascii(self) -> None:
+        from godmode_session_hook import _ascii_echo
+        flattened = _ascii_echo("café résumé 中文")
+        self.assertTrue(flattened.isascii())
+        self.assertIn("caf", flattened)

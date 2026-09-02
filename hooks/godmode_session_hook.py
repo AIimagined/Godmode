@@ -685,6 +685,23 @@ def _open_obligations_touched(archive: Any, reply_text: str) -> list[str]:
 
 _SENTENCE_SPLIT = re.compile(r"[.!?](?:\s+|$)")
 
+# Echoed claim text crosses a host boundary whose codepage godmode does not
+# control (field report 2026-09-02: a Windows terminal rendered a reply's
+# section sign and em dash as mojibake inside the gate's echo). The record
+# keeps the original bytes; only the ECHO is flattened to ASCII, with
+# readable stand-ins for the punctuation replies actually use.
+_ECHO_SUBSTITUTIONS = {
+    "—": " - ", "–": "-", "‘": "'", "’": "'",
+    "“": '"', "”": '"', "…": "...", "§": "S.",
+    "·": "-", "×": "x", "→": "->",
+}
+
+
+def _ascii_echo(text: str) -> str:
+    for char, stand_in in _ECHO_SUBSTITUTIONS.items():
+        text = text.replace(char, stand_in)
+    return text.encode("ascii", "replace").decode("ascii")
+
 
 def _reply_sentences(reply_text: str) -> list[str]:
     """Sentences worth judging, from a markdown-shaped reply.
@@ -1481,7 +1498,8 @@ def main(argv: list[str] | None = None) -> int:
                     "--kind obligation --subject \"<name>\" --status "
                     "closed` - otherwise they keep coming back.")
             if unsupported:
-                shown = "; ".join(f"'{s[:160]}'" for s in unsupported[:2])
+                shown = "; ".join(
+                    f"'{_ascii_echo(s)[:160]}'" for s in unsupported[:2])
                 notices.append(
                     f"godmode: {len(unsupported)} claim-shaped sentence(s) in this "
                     f"reply have nothing backing them on record: {shown}. "
@@ -1506,7 +1524,8 @@ def main(argv: list[str] | None = None) -> int:
                     if touched:
                         parked["obligations"] = touched
                     if unsupported:
-                        parked["sentences"] = [s[:200] for s in unsupported[:3]]
+                        parked["sentences"] = [
+                            _ascii_echo(s)[:200] for s in unsupported[:3]]
                     parked["session"] = _session_key(submitted)
                     echo.write_text(json.dumps(parked, ensure_ascii=False),
                                     encoding="utf-8")
@@ -1521,7 +1540,8 @@ def main(argv: list[str] | None = None) -> int:
             # other notice stays advisory in the same single object.
             done_shaped = _unrecorded_done_claims(archive, reply_text)
             if done_shaped:
-                shown = "; ".join(f"'{s[:120]}'" for s in done_shaped[:2])
+                shown = "; ".join(
+                    f"'{_ascii_echo(s)[:120]}'" for s in done_shaped[:2])
                 print(json.dumps({
                     "decision": "block",
                     "reason": (
