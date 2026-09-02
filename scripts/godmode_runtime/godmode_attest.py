@@ -991,6 +991,17 @@ def record_differential(
 # was actually run failing, not merely cited), and holding every verified
 # claim to it would be the over-gating that gets a check switched off. Only
 # claims using this vocabulary are held to the temporal shape.
+# A sweep verdict is a judgment about an upstream body of work - the claim
+# class the reading-depth bar applies to. Deliberately narrow: ordinary
+# progress claims must never trip it.
+_SWEEP_VERDICT = re.compile(
+    r"(?i)\b(?:nil-build|import verdict|swept and filed|"
+    r"no mechanism to import|filed nil-build)\b")
+_DEPTH_DECLARED = re.compile(
+    r"(?i)\b(?:readme-level|code-level|no code published|reading depth)\b")
+_SOURCE_PATH = re.compile(
+    r"(?i)(?:/blob/|/contents/|\.(?:py|js|ts|rs|go|java|rb|c|h|sh|ps1|md|json|ya?ml)\b)")
+
 _FIX_VOCAB = re.compile(
     # "fixed" after a determiner is a property, not a repair event - "one
     # fixed color", "a fixed width" (self-observed 2026-09-02: an offer of
@@ -1737,6 +1748,23 @@ def record_claim(
                 "them - this claim is the author's word about a run the "
                 "record cannot see; `godmode verify --command \"...\"` "
                 "attests it and upgrades the support")
+    # Operator challenge 2026-09-03: sweep verdicts about upstream repos
+    # were recorded from README reads with nothing naming the depth - and
+    # one code-level pass then found an importable mechanism the README
+    # never showed. Godmode cannot do the deep dive; it can refuse to let
+    # a shallow one masquerade as a verdict. A sweep-verdict claim either
+    # cites a source actually read (a path-shaped url:/doc: citation) or
+    # declares its reading depth in its own words.
+    if _SWEEP_VERDICT.search(text) and not _DEPTH_DECLARED.search(text):
+        source_read = any(
+            str(c).startswith(("url:", "doc:")) and _SOURCE_PATH.search(str(c))
+            for c in citations)
+        if not source_read:
+            advisories.append(
+                "a sweep verdict with no source read on record - cite the "
+                "upstream files actually read (url:<path to a source file>) "
+                "or state the reading depth (README-level, code-level, "
+                "no code published) in the claim itself")
     if grade == "verified" and fix_claim:
         session_has_criterion = any(
             record["data"].get("session") == session

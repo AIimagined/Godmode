@@ -1,0 +1,1 @@
+A sweep verdict about an upstream repo now names its own reading depth: recorded with no path-shaped source citation and no declared depth (README-level, code-level, no code published), the claim carries an advisory saying so - a shallow read may be the right call, but it may not masquerade as a code-verified verdict (operator challenge, 2026-09-03).

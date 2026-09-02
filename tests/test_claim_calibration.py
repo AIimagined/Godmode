@@ -418,3 +418,50 @@ class UnbackedCommandCiteTests(unittest.TestCase):
             advisories = record.get("data", record).get("advisories", [])
             self.assertFalse(any("no attestation" in a for a in advisories),
                              advisories)
+
+
+class SweepDepthTests(unittest.TestCase):
+    """Operator challenge 2026-09-03: sweep verdicts were recorded from
+    README reads with nothing naming the depth. The verdict class now
+    demands either a cited source read or a declared reading depth."""
+
+    def _claim(self, archive, project, text, cites):
+        from godmode_runtime.godmode_attest import record_claim
+        record = record_claim(archive, project, "S", text, "observed",
+                              cites=cites)
+        return record.get("data", record).get("advisories", [])
+
+    def test_verdict_without_source_read_is_named(self) -> None:
+        from test_godmode_runtime import isolated_project
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            advisories = self._claim(
+                archive, project,
+                "the upstream repo is swept and filed nil-build with two corroborations",
+                ["file:README.md"])
+            self.assertTrue(any("reading depth" in a for a in advisories),
+                            advisories)
+
+    def test_cited_source_file_is_clean(self) -> None:
+        from test_godmode_runtime import isolated_project
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            advisories = self._claim(
+                archive, project,
+                "the upstream repo is swept and filed nil-build after a code read",
+                ["url:upstream/blob/main/hooks/session-start.sh",
+                 "file:README.md"])
+            self.assertFalse(any("reading depth" in a for a in advisories),
+                             advisories)
+
+    def test_declared_depth_is_clean(self) -> None:
+        from test_godmode_runtime import isolated_project
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            advisories = self._claim(
+                archive, project,
+                "the upstream repo is swept and filed nil-build, README-level: "
+                "it is out of our lane entirely",
+                ["file:README.md"])
+            self.assertFalse(any("reading depth" in a for a in advisories),
+                             advisories)
