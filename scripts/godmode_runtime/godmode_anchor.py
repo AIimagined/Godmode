@@ -417,10 +417,31 @@ def host_capabilities(*, tool_call_interception: str | None = None) -> dict[str,
         # anyone who exported the variable by hand.
         "tool_call_interception": interception,
     }
+    # Field battery 2026-09-03 ("HARD controls can be misleading"): a
+    # control whose refusal happens inside the CLI workflow cannot outrank
+    # the host's interception reality - an agent acting outside the CLI is
+    # never seen by it. The grade is capped, and the cap says why: "the
+    # CLI refused this" and "the host prevented this" are different claims.
+    _CLI_BOUND = ("attestation_gate", "claim_downgrade",
+                  "plan_mode_mutation_gate", "status_reopen_guard",
+                  "authority_claim_detection")
+    capped: dict[str, str] = {}
+    if interception != "HARD":
+        for name in _CLI_BOUND:
+            if controls.get(name) == "HARD":
+                controls[name] = "HARD-IN-CLI"
+                capped[name] = (
+                    "HARD logic, but tool_call_interception is "
+                    f"{interception}: this control refuses inside the CLI "
+                    "workflow and cannot stop an action taken outside it")
     return {
         "host": host,
         "interactive": interactive,
         "controls": controls,
+        "capped": capped,
+        "enforcement_distinction": (
+            "HARD = the host prevented it; HARD-IN-CLI = the CLI refused "
+            "it, the host could not have; SOFT = surfaced after the fact"),
         "unavailable": sorted(k for k, v in controls.items() if v == "UNAVAILABLE"),
         "note": "UNAVAILABLE controls are not enforced here; claims resting on them stay unverified",
     }
