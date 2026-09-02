@@ -1,1 +1,0 @@
-`godmode docs --emit-rules cursor|copilot|generic` renders the doctrine, red flags, and When rules into a host's instruction-file format from the same canonical constants the session brief injects - one source, generated never hand-edited, so a hook-less host reads the identity block through the one surface it actually loads.

@@ -1,1 +1,0 @@
-The claim advisory no longer judges reported speech - "the vendor claims X" describes someone else's assertion (field reports 9 and 11); "reports"/"documents" stay out of the frame list so "the suite reports zero failures" is still this agent's own claim.

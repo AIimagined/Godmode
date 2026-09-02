@@ -1,1 +1,0 @@
-The stop gate's echoed claim text is flattened to ASCII with readable stand-ins (em dash to hyphen, section sign to "S.") before it crosses the host boundary - a Windows terminal decoding with its own codepage rendered the echo as mojibake (field report, 2026-09-02). The archive record keeps the original text; only the echo is flattened.

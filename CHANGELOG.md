@@ -6,6 +6,36 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.3.12] - 2026-09-02
+
+### Added
+
+- The skill lint gains a bundle facet: a markdown link asserting a bundle path that does not exist is a dead link, and a bundled file no reference reaches is an orphan - a skill is a directory graph, and nothing audited it before. Backticked paths count as references when they resolve and stay silent when they do not (prose legitimately names plugin-root paths); convention-loaded files (the evals suite, host adapter manifests) are reachable by name. Dogfooding the facet found and fixed one real orphan in godmode's own primary skill.
+- `godmode digest [--since N]` tells the archive as dated prose: sessions, incidents with failure classes and turning points, claims and their resolutions with scores, lessons with their guards, versions, checkpoints - assembled verbatim from record fields with no model and no paraphrase, so the same archive always renders the same story. Views answer what the state is; the digest answers what happened.
+- The push preflight scans commit history for private terms in addition to the tree (reproduce: commit a listed term, scrub it, run `godmode precheck --preflight` - the history-terms finding remains, because a deletion diff still shows the deleted name and commit messages were previously unscanned). Counts and commit references, never the term; the finding states that removal requires a history rewrite.
+- The advisory posture is now a declared knob: `nag_posture` in the authorization policy accepts quiet (advisory class silenced wholesale - claim advisories, nags, nudges; the block gates never read the flag, because enforcement is not an advisory), standard (the default), or strict (advisory thresholds tightened - the green streak fires at two consecutive passes). Any other value refuses loudly at policy validation. Also two splitter refinements from field reports: markdown headings are labels, never claims, and quoted completion words are mentions, never this session's declarations.
+- Quantities that disagree now get named at write time: a claim carrying a bare number, recorded over a recent same-subject claim carrying a different number, draws an advisory quoting both figures and the two honest exits (resolve the elder superseded, or state what differs). Advisory and pre-write, never a block - the new number is usually the correction; what could not continue was the pair coexisting silently.
+- The session brief carries a red-flags table beside the doctrine: the six thoughts that precede violations, each mapped to its reality - "too simple to record", "I remember how this works", "one more rerun to be sure", "the definition says it does not run", "every probe returned zero", "the lesson does not apply here". Rationalization detection as a lookup, not willpower; rows sourced from recorded field lessons.
+- `godmode docs --emit-rules cursor|copilot|generic` renders the doctrine, red flags, and When rules into a host's instruction-file format from the same canonical constants the session brief injects - one source, generated never hand-edited, so a hook-less host reads the identity block through the one surface it actually loads.
+- Obligations gain a `--standing` flag for per-task duties that have no subject to match: a standing obligation surfaces at every stop unconditionally, leads ahead of the notice cap, and survives the quiet posture - an operator-mandated per-task duty is definition-of-done, not advisory. Built from a recorded field pair where exactly such a duty, though recorded, died on every long turn because nothing fired mid-session.
+- Godmode joins the terminal badge row: the session-start hook caches the enforcement marker to `~/.claude/godmode-statusline.txt` and the shipped `adapters/statusline/godmode-statusline.ps1` prints it in milliseconds - `[GODMODE ✓]` proven, `[GODMODE ~]` partial, `[GODMODE ?]` soft, `[GODMODE !]` unavailable (the badge wears the full name). Wire the script into the host's statusLine command chain beside other segments; the cache means a statusline render never pays a CLI start.
+- `godmode topology` maps the archive's record-kind transitions per session and names the ones seen mostly in sessions that ended with an incident or failed resolution - counts and shares from the local record, association not cause, and an honest refusal below four sessions.
+- A claim below the verified grade that cites a command with no attestation behind it now says so in its own advisories - "observed" never silently reads as "checked" (field report, 2026-09-02).
+- godmode verify accepts --timeout so a legitimate long check - a full suite attestation - can declare its own budget instead of dying at the fixed 900s default.
+
+### Changed
+
+- The statusline badge wears the full GODMODE label and is colored by its enforcement marker - lime proven, green partial (operator-picked), dim soft, red unavailable - so the grade reads at a glance; GODMODE_STATUSLINE_COLOR=off restores monochrome.
+
+### Fixed
+
+- The claim advisory no longer judges reported speech - "the vendor claims X" describes someone else's assertion (field reports 9 and 11); "reports"/"documents" stay out of the frame list so "the suite reports zero failures" is still this agent's own claim.
+- The skill bundle facet no longer carries a remote-URL literal in its external-link skip - the runtime privacy scan forbids those in source, and it was right.
+- The stop gate's echoed claim text is flattened to ASCII with readable stand-ins (em dash to hyphen, section sign to "S.") before it crosses the host boundary - a Windows terminal decoding with its own codepage rendered the echo as mojibake (field report, 2026-09-02). The archive record keeps the original text; only the echo is flattened.
+- The stop gate no longer judges fenced code blocks (a reply SHOWS code, it does not state it) or sentences that open on a condition - both were observed arming the completion gate on an offered shell one-liner and on "that works too" advice.
+- `godmode remember` now accepts the whole record as one quoted string, the way `claim` always has - the subject is derived from the opening words. An agent that dictated an incident in prose used to hit a usage error and the incident never reached the record (field report, 2026-09-02); a refusal that loses the record is worse than a derived subject.
+- The routing-stability digest normalizes line endings before hashing (reproduce: write the snapshot on a CRLF checkout, run `python -m unittest tests.test_routing_stability` on an LF checkout - it stays green where all six CI legs previously read suites-changed). A line-ending equivalence test pins the class.
+
 ## [0.3.11] - 2026-09-02
 
 ### Added
