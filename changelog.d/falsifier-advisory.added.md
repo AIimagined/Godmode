@@ -1,1 +1,0 @@
-A hypothesis-grade claim that names no falsifier draws an advisory asking for the one command or observation that would refute it (`--refuted-by`) - a theory nothing could kill is a story, not a finding.

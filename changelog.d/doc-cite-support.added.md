@@ -1,1 +1,0 @@
-A doc: citation naming a local file is now content-checked against the claim: zero salient overlap draws an advisory below the verified grade and a downgrade at it - a citation that merely exists is decoration, not support. "Any citation passes" was the field's sharpest trust complaint, twice.
