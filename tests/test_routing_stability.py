@@ -48,3 +48,15 @@ class RoutingStabilityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LineEndingTests(unittest.TestCase):
+    def test_the_digest_ignores_checkout_line_endings(self) -> None:
+        # A Windows checkout hashes CRLF bytes, CI hashes LF - the digest
+        # must see suite CONTENT, not the checkout's line-ending choice.
+        import hashlib
+        payload_lf = b'{"a": 1}\n{"b": 2}\n'
+        payload_crlf = payload_lf.replace(b"\n", b"\r\n")
+        digest = lambda raw: hashlib.sha256(
+            raw.replace(b"\r\n", b"\n")).hexdigest()
+        self.assertEqual(digest(payload_lf), digest(payload_crlf))

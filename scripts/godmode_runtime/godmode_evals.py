@@ -967,7 +967,11 @@ def routing_stability(project: Path, write: bool = False) -> dict[str, Any]:
     project = Path(project)
     suites_digest = _hashlib.sha256()
     for path in sorted((project / "skills").glob("*/godmode-evals.json")):
-        suites_digest.update(path.read_bytes())
+        # CRLF-normalized before hashing - the decision-table lesson,
+        # applied late: a checkout's line endings are not suite content,
+        # and the first CI run against a Windows-written snapshot proved
+        # it on all six matrix legs at once (2026-09-02).
+        suites_digest.update(path.read_bytes().replace(b"\r\n", b"\n"))
     digest = suites_digest.hexdigest()[:16]
 
     current = run_routing_evals(project)
