@@ -1,0 +1,1 @@
+A correction-shaped prompt - the operator catching a miss - draws a once-per-session nudge to record the miss as an incident while the evidence is fresh: the largest lesson source in every field corpus is the operator catch, and the catch-moment is when it enters the record or evaporates.

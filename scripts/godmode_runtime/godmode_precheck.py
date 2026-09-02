@@ -572,6 +572,16 @@ _PROMPT_SHAPES = (
                               r"anything\s+pending|what.s\s+left)\b"),
      "godmode: done-check - `godmode status remaining` lists the frontier "
      "with evidence tiers; declared and verified are different columns."),
+    # The largest lesson source in every field corpus is the operator's
+    # own catch - and the catch-moment is when the evidence is freshest.
+    ("correction", re.compile(
+        r"(?i)(?:\bthat.s\s+(?:wrong|incorrect|not\s+right)\b|"
+        r"\bwhy\s+(?:did|do|have|are)\s+you\s+(?:miss|not|skip|ignor)|"
+        r"\byou\s+(?:did\s*n[o']t|missed|forgot|skipped|ignored)\b|"
+        r"\bnot\s+what\s+i\s+asked\b|\bwrong\s+again\b)"),
+     "godmode: the operator caught a miss - record it while the evidence "
+     "is fresh (`godmode remember --kind incident \"<what happened>\"`); "
+     "a miss that recurs earns a guard, not another apology."),
 )
 
 
