@@ -1,0 +1,1 @@
+The shipped package compiles with zero SyntaxWarnings, pinned by a test that compiles every source file with warnings as errors - 0.3.12 printed one on first import from a stray non-raw escape, observed by the operator minutes after installing.
