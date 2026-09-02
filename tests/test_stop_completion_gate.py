@@ -169,3 +169,26 @@ class SoftenedDodgeTests(unittest.TestCase):
                 "cwd": str(project), "stop_hook_active": True})
             self.assertIn("passed by rewording", first.stdout)
             self.assertNotIn("passed by rewording", second.stdout)
+
+
+class ProgressReportTests(unittest.TestCase):
+    """Honest mid-task updates are not completion declarations - a
+    sentence carrying its own incompleteness marker skips the gate."""
+
+    def test_progress_update_is_not_blocked(self) -> None:
+        with _project() as (project, state, _archive):
+            transcript = _transcript(
+                project, "The suite is complete so far; the catalog check "
+                         "is still running and the render is awaiting it.")
+            done = _run(project, state, {
+                "transcript_path": str(transcript), "session_id": "S1",
+                "cwd": str(project)})
+            self.assertNotIn('"block"', done.stdout)
+
+    def test_plain_done_still_blocks(self) -> None:
+        with _project() as (project, state, _archive):
+            transcript = _transcript(project, DONE_CLAIM)
+            done = _run(project, state, {
+                "transcript_path": str(transcript), "session_id": "S1",
+                "cwd": str(project)})
+            self.assertIn('"block"', done.stdout)
