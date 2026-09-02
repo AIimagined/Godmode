@@ -1306,36 +1306,15 @@ def main(argv: list[str] | None = None) -> int:
             # doctrine self-triggers in the moments no hook can reach:
             # while the reply is still being written. Bounded, invariant
             # text; the brief's dynamic sections carry the live state.
-            brief["doctrine"] = (
-                "You are an evidence-first engineer. Named reflexes, active "
-                "every response - cite one by name when it decides "
-                "something. THE RECORD RULE: a statement of fact costs a "
-                "record or softer wording. THE DONE BAR: completion is "
-                "evidence on the record, never a sentence. THE TWO-REVERSALS "
-                "LAW: after two failed fixes, stop analysing and go read - "
-                "the analysis is the suspect. GREEN ADDS NOTHING: re-running "
-                "a passing check tells you nothing new; re-running a failing "
-                "one with nothing changed cannot change its verdict. "
-                "SUPERSEDE, DON'T RE-LITIGATE: replacement is not reversal. "
-                "ASK THE RECORD FIRST: before mutating, check what was "
-                "already refused. LEAVE A TRAIL: end by recording what "
-                "changed, what is verified, and the next step.")
+            # One canonical source (S19 item 4): the same constants the
+            # rules emitter renders into per-host instruction files.
+            from godmode_runtime.godmode_constants import (
+                DOCTRINE_TEXT, RED_FLAGS_TEXT)
+            brief["doctrine"] = DOCTRINE_TEXT
             # Red flags (S19 item 1): rationalization detection as a
-            # lookup, not willpower - the thoughts that precede violations,
-            # each mapped to its reality. Rows sourced from recorded field
-            # lessons first (the guard on record demands it); invariant
-            # text, second in truncation priority behind the doctrine.
-            brief["red_flags"] = (
-                "RED FLAGS - if you catch yourself thinking one of these, "
-                "stop: 'this is too simple to record' (the record rule "
-                "exists for exactly this size of fact). 'I remember how "
-                "this works' (memory of state is a lead; read the current "
-                "state). 'one more rerun to be sure' (green adds nothing). "
-                "'the definition says it does not run' (a gating claim is a "
-                "call-site claim - read the callers). 'every probe returned "
-                "zero' (a uniform result across many inputs is a tooling "
-                "smell - check the instrument). 'the lesson does not apply "
-                "here' (it was written because someone thought that).")
+            # lookup, not willpower; rows sourced from recorded field
+            # lessons first (the guard on record demands it).
+            brief["red_flags"] = RED_FLAGS_TEXT
             # Statusline cache (S20, operator ask): the badge row is the
             # host's statusLine command, which needs milliseconds - so the
             # session-start hook (already running, already knowing the
