@@ -56,3 +56,28 @@ class SeparatorTableTests(unittest.TestCase):
             "Gates green: tsc 0 · suite 3706 pass · parity 97/97.\n"
             "The build finished cleanly after the fix.")
         self.assertEqual(sentences, ["The build finished cleanly after the fix"])
+
+
+class HeadingAndQuoteTests(unittest.TestCase):
+    def test_markdown_headings_are_labels_not_claims(self) -> None:
+        # Field report 8: '## What upstream shipped and where it lands'
+        # is a section title; "shipped" in a heading must not arm the gate.
+        sentences = _reply_sentences(
+            "## What upstream shipped and where it lands for us\n"
+            "The build finished cleanly after the fix.")
+        self.assertEqual(sentences, ["The build finished cleanly after the fix"])
+
+    def test_quoted_completion_vocab_is_not_a_claim(self) -> None:
+        # The quoted-vocab false positive (threshold met): an agent that
+        # confidently declared "fixed" is a hypothetical, not this
+        # session's claim.
+        sentences = _reply_sentences(
+            'An agent that confidently declared "fixed" and was wrong '
+            'burned trust badly there.')
+        self.assertEqual(len(sentences), 1)
+        import sys as _s
+        hooks_dir = str(Path(__file__).resolve().parents[1] / "hooks")
+        if hooks_dir not in _s.path:
+            _s.path.insert(0, hooks_dir)
+        from godmode_session_hook import _strip_quoted
+        self.assertNotIn("fixed", _strip_quoted(sentences[0]))

@@ -547,6 +547,10 @@ def _marginal_return_nudges(archive: Any, submitted: dict,
     except Exception:  # noqa: BLE001
         return []
     mutations = timeline.get("mutation_turns") or []
+    # S19 item 2: posture scales the advisory thresholds - strict fires
+    # the streak at two, standard at three; quiet is handled by the
+    # caller, which drops the advisory class wholesale.
+    streak_bar = 2 if _nag_posture(archive) == "strict" else 3
     green_streak = 0
     stale_retry = 0
     for entries in (timeline.get("commands") or {}).values():
@@ -557,7 +561,7 @@ def _marginal_return_nudges(archive: Any, submitted: dict,
             if code == 0:
                 run_start = turn if run == 0 else run_start
                 run += 1
-                if run >= 3 and not any(run_start < m < turn for m in mutations):
+                if run >= streak_bar and not any(run_start < m < turn for m in mutations):
                     green_streak = max(green_streak, run)
             else:
                 run = 0
@@ -684,7 +688,12 @@ def _reply_sentences(reply_text: str) -> list[str]:
     """
     found: list[str] = []
     for raw_line in reply_text.splitlines():
-        line = raw_line.strip().lstrip("-*#>").strip()
+        stripped = raw_line.strip()
+        # A markdown heading is a section label, not a statement (field
+        # report 8: a title containing 'shipped' armed the gate).
+        if stripped.startswith("#"):
+            continue
+        line = stripped.lstrip("-*>").strip()
         if not line or "|" in line or line.count("·") >= 2:
             continue
         for chunk in _SENTENCE_SPLIT.split(line):
@@ -720,6 +729,32 @@ _COMPLETION_VOCAB = re.compile(
     r"all\s+tests\s+pass(?:ed)?)\b")
 
 
+def _nag_posture(archive: Any) -> str:
+    """The declared advisory posture: quiet, standard (default), strict.
+
+    Read from the validated policy (the sentinel refuses unknown values
+    loudly); any failure to read is standard, never quiet - a broken
+    policy must not silence the advisories.
+    """
+    try:
+        from godmode_runtime.godmode_sentinel import local_authorization_policy
+
+        return str(local_authorization_policy(archive).get(
+            "nag_posture", "standard"))
+    except Exception:  # noqa: BLE001
+        return "standard"
+
+
+_QUOTED_SPAN = re.compile("\"[^\"]{1,80}\"|‘[^’]{1,80}’|“[^”]{1,80}”")
+
+
+def _strip_quoted(sentence: str) -> str:
+    """Quoted spans are mentions, not claims: an agent that declared
+    "fixed" inside a hypothetical is not this session declaring a fix
+    (the quoted-vocab false positive, threshold met 2026-09-02)."""
+    return _QUOTED_SPAN.sub(" ", sentence)
+
+
 def _unrecorded_done_claims(archive: Any, reply_text: str) -> list[str]:
     """DONE-shaped sentences in the reply with no claim record behind them.
 
@@ -740,9 +775,10 @@ def _unrecorded_done_claims(archive: Any, reply_text: str) -> list[str]:
         return []
     found: list[str] = []
     for sentence in _reply_sentences(reply_text):
-        if not (_COMPLETION_VOCAB.search(sentence)
-                or looks_like_fix_claim(sentence)[0]
-                or looks_like_pass_verdict(sentence)[0]):
+        judged = _strip_quoted(sentence)
+        if not (_COMPLETION_VOCAB.search(judged)
+                or looks_like_fix_claim(judged)[0]
+                or looks_like_pass_verdict(judged)[0]):
             continue
         if _normalise(sentence) in recorded:
             continue
@@ -1414,8 +1450,13 @@ def main(argv: list[str] | None = None) -> int:
             reply_text = _final_reply_text(submitted)
             if not reply_text:
                 return 0
-            unsupported = _unrecorded_claims(archive, reply_text)
-            touched = _open_obligations_touched(archive, reply_text)
+            # S19 item 2: quiet posture drops the ADVISORY class wholesale
+            # - claim advisories, nags, nudges, echo parking. The block
+            # gates below never read this flag: enforcement is not an
+            # advisory, and quiet must never mean unguarded.
+            quiet = _nag_posture(archive) == "quiet"
+            unsupported = [] if quiet else _unrecorded_claims(archive, reply_text)
+            touched = [] if quiet else _open_obligations_touched(archive, reply_text)
             # The investigation nudge: the timeline the temporal claim check
             # already reads also carries the fix-loop shape - one command
             # red three times with mutations between the failures. That
@@ -1424,7 +1465,7 @@ def main(argv: list[str] | None = None) -> int:
             # rounds, 2026-08-31, proved willpower is not a control).
             # Counts and points only; the timeline stores digests, so the
             # command text never appears (the 4018 privacy decision).
-            nudge = _investigation_nudge(archive, submitted)
+            nudge = None if quiet else _investigation_nudge(archive, submitted)
             # One stdout object or nothing: the host parses hook stdout as a
             # single JSON value, and two valid objects concatenated read as
             # "looks like JSON but is not valid JSON" - the whole delivery
@@ -1434,8 +1475,9 @@ def main(argv: list[str] | None = None) -> int:
             notices: list[str] = []
             if nudge:
                 notices.append(nudge)
-            notices.extend(_marginal_return_nudges(
-                archive, submitted, _session_key(submitted)))
+            if not quiet:
+                notices.extend(_marginal_return_nudges(
+                    archive, submitted, _session_key(submitted)))
             if touched:
                 notices.append(
                     "godmode: this reply relates to unfinished "

@@ -4058,6 +4058,16 @@ class CapabilityBroker:
             ):
                 raise AuthorizationError("approval_required must be a list of category names")
             policy["approval_required"] = tuple(approval)
+        # S19 item 2: nag posture. quiet silences the ADVISORY class only
+        # (the block gates never read this key - enforcement is not an
+        # advisory); strict halves advisory thresholds. Any other value
+        # refuses loudly, same as every key in this file.
+        posture = raw.get("nag_posture")
+        if posture is not None:
+            if posture not in ("quiet", "standard", "strict"):
+                raise AuthorizationError(
+                    "nag_posture must be 'quiet', 'standard', or 'strict'")
+            policy["nag_posture"] = posture
         # S16 (E56): declarative per-tool gates - approval demanded at the
         # tool's DECLARATION. Tighten-only like everything in this file:
         # only "ask" and "deny" survive validation; any other value refuses
