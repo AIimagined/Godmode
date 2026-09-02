@@ -2409,17 +2409,29 @@ def cmd_checkpoint(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 def cmd_checklist_update(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     if args.status in {"complete", "done"} and not args.evidence:
         raise ArchiveError("A completed checklist item requires --evidence")
-    return CommandResult(
-        {
-            "record": _append(
-                runtime,
-                "checklist",
-                args.item,
-                {"status": args.status, "note": args.note},
-                args.evidence,
-            )
-        }
-    )
+    payload: dict[str, Any] = {
+        "record": _append(
+            runtime,
+            "checklist",
+            args.item,
+            {"status": args.status, "note": args.note},
+            args.evidence,
+        )
+    }
+    # A row with no runnable command is a suggestion, not a gate (field
+    # corpus, 2026-09-03): a complete row whose evidence is all prose or
+    # file paths cannot be re-proved by anyone later. Advisory, never a
+    # refusal - some rows are legitimately human-verified.
+    if args.status in {"complete", "done"}:
+        runnable = any(
+            str(cite).startswith(("cmd:", "seq:"))
+            for cite in (args.evidence or []))
+        if not runnable:
+            payload["advisories"] = [
+                "no runnable command in this row's evidence - a row nobody "
+                "can re-run is a suggestion, not a gate; add cmd:<the check "
+                "that re-proves it> or seq:<its attestation> when one exists"]
+    return CommandResult(payload)
 
 
 def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:

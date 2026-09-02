@@ -2582,3 +2582,46 @@ class StagedReleaseWindowTests(unittest.TestCase):
             {"surface": "latest git tag", "version": "0.3.11"},
         ]
         self.assertFalse(_release_staged(surfaces))
+
+
+class RunnableChecklistTests(unittest.TestCase):
+    """A complete row with no runnable-command evidence is a suggestion,
+    not a gate - named at write time, never refused."""
+
+    def test_prose_evidence_draws_the_advisory(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            from godmode_runtime.godmode_console import main
+            import io, json as _json
+            from contextlib import redirect_stdout
+            out = io.StringIO()
+            with redirect_stdout(out):
+                main(["--project", str(project), "checklist", "update",
+                      "--item", "release notes reviewed", "--status",
+                      "complete", "--evidence", "file:docs/notes.md"])
+            self.assertIn("no runnable command", out.getvalue())
+
+    def test_cmd_evidence_is_clean(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            from godmode_runtime.godmode_console import main
+            import io
+            from contextlib import redirect_stdout
+            out = io.StringIO()
+            with redirect_stdout(out):
+                main(["--project", str(project), "checklist", "update",
+                      "--item", "suite green", "--status", "complete",
+                      "--evidence", "cmd:python -m unittest discover"])
+            self.assertNotIn("no runnable command", out.getvalue())
+
+    def test_pending_rows_stay_silent(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            from godmode_runtime.godmode_console import main
+            import io
+            from contextlib import redirect_stdout
+            out = io.StringIO()
+            with redirect_stdout(out):
+                main(["--project", str(project), "checklist", "update",
+                      "--item", "pending row", "--status", "active"])
+            self.assertNotIn("no runnable command", out.getvalue())
