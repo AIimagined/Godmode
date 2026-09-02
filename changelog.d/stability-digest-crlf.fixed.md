@@ -1,0 +1,1 @@
+The routing-stability digest normalizes line endings before hashing (reproduce: write the snapshot on a CRLF checkout, run `python -m unittest tests.test_routing_stability` on an LF checkout - it stays green where all six CI legs previously read suites-changed). A line-ending equivalence test pins the class.
