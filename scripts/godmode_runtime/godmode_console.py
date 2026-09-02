@@ -2483,6 +2483,12 @@ def cmd_loop_contract(args: argparse.Namespace, runtime: Runtime) -> CommandResu
     return CommandResult({"record": _event_view(record)})
 
 
+def cmd_topology(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    _require_archive(runtime)
+    from .godmode_topology import trace_topology
+    return CommandResult(trace_topology(runtime.archive))
+
+
 def cmd_digest(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     from .godmode_digest import render_digest
@@ -4942,6 +4948,12 @@ def _build_parser() -> argparse.ArgumentParser:
     _evidence(remember)
     remember.set_defaults(handler=cmd_remember)
 
+    topology_parser = sub.add_parser(
+        "topology",
+        help="The archive's record-kind transitions as a map - transitions "
+             "seen mostly in failing sessions are named as warnings; "
+             "association, not cause")
+    topology_parser.set_defaults(handler=cmd_topology)
     digest_parser = sub.add_parser(
         "digest",
         help="The archive told as dated prose - what happened, in order, "
