@@ -56,6 +56,58 @@ def _findings(project: Path, target: Path) -> list[str]:
     return out
 
 
+def _impact_brief(project: Path, target: Path, session: str) -> str | None:
+    """The recorded neighbors of an edited file, pushed at the edit moment.
+
+    Blast radius is queryable (`context why --about X`) but pull-only -
+    nothing surfaced the invariants, incidents, and prior fixes touching a
+    surface until after the regression (operator directive, 2026-09-03).
+    Once per file per session, one line, fail-silent: an advisory must
+    never block or slow an edit visibly.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    try:
+        from godmode_runtime.godmode_anchor import resolve_anchor
+        from godmode_runtime.godmode_chronicle import Chronicle
+        archive = Chronicle(resolve_anchor(project))
+        if not archive.initialized():
+            return None
+        try:
+            relative = target.resolve().relative_to(
+                project.resolve()).as_posix()
+        except ValueError:
+            return None
+        seen_path = archive.root / "godmode-impact-seen.json"
+        try:
+            seen = json.loads(seen_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            seen = {}
+        key = f"{session}:{relative}"
+        if seen.get(key):
+            return None
+        needle = f"file:{relative}"
+        newest: dict | None = None
+        count = 0
+        for record in archive.select(limit=500):
+            if record.get("kind") not in ("invariant", "incident", "lesson",
+                                          "claim"):
+                continue
+            if any(str(cite).startswith(needle)
+                   for cite in record.get("evidence") or []):
+                count += 1
+                newest = record
+        if not newest:
+            return None
+        seen[key] = True
+        seen_path.write_text(json.dumps(seen), encoding="utf-8")
+        return (f"godmode: {relative} carries {count} recorded fact(s) - "
+                f"newest: '{str(newest.get('subject', ''))[:70]}' "
+                f"(seq {newest.get('sequence')}); `godmode context why "
+                f"--about {relative}` lists what a change here can regress")
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def main() -> int:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
@@ -64,19 +116,27 @@ def main() -> int:
     if not isinstance(payload, dict):
         return 0
     project = Path(str(payload.get("cwd") or "."))
-    if not _enabled(project):
-        return 0
     tool_input = payload.get("tool_input") or {}
     file_path = tool_input.get("file_path") or tool_input.get("path") or ""
     if not file_path:
         return 0
-    lines = _findings(project, Path(str(file_path)))
-    if not lines:
+    messages: list[str] = []
+    session = str(payload.get("session_id") or "tp")
+    impact = _impact_brief(project, Path(str(file_path)), session)
+    if impact:
+        messages.append(impact)
+    if _enabled(project):
+        lines = _findings(project, Path(str(file_path)))
+        if lines:
+            shown = lines[:CAP]
+            if len(lines) > CAP:
+                shown.append(f"... {len(lines) - CAP} more; `godmode quality "
+                             "--format editor` lists all")
+            messages.append("godmode quality (post-edit, advisory):\n"
+                            + "\n".join(shown))
+    if not messages:
         return 0
-    shown = lines[:CAP]
-    if len(lines) > CAP:
-        shown.append(f"... {len(lines) - CAP} more; `godmode quality --format editor` lists all")
-    print(json.dumps({"systemMessage": "godmode quality (post-edit, advisory):\n" + "\n".join(shown)}))
+    print(json.dumps({"systemMessage": "\n".join(messages)}))
     return 0
 
 
