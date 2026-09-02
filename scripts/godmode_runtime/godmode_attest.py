@@ -1722,6 +1722,21 @@ def record_claim(
     # mutating R3+ commands (git branch -D) are not counted as mutations.
     # Wire to classify_action tiers when a task owns the sentinel.
     advisories: list[str] = []
+    # Field report 2026-09-02: an observed-grade claim citing a command that
+    # was never attested recorded clean - "zero advisories on a claim it
+    # cannot check". The verified ladder above downgrades; below verified,
+    # the same gap is at least NAMED, so "observed" never silently reads as
+    # "checked". Advisory, not downgrade: observed is already the
+    # self-report tier, but the reader deserves to know which part of the
+    # support is words.
+    if grade != "verified":
+        unbacked = [c for c in cmd_citations if c in unresolved]
+        if unbacked:
+            advisories.append(
+                f"{len(unbacked)} cmd citation(s) have no attestation behind "
+                "them - this claim is the author's word about a run the "
+                "record cannot see; `godmode verify --command \"...\"` "
+                "attests it and upgrades the support")
     if grade == "verified" and fix_claim:
         session_has_criterion = any(
             record["data"].get("session") == session
