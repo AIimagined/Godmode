@@ -150,3 +150,22 @@ class AdjectivalFixedTests(unittest.TestCase):
                        "the bug is fixed now",
                        "commit 83eb0e3 fixed both defects"):
             self.assertTrue(looks_like_fix_claim(phrase)[0], phrase)
+
+
+class AttributedSpeechTests(unittest.TestCase):
+    """Field reports 9 and 11: "the vendor claims X" describes someone
+    else's assertion; the advisory judged it as this agent's claim."""
+
+    def test_reported_speech_is_skipped(self) -> None:
+        import godmode_session_hook as hook
+        for s in ("The vendor claims the API is thread-safe with 3 retries",
+                  "Their changelog says the bug was fixed in 2.1",
+                  "The paper states a 54% drop across 100 runs"):
+            self.assertIsNotNone(hook._ATTRIBUTED_SPEECH.match(s), s)
+
+    def test_own_assertions_are_not_reported_speech(self) -> None:
+        import godmode_session_hook as hook
+        for s in ("The suite reports zero failures across 205 modules",
+                  "All 42 tests pass on the new branch",
+                  "I measured 180ms on this archive"):
+            self.assertIsNone(hook._ATTRIBUTED_SPEECH.match(s), s)
