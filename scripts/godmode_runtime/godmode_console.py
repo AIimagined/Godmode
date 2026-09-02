@@ -3826,6 +3826,13 @@ def cmd_experiment_verdict(args: argparse.Namespace, runtime: Runtime) -> Comman
     )
 
 
+def cmd_skill_names(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    from .godmode_forge import lint_skill_names
+    root = Path(runtime.anchor.project_root) / args.root
+    report = lint_skill_names(root)
+    return CommandResult(report, exit_code=0 if report["passed"] else 1)
+
+
 def cmd_skill_validate(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult(validate_skill(args.path))
 
@@ -5593,6 +5600,12 @@ def _build_parser() -> argparse.ArgumentParser:
     skill_validate = skill_sub.add_parser("validate")
     skill_validate.add_argument("--path", required=True)
     skill_validate.set_defaults(handler=cmd_skill_validate)
+    skill_names = skill_sub.add_parser(
+        "names", help="Project-wide skill-name collision check - the host "
+                      "resolves a collision silently, keeping one twin")
+    skill_names.add_argument("--root", default="skills",
+                             help="Skills directory (default: skills)")
+    skill_names.set_defaults(handler=cmd_skill_names)
     skill_lint = skill_sub.add_parser(
         "lint", help="Three structural facets: scope, delivery, safety; verdict is structural only")
     skill_lint.add_argument("--path", required=True)
