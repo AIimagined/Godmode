@@ -186,7 +186,7 @@ class RequestTurnSurfaceTests(unittest.TestCase):
                 capture_output=True, text=True, encoding="utf-8",
                 errors="replace", timeout=180, env=dict(os.environ))
             self.assertEqual(done.returncode, 0, done.stderr)
-            self.assertIn("stated request", done.stdout or "")
+            self.assertIn("operator ask '", done.stdout or "")
 
     def test_a_closed_request_stays_silent(self) -> None:
         import json
@@ -271,3 +271,30 @@ class StandingObligationTests(unittest.TestCase):
                             "status": "closed"})
             done = self._stop(archive)
             self.assertNotIn("per-task effectiveness report", done.stdout or "")
+
+
+class RequestRenderingTests(unittest.TestCase):
+    """Field report 2026-09-03: 'ask:<hash> (about: sorted, bag)' is not
+    actionable. The notice now carries the keywords in spoken order plus
+    the paste-ready closure command; the raw prompt stays unstored."""
+
+    def test_touched_request_renders_phrase_and_closure(self) -> None:
+        import sys as _sys
+        from pathlib import Path as _P
+        _sys.path.insert(0, str(_P(__file__).parent))
+        from test_godmode_runtime import isolated_project
+        import godmode_session_hook as hook
+        from godmode_runtime.godmode_requests import record_request
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            record_request(archive,
+                           "document the brand axis ahead of the b-39 work")
+            notices = hook._open_obligations_touched(
+                archive,
+                "the brand axis document for b-39 work is progressing ahead")
+            self.assertTrue(notices, "request should surface")
+            line = notices[0]
+            self.assertIn("operator ask '", line)
+            self.assertIn("--status closed", line)
+            self.assertNotRegex(line, r"\(about:")
+            self.assertIn("document", line.split("close with")[0])

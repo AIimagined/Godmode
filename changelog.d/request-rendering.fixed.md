@@ -1,0 +1,1 @@
+A touched operator request surfaces as its keywords in SPOKEN order plus the paste-ready closure command - the hash-plus-sorted-bag rendering was unactionable and trained dismissal (field reports, 2026-09-03). The raw prompt stays unstored; the phrase is the words the operator used, minus stopwords, in the order they said them.

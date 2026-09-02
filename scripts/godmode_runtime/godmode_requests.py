@@ -99,6 +99,16 @@ def summarise(text: str) -> str:
     return flattened[: SUBJECT_LIMIT - 1].rstrip() + "…"
 
 
+def _ordered_keywords(text: str) -> list[str]:
+    """Keywords in first-appearance order - the display form."""
+    seen: list[str] = []
+    for match in _WORD.findall(text):
+        token = match.lower().rstrip("._-")
+        if len(token) >= 4 and token not in _STOPWORDS and token not in seen:
+            seen.append(token)
+    return seen
+
+
 def _keywords(text: str) -> frozenset[str]:
     # Field report 2026-08-29 (obligation 4521): the token regex admits
     # trailing punctuation, so "continue." and "here." rode into candidate
@@ -238,7 +248,11 @@ def record_request(archive: Any, text: str, *, session: str | None = None,
             "tools_in_flight": int(tools_in_flight),
             "session": session,
             "source": "inferred" if str(source).lower() == "inferred" else "stated",
-            "keywords": sorted(_keywords(flattened))[:24],
+            # Appearance order, not sorted: rendered back to a reviewer,
+            # ordered keywords read like the ask; a sorted bag reads like
+            # noise (field report, 2026-09-03). Matching still treats
+            # them as a set.
+            "keywords": _ordered_keywords(flattened)[:24],
         },
         evidence=[],
     )
