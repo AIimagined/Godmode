@@ -333,3 +333,55 @@ class AsymmetricScoreTests(unittest.TestCase):
             data = resolution.get("data", resolution)
             self.assertAlmostEqual(data["asymmetric_score"], data["score"],
                                    places=6)
+
+
+class NumericContradictionTests(unittest.TestCase):
+    """S18: the ledger preserves fed errors faithfully - a wrong quantity
+    in a checkpoint outlived the measurement that killed it, and nothing
+    fired. The conservative pre-write advisory: a claim carrying a bare
+    number, recorded over a recent claim on the same subject carrying a
+    DIFFERENT number, names the disagreement at write time - flag, never
+    block, because the new number is usually the correction."""
+
+    def test_a_conflicting_quantity_draws_the_advisory(self) -> None:
+        from test_godmode_runtime import isolated_project
+        from godmode_runtime.godmode_attest import record_claim
+        with isolated_project() as (project, _s, _a, archive):
+            (project / "README.md").write_text("x", encoding="utf-8")
+            record_claim(archive, project, "S",
+                         "the parser suite covers 39 scenario pairs today",
+                         "observed", cites=["file:README.md"])
+            second = record_claim(archive, project, "S",
+                                  "the parser suite covers 31 scenario pairs today",
+                                  "observed", cites=["file:README.md"])
+            advisories = second.get("data", second).get("advisories", [])
+            self.assertTrue(any("39" in a and "31" in a for a in advisories),
+                            advisories)
+
+    def test_matching_quantities_stay_silent(self) -> None:
+        from test_godmode_runtime import isolated_project
+        from godmode_runtime.godmode_attest import record_claim
+        with isolated_project() as (project, _s, _a, archive):
+            (project / "README.md").write_text("x", encoding="utf-8")
+            record_claim(archive, project, "S",
+                         "the parser suite covers 39 scenario pairs today",
+                         "observed", cites=["file:README.md"])
+            second = record_claim(archive, project, "S",
+                                  "the parser suite covers 39 scenario pairs today",
+                                  "observed", cites=["file:README.md"])
+            advisories = second.get("data", second).get("advisories", [])
+            self.assertFalse(any("disagree" in a for a in advisories))
+
+    def test_different_subjects_never_compare(self) -> None:
+        from test_godmode_runtime import isolated_project
+        from godmode_runtime.godmode_attest import record_claim
+        with isolated_project() as (project, _s, _a, archive):
+            (project / "README.md").write_text("x", encoding="utf-8")
+            record_claim(archive, project, "S",
+                         "the lexer benchmark holds 39 fixtures",
+                         "observed", cites=["file:README.md"])
+            second = record_claim(archive, project, "S",
+                                  "the deploy window spans 31 minutes",
+                                  "observed", cites=["file:README.md"])
+            advisories = second.get("data", second).get("advisories", [])
+            self.assertFalse(any("disagree" in a for a in advisories))

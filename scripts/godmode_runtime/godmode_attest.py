@@ -1729,6 +1729,38 @@ def record_claim(
                 "you judged success by"
             )
 
+    # S18 - numeric contradiction, pre-write and advisory only: a claim
+    # carrying a bare number, recorded over a recent claim on the same
+    # subject carrying a DIFFERENT number, names the disagreement at
+    # write time. Never a block or downgrade - the new number is usually
+    # the correction; what must not happen is the pair coexisting
+    # silently (the field case: a wrong quantity outlived the measurement
+    # that killed it). Same-subject bar: >=3 shared salient words, the
+    # standard everywhere.
+    numbers = set(re.findall(r"(?<![\w.])\d[\d,]*(?:\.\d+)?(?![\w.])", text))
+    if numbers:
+        from .godmode_sources import _salient_words
+
+        own_vocab = _salient_words(text) - numbers
+        for prior in reversed(archive.select(kind="claim", limit=100)):
+            prior_data = prior.get("data") or {}
+            prior_text = str(prior_data.get("text") or prior.get("subject") or "")
+            if prior_text == text or prior_data.get("resolves") is not None:
+                continue
+            prior_numbers = set(re.findall(
+                r"(?<![\w.])\d[\d,]*(?:\.\d+)?(?![\w.])", prior_text))
+            if not prior_numbers or prior_numbers == numbers:
+                continue
+            prior_vocab = _salient_words(prior_text) - prior_numbers
+            if len(own_vocab & prior_vocab) >= 3:
+                advisories.append(
+                    f"quantities disagree with seq {prior['sequence']} on "
+                    f"the same subject: {', '.join(sorted(prior_numbers))} "
+                    f"there vs {', '.join(sorted(numbers))} here - if this "
+                    "corrects it, resolve the elder superseded; if both "
+                    "are true, say what differs")
+                break
+
     record = archive.append(
         "claim",
         text[:120],
