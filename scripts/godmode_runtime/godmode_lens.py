@@ -396,7 +396,17 @@ def detect_context_issues(
         latest_sequence = records[-1]["sequence"] if records else 0
         baseline_confidence = record_confidence(latest_inventory["sequence"], latest_sequence)
         captured = _parse_time(latest_inventory["data"].get("captured_at"))
-        if captured and (datetime.now(timezone.utc) - captured).total_seconds() > 86_400:
+        # Age alone is not staleness on a dormant repo (field report,
+        # 2026-09-03: a 117h-old baseline warned while the diff was clean).
+        # When the live tree is available and diffs clean, the age warning
+        # stays quiet; without a live tree to compare, age is the only
+        # signal and still speaks.
+        tree_unchanged = (
+            current_inventory is not None
+            and inventory_diff(latest_inventory["data"],
+                               current_inventory)["clean"])
+        if (captured and not tree_unchanged
+                and (datetime.now(timezone.utc) - captured).total_seconds() > 86_400):
             age_hours = int((datetime.now(timezone.utc) - captured).total_seconds() // 3600)
             issues.append(
                 {"code": "stale-baseline", "severity": "warning",

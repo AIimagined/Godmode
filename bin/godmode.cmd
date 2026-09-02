@@ -1,4 +1,11 @@
 @echo off
-rem Godmode is not an npm package; this shim makes a PATH-style invocation
-rem resolve loudly to the real entry point instead of silence.
-python "%~dp0..\scripts\godmode.py" %*
+rem Thin shim so the command is `godmode ...` rather than a long interpreter
+rem invocation against a plugin path. Put this directory on PATH.
+setlocal
+set "GODMODE_ROOT=%~dp0.."
+if defined GODMODE_PYTHON (
+  "%GODMODE_PYTHON%" "%GODMODE_ROOT%\scripts\godmode.py" %*
+) else (
+  python "%GODMODE_ROOT%\scripts\godmode.py" %*
+)
+exit /b %ERRORLEVEL%

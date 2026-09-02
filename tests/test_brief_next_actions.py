@@ -238,3 +238,32 @@ class RedFlagsTests(unittest.TestCase):
             self.assertIn("call-site", flags)
             self.assertIn("uniform result", flags)
             self.assertLess(len(flags), 1100)
+
+
+class HonestyTuningTests(unittest.TestCase):
+    """Field report 2026-09-03: an empty charter spoke only at close;
+    a clean-diff baseline warned about age alone."""
+
+    def test_zero_rules_speaks_at_open(self) -> None:
+        import sys as _sys
+        from pathlib import Path as _P
+        _sys.path.insert(0, str(_P(__file__).parent))
+        from test_godmode_runtime import isolated_project
+        import json as _json
+        import subprocess
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            root = _P(__file__).resolve().parents[1]
+            payload = _json.dumps({"session_id": "S-open",
+                                   "cwd": str(project)})
+            import os as _os
+            env = dict(_os.environ)
+            env["CLAUDE_PROJECT_DIR"] = str(project)
+            done = subprocess.run(
+                [_sys.executable,
+                 str(root / "hooks" / "godmode_session_hook.py"),
+                 "session-start"],
+                input=payload, capture_output=True, text=True,
+                timeout=120, env=env, cwd=project)
+            self.assertIn("0 compiled rules", done.stdout)
+            self.assertIn("nothing can block", done.stdout)

@@ -1339,6 +1339,17 @@ def main(argv: list[str] | None = None) -> int:
                     record_delivery(
                         archive, laws,
                         session=str(submitted.get("session_id") or "") or None)
+                else:
+                    # Field report 2026-09-03: an empty charter surfaced only
+                    # at session close ("0 compiled rules - nothing could
+                    # have blocked"), after the work it could not govern.
+                    # Said at the OPEN instead, where it can still change
+                    # the session.
+                    brief["laws"] = {
+                        "compiled_rules": 0,
+                        "note": ("0 compiled rules - nothing can block; add "
+                                 "a GODMODE.md or Code of Law so substantive "
+                                 "work has something enforceable behind it")}
             except Exception as exc:  # noqa: BLE001
                 brief["laws"] = {"unavailable": str(exc)[:120]}
             # The brief's closing section is commands, not inventory: each

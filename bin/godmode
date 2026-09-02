@@ -1,4 +1,37 @@
-#!/usr/bin/env bash
-# Godmode is not an npm package; this shim makes a PATH-style invocation
-# resolve loudly to the real entry point instead of silence.
-exec python "$(dirname "$0")/../scripts/godmode.py" "$@"
+#!/usr/bin/env sh
+# Thin shim so the command is `godmode ...` rather than a long interpreter
+# invocation against a plugin path. Every call otherwise costs the caller the
+# full path to the plugin, which is enough friction to suppress use.
+#
+# Put this directory on PATH, or symlink this file into one already there.
+set -eu
+
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+root=$(dirname -- "$here")
+
+# Presence on PATH is not the same as being an interpreter: Windows ships
+# `python`/`python3` shims that exist, resolve, and then refuse to run. So each
+# candidate is asked for its version and only accepted if it answers.
+usable() {
+  command -v "$1" >/dev/null 2>&1 && "$1" -c "import sys" >/dev/null 2>&1
+}
+
+python=
+if [ -n "${GODMODE_PYTHON:-}" ]; then
+  python=$GODMODE_PYTHON
+else
+  for candidate in python3 python py; do
+    if usable "$candidate"; then
+      python=$candidate
+      break
+    fi
+  done
+fi
+
+if [ -z "$python" ]; then
+  echo "godmode: no working python interpreter found on PATH." >&2
+  echo "         Set GODMODE_PYTHON to the interpreter to use." >&2
+  exit 127
+fi
+
+exec "$python" "$root/scripts/godmode.py" "$@"
