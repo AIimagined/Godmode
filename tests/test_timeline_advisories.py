@@ -219,3 +219,77 @@ class NagPostureTests(unittest.TestCase):
                 lines += _bash_call(i, "python -m unittest tests.test_thing", ok=True)
             done = _run(project, state, _write(project, lines))
             self.assertIn("GREEN ADDS NOTHING", _message(done))
+
+
+class TripwireTests(unittest.TestCase):
+    """Runaway-activity and permission-drift shapes measured against the
+    archive's own per-session baseline; once per session per wire."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import sys as _sys
+        from pathlib import Path as _P
+        root = _P(__file__).resolve().parents[1]
+        for entry in (str(root / "scripts"), str(root / "hooks"), str(root)):
+            if entry not in _sys.path:
+                _sys.path.insert(0, entry)
+
+    def _archive(self):
+        import sys as _sys, tempfile, os as _os
+        from pathlib import Path as _P
+        from contextlib import contextmanager
+        from unittest import mock
+        root = _P(__file__).resolve().parents[1]
+        for entry in (str(root / "scripts"), str(root / "hooks"), str(root)):
+            if entry not in _sys.path:
+                _sys.path.insert(0, entry)
+        from godmode_runtime.godmode_anchor import resolve_anchor
+        from godmode_runtime.godmode_chronicle import Chronicle
+
+        @contextmanager
+        def ctx():
+            with tempfile.TemporaryDirectory(prefix="gm-wire-") as tmp:
+                base = _P(tmp)
+                proj = base / "p"
+                proj.mkdir()
+                with mock.patch.dict(_os.environ,
+                                     {"GODMODE_STATE_HOME": str(base / "s")},
+                                     clear=False):
+                    archive = Chronicle(resolve_anchor(proj))
+                    archive.initialize()
+                    yield archive
+        return ctx()
+
+    def test_runaway_fires_once_above_double_average(self) -> None:
+        import godmode_session_hook as hook
+        with self._archive() as archive:
+            for s in ("A", "B", "C", "D", "E"):
+                for _ in range(5):
+                    archive.append("action", "work", {"session": s})
+            for _ in range(25):
+                archive.append("action", "work", {"session": "HOT"})
+            first = hook._tripwire_nudges(archive, "HOT")
+            second = hook._tripwire_nudges(archive, "HOT")
+            self.assertTrue(any("runaway-loop shape" in n for n in first),
+                            first)
+            self.assertFalse(any("runaway-loop shape" in n for n in second))
+
+    def test_normal_session_is_silent(self) -> None:
+        import godmode_session_hook as hook
+        with self._archive() as archive:
+            for s in ("A", "B", "C", "D", "E"):
+                for _ in range(5):
+                    archive.append("action", "work", {"session": s})
+            for _ in range(6):
+                archive.append("action", "work", {"session": "CALM"})
+            self.assertEqual(hook._tripwire_nudges(archive, "CALM"), [])
+
+    def test_refusal_spike_fires(self) -> None:
+        import godmode_session_hook as hook
+        with self._archive() as archive:
+            for _ in range(4):
+                archive.append("refusal", "denied op",
+                               {"session": "SPIKE", "category": "x"})
+            nudges = hook._tripwire_nudges(archive, "SPIKE")
+            self.assertTrue(any("permission-drift shape" in n
+                                for n in nudges), nudges)
