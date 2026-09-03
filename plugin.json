@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "godmode",
-  "version": "0.3.17",
+  "version": "0.3.18",
   "description": "Your coding agent says \"done.\" Godmode is how you know: a local, tamper-evident evidence ledger of what it did, claimed, and verified - with gates and a completion bar enforced in hooks at runtime. Zero deps, zero network.",
   "author": {
     "name": "AIimagined",

@@ -141,14 +141,17 @@ class PackagingTests(unittest.TestCase):
         self.assertNotIn("version", entry)
 
         # One shell-form string per entry (2026-08-28): the shape Claude,
-        # Codex and Grok all parse; never a `command` + `args` pair.
+        # Codex and Grok all parse; never a `command` + `args` pair. Since
+        # the stock-macOS fix every hook routes through the polyglot
+        # launcher, which resolves the interpreter per platform.
         handler = hook_config["hooks"]["SessionStart"][0]["hooks"][0]
         self.assertEqual(
             handler["command"],
-            'python "${CLAUDE_PLUGIN_ROOT}/hooks/godmode_session_hook.py" session-start')
+            '"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd" '
+            'godmode_session_hook.py session-start')
         self.assertNotIn("args", handler)
 
-    def test_claude_session_hook_is_silent_until_initialized(self) -> None:
+    def test_claude_session_hook_speaks_before_initialized(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
             hook = PLUGIN_ROOT / "hooks" / "godmode_session_hook.py"
             submitted = json.dumps(
@@ -171,9 +174,16 @@ class PackagingTests(unittest.TestCase):
                     env=os.environ.copy(),
                 )
 
-            silent = run_hook()
-            self.assertEqual(silent.returncode, 0, silent.stderr)
-            self.assertEqual(silent.stdout, "")
+            # Silence-before-init WAS the doctrine until a stock-macOS field
+            # install proved it harmful (2026-09-03): an operator ran a whole
+            # session believing gates were on. A Claude session now hears
+            # loudly that nothing is being gated and how to change that.
+            loud = run_hook()
+            self.assertEqual(loud.returncode, 0, loud.stderr)
+            notice = json.loads(loud.stdout)
+            context = notice["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("NOT initialized", context)
+            self.assertIn("godmode init", context)
 
             archive.initialize()
             active = run_hook()

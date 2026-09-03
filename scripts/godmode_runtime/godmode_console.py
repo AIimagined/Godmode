@@ -2777,6 +2777,18 @@ def cmd_precheck(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     - precheck already runs before work starts, which is also the moment a
     one-sided diff against a declared pair is still cheap to fix.
     """
+    if getattr(args, "designate_suite", None):
+        # The ratchet form: recorded once, every later preflight runs it
+        # unprompted. Three CI-red releases proved a per-call flag is
+        # willpower, not a control.
+        _require_archive(runtime)
+        record = runtime.archive.append(
+            "criterion", "preflight-suite",
+            {"command": args.designate_suite,
+             "value": "the designated pre-push suite; preflight runs it on "
+                      "every cut"})
+        return CommandResult({"designated": args.designate_suite,
+                              "sequence": record["sequence"]})
     if getattr(args, "preflight", False):
         from .godmode_preflight import push_preflight
         report = push_preflight(Path(runtime.anchor.project_root),
@@ -5179,6 +5191,10 @@ def _build_parser() -> argparse.ArgumentParser:
     precheck_parser.add_argument("--suite", nargs="+", default=None,
                                  help="With --preflight: the command to run inside the "
                                       "worktree (e.g. python -m unittest ...)")
+    precheck_parser.add_argument("--designate-suite", metavar="CMD",
+                                 help="Record the suite durably: every later "
+                                      "--preflight runs it without being asked - "
+                                      "the ratchet form of --suite")
     precheck_parser.set_defaults(handler=cmd_precheck)
 
     # A sibling top-level command, not a `precheck` subcommand: `precheck`

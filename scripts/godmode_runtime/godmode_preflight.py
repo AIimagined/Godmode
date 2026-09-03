@@ -113,6 +113,22 @@ def push_preflight(project: Path | str,
                                   "private list; run the scrub before staging "
                                   "the push",
                     })
+        # THE RATCHET RULE, applied to this gate's own miss: three releases
+        # went red in CI on stale pins because "run the full suite first"
+        # lived as a lesson, and the suite hook here waited on a per-call
+        # flag nobody passed. A designation recorded once
+        # (`precheck --designate-suite "<cmd>"`) now runs on every
+        # preflight of this project - the control survives forgetting.
+        if not suite and archive is not None:
+            try:
+                for record in archive.select(kind="criterion", limit=200):
+                    if record.get("subject") == "preflight-suite":
+                        stored = (record.get("data") or {}).get("command")
+                        if stored:
+                            import shlex
+                            suite = shlex.split(str(stored))
+            except Exception:  # noqa: BLE001
+                pass
         if suite:
             run = subprocess.run(suite, cwd=worktree, capture_output=True,
                                  check=False, timeout=1800)
@@ -123,7 +139,9 @@ def push_preflight(project: Path | str,
                               "a person decides whether this state ships",
                 })
         else:
-            skipped.append("suite: no command designated (--suite)")
+            skipped.append(
+                "suite: no command designated - pass --suite once, or record "
+                "it durably: precheck --designate-suite \"<cmd>\"")
         # Standing process debt rides the preflight as judgment findings:
         # a push that never saw the dormant census is how commit stacks
         # queue over unstated criteria and assumptions (operator finding,

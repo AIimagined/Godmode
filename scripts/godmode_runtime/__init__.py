@@ -2,4 +2,4 @@
 
 # Developed by AIimagined.
 
-__version__ = "0.3.17"
+__version__ = "0.3.18"
