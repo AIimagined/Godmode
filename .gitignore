@@ -50,3 +50,4 @@ docs-site/
 # repo file contents, so it must never be committable by a `git add -A`
 # that races a test run.
 .dogfood-restore.json
+.godmode-authorization-policy*.json
