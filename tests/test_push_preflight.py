@@ -167,3 +167,59 @@ class PreflightTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OpenAsksGateTests(unittest.TestCase):
+    """A cut over open operator asks is the goal-misread class as
+    machinery - every open stated request is a preflight finding."""
+
+    def _project(self):
+        import sys as _sys, tempfile
+        from pathlib import Path as _P
+        from contextlib import contextmanager
+        from unittest import mock
+        import os as _os
+        root_dir = _P(__file__).resolve().parents[1]
+        for entry in (str(root_dir / "scripts"),):
+            if entry not in _sys.path:
+                _sys.path.insert(0, entry)
+        from godmode_runtime.godmode_anchor import resolve_anchor
+        from godmode_runtime.godmode_chronicle import Chronicle
+        import subprocess as _sp
+
+        @contextmanager
+        def ctx():
+            with tempfile.TemporaryDirectory(prefix="gm-asks-") as tmp:
+                base = _P(tmp)
+                proj = base / "p"
+                proj.mkdir()
+                _sp.run(["git", "init", "-q"], cwd=proj, capture_output=True)
+                (proj / "a.txt").write_text("x", encoding="utf-8")
+                _sp.run(["git", "add", "-A"], cwd=proj, capture_output=True)
+                _sp.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                         "commit", "-qm", "init"], cwd=proj,
+                        capture_output=True)
+                state = base / "state"
+                with mock.patch.dict(_os.environ,
+                                     {"GODMODE_STATE_HOME": str(state)},
+                                     clear=False):
+                    archive = Chronicle(resolve_anchor(proj))
+                    archive.initialize()
+                    yield proj, archive
+        return ctx()
+
+    def test_open_ask_is_a_finding(self) -> None:
+        from godmode_runtime.godmode_preflight import push_preflight
+        from godmode_runtime.godmode_requests import record_request
+        with self._project() as (proj, archive):
+            record_request(archive, "sweep the upstream repos before the cut")
+            report = push_preflight(proj, archive=archive)
+            checks = [j.get("check") for j in report["judgment"]]
+            self.assertIn("open-operator-asks", checks)
+
+    def test_no_open_asks_no_finding(self) -> None:
+        from godmode_runtime.godmode_preflight import push_preflight
+        with self._project() as (proj, archive):
+            report = push_preflight(proj, archive=archive)
+            checks = [j.get("check") for j in report["judgment"]]
+            self.assertNotIn("open-operator-asks", checks)
