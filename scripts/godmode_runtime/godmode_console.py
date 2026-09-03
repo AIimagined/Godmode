@@ -2573,6 +2573,30 @@ def cmd_digest(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult(render_digest(runtime.archive, since=args.since))
 
 
+def _guide_growth(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Lessons and invariants recorded in the last seven days - counts only."""
+    from datetime import datetime, timedelta, timezone
+    week = datetime.now(timezone.utc) - timedelta(days=7)
+    lessons = invariants = 0
+    for record in records:
+        if record.get("kind") not in ("lesson", "invariant"):
+            continue
+        stamp = str(record.get("recorded_at") or "")
+        try:
+            when = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if when >= week:
+            if record["kind"] == "lesson":
+                lessons += 1
+            else:
+                invariants += 1
+    return {"lessons": lessons, "invariants": invariants,
+            "note": "zero growth means nothing was learned this week - or "
+                    "nothing surprised; fast growth means patching, not "
+                    "generalizing"}
+
+
 def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # Scope-explicit (B4-8 ext.): every status answer names the project it
     # is about, in JSON and in prose.
@@ -2641,6 +2665,12 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             # how well declared confidence has tracked outcomes, and the
             # standing debt of scored claims nothing ever resolved.
             "calibration": calibration_summary(runtime.archive, records=records),
+            # Guide growth (harness health scorecard, absorbed 2026-09-03):
+            # rules and lessons added in the last seven days - a guide that
+            # never grows is a system that has stopped learning from its
+            # misses, and one that grows too fast is patching instead of
+            # generalizing.
+            "guide_growth_7d": _guide_growth(records),
             # Demand-vs-use census: which machinery families the record
             # demanded versus which fired. Dormancy WITH demand is the
             # alarm; idle is health. Advisory - never flips health.

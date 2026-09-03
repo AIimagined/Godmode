@@ -538,6 +538,66 @@ def _investigation_nudge(archive: Any, submitted: dict) -> str | None:
     )
 
 
+def _tripwire_nudges(archive: Any, session: str | None) -> list[str]:
+    """Two runaway shapes measured against the archive's own baseline.
+
+    Absorbed from a production harness playbook's trip-wire table
+    (2026-09-03): a session whose recorded activity runs far past the
+    archive's per-session average is a runaway-loop shape, and a spike of
+    protected-class refusals is a permission-drift shape. Counts only,
+    once per session per wire, honest below a five-session baseline.
+    """
+    if not session:
+        return []
+    out: list[str] = []
+    try:
+        fired: set[str] = set()
+        actions: dict[str, int] = {}
+        refusals: dict[str, int] = {}
+        for record in archive.select(limit=500):
+            kind = record.get("kind")
+            data = record.get("data") or {}
+            if (kind == "action"
+                    and record.get("subject") == "tripwire-nudge"
+                    and str(data.get("session") or "") == session):
+                fired.add(str(data.get("wire") or ""))
+                continue
+            rec_session = str(data.get("session") or "")
+            if not rec_session:
+                continue
+            if kind in ("action", "attestation"):
+                actions[rec_session] = actions.get(rec_session, 0) + 1
+            elif kind == "refusal":
+                refusals[rec_session] = refusals.get(rec_session, 0) + 1
+        prior_counts = [c for s, c in actions.items() if s != session]
+        mine = actions.get(session, 0)
+        if "runaway" not in fired and len(prior_counts) >= 5 and mine >= 20:
+            average = sum(prior_counts) / len(prior_counts)
+            if average > 0 and mine > 2 * average:
+                out.append(
+                    f"godmode: this session holds {mine} recorded actions "
+                    f"against a {average:.0f}-action archive average - the "
+                    "runaway-loop shape; a checkpoint now bounds what a "
+                    "wrong turn can cost")
+                archive.append("action", "tripwire-nudge",
+                               {"session": session, "wire": "runaway"})
+        my_refusals = refusals.get(session, 0)
+        prior_refusals = [c for s, c in refusals.items() if s != session]
+        if "drift" not in fired and my_refusals >= 3 and my_refusals > 2 * (
+                (sum(prior_refusals) / len(prior_refusals))
+                if prior_refusals else 0):
+            out.append(
+                f"godmode: {my_refusals} protected-class refusals this "
+                "session - the permission-drift shape; check whether the "
+                "task actually needs these operations or the approach "
+                "drifted into them")
+            archive.append("action", "tripwire-nudge",
+                           {"session": session, "wire": "drift"})
+    except Exception:  # noqa: BLE001
+        return out
+    return out
+
+
 def _marginal_return_nudges(archive: Any, submitted: dict,
                             session: str | None) -> list[str]:
     """Two zero-information shapes in the timeline, one sentence each.
@@ -1591,6 +1651,8 @@ def main(argv: list[str] | None = None) -> int:
             if not quiet:
                 notices.extend(_marginal_return_nudges(
                     archive, submitted, _session_key(submitted)))
+                notices.extend(_tripwire_nudges(
+                    archive, _session_key(submitted)))
             if touched:
                 notices.append(
                     "godmode: this reply relates to unfinished "

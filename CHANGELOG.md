@@ -11,6 +11,7 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 ### Added
 
 - The session brief states the gate posture at open in BOTH modes: observe mode already announced itself with would-have counts; enforce mode now says that reads and working-tree writes run free by design and asks are reserved for protected classes - a quiet session means allow-tier work, never an absent gate (field report measured "0 asks / 53 actions" and concluded inertness).
+- Two trip wires measured against the archive's own per-session baseline, absorbed from a production harness playbook: a session running past twice the average recorded activity draws the runaway-loop advisory, and a spike of protected-class refusals draws the permission-drift advisory - once per session per wire, honest below a five-session baseline. And doctor gains guide_growth_7d: lessons and invariants recorded this week, because zero growth means nothing was learned and fast growth means patching, not generalizing.
 
 ## [0.3.16] - 2026-09-03
 
