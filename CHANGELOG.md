@@ -13,6 +13,10 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 - The session brief states the gate posture at open in BOTH modes: observe mode already announced itself with would-have counts; enforce mode now says that reads and working-tree writes run free by design and asks are reserved for protected classes - a quiet session means allow-tier work, never an absent gate (field report measured "0 asks / 53 actions" and concluded inertness).
 - Two trip wires measured against the archive's own per-session baseline, absorbed from a production harness playbook: a session running past twice the average recorded activity draws the runaway-loop advisory, and a spike of protected-class refusals draws the permission-drift advisory - once per session per wire, honest below a five-session baseline. And doctor gains guide_growth_7d: lessons and invariants recorded this week, because zero growth means nothing was learned and fast growth means patching, not generalizing.
 
+### Fixed
+
+- Godmode now works on stock macOS in EVERY host: all hook commands - Claude, Codex, Grok shared file, Cursor, Antigravity fragment and install path - route through a polyglot launcher (one file valid under both POSIX sh and cmd.exe) that resolves python3, python, then py per platform and execs so gate-block exit codes pass through; GODMODE_PYTHON overrides everything, and a machine with no interpreter says so loudly instead of dying silently. The pi adapter defaults to python3 off Windows, the orientation screen prints the exact interpreter that rendered it, and a session on an uninitialized project is told at the open that nothing is being gated - a stock-macOS field install discovered both silences by hand (field report, 2026-09-03).
+
 ## [0.3.16] - 2026-09-03
 
 ### Fixed

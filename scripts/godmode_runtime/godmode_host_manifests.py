@@ -207,9 +207,14 @@ def _shell_entry(root_var: str, script: str, *args: str, timeout: int) -> dict[s
     per-OS variant.
     """
     tail = " ".join(args)
+    # Field report 2026-09-03 (stock macOS): bare `python` does not exist
+    # there, so every hook died silently. The polyglot launcher resolves
+    # python3/python/py per platform and execs, preserving the exit codes
+    # that carry gate blocks.
     return {
         "type": "command",
-        "command": f'python "{root_var}/{script}"' + (f" {tail}" if tail else ""),
+        "command": (f'"{root_var}/hooks/run-hook.cmd" {script.rsplit("/", 1)[-1]}'
+                    + (f" {tail}" if tail else "")),
         "timeout": timeout,
     }
 
@@ -282,7 +287,6 @@ def codex_project_hooks(plugin_root) -> dict:
 
     root = _Path(plugin_root)
     shared = _json.loads((root / "hooks" / "hooks.json").read_text(encoding="utf-8"))
-    interpreter = "python" if _os.name == "nt" else "python3"
     projected: dict = {"hooks": {}}
     for event, blocks in shared["hooks"].items():
         out_blocks = []
@@ -290,8 +294,8 @@ def codex_project_hooks(plugin_root) -> dict:
             entries = [{
                 "type": "command",
                 "command": entry["command"].replace(
-                    'python "${CLAUDE_PLUGIN_ROOT}/',
-                    interpreter + ' "' + root.as_posix() + "/"),
+                    '"${CLAUDE_PLUGIN_ROOT}/',
+                    '"' + root.as_posix() + "/"),
             } for entry in block.get("hooks", [])]
             out = {"matcher": block["matcher"]} if "matcher" in block else {}
             out["hooks"] = entries
@@ -351,14 +355,14 @@ def build_antigravity_fragment() -> dict:
                 {
                     "matcher": ANTIGRAVITY_TOOL_MATCHER,
                     "type": "command",
-                    "command": f"python {root}/{GATE_FAST_HOOK}",
+                    "command": f"{root}/hooks/run-hook.cmd godmode_gate_fast.py",
                     "timeout": 8,
                 },
             ],
             "Stop": [
                 {
                     "type": "command",
-                    "command": f"python {root}/{SESSION_HOOK} stop",
+                    "command": f"{root}/hooks/run-hook.cmd godmode_session_hook.py stop",
                     "timeout": 10,
                 },
             ],
@@ -386,11 +390,9 @@ def write_antigravity_project_hooks(plugin_root, project, *,
     from pathlib import Path as _Path
 
     root = _Path(plugin_root)
-    interpreter = "python" if _os.name == "nt" else "python3"
     fragment = build_antigravity_fragment()
     entry = _json.loads(_json.dumps(fragment["godmode"]).replace(
-        "python " + ANTIGRAVITY_ROOT_TOKEN + "/",
-        interpreter + " " + root.as_posix() + "/"))
+        ANTIGRAVITY_ROOT_TOKEN + "/", root.as_posix() + "/"))
     target = _Path(project) / ".agents" / "hooks.json"
     existing: dict = {}
     if target.exists():
@@ -619,7 +621,7 @@ def build_gemini_fragment() -> dict[str, Any]:
                         {
                             "name": "godmode-pre-tool-gate",
                             "type": "command",
-                            "command": f"python {root}/{GATE_FAST_HOOK}",
+                            "command": f"{root}/hooks/run-hook.cmd godmode_gate_fast.py",
                             "timeout": 3000,
                             "description": "Godmode pre-tool gate.",
                         },

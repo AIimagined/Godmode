@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${PLUGIN_ROOT}/hooks/godmode_session_hook.py\" session-start",
+            "command": "\"${PLUGIN_ROOT}/hooks/run-hook.cmd\" godmode_session_hook.py session-start",
             "timeout": 10
           }
         ]
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${PLUGIN_ROOT}/hooks/godmode_gate_fast.py\"",
+            "command": "\"${PLUGIN_ROOT}/hooks/run-hook.cmd\" godmode_gate_fast.py",
             "timeout": 3
           }
         ]
@@ -32,7 +32,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${PLUGIN_ROOT}/hooks/godmode_gate_fast.py\"",
+            "command": "\"${PLUGIN_ROOT}/hooks/run-hook.cmd\" godmode_gate_fast.py",
             "timeout": 3
           }
         ]

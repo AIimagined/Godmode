@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"<ABSOLUTE-PATH-TO-GODMODE>/hooks/godmode_gate_fast.py\""
+            "command": "\"<ABSOLUTE-PATH-TO-GODMODE>/hooks/run-hook.cmd\" godmode_gate_fast.py"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"<ABSOLUTE-PATH-TO-GODMODE>/hooks/godmode_session_hook.py\" session-start"
+            "command": "\"<ABSOLUTE-PATH-TO-GODMODE>/hooks/run-hook.cmd\" godmode_session_hook.py session-start"
           }
         ]
       }

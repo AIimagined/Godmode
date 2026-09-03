@@ -54,7 +54,10 @@ export default function godmodeExtension(pi: {
   cwd?: string;
 }) {
   const root = process.env.GODMODE_PLUGIN_ROOT;
-  const python = process.env.GODMODE_PYTHON || "python";
+  // Stock macOS ships no bare `python` (field report, 2026-09-03): resolve
+// python3 first, with GODMODE_PYTHON overriding everything.
+const python = process.env.GODMODE_PYTHON
+  || (process.platform === "win32" ? "python" : "python3");
   let warnedUnconfigured = false;
 
   pi.on("tool_call", (event) => {

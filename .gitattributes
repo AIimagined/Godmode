@@ -10,3 +10,4 @@ NOTICE text eol=lf
 *.yml text eol=lf
 *.png binary
 *.jpg binary
+hooks/run-hook.cmd text eol=lf

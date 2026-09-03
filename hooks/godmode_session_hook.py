@@ -1358,7 +1358,22 @@ def main(argv: list[str] | None = None) -> int:
                     _emit_claude_context(notice)
                 else:
                     print(json.dumps(notice))
-            elif not claude_session:
+            elif claude_session:
+                # Field report 2026-09-03 (a stock-macOS install): the
+                # uninitialized state was discovered only by running the
+                # hook BY HAND - the session itself heard nothing, so "the
+                # gate was open the whole time" silently. Present but idle
+                # is a state the session must be told at the open.
+                _emit_claude_context({
+                    "godmode": "not-initialized",
+                    "project": resolved_root,
+                    "notice": (
+                        "godmode is installed but NOT initialized for this "
+                        "project - nothing is being gated or recorded. Run "
+                        "`godmode init` to switch it on, or ignore this if "
+                        "the project is deliberately ungoverned."),
+                })
+            else:
                 print(json.dumps({
                     "godmode": "not-initialized",
                     "project": resolved_root,

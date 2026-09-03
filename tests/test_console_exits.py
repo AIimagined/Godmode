@@ -299,7 +299,8 @@ class InvocationDiscoveryTests(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, str(root / "scripts" / "godmode.py")],
             capture_output=True, text=True, timeout=120)
-        self.assertIn("run as: python", result.stdout)
+        self.assertIn("run as: \"", result.stdout)
+        self.assertIn("python", result.stdout.splitlines()[2])
         self.assertIn("godmode.py", result.stdout)
         self.assertIn("not on npm", result.stdout)
 
