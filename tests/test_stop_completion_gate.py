@@ -192,3 +192,19 @@ class ProgressReportTests(unittest.TestCase):
                 "transcript_path": str(transcript), "session_id": "S1",
                 "cwd": str(project)})
             self.assertIn('"block"', done.stdout)
+
+
+class PendingListTests(unittest.TestCase):
+    """Field report on 0.3.15 day one: 'Pending list above stands' was
+    blocked - describing open work is the opposite of declaring done."""
+
+    def test_a_pending_list_reply_is_not_blocked(self) -> None:
+        with _project() as (project, state, _archive):
+            transcript = _transcript(
+                project, "The export lane is done and shipped; the retry "
+                         "queue and the webhook stay pending, and the "
+                         "backfill is blocked on credentials.")
+            done = _run(project, state, {
+                "transcript_path": str(transcript), "session_id": "S1",
+                "cwd": str(project)})
+            self.assertNotIn('"block"', done.stdout)
