@@ -38,6 +38,7 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 - A touched operator request surfaces as its keywords in SPOKEN order plus the paste-ready closure command - the hash-plus-sorted-bag rendering was unactionable and trained dismissal (field reports, 2026-09-03). The raw prompt stays unstored; the phrase is the words the operator used, minus stopwords, in the order they said them.
 - The request ledger stops capturing turn lubricant: single-word prompts and pasted terminal transcripts are dropped at the write path, and a 374-item pre-filter backlog was closed with per-class reasons (machine capture, expired unreviewed, served) - a ledger whose count is mostly noise is a ledger nobody reads.
 - CI fix round: the fetch-notice matcher carries only names shipped hosts actually send (the grok contract test caught three speculative ones), and the single-word request drop exempts long opaque tokens so a pasted secret still reaches the redaction machinery.
+- The done-bar exemption vocabulary gains pending, blocked, queued, outstanding, unfinished, deferred, on hold, and to-do - a reply DESCRIBING open work is the opposite of declaring it done, and a status list was blocked for exactly that on 0.3.15's first field day.
 
 ## [0.3.14] - 2026-09-03
 

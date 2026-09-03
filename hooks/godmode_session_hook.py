@@ -849,7 +849,12 @@ def _unrecorded_done_claims(archive: Any, reply_text: str) -> list[str]:
         # 2026-09-03: honest mid-task updates cost a claim each).
         if re.search(r"(?i)\b(?:still\s+(?:running|pending|open|ahead)|"
                      r"not\s+yet|in\s+progress|so\s+far|mid-flight|"
-                     r"remaining|awaiting|until|once\s+the|except)\b",
+                     r"remaining|awaiting|until|once\s+the|except|"
+                     # Field report on 0.3.15 day one: "Pending list above
+                     # stands" was blocked - a reply DESCRIBING open work
+                     # is the opposite of declaring it done.
+                     r"pending|blocked|queued|outstanding|unfinished|"
+                     r"deferred|on\s+hold|to-?do)\b",
                      judged):
             continue
         if not (_COMPLETION_VOCAB.search(judged)
