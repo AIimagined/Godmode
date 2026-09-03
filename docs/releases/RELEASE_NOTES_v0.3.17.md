@@ -8,6 +8,13 @@ reserved for the protected classes - a field project measured a zero-ask
 day of allow-tier work and concluded the gate existed on paper, which is
 exactly the misread this line ends.
 
+Two trip wires join the stop surface, measured against the archive's own
+per-session baseline: recorded activity past twice the average draws the
+runaway-loop advisory, and a spike of protected-class refusals draws the
+permission-drift advisory. Doctor gains a guide-growth gauge - the week's
+lessons and invariants, because zero growth means nothing was learned and
+fast growth means patching instead of generalizing.
+
 ## Verifying
 
 - Open a session on an enforce-mode project: the brief carries "gate
