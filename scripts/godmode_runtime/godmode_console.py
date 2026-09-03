@@ -895,7 +895,12 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         return CommandResult(
             {"resolves": data["resolves"], "outcome": data["outcome"],
              "confidence": data["confidence"], "score": data["score"],
-             "sequence": record["sequence"]},
+             "sequence": record["sequence"],
+             # An advisory nobody sees is an advisory that never happened:
+             # the reversal-accounting ask lived in the record while the
+             # printed payload dropped it (installed-cache test, 2026-09-03).
+             **({"advisories": data["advisories"]}
+                if data.get("advisories") else {})},
             exit_code=0,
         )
     if not args.text:

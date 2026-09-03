@@ -664,3 +664,39 @@ class UniversalClaimTests(unittest.TestCase):
             "the parser accepts trailing commas since the grammar change")
         self.assertFalse(any("enumerates its lanes" in a
                              for a in advisories), advisories)
+
+
+class ResolutionPayloadTests(unittest.TestCase):
+    """An advisory nobody sees never happened - the printed resolution
+    payload carries the accounting ask."""
+
+    def test_failed_resolution_prints_the_advisory(self) -> None:
+        import io
+        from contextlib import redirect_stdout
+        from test_godmode_runtime import isolated_project
+        from godmode_runtime.godmode_console import main
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            (project / "README.md").write_text("the flag gates the export",
+                                               encoding="utf-8")
+            main(["--project", str(project), "session", "open",
+                  "--label", "t"])
+            out = io.StringIO()
+            with redirect_stdout(out):
+                main(["--project", str(project), "claim",
+                      "the flag gates the export", "--confidence", "0.9",
+                      "--cite", "file:README.md"])
+            import re as _re
+            # resolve the claim we just made: find its sequence
+            with redirect_stdout(io.StringIO()):
+                pass
+            h = io.StringIO()
+            with redirect_stdout(h):
+                main(["--project", str(project), "history", "--limit", "3"])
+            seqs = _re.findall(r'"sequence": (\d+)', h.getvalue())
+            out2 = io.StringIO()
+            with redirect_stdout(out2):
+                main(["--project", str(project), "claim", "--resolve",
+                      seqs[-1], "--outcome", "failed",
+                      "resolution evidence", "--cite", "file:README.md"])
+            self.assertIn("withdrawn claim", out2.getvalue())
