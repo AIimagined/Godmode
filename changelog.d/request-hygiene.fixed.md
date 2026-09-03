@@ -1,1 +1,0 @@
-The request ledger stops capturing turn lubricant: single-word prompts and pasted terminal transcripts are dropped at the write path, and a 374-item pre-filter backlog was closed with per-class reasons (machine capture, expired unreviewed, served) - a ledger whose count is mostly noise is a ledger nobody reads.
