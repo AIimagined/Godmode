@@ -1784,8 +1784,8 @@ def record_claim(
             advisories.append(
                 f"{len(unbacked)} cmd citation(s) have no attestation behind "
                 "them - this claim is the author's word about a run the "
-                "record cannot see; `godmode verify --command \"...\"` "
-                "attests it and upgrades the support")
+                "record cannot see; re-record with `--verify` to execute "
+                "them (or attest first: `godmode verify --command \"...\"`)")
     # A grep proves existence; an enumeration proves coverage (field
     # corpus, 2026-09-03). A claim quantifying universally with no
     # enumeration beside it gets the bar named. Judged on the unquoted

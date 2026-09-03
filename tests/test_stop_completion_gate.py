@@ -120,6 +120,24 @@ class CompletionGateTests(unittest.TestCase):
                 "transcript_path": str(_transcript(project, f"Finished. {DONE_CLAIM}."))})
             json.loads(done.stdout)  # exactly one object, or raises
 
+    def test_truncated_statement_list_names_the_remainder(self) -> None:
+        # Field report 2026-09-03: "3 of those statements" with only two
+        # quoted read as a counting bug in the field. The cap stays at two
+        # quotes; the remainder now names itself.
+        with _project() as (project, state, _archive):
+            text = ("Finished. The migration is complete and all tests pass. "
+                    "The importer is complete and all checks pass. "
+                    "The exporter is complete and all probes pass.")
+            done = _run(project, state, {
+                "transcript_path": str(_transcript(project, text))})
+            self.assertEqual(done.returncode, 0, done.stderr)
+            payload = json.loads(done.stdout)
+            self.assertEqual(payload.get("decision"), "block")
+            reason = payload.get("reason", "")
+            counted = int(reason.split(" of those statements")[0].rsplit(None, 1)[-1])
+            if counted > 2:
+                self.assertIn(f"(+{counted - 2} more)", reason)
+
 
 if __name__ == "__main__":
     unittest.main()

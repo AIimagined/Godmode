@@ -707,7 +707,17 @@ def _open_obligations_touched(archive: Any, reply_text: str) -> list[str]:
                 continue
             vocab = _salient_words(f"{subject} {data.get('value', '')}")
             if len(reply_words & vocab) >= 3:
-                touched.append((record.get("sequence", 0), subject, vocab))
+                # Field report 2026-09-03: the footer's one-size closure
+                # command said `--kind obligation` under an ask line saying
+                # `--kind request` - a contradiction in the same sentence.
+                # Every line now carries its own paste-ready closure and
+                # the footer names none.
+                touched.append((
+                    record.get("sequence", 0),
+                    f"{subject} - close with `godmode remember --kind "
+                    f"obligation --subject \"{subject}\" --status closed` "
+                    "when done",
+                    vocab))
         # Sibling collapse (field report, 2026-09-01): a version-bearing
         # subject mints a NEW obligation every bump and subject-keyed state
         # never links them, so the nag surfaced corpses beside the living
@@ -1672,12 +1682,13 @@ def main(argv: list[str] | None = None) -> int:
                 notices.append(
                     "godmode: this reply relates to unfinished "
                     "promises on record: " + ", ".join(touched)
-                    + ". Act on them, or close them with `godmode remember "
-                    "--kind obligation --subject \"<name>\" --status "
-                    "closed` - otherwise they keep coming back.")
+                    + ". Act on them, or close each with the command its "
+                    "line shows - otherwise they keep coming back.")
             if unsupported:
                 shown = "; ".join(
                     f"'{_ascii_echo(s)[:160]}'" for s in unsupported[:2])
+                if len(unsupported) > 2:
+                    shown += f" (+{len(unsupported) - 2} more)"
                 notices.append(
                     f"godmode: {len(unsupported)} claim-shaped sentence(s) in this "
                     f"reply have nothing backing them on record: {shown}. "
@@ -1731,6 +1742,10 @@ def main(argv: list[str] | None = None) -> int:
                     pass
                 shown = "; ".join(
                     f"'{_ascii_echo(s)[:120]}'" for s in done_shaped[:2])
+                # Field report 2026-09-03: "3 statements" with two quoted
+                # read as a counting bug; the truncation names itself.
+                if len(done_shaped) > 2:
+                    shown += f" (+{len(done_shaped) - 2} more)"
                 print(json.dumps({
                     "decision": "block",
                     "reason": (

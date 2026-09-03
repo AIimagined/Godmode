@@ -95,6 +95,47 @@ jobs:
           python scripts/godmode.py --project . --json checksums > second.json
           python -c "import json;a=json.load(open('first.json'));b=json.load(open('second.json'));assert a['manifest_sha256']==b['manifest_sha256'],'checksums not reproducible';print('reproducible:',a['manifest_sha256'])"
 
+  # Field report 2026-09-03: every hook died silently on a stock MacBook -
+  # bare `python` does not exist there, and the matrix legs above install it
+  # via setup-python, so a green matrix proved nothing about a real install.
+  # This job is the class-killer: no setup-python, bare `python` shadowed by
+  # a poison shim, and the hooks invoked exactly as a host invokes them
+  # (through hooks/run-hook.cmd under /bin/sh). If the launcher ever regresses
+  # to needing `python`, this job goes red before any field machine does.
+  stock-host:
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Poison bare `python` (the stock-macOS shape)
+        run: |
+          mkdir -p /tmp/nopython
+          printf '#!/bin/sh\necho "bare python must not be reachable" >&2\nexit 127\n' > /tmp/nopython/python
+          chmod +x /tmp/nopython/python
+          echo "/tmp/nopython" >> "$GITHUB_PATH"
+
+      - name: Run every hook entry the way a host does
+        run: |
+          set -e
+          command -v python3 >/dev/null || { echo "runner image lost python3"; exit 1; }
+          run_hook() {
+            payload="$1"; shift
+            out=$(printf '%s' "$payload" | ./hooks/run-hook.cmd "$@") || { echo "hook $* exited non-zero"; exit 1; }
+            if [ -n "$out" ]; then
+              printf '%s' "$out" | python3 -c "import json,sys; json.load(sys.stdin)" \
+                || { echo "hook $* emitted non-JSON: $out"; exit 1; }
+            fi
+            echo "hook $* ok"
+          }
+          run_hook '{"hook_event_name":"SessionStart","cwd":"."}' godmode_session_hook.py session-start
+          run_hook '{"hook_event_name":"Stop","cwd":"."}' godmode_session_hook.py stop
+          run_hook '{"hook_event_name":"PreToolUse","cwd":".","tool_name":"Bash","tool_input":{"command":"echo hi"}}' godmode_gate_fast.py
+          run_hook '{"hook_event_name":"PostToolUse","cwd":".","tool_name":"Edit","tool_input":{"file_path":"README.md"}}' godmode_post_edit.py
+
+      - name: Smoke the CLI on python3 only
+        run: python3 scripts/godmode.py --version
+
   # Differential network capture: every PRD-named CLI surface (init, inspect,
   # resume, doctor, report) runs against a throwaway project under a socket
   # audit hook; any recorded connection fails the job. The gate first proves it

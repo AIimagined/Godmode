@@ -622,6 +622,46 @@ class ClaimVerifyTests(unittest.TestCase):
             self.assertIn("no attestation behind", out.getvalue())
 
 
+class SupportHeadlineTests(unittest.TestCase):
+    """Field report 2026-09-03: 'JSON noise with no signal about what was
+    verified'. The payload now carries one sentence naming what executed
+    versus what is taken on the author's word."""
+
+    def _claim(self, extra_args):
+        import io
+        from contextlib import redirect_stdout
+        from test_godmode_runtime import isolated_project
+        from godmode_runtime.godmode_console import main
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            (Path(project) / "NOTES.md").write_text(
+                "the probe prints the answer", encoding="utf-8")
+            main(["--project", str(project), "session", "open",
+                  "--label", "t"])
+            out = io.StringIO()
+            with redirect_stdout(out):
+                main(["--project", str(project), "claim",
+                      "the probe prints the answer"] + extra_args)
+            return out.getvalue()
+
+    def test_verified_run_names_the_execution(self) -> None:
+        import sys as _sys2
+        text = self._claim(
+            ["--verify", "--cite", f"cmd:{_sys2.executable} -c print(42)"])
+        self.assertIn("executed and attested", text)
+
+    def test_unexecuted_cmd_cite_names_the_gap(self) -> None:
+        import sys as _sys2
+        text = self._claim(
+            ["--cite", f"cmd:{_sys2.executable} -c print(42)"])
+        self.assertIn("taken on the record's word", text)
+        self.assertIn("--verify", text)
+
+    def test_doc_only_cite_names_the_basis(self) -> None:
+        text = self._claim(["--cite", "doc:NOTES.md"])
+        self.assertIn("no cmd: citation to run", text)
+
+
 class UniversalClaimTests(unittest.TestCase):
     """A grep proves existence; an enumeration proves coverage."""
 
