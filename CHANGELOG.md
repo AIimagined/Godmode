@@ -6,6 +6,12 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.3.16] - 2026-09-03
+
+### Fixed
+
+- A failed resolution PRINTS its accounting ask - the advisory lived in the record while the payload dropped it, found by the installed-cache feature test. An advisory nobody sees never happened.
+
 ## [0.3.15] - 2026-09-03
 
 ### Added
