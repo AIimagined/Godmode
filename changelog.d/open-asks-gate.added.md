@@ -1,0 +1,1 @@
+The push preflight surfaces every OPEN stated operator ask as a judgment finding - a cut over an operator-named set is the goal-misread class, now machinery: close each ask or park it explicitly before the gate.

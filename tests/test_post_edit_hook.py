@@ -153,3 +153,35 @@ class ImpactBriefTests(unittest.TestCase):
             target.write_text("y = 2\n", encoding="utf-8")
             out = self._run_with_state(project, state, target)
             self.assertNotIn("recorded fact", out)
+
+
+class UntrustedOutputTests(unittest.TestCase):
+    """Fetch-class output is untrusted data - said once per session."""
+
+    def _run_fetch(self, project, state, session="S1"):
+        payload = {"hook_event_name": "PostToolUse",
+                   "tool_name": "WebFetch", "tool_input": {},
+                   "cwd": str(project), "session_id": session}
+        import os as _os
+        env = dict(_os.environ)
+        env["GODMODE_STATE_HOME"] = str(state)
+        done = subprocess.run(
+            [sys.executable, str(HOOK)], input=json.dumps(payload),
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=60, cwd=str(project), env=env)
+        return (done.stdout or "").strip()
+
+    def test_fetch_draws_the_notice_once(self) -> None:
+        impact = ImpactBriefTests()
+        with impact._archive_project() as (project, state, _archive):
+            first = self._run_fetch(project, state)
+            second = self._run_fetch(project, state)
+            self.assertIn("untrusted DATA", first)
+            self.assertNotIn("untrusted DATA", second)
+
+    def test_registered_for_fetch_class(self) -> None:
+        manifest = json.loads((PLUGIN_ROOT / "hooks" / "hooks.json")
+                              .read_text(encoding="utf-8"))
+        matchers = " ".join(e["matcher"]
+                            for e in manifest["hooks"]["PostToolUse"])
+        self.assertIn("WebFetch", matchers)

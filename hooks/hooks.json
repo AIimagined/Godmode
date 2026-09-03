@@ -66,6 +66,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "WebFetch|WebSearch|web_fetch|web_search|fetch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/godmode_post_edit.py\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PreToolUse": [

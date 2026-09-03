@@ -187,6 +187,37 @@ def push_preflight(project: Path | str,
         _git(repo, "worktree", "remove", "--force", str(worktree))
         _git(repo, "worktree", "prune")
 
+    # A cut over open operator asks is the goal-misread class as machinery
+    # (recorded incident, 2026-09-03: an operator-named set was parked
+    # inside a spec and the cut staged anyway). Every OPEN stated request
+    # is a judgment finding: close it, or park it EXPLICITLY with the
+    # operator's own words.
+    if archive is not None:
+        try:
+            latest_requests: dict[str, dict] = {}
+            for record in archive.select(kind="request", limit=200):
+                digest = str((record.get("data") or {}).get("digest", ""))
+                if digest:
+                    latest_requests[digest] = record
+            open_asks = []
+            for record in latest_requests.values():
+                data = record.get("data") or {}
+                if (str(data.get("status", "open")) == "open"
+                        and str(data.get("source", "stated")) == "stated"):
+                    keywords = [str(w) for w in (data.get("keywords") or [])]
+                    open_asks.append(" ".join(keywords[:6]) or
+                                     str(record.get("subject", "")))
+            if open_asks:
+                judgment.append({
+                    "check": "open-operator-asks",
+                    "detail": (f"{len(open_asks)} stated operator ask(s) "
+                               "still open at the gate - a cut over an "
+                               "operator-named set is the goal-misread "
+                               "class; close each, or park it explicitly: "
+                               + "; ".join(f"'{a}'" for a in open_asks[:3])),
+                })
+        except Exception:  # noqa: BLE001
+            skipped.append("open-asks scan: unavailable")
     return {
         "mechanical": mechanical,
         "judgment": judgment,
