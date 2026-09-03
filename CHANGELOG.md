@@ -6,6 +6,12 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.3.17] - 2026-09-03
+
+### Added
+
+- The session brief states the gate posture at open in BOTH modes: observe mode already announced itself with would-have counts; enforce mode now says that reads and working-tree writes run free by design and asks are reserved for protected classes - a quiet session means allow-tier work, never an absent gate (field report measured "0 asks / 53 actions" and concluded inertness).
+
 ## [0.3.16] - 2026-09-03
 
 ### Fixed
