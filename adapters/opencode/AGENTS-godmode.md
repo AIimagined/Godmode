@@ -19,7 +19,7 @@ any change. Runs under Bun or Node.
 
 ## Session contract
 
-Before substantive work: `python scripts/godmode.py --project . session open
+Before substantive work: `python3 scripts/godmode.py --project . session open
 --label <task>` and read the handshake. Before completion: `session close` —
 a non-zero exit means an unattested step, an uncited claim, or a half-done
 pair; resolve it, never summarize past it. Set `GODMODE_HOST=opencode` and
@@ -55,3 +55,5 @@ without it, nothing intercepts a call the agent does not route through the
 CLI. It becomes HARD only when a live OpenCode session's block is
 chronicled as a proof (`hooks status`). State which of the two applies in
 the first session report.
+
+(On Windows use `python` in place of `python3`; stock macOS ships only `python3`.)

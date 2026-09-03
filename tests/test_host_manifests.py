@@ -130,7 +130,7 @@ class SharedHooksFileTests(unittest.TestCase):
                     self.assertNotIn("args", entry, (event, entry))
                     self.assertIsInstance(entry["command"], str, event)
                     self.assertTrue(
-                        entry["command"].startswith('python "${CLAUDE_PLUGIN_ROOT}/hooks/'),
+                        entry["command"].startswith('"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd"'),
                         (event, entry["command"]))
 
     def test_the_pretooluse_matcher_unions_every_host_tool_the_adapter_recognises(self) -> None:
@@ -208,7 +208,7 @@ class CursorManifestTests(unittest.TestCase):
         for event, groups in manifest["hooks"].items():
             for entry in groups[0]["hooks"]:
                 self.assertNotIn("args", entry, event)
-                self.assertTrue(entry["command"].startswith('python "${PLUGIN_ROOT}/hooks/'),
+                self.assertTrue(entry["command"].startswith('"${PLUGIN_ROOT}/hooks/run-hook.cmd"'),
                                 (event, entry["command"]))
 
     def test_the_pretooluse_matcher_never_emits_edit_or_any_untraceable_name(self) -> None:

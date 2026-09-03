@@ -6,7 +6,7 @@ is required.
 
 ## Session contract
 
-Open substantive work with `python scripts/godmode.py --project . session open
+Open substantive work with `python3 scripts/godmode.py --project . session open
 --label <task>` — the handshake includes the enforcement table; record it in
 your first message so capability negotiation is visible, not assumed. Close
 with `session close`; a non-zero exit blocks completion. Set
@@ -35,3 +35,5 @@ if enabled, say so in the session report.
 tool_call_interception is UNAVAILABLE: GEMINI.md context is advisory and no
 pre-tool boundary is exposed, so nothing intercepts a call the agent does not
 route through the CLI.
+
+(On Windows use `python` in place of `python3`; stock macOS ships only `python3`.)

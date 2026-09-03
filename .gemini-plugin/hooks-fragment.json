@@ -22,7 +22,7 @@
           {
             "name": "godmode-pre-tool-gate",
             "type": "command",
-            "command": "python ${extensionPath}/hooks/godmode_gate_fast.py",
+            "command": "${extensionPath}/hooks/run-hook.cmd godmode_gate_fast.py",
             "timeout": 3000,
             "description": "Godmode pre-tool gate."
           }

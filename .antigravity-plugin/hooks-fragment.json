@@ -6,14 +6,14 @@
       {
         "matcher": ".*",
         "type": "command",
-        "command": "python ${godmodePluginRoot}/hooks/godmode_gate_fast.py",
+        "command": "${godmodePluginRoot}/hooks/run-hook.cmd godmode_gate_fast.py",
         "timeout": 8
       }
     ],
     "Stop": [
       {
         "type": "command",
-        "command": "python ${godmodePluginRoot}/hooks/godmode_session_hook.py stop",
+        "command": "${godmodePluginRoot}/hooks/run-hook.cmd godmode_session_hook.py stop",
         "timeout": 10
       }
     ]

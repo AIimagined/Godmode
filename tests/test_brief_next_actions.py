@@ -293,3 +293,29 @@ class GatePostureTests(unittest.TestCase):
                 cwd=project)
             self.assertIn("gate ENFORCING", done.stdout)
             self.assertIn("quiet session means allow-tier work", done.stdout)
+
+
+class NotInitializedLoudTests(unittest.TestCase):
+    """Present-but-idle is a state the session must be told at the open -
+    a stock-macOS field install discovered it only by hand."""
+
+    def test_claude_session_hears_not_initialized(self) -> None:
+        import sys as _sys, json as _json, os as _os, subprocess, tempfile
+        from pathlib import Path as _P
+        root = _P(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="gm-uninit-") as tmp:
+            proj = _P(tmp) / "p"
+            proj.mkdir()
+            env = dict(_os.environ)
+            env["GODMODE_STATE_HOME"] = str(_P(tmp) / "state")
+            env["CLAUDE_PROJECT_DIR"] = str(proj)
+            done = subprocess.run(
+                [_sys.executable,
+                 str(root / "hooks" / "godmode_session_hook.py"),
+                 "session-start"],
+                input=_json.dumps({"session_id": "S-x", "cwd": str(proj),
+                                   "hook_event_name": "SessionStart"}),
+                capture_output=True, text=True, timeout=120, env=env,
+                cwd=proj)
+            self.assertIn("NOT initialized", done.stdout)
+            self.assertIn("godmode init", done.stdout)

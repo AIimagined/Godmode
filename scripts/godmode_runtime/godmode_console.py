@@ -4063,9 +4063,10 @@ def _day_one_text(parser: argparse.ArgumentParser) -> str:
     # package; the ONLY resolvable spelling is this file's own path, so
     # the orientation screen states it before anything else.
     entry = Path(__file__).resolve().parents[1] / "godmode.py"
+    import sys as _sys
     lines = ["GODMODE - DAY ONE", "",
-             f'  run as: python "{entry}" <verb>   (godmode is not on npm; '
-             "`godmode` below abbreviates that command)", ""]
+             f'  run as: "{_sys.executable}" "{entry}" <verb>   (godmode is '
+             "not on npm; `godmode` below abbreviates that command)", ""]
     for name, blurb in _DAY_ONE_VERBS:
         lines.append(f"  godmode {name:<13} {blurb}")
     lines += [
