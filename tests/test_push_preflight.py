@@ -224,6 +224,22 @@ class OpenAsksGateTests(unittest.TestCase):
             checks = [j.get("check") for j in report["judgment"]]
             self.assertNotIn("open-operator-asks", checks)
 
+    def test_a_designated_suite_runs_without_being_asked(self) -> None:
+        # THE RATCHET RULE on this gate's own miss: three CI-red releases
+        # on stale pins while "run the suite first" lived as a lesson and
+        # a per-call flag. Recorded once, the suite runs on every
+        # preflight - a failing designation is a judgment finding.
+        import sys as _sys
+        from godmode_runtime.godmode_preflight import push_preflight
+        with self._project() as (proj, archive):
+            archive.append("criterion", "preflight-suite",
+                           {"command": f'"{_sys.executable}" -c "import sys; sys.exit(3)"'})
+            report = push_preflight(proj, archive=archive)
+            checks = [j.get("check") for j in report["judgment"]]
+            self.assertIn("suite", checks)
+            self.assertNotIn("suite: no command designated",
+                             " ".join(report.get("skipped", [])))
+
     def test_a_subject_closure_clears_the_finding(self) -> None:
         # Field-caught at the 0.3.17 gate (2026-09-04): the closure command
         # this very finding prescribes writes the digest of the SUBJECT,

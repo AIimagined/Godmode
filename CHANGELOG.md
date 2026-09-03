@@ -6,6 +6,16 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.3.18] - 2026-09-04
+
+### Added
+
+- The preflight suite is now a ratchet, not a flag: `precheck --designate-suite "<cmd>"` records the pre-push suite once and every later preflight runs it unprompted, reporting a non-zero exit as a judgment finding. Three releases went red in CI on stale test pins while "run the full suite first" lived as a lesson and a per-call `--suite` nobody passed - a control that depends on remembering is willpower, and this gate now remembers for itself.
+
+### Fixed
+
+- Two test pins caught by v0.3.17's CI, stale against that release's own deliberate changes: the manifest contract now expects the polyglot-launcher command form, and the packaging test that asserted pre-init SILENCE now asserts the loud not-initialized notice - silence-before-init was the field defect 0.3.17 fixed, and the test enforcing it outlived the doctrine.
+
 ## [0.3.17] - 2026-09-03
 
 ### Added

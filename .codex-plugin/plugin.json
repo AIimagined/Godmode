@@ -1,6 +1,6 @@
 {
   "name": "godmode",
-  "version": "0.3.17",
+  "version": "0.3.18",
   "description": "Skills for a local, tamper-evident evidence ledger of what a coding agent did, claimed, and verified - gates enforced in hooks.",
   "author": {
     "name": "AIimagined"
