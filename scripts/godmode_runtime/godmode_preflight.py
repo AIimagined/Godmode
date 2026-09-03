@@ -194,19 +194,19 @@ def push_preflight(project: Path | str,
     # operator's own words.
     if archive is not None:
         try:
-            latest_requests: dict[str, dict] = {}
-            for record in archive.select(kind="request", limit=200):
-                digest = str((record.get("data") or {}).get("digest", ""))
-                if digest:
-                    latest_requests[digest] = record
+            # Closure honouring lives in one place (open_stated_requests):
+            # this gate's own latest-per-digest rebuild was blind to a
+            # closure written from the command line, so the exact command
+            # the finding prescribed closed nothing it could see
+            # (field-caught at the 0.3.17 gate, 2026-09-04).
+            from .godmode_requests import open_stated_requests
             open_asks = []
-            for record in latest_requests.values():
+            for record in open_stated_requests(
+                    archive.select(kind="request", limit=200)):
                 data = record.get("data") or {}
-                if (str(data.get("status", "open")) == "open"
-                        and str(data.get("source", "stated")) == "stated"):
-                    keywords = [str(w) for w in (data.get("keywords") or [])]
-                    open_asks.append(" ".join(keywords[:6]) or
-                                     str(record.get("subject", "")))
+                keywords = [str(w) for w in (data.get("keywords") or [])]
+                open_asks.append(" ".join(keywords[:6]) or
+                                 str(record.get("subject", "")))
             if open_asks:
                 judgment.append({
                     "check": "open-operator-asks",

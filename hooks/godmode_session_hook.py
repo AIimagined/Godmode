@@ -727,17 +727,14 @@ def _open_obligations_touched(archive: Any, reply_text: str) -> list[str]:
         # mid-task ask resurfaces when a reply touches its subject, not
         # only at handover review. Latest record per digest is the state;
         # only operator-stated, still-open requests enter.
-        latest_requests: dict[str, dict] = {}
-        for record in archive.select(kind="request", limit=200):
-            digest = str((record.get("data") or {}).get("digest", ""))
-            if digest:
-                latest_requests[digest] = record
-        for record in latest_requests.values():
+        # One reader for "still open": this surface's own latest-per-digest
+        # rebuild was blind to command-line closures, so the paste-ready
+        # closure it prescribed closed nothing it could see (field-caught
+        # at the 0.3.17 gate, 2026-09-04).
+        from godmode_runtime.godmode_requests import open_stated_requests
+        for record in open_stated_requests(
+                archive.select(kind="request", limit=200)):
             data = record.get("data") or {}
-            if str(data.get("status", "open")) != "open":
-                continue
-            if str(data.get("source", "stated")) != "stated":
-                continue
             # Requests store no raw prompt text (privacy) - only a digest
             # and the extracted keywords, which are exactly the match
             # vocabulary this surface needs.

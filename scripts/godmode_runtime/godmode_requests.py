@@ -300,6 +300,41 @@ def _closed_digests(records: list[dict[str, Any]]) -> set[str]:
     return closed
 
 
+def open_stated_requests(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Latest open stated request per digest, subject-closures honoured.
+
+    Two consumers (the push preflight and the stop-hook nag) each rebuilt a
+    latest-per-`data.digest` scan and were blind to a closure written from
+    the command line: `remember --kind request --subject "ask:<hex>" --status
+    closed` stores the digest OF THE SUBJECT, a different key from the
+    prompt-text digest the original carries - so the exact command both
+    surfaces prescribed closed nothing they could see (field-caught at the
+    0.3.17 gate, 2026-09-04). `_closed_digests` already holds the fallback;
+    this is the one place all readers get it from.
+    """
+    closed = _closed_digests(records)
+    latest: dict[str, dict[str, Any]] = {}
+    for record in records:
+        if record.get("kind") != "request":
+            continue
+        identifier = str((record.get("data") or {}).get("digest", ""))
+        if identifier:
+            latest[identifier] = record
+    survivors: list[dict[str, Any]] = []
+    for identifier, record in latest.items():
+        data = record.get("data") or {}
+        if str(data.get("status", "open")) != "open":
+            continue
+        if str(data.get("source", "stated")) != "stated":
+            continue
+        if identifier in closed:
+            continue
+        if digest(str(record.get("subject", "")).strip()) in closed:
+            continue
+        survivors.append(record)
+    return survivors
+
+
 def review_requests(records: list[dict[str, Any]],
                     answered_text: str = "") -> dict[str, Any]:
     """Requests with no closure, interruptions first.
