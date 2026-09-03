@@ -36,6 +36,7 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 - The orientation screen states the one resolvable invocation - `run as: python "<plugin>/scripts/godmode.py"` - before listing any verb, and PATH shims for both shells make a guessed invocation land loudly on the real entry point. An agent guessed npx, hit a squatted npm name, and got silence at the moment continuity was needed (field report, 2026-09-03); godmode is not an npm package and now says so.
 - A sentence carrying its own incompleteness marker - still running, not yet, in progress, so far, awaiting, except - is a progress report, not a completion declaration, and no longer arms the done-bar; honest mid-task updates stop costing a claim each (field report, 2026-09-03).
 - A touched operator request surfaces as its keywords in SPOKEN order plus the paste-ready closure command - the hash-plus-sorted-bag rendering was unactionable and trained dismissal (field reports, 2026-09-03). The raw prompt stays unstored; the phrase is the words the operator used, minus stopwords, in the order they said them.
+- The request ledger stops capturing turn lubricant: single-word prompts and pasted terminal transcripts are dropped at the write path, and a 374-item pre-filter backlog was closed with per-class reasons (machine capture, expired unreviewed, served) - a ledger whose count is mostly noise is a ledger nobody reads.
 
 ## [0.3.14] - 2026-09-03
 
