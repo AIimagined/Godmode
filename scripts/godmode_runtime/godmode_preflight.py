@@ -133,10 +133,20 @@ def push_preflight(project: Path | str,
             run = subprocess.run(suite, cwd=worktree, capture_output=True,
                                  check=False, timeout=1800)
             if run.returncode != 0:
+                # The finding names its catch: "exit 1" alone trains a
+                # 20-minute re-run to learn which test failed (first live
+                # run of the ratchet, 2026-09-04). unittest writes verdicts
+                # to stderr; the tail is where the summary lives.
+                tail = (run.stderr or run.stdout or b"")[-2000:].decode(
+                    "utf-8", errors="replace")
+                lines = [ln for ln in tail.splitlines()
+                         if ln.startswith(("FAIL", "ERROR", "Ran "))
+                         or "Error" in ln][-8:]
                 judgment.append({
                     "check": "suite",
                     "detail": f"designated suite exited exit {run.returncode}; "
-                              "a person decides whether this state ships",
+                              "a person decides whether this state ships"
+                              + (": " + " | ".join(lines) if lines else ""),
                 })
         else:
             skipped.append(

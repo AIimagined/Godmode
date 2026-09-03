@@ -10,7 +10,7 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ### Added
 
-- The preflight suite is now a ratchet, not a flag: `precheck --designate-suite "<cmd>"` records the pre-push suite once and every later preflight runs it unprompted, reporting a non-zero exit as a judgment finding. Three releases went red in CI on stale test pins while "run the full suite first" lived as a lesson and a per-call `--suite` nobody passed - a control that depends on remembering is willpower, and this gate now remembers for itself.
+- The preflight suite is now a ratchet, not a flag: `precheck --designate-suite "<cmd>"` records the pre-push suite once and every later preflight runs it unprompted, reporting a non-zero exit as a judgment finding that quotes the failing summary lines - "exit 1" alone trains a twenty-minute re-run to learn which test failed. Three releases went red in CI on stale test pins while "run the full suite first" lived as a lesson and a per-call `--suite` nobody passed - a control that depends on remembering is willpower, and this gate now remembers for itself.
 
 ### Fixed
 
