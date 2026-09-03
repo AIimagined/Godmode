@@ -267,3 +267,29 @@ class HonestyTuningTests(unittest.TestCase):
                 timeout=120, env=env, cwd=project)
             self.assertIn("0 compiled rules", done.stdout)
             self.assertIn("nothing can block", done.stdout)
+
+
+class GatePostureTests(unittest.TestCase):
+    """Silence in enforce mode must never read as an absent gate."""
+
+    def test_enforce_mode_states_its_posture_at_open(self) -> None:
+        import sys as _sys
+        from pathlib import Path as _P
+        _sys.path.insert(0, str(_P(__file__).parent))
+        from test_godmode_runtime import isolated_project
+        import json as _json, os as _os, subprocess
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            root = _P(__file__).resolve().parents[1]
+            env = dict(_os.environ)
+            env["CLAUDE_PROJECT_DIR"] = str(project)
+            done = subprocess.run(
+                [_sys.executable,
+                 str(root / "hooks" / "godmode_session_hook.py"),
+                 "session-start"],
+                input=_json.dumps({"session_id": "S-post",
+                                   "cwd": str(project)}),
+                capture_output=True, text=True, timeout=120, env=env,
+                cwd=project)
+            self.assertIn("gate ENFORCING", done.stdout)
+            self.assertIn("quiet session means allow-tier work", done.stdout)

@@ -1,0 +1,1 @@
+The session brief states the gate posture at open in BOTH modes: observe mode already announced itself with would-have counts; enforce mode now says that reads and working-tree writes run free by design and asks are reserved for protected classes - a quiet session means allow-tier work, never an absent gate (field report measured "0 asks / 53 actions" and concluded inertness).

@@ -297,6 +297,20 @@ def _session_obligations(anchor: Any, archive: Chronicle) -> dict[str, Any]:
         except GodmodeError:
             notice += " (would-have counts unavailable: archive unreadable)"
         obligations["enforcement"]["notice"] = notice
+    else:
+        # Field report 2026-09-03 ("a day of mutations with not one ask -
+        # the gate exists on paper"): in enforce mode, silence reads as
+        # inertness when every action lands allow-tier by design. The
+        # posture is stated at open so quiet can never be mistaken for
+        # absent: reads and working-tree writes run free, asks are
+        # reserved for the protected classes.
+        obligations["enforcement"]["notice"] = (
+            "gate ENFORCING - reads and working-tree writes run free by "
+            "design; protected classes (external writes, history changes, "
+            "deletes outside the tree, force operations) deny or ask. A "
+            "quiet session means allow-tier work, not an absent gate; "
+            "`godmode grid` proves the controls hold, `godmode "
+            "capabilities` shows the split.")
     return obligations
 
 
