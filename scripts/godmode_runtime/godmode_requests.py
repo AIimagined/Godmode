@@ -165,6 +165,10 @@ _HOST_ENVELOPES = (
     # gate table?" - a person asking - is untouched.
     re.compile(r"^\s*(cd|grep|echo|python3?|git|ls|cat|awk|sed|for|while)\s"
                r"[^\n]*(&&|\|\||<<|\|\s|>\s|>>)"),
+    # A pasted terminal transcript: the PowerShell prompt is an envelope no
+    # person types as an ask (2026-09-03 hygiene pass: dozens of these sat
+    # open in the ledger).
+    re.compile(r"^\s*PS [A-Z]:\\"),
 )
 
 
@@ -216,6 +220,11 @@ def record_request(archive: Any, text: str, *, session: str | None = None,
         # A host envelope, not an ask. Dropped rather than stored, because
         # a ledger of asks that fills with tool-permission prompts and task
         # notifications stops being a ledger of asks.
+        return None
+    # Write-path only (the review path re-judges stored digest subjects,
+    # which legitimately carry few words): a single-word prompt - "yes",
+    # "hi", "continue" - is turn lubricant with nothing to act on later.
+    if len(flattened.split()) < 2:
         return None
 
     # A spoken secret used to be caught downstream: the subject carried the
