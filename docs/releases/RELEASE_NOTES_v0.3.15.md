@@ -38,6 +38,13 @@ done-bar by rewording draws a named advisory on the re-fire; and two
 skills sharing a name - a collision the host resolves silently - fail
 `godmode skill names`.
 
+And the release closes its own loop twice over: the push preflight now
+surfaces every open stated operator ask as a finding - a cut over an
+operator-named set is the goal-misread class, caught by machinery instead
+of memory - and fetch-class tool output carries a once-per-session
+untrusted-data notice, the one output-governance import the full
+upstream-repo sweep produced.
+
 ## Verifying
 
 - `python -m unittest discover -s tests` — the full suite (3,183 tests).
