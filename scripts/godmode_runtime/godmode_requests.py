@@ -222,9 +222,11 @@ def record_request(archive: Any, text: str, *, session: str | None = None,
         # notifications stops being a ledger of asks.
         return None
     # Write-path only (the review path re-judges stored digest subjects,
-    # which legitimately carry few words): a single-word prompt - "yes",
-    # "hi", "continue" - is turn lubricant with nothing to act on later.
-    if len(flattened.split()) < 2:
+    # which legitimately carry few words): a SHORT single-word prompt -
+    # "yes", "hi", "continue" - is turn lubricant with nothing to act on
+    # later. A long single token stays recordable: a pasted opaque secret
+    # must reach the redaction machinery, not vanish before it.
+    if len(flattened.split()) < 2 and len(flattened) <= 12:
         return None
 
     # A spoken secret used to be caught downstream: the subject carried the
