@@ -68,7 +68,7 @@
         ]
       },
       {
-        "matcher": "WebFetch|WebSearch|web_fetch|web_search|fetch",
+        "matcher": "WebFetch|WebSearch",
         "hooks": [
           {
             "type": "command",

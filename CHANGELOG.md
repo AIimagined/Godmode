@@ -37,6 +37,7 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 - A sentence carrying its own incompleteness marker - still running, not yet, in progress, so far, awaiting, except - is a progress report, not a completion declaration, and no longer arms the done-bar; honest mid-task updates stop costing a claim each (field report, 2026-09-03).
 - A touched operator request surfaces as its keywords in SPOKEN order plus the paste-ready closure command - the hash-plus-sorted-bag rendering was unactionable and trained dismissal (field reports, 2026-09-03). The raw prompt stays unstored; the phrase is the words the operator used, minus stopwords, in the order they said them.
 - The request ledger stops capturing turn lubricant: single-word prompts and pasted terminal transcripts are dropped at the write path, and a 374-item pre-filter backlog was closed with per-class reasons (machine capture, expired unreviewed, served) - a ledger whose count is mostly noise is a ledger nobody reads.
+- CI fix round: the fetch-notice matcher carries only names shipped hosts actually send (the grok contract test caught three speculative ones), and the single-word request drop exempts long opaque tokens so a pasted secret still reaches the redaction machinery.
 
 ## [0.3.14] - 2026-09-03
 
