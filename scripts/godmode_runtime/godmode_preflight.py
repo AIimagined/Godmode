@@ -130,8 +130,11 @@ def push_preflight(project: Path | str,
             except Exception:  # noqa: BLE001
                 pass
         if suite:
+            # 3600, not 1800: this repo's own designated suite runs ~27
+            # minutes on the reference machine, and a timeout kill is
+            # indistinguishable from a failure in the finding.
             run = subprocess.run(suite, cwd=worktree, capture_output=True,
-                                 check=False, timeout=1800)
+                                 check=False, timeout=3600)
             if run.returncode != 0:
                 # The finding names its catch: "exit 1" alone trains a
                 # 20-minute re-run to learn which test failed (first live
