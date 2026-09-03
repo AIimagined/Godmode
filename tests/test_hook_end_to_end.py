@@ -32,6 +32,11 @@ HOOK = PLUGIN_ROOT / "hooks" / "godmode_session_hook.py"
 
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
+# Standalone runs need the runtime importable too; riding a sibling
+# module's path insert made this file order-dependent (latent until a
+# lone `-m unittest tests.test_hook_end_to_end` hit it, 2026-09-03).
+if str(PLUGIN_ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
 
 from tests._gate_mode_isolation import park_local_policy, restore_local_policy  # noqa: E402
 
