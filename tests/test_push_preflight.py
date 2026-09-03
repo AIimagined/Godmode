@@ -223,3 +223,23 @@ class OpenAsksGateTests(unittest.TestCase):
             report = push_preflight(proj, archive=archive)
             checks = [j.get("check") for j in report["judgment"]]
             self.assertNotIn("open-operator-asks", checks)
+
+    def test_a_subject_closure_clears_the_finding(self) -> None:
+        # Field-caught at the 0.3.17 gate (2026-09-04): the closure command
+        # this very finding prescribes writes the digest of the SUBJECT,
+        # not of the prompt text, and the gate's latest-per-digest rebuild
+        # never saw it - close, re-run, still blocked.
+        from godmode_runtime.godmode_preflight import push_preflight
+        from godmode_runtime.godmode_requests import record_request
+        from godmode_runtime.godmode_requests import digest as request_digest
+        with self._project() as (proj, archive):
+            record = record_request(
+                archive, "sweep the upstream repos before the cut")
+            subject = record["subject"]
+            archive.append("request", subject,
+                           {"value": "served", "status": "closed",
+                            "digest": request_digest(subject),
+                            "source": "stated"})
+            report = push_preflight(proj, archive=archive)
+            checks = [j.get("check") for j in report["judgment"]]
+            self.assertNotIn("open-operator-asks", checks)
