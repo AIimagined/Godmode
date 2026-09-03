@@ -950,9 +950,25 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     if check_results:
         data = dict(data)
         data["verified_checks"] = check_results
+    # Field report 2026-09-03 ("JSON noise with no signal about what was
+    # verified"): the grade is honest but mute - one sentence names what was
+    # executed versus taken on the author's word, so "observed" never reads
+    # as "checked" and the path to "verified" is in the payload itself.
+    cmd_count = sum(1 for c in (args.cite or []) if str(c).startswith("cmd:"))
+    if check_results:
+        passed = sum(1 for c in check_results if c.get("passed"))
+        support = (f"{passed}/{len(check_results)} cited command(s) executed "
+                   "and attested just now")
+    elif cmd_count:
+        support = (f"nothing executed - {cmd_count} cmd cite(s) taken on the "
+                   "record's word; re-run with --verify to execute them")
+    else:
+        support = ("nothing executed - no cmd: citation to run; the grade "
+                   "rests on document/file overlap only")
     # A downgrade is a finding, so it must be visible in the exit status too.
     return CommandResult(
         {"claim": data["text"], "grade": data["grade"], "claimed": data["claimed_grade"],
+         "support": support,
          "downgraded": data["downgraded"], "reason": data.get("reason", ""),
          "unresolved": data["unresolved"], "unsupported": data.get("unsupported", []),
          "blast_radius": data.get("blast_radius"),

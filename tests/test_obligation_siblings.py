@@ -59,6 +59,20 @@ class SiblingCollapseTests(unittest.TestCase):
                 "live-verify engine version 0.8.22"), touched)
             self.assertIn("muted", touched[0])
 
+    def test_touched_obligation_carries_its_own_closure(self) -> None:
+        # Field report 2026-09-03: the footer's one-size closure command said
+        # `--kind obligation` directly under an ask line saying `--kind
+        # request`. Every line now carries its own paste-ready closure.
+        with _archive() as archive:
+            archive.append("obligation", "live-verify engine version 0.8.22",
+                           {"value": "run the live verify pass against the engine"})
+            touched = _open_obligations_touched(
+                archive, "next step is the live verify pass against the engine build")
+            self.assertEqual(len(touched), 1)
+            self.assertIn("close with `godmode remember --kind obligation "
+                          "--subject \"live-verify engine version 0.8.22\" "
+                          "--status closed`", touched[0])
+
     def test_unrelated_obligations_still_both_surface(self) -> None:
         with _archive() as archive:
             archive.append("obligation", "live-verify engine version 0.8.22",
