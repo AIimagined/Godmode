@@ -741,13 +741,15 @@ def _open_obligations_touched(archive: Any, reply_text: str) -> list[str]:
             keywords = [str(w).lower() for w in (data.get("keywords") or [])]
             vocab = set(keywords)
             shared = len(reply_words & vocab)
-            # A reply covering half the ask's vocabulary is SERVING it, not
-            # merely touching it - the same weak bar `review_requests`
-            # already applies (field report 2026-09-04: the reply that
-            # answered "check godmode continuity" was told to close it).
-            # The ledger still holds the ask until a person closes it; the
-            # turn-boundary nag just stops firing on the answer itself.
-            if vocab and shared / len(vocab) >= 0.5:
+            # A reply restating nearly every word of the ask is SERVING it,
+            # not merely touching it (field report 2026-09-04: the reply
+            # that answered "check godmode continuity" was told to close
+            # it). Three-quarters, not the review's one-half: a related
+            # progress line ("the engine parity sweep is still ahead")
+            # shares half the words of the ask it has NOT served, and the
+            # sibling pins hold that case. The ledger still holds the ask
+            # until a person closes it; only the turn-boundary nag yields.
+            if vocab and shared / len(vocab) >= 0.75:
                 continue
             if shared >= 3:
                 # Field report 2026-09-03: a hash plus a sorted keyword bag
