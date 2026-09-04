@@ -36,10 +36,10 @@ was running, and each named a friction with a pin behind it now:
   word of context beside them, is an observation; promise-verb claims
   carry no number and stay gated.
 - **The answer is not an unfinished promise.** The reply that served
-  "check godmode continuity" was told to close it. Half the ask's
-  keywords covered is the served bar `review_requests` already applied;
-  the turn-boundary nag now applies the same one. The ledger still holds
-  the ask until a person closes it.
+  "check godmode continuity" was told to close it. A reply restating
+  three-quarters of the ask's keywords is serving it; a related progress
+  line shares half the words of an ask it has not served, and stays
+  surfaced. The ledger still holds the ask until a person closes it.
 - **A remedy applied is a signal silenced.** The capacity warning fired
   on every call after the checkpoint it asked for existed. A checkpoint
   among the newest 25 records covers the brief; the due message carries
