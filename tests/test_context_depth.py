@@ -103,6 +103,19 @@ class CapacityTriggerTests(unittest.TestCase):
             self.assertGreater(signal["estimated_tokens"], int(60 * 0.8))
             self.assertIn("detail", signal)
 
+    def test_a_recent_checkpoint_covers_the_signal(self) -> None:
+        # Field report 2026-09-04: past 80% the signal re-fired on every call
+        # after the checkpoint it asked for had been written.
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            archive.append("decision", "layout", {"choice": "flat"}, evidence=["seq:0"])
+            archive.append("checkpoint", "handoff", {"summary": "state saved"},
+                           evidence=["seq:1"])
+            signal = capacity_checkpoint_due(archive, token_budget=60)
+            self.assertGreater(signal["estimated_tokens"], int(60 * 0.8))
+            self.assertFalse(signal["due"])
+            self.assertIn("covers", signal["detail"])
+
     def test_signal_stays_quiet_under_a_generous_budget(self) -> None:
         with isolated_project() as (_project, _state, _anchor, archive):
             archive.initialize()

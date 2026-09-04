@@ -99,6 +99,11 @@ def _redacted_entry(relative: str, entry: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# How many newest records a checkpoint stays "recent" for, silencing the
+# capacity signal it was the remedy to.
+RECENT_CHECKPOINT_WINDOW = 25
+
+
 def collect_inventory(project: str | Path) -> dict[str, Any]:
     root = canonical_path(Path(project))
     # Deferred import: sentinel imports nothing from this module, but the
@@ -431,7 +436,14 @@ def detect_context_issues(
                     {
                         "code": "undocumented-drift",
                         "severity": "warning",
-                        "detail": f"{len(drift['added'])} added, {len(drift['changed'])} changed, {len(drift['removed'])} removed.",
+                        # The scan measures drift and never moves the
+                        # baseline; the finding names the verb that does
+                        # (field report 2026-09-04: "--scan does not
+                        # refresh the baseline, needed a separate rebuild").
+                        "detail": (f"{len(drift['added'])} added, {len(drift['changed'])} changed, "
+                                   f"{len(drift['removed'])} removed since the baseline; once "
+                                   "reviewed, `godmode context status --scan --rebaseline` "
+                                   "accepts the current tree."),
                     }
                 )
             # An mtime can only move forward on an untouched tree; one that
@@ -650,15 +662,32 @@ def capacity_checkpoint_due(
     brief = build_context_brief(archive.anchor, archive, token_budget=token_budget)
     estimated = brief["estimated_tokens"]
     threshold = int(token_budget * 0.8)
-    due = estimated > threshold
+    over = estimated > threshold
+    # A brief past 80% stays past 80% for the life of a busy archive, so
+    # the bare threshold re-fired on every call after the remedy had been
+    # applied (field report 2026-09-04: "fires on every call, no
+    # auto-remedy"). A checkpoint among the newest records IS the remedy:
+    # the signal re-arms only once enough has happened since it.
+    # Deliberate ceiling: "recent" is a record count, not a content diff -
+    # raise RECENT_CHECKPOINT_WINDOW or hash the brief if it re-fires too soon.
+    covered = any(record.get("kind") == "checkpoint"
+                  for record in archive.select(limit=RECENT_CHECKPOINT_WINDOW))
+    due = over and not covered
+    if due:
+        state = ("write an atomic checkpoint before compaction: "
+                 "`godmode checkpoint \"<state>\" --next \"<action>\"`.")
+    elif over:
+        state = (f"a checkpoint within the last {RECENT_CHECKPOINT_WINDOW} "
+                 "records covers this; re-arms as records accrue.")
+    else:
+        state = "capacity is comfortable."
     return {
         "due": due,
         "estimated_tokens": estimated,
         "budget": token_budget,
         "detail": (
-            f"Brief estimate {estimated} tokens vs threshold {threshold} (80% of {token_budget}); "
-            + ("write an atomic checkpoint before compaction." if due
-               else "capacity is comfortable.")
+            f"Brief estimate {estimated} tokens vs threshold {threshold} "
+            f"(80% of {token_budget}); {state}"
         ),
     }
 

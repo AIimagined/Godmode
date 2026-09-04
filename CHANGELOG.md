@@ -6,6 +6,15 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+### Fixed
+
+- The stop-hook claim advisory and the done-bar block exempt readouts: a sentence whose every number appears in this turn's own tool output, with a word of context beside it, restates an observation rather than making a claim. Field report 2026-09-04: the done-bar blocked a status report whose every figure was godmode's own output seconds earlier. Promise-verb claims carry no number and stay gated.
+- The turn-boundary request nag no longer fires on the reply that answers the ask: a reply covering half the ask's keywords is serving it, the same weak bar `review_requests` already applies. The ledger still holds the ask until a person closes it.
+- The capacity signal stops re-firing once its remedy is applied: a checkpoint among the newest 25 records covers the brief, and the signal re-arms as records accrue. The due message now carries the checkpoint command.
+- `context status --scan --rebaseline` measures drift and accepts the current tree as the new baseline in one call; the drift finding names it. `--scan` alone still only measures.
+- Framework build caches (`.next`, `.nuxt`, `.svelte-kit`, `.turbo`, `.cache`, `.parcel-cache`, `.angular`, `.vercel`, `.output`, `.ruff_cache`) join the shared skip list - a Next.js build had been polluting every drift count.
+- `status remaining` reports an age split (within 30 days vs older) on every call and takes `--since DAYS` to hide older items, with the hidden count reported - 303 items dominated by July-era obligations answered "what is left now?" with everything ever left.
+
 ## [0.3.18] - 2026-09-04
 
 ### Added

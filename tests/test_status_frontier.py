@@ -86,3 +86,24 @@ class FrontierTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AgeWindowTests(unittest.TestCase):
+    def test_since_hides_old_items_and_reports_the_split(self) -> None:
+        # Field report 2026-09-04: 303 items dominated by July-era noise.
+        from datetime import datetime, timedelta, timezone
+
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            record_item(archive, "old-item", "from long ago", "proposed")
+            archive.append("obligation", "old-duty", {"value": "still open"}, evidence=[])
+            later = datetime.now(timezone.utc) + timedelta(days=45)
+            whole = remaining(archive, project, now=later)
+            self.assertEqual(whole["count"], 2)
+            self.assertEqual(whole["age_split"]["older"], 2)
+            self.assertEqual(whole["stale_hidden"], 0)
+            windowed = remaining(archive, project, since_days=30, now=later)
+            self.assertEqual(windowed["count"], 0)
+            self.assertEqual(windowed["stale_hidden"], 2)
+            fresh = remaining(archive, project, since_days=30)
+            self.assertEqual(fresh["count"], 2)

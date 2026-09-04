@@ -60,6 +60,23 @@ def _transcript(base: Path, text: str) -> Path:
     return path
 
 
+def _transcript_after_tool(base: Path, tool_output: str, text: str) -> Path:
+    """The observed Claude shape: human prompt, a tool call, its result as a
+    user-role `tool_result` block, then the final assistant text."""
+    path = base / "transcript.jsonl"
+    lines = [
+        json.dumps({"type": "user", "message": {"content": "do the thing"}}),
+        json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}]}}),
+        json.dumps({"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": tool_output}]}}),
+        json.dumps({"type": "assistant",
+                    "message": {"content": [{"type": "text", "text": text}]}}),
+    ]
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
 def _run(project: Path, state: Path, payload: dict) -> subprocess.CompletedProcess:
     environment = dict(os.environ)
     environment["GODMODE_STATE_HOME"] = str(state)
@@ -80,6 +97,65 @@ class StopAdvisoryTests(unittest.TestCase):
         payload = json.loads(done.stdout)
         self.assertIn("blocks every force-push", payload["systemMessage"])
         self.assertIn("godmode claim", payload["systemMessage"])
+
+    def test_a_readout_of_this_turns_tool_output_is_silent(self) -> None:
+        # Field report 2026-09-04: a status report whose every figure was
+        # godmode's own output seconds earlier was told to record claims.
+        with _project() as (project, state, _archive):
+            transcript = _transcript_after_tool(
+                project, '{"archive": {"valid": true, "anchored": true, "records": 1521}}',
+                "Archive valid, anchored, 1521 records.")
+            done = _run(project, state, {"session_id": "s1",
+                                         "transcript_path": str(transcript)})
+        self.assertEqual(done.returncode, 0)
+        self.assertEqual(done.stdout.strip(), "")
+
+    def test_a_readout_must_match_the_observed_number(self) -> None:
+        with _project() as (project, state, _archive):
+            transcript = _transcript_after_tool(
+                project, '{"archive": {"valid": true, "anchored": true, "records": 1520}}',
+                "Archive valid, anchored, 1521 records.")
+            done = _run(project, state, {"session_id": "s1",
+                                         "transcript_path": str(transcript)})
+        self.assertEqual(done.returncode, 0)
+        self.assertIn("1521 records", json.loads(done.stdout)["systemMessage"])
+
+    def test_the_done_bar_accepts_an_observed_result(self) -> None:
+        with _project() as (project, state, _archive):
+            transcript = _transcript_after_tool(
+                project, "Ran 3206 tests in 1602.1s\n\nOK",
+                "All 3206 tests pass.")
+            done = _run(project, state, {"session_id": "s1",
+                                         "transcript_path": str(transcript)})
+        self.assertEqual(done.returncode, 0)
+        self.assertNotIn('"block"', done.stdout)
+
+    def test_a_reply_that_serves_an_ask_is_not_told_to_close_it(self) -> None:
+        # The reply answering "check godmode continuity" shares every keyword
+        # with the ask - that is the answer, not an unfinished promise.
+        from godmode_runtime.godmode_requests import record_request
+
+        with _project() as (project, state, archive):
+            record_request(archive, "check godmode continuity", session="s1")
+            transcript = _transcript(
+                project, "Check result for godmode continuity: archive valid and anchored.")
+            done = _run(project, state, {"session_id": "s1",
+                                         "transcript_path": str(transcript)})
+        self.assertEqual(done.returncode, 0)
+        self.assertNotIn("operator ask", done.stdout)
+
+    def test_a_reply_that_only_touches_an_ask_still_surfaces_it(self) -> None:
+        from godmode_runtime.godmode_requests import record_request
+
+        with _project() as (project, state, archive):
+            record_request(archive, "please investigate the flaky deployment pipeline "
+                                    "timeout across staging clusters tonight", session="s1")
+            transcript = _transcript(
+                project, "Looked at the deployment pipeline timeout; nothing else touched.")
+            done = _run(project, state, {"session_id": "s1",
+                                         "transcript_path": str(transcript)})
+        self.assertEqual(done.returncode, 0)
+        self.assertIn("operator ask", json.loads(done.stdout)["systemMessage"])
 
     def test_ordinary_prose_is_silent(self) -> None:
         with _project() as (project, state, _archive):

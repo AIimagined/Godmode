@@ -206,6 +206,7 @@ def items(archive: Chronicle) -> dict[str, dict[str, Any]]:
             "proof": data.get("proof", ""),
             "sequence": record["sequence"],
             "evidence": record.get("evidence", []),
+            "recorded_at": record.get("recorded_at"),
         }
         # §19 fields ride along when declared, so gates and point sums read the
         # same view every other consumer does instead of re-parsing records.
@@ -438,13 +439,40 @@ def survey(archive: Chronicle, project: Path) -> dict[str, Any]:
     }
 
 
+# Past this many days an open item is reported as older, not current.
+STALE_AFTER_DAYS = 30
+
+
+def _age_days(recorded_at: Any, now: Any = None) -> int | None:
+    """Whole days since an ISO timestamp; None when unreadable."""
+    from datetime import datetime, timezone
+
+    if not isinstance(recorded_at, str):
+        return None
+    try:
+        written = datetime.fromisoformat(recorded_at)
+    except ValueError:
+        return None
+    if written.tzinfo is None:
+        written = written.replace(tzinfo=timezone.utc)
+    current = now or datetime.now(timezone.utc)
+    return max(0, int((current - written).total_seconds() // 86_400))
+
+
 def remaining(
     archive: Chronicle,
     project: Path,
     session: str | None = None,
     charter: dict[str, Any] | None = None,
+    since_days: int | None = None,
+    now: Any = None,
 ) -> dict[str, Any]:
     """Derive what is left from the records, instead of recalling it.
+
+    `since_days` hides items older than that many days (their count still
+    reports as `stale_hidden`); `now` is for tests. Field report 2026-09-04:
+    303 items dominated by July-era obligations answered "what is left
+    NOW?" with everything ever left, which is a list nobody can use.
 
     A remaining-work list composed from memory is a claim about the project that
     nothing checked. It reads as complete because a list always does, and the
@@ -472,7 +500,8 @@ def remaining(
     for name, entry in sorted(current.items()):
         if entry["state"] not in TERMINAL:
             items_left.append({"source": "status", "id": name,
-                               "detail": f"{entry['title'] or name} is {entry['state']}"})
+                               "detail": f"{entry['title'] or name} is {entry['state']}",
+                               "age_days": _age_days(entry.get("recorded_at"), now)})
 
     # The latest record per subject is the obligation's state: a later
     # `closed` or `retired` record supersedes the original `open` one, so
@@ -485,7 +514,8 @@ def remaining(
         status = str(record["data"].get("status", "open")).lower()
         if status not in ("closed", "met", "done", "retired"):
             items_left.append({"source": "obligation", "id": record["subject"],
-                               "detail": str(record["data"].get("value", ""))[:160]})
+                               "detail": str(record["data"].get("value", ""))[:160],
+                               "age_days": _age_days(record.get("recorded_at"), now)})
 
     if charter is None:
         unavailable.append({"source": "unattested rules",
@@ -525,6 +555,17 @@ def remaining(
                 items_left.append({"source": "claim", "id": record["subject"][:60],
                                    "detail": f"downgraded: {data.get('reason', 'unsupported')}"})
 
+    # Age split always reported; the window filter only on request. An item
+    # with no readable time is never hidden - unknown age is not old age.
+    recent = sum(1 for e in items_left
+                 if e.get("age_days") is None or e["age_days"] <= STALE_AFTER_DAYS)
+    stale_hidden = 0
+    if since_days is not None:
+        kept = [e for e in items_left
+                if e.get("age_days") is None or e["age_days"] <= since_days]
+        stale_hidden = len(items_left) - len(kept)
+        items_left = kept
+
     by_source: dict[str, int] = {}
     for entry in items_left:
         by_source[entry["source"]] = by_source.get(entry["source"], 0) + 1
@@ -556,6 +597,9 @@ def remaining(
         "blocked": blocked,
         "count": len(items_left),
         "by_source": dict(sorted(by_source.items())),
+        "age_split": {f"within_{STALE_AFTER_DAYS}d": recent,
+                      "older": len(items_left) + stale_hidden - recent},
+        "stale_hidden": stale_hidden,
         "phantoms_closed": verification["auto_closed"],
         "sources_consulted": consulted,
         "sources_unavailable": unavailable,

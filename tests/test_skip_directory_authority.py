@@ -48,6 +48,12 @@ class SingleOwnerTests(unittest.TestCase):
             with self.subTest(directory=name):
                 self.assertIn(name, IGNORED_DIRECTORY_NAMES)
 
+    def test_framework_build_caches_are_skipped_everywhere(self) -> None:
+        # Field report 2026-09-04: `.next` output polluted every drift count.
+        for name in (".next", ".nuxt", ".svelte-kit", ".turbo", ".cache"):
+            with self.subTest(directory=name):
+                self.assertIn(name, IGNORED_DIRECTORY_NAMES)
+
     def test_source_control_metadata_is_skipped_everywhere(self) -> None:
         for name in (".git", ".hg", ".svn"):
             with self.subTest(directory=name):
