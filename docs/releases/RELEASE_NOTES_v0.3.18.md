@@ -11,9 +11,16 @@ poisoned).
 
 The recurring miss got its ratchet: `precheck --designate-suite "<cmd>"`
 records the pre-push suite once, and every later preflight runs it
-without being asked, reporting a non-zero exit as a judgment finding. A
-control that depends on remembering a flag is willpower; this gate now
-remembers for itself.
+without being asked, reporting a non-zero exit as a judgment finding
+that quotes the failing summary lines. A control that depends on
+remembering a flag is willpower; this gate now remembers for itself.
+
+The ratchet earned its keep before shipping: its first live runs caught
+sentinel-scoping assertions failing only inside the gate - the preflight
+worktree lived under the system temp dir, which is the sentinel's own
+scratch allowance, so the controls were being tested from inside the one
+zone they deliberately exempt. The worktree now lives under the repo's
+.git, outside every scratch classification.
 
 ## Verifying
 
