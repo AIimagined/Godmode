@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 
@@ -166,7 +167,13 @@ def push_preflight(project: Path | str,
                 partial = (expired.stderr or expired.stdout or b"")
                 if isinstance(partial, str):
                     partial = partial.encode("utf-8", errors="replace")
-                tail = partial[-600:].decode("utf-8", errors="replace").strip()
+                text = partial.decode("utf-8", errors="replace")
+                tail = text[-600:].strip()
+                # unittest's quiet stream is one mark per test; the count
+                # says how far the suite got before the clock did (round 8
+                # reported 300 dots and nothing else - a tail with no
+                # position in it).
+                completed = sum(len(m) for m in re.findall(r"[.FEsx]{5,}", text))
                 judgment.append({
                     "check": "suite",
                     "detail": f"designated suite killed after "
@@ -174,6 +181,8 @@ def push_preflight(project: Path | str,
                               "a hang or a slow machine, and a person decides "
                               "which; run the suite with -v to name the test "
                               "it stopped in"
+                              + (f"; about {completed} quiet-mode test marks "
+                                 "before the kill" if completed else "")
                               + (f"; last output: {tail[-300:]!r}" if tail else ""),
                 })
                 run = None
@@ -259,6 +268,9 @@ def push_preflight(project: Path | str,
     finally:
         _git(repo, "worktree", "remove", "--force", str(worktree))
         _git(repo, "worktree", "prune")
+        # The mkdtemp parent outlived the worktree it held (rounds 7 and 8
+        # each left an empty `.godmode-preflight-*` beside the repo).
+        shutil.rmtree(scratch, ignore_errors=True)
 
     # A cut over open operator asks is the goal-misread class as machinery
     # (recorded incident, 2026-09-03: an operator-named set was parked

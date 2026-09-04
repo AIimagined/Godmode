@@ -2511,6 +2511,13 @@ def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         args.value = text
         if args.subject is None:
             args.subject = " ".join(text.split()[:8])[:MAX_SUBJECT].strip()
+    if args.subject is not None and args.value is None and args.status:
+        # A status change carries no new value: the paste-ready closure the
+        # stop hook prescribes (`--kind request --subject "ask:<hex>"
+        # --status closed`) was refused here for lacking --value, so the
+        # exact line every surface printed closed nothing (field-caught at
+        # the 0.3.18 gate, 2026-09-04 - five open asks, four of them served).
+        args.value = f"status set to {args.status}"
     if args.subject is None or args.value is None:
         raise ArchiveError(
             "remember needs either the whole record as one quoted string "

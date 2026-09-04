@@ -54,9 +54,13 @@ was running, and each named a friction with a pin behind it now:
   on every call and takes `--since DAYS`; 303 items dominated by
   months-old obligations was a list nobody could use.
 
-And the gate caught itself once more: round 7 outran the hour and died
-as a bare `TimeoutExpired`, the suite output lost with the process. The
-kill is a judgment finding now, quoting the last thing the suite wrote.
+And the gate caught itself twice more. Round 7 outran the hour and died
+as a bare `TimeoutExpired`, the suite output lost with the process; the
+kill is a judgment finding now, counting the tests it got through and
+quoting the last thing the suite wrote. Round 8 listed five open
+operator asks, and the paste-ready closure line every surface prints
+turned out to be refused by `remember` for lacking a value - a status
+change carries none, and the line now closes what it names.
 
 ## Verifying
 
