@@ -70,7 +70,18 @@ def push_preflight(project: Path | str,
     judgment: list[dict[str, Any]] = []
     skipped: list[str] = []
 
-    scratch = Path(tempfile.mkdtemp(prefix="godmode-preflight-"))
+    # NOT under the system temp dir (incident 8892, 2026-09-04): temp is
+    # the sentinel's scratch allowance, and a suite run inside it finds
+    # protective assertions honestly permitting what they exist to block -
+    # the gate was testing the controls from inside the one zone they
+    # deliberately exempt. The repo's own .git is outside every scratch
+    # classification and vanishes with the same cleanup.
+    git_dir = Path(_git(repo, "rev-parse", "--git-common-dir")
+                   .stdout.decode("utf-8", errors="replace").strip())
+    if not git_dir.is_absolute():
+        git_dir = repo / git_dir
+    scratch = Path(tempfile.mkdtemp(prefix="godmode-preflight-",
+                                    dir=str(git_dir)))
     worktree = scratch / "head"
     added = _git(repo, "worktree", "add", "--detach", str(worktree), "HEAD")
     if added.returncode != 0:
