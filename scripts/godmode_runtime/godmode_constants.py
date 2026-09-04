@@ -103,7 +103,12 @@ IGNORED_DIRECTORY_NAMES = frozenset(
         # Tool caches. These lived only in `godmode_structure`'s private
         # copy of this list, so every other walk - the atlas, the database
         # inventory, the scope fence - descended into them.
-        ".tox", ".mypy_cache", ".pytest_cache",
+        ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+        # Framework build caches. Field report 2026-09-04: a Next.js
+        # project's `.next` output polluted every drift count - hundreds
+        # of "added/changed" paths no person had touched.
+        ".next", ".nuxt", ".svelte-kit", ".turbo", ".cache",
+        ".parcel-cache", ".angular", ".vercel", ".output",
     }
 )
 

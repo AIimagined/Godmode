@@ -1473,7 +1473,8 @@ def cmd_remaining(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     session = args.session or latest_session(runtime.archive)
     report = remaining(runtime.archive, Path(runtime.anchor.project_root),
-                       session=session, charter=_charter(runtime))
+                       session=session, charter=_charter(runtime),
+                       since_days=getattr(args, "since", None))
     return CommandResult(report, exit_code=1 if report["count"] else 0)
 
 
@@ -2293,6 +2294,18 @@ def cmd_context_status(args: argparse.Namespace, runtime: Runtime) -> CommandRes
     orphaned = runtime.archive.orphaned()
     if orphaned:
         payload["orphaned_archive"] = orphaned
+    if getattr(args, "rebaseline", False):
+        # Drift above was measured against the OLD baseline; the new one is
+        # written after, so the report shows what was accepted. Refused
+        # without --scan: accepting a tree nobody measured is not review.
+        if not args.scan:
+            raise GodmodeError("--rebaseline needs --scan: measure the drift "
+                               "before accepting it as the new baseline")
+        snapshot = make_snapshot(runtime.anchor)
+        record = runtime.archive.append(
+            "inventory", "repository-snapshot", snapshot,
+            evidence=[runtime.anchor.head] if runtime.anchor.head else [])
+        payload["rebaselined"] = _event_view(record)
     return CommandResult(payload)
 
 
@@ -4740,6 +4753,10 @@ def _build_parser() -> argparse.ArgumentParser:
     status_sub.add_parser("survey").set_defaults(handler=cmd_status_survey)
     status_remaining = status_sub.add_parser("remaining")
     status_remaining.add_argument("--session")
+    status_remaining.add_argument(
+        "--since", type=int, metavar="DAYS",
+        help="Hide open items older than DAYS (count reported as stale_hidden); "
+             "the age split is always reported")
     status_remaining.set_defaults(handler=cmd_remaining)
     status_sub.add_parser(
         "render", help="The status document, rendered read-only from the store"
@@ -5013,6 +5030,11 @@ def _build_parser() -> argparse.ArgumentParser:
     context_sub = context.add_subparsers(dest="context_command", required=True)
     context_status = context_sub.add_parser("status")
     context_status.add_argument("--scan", action="store_true")
+    context_status.add_argument(
+        "--rebaseline", action="store_true",
+        help="With --scan: after reporting drift, record the current tree as "
+             "the new inventory baseline (what `context rebuild` does) - "
+             "measure and accept in one call")
     context_status.set_defaults(handler=cmd_context_status)
     context_sub.add_parser("rebuild").set_defaults(handler=cmd_context_rebuild)
     context_structure = context_sub.add_parser(

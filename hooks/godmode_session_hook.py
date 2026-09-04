@@ -740,7 +740,16 @@ def _open_obligations_touched(archive: Any, reply_text: str) -> list[str]:
             # vocabulary this surface needs.
             keywords = [str(w).lower() for w in (data.get("keywords") or [])]
             vocab = set(keywords)
-            if len(reply_words & vocab) >= 3:
+            shared = len(reply_words & vocab)
+            # A reply covering half the ask's vocabulary is SERVING it, not
+            # merely touching it - the same weak bar `review_requests`
+            # already applies (field report 2026-09-04: the reply that
+            # answered "check godmode continuity" was told to close it).
+            # The ledger still holds the ask until a person closes it; the
+            # turn-boundary nag just stops firing on the answer itself.
+            if vocab and shared / len(vocab) >= 0.5:
+                continue
+            if shared >= 3:
                 # Field report 2026-09-03: a hash plus a sorted keyword bag
                 # is not actionable and trains dismissal. No raw prompt is
                 # stored (privacy), so the closest honest rendering is the
@@ -845,10 +854,83 @@ _ATTRIBUTED_SPEECH = re.compile(
     r"(?:that\s+)?\S")
 
 
-def _unrecorded_claims(archive: Any, reply_text: str) -> list[str]:
+def _turn_tool_output(submitted: dict[str, Any]) -> str:
+    """The tool results of THIS turn, from the host transcript's tail:
+    every `tool_result` block after the last human prompt. Read in memory,
+    bounded, never stored (the 4018 privacy decision). Empty when the host
+    sends no transcript (Grok) - the readout exemption then simply never
+    applies, which is the advisory's prior behaviour."""
+    path = submitted.get("transcript_path") or submitted.get("transcriptPath")
+    if not path:
+        return ""
+    try:
+        lines = Path(str(path)).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    chunks: list[str] = []
+    size = 0
+    for line in reversed(lines[-400:]):
+        try:
+            entry = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if entry.get("type") != "user":
+            continue
+        parts = (entry.get("message") or {}).get("content")
+        if isinstance(parts, str):
+            break  # the human prompt that opened this turn
+        if not isinstance(parts, list):
+            continue
+        results = [p for p in parts if isinstance(p, dict) and p.get("type") == "tool_result"]
+        if not results:
+            break  # a text-only user entry is the human, not a tool
+        for part in results:
+            body = part.get("content")
+            if isinstance(body, list):
+                body = " ".join(str(b.get("text", "")) for b in body if isinstance(b, dict))
+            text = str(body or "")
+            chunks.append(text)
+            size += len(text)
+        if size > 60_000:
+            break
+    return "\n".join(chunks).lower()
+
+
+_READOUT_NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+
+def _observed_readout(sentence: str, observed: str) -> bool:
+    """A sentence that restates numbers the turn's own tools printed is a
+    readout, not a claim (field report 2026-09-04: the done-bar blocked a
+    status report whose every figure was godmode's own output seconds
+    earlier). Every number in the sentence must appear in the tool output
+    and at least two of its salient words beside them - a coincidental
+    '1' is not an observation. Promise-verb claims carry no number and are
+    never exempt."""
+    if not observed:
+        return False
+    numbers = [n.replace(",", "") for n in _READOUT_NUMBER.findall(sentence)]
+    if not numbers:
+        return False
+    flat = observed.replace(",", "")
+    if not all(re.search(rf"(?<![\w.]){re.escape(n)}(?![\w])", flat) for n in numbers):
+        return False
+    from godmode_runtime.godmode_sources import _salient_words
+
+    words = _salient_words(sentence)
+    echoed = sum(1 for w in words if w in observed)
+    # A single digit is in every tool output somewhere; it needs two words
+    # of company before it counts as the same observation.
+    needed = 2 if all(len(n) == 1 for n in numbers) else 1
+    return bool(words) and echoed >= min(needed, len(words))
+
+
+def _unrecorded_claims(archive: Any, reply_text: str,
+                       observed: str = "") -> list[str]:
     """Claim-shaped sentences in the reply with no claim record behind them.
     Reuses the public-surface claim definition (`claimscan.is_claim`) and
-    the archive's normalised claim set - one definition of a claim, not two."""
+    the archive's normalised claim set - one definition of a claim, not two.
+    `observed` is this turn's tool output: a sentence it backs is a readout."""
     from godmode_runtime.godmode_claimscan import _normalise, _recorded_claims, is_claim
 
     try:
@@ -862,6 +944,8 @@ def _unrecorded_claims(archive: Any, reply_text: str) -> list[str]:
         if not is_claim(sentence):
             continue
         if _normalise(sentence) in recorded:
+            continue
+        if _observed_readout(sentence, observed):
             continue
         found.append(sentence)
     return found
@@ -898,7 +982,8 @@ def _strip_quoted(sentence: str) -> str:
     return _QUOTED_SPAN.sub(" ", sentence)
 
 
-def _unrecorded_done_claims(archive: Any, reply_text: str) -> list[str]:
+def _unrecorded_done_claims(archive: Any, reply_text: str,
+                            observed: str = "") -> list[str]:
     """DONE-shaped sentences in the reply with no claim record behind them.
 
     Deliberately a separate detector from `_unrecorded_claims`: `is_claim`
@@ -943,6 +1028,10 @@ def _unrecorded_done_claims(archive: Any, reply_text: str) -> list[str]:
                 or looks_like_pass_verdict(judged)[0]):
             continue
         if _normalise(sentence) in recorded:
+            continue
+        # A completion sentence whose figures the turn's own tools printed
+        # is a readout of an observed result, not an unbacked declaration.
+        if _observed_readout(sentence, observed):
             continue
         found.append(sentence)
     return found
@@ -1645,7 +1734,12 @@ def main(argv: list[str] | None = None) -> int:
             # gates below never read this flag: enforcement is not an
             # advisory, and quiet must never mean unguarded.
             quiet = _nag_posture(archive) == "quiet"
-            unsupported = [] if quiet else _unrecorded_claims(archive, reply_text)
+            # This turn's tool output: a sentence restating it is a readout,
+            # not a claim (field report 2026-09-04 - the done-bar blocked a
+            # status report built entirely from godmode's own output).
+            observed = _turn_tool_output(submitted)
+            unsupported = [] if quiet else _unrecorded_claims(
+                archive, reply_text, observed)
             touched = _open_obligations_touched(archive, reply_text)
             if quiet:
                 # Standing duties survive quiet: an operator-mandated
@@ -1724,7 +1818,7 @@ def main(argv: list[str] | None = None) -> int:
             # reason; the host re-fires with stop_hook_active set and that
             # path returned clean above, so the bound costs nothing. Every
             # other notice stays advisory in the same single object.
-            done_shaped = _unrecorded_done_claims(archive, reply_text)
+            done_shaped = _unrecorded_done_claims(archive, reply_text, observed)
             if done_shaped:
                 # Marker for the re-fire: if no claim lands between this
                 # block and the re-fire, the gate was passed by rewording

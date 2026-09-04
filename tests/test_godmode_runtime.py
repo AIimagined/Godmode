@@ -444,6 +444,13 @@ class CliAndPrivacyTests(unittest.TestCase):
             run("history", "--limit", "100")
             run("inventory", "diff")
             run("context", "status", "--scan")
+            # Measure-and-accept in one call (field report 2026-09-04: --scan
+            # never moved the baseline, so drift re-reported until a rebuild).
+            before = json.loads(run("inventory", "diff").stdout)["baseline_sequence"] or 0
+            accepted = json.loads(run("context", "status", "--scan", "--rebaseline").stdout)
+            self.assertIn("rebaselined", accepted)
+            self.assertGreater(
+                json.loads(run("inventory", "diff").stdout)["baseline_sequence"], before)
             run("context", "why")
             run("explain-context")
             run("report", "--token-budget", "300")
