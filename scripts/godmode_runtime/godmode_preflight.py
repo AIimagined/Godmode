@@ -26,6 +26,10 @@ import os
 import re
 import subprocess
 import tempfile
+
+# 3600, not 1800: this repo's own designated suite runs ~27 minutes on the
+# reference machine, and a kill must never be mistaken for a failure.
+SUITE_TIMEOUT_SECONDS = 3600
 from pathlib import Path
 from typing import Any
 
@@ -150,9 +154,30 @@ def push_preflight(project: Path | str,
             # 3600, not 1800: this repo's own designated suite runs ~27
             # minutes on the reference machine, and a timeout kill is
             # indistinguishable from a failure in the finding.
-            run = subprocess.run(suite, cwd=worktree, capture_output=True,
-                                 check=False, timeout=3600)
-            if run.returncode != 0:
+            try:
+                run = subprocess.run(suite, cwd=worktree, capture_output=True,
+                                     check=False, timeout=SUITE_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired as expired:
+                # A timeout kill is a verdict, not a crash: round 7 of the
+                # 0.3.18 gate died here as a bare traceback and the hour of
+                # suite output behind it was lost with the process. The
+                # partial output rides the exception; its tail is the only
+                # witness to where the suite was when the clock ran out.
+                partial = (expired.stderr or expired.stdout or b"")
+                if isinstance(partial, str):
+                    partial = partial.encode("utf-8", errors="replace")
+                tail = partial[-600:].decode("utf-8", errors="replace").strip()
+                judgment.append({
+                    "check": "suite",
+                    "detail": f"designated suite killed after "
+                              f"{SUITE_TIMEOUT_SECONDS}s without a verdict - "
+                              "a hang or a slow machine, and a person decides "
+                              "which; run the suite with -v to name the test "
+                              "it stopped in"
+                              + (f"; last output: {tail[-300:]!r}" if tail else ""),
+                })
+                run = None
+            if run is not None and run.returncode != 0:
                 # The finding names its catch: "exit 1" alone trains a
                 # 20-minute re-run to learn which test failed (first live
                 # run of the ratchet, 2026-09-04). unittest writes verdicts

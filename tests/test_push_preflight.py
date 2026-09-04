@@ -95,6 +95,26 @@ class PreflightTests(unittest.TestCase):
             self.assertEqual(len(report["judgment"]), 1)
             self.assertIn("exit 3", report["judgment"][0]["detail"])
 
+    def test_a_timed_out_suite_is_a_judgment_finding_not_a_traceback(self) -> None:
+        # Round 7 of the 0.3.18 gate: the suite outran the clock and the
+        # gate died as a bare TimeoutExpired, taking the hour of output
+        # with it. The kill is a verdict a person reads, with the tail.
+        from unittest import mock
+
+        from godmode_runtime import godmode_preflight
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp))
+            with mock.patch.object(godmode_preflight, "SUITE_TIMEOUT_SECONDS", 1):
+                report = push_preflight(
+                    repo, suite=[sys.executable, "-u", "-c",
+                                 "import sys, time; sys.stderr.write('test_slow_one ... ');"
+                                 "sys.stderr.flush(); time.sleep(20)"])
+            suite = [f for f in report["judgment"] if f["check"] == "suite"]
+            self.assertEqual(len(suite), 1)
+            self.assertIn("killed after 1s", suite[0]["detail"])
+            self.assertIn("test_slow_one", suite[0]["detail"])
+
     def test_the_worktree_is_gone_on_every_exit_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = _repo(Path(tmp))
