@@ -19,8 +19,11 @@ The ratchet earned its keep before shipping: its first live runs caught
 sentinel-scoping assertions failing only inside the gate - the preflight
 worktree lived under the system temp dir, which is the sentinel's own
 scratch allowance, so the controls were being tested from inside the one
-zone they deliberately exempt. The worktree now lives under the repo's
-.git, outside every scratch classification.
+zone they deliberately exempt. (A second try under the repo's .git
+failed the opposite way - plain-file fixtures correctly classified as
+git-internals mutations.) The worktree now lives beside the repo:
+ordinary filesystem to every classifier, and the location the green
+full-suite experiment ran from.
 
 ## Verifying
 

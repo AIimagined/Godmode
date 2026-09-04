@@ -14,7 +14,7 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ### Fixed
 
-- The preflight worktree moves out of the system temp dir and under the repo's own .git: temp is the sentinel's scratch allowance, and the gate's first live suite runs found protective assertions honestly permitting what they exist to block - the controls were being tested from inside the one zone they deliberately exempt. Deterministic, gate-only, invisible until the suite finding learned to quote its catch.
+- The preflight worktree moves out of the system temp dir to a sibling of the repo: temp is the sentinel's scratch allowance, and the gate's first live suite runs found protective assertions honestly permitting what they exist to block - the controls were being tested from inside the one zone they deliberately exempt. An intermediate home under the repo's .git failed the opposite way, plain-file fixtures correctly classifying as git-internals mutations; a sibling directory is ordinary filesystem to every classifier, and it is the location the green 3206-test experiment ran from. Deterministic, gate-only, invisible until the suite finding learned to quote its catch.
 - The suite finding quotes its failing summary lines and the suite timeout is 3600s - this repo's own designated suite runs ~27 minutes, and a timeout kill was indistinguishable from a failure.
 - Two test pins caught by v0.3.17's CI, stale against that release's own deliberate changes: the manifest contract now expects the polyglot-launcher command form, and the packaging test that asserted pre-init SILENCE now asserts the loud not-initialized notice - silence-before-init was the field defect 0.3.17 fixed, and the test enforcing it outlived the doctrine.
 
