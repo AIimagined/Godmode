@@ -6,16 +6,6 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
-### Fixed
-
-- The stop-hook claim advisory and the done-bar block exempt readouts: a sentence whose every number appears in this turn's own tool output, with a word of context beside it, restates an observation rather than making a claim. Field report 2026-09-04: the done-bar blocked a status report whose every figure was godmode's own output seconds earlier. Promise-verb claims carry no number and stay gated.
-- The turn-boundary request nag no longer fires on the reply that answers the ask: a reply covering half the ask's keywords is serving it, the same weak bar `review_requests` already applies. The ledger still holds the ask until a person closes it.
-- The capacity signal stops re-firing once its remedy is applied: a checkpoint among the newest 25 records covers the brief, and the signal re-arms as records accrue. The due message now carries the checkpoint command.
-- `context status --scan --rebaseline` measures drift and accepts the current tree as the new baseline in one call; the drift finding names it. `--scan` alone still only measures.
-- Framework build caches (`.next`, `.nuxt`, `.svelte-kit`, `.turbo`, `.cache`, `.parcel-cache`, `.angular`, `.vercel`, `.output`, `.ruff_cache`) join the shared skip list - a Next.js build had been polluting every drift count.
-- `status remaining` reports an age split (within 30 days vs older) on every call and takes `--since DAYS` to hide older items, with the hidden count reported - 303 items dominated by July-era obligations answered "what is left now?" with everything ever left.
-- The preflight suite timeout is a judgment finding, not a traceback: round 7 of the v0.3.18 gate outran its hour and died as a bare `TimeoutExpired`, losing the suite output with the process. The finding now names the kill, quotes the last output the suite wrote, and the worktree cleanup still runs.
-
 ## [0.3.18] - 2026-09-04
 
 ### Added
@@ -27,6 +17,13 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 - The preflight worktree moves out of the system temp dir to a sibling of the repo: temp is the sentinel's scratch allowance, and the gate's first live suite runs found protective assertions honestly permitting what they exist to block - the controls were being tested from inside the one zone they deliberately exempt. An intermediate home under the repo's .git failed the opposite way, plain-file fixtures correctly classifying as git-internals mutations; a sibling directory is ordinary filesystem to every classifier, and it is the location the green 3206-test experiment ran from. Deterministic, gate-only, invisible until the suite finding learned to quote its catch.
 - The suite finding quotes its failing summary lines and the suite timeout is 3600s - this repo's own designated suite runs ~27 minutes, and a timeout kill was indistinguishable from a failure.
 - Two test pins caught by v0.3.17's CI, stale against that release's own deliberate changes: the manifest contract now expects the polyglot-launcher command form, and the packaging test that asserted pre-init SILENCE now asserts the loud not-initialized notice - silence-before-init was the field defect 0.3.17 fixed, and the test enforcing it outlived the doctrine.
+- The stop-hook claim advisory and the done-bar block exempt readouts: a sentence whose every number appears in this turn's own tool output, with a word of context beside it, restates an observation rather than making a claim. Field report 2026-09-04: the done-bar blocked a status report whose every figure was godmode's own output seconds earlier. Promise-verb claims carry no number and stay gated.
+- The turn-boundary request nag no longer fires on the reply that answers the ask: a reply covering half the ask's keywords is serving it, the same weak bar `review_requests` already applies. The ledger still holds the ask until a person closes it.
+- The capacity signal stops re-firing once its remedy is applied: a checkpoint among the newest 25 records covers the brief, and the signal re-arms as records accrue. The due message now carries the checkpoint command.
+- `context status --scan --rebaseline` measures drift and accepts the current tree as the new baseline in one call; the drift finding names it. `--scan` alone still only measures.
+- Framework build caches (`.next`, `.nuxt`, `.svelte-kit`, `.turbo`, `.cache`, `.parcel-cache`, `.angular`, `.vercel`, `.output`, `.ruff_cache`) join the shared skip list - a Next.js build had been polluting every drift count.
+- `status remaining` reports an age split (within 30 days vs older) on every call and takes `--since DAYS` to hide older items, with the hidden count reported - 303 items dominated by July-era obligations answered "what is left now?" with everything ever left.
+- The preflight suite timeout is a judgment finding, not a traceback: round 7 of this release's own gate outran its hour and died as a bare `TimeoutExpired`, losing the suite output with the process. The finding now names the kill, quotes the last output the suite wrote, and the worktree cleanup still runs.
 
 ## [0.3.17] - 2026-09-03
 
