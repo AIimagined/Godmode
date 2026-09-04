@@ -51,13 +51,27 @@ def _isolated_git_repo():
 
 class AnchorCacheTests(unittest.TestCase):
     def test_second_call_is_fast(self) -> None:
+        # Six subprocess spawns cost 270ms+; a cache hit must not spawn any.
+        # Asserted on the spawn count, not the clock: a 50 ms wall-clock bar
+        # read 52 ms under a loaded machine at the 0.3.18 gate (round 11)
+        # while the cache was doing exactly what it should.
+        from godmode_runtime import godmode_anchor
+
         with _isolated_git_repo() as root:
             resolve_anchor(root)  # warm the cache
-            t0 = time.perf_counter()
-            resolve_anchor(root)
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-        # Six subprocess spawns cost 270ms+; a cache hit must not spawn any.
-        self.assertLess(elapsed_ms, 50)
+            real_run = godmode_anchor.subprocess.run
+            spawned: list[str] = []
+
+            def counting_run(*args, **kwargs):
+                spawned.append(str(args[0]) if args else str(kwargs.get("args")))
+                return real_run(*args, **kwargs)
+
+            with mock.patch.object(godmode_anchor.subprocess, "run", counting_run):
+                t0 = time.perf_counter()
+                resolve_anchor(root)
+                elapsed_ms = (time.perf_counter() - t0) * 1000
+        self.assertEqual(spawned, [], "a cache hit spawned git")
+        self.assertLess(elapsed_ms, 1000)
 
     def test_cached_anchor_matches_uncached_fields(self) -> None:
         with _isolated_git_repo() as root:
