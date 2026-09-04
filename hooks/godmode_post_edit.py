@@ -110,6 +110,15 @@ def _impact_brief(project: Path, target: Path, session: str) -> str | None:
 
 def main() -> int:
     try:
+        # UTF-8 in, UTF-8 out, whatever the console codepage says (the
+        # session hook's field-caught mojibake, 2026-09-04, same fix).
+        for stream in (sys.stdin, sys.stdout, sys.stderr):
+            reconfigure = getattr(stream, "reconfigure", None)
+            if reconfigure is not None:
+                try:
+                    reconfigure(encoding="utf-8", errors="replace")
+                except (ValueError, OSError):
+                    pass
         payload = json.loads(sys.stdin.read() or "{}")
     except ValueError:
         return 0

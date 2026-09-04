@@ -157,6 +157,25 @@ class StopAdvisoryTests(unittest.TestCase):
         self.assertEqual(done.returncode, 0)
         self.assertIn("operator ask", json.loads(done.stdout)["systemMessage"])
 
+    def test_a_utf8_payload_survives_the_console_codepage(self) -> None:
+        # Field report 2026-09-04 (Windows, cp1252 console): the host's
+        # UTF-8 payload was decoded as the console codepage, so an em dash
+        # in the reply reached the echo as mojibake (`??"`) and the echo
+        # table never saw the dash it was built to flatten.
+        with _project() as (project, state, _archive):
+            done = _run(project, state, {
+                "session_id": "s1",
+                "last_assistant_message":
+                    f"Done. {CLAIM_SENTENCE} — across every host § 4.",
+            })
+        self.assertEqual(done.returncode, 0, done.stderr)
+        message = json.loads(done.stdout)["systemMessage"]
+        self.assertIn("force-push", message)
+        self.assertIn(" - ", message)
+        self.assertIn("across every host S. 4", message)
+        self.assertNotIn("â", message)
+        self.assertNotIn("�", message)
+
     def test_ordinary_prose_is_silent(self) -> None:
         with _project() as (project, state, _archive):
             transcript = _transcript(project, f"{PLAIN_SENTENCE}.")
