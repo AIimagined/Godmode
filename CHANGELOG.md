@@ -23,7 +23,8 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 - `context status --scan --rebaseline` measures drift and accepts the current tree as the new baseline in one call; the drift finding names it. `--scan` alone still only measures.
 - Framework build caches (`.next`, `.nuxt`, `.svelte-kit`, `.turbo`, `.cache`, `.parcel-cache`, `.angular`, `.vercel`, `.output`, `.ruff_cache`) join the shared skip list - a Next.js build had been polluting every drift count.
 - `status remaining` reports an age split (within 30 days vs older) on every call and takes `--since DAYS` to hide older items, with the hidden count reported - 303 items dominated by July-era obligations answered "what is left now?" with everything ever left.
-- The preflight suite timeout is a judgment finding, not a traceback: round 7 of this release's own gate outran its hour and died as a bare `TimeoutExpired`, losing the suite output with the process. The finding now names the kill, quotes the last output the suite wrote, and the worktree cleanup still runs.
+- The preflight suite timeout is a judgment finding, not a traceback: round 7 of this release's own gate outran its hour and died as a bare `TimeoutExpired`, losing the suite output with the process. The finding now names the kill, counts the quiet-mode test marks before it, quotes the last output the suite wrote, and the scratch directory goes with the worktree.
+- `remember --kind request --subject "ask:<hex>" --status closed` - the exact closure line every surface prints - was refused for lacking `--value`, so it closed nothing. A status change carries no new value; the line now closes the ask (field-caught at this release's own gate: five open asks, four of them served).
 
 ## [0.3.17] - 2026-09-03
 

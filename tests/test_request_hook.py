@@ -87,6 +87,22 @@ class RequestHookTests(unittest.TestCase):
         self._submit("also check the readme", tools_in_flight=2)
         self.assertTrue(self._requests()[0]["data"]["interrupted_work"])
 
+    def test_the_prescribed_closure_line_is_accepted(self) -> None:
+        # The stop hook prescribes `remember --kind request --subject
+        # "ask:<hex>" --status closed`; `remember` refused that exact line
+        # for lacking --value (field-caught at the 0.3.18 gate, 2026-09-04).
+        self._submit("check the widget")
+        subject = self._requests()[-1]["subject"]
+        done = subprocess.run(
+            [sys.executable, str(PLUGIN_ROOT / "scripts" / "godmode.py"),
+             "--project", str(self.project), "--json", "remember",
+             "--kind", "request", "--subject", subject, "--status", "closed"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=180, env=os.environ)
+        self.assertEqual(done.returncode, 0, done.stderr or done.stdout)
+        self.assertEqual(review_requests(
+            Chronicle(resolve_anchor(str(self.project))).read_events())["findings"], [])
+
     def test_the_hook_is_silent(self) -> None:
         """It adds no context and blocks nothing. A ledger of asks that
         announced itself would be one more thing to answer beside the work
