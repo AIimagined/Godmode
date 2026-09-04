@@ -62,6 +62,16 @@ operator asks, and the paste-ready closure line every surface prints
 turned out to be refused by `remember` for lacking a value - a status
 change carries none, and the line now closes what it names.
 
+Round 9 ran verbose and named the hour-eater: the hook end-to-end tests,
+which drove the real hook against this repository's live archive - 9,178
+records, re-read on every one of about 117 calls. Two things came out of
+that. A hook call against an archive that size drops from 18.7 s to 4.5 s
+(one directory scan for the identity check, one chain walk per identity
+instead of one per read; tamper evidence untouched, since any change on
+disk still forces both). And those tests now cross the boundary against a
+fresh fixture project, 528 s to 22 s - CI never carried that archive, so
+CI never saw the cost.
+
 ## Verifying
 
 - `godmode precheck --designate-suite "python -m unittest discover -s tests"`

@@ -26,6 +26,11 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 - The preflight suite timeout is a judgment finding, not a traceback: round 7 of this release's own gate outran its hour and died as a bare `TimeoutExpired`, losing the suite output with the process. The finding now names the kill, counts the quiet-mode test marks before it, quotes the last output the suite wrote, and the scratch directory goes with the worktree.
 - `remember --kind request --subject "ask:<hex>" --status closed` - the exact closure line every surface prints - was refused for lacking `--value`, so it closed nothing. A status change carries no new value; the line now closes the ask (field-caught at this release's own gate: five open asks, four of them served).
 
+### Changed
+
+- A hook call against a 9,178-record archive dropped from 18.7 s to 4.5 s: the archive identity check is one directory scan instead of a stat per file, and a record list already verified for the current identity is not re-walked on the next read in the same process. Any change on disk still changes the identity and forces a fresh read and a fresh chain walk - the tamper-evidence contract is untouched. Measured because this release's own gate ran out of its hour three times: the hook end-to-end tests made about 117 such calls against this repo's live archive.
+- Those hook end-to-end tests now drive the hook against a fresh fixture project instead of this repository, 528 s to 22 s: a test that costs what the developer's private archive weighs is a test CI never runs the same way, and the archive only grows.
+
 ## [0.3.17] - 2026-09-03
 
 ### Added

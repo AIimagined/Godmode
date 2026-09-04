@@ -40,6 +40,39 @@ if str(PLUGIN_ROOT / "scripts") not in sys.path:
 
 from tests._gate_mode_isolation import park_local_policy, restore_local_policy  # noqa: E402
 
+import shutil  # noqa: E402
+import tempfile  # noqa: E402
+
+
+def _fixture_project() -> Path:
+    """A fresh git project the hook is driven against.
+
+    Until 2026-09-04 this module drove the hook against THIS repo, whose
+    live archive had grown to 9,178 records: every one of the ~117 hook
+    calls here re-read it, the module alone took 35 minutes under the push
+    gate, and the gate's hour ran out three times. CI never had that
+    archive, so it never saw the cost. The fixture carries the shapes the
+    payloads name (a tests/ file, README.md, CHANGELOG.md, a .git) over an
+    archive of a few records - the boundary is still crossed for real.
+    """
+    base = Path(tempfile.mkdtemp(prefix="godmode-e2e-"))
+    project = base / "project"
+    (project / "tests").mkdir(parents=True)
+    (project / "scripts").mkdir()
+    (project / "README.md").write_text("# fixture\n", encoding="utf-8")
+    (project / "CHANGELOG.md").write_text("# changes\n", encoding="utf-8")
+    (project / "tests" / "test_hook_end_to_end.py").write_text(
+        "# fixture\n", encoding="utf-8")
+    for command in (["init", "-q"], ["config", "user.email", "e2e@example.invalid"],
+                    ["config", "user.name", "e2e"], ["add", "-A"],
+                    ["commit", "-qm", "seed"]):
+        subprocess.run(["git", *command], cwd=project, check=True,
+                       capture_output=True)
+    return project
+
+
+PROJECT = _fixture_project()
+
 def setUpModule() -> None:
     # These tests cross the boundary against THIS repo, so a local
     # observe-mode declaration turns every decision envelope into an
@@ -52,17 +85,18 @@ def setUpModule() -> None:
     # no local run ever saw it. initialize() is idempotent.
     from godmode_runtime.godmode_anchor import resolve_anchor
     from godmode_runtime.godmode_chronicle import Chronicle
-    Chronicle(resolve_anchor(PLUGIN_ROOT)).initialize()
+    Chronicle(resolve_anchor(PROJECT)).initialize()
 
 
 def tearDownModule() -> None:
     restore_local_policy()
+    shutil.rmtree(PROJECT.parent, ignore_errors=True)
 
 # (label, tool, tool_input) drawn from what a working session actually issues.
 MUST_ALLOW = (
     ("edit a project file", "Edit",
-     {"file_path": str(PLUGIN_ROOT / "tests" / "test_hook_end_to_end.py")}),
-    ("write a project file", "Write", {"file_path": str(PLUGIN_ROOT / "notes.md")}),
+     {"file_path": str(PROJECT / "tests" / "test_hook_end_to_end.py")}),
+    ("write a project file", "Write", {"file_path": str(PROJECT / "notes.md")}),
     ("plain listing", "Bash", {"command": "ls"}),
     ("piped compound read", "Bash",
      {"command": "ls scripts | head -3 && git status --short"}),
@@ -81,7 +115,7 @@ MUST_ALLOW = (
     # above - not an opaque string. Everyday test-running must stay R1.
     ("run the suite via -m", "Bash", {"command": "python -m unittest discover -s tests"}),
     ("run pytest via -m", "Bash", {"command": "python -m pytest -q"}),
-    ("read a file", "Read", {"file_path": str(PLUGIN_ROOT / "README.md")}),
+    ("read a file", "Read", {"file_path": str(PROJECT / "README.md")}),
     # Everything v0.2.5 unblocked, asserted where the host will hit it rather
     # than only against the classifier. Each of these was refused by a shipped
     # build while the suite of the day reported green.
@@ -96,8 +130,8 @@ MUST_ALLOW = (
 )
 
 MUST_DENY = (
-    ("edit inside the git directory", "Edit", {"file_path": str(PLUGIN_ROOT / ".git" / "config")}),
-    ("write outside the tree", "Write", {"file_path": str(PLUGIN_ROOT.parent / "outside.txt")}),
+    ("edit inside the git directory", "Edit", {"file_path": str(PROJECT / ".git" / "config")}),
+    ("write outside the tree", "Write", {"file_path": str(PROJECT.parent / "outside.txt")}),
     ("force push", "Bash", {"command": "git push --force origin main"}),
     ("recursive delete", "Bash", {"command": "rm -rf build"}),
     ("a delete inside a loop", "Bash", {"command": "for f in *; do rm -rf $f; done"}),
@@ -150,7 +184,7 @@ def _decide(tool: str, tool_input: dict) -> tuple[str, str]:
         "hook_event_name": "PreToolUse",
         "tool_name": tool,
         "tool_input": tool_input,
-        "cwd": str(PLUGIN_ROOT),
+        "cwd": str(PROJECT),
     }
     # Pinned host: these assertions describe the Claude dialect's decisions.
     # A CI runner has no host env markers at all, and an unknown host's
@@ -162,9 +196,9 @@ def _decide(tool: str, tool_input: dict) -> tuple[str, str]:
     # (test_capability_register marks its own session's sources-gate).
     environment = {**os.environ, "GODMODE_HOST": "claude"}
     done = subprocess.run(
-        [sys.executable, str(HOOK), "pre-action", "--project", str(PLUGIN_ROOT)],
+        [sys.executable, str(HOOK), "pre-action", "--project", str(PROJECT)],
         input=json.dumps(payload), capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=180, cwd=str(PLUGIN_ROOT),
+        encoding="utf-8", errors="replace", timeout=180, cwd=str(PROJECT),
         env=environment,
     )
     body = (done.stdout or "").strip()
@@ -350,7 +384,7 @@ class ApprovalRequiredHookTests(unittest.TestCase):
     feature, so the test avoids it rather than encoding it as a limit.
     """
 
-    POLICY = PLUGIN_ROOT / ".godmode-authorization-policy.json"
+    POLICY = PROJECT / ".godmode-authorization-policy.json"
     OPERATION = "git checkout -b demo-branch"
 
     def setUp(self) -> None:
