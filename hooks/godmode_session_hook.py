@@ -82,6 +82,19 @@ def _input() -> tuple[dict[str, Any], bool]:
     """
     if sys.stdin.isatty():
         return {}, False
+    # The host writes UTF-8; a Windows console codepage (cp1252 in the
+    # field) decoded it as something else, so every dash, section sign and
+    # non-ASCII path in a payload arrived as mojibake and the echo showed
+    # `??"` where the reply had an em dash (field report 2026-09-04). Both
+    # directions: stdout carries `ensure_ascii=False` JSON back to the same
+    # host. The CLI already reconfigures at startup; the hook now does too.
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass
     raw = sys.stdin.read()
     if not raw.strip():
         return {}, False

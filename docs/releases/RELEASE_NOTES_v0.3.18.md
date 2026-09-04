@@ -72,6 +72,13 @@ disk still forces both). And those tests now cross the boundary against a
 fresh fixture project, 528 s to 22 s - CI never carried that archive, so
 CI never saw the cost.
 
+A fourth report, from a Windows session, showed `??"` in the stop hook's
+own echo where the reply had an em dash. The hooks were reading the
+host's UTF-8 payload through the console codepage and writing their
+reply the same way, so every non-ASCII character in a reply, a path or a
+command arrived mangled. Both hooks now reconfigure their streams to
+UTF-8 at startup, as the CLI already did.
+
 ## Verifying
 
 - `godmode precheck --designate-suite "python -m unittest discover -s tests"`
