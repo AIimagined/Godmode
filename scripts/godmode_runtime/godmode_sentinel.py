@@ -2103,6 +2103,20 @@ def _pinned_evaluator_hit(path: str, project_root: Path | None, archive: Any) ->
     return key if key in pinned_evaluators(archive) else None
 
 
+def _shown_path(path: str, project_root: Path | None) -> str:
+    """The path as a refusal reason should show it: relative to the project
+    when it lies inside, and when it must be cut, cut from the FRONT so the
+    filename survives. Field walk 2026-09-05: `path[:80]` under a deep temp
+    root ended mid-directory and named nothing."""
+    text = path
+    if project_root is not None:
+        try:
+            text = Path(path).resolve().relative_to(Path(project_root).resolve()).as_posix()
+        except (OSError, ValueError):
+            pass
+    return text if len(text) <= 80 else "..." + text[-77:]
+
+
 def _write_verdict(path: str, project_root: Path | None, archive: Any) -> tuple[str, bool, list[str]]:
     """Whether writing `path` is protected, and why - the pin/sensitivity/
     containment decision the `_TOOL_FILE_EDIT` edit branch, the shell-
@@ -2124,10 +2138,10 @@ def _write_verdict(path: str, project_root: Path | None, archive: Any) -> tuple[
                  "produces stop meaning anything"])
     if _SENSITIVE_EDIT.search(path):
         return ("worktree-file-mutation", True,
-                [f"not an ordinary working file: {path[:80]}"])
+                [f"not an ordinary working file: {_shown_path(path, project_root)}"])
     if not _contained(path, project_root) and not _is_scratch(Path(path), project_root):
         return ("worktree-file-mutation", True,
-                [f"outside the working tree: {path[:80]}"])
+                [f"outside the working tree: {_shown_path(path, project_root)}"])
     return "worktree-file-mutation", False, ["a file in the working tree"]
 
 
@@ -3069,10 +3083,10 @@ def _categorize(normalized: str, project_root: Path | None = None,
                      "produces stop meaning anything"])
         if _SENSITIVE_EDIT.search(path):
             return ("worktree-file-mutation", True,
-                    [f"not an ordinary working file: {path[:80]}"])
+                    [f"not an ordinary working file: {_shown_path(path, project_root)}"])
         if not _contained(path, project_root) and not _is_scratch(Path(path), project_root):
             return ("worktree-file-mutation", True,
-                    [f"outside the working tree: {path[:80]}"])
+                    [f"outside the working tree: {_shown_path(path, project_root)}"])
         # Writing a "new" file onto an existing filename is an overwrite bet.
         # The host's own editor refuses an unread overwrite interactively, but
         # an operation arriving here as a declared write has no such net - so

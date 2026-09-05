@@ -516,6 +516,22 @@ class RealToolPayloadTests(unittest.TestCase):
             self.assertTrue(
                 classify_action(operation, project_root=PLUGIN_ROOT)["protected"], relative)
 
+    def test_the_sensitive_file_reason_names_the_file_not_a_truncated_root(self) -> None:
+        """Field walk 2026-09-05: under a deep temp root the R2 reason read
+        `not an ordinary working file: C:/Users/.../Vibecode` - the first 80
+        characters of an absolute path, cut mid-directory, naming nothing.
+        The reason shows the path relative to the project, filename intact."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / ("x" * 70) / "project"
+            target = root / "deploy" / "stage" / ".env"
+            operation = self._operation("Write", file_path=str(target))
+            verdict = classify_action(operation, project_root=root)
+        self.assertTrue(verdict["protected"])
+        reason = " ".join(verdict["impact"])
+        self.assertIn("deploy/stage/.env", reason.replace("\\", "/"), reason)
+        self.assertNotIn("x" * 20, reason, reason)
+
     def test_editing_godmodes_own_authorization_policy_stays_protected(self) -> None:
         """CX final review F1: a governed `Write`/`Edit` tool call targeting
         `.godmode-authorization-policy.json` used to classify as an ordinary
