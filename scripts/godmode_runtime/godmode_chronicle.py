@@ -71,10 +71,25 @@ def _record_hash(record: dict[str, Any]) -> str:
 
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
-    )
+    # Ninth field report 2026-09-05 (Codex sandbox: PermissionError outside
+    # the workspace) and a field walk the same day (Windows: the temporary
+    # name built from the 60-character record name pushed a deep state
+    # home past MAX_PATH, FileNotFoundError): both escaped as tracebacks.
+    # The temporary name is short, and any OS refusal becomes an
+    # ArchiveError that names the directory and the remedy.
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=".w", suffix=".tmp", dir=str(path.parent)
+        )
+    except OSError as exc:
+        raise ArchiveError(
+            f"cannot write the archive under {path.parent} ({exc.strerror or exc}); "
+            "the state location is not writable from here - point "
+            "GODMODE_STATE_HOME at a writable directory (a short path on "
+            "Windows), or initialise inside a git checkout so the archive "
+            "lives under its .git directory"
+        ) from exc
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(payload, handle, sort_keys=True, ensure_ascii=False, indent=2)
