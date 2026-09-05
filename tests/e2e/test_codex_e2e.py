@@ -57,10 +57,23 @@ def _skip_reason(host: str) -> str | None:
                 f"{spec['env']}=1 to enable it (skipped by default so the "
                 "ordinary suite never depends on a host binary being "
                 "installed on this machine)")
-    if shutil.which(spec["binary"]) is None:
+    if host_binary(spec["binary"]) is None:
         return (f"{spec['env']}=1 is set, but no {spec['binary']!r} binary "
                 f"was found on PATH - install/PATH the real {host} CLI to "
                 "run this layer for real")
+    return None
+
+
+def host_binary(name: str) -> str | None:
+    """The runnable host CLI, or None. Ninth field report 2026-09-05: on
+    Windows the npm shim is `codex.cmd` (plus a `.ps1` that an execution
+    policy may refuse), and a bare name lookup missed it, so the live
+    layer skipped as if no CLI existed. The .cmd and .exe spellings are
+    tried explicitly; a .ps1 is never chosen."""
+    for candidate in (name, f"{name}.cmd", f"{name}.exe"):
+        found = shutil.which(candidate)
+        if found and not found.lower().endswith(".ps1"):
+            return found
     return None
 
 

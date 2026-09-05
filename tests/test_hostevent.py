@@ -33,6 +33,28 @@ if str(SCRIPTS) not in sys.path:
 from godmode_runtime import godmode_hostevent as he  # noqa: E402
 
 
+if str(Path(__file__).parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).parent))
+from _host_env import scrubbed_environment  # noqa: E402
+
+_HOST_ENV = None
+
+
+def setUpModule() -> None:
+    """Eighth/tenth field reports 2026-09-05: the suite run inside a Grok or
+    Antigravity session inherited that host's markers and detected the
+    ambient host in Claude- and Codex-shaped tests. Every test in this
+    module starts from a scrubbed environment."""
+    global _HOST_ENV
+    _HOST_ENV = scrubbed_environment()
+    _HOST_ENV.start()
+
+
+def tearDownModule() -> None:
+    if _HOST_ENV is not None:
+        _HOST_ENV.stop()
+
+
 class _FakeArchive:
     """Minimal `.append` stand-in - the archive helpers here only need to
     know what was recorded, not a real hash-chained Chronicle."""
