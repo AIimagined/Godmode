@@ -2703,6 +2703,42 @@ def _doctor_host(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         writable_detail = f"{exc.strerror or exc}; set GODMODE_STATE_HOME to a writable directory"
     grade = interception_state(runtime.archive, host) if runtime.archive.initialized() else "UNAVAILABLE"
     issues: list[str] = []
+    # Ninth field report 2026-09-05: a project's own .codex/hooks.json
+    # pointed at a 0.3.4 install path that no longer existed. Every path a
+    # project-level hook command names must exist, or the hook is dead
+    # wiring and the host fails open in silence.
+    project_files = {"codex": ".codex/hooks.json", "antigravity": ".agents/hooks.json",
+                     "cursor": ".cursor/hooks.json"}
+    project_hooks: dict[str, Any] | None = None
+    relative = project_files.get(host)
+    if relative:
+        candidate = Path(runtime.anchor.project_root) / relative
+        if candidate.is_file():
+            missing: list[str] = []
+            commands: list[str] = []
+            try:
+                doc = json.loads(candidate.read_text(encoding="utf-8"))
+                for groups in (doc.get("hooks") or {}).values():
+                    for group in groups if isinstance(groups, list) else []:
+                        for handler in (group.get("hooks") or []) if isinstance(group, dict) else []:
+                            command = str((handler or {}).get("command", ""))
+                            if command:
+                                commands.append(command)
+            except (OSError, json.JSONDecodeError, AttributeError):
+                missing.append(f"{relative} does not parse")
+            for command in commands:
+                for target in re.findall(r'"([^"]+)"', command) + [
+                        t for t in command.split() if "/hooks/" in t or t.endswith(".py")]:
+                    target = target.strip().rstrip(";")
+                    if not target or target.startswith("$") or "<" in target:
+                        continue
+                    if not Path(target).exists():
+                        missing.append(target)
+            missing = sorted(set(missing))
+            project_hooks = {"path": relative, "commands": len(commands),
+                             "targets_exist": not missing, "missing": missing}
+            for item in missing:
+                issues.append(f"{relative} names a path that does not exist: {item}")
     if not present:
         issues.append(f"hook artifact missing for {host}: {artifact_path or 'no artifact registered'}")
     elif not parses:
@@ -2721,6 +2757,7 @@ def _doctor_host(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         "archive_writable": writable,
         "archive_root": "<local-state>",
         "interception": grade,
+        **({"project_hooks": project_hooks} if project_hooks is not None else {}),
         "issues": issues,
         "healthy": not issues,
     }, exit_code=0)

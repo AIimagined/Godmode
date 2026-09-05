@@ -49,6 +49,25 @@ class DoctorHostTests(unittest.TestCase):
         self.assertIs(report["archive_writable"], True)
         self.assertIn(report["interception"], ("HARD", "DEGRADED", "PARTIAL", "SOFT", "UNAVAILABLE"))
 
+
+    def test_codex_project_hooks_with_a_dead_install_path_are_reported(self) -> None:
+        """Ninth field report 2026-09-05: the project's .codex/hooks.json
+        pointed at a 0.3.4 install path that no longer existed, and nothing
+        said so until a human read the file."""
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            (project / ".codex").mkdir()
+            (project / ".codex" / "hooks.json").write_text(json.dumps({"hooks": {"PreToolUse": [
+                {"matcher": "Bash", "hooks": [{"type": "command",
+                 "command": 'cd "C:/old/godmode/0.3.4/hooks"; ./run-hook.cmd godmode_gate_fast.py'}]}]}}),
+                encoding="utf-8")
+            code, report = _doctor(project, "--host", "codex")
+        self.assertEqual(code, 0, report)
+        self.assertFalse(report["healthy"], report)
+        self.assertTrue(any("0.3.4" in issue for issue in report["issues"]), report["issues"])
+        self.assertIn("project_hooks", report)
+        self.assertFalse(report["project_hooks"]["targets_exist"], report["project_hooks"])
+
     def test_an_unknown_host_is_refused_with_the_known_list(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
