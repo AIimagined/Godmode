@@ -82,4 +82,4 @@ and `--json` work on every command and may appear in any position;
 | `version` | Record a version fact, or reconcile every surface |
 | `watch` | Per-boundary anomaly scan over this session's attestations |
 
-Run `python scripts/godmode.py <command> --help` for flags and sub-verbs.
+Run `bin/godmode <command> --help` (`bin\godmode.cmd` on Windows; the shim probes python3, python, then py) for flags and sub-verbs.

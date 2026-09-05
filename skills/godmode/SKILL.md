@@ -16,7 +16,10 @@ continuity without placing operational memory in tracked project files.
 2. Resolve the bundled `scripts/godmode.py` from the plugin root: use `$GROK_PLUGIN_ROOT`
    if set, else `$CLAUDE_PLUGIN_ROOT` if set, else the directory two levels above this
    skill file. Do not assume the user's project contains this script.
-3. If Godmode is initialized, run `python <plugin-root>/scripts/godmode.py --project <root> context status`.
+3. If Godmode is initialized, run `<plugin-root>/bin/godmode --project <root> context status`
+   (`bin\godmode.cmd` on Windows). The shim probes `python3`, then `python`,
+   then `py`, and honours `GODMODE_PYTHON`; a bare `python` does not exist on
+   stock macOS, so never write it into a command.
 4. For a new or uncertain session, use `resume --refresh`; otherwise use `resume`.
 5. Separate observed facts, declared intent, assumptions, conflicts, and open obligations.
 6. Route to the narrowest specialist below.
@@ -53,6 +56,14 @@ Never submit prompts, transcripts, source bodies, credentials, environment dumps
 private instructions to the archive. Store structured facts, hashes, relative paths,
 statuses, and evidence references only. Godmode is on demand: do not start a watcher,
 listener, proxy, daemon, update ping, or background process.
+
+## Enforcement honesty
+
+Before saying that "the gate blocked" a tool, read `hooks status`. HARD
+means the host called the hook and a live deny was chronicled. PARTIAL,
+DEGRADED, SOFT or UNAVAILABLE means the host is not proven to call the
+hook: say that the CLI refused, or that the preview would refuse, and
+never that the host stopped the tool.
 
 ## Session gates
 

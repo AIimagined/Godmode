@@ -8,7 +8,7 @@ stdout, and exit codes. Nothing here requires a plugin system.
 
 On an unlisted host every control is **SOFT**: Godmode evaluates and reports,
 but nothing forces the agent to consult it before acting. State this in the
-first session report. `python scripts/godmode.py --project . capabilities`
+first session report. `bin/godmode --project . capabilities`
 prints the exact table; do not claim HARD enforcement the host cannot hold.
 
 ## Protocol
@@ -37,8 +37,8 @@ All commands accept `--json` (compact, sort-keyed) for machine parsing and
 ## Minimal loop (any language)
 
 ```sh
-python scripts/godmode.py --project . --json session open --label task
-python scripts/godmode.py --project . --json verify tests --command "python -m unittest"
-python scripts/godmode.py --project . --json claim "tests pass" --grade verified --cite "cmd:python -m unittest"
-python scripts/godmode.py --project . --json session close
+bin/godmode --project . --json session open --label task
+bin/godmode --project . --json verify tests --command "python -m unittest"
+bin/godmode --project . --json claim "tests pass" --grade verified --cite "cmd:python -m unittest"
+bin/godmode --project . --json session close
 ```

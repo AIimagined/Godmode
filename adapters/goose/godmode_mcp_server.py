@@ -13,7 +13,7 @@ Native JSON-RPC 2.0 over stdio, no SDK dependency: initialize,
 tools/list, tools/call. Anything else answers method-not-found.
 
 Wire into goose (or any MCP host) as a stdio extension:
-    command: python
+    command: python3   # or python / py - whichever `-c "import sys"` answers on this machine
     args: [<godmode root>/adapters/goose/godmode_mcp_server.py,
            --project, <the project directory>]
 """

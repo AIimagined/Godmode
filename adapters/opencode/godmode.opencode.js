@@ -75,7 +75,16 @@ async function runGate(command, payload, directory) {
 
 export const GodmodePlugin = async ({ directory }) => {
   const root = process.env.GODMODE_PLUGIN_ROOT;
-  const python = process.env.GODMODE_PYTHON || "python";
+  // Eighth field report 2026-09-05: stock macOS has no bare `python`.
+  // Same probe as the hook launcher: GODMODE_PYTHON, then python3, python, py.
+  const python = process.env.GODMODE_PYTHON || (() => {
+    const { spawnSync } = require("child_process");
+    for (const candidate of ["python3", "python", "py"]) {
+      const probe = spawnSync(candidate, ["-c", "import sys"], { stdio: "ignore" });
+      if (!probe.error && probe.status === 0) return candidate;
+    }
+    return "python3";
+  })();
   let warnedUnconfigured = false;
   return {
     "tool.execute.before": async (input, output) => {

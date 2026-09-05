@@ -18,7 +18,7 @@ Produce a small, validated skill with explicit routing and observable acceptance
 5. Run the local forge:
 
    ```powershell
-   python <plugin-root>/scripts/godmode.py --project <path> skill forge --destination <skills-directory> --name <skill-name> --purpose "<purpose>" --gap-evidence "<evidence>" --repeated-uses 2 --positive "<trigger one>" --positive "<trigger two>" --negative "<near miss one>" --negative "<near miss two>" --assertion "<observable result>"
+   <plugin-root>/bin/godmode --project <path> skill forge --destination <skills-directory> --name <skill-name> --purpose "<purpose>" --gap-evidence "<evidence>" --repeated-uses 2 --positive "<trigger one>" --positive "<trigger two>" --negative "<near miss one>" --negative "<near miss two>" --assertion "<observable result>"
    ```
 
 6. Validate the generated structure with `skill validate`, then use the host's official skill validator when available.

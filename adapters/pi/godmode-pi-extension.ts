@@ -57,7 +57,18 @@ export default function godmodeExtension(pi: {
   // Stock macOS ships no bare `python` (field report, 2026-09-03): resolve
 // python3 first, with GODMODE_PYTHON overriding everything.
 const python = process.env.GODMODE_PYTHON
-  || (process.platform === "win32" ? "python" : "python3");
+  || probeInterpreter();
+
+// Eighth field report 2026-09-05: a platform guess is not a probe. Same
+// order as the hook launcher: python3, python, py - the first that imports.
+function probeInterpreter(): string {
+  const { spawnSync } = require("child_process");
+  for (const candidate of ["python3", "python", "py"]) {
+    const probe = spawnSync(candidate, ["-c", "import sys"], { stdio: "ignore" });
+    if (!probe.error && probe.status === 0) return candidate;
+  }
+  return "python3";
+}
   let warnedUnconfigured = false;
 
   pi.on("tool_call", (event) => {

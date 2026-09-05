@@ -8,7 +8,7 @@
           {
             "name": "godmode-session-start",
             "type": "command",
-            "command": "python ${extensionPath}/hooks/godmode_session_hook.py session-start",
+            "command": "${extensionPath}/hooks/run-hook.cmd godmode_session_hook.py session-start",
             "timeout": 10000,
             "description": "Godmode session continuity brief."
           }

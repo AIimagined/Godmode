@@ -653,7 +653,7 @@ def build_gemini_fragment() -> dict[str, Any]:
                         {
                             "name": "godmode-session-start",
                             "type": "command",
-                            "command": f"python {root}/{SESSION_HOOK} session-start",
+                            "command": f"{root}/hooks/run-hook.cmd godmode_session_hook.py session-start",
                             "timeout": 10000,
                             "description": "Godmode session continuity brief.",
                         },

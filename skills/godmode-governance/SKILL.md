@@ -16,7 +16,7 @@ Turn a risky requested operation into an explicit, reviewable contract. This ski
 3. Classify the proposed action with:
 
    ```powershell
-   python <plugin-root>/scripts/godmode.py --project <path> guard --operation "<exact operation>"
+   <plugin-root>/bin/godmode --project <path> guard --operation "<exact operation>"
    ```
 
 4. For a protected result, present the exact action, affected scope, likely impact, recovery path, and proof to run afterward.
