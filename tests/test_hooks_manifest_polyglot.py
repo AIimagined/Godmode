@@ -52,6 +52,48 @@ class PolyglotLauncherTests(unittest.TestCase):
         self.assertNotIn("goto", cmd_half.lower())
         self.assertNotRegex(cmd_half, r"(?m)^:[a-z]")
 
+
+    @unittest.skipUnless(sys.platform == "win32", "cmd.exe half")
+    def test_cmd_half_keeps_the_hooks_exit_code_when_python_is_missing(self) -> None:
+        """Field walk 2026-09-05 (obligation 9401): with no `python` on PATH
+        and only the `py` launcher available, every hook exited 49 - the
+        parse-time `%ERRORLEVEL%` inside the `if errorlevel 9009 ( ... )`
+        block was 9009, truncated to a byte. A gate's exit 2 vanished.
+        The launcher must return the hook's own exit code."""
+        import os, shutil
+        py = shutil.which("py")
+        if not py:
+            self.skipTest("py launcher not installed")
+        system_root = os.environ.get("SystemRoot", r"C:\Windows")
+        env = {**os.environ, "PATH": os.pathsep.join(
+            [os.path.join(system_root, "System32"), system_root, os.path.dirname(py)])}
+        result = subprocess.run(
+            ["cmd.exe", "/d", "/c", str(PLUGIN_ROOT / "hooks" / "run-hook.cmd"),
+             "godmode_gate_fast.py"],
+            input="not json", capture_output=True, text=True, timeout=120, env=env)
+        self.assertEqual(result.returncode, 2, (result.stdout, result.stderr))
+        self.assertNotIn("is not recognized", result.stderr + result.stdout)
+
+
+    @unittest.skipUnless(sys.platform == "win32", "cmd.exe shim")
+    def test_bin_shim_finds_an_interpreter_when_python_is_missing(self) -> None:
+        """Eighth field report 2026-09-05: bin/godmode.cmd had the same
+        python-only gap as the launcher's cmd half; bin/godmode probes
+        python3/python/py. With only the py launcher on PATH the shim must
+        still answer --version."""
+        import os, shutil
+        py = shutil.which("py")
+        if not py:
+            self.skipTest("py launcher not installed")
+        system_root = os.environ.get("SystemRoot", "C:/Windows")
+        env = {**os.environ, "PATH": os.pathsep.join(
+            [os.path.join(system_root, "System32"), system_root, os.path.dirname(py)])}
+        result = subprocess.run(
+            ["cmd.exe", "/d", "/c", str(PLUGIN_ROOT / "bin" / "godmode.cmd"), "--version"],
+            capture_output=True, text=True, timeout=120, env=env)
+        self.assertEqual(result.returncode, 0, (result.stdout, result.stderr))
+        self.assertIn("Godmode", result.stdout)
+
     def test_launcher_runs_a_hook_end_to_end(self) -> None:
         result = subprocess.run(
             [str(PLUGIN_ROOT / "hooks" / "run-hook.cmd")
