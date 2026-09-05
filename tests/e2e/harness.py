@@ -267,7 +267,12 @@ def cursor_shell(command: str, cwd: str) -> dict[str, Any]:
 
 
 def cursor_edit(file_path: str, cwd: str) -> dict[str, Any]:
-    return {"hook_event_name": "preToolUse", "tool_name": "Edit",
+    # Cursor's documented tool-type vocabulary is Shell/Read/Write/Grep/
+    # Delete/Task (Addendum 5); an in-scope edit arrives as `Write`. The
+    # earlier fixture sent Claude's `Edit`, which Cursor never emits, and
+    # the adapter rightly answered unrecognized-tool (ninth field report,
+    # 2026-09-05: "expected allow, received ask").
+    return {"hook_event_name": "preToolUse", "tool_name": "Write",
             "tool_input": {"file_path": file_path}, "cwd": cwd}
 
 
@@ -277,7 +282,11 @@ def gemini_shell(command: str, cwd: str) -> dict[str, Any]:
 
 
 def gemini_edit(file_path: str, cwd: str) -> dict[str, Any]:
-    return {"hook_event_name": "BeforeTool", "tool_name": "Edit",
+    # Gemini CLI edits through `replace` (and writes through `write_file`);
+    # `Edit` is Claude's name and Gemini never sends it (ninth field report,
+    # 2026-09-05: "expected allow, received deny" was the fail-closed
+    # answer to a tool name the host does not have).
+    return {"hook_event_name": "BeforeTool", "tool_name": "replace",
             "tool_input": {"file_path": file_path}, "cwd": cwd}
 
 
