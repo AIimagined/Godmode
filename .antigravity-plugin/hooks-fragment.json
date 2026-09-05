@@ -5,16 +5,24 @@
     "PreToolUse": [
       {
         "matcher": ".*",
-        "type": "command",
-        "command": "${godmodePluginRoot}/hooks/run-hook.cmd godmode_gate_fast.py",
-        "timeout": 8
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${godmodePluginRoot}/hooks/run-hook.cmd godmode_gate_fast.py",
+            "timeout": 8
+          }
+        ]
       }
     ],
     "Stop": [
       {
-        "type": "command",
-        "command": "${godmodePluginRoot}/hooks/run-hook.cmd godmode_session_hook.py stop",
-        "timeout": 10
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${godmodePluginRoot}/hooks/run-hook.cmd godmode_session_hook.py stop",
+            "timeout": 10
+          }
+        ]
       }
     ]
   }

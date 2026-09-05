@@ -379,21 +379,37 @@ def build_antigravity_fragment() -> dict:
             "fresh probe proof; Stop hooks not firing on Windows (IDE "
             "1.107.0) is field-confirmed, 2026-08-29."
         ),
+        # Tenth field report 2026-09-05: Antigravity's loader expects each
+        # matcher group to carry its handlers in a `hooks` array
+        # (`{matcher, hooks: [{type, command, timeout}]}`); a handler laid
+        # directly beside the matcher was never found, so the gate was
+        # silently ignored. Stop follows the same group shape. Commands
+        # stay double-quote-free and single-quote-free: Antigravity on
+        # Windows runs them through cmd.exe /c, where a single quote does
+        # not quote.
         "godmode": {
             "enabled": True,
             "PreToolUse": [
                 {
                     "matcher": ANTIGRAVITY_TOOL_MATCHER,
-                    "type": "command",
-                    "command": f"{root}/hooks/run-hook.cmd godmode_gate_fast.py",
-                    "timeout": 8,
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": f"{root}/hooks/run-hook.cmd godmode_gate_fast.py",
+                            "timeout": 8,
+                        },
+                    ],
                 },
             ],
             "Stop": [
                 {
-                    "type": "command",
-                    "command": f"{root}/hooks/run-hook.cmd godmode_session_hook.py stop",
-                    "timeout": 10,
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": f"{root}/hooks/run-hook.cmd godmode_session_hook.py stop",
+                            "timeout": 10,
+                        },
+                    ],
                 },
             ],
         },

@@ -283,9 +283,34 @@ class AntigravityArtifactTests(unittest.TestCase):
 
     def test_timeouts_are_seconds_and_bounded(self) -> None:
         entry = host_manifests.build_antigravity_fragment()["godmode"]
-        handlers = [h for event in ("PreToolUse", "Stop") for h in entry[event]]
+        handlers = [h for event in ("PreToolUse", "Stop")
+                    for group in entry[event] for h in group["hooks"]]
         for handler in handlers:
             self.assertLessEqual(handler["timeout"], 30)
+
+    def test_handlers_sit_inside_a_hooks_array_per_matcher_group(self) -> None:
+        """Tenth field report 2026-09-05 (Antigravity): the loader expects
+        `{"matcher": ..., "hooks": [{type, command, timeout}]}` per group;
+        a handler placed directly beside the matcher is never found, so the
+        gate was silently ignored."""
+        entry = host_manifests.build_antigravity_fragment()["godmode"]
+        for event in ("PreToolUse", "Stop"):
+            for group in entry[event]:
+                self.assertNotIn("command", group, (event, group))
+                self.assertIsInstance(group.get("hooks"), list, (event, group))
+                for handler in group["hooks"]:
+                    self.assertEqual(handler["type"], "command")
+                    self.assertIn("run-hook.cmd", handler["command"])
+        self.assertEqual(entry["PreToolUse"][0]["matcher"], host_manifests.ANTIGRAVITY_TOOL_MATCHER)
+
+    def test_commands_carry_no_single_quotes_for_cmd_exe(self) -> None:
+        """Antigravity on Windows runs hook commands through cmd.exe /c, where
+        a single quote is not a quoting character (tenth field report)."""
+        entry = host_manifests.build_antigravity_fragment()["godmode"]
+        for event in ("PreToolUse", "Stop"):
+            for group in entry[event]:
+                for handler in group["hooks"]:
+                    self.assertNotIn("'", handler["command"], handler["command"])
 
     def test_the_note_documents_the_stdout_contract_and_the_probe_rule(self) -> None:
         fragment = host_manifests.build_antigravity_fragment()
