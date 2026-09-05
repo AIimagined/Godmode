@@ -28,6 +28,8 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 - The session and post-edit hooks read their payload and write their reply as UTF-8 regardless of the console codepage. On a Windows cp1252 console the host's UTF-8 payload decoded as mojibake, so every dash, section sign and non-ASCII path in a reply or command arrived mangled and the echo showed `??"` where the reply had an em dash (field report 2026-09-04). The CLI already reconfigured its streams at startup; the hooks now do the same.
 
+- The corpus freshness stamp retries a failed `git log` once before falling back to the file's mtime. A failure (a 5 s git timeout on a machine three minutes out of sleep, at this release's own gate) returned the same nothing as an untracked path, so the checkout time became that file's freshness and the ranking snapshot eval flipped for one run out of four with nothing in the tree changed. Untracked paths still fall back to mtime.
+
 ### Changed
 
 - A hook call against a 9,178-record archive dropped from 18.7 s to 4.5 s: the archive identity check is one directory scan instead of a stat per file, and a record list already verified for the current identity is not re-walked on the next read in the same process. Any change on disk still changes the identity and forces a fresh read and a fresh chain walk - the tamper-evidence contract is untouched. Measured because this release's own gate ran out of its hour three times: the hook end-to-end tests made about 117 such calls against this repo's live archive.

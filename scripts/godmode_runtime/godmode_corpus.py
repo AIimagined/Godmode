@@ -417,6 +417,14 @@ def _freshness_stamp(project: Path, path: str, is_git: bool) -> int:
     """
     if is_git:
         stamp = run_git(project, "log", "-1", "--format=%ct", "--", path)
+        if stamp is None:
+            # None is git FAILING (a 5 s timeout on a machine just woken
+            # from sleep, at the 0.3.18 gate's round 13), not an untracked
+            # path (that is ""). Falling straight to mtime on a failure
+            # made the checkout time the file's freshness and flipped the
+            # ranking snapshot for one run out of four. One retry; the
+            # mtime fallback stays for the genuinely untracked case.
+            stamp = run_git(project, "log", "-1", "--format=%ct", "--", path)
         if stamp and stamp.isdigit():
             return int(stamp) * 1_000_000_000
         return _mtime_stamp(project, path)
