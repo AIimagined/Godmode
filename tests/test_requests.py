@@ -500,5 +500,21 @@ class RememberHelpTests(unittest.TestCase):
         self.assertIn("digest", text)
 
 
+class RequestKeywordTests(unittest.TestCase):
+    def test_a_pasted_url_reads_as_its_words_not_its_scheme_and_domain(self) -> None:
+        """Field report 2026-09-05 (obligation 9303): a pasted-URL prompt
+        rendered as the ask `https developers.openai.com docs models` - the
+        scheme and the dotted host are noise no reader recognises the ask
+        by. Scheme words and bare domain tokens are dropped and a dotted
+        host splits into its words."""
+        from godmode_runtime.godmode_requests import _ordered_keywords
+        words = _ordered_keywords(
+            "please read https://developers.openai.com/docs/models and www.example.org first")
+        for noise in ("https", "http", "www", "developers.openai.com", "www.example.org"):
+            self.assertNotIn(noise, words, words)
+        for word in ("developers", "openai", "docs", "models", "example"):
+            self.assertIn(word, words, words)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -77,6 +77,7 @@ but then than there here what which who when where why how all any some also
 just now new old very much many more most other into out up down over under
 again once only own same too our your their them us am are been being get got
 go make made see say said want need know think take come give please thanks ok
+http https ftp
 """.split())
 
 
@@ -99,12 +100,26 @@ def summarise(text: str) -> str:
     return flattened[: SUBJECT_LIMIT - 1].rstrip() + "…"
 
 
+def _tokens(text: str):
+    """Every candidate keyword in the text, in order. Field report
+    2026-09-05 (obligation 9303): a pasted URL rode in as `https` plus one
+    dotted host token (`developers.openai.com`), so the ask line read as
+    the address, not the request. A dotted token splits into its words -
+    the scheme words are stopwords, and a TLD is shorter than the
+    four-character floor - so only the words a reader recognises survive.
+    """
+    for match in _WORD.findall(text):
+        for part in match.lower().split("."):
+            token = part.rstrip("._-")
+            if len(token) >= 4 and token not in _STOPWORDS:
+                yield token
+
+
 def _ordered_keywords(text: str) -> list[str]:
     """Keywords in first-appearance order - the display form."""
     seen: list[str] = []
-    for match in _WORD.findall(text):
-        token = match.lower().rstrip("._-")
-        if len(token) >= 4 and token not in _STOPWORDS and token not in seen:
+    for token in _tokens(text):
+        if token not in seen:
             seen.append(token)
     return seen
 
@@ -115,12 +130,7 @@ def _keywords(text: str) -> frozenset[str]:
     # clusters as distinct keywords - noise no promotion could turn into a
     # rule. Trailing ._- is stripped and anything shorter than four chars
     # after the strip is dropped.
-    words = set()
-    for match in _WORD.findall(text):
-        token = match.lower().rstrip("._-")
-        if len(token) >= 4 and token not in _STOPWORDS:
-            words.add(token)
-    return frozenset(words)
+    return frozenset(_tokens(text))
 
 
 def _reviewable(record: dict[str, Any]) -> str:
