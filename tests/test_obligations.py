@@ -121,6 +121,39 @@ class SupersessionTests(unittest.TestCase):
         self.assertNotIn("version-superseded", codes)
 
 
+class RewordedSupersessionTests(unittest.TestCase):
+    """Seventh and eleventh field reports 2026-09-05: two live-verify
+    obligations about 0.7.109 and 0.8.17 kept resurfacing after the same
+    duty was recorded for 0.8.29, because the clustering compared subject
+    AND value text, and a long reworded value drowned the shared subject.
+    An obligation record's identity is its subject; the value is prose."""
+
+    @staticmethod
+    def _obligation(sequence: int, subject: str, value: str) -> dict:
+        return {"kind": "obligation", "sequence": sequence, "subject": subject,
+                "data": {"status": "open", "value": value}}
+
+    def test_a_reworded_value_does_not_hide_a_superseded_subject(self) -> None:
+        report = review_obligations([
+            self._obligation(1, "live-verify 0.7.109 on mac",
+                             "Field report: run the three-host live verification on the 0.7.109 build before cutting"),
+            self._obligation(2, "live-verify 0.8.29 rows",
+                             "Ninth report queue: the 0.8.29 rows need the live verification pass on mac, windows and linux with fresh probes"),
+        ])
+        superseded = [f for f in report["findings"] if f["code"] == "version-superseded"]
+        self.assertTrue(superseded, report["findings"])
+        self.assertIn("0.7.109", superseded[0]["obligation"])
+        self.assertIn("0.8.29", superseded[0]["detail"])
+
+    def test_different_subjects_with_versions_stay_apart(self) -> None:
+        report = review_obligations([
+            self._obligation(1, "publish the 0.7.109 release page", "page"),
+            self._obligation(2, "rotate the 0.8.29 signing key", "key"),
+        ])
+        codes = {f["code"] for f in report["findings"]}
+        self.assertNotIn("version-superseded", codes)
+
+
 class RealHandoverTests(unittest.TestCase):
     """The obligations this module was built for, copied from the archive.
 

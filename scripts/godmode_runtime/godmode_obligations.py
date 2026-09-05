@@ -67,6 +67,12 @@ _COMPOUND = re.compile(r"\s*[;]\s*|\s+-\s+")
 # high - a false grouping invents a stale obligation, which is worse than
 # missing one, because it teaches the reader to distrust the report.
 SIMILARITY = 0.6
+# Two obligation SUBJECTS that both carry a version number are compared
+# more leniently: the version-superseded finding needs a higher version on
+# the later one anyway, which is a second guard the general threshold does
+# not have (seventh and eleventh field reports 2026-09-05: "live-verify
+# 0.7.109 on mac" and "live-verify 0.8.29 rows" were never grouped).
+SIMILARITY_VERSIONED = 0.5
 _STOPWORDS = frozenset({
     "the", "a", "an", "to", "and", "or", "of", "for", "in", "on", "at", "is",
     "it", "this", "that", "then", "only", "also", "with", "from", "by", "be",
@@ -127,6 +133,7 @@ def review_obligations(records: list[dict[str, Any]]) -> dict[str, Any]:
     retired = {tokens for tokens in retired if tokens}
 
     clusters: list[tuple[frozenset[str], list[tuple[int, str]]]] = []
+    versioned_openers: dict[int, bool] = {}
     handovers = 0
     total = 0
     # Obligation-KIND records join the same clustering (three field reports,
@@ -143,18 +150,28 @@ def review_obligations(records: list[dict[str, Any]]) -> dict[str, Any]:
         if str(data.get("status", "open")).lower() in {
                 "closed", "done", "retired", "superseded"}:
             continue
-        text = f"{subject} {data.get('value', '')}".strip()
-        tokens = _tokens(normalise_obligation(text))
+        # Seventh and eleventh field reports 2026-09-05: an obligation
+        # record's identity is its SUBJECT; the value is prose that, once
+        # reworded, drowned the shared subject and let a superseded duty
+        # resurface as new. Cluster on the subject, and only fall back to
+        # the value when the subject carries no words of its own.
+        subject_tokens = _tokens(normalise_obligation(subject))
+        text = subject if subject_tokens else str(data.get("value", "")).strip()
+        tokens = subject_tokens or _tokens(normalise_obligation(text))
         if not tokens:
             continue
         total += 1
         sequence = int(record.get("sequence", 0))
+        versioned = _highest(text) is not None
         for existing, members in clusters:
-            if _overlap(existing, tokens) >= SIMILARITY:
+            opener_versioned = versioned_openers.get(id(existing), False)
+            threshold = SIMILARITY_VERSIONED if (versioned and opener_versioned) else SIMILARITY
+            if _overlap(existing, tokens) >= threshold:
                 members.append((sequence, subject))
                 break
         else:
             clusters.append((tokens, [(sequence, subject)]))
+            versioned_openers[id(tokens)] = versioned
     for record in records:
         if record.get("kind") != "checkpoint" and "next" not in (record.get("data") or {}):
             continue
