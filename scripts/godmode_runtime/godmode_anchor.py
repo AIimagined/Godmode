@@ -149,6 +149,11 @@ def _head_identity(requested: Path) -> tuple[int, int] | None:
     return None
 
 
+# Bumped whenever a cached field's meaning changes; 2 = archive_root joined
+# onto the requested directory (the common-dir fix), not the toplevel.
+_ANCHOR_CACHE_FORMAT = 2
+
+
 def _anchor_cache_path(requested: Path) -> Path:
     # Cache-only content, safe to delete at any time: lives beside the
     # per-device salt, keyed by a hash of the resolved path so two projects
@@ -166,7 +171,13 @@ def _load_cached_anchor(requested: Path, identity: tuple[int, int]) -> ProjectAn
         return None
     if not isinstance(raw, dict) or list(raw.get("_head_identity", [])) != list(identity):
         return None
-    fields = {k: v for k, v in raw.items() if k != "_head_identity"}
+    # Entries written before the common-dir fix (2026-09-05) carry a wrong
+    # archive_root for every subdirectory and would be served until the
+    # next commit or checkout moved the reflog; a missing or older format
+    # version means re-resolve, never trust.
+    if raw.get("_cache_format") != _ANCHOR_CACHE_FORMAT:
+        return None
+    fields = {k: v for k, v in raw.items() if k not in ("_head_identity", "_cache_format")}
     try:
         return ProjectAnchor(**fields)
     except TypeError:
@@ -180,6 +191,7 @@ def _store_cached_anchor(requested: Path, identity: tuple[int, int],
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = asdict(anchor)
         payload["_head_identity"] = list(identity)
+        payload["_cache_format"] = _ANCHOR_CACHE_FORMAT
         tmp = path.with_suffix(f".{os.getpid()}.tmp")
         tmp.write_text(json.dumps(payload), encoding="utf-8")
         tmp.replace(path)
@@ -282,7 +294,14 @@ def resolve_anchor(project: str | Path) -> ProjectAnchor:
         project_root = canonical_path(Path(top))
         common_path = Path(common)
         if not common_path.is_absolute():
-            common_path = project_root / common_path
+            # git answers `--git-common-dir` relative to the directory it
+            # was asked from (`-C requested`): `.git` at the toplevel,
+            # `../.git` one level down. Joining it onto the toplevel put the
+            # archive one directory too high for every subdirectory, so a
+            # hook fired from below the root read the repository as
+            # not-initialized and the gate was silently off (field walk
+            # 2026-09-05).
+            common_path = requested / common_path
         common_path = canonical_path(common_path)
         project_key = hashlib.sha256(
             f"git\0{common_path}".encode("utf-8")

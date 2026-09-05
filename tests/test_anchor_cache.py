@@ -164,5 +164,55 @@ class AnchorCacheTests(unittest.TestCase):
         self.assertNotEqual(before.branch, after.branch)
 
 
+class SubdirectoryAnchorTests(unittest.TestCase):
+    def test_a_subdirectory_resolves_the_same_archive_as_the_root(self) -> None:
+        """Field walk 2026-09-05: `git rev-parse --git-common-dir` answers
+        RELATIVE TO THE DIRECTORY IT WAS ASKED FROM (`../.git` from a
+        first-level subdirectory), and the anchor joined that onto the
+        toplevel instead - so every hook fired with a subdirectory as its
+        project looked one level too high, found no archive, and read the
+        repository as not-initialized: the gate was silently off for any
+        session opened below the root."""
+        import subprocess, tempfile
+        from godmode_runtime.godmode_anchor import resolve_anchor
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "repo"
+            (root / "pkg" / "inner").mkdir(parents=True)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            top = resolve_anchor(root)
+            for sub in (root / "pkg", root / "pkg" / "inner"):
+                with self.subTest(sub=str(sub.relative_to(root))):
+                    anchor = resolve_anchor(sub)
+                    self.assertEqual(anchor.project_root, top.project_root)
+                    self.assertEqual(anchor.archive_root, top.archive_root)
+                    self.assertEqual(anchor.git_common_dir, top.git_common_dir)
+                    self.assertEqual(anchor.project_key, top.project_key)
+
+    def test_a_cache_entry_from_before_the_common_dir_fix_is_ignored(self) -> None:
+        """The wrong archive root above was CACHED per requested directory
+        and keyed on the reflog identity alone, so a fixed resolver kept
+        serving the stale answer until the next commit or checkout. Entries
+        now carry a cache format version; one without it is re-resolved."""
+        import json, subprocess, tempfile
+        from dataclasses import asdict
+        from godmode_runtime import godmode_anchor as anchor_module
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "repo"
+            (root / "pkg").mkdir(parents=True)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(Path(temporary) / "state")}):
+                good = anchor_module.resolve_anchor(root / "pkg")
+                requested = anchor_module.canonical_path(root / "pkg")
+                identity = anchor_module._head_identity(requested)
+                stale = asdict(good)
+                stale["archive_root"] = str(Path(temporary) / ".git" / "godmode-state")  # the old, wrong join
+                stale["_head_identity"] = list(identity)
+                path = anchor_module._anchor_cache_path(requested)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(stale), encoding="utf-8")
+                self.assertEqual(anchor_module.resolve_anchor(root / "pkg").archive_root, good.archive_root)
+
+
+
 if __name__ == "__main__":
     unittest.main()
