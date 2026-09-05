@@ -534,6 +534,37 @@ class LiveGrokHarnessShapeTests(unittest.TestCase):
         self.assertEqual(unresolved, [], "the Grok manifest subscribes to tool "
                          "names this adapter answers with unrecognized-tool")
 
+
+    def test_every_live_grok_tool_name_has_a_declared_answer(self) -> None:
+        """Eighth field report 2026-09-05: only three mutating and four
+        read-only names were known, so most of Grok 1.0.13's builtins would
+        fail closed as unrecognized once the launcher parses. This list is
+        the `tools` array from a live `grok -p` init event on 1.0.13
+        (2026-09-05); every name must be a declared mutating tool, a
+        declared read-only tool, or a documented fail-closed one."""
+        live = {
+            "run_terminal_command", "read_file", "search_replace", "list_dir",
+            "grep", "kill_command_or_subagent", "todo_write",
+            "get_command_or_subagent_output", "spawn_subagent",
+            "scheduler_create", "scheduler_delete", "scheduler_list", "monitor",
+            "search_tool", "use_tool", "workflow", "enter_plan_mode",
+            "exit_plan_mode", "ask_user_question", "web_search", "web_fetch",
+            "image_gen", "image_edit", "image_to_video", "reference_to_video",
+            "write",
+        }
+        declared = he.GROK_TOOLS | he.GROK_READONLY_TOOLS | he.GROK_FAIL_CLOSED_TOOLS
+        self.assertEqual(live - declared, set(), "live Grok tools with no declared answer")
+        for name in he.GROK_READONLY_TOOLS:
+            event = he.parse_host_payload({
+                "hookEventName": "pre_tool_use", "toolName": name,
+                "toolInput": {"path": "a.txt"}, "cwd": "."})
+            self.assertEqual(event.tool_kind, he.TOOL_KIND_READ, name)
+        for name in he.GROK_FAIL_CLOSED_TOOLS:
+            event = he.parse_host_payload({
+                "hookEventName": "pre_tool_use", "toolName": name,
+                "toolInput": {}, "cwd": "."})
+            self.assertEqual(event.tool_kind, he.TOOL_KIND_UNRECOGNIZED, name)
+
     def test_the_live_shell_shape_is_a_shell_call_not_an_unrecognized_tool(self) -> None:
         event = he.parse_host_payload({
             "hook_event_name": "PreToolUse", "tool_name": "Bash",

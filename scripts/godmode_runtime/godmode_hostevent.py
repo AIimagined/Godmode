@@ -245,6 +245,25 @@ _GROK_TOOLS = frozenset({"run_terminal_command", "write", "search_replace"})
 # hook's own early branch), and unknown names still fail closed.
 _GROK_READONLY_TOOLS = frozenset({
     "get_command_or_subagent_output", "read_file", "grep", "spawn_subagent",
+    # Eighth field report 2026-09-05 + the `tools` array of a live
+    # `grok -p` init event on 1.0.13 the same day: the rest of Grok's
+    # non-mutating builtins. Reads, listings, searches, plan-mode toggles,
+    # a question to the user, a scheduler listing, a monitor - none of them
+    # writes the tree, the index, or a remote.
+    "list_dir", "todo_write", "scheduler_list", "search_tool", "monitor",
+    "enter_plan_mode", "exit_plan_mode", "ask_user_question",
+    "web_search", "web_fetch",
+})
+# Live names this adapter deliberately keeps FAIL-CLOSED (unrecognized):
+# process kills, scheduler mutation, workflows, the MCP dispatcher (its
+# real name arrives as `server__tool`, which no fixed set can enumerate),
+# and the media generators (an external call this classifier does not
+# read). The shipped matcher never subscribes to them, so they reach the
+# gate only if a host widens it - and then they ask rather than pass.
+_GROK_FAIL_CLOSED_TOOLS = frozenset({
+    "kill_command_or_subagent", "scheduler_create", "scheduler_delete",
+    "workflow", "use_tool", "image_gen", "image_edit", "image_to_video",
+    "reference_to_video",
 })
 # Addendum 5: Cursor's pre-tool events, camelCase, a fourth dialect.
 _CURSOR_EVENTS = frozenset({"preToolUse", "beforeShellExecution"})
@@ -1436,6 +1455,8 @@ ANTIGRAVITY_SHELL_TOOLS = _ANTIGRAVITY_SHELL_TOOLS
 ANTIGRAVITY_READONLY_TOOLS = _ANTIGRAVITY_READONLY_TOOLS
 ANTIGRAVITY_FENCED_TOOLS = _ANTIGRAVITY_FENCED_TOOLS
 GROK_TOOLS = _GROK_TOOLS
+GROK_READONLY_TOOLS = _GROK_READONLY_TOOLS
+GROK_FAIL_CLOSED_TOOLS = _GROK_FAIL_CLOSED_TOOLS
 CLAUDE_TOOLS = _CLAUDE_TOOLS
 CURSOR_EVENTS = _CURSOR_EVENTS
 GEMINI_EVENTS = _GEMINI_EVENTS
