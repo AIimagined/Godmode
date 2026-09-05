@@ -965,10 +965,23 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     else:
         support = ("nothing executed - no cmd: citation to run; the grade "
                    "rests on document/file overlap only")
+    # Sixth field report 2026-09-05 (obligation 9313): the grade was honest
+    # but the reader had to know the ladder to act on it. Name the next
+    # grade and the exact flag that earns it; --brief shows the same line.
+    if data["grade"] == "verified":
+        next_grade, next_action = None, "verified is the top grade; nothing further to earn"
+    elif cmd_count:
+        next_grade = "verified"
+        next_action = (f"verified: re-run with --grade verified --verify; the {cmd_count} "
+                       "cmd cite(s) execute and attest")
+    else:
+        next_grade = "verified"
+        next_action = ('verified: re-run with --grade verified --cite '
+                       '"cmd:<the deciding check>" --verify')
     # A downgrade is a finding, so it must be visible in the exit status too.
     return CommandResult(
         {"claim": data["text"], "grade": data["grade"], "claimed": data["claimed_grade"],
-         "support": support,
+         "support": support, "next_grade": next_grade, "next_action": next_action,
          "downgraded": data["downgraded"], "reason": data.get("reason", ""),
          "unresolved": data["unresolved"], "unsupported": data.get("unsupported", []),
          "blast_radius": data.get("blast_radius"),

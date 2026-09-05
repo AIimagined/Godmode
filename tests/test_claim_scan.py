@@ -102,5 +102,49 @@ class ClaimScanTests(unittest.TestCase):
                          "\n".join(f"{u['file']}:{u['line']}: {u['sentence']}" for u in report["uncovered"]))
 
 
+class ClaimNextGradeTests(unittest.TestCase):
+    """Sixth field report 2026-09-05 (obligation 9313): the claim grade was
+    honest but the reader had to know the ladder to act on it. The payload
+    names the next grade and the command that earns it, and --brief shows
+    the same on its one line."""
+
+    def _claim(self, root: Path, *extra: str) -> tuple[int, str]:
+        with mock.patch.object(sys, "stdout", io.StringIO()),                 mock.patch.object(sys, "stderr", io.StringIO()):
+            console.main(["--project", str(root), "session", "open"])
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "stdout", out), mock.patch.object(sys, "stderr", err):
+            code = console.main(["--project", str(root), "claim",
+                                 "the suite passes", *extra])
+        self.assertEqual(err.getvalue(), "", err.getvalue())
+        return code, out.getvalue()
+
+    def test_an_observed_claim_names_verified_and_the_verify_flag(self) -> None:
+        with _project() as (root, archive):
+            archive.initialize()
+            code, text = self._claim(root, "--cite", "cmd:python -c \"print(1)\"")
+        payload = json.loads(text)
+        self.assertEqual(payload["grade"], "observed", payload)
+        self.assertEqual(payload["next_grade"], "verified")
+        self.assertIn("--verify", payload["next_action"])
+
+    def test_brief_shows_the_next_grade_and_how_to_earn_it(self) -> None:
+        with _project() as (root, archive):
+            archive.initialize()
+            code, text = self._claim(root, "--cite", "cmd:python -c \"print(1)\"", "--brief")
+        line = text.strip()
+        self.assertIn("observed", line)
+        self.assertIn("verified", line)
+        self.assertIn("--grade verified", line)
+
+    def test_a_verified_claim_has_no_next_grade(self) -> None:
+        with _project() as (root, archive):
+            archive.initialize()
+            code, text = self._claim(root, "--grade", "verified",
+                                     "--cite", "cmd:python -c \"print(1)\"", "--verify")
+        payload = json.loads(text)
+        self.assertEqual(payload["grade"], "verified", payload)
+        self.assertIsNone(payload["next_grade"])
+
+
 if __name__ == "__main__":
     unittest.main()
