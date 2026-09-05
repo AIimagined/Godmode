@@ -1,0 +1,1 @@
+`doctor --host <name>` answers the wiring questions a field machine asks: hook artifact present and parsing, which interpreter answers, archive writable from here, interception grade on record, documented gaps, and every path the project's own `.codex/hooks.json` (or `.agents/hooks.json`) names that does not exist. Ninth field report.

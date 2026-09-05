@@ -1,0 +1,1 @@
+On a plain git checkout with no archive under its metadata dir, the fast gate allows silently with stats alone instead of escalating to the full hook, which loaded the runtime and spawned git only to print the not-initialized notice - more per call than a governed project paid. A `.git` file, a missing `.git`, or a malformed payload still escalates.
