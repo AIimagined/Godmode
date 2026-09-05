@@ -124,12 +124,31 @@ class SharedCommandStringTests(unittest.TestCase):
         self.assertEqual(len(gate), 1, gate)
         return gate[0]
 
+    @staticmethod
+    def _sh() -> str | None:
+        """A POSIX sh: on PATH, or Git for Windows' bundled one beside git.exe
+        (the release gate launches from PowerShell, where Git's usr/bin is
+        not on PATH)."""
+        import shutil
+        found = shutil.which("sh")
+        if found:
+            return found
+        git = shutil.which("git")
+        if git:
+            candidate = Path(git).resolve().parent.parent / "usr" / "bin" / "sh.exe"
+            if candidate.is_file():
+                return str(candidate)
+        return None
+
     def test_every_shared_command_runs_under_sh(self) -> None:
         import os
+        sh = self._sh()
+        if not sh:
+            self.skipTest("no POSIX sh on this machine")
         env = {**os.environ, "CLAUDE_PLUGIN_ROOT": str(PLUGIN_ROOT)}
         for command in self._commands():
             with self.subTest(command=command):
-                done = subprocess.run(["sh", "-c", command], input="{}", capture_output=True,
+                done = subprocess.run([sh, "-c", command], input="{}", capture_output=True,
                                       text=True, timeout=120, env=env)
                 self.assertIn(done.returncode, (0, 2), (command, done.stderr[-400:]))
                 self.assertNotIn("not found", done.stderr)
