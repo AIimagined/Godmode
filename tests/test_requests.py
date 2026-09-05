@@ -483,5 +483,22 @@ class DictationFormTests(unittest.TestCase):
         self.assertNotEqual(code, 0)
 
 
+class RememberHelpTests(unittest.TestCase):
+    def test_remember_help_documents_closing_an_ask_by_subject_digest(self) -> None:
+        """Sixth field report 2026-09-05 (obligation 9312): the stop hook
+        prescribes `--kind request --subject "ask:<hex>" --status closed`
+        and nothing in `remember --help` said what that line is or where
+        the hex comes from."""
+        import subprocess
+        done = subprocess.run(
+            [sys.executable, str(SCRIPTS / "godmode.py"), "remember", "--help"],
+            capture_output=True, text=True, encoding="utf-8", timeout=60, cwd=PLUGIN_ROOT)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        text = " ".join(done.stdout.split())
+        self.assertIn('--kind request --subject "ask:<hex>" --status closed', text)
+        self.assertIn("stop hook", text)
+        self.assertIn("digest", text)
+
+
 if __name__ == "__main__":
     unittest.main()

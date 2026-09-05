@@ -5115,7 +5115,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
     remember = sub.add_parser(
         "remember",
-        help="Record a decision, invariant, lesson, obligation, assumption, or request")
+        help="Record a decision, invariant, lesson, obligation, assumption, or request",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "closing an ask:\n"
+            "  The stop hook names each open operator ask as ask:<hex>, the first\n"
+            "  twelve characters of the ask's digest. Close one with exactly the line\n"
+            "  it prints:\n"
+            '    godmode remember --kind request --subject "ask:<hex>" --status closed\n'
+            "  No --value is needed for a status change. `godmode history --kind\n"
+            "  request` lists the recorded asks with their subjects."))
     remember.add_argument(
         "--kind",
         # U-S4 - "assumption" added for the assumption gate
