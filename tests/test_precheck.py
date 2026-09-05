@@ -38,6 +38,7 @@ from godmode_runtime.godmode_precheck import (  # noqa: E402
     render,
 )
 from godmode_runtime.godmode_register import set_state  # noqa: E402
+from godmode_runtime import godmode_console as console  # noqa: E402
 from test_godmode_runtime import isolated_project  # noqa: E402
 
 
@@ -425,6 +426,21 @@ class PairedArtifactCheckTests(unittest.TestCase):
         self.assertIn("paired-artifact, advisory", text)
         self.assertIn("a.py", text)
         self.assertIn("b.py", text)
+
+
+class PrecheckUsageTests(unittest.TestCase):
+    def test_precheck_without_about_is_a_usage_refusal_not_an_archive_error(self) -> None:
+        import io, json, tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as temporary:
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.object(sys, "stdout", out), mock.patch.object(sys, "stderr", err):
+                code = console.main(["--project", temporary, "precheck"])
+        self.assertEqual(code, 1, err.getvalue())
+        payload = json.loads(out.getvalue())
+        self.assertIn("--about", payload["refused"])
+        self.assertIn("--preflight", payload["refused"])
+        self.assertNotIn("ArchiveError", err.getvalue())
 
 
 if __name__ == "__main__":

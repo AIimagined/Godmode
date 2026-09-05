@@ -2816,7 +2816,11 @@ def cmd_precheck(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
                                 archive=runtime.archive)
         return CommandResult(report, exit_code=1 if report["verdict"] == "findings" else 0)
     if not args.about:
-        raise ArchiveError("precheck requires --about (or --preflight)")
+        # A missing argument is a usage refusal like every other verb's,
+        # not an archive fault: exit 1 with the shape on stdout.
+        return CommandResult(
+            {"refused": "precheck needs --about \"<what you are about to do>\", "
+                        "or --preflight"}, exit_code=1)
     _require_archive(runtime)
     project = Path(runtime.anchor.project_root)
     changed = list(args.changed) if args.changed else _working_tree_changes(project)
