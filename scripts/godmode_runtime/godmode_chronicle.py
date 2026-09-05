@@ -141,6 +141,11 @@ class Chronicle:
         self._events_cache_key: tuple[Any, ...] | None = None
         self._events_cache: list[dict[str, Any]] | None = None
         self._events_verified_key: str | None = None
+        # A pinned directory identity: set by `pin_identity()` for a
+        # short-lived caller (a hook process) whose many reads would each
+        # re-stat every record file; own appends refresh it, in-place
+        # rewrites drop it, and nothing outside the pin's owner is affected.
+        self._pinned_identity: tuple[bool, str | None] | None = None
         self._accepted_keys_cache_key: tuple[int, int] | None = None
         self._accepted_keys_cache: set[str] | None = None
 
@@ -379,8 +384,37 @@ class Chronicle:
         parts = [f"{name}:{mtime}:{size}" for name, mtime, size in stats]
         return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 
+    # Field walk 2026-09-05: one SessionStart hook called read_events 25
+    # times on a 9.3k-record archive and each call re-scanned the whole
+    # directory - 1.4 s of stat calls for an archive nothing had touched.
+    # The tamper-evidence contract (an in-place rewrite of an older record
+    # must fail the NEXT read) rules out a time-based beat, so the relief is
+    # opt-in: a short-lived process pins the identity it scanned once, its
+    # own appends refresh the pin, and every append still lists the
+    # directory fresh under the write lock for the chain tail.
+    def pin_identity(self) -> None:
+        self._pinned_identity = (True, self._events_identity())
+
+    def unpin_identity(self) -> None:
+        self._pinned_identity = None
+
+    def _current_identity(self) -> str | None:
+        pinned = self._pinned_identity
+        if pinned is not None:
+            return pinned[1]
+        return self._events_identity()
+
+    def _drop_events_cache(self) -> None:
+        self._events_cache_key = None
+        self._events_verified_key = None
+        if self._pinned_identity is not None:
+            # A pin that went None would make every later read a full parse
+            # AND a full verify (measured: 33 s per SessionStart); re-scan
+            # once so the next read fills the cache and verifies once.
+            self._pinned_identity = (True, self._events_identity())
+
     def read_events(self, *, verify: bool = True) -> list[dict[str, Any]]:
-        identity = self._events_identity()
+        identity = self._current_identity()
         if identity is not None and identity == self._events_cache_key \
                 and self._events_cache is not None:
             records = self._events_cache
@@ -675,6 +709,22 @@ class Chronicle:
         # truncation.
         self._write_chain_anchor(sequence, record["record_hash"])
         self._write_head(sequence, record["record_hash"])
+        # Field walk 2026-09-05: the hook's own append used to invalidate
+        # the parsed cache, so its next read re-parsed every record file
+        # (two full reads per hook on a 9.3k-record archive). The record
+        # just sealed continues the verified chain the cache holds, so the
+        # cache extends by one - into a NEW list, so a caller holding the
+        # old one never sees it mutate - and the identity re-scans once.
+        cache = self._events_cache
+        if cache is not None and len(cache) == sequence - 1 and self._events_cache_key is not None:
+            self._events_cache = cache + [record]
+            identity = self._events_identity()
+            self._events_cache_key = identity
+            self._events_verified_key = identity
+            if self._pinned_identity is not None:
+                self._pinned_identity = (True, identity)
+        else:
+            self._drop_events_cache()
         return record
 
     def append(
@@ -734,8 +784,7 @@ class Chronicle:
         got shorter, never a silent repair.
         """
         with self.write_lock():
-            self._events_cache_key = None
-            self._events_verified_key = None
+            self._drop_events_cache()
             records = [self._read_json(path) for path in self.event_paths()]
             self.verify(records, check_anchor=False)
             previous = self._read_chain_anchor()
@@ -809,6 +858,9 @@ class Chronicle:
                 _atomic_json(paths[index], record)
                 previous = record["record_hash"]
             self._write_head(len(records), previous)
+            # The files just rewrote in place: whatever the cache holds is
+            # pre-expunge and must never be extended by the tombstone.
+            self._drop_events_cache()
             tombstone = self._write_record(
                 "incident", "expunge", tombstone_data,
                 [f"expunged-sequence:{sequence}"],

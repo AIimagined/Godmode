@@ -1437,6 +1437,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         anchor = resolve_anchor(project)
         archive = Chronicle(anchor)
+        # A hook is a short-lived process that reads the archive many times
+        # (measured 25 on one SessionStart) and appends a few records of its
+        # own; pin the directory identity it scanned once so those reads do
+        # not each re-stat every record file (field walk 2026-09-05: 1.4 s
+        # of a 5-7 s hook on a 9.3k-record archive).
+        archive.pin_identity()
         if not archive.initialized():
             # Stay silent for a genuinely new project, but never for one whose history
             # is merely unreachable: an agent starting here would otherwise be told

@@ -148,5 +148,45 @@ class ChronicleCacheTests(unittest.TestCase):
         self.assertTrue(result["valid"])
 
 
+class HookBudgetCacheTests(unittest.TestCase):
+    """Field walk 2026-09-05: a SessionStart hook on a 9.3k-record archive
+    took 5-7 s against a 10 s timeout. Two causes measured by profile: the
+    hook's own append invalidated the cache, so the next read re-parsed
+    every record file (two full reads per hook), and 25 read_events calls
+    each re-scanned the directory (1.4 s of stat calls)."""
+
+    def test_own_append_extends_the_cache_instead_of_rereading(self) -> None:
+        from unittest import mock
+        from godmode_runtime.godmode_chronicle import Chronicle
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            for n in range(8):
+                archive.append("claim", f"c{n}", {"text": "x"}, evidence=[])
+            before = archive.read_events()
+            with mock.patch.object(Chronicle, "_read_json", wraps=Chronicle._read_json) as reads:
+                archive.append("claim", "c8", {"text": "y"}, evidence=[])
+                after = archive.read_events()
+        self.assertEqual(len(after), len(before) + 1)
+        self.assertIsNot(before, after)
+        # The append itself reads the tail record to validate the head
+        # hint (O(1)); what must not happen is a parse of every record.
+        self.assertLessEqual(reads.call_count, 2, "own append forced a full re-read")
+        archive.verify(after)
+
+    def test_pinned_reads_scan_the_directory_once(self) -> None:
+        from unittest import mock
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            archive.append("claim", "one", {"text": "x"}, evidence=[])
+            archive.pin_identity()
+            archive.read_events()
+            with mock.patch.object(archive, "_events_identity", wraps=archive._events_identity) as scans:
+                for _ in range(5):
+                    archive.read_events()
+                self.assertEqual(scans.call_count, 0, "five pinned reads re-scanned the directory")
+                archive.append("claim", "two", {"text": "y"}, evidence=[])
+                self.assertEqual(len(archive.read_events()), 2, "own append is visible under the pin")
+
+
 if __name__ == "__main__":
     unittest.main()
