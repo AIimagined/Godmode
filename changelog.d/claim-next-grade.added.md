@@ -1,1 +1,0 @@
-A claim names the next grade and the flag that earns it (`next_grade`, `next_action`), and `--brief` prints the same line - the grade was honest but mute about the ladder. Sixth field report, obligation 9313.

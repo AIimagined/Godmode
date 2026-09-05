@@ -1,1 +1,0 @@
-An archive write the OS refuses is an ArchiveError naming the directory and the remedy (`GODMODE_STATE_HOME`, or a git checkout), not a traceback: `session open` raised PermissionError under the Codex sandbox and FileNotFoundError on Windows when the temporary name built from the 60-character record name pushed a deep state home past MAX_PATH. The temporary name is short now.

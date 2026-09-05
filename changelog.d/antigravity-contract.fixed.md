@@ -1,1 +1,0 @@
-Antigravity handlers sit inside a `hooks` array per matcher group, the fast gate reads the nested `toolCall.name` / `args.CommandLine` payload (and `run_command` joins the shell tools), the done bar answers `{"decision": "continue"}` there, the declared-host resolver knows Antigravity's markers, and fragment commands carry no single quotes for cmd.exe. Tenth field report.

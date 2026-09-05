@@ -9,7 +9,7 @@
     {
       "name": "godmode",
       "description": "A local, tamper-evident record of what a coding agent did, what it claimed, and what was verified.",
-      "version": "0.3.18",
+      "version": "0.3.19",
       "category": "productivity",
       "source": {
         "source": "url",

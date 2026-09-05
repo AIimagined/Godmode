@@ -1,1 +1,0 @@
-Every tool name in a live Grok 1.0.13 init event has a declared answer: reads, listings, searches, plan-mode toggles, the user question, scheduler listing and monitor are read-only; process kills, scheduler mutation, workflows, the MCP dispatcher and the media generators stay fail-closed on purpose. A test holds the live list against the sets.

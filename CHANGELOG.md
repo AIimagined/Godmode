@@ -6,6 +6,26 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.3.19] - 2026-09-05
+
+### Added
+
+- A claim names the next grade and the flag that earns it (`next_grade`, `next_action`), and `--brief` prints the same line - the grade was honest but mute about the ladder. Sixth field report, obligation 9313.
+- `doctor --host <name>` answers the wiring questions a field machine asks: hook artifact present and parsing, which interpreter answers, archive writable from here, interception grade on record, documented gaps, and every path the project's own `.codex/hooks.json` (or `.agents/hooks.json`) names that does not exist. Ninth field report.
+
+### Fixed
+
+- Antigravity handlers sit inside a `hooks` array per matcher group, the fast gate reads the nested `toolCall.name` / `args.CommandLine` payload (and `run_command` joins the shell tools), the done bar answers `{"decision": "continue"}` there, the declared-host resolver knows Antigravity's markers, and fragment commands carry no single quotes for cmd.exe. Tenth field report.
+- An archive write the OS refuses is an ArchiveError naming the directory and the remedy (`GODMODE_STATE_HOME`, or a git checkout), not a traceback: `session open` raised PermissionError under the Codex sandbox and FileNotFoundError on Windows when the temporary name built from the 60-character record name pushed a deep state home past MAX_PATH. The temporary name is short now.
+- Field walk of the installed build: `precheck` with no argument is a usage refusal, not an ArchiveError; the R2 reason shows the file relative to the project instead of the first 80 characters of its absolute root; an exit-2 refusal says why on stderr as well as stdout; `remember --help` explains the `ask:<hex>` closure line; a pasted URL reads as its words in the request ledger, not its scheme and host; a reworded obligation value no longer hides a superseded subject; the Cursor and Gemini edit fixtures send the hosts' own tool names.
+- Every tool name in a live Grok 1.0.13 init event has a declared answer: reads, listings, searches, plan-mode toggles, the user question, scheduler listing and monitor are read-only; process kills, scheduler mutation, workflows, the MCP dispatcher and the media generators stay fail-closed on purpose. A test holds the live list against the sets.
+- The shared `hooks/hooks.json` command runs under PowerShell as well as sh. Grok on Windows hands a plugin hook's string to pwsh and rewrites known `$VAR` refs to `$env:VAR`; the previous quoted-path shape was a ParserError there and every hook fail-opened (eighth field report, Grok 1.0.13). The entry is now `cd "${CLAUDE_PLUGIN_ROOT}/hooks"; ./run-hook.cmd <hook>` - a builtin plus a relative command in both shells, pinned live on Grok Windows against a dozen alternatives and measured equal to the old shape under sh. A unit test runs the gate through pwsh with a force-push and a Windows CI job feeds every shared entry to pwsh the way Grok does.
+- A SessionStart hook on a 9.3k-record archive dropped from about five seconds to under two: the hook pins the directory identity it scanned once instead of re-stat-ing every record on each of its two dozen reads, and its own appends extend the parsed cache into a new list instead of forcing a full re-parse. Every append still lists the directory fresh under the write lock, and an in-place rewrite still fails the next read.
+- Host tests start from a scrubbed environment (a suite run inside a Grok or Antigravity session used to detect the ambient host in Claude- and Codex-shaped tests); the Codex live layer discovers `codex.cmd` and `codex.exe`; no skill, adapter or sample tells a stock macOS to run bare `python` - skills point at `bin/godmode`, the Gemini SessionStart entry routes through the launcher, OpenCode and Pi probe python3/python/py, and the git-hook backstop tries `py`; the root skill states that a PARTIAL hooks status never becomes "the gate blocked".
+- The launcher's cmd half and `bin/godmode.cmd` probe interpreters the way the sh half does (python, python3, py; `GODMODE_PYTHON` first) and return the hook's own exit code. With no `python` on PATH and only the `py` launcher, both used to answer 9009 (49 through a cmd /c wrapper) because `%ERRORLEVEL%` inside the fallback block expanded at parse time, and the Store shim's not-recognized line reached the host.
+- A hook whose project is a subdirectory resolves the same archive as the root. git answers `--git-common-dir` relative to the directory it was asked from, and the anchor joined that onto the toplevel, so any session opened below the root looked one level too high, found no archive, and ran with the gate silently off. The join is on the requested directory now, and the anchor cache carries a format version so entries written by the old join are re-resolved.
+- On a plain git checkout with no archive under its metadata dir, the fast gate allows silently with stats alone instead of escalating to the full hook, which loaded the runtime and spawned git only to print the not-initialized notice - more per call than a governed project paid. A `.git` file, a missing `.git`, or a malformed payload still escalates.
+
 ## [0.3.18] - 2026-09-04
 
 ### Added
