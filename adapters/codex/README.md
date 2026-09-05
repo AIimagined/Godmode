@@ -52,6 +52,11 @@ Two details are load-bearing and both differ from the plugin manifest:
 1. Copy `hooks.json` from this directory to `<your project>/.codex/hooks.json`.
 2. Replace `<ABSOLUTE-PATH-TO-GODMODE>` with the absolute path of your godmode
    checkout. Absolute, because a project hook has no `${PLUGIN_ROOT}`.
+   The command is `cd "<root>/hooks"; ./run-hook.cmd <hook>` on purpose:
+   a builtin plus a relative-path command is the one shape both a POSIX
+   shell and Windows PowerShell execute unchanged (a bare quoted path in
+   statement position is a parse error in PowerShell). The hook reads the
+   project from the payload's `cwd`, so the directory change is harmless.
 3. Open Codex interactively in that project and run `/hooks`. Codex requires
    you to review and trust a non-managed command hook before it runs; approve
    godmode's entries there.

@@ -105,5 +105,57 @@ class PolyglotLauncherTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
 
+class SharedCommandStringTests(unittest.TestCase):
+    """Eighth field report 2026-09-05 (Grok 1.0.13, Windows): Grok runs a
+    plugin hook's command string in PowerShell, and the shipped
+    `"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd" ...` shape parse-fails there
+    (a quoted path in statement position needs `&`), so every hook
+    fail-opened. The same string must run under sh (Claude, Codex, Grok on
+    macOS) AND under pwsh (Grok on Windows), with the plugin root arriving
+    only as an environment variable, exactly as the hosts pass it."""
+
+    def _commands(self) -> list[str]:
+        manifest = json.loads((PLUGIN_ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+        return [entry["command"] for groups in manifest["hooks"].values()
+                for group in groups for entry in group["hooks"]]
+
+    def _gate_command(self) -> str:
+        gate = [c for c in self._commands() if "godmode_gate_fast.py" in c]
+        self.assertEqual(len(gate), 1, gate)
+        return gate[0]
+
+    def test_every_shared_command_runs_under_sh(self) -> None:
+        import os
+        env = {**os.environ, "CLAUDE_PLUGIN_ROOT": str(PLUGIN_ROOT)}
+        for command in self._commands():
+            with self.subTest(command=command):
+                done = subprocess.run(["sh", "-c", command], input="{}", capture_output=True,
+                                      text=True, timeout=120, env=env)
+                self.assertIn(done.returncode, (0, 2), (command, done.stderr[-400:]))
+                self.assertNotIn("not found", done.stderr)
+
+    @unittest.skipUnless(sys.platform == "win32", "PowerShell host shape")
+    def test_the_gate_command_denies_garbage_under_pwsh(self) -> None:
+        import os, shutil
+        pwsh = shutil.which("pwsh") or shutil.which("powershell")
+        if not pwsh:
+            self.skipTest("no PowerShell on this machine")
+        env = {**os.environ, "CLAUDE_PLUGIN_ROOT": str(PLUGIN_ROOT)}
+        # Grok's runner (10-hooks.md, "Using variables in command"): on
+        # Windows PowerShell known `$VAR`/`${VAR}` refs are rewritten to
+        # `$env:VAR` before the string runs. Apply the same rewrite here;
+        # everything else reaches pwsh verbatim.
+        command = self._gate_command().replace("${CLAUDE_PLUGIN_ROOT}", "$env:CLAUDE_PLUGIN_ROOT")
+        payload = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                              "tool_input": {"command": "git push --force origin main"},
+                              "cwd": str(PLUGIN_ROOT)})
+        done = subprocess.run([pwsh, "-NoProfile", "-Command", command],
+                              input=payload, capture_output=True, text=True,
+                              timeout=120, env=env)
+        self.assertNotIn("ParserError", done.stderr, done.stderr[-600:])
+        self.assertIn('"deny"', done.stdout, (done.stdout, done.stderr[-400:]))
+        self.assertIn("R5", done.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

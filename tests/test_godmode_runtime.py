@@ -147,7 +147,7 @@ class PackagingTests(unittest.TestCase):
         handler = hook_config["hooks"]["SessionStart"][0]["hooks"][0]
         self.assertEqual(
             handler["command"],
-            '"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd" '
+            'cd "${CLAUDE_PLUGIN_ROOT}/hooks"; ./run-hook.cmd '
             'godmode_session_hook.py session-start')
         self.assertNotIn("args", handler)
 

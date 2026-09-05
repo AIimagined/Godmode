@@ -18,6 +18,29 @@ a missing or unreadable transcript is recorded as a stated gap rather than an
 error. Pre-action mode classifies an exact operation and denies protected work
 unless a matching one-use capability is supplied.
 
+## The command string every host runs
+
+Each entry in `hooks/hooks.json` is one shell-form string:
+
+```
+cd "${CLAUDE_PLUGIN_ROOT}/hooks"; ./run-hook.cmd <hook.py> [event]
+```
+
+It has to run unchanged under two shells. Claude Code (macOS, and Windows
+through Git Bash), Codex and Grok on macOS hand the string to a POSIX sh.
+Grok on Windows hands a plugin hook's string to PowerShell and rewrites
+known `$VAR` references to `$env:VAR`; there a bare quoted path in
+statement position is a ParserError, `& "..."` is a syntax error back in
+sh, `$env:` written by hand is refused by Grok's own variable check, and a
+one-shot git alias runs in both but costs three extra process spawns per
+hook on Windows (eighth field report, 2026-09-05, every hook fail-open on
+the shipped shape). A directory change plus a relative-path command is a
+builtin and a native command in both shells: sh hosts pay nothing extra,
+pwsh runs the `.cmd` through cmd.exe. Every hook reads the project from the
+payload's `cwd`, never from the process directory, so the `cd` is invisible
+to the gate. Pinned live on Grok 1.0.13 / Windows against a dozen
+alternatives.
+
 ## The pre-tool gate
 
 `PreToolUse` is registered for mutating tools (`Bash`, `PowerShell`, `Write`,

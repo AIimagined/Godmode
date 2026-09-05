@@ -136,6 +136,43 @@ jobs:
       - name: Smoke the CLI on python3 only
         run: python3 scripts/godmode.py --version
 
+  # Eighth field report 2026-09-05: Grok on Windows hands a plugin hook's
+  # command string to PowerShell, where the previous quoted-path shape was a
+  # ParserError and every hook fail-opened. The matrix legs run hooks through
+  # Python directly, so a green matrix proved nothing about that shell. This
+  # job feeds the exact shared command strings to pwsh, with the plugin root
+  # arriving only as an environment variable, the way Grok passes it.
+  stock-host-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Run every shared hook command through PowerShell
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $env:CLAUDE_PLUGIN_ROOT = (Get-Location).Path
+          $manifest = Get-Content -Raw hooks/hooks.json | ConvertFrom-Json
+          $failed = $false
+          foreach ($event in $manifest.hooks.PSObject.Properties) {
+            foreach ($group in $event.Value) {
+              foreach ($entry in $group.hooks) {
+                # Grok rewrites known $VAR / ${VAR} refs to $env:VAR before pwsh runs the string.
+                $cmd = $entry.command.Replace('${CLAUDE_PLUGIN_ROOT}', '$env:CLAUDE_PLUGIN_ROOT')
+                $payload = @{ hook_event_name = $event.Name; cwd = (Get-Location).Path } | ConvertTo-Json -Compress
+                $out = ($payload | pwsh -NoProfile -Command $cmd 2>&1 | Out-String)
+                if ($out -match "ParserError") { Write-Host "PARSE FAILURE for $($event.Name): $out"; $failed = $true }
+                else { Write-Host "ok $($event.Name): $cmd" }
+              }
+            }
+          }
+          $gate = ($manifest.hooks.PreToolUse | ForEach-Object { $_.hooks } | Where-Object { $_.command -match "godmode_gate_fast" } | Select-Object -First 1).command.Replace('${CLAUDE_PLUGIN_ROOT}', '$env:CLAUDE_PLUGIN_ROOT')
+          $push = @{ hook_event_name = "PreToolUse"; tool_name = "Bash"; tool_input = @{ command = "git push --force origin main" }; cwd = (Get-Location).Path } | ConvertTo-Json -Compress
+          $deny = ($push | pwsh -NoProfile -Command $gate 2>&1 | Out-String)
+          if ($deny -notmatch '"deny"') { Write-Host "gate did not refuse a force-push under pwsh: $deny"; $failed = $true }
+          if ($failed) { exit 1 }
+
   # Differential network capture: every PRD-named CLI surface (init, inspect,
   # resume, doctor, report) runs against a throwaway project under a socket
   # audit hook; any recorded connection fails the job. The gate first proves it

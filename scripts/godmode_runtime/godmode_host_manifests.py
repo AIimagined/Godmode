@@ -186,6 +186,28 @@ ANTIGRAVITY_TOOL_MATCHER = ".*"
 # Shared plumbing.
 # ---------------------------------------------------------------------------
 
+# The one command shape that runs the launcher from the shared
+# `hooks/hooks.json` under every host shell the file is loaded by: a POSIX
+# sh (Claude Code on macOS and on Windows via Git Bash, Codex, Grok on
+# macOS) and PowerShell (Grok on Windows, which hands a plugin hook's
+# string to pwsh and rewrites known `$VAR` refs to `$env:VAR`). Pinned live
+# on Grok 1.0.13 / Windows on 2026-09-05 against a dozen alternatives:
+#   - `"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd" X` (the 0.3.18 shape) ->
+#     ParserError: a quoted path in statement position needs `&`;
+#   - `& "..." X` -> runs in pwsh, syntax error in sh;
+#   - `$env:CLAUDE_PLUGIN_ROOT` written by hand -> refused by Grok's own
+#     variable validator ("required env var(s) not set: ${env}");
+#   - `sh "..." X` -> needs sh on PATH, which a stock Git-for-Windows
+#     install does not provide (the field session had no `bash` either);
+#   - a one-shot `git -c alias...` -> runs in both, but costs git + MSYS sh
+#     + cmd.exe per hook: ~700 ms more on Windows under Claude Code.
+# `cd "<root>/hooks"; ./run-hook.cmd X` is a builtin plus a relative-path
+# command in BOTH shells, so sh hosts pay nothing extra (measured equal to
+# the old shape), and pwsh runs the .cmd through cmd.exe. Every hook reads
+# the project from the payload's `cwd`, never from the process directory,
+# so the change of directory is invisible to the gate.
+SHARED_COMMAND_PREFIX = 'cd "${CLAUDE_PLUGIN_ROOT}/hooks"; ./run-hook.cmd'
+
 SESSION_HOOK = "hooks/godmode_session_hook.py"
 GATE_FAST_HOOK = "hooks/godmode_gate_fast.py"
 
@@ -202,9 +224,17 @@ def _shell_entry(root_var: str, script: str, *args: str, timeout: int) -> dict[s
     `CLAUDE_PLUGIN_ROOT` alias set. The 2026-08-28 field reports are why
     this is the only builder left: Grok took a bare `"python"` token as a
     path beside the file and failed every hook open; Codex refused the
-    `args` shape and listed zero hooks. Forward slashes are fine on
-    Windows for python, Git Bash and PowerShell alike, so there is no
-    per-OS variant.
+    `args` shape and listed zero hooks.
+
+    Eighth field report 2026-09-05 (Grok 1.0.13, Windows) retired the
+    claim that used to sit here ("forward slashes are fine on PowerShell,
+    so there is no per-OS variant"): Grok runs a plugin hook's command in
+    PowerShell on Windows, where a quoted path in statement position is a
+    ParserError - every hook fail-opened. The SHARED file (`hooks/hooks.json`)
+    therefore carries `SHARED_COMMAND_PREFIX` (`cd "<root>/hooks";
+    ./run-hook.cmd`), which both sh and PowerShell execute unchanged; this
+    builder keeps the plain quoted form for the dedicated Cursor manifest,
+    whose loader and shell are unverified.
     """
     tail = " ".join(args)
     # Field report 2026-09-03 (stock macOS): bare `python` does not exist

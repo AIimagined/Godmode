@@ -30,7 +30,8 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from godmode_runtime import godmode_bindings as bindings  # noqa: E402
-from godmode_runtime import godmode_host_manifests as host_manifests  # noqa: E402
+from godmode_runtime import godmode_host_manifests as host_manifests
+from godmode_runtime.godmode_host_manifests import SHARED_COMMAND_PREFIX  # noqa: E402
 
 
 @contextmanager
@@ -130,7 +131,7 @@ class SharedHooksFileTests(unittest.TestCase):
                     self.assertNotIn("args", entry, (event, entry))
                     self.assertIsInstance(entry["command"], str, event)
                     self.assertTrue(
-                        entry["command"].startswith('"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd"'),
+                        entry["command"].startswith(SHARED_COMMAND_PREFIX),
                         (event, entry["command"]))
 
     def test_the_pretooluse_matcher_unions_every_host_tool_the_adapter_recognises(self) -> None:
