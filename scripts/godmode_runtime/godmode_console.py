@@ -59,6 +59,7 @@ from .godmode_bindings import check as bindings_check
 from .godmode_bindings import dependency_gate, release_checksums, sbom_cyclonedx, sbom_spdx
 from .godmode_bindings import install_verify as hooks_install_verify
 from .godmode_bindings import registration_report as hooks_registration_report
+from .godmode_bindings import _PACKAGE_ROOT
 from .godmode_bindings import sbom as build_sbom
 from .godmode_bindings import write as bindings_write
 from .godmode_charter import ADVISORY, TRIGGERS, applicable_rules, bootstrap_rules, compile_charter, traits_of
@@ -2646,7 +2647,88 @@ def _guide_growth(records: list[dict[str, Any]]) -> dict[str, Any]:
                     "generalizing"}
 
 
+def _doctor_host(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """`doctor --host <name>`: the wiring a field machine can check itself.
+
+    Ninth field report 2026-09-05 (Codex): a stale install path in a hook
+    config, an unwritable archive home under the sandbox, and a PowerShell
+    shim where a binary was expected were each found by hand. One answer
+    covers them: does the host's hook artifact exist and parse, which
+    interpreter answers, is the archive writable from here, and what grade
+    of interception is on record.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+    from .godmode_host_manifests import HOOK_ARTIFACTS
+    from .godmode_hookproof import interception_state
+
+    known = sorted(set(HOOK_ARTIFACTS) | {"claude"})
+    host = str(args.host).strip().lower()
+    if host not in known:
+        return CommandResult(
+            {"refused": f"unknown host {host!r}; known: {', '.join(known)}"}, exit_code=1)
+    registration = hooks_registration_report()
+    entry = registration.get(host) or {}
+    artifact_path = entry.get("path")
+    artifact_file = (_PACKAGE_ROOT / artifact_path) if artifact_path else None
+    present = bool(artifact_file and artifact_file.is_file())
+    parses = False
+    if present:
+        try:
+            json.loads(artifact_file.read_text(encoding="utf-8"))
+            parses = True
+        except (OSError, json.JSONDecodeError):
+            parses = False
+    interpreters: dict[str, bool] = {}
+    for candidate in ("python3", "python", "py"):
+        found = shutil.which(candidate)
+        ok = False
+        if found:
+            try:
+                ok = subprocess.run([found, "-c", "import sys"], capture_output=True,
+                                    timeout=20).returncode == 0
+            except (OSError, subprocess.TimeoutExpired):
+                ok = False
+        interpreters[candidate] = ok
+    writable = False
+    writable_detail = ""
+    try:
+        runtime.archive.root.mkdir(parents=True, exist_ok=True)
+        handle, temporary = tempfile.mkstemp(prefix=".w", suffix=".tmp", dir=str(runtime.archive.root))
+        os.close(handle)
+        os.unlink(temporary)
+        writable = True
+    except OSError as exc:
+        writable_detail = f"{exc.strerror or exc}; set GODMODE_STATE_HOME to a writable directory"
+    grade = interception_state(runtime.archive, host) if runtime.archive.initialized() else "UNAVAILABLE"
+    issues: list[str] = []
+    if not present:
+        issues.append(f"hook artifact missing for {host}: {artifact_path or 'no artifact registered'}")
+    elif not parses:
+        issues.append(f"hook artifact does not parse: {artifact_path}")
+    if not any(interpreters.values()):
+        issues.append("no python3, python or py answers `-c \"import sys\"` on PATH; set GODMODE_PYTHON")
+    if not writable:
+        issues.append(f"archive not writable at {runtime.archive.root}: {writable_detail}")
+    if entry.get("gap"):
+        issues.append(f"documented gap: {entry['gap']}")
+    return CommandResult({
+        "host": host,
+        "hook_artifact": {"path": artifact_path, "present": present, "parses": parses,
+                          "current": entry.get("current")},
+        "interpreters": interpreters,
+        "archive_writable": writable,
+        "archive_root": "<local-state>",
+        "interception": grade,
+        "issues": issues,
+        "healthy": not issues,
+    }, exit_code=0)
+
+
 def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if getattr(args, "host", None):
+        return _doctor_host(args, runtime)
     # Scope-explicit (B4-8 ext.): every status answer names the project it
     # is about, in JSON and in prose.
     project = str(runtime.anchor.project_root)
@@ -5197,6 +5279,9 @@ def _build_parser() -> argparse.ArgumentParser:
     digest_parser.set_defaults(handler=cmd_digest)
     doctor = sub.add_parser("doctor", help="Verify archive and continuity health")
     doctor.add_argument("--deep", action="store_true")
+    doctor.add_argument(
+        "--host", help="Check one host's wiring instead: hook artifact present and "
+                       "parsing, interpreter on PATH, archive writable, interception grade")
     doctor.set_defaults(handler=cmd_doctor)
 
     fence = sub.add_parser("fence", help="The editable set this plan declared")
