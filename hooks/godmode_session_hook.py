@@ -2608,7 +2608,13 @@ def main(argv: list[str] | None = None) -> int:
         # EXIT 3 REMOVED (CX-2): see the probe branch's comment above - no
         # documented host dialect assigns exit 3 any meaning, and at least
         # one (Grok) fail-opens on it.
-        return 0 if preview["allow"] else 2
+        if preview["allow"]:
+            return 0
+        # A host that acts on exit 2 shows the model stderr, not stdout
+        # (field walk 2026-09-05: a malformed payload blocked with no
+        # visible reason). The same reason goes to both streams.
+        print(f"godmode: {preview.get('reason') or preview['category']}", file=sys.stderr)
+        return 2
     except GodmodeError as exc:
         # M7 (external audit): `claude_session` is read from the PAYLOAD
         # (`hook_event_name == "SessionStart"`, in `_is_claude_session`),

@@ -581,6 +581,23 @@ class ModeTableTests(unittest.TestCase):
             self.assertNotIn("permissionDecision", json.dumps(body))
             self.assertNotIn('"allow": true', json.dumps(body).lower())
 
+    def test_row4_malformed_payload_refusal_reason_reaches_stderr(self) -> None:
+        """Field walk 2026-09-05: the malformed-payload refusal exited 2 with
+        its reason only on stdout, in the bare preview shape. A host that
+        reads exit 2 (Claude Code shows stderr to the model on exit 2) saw
+        a block with no reason at all. The reason now also reaches stderr."""
+        with isolated_project() as (project, state, _anchor, archive):
+            archive.initialize()
+            done = subprocess.run(
+                [sys.executable, str(HOOK), "pre-action", "--project", str(project)],
+                input="{not valid json at all", capture_output=True, text=True,
+                encoding="utf-8", timeout=60,
+                env={**os.environ, "GODMODE_STATE_HOME": str(state), "GODMODE_HOST": "claude"},
+            )
+            self.assertEqual(done.returncode, 2, done.stderr)
+            self.assertIn("no operation described", done.stderr)
+            self.assertIn("godmode", done.stderr)
+
     def test_row4_malformed_payload_refuses_protected_and_records_degradation(self) -> None:
         with isolated_project() as (project, state, _anchor, archive):
             archive.initialize()
