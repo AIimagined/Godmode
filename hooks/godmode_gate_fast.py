@@ -438,11 +438,46 @@ def _parse_payload(raw: bytes) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def ungoverned_project(start: Path) -> bool:
+    """True only for the one shape this can decide with stats alone: a
+    plain git checkout (a `.git` DIRECTORY holding `HEAD`, found walking up
+    from `start`) whose metadata dir has no `godmode-state` under it. That
+    is exactly where `resolve_anchor` would put the archive for such a
+    checkout, so nothing was ever initialized there and there is nothing to
+    gate. A `.git` file (worktree), no `.git` at all, or any doubt escalates
+    - the full hook keeps every other answer. Field walk 2026-09-05: the
+    not-initialized notice cost 380-520 ms per mutating call, more than a
+    governed project pays, because it needed the whole runtime to say so.
+    """
+    try:
+        current = Path(start).resolve()
+        for candidate in (current, *current.parents):
+            git = candidate / ".git"
+            if git.is_file():
+                return False
+            if git.is_dir():
+                if not (git / "HEAD").is_file():
+                    return False
+                return not (git / "godmode-state").exists()
+    except Exception:  # noqa: BLE001 - fail-safe boundary: doubt escalates
+        return False
+    return False
+
+
 def main() -> int:
     raw = sys.stdin.buffer.read()
     payload = _parse_payload(raw)
     table = _load_table()
     if fast_verdict(payload, table) == "allow":
+        return 0
+    # Same project the full hook would resolve: the payload's `cwd` when
+    # it carries one, else the process directory.
+    cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) else None
+    if payload and ungoverned_project(Path(cwd) if cwd else Path.cwd()):
+        # Nothing was initialized for this checkout: no archive, no
+        # policy, no pins. Silent allow, the same answer the full hook
+        # gives after loading everything. A malformed payload (parsed to
+        # `{}`) never takes this exit; it still fails closed below.
         return 0
     # Escalate: re-feed the exact bytes read from stdin to the full hook and
     # mirror its stdout/stderr/exit code verbatim - the fast gate must be

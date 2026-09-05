@@ -216,6 +216,61 @@ class NoArchiveIO(unittest.TestCase):
         self.assertEqual(opened, [])
 
 
+class UngovernedProject(unittest.TestCase):
+    """Field walk 2026-09-05: on a project nobody ran `godmode init` in,
+    every mutating tool call still escalated to the full hook, which loaded
+    the runtime and spawned git only to print the not-initialized notice
+    (380-520 ms, slower than a governed project). A plain git checkout
+    with no archive under its metadata dir has nothing to gate: the fast
+    gate answers that itself, with stats only, and stays silent."""
+
+    def _git_dir(self, root: Path) -> Path:
+        git = root / ".git"
+        git.mkdir()
+        (git / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+        return git
+
+    def test_a_git_checkout_without_an_archive_is_ungoverned(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._git_dir(root)
+            (root / "src").mkdir()
+            self.assertTrue(fast.ungoverned_project(root / "src"))
+
+    def test_an_archive_under_the_metadata_dir_means_governed(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (self._git_dir(root) / "godmode-state").mkdir()
+            self.assertFalse(fast.ungoverned_project(root))
+
+    def test_a_worktree_or_non_git_directory_escalates(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.assertFalse(fast.ungoverned_project(root), "no .git at all")
+            (root / ".git").write_text("gitdir: ../elsewhere\n", encoding="utf-8")
+            self.assertFalse(fast.ungoverned_project(root), ".git file (worktree)")
+
+    def test_the_gate_stays_silent_and_skips_the_full_hook_on_an_ungoverned_project(self) -> None:
+        import os, tempfile
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self._git_dir(root)
+            body = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                               "tool_input": {"command": "rm -rf build"},
+                               "cwd": str(root)})
+            started = time.perf_counter()
+            done = subprocess.run([sys.executable, str(FAST_GATE)], input=body.encode(),
+                                  capture_output=True, cwd=str(root), timeout=60,
+                                  env={**os.environ, "GODMODE_STATE_HOME": str(root / "state")})
+            elapsed = time.perf_counter() - started
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.strip(), b"", done.stdout[:300])
+        self.assertLess(elapsed, 2.0)
+
+
 class FailOpen(unittest.TestCase):
     """'Fail open' here means fail toward escalation, never toward allow -
     the gate's only safe direction when anything is uncertain."""
