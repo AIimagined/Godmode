@@ -58,7 +58,9 @@ _FENCED_TOOLS = frozenset({"Edit", "Write", "NotebookEdit", "apply_patch",
 # should never have sent here - escalates rather than guesses. CX-2 adds
 # Codex's `shell_command` and Grok's `run_terminal_command` (Addendum 6).
 _SHELL_TOOLS = frozenset({"Bash", "PowerShell", "shell_command",
-                          "run_terminal_command"})
+                          "run_terminal_command",
+                          # Antigravity's shell tool (tenth field report).
+                          "run_command"})
 
 # `git branch <name>` (no flag) creates a branch; `git branch -d/-D/-m/-M/
 # --delete <name>` deletes or renames one. Both are real mutations reachable
@@ -370,12 +372,21 @@ def fast_verdict(payload: dict[str, Any], table: dict[str, Any] | None) -> str:
         # casings with conflicting values can never be read as two
         # different tools by two different checks.
         tool = payload.get("toolName", payload.get("tool_name"))
+        tool_input = payload.get("toolInput", payload.get("tool_input"))
+        # Tenth field report 2026-09-05: Antigravity rides the tool on a
+        # nested `toolCall` object - `{"toolCall": {"name": "run_command",
+        # "args": {"CommandLine": ...}}}` - so every Antigravity call missed
+        # the flat lookup above and escalated. Read that shape too; the
+        # command text is `CommandLine` there, `command` elsewhere.
+        tool_call = payload.get("toolCall")
+        if isinstance(tool_call, dict) and tool is None:
+            tool = tool_call.get("name")
+            tool_input = tool_call.get("args")
         if not isinstance(tool, str) or tool in _FENCED_TOOLS or tool not in _SHELL_TOOLS:
             return "escalate"
-        tool_input = payload.get("toolInput", payload.get("tool_input"))
         if not isinstance(tool_input, dict):
             return "escalate"
-        command = tool_input.get("command")
+        command = tool_input.get("command", tool_input.get("CommandLine"))
         if not isinstance(command, str) or not command.strip():
             return "escalate"
 

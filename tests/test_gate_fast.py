@@ -271,6 +271,27 @@ class UngovernedProject(unittest.TestCase):
         self.assertLess(elapsed, 2.0)
 
 
+class AntigravityPayloadShape(unittest.TestCase):
+    """Tenth field report 2026-09-05: Antigravity delivers
+    `{"toolCall": {"name": "run_command", "args": {"CommandLine": ...}}}`.
+    The fast gate read only toolName/toolInput.command, so every
+    Antigravity call escalated to the full hook and the fast path never
+    applied there."""
+
+    def test_a_read_only_command_line_allows_in_process(self) -> None:
+        payload = {"toolCall": {"name": "run_command", "args": {"CommandLine": "git status"}}}
+        self.assertEqual(fast.fast_verdict(payload, TABLE), "allow")
+
+    def test_a_mutating_command_line_still_escalates(self) -> None:
+        payload = {"toolCall": {"name": "run_command",
+                                "args": {"CommandLine": "git push " + "--force"}}}
+        self.assertEqual(fast.fast_verdict(payload, TABLE), "escalate")
+
+    def test_an_unknown_nested_tool_escalates(self) -> None:
+        payload = {"toolCall": {"name": "write_to_file", "args": {"CommandLine": "git status"}}}
+        self.assertEqual(fast.fast_verdict(payload, TABLE), "escalate")
+
+
 class FailOpen(unittest.TestCase):
     """'Fail open' here means fail toward escalation, never toward allow -
     the gate's only safe direction when anything is uncertain."""
