@@ -1858,8 +1858,11 @@ def main(argv: list[str] | None = None) -> int:
                 # read as a counting bug; the truncation names itself.
                 if len(done_shaped) > 2:
                     shown += f" (+{len(done_shaped) - 2} more)"
+                # Tenth field report 2026-09-05: Antigravity's Stop contract
+                # keeps the agent working on {"decision": "continue"}; the
+                # Claude/Grok spelling is "block". Same reason either way.
                 print(json.dumps({
-                    "decision": "block",
+                    "decision": "continue" if current_host() == "antigravity" else "block",
                     "reason": (
                         f"godmode gate, deliberate block, not a crash - THE DONE BAR: this reply says work is "
                         f"done, but {len(done_shaped)} of those statements "

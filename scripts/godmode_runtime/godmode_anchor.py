@@ -363,6 +363,11 @@ def current_host() -> str:
     """
     if os.environ.get("GODMODE_HOST"):
         return os.environ["GODMODE_HOST"]
+    # Tenth field report 2026-09-05: the hook's own host label lacked
+    # Antigravity, so its Stop answer wore Claude's spelling there. Same
+    # order as the envelope adapter: Antigravity's markers, then Grok's.
+    if os.environ.get("ANTIGRAVITY_AGENT") or os.environ.get("ANTIGRAVITY_CONVERSATION_ID"):
+        return "antigravity"
     if os.environ.get("GROK_AGENT"):
         return "grok"
     if os.environ.get("GROK_PLUGIN_ROOT") or os.environ.get("GROK_HOOK_EVENT"):

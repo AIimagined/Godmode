@@ -84,6 +84,20 @@ class CompletionGateTests(unittest.TestCase):
             self.assertEqual(payload.get("decision"), "block")
             self.assertIn("godmode claim", payload.get("reason", ""))
 
+    def test_antigravity_hears_the_block_as_decision_continue(self) -> None:
+        """Tenth field report 2026-09-05: Antigravity's Stop contract is
+        {"decision": "continue", "reason": ...} to keep the agent working
+        (or {} to let it stop); Claude's "block" spelling is discarded there
+        and the done bar never fired."""
+        with _project() as (project, state, _archive):
+            with mock.patch.dict(os.environ, {"ANTIGRAVITY_AGENT": "1"}, clear=False):
+                done = _run(project, state, {
+                    "transcript_path": str(_transcript(project, f"All wrapped up. {DONE_CLAIM}."))})
+            self.assertEqual(done.returncode, 0, done.stderr)
+            payload = json.loads(done.stdout)
+            self.assertEqual(payload.get("decision"), "continue", payload)
+            self.assertIn("godmode claim", payload.get("reason", ""))
+
     def test_the_refire_passes_clean(self) -> None:
         with _project() as (project, state, _archive):
             done = _run(project, state, {
