@@ -2751,6 +2751,14 @@ def main(argv: list[str] | None = None) -> int:
                                 "hookSpecificOutput": {
                                     "hookEventName": "PreToolUse",
                                     "additionalContext": parked_context}}
+                if host == "antigravity":
+                    # Obligation 9862: Antigravity reads a silent allow as a
+                    # denial (agy 1.0.15, agentmemory's bridge). Its contract
+                    # is {decision, reason} and nothing else.
+                    body = {"decision": "allow"}
+                    if advisory:
+                        body["reason"] = advisory
+                    advisory = None
                 if advisory:
                     # Obligation 9860: the model reads additionalContext (or
                     # Cursor's agent_message); the operator keeps the
@@ -2772,6 +2780,10 @@ def main(argv: list[str] | None = None) -> int:
                 body, _code = render_decision(
                     event.host, event.event, _decision_for(preview), preview["reason"])
                 print(json.dumps(body, ensure_ascii=False))
+            elif current_host() == "antigravity":
+                # An allowed call with no operation text (a read tool):
+                # still spoken on Antigravity (obligation 9862).
+                print(json.dumps({"decision": "allow"}))
             return 0
         print(json.dumps(preview))
         # EXIT 3 REMOVED (CX-2): see the probe branch's comment above - no

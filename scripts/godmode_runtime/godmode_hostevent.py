@@ -275,7 +275,13 @@ _GEMINI_EVENTS = frozenset({"BeforeTool"})
 # closed as unrecognized - the same discipline whose live misses taught the
 # Grok adapter its read-only builtins.
 _ANTIGRAVITY_SHELL_TOOLS = frozenset({"run_command"})
-_ANTIGRAVITY_READONLY_TOOLS = frozenset({"view_file"})
+# Sweep 2026-09-07: the names agentmemory's Antigravity bridge maps from
+# the live agy CLI (Cascade-style vocabulary) join the documented one.
+_ANTIGRAVITY_READONLY_TOOLS = frozenset({
+    "view_file", "view_line_range", "view_code_item", "read_file",
+    "read_url_content", "grep_search", "codebase_search", "find_by_name",
+    "list_dir",
+})
 # Field report 2026-08-29 (live Antigravity agent, its own tool vocabulary):
 # the mutating file tools are write_to_file / replace_file_content with a
 # PascalCase `TargetFile` arg - names no other documented host uses, so
@@ -284,7 +290,13 @@ _ANTIGRAVITY_READONLY_TOOLS = frozenset({"view_file"})
 # the nested `toolCall` the official docs describe - both dialects are
 # mapped, and the envelope shape stays unverified-live until a wired hook
 # actually fires (the reporting session had no hooks registered).
-_ANTIGRAVITY_FENCED_TOOLS = frozenset({"write_to_file", "replace_file_content"})
+_ANTIGRAVITY_FENCED_TOOLS = frozenset({
+    "write_to_file", "replace_file_content",
+    # The bridge's names: edit_file/propose_code edit, create_file writes;
+    # their path rides `TargetFile` or `AbsolutePath`.
+    "edit_file", "propose_code", "create_file",
+})
+_ANTIGRAVITY_WRITE_TOOLS = frozenset({"write_to_file", "create_file"})
 
 
 def detect_host(raw: Any) -> str:
@@ -1227,10 +1239,10 @@ def _adapt_antigravity(raw: Any) -> HostEvent:
             tool_kind=TOOL_KIND_SHELL,
         )
     if tool in _ANTIGRAVITY_FENCED_TOOLS:
-        target = str(args.get("TargetFile") or "").strip()
+        target = str(args.get("TargetFile") or args.get("AbsolutePath") or "").strip()
         if not target:
             return _unrecognized("antigravity", tool, raw)
-        verb = "write" if tool == "write_to_file" else "edit"
+        verb = "write" if tool in _ANTIGRAVITY_WRITE_TOOLS else "edit"
         return HostEvent(
             schema=SCHEMA, event=event_name, host="antigravity", tool=tool,
             operation=f"{verb} file {target}", targets=[target], cwd=cwd,

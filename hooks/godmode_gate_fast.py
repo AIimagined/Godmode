@@ -491,6 +491,17 @@ def brief_pending(start: Path) -> bool:
         return True
 
 
+def spoken_allow(payload: dict[str, Any]) -> None:
+    """Antigravity reads a silent PreToolUse as a denial (agentmemory's
+    bridge, verified on agy 1.0.15: a bare `{}` refuses every matched
+    call), so on that host an allow is spoken. Every other host's contract
+    reads silence as allow, and a body there could be read as something
+    else, so this prints nothing for them. Obligation 9862."""
+    if (os.environ.get("ANTIGRAVITY_AGENT") or os.environ.get("ANTIGRAVITY_CONVERSATION_ID")
+            or isinstance(payload.get("toolCall"), dict)):
+        sys.stdout.write('{"decision": "allow"}\n')
+
+
 def main() -> int:
     raw = sys.stdin.buffer.read()
     payload = _parse_payload(raw)
@@ -500,12 +511,14 @@ def main() -> int:
     cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) else None
     if fast_verdict(payload, table) == "allow" and not brief_pending(
             Path(cwd) if cwd else Path.cwd()):
+        spoken_allow(payload)
         return 0
     if payload and ungoverned_project(Path(cwd) if cwd else Path.cwd()):
         # Nothing was initialized for this checkout: no archive, no
         # policy, no pins. Silent allow, the same answer the full hook
         # gives after loading everything. A malformed payload (parsed to
         # `{}`) never takes this exit; it still fails closed below.
+        spoken_allow(payload)
         return 0
     # Escalate: re-feed the exact bytes read from stdin to the full hook and
     # mirror its stdout/stderr/exit code verbatim - the fast gate must be
