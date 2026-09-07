@@ -1,7 +1,8 @@
 """Read a hook's stdin payload without waiting for EOF.
 
-Sweep 2026-09-07 (a hook-bearing plugin in the research ledger 9ed2c39, their #729/#833/#949): under the Windows
-pipe implementation a host's close of the hook's stdin can lag arbitrarily,
+Sweep 2026-09-07 (a hook-bearing plugin in the research ledger fixed the same
+class in three of its own issues): under the Windows pipe implementation a
+host's close of the hook's stdin can lag arbitrarily,
 so a hook that reads to EOF sits with its work done until the host's own
 timeout kills it. A hook payload is one JSON object, so the read resolves
 the moment that object is complete; EOF and a size cap are the other two

@@ -1,7 +1,8 @@
 """A hook returns on the first complete JSON payload, not on EOF.
 
-Sweep 2026-09-07 (a hook-bearing plugin in the research ledger 9ed2c39, their #729/#833/#949): under the
-Windows pipe implementation a host's stdin close can lag arbitrarily, so a
+Sweep 2026-09-07 (a hook-bearing plugin in the research ledger fixed the
+same class in three of its own issues): under the Windows pipe
+implementation a host's stdin close can lag arbitrarily, so a
 hook that reads to EOF sits with its work done until the host's timeout.
 Every godmode hook read to EOF. Each now resolves on the first complete
 JSON object (2 MiB cap) and exits while the host still holds the pipe open.

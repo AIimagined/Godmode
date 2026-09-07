@@ -1,6 +1,6 @@
 """The launcher starts every hook interpreter isolated.
 
-Sweep 2026-09-07 (planning-with-files ec2ec0a): their hook interpreters
+Sweep 2026-09-07 (a planning plugin in the research ledger): its hook interpreters
 imported a repository's own hashlib.py or secrets.py with the hook's
 privileges because the working directory led sys.path. Godmode runs hooks
 as script files, so the working directory never led its path; what was

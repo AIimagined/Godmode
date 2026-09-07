@@ -1102,7 +1102,7 @@ def checkpoint_age(record: dict[str, Any], *, now: Any = None,
 def _advisory_body(host: str, event_name: str, text: str) -> dict[str, Any]:
     """One stdout object carrying an advisory on BOTH channels a host has.
 
-    Sweep 2026-09-07 (planning-with-files, measured on Claude Code):
+    Sweep 2026-09-07 (a planning plugin in the ledger, measured on Claude Code):
     `systemMessage` is shown to the operator and the model never sees it.
     So a note addressed to the model rides `hookSpecificOutput.
     additionalContext` (Claude, Codex; Grok delivers it with the call's
@@ -2777,7 +2777,7 @@ def main(argv: list[str] | None = None) -> int:
                                     "additionalContext": parked_context}}
                 if host == "antigravity":
                     # Obligation 9862: Antigravity reads a silent allow as a
-                    # denial (agy 1.0.15, agentmemory's bridge). Its contract
+                    # denial (agy 1.0.15, a memory plugin's bridge). Its contract
                     # is {decision, reason} and nothing else.
                     body = {"decision": "allow"}
                     if advisory:

@@ -492,8 +492,8 @@ def brief_pending(start: Path) -> bool:
 
 
 def spoken_allow(payload: dict[str, Any]) -> None:
-    """Antigravity reads a silent PreToolUse as a denial (agentmemory's
-    bridge, verified on agy 1.0.15: a bare `{}` refuses every matched
+    """Antigravity reads a silent PreToolUse as a denial (a memory plugin's
+    Antigravity bridge, verified on agy 1.0.15: a bare `{}` refuses every matched
     call), so on that host an allow is spoken. Every other host's contract
     reads silence as allow, and a body there could be read as something
     else, so this prints nothing for them. Obligation 9862."""

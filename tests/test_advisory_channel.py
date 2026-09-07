@@ -1,6 +1,6 @@
 """Model-addressed advisories ride the channel the model reads.
 
-Sweep 2026-09-07 (planning-with-files eb8af2f, measured on Claude Code):
+Sweep 2026-09-07 (a planning plugin in the research ledger, measured on Claude Code):
 `systemMessage` is shown to the operator; the model never sees it. Godmode's
 allowed-call advisories (evidence pipe, checkpoint pressure, verify
 promotion, observe) and its post-edit findings were all `systemMessage`

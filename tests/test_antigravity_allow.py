@@ -1,6 +1,6 @@
 """An Antigravity allow is spoken, never silent.
 
-Sweep 2026-09-07 (agentmemory's Antigravity bridge, verified by them on agy
+Sweep 2026-09-07 (a memory plugin's Antigravity bridge, verified by its authors on agy
 1.0.15): the Antigravity CLI treats a PreToolUse response without a
 `decision` as a denial, and a bare `{}` refuses every matched call. Godmode
 printed nothing on an Antigravity allow - silence is Claude's allow signal,

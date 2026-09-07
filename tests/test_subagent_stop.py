@@ -1,6 +1,6 @@
 """SubagentStop reaches the done-bar, advisory only.
 
-Sweep 2026-09-07: agentmemory subscribes SubagentStart/Stop, PostToolUse-
+Sweep 2026-09-07: a memory plugin in the ledger subscribes SubagentStart/Stop, PostToolUse-
 Failure, Notification and TaskCompleted; godmode subscribed none of them,
 and a subagent's Stop was where the done-bar was bypassed. `SubagentStop`
 (documented by Claude, Codex and Grok alike) now routes to the session

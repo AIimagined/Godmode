@@ -275,7 +275,7 @@ _GEMINI_EVENTS = frozenset({"BeforeTool"})
 # closed as unrecognized - the same discipline whose live misses taught the
 # Grok adapter its read-only builtins.
 _ANTIGRAVITY_SHELL_TOOLS = frozenset({"run_command"})
-# Sweep 2026-09-07: the names agentmemory's Antigravity bridge maps from
+# Sweep 2026-09-07: the names a memory plugin's Antigravity bridge maps from
 # the live agy CLI (Cascade-style vocabulary) join the documented one.
 _ANTIGRAVITY_READONLY_TOOLS = frozenset({
     "view_file", "view_line_range", "view_code_item", "read_file",
