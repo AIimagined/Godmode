@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "\"${PLUGIN_ROOT}/hooks/run-hook.cmd\" godmode_session_hook.py session-start",
-            "timeout": 10
+            "timeout": 30
           }
         ]
       }

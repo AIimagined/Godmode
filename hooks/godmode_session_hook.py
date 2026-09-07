@@ -1496,7 +1496,7 @@ def _apply_observe_mode(archive: Chronicle, tool: str, operation: str,
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="godmode-session-hook")
     parser.add_argument("event", choices=["stop", "session-start", "pre-compact", "session-end",
-                                          "pre-action", "user-prompt"])
+                                          "pre-action", "user-prompt", "subagent-stop"])
     parser.add_argument("--project")
     parser.add_argument("--capture-payload", action="store_true",
                         help="CX-2: record this call's structural shape (names/hashes "
@@ -1823,7 +1823,17 @@ def main(argv: list[str] | None = None) -> int:
                         pass
             return 0
 
-        if args.event == "stop":
+        if args.event in ("stop", "subagent-stop"):
+            # Obligation 9867: a subagent's Stop runs the same claim scan and
+            # parks the same echo, but never blocks - a subagent's reply is
+            # not the one the operator is about to trust, and its transcript
+            # arrives under its own key.
+            subagent = args.event == "subagent-stop"
+            if subagent and not submitted.get("transcript_path"):
+                agent_transcript = (submitted.get("agent_transcript_path")
+                                    or submitted.get("agentTranscriptPath"))
+                if agent_transcript:
+                    submitted["transcript_path"] = agent_transcript
             # S4 (obligation 4102): the claim gate at the message boundary.
             # Seven field reports in one day ended with "claim still
             # unused" - the verbs wait to be invoked and never are, so the
@@ -1975,7 +1985,7 @@ def main(argv: list[str] | None = None) -> int:
                 # Tenth field report 2026-09-05: Antigravity's Stop contract
                 # keeps the agent working on {"decision": "continue"}; the
                 # Claude/Grok spelling is "block". Same reason either way.
-                print(json.dumps({
+                block_body = {
                     "decision": "continue" if current_host() == "antigravity" else "block",
                     "reason": (
                         f"godmode gate, deliberate block, not a crash - THE DONE BAR: this reply says work is "
@@ -1990,7 +2000,15 @@ def main(argv: list[str] | None = None) -> int:
                     "systemMessage": " ".join(notices) if notices else
                         "godmode: completion blocked once pending a record; "
                         "the re-fire passes.",
-                }))
+                }
+                if subagent:
+                    # Advisory only: the reason the main stop would block on
+                    # becomes the note, and the parked echo carries it to
+                    # the next prompt boundary.
+                    print(json.dumps({"systemMessage": block_body["reason"]},
+                                     ensure_ascii=False))
+                else:
+                    print(json.dumps(block_body, ensure_ascii=False))
                 return 0
             if notices:
                 # At most two notices per stop (S15 item 6): skimmed is

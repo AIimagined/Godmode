@@ -94,6 +94,9 @@ GROK_HOOK_EVENTS = frozenset({
     # PostToolUse, and `hooks status` said Grok declared neither - the list
     # lagged the manifest it describes.
     "Stop", "PostToolUse",
+    # Sweep 2026-09-07 (obligation 9867): the shared file carries
+    # SubagentStop; Grok's own discovery log counts subagent_stop hooks.
+    "SubagentStop",
 })
 
 # Addendum 5 (spec, verified fetch): Cursor's own camelCase dialect names
