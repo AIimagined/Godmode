@@ -8,6 +8,8 @@ from __future__ import annotations
 # hook call makes, whether or not it ever touches a capability - lives in
 # this same module, so a module-top import of these three paid their cost
 # on every tool call, not just the ones that mint or spend a capability.
+import ast
+import ast
 import base64
 from dataclasses import dataclass
 import hashlib
@@ -1517,6 +1519,149 @@ def _opaque_inline_verdict(payload: str) -> tuple[str, bool, list[str]]:
              "code is protected regardless of visible content"])
 
 
+# `inline_interpreter: "scan"` (thirteenth field report: 321 of one archive's
+# refusals were asks on `python -c`/heredoc blocks the agent itself wrote).
+# Under that posture, and only then, a Python payload at the HEAD of a
+# segment is parsed with `ast` and cleared when everything in it is a read or
+# a computation. The rule is an allowlist, not a vocabulary: every import
+# must come from this table, `os` may only be touched through the read
+# attributes below, and no name or attribute may execute, import
+# dynamically, reach a dunder, or open a file for writing. Anything the
+# parser cannot read, any other interpreter, and any wrapped head keep the
+# opaque floor above. Ceiling, stated: this table is an enumeration, so a
+# read-only module it does not name (a project's own helper) still asks.
+_READ_ONLY_MODULES = frozenset({
+    "abc", "argparse", "array", "ast", "base64", "binascii", "bisect",
+    "calendar", "collections", "contextlib", "copy", "csv", "dataclasses",
+    "datetime", "decimal", "difflib", "enum", "fnmatch", "fractions",
+    "functools", "glob", "graphlib", "hashlib", "heapq", "html", "io",
+    "itertools", "json", "keyword", "locale", "math", "numbers", "operator",
+    "os", "pathlib", "platform", "pprint", "random", "re", "secrets", "shlex",
+    "statistics", "string", "struct", "sys", "textwrap", "time", "tokenize",
+    "traceback", "typing", "unicodedata", "uuid", "zoneinfo",
+})
+_OS_READ_ATTRS = frozenset({
+    "altsep", "cpu_count", "curdir", "devnull", "environ", "extsep", "fspath",
+    "getcwd", "getenv", "getpid", "linesep", "listdir", "lstat", "name",
+    "path", "pathsep", "scandir", "sep", "stat", "walk",
+})
+_PYTHON_EXECUTION_NAMES = frozenset({
+    "exec", "eval", "compile", "__import__", "getattr", "setattr", "delattr",
+    "globals", "locals", "vars", "breakpoint", "modules", "attrgetter",
+    "methodcaller", "import_module", "load_module", "open_code", "FileIO",
+    "write_text", "write_bytes", "unlink", "rmdir", "rename", "renames",
+    "touch", "mkdir", "makedirs", "chmod", "lchmod", "chown", "symlink_to",
+    "hardlink_to", "link_to", "remove", "removedirs", "system", "popen",
+    "spawn", "kill", "truncate", "rmtree", "copyfile", "copytree", "move",
+})
+_INLINE_SCAN_MAX_CHARS = 20_000
+
+
+def _open_call_reads(call: ast.Call) -> bool:
+    """Whether an `open(...)`/`.open(...)` call reads. A missing mode reads; a
+    literal mode reads when it names no write/append/create/update; a mode
+    the parser cannot see is a write for this purpose."""
+    positional = 1 if isinstance(call.func, ast.Name) else 0
+    mode: ast.expr | None = None
+    if len(call.args) > positional:
+        mode = call.args[positional]
+    for keyword in call.keywords:
+        if keyword.arg == "mode":
+            mode = keyword.value
+    if mode is None:
+        return True
+    if isinstance(mode, ast.Constant) and isinstance(mode.value, str):
+        return not any(flag in mode.value for flag in "wax+")
+    return False
+
+
+def _python_payload_reads_only(code: str) -> bool:
+    if len(code) > _INLINE_SCAN_MAX_CHARS:
+        return False
+    try:
+        tree = ast.parse(code)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] not in _READ_ONLY_MODULES:
+                    return False
+                if alias.name.split(".")[0] == "os" and alias.asname:
+                    return False  # `import os as o` hides `o.remove` from the attr rule
+        elif isinstance(node, ast.ImportFrom):
+            module = (node.module or "").split(".")[0]
+            if node.level or module not in _READ_ONLY_MODULES:
+                return False
+            for alias in node.names:
+                name = alias.name
+                if name in _PYTHON_EXECUTION_NAMES or name.startswith("__"):
+                    return False
+                if module == "os" and name not in _OS_READ_ATTRS:
+                    return False
+        elif isinstance(node, ast.Name):
+            if node.id in _PYTHON_EXECUTION_NAMES or node.id.startswith("__"):
+                return False
+        elif isinstance(node, ast.Attribute):
+            if node.attr in _PYTHON_EXECUTION_NAMES or node.attr.startswith("__"):
+                return False
+            if (isinstance(node.value, ast.Name) and node.value.id == "os"
+                    and node.attr not in _OS_READ_ATTRS):
+                return False
+        elif isinstance(node, ast.Call):
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else (
+                func.attr if isinstance(func, ast.Attribute) else "")
+            if name == "open" and not _open_call_reads(node):
+                return False
+            # `Path.replace(target)` renames; `str.replace(old, new)` does not.
+            # The only visible difference is the arity.
+            if (name == "replace" and isinstance(func, ast.Attribute)
+                    and len(node.args) == 1 and not node.keywords):
+                return False
+    return True
+
+
+def _python_inline_code(tokens: list[str]) -> str | None:
+    """The `-c` payload among `tokens` (everything after a Python head), or
+    `None` when the interpreter would run a file or read stdin instead.
+    Mirrors `_inline_flag_in_tokens`: options stop at the first operand."""
+    previous_was_flag = False
+    for index, token in enumerate(tokens):
+        if not token.startswith("-"):
+            if (_is_path_shaped(token) or _FILE_SHAPED_TOKEN.search(token)
+                    or not previous_was_flag):
+                return None
+            previous_was_flag = False
+            continue
+        following = tokens[index + 1] if index + 1 < len(tokens) else None
+        if token == "-c":
+            return following
+        if _PYTHON_FLAG_TOKEN.match(token):
+            fused = token[token.index("c", 1) + 1:]
+            return fused or following
+        previous_was_flag = True
+    return None
+
+
+def _scanned_inline_verdict(evidence: str, code: str | None,
+                            family: str | None) -> tuple[str, bool, list[str]]:
+    """`_opaque_inline_verdict`, then the scan posture's one downgrade: a
+    Python payload the parser read as reads and computation only. Visible R5
+    or policy-write evidence anywhere on the line keeps its verdict."""
+    category, protected, impact = _opaque_inline_verdict(evidence)
+    if (family == "python" and code is not None
+            and category == "interpreter-opaque-inline"
+            and not _OPAQUE_R5_EVIDENCE.search(evidence)
+            and _python_payload_reads_only(code)):
+        return ("interpreter-inline-read-only", False,
+                ["a Python payload read with ast under the inline_interpreter "
+                 "scan posture: imports only from the read-only module table, "
+                 "no exec/eval/dynamic import, no dunder access, no file opened "
+                 "for writing"])
+    return category, protected, impact
+
+
 # ---------------------------------------------------------------------------
 # ROUND 3, the structural half. Two paths in `_categorize` used to return the
 # IDENTICAL verdict: matching the safe-read allowlist, and matching nothing
@@ -2768,6 +2913,10 @@ _TIER_BY_CATEGORY = {
     # scan below finds anything; `_R5_ESCALATIONS` raises it further when
     # the payload shows visible evidence of something worse.
     "interpreter-opaque-inline": "R2",
+    # The scan posture's cleared payload: local compute, like running a
+    # script file. A policy that names the category in `password_required`
+    # or `approval_required` still asks for it.
+    "interpreter-inline-read-only": "R1",
     "git-branch-mutation": "R3",
     "git-history-or-remote": "R3",
     "worktree-discard": "R3",
@@ -3599,7 +3748,10 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                     # inner or a pipeline segment, where the literal-fetch
                     # allowance must not be granted locally - the laundering
                     # pin and the pipeline post-pass own those cases.
-                    _allow_standalone_fetch: bool = True) -> dict[str, Any]:
+                    _allow_standalone_fetch: bool = True,
+                    # `inline_interpreter: "scan"` - a read-only Python payload
+                    # at a segment's head is cleared; see `_scanned_inline_verdict`.
+                    inline_scan: bool = False) -> dict[str, Any]:
     """Deterministic preview of what an operation would touch.
 
     A compound command is classified part by part and takes the risk of its
@@ -3663,7 +3815,12 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     heredoc = _first_heredoc_interpreter(normalized)
     if heredoc is not None:
         header, body, remainder = heredoc
-        category, protected, impact = _opaque_inline_verdict(body or header)
+        if inline_scan and body:
+            head = _normalized_interpreter_head(header)
+            category, protected, impact = _scanned_inline_verdict(
+                body, body, _interpreter_family(head[0]) if head else None)
+        else:
+            category, protected, impact = _opaque_inline_verdict(body or header)
         tier, second_confirmation = _risk_tier(category, normalized)
         digest = hashlib.sha256(normalized.encode()).hexdigest()
         heredoc_verdict: dict[str, Any] = {
@@ -3682,7 +3839,8 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # heredoc itself already decided the call is protected. Worst of
         # the two wins, exactly like every other multi-part operation below.
         remainder_verdict = classify_action(
-            remainder, extra_protected, project_root, archive, require_approval)
+            remainder, extra_protected, project_root, archive, require_approval,
+            inline_scan=inline_scan)
         worst = max((heredoc_verdict, remainder_verdict),
                     key=lambda v: (v["protected"], v["tier"]))
         worst = dict(worst)
@@ -3726,9 +3884,11 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # match - and the same value the round-4 head check below already
         # reads, so the two cannot disagree about where the spans were.
         stripped = sub_blanked.strip() or "echo"
-        parts = [classify_action(stripped, extra_protected, project_root, archive, require_approval)]
+        parts = [classify_action(stripped, extra_protected, project_root, archive,
+                                 require_approval, inline_scan=inline_scan)]
         parts += [classify_action(one, extra_protected, project_root, archive,
-                                  require_approval, _allow_standalone_fetch=False)
+                                  require_approval, _allow_standalone_fetch=False,
+                                  inline_scan=inline_scan)
                   for one in inner]
         # ROUND 4: blanking the substitution leaves the line headless, so the
         # help test is given a placeholder head - `$(which python3)
@@ -3773,7 +3933,8 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # counts the real, unresolved segment count below.
         resolved_segments = _resolve_head_variables(segments)
         verdicts = [classify_action(segment, extra_protected, project_root, archive,
-                                    require_approval, _allow_standalone_fetch=False)
+                                    require_approval, _allow_standalone_fetch=False,
+                                    inline_scan=inline_scan)
                     for segment in resolved_segments]
         # B4-9 pipeline post-pass: a literal-URL read-only fetch whose ask
         # is the ONLY thing protecting the line is downgraded when every
@@ -3801,6 +3962,15 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
 
     category, protected, impact = _categorize(normalized, project_root, archive,
                                               fetch_standalone=_allow_standalone_fetch)
+    if inline_scan and category == "interpreter-opaque-inline":
+        # Only a Python interpreter AT THE HEAD (quoted or pathed, never
+        # wrapped) with a `-c` payload is read; the tokens are the shell's
+        # own argv split, the same view the opacity rules used.
+        head = _normalized_interpreter_head(normalized)
+        tokens = _argv_tokens(normalized) if head else None
+        if head and tokens and _interpreter_family(head[0]) == "python":
+            category, protected, impact = _scanned_inline_verdict(
+                normalized, _python_inline_code(tokens[1:]), "python")
     if not protected and category in tuple(extra_protected):
         protected = True
         impact = list(impact) + ["protection extended by local authorization policy"]
@@ -4111,6 +4281,16 @@ class CapabilityBroker:
             ):
                 raise AuthorizationError("ask_only must be a list of category names")
             policy["ask_only"] = tuple(ask_only)
+        # `inline_interpreter` (thirteenth field report): "scan" lets a
+        # Python `-c`/heredoc payload the parser reads as reads-only
+        # through, with a record; "ask" is the default floor. A loosening,
+        # so like observe mode it is validated to its exact spellings.
+        inline = raw.get("inline_interpreter")
+        if inline is not None:
+            if not isinstance(inline, str) or inline not in ("ask", "scan"):
+                raise AuthorizationError(
+                    "inline_interpreter must be exactly \"ask\" or \"scan\"")
+            policy["inline_interpreter"] = inline
         # U-E7 observe mode: a LOOSENING of enforcement (every deny/ask
         # becomes an advisory - see `hooks/godmode_session_hook.py`'s
         # `_apply_observe_mode`), so this is the one key in this file that
@@ -4160,6 +4340,7 @@ class CapabilityBroker:
             archive=self.archive,
             # U-S4 approval-declarations - minimal isolated block.
             require_approval=policy.get("approval_required", ()),
+            inline_scan=policy.get("inline_interpreter") == "scan",
         )
 
     def _mint_context(self) -> dict[str, str]:

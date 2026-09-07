@@ -2258,6 +2258,7 @@ def main(argv: list[str] | None = None) -> int:
                 archive=archive,
                 extra_protected=policy.get("password_required", ()),
                 require_approval=policy.get("approval_required", ()),
+                inline_scan=policy.get("inline_interpreter") == "scan",
             )
         else:
             preview = {
@@ -2300,6 +2301,21 @@ def main(argv: list[str] | None = None) -> int:
             preview["governance_block"] = True
         elif not preview["protected"]:
             preview["allow"] = True
+            if preview.get("category") == "interpreter-inline-read-only":
+                # The scan posture cleared a payload the floor would have
+                # asked about: an allow with a record, never silently, so
+                # the census can count what the posture changed.
+                preview["cleared_by"] = "inline_interpreter"
+                try:
+                    archive.append("action", "interpreter-inline-read-only", {
+                        "category": "interpreter-inline-read-only",
+                        "tier": str(preview.get("tier") or ""),
+                        "tool": str(host_field(submitted, "tool_name") or "")[:40],
+                        "gate": "allow",
+                        "cleared_by": "inline_interpreter",
+                    })
+                except GodmodeError:
+                    record_hook_degradation(archive, current_host(), "inline-scan-record-failed")
         elif (staged := _broker(archive).consume_staged(operation)) is not None:
             # An operator authorised this exact command with the password, and
             # left it where the hook can read it. Without this the refusal

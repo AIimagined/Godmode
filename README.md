@@ -366,7 +366,13 @@ The **posture loop**: run the gate in observe mode, read
 its enforce section - built from real asks and real denials, including the
 no-ask hosts whose every would-ask folds to a deny - propose `ask_only`
 tuning and policy drift. Proposal only; the operator edits the policy
-file.
+file. A second hand-written loosening, `"inline_interpreter": "scan"`,
+reads a Python `-c` or heredoc payload at a segment's head with the
+standard library's `ast` and clears it when every import is from a
+read-only module table and nothing executes, imports dynamically, reaches
+a dunder, or opens a file for writing; each clearance leaves an action
+record, anything unreadable keeps the ask, and other interpreters are not
+read.
 
 The **echo loop**: claim-shaped sentences in a reply that never became
 records, and open obligations the turn touched, are parked at Stop and
