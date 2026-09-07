@@ -167,6 +167,10 @@ jobs:
               }
             }
           }
+          # A plain checkout has no archive, and the fast gate answers an
+          # ungoverned checkout with a silent allow by design (0.3.19); the
+          # deny check below needs a governed one.
+          python scripts/godmode.py --project . init | Out-Null
           $gate = ($manifest.hooks.PreToolUse | ForEach-Object { $_.hooks } | Where-Object { $_.command -match "godmode_gate_fast" } | Select-Object -First 1).command.Replace('${CLAUDE_PLUGIN_ROOT}', '$env:CLAUDE_PLUGIN_ROOT')
           $push = @{ hook_event_name = "PreToolUse"; tool_name = "Bash"; tool_input = @{ command = "git push --force origin main" }; cwd = (Get-Location).Path } | ConvertTo-Json -Compress
           $deny = ($push | pwsh -NoProfile -Command $gate 2>&1 | Out-String)
