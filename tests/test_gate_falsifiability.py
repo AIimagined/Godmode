@@ -156,6 +156,10 @@ NO_PROOF_YET: dict[str, str] = {
     "sbom --brief": "reports rather than gates; `sbom --gate` carries the assertion",
     "--json checksums": "asserts determinism across two runs; making it "
                         "nondeterministic is not expressible as a file mutation",
+    "init": "setup for the Windows stock-host leg's deny check, not a gate: "
+            "a plain checkout has no archive and the fast gate answers an "
+            "ungoverned checkout with a silent allow by design; init's own "
+            "behaviour is pinned in test_godmode_runtime",
 }
 
 
