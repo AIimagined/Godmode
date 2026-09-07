@@ -9,12 +9,16 @@
 :; # `exec`/`exit` ends the sh half before cmd's section is reached. The
 :; # cmd half is label-free on purpose: this file is committed LF-only
 :; # for the sh half, and cmd `goto` over LF endings is a known flake.
+:; # Every interpreter starts with -I -B (sweep 2026-09-07, obligation 9866):
+:; # isolated from PYTHONPATH, PYTHON* variables and the user site, and
+:; # writing no byte-code into the plugin cache. The hooks put the plugin's
+:; # own directories on sys.path themselves.
 :; hook="$1"; shift
 :; dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-:; if [ -n "${GODMODE_PYTHON:-}" ]; then exec "$GODMODE_PYTHON" "$dir/$hook" "$@"; fi
+:; if [ -n "${GODMODE_PYTHON:-}" ]; then exec "$GODMODE_PYTHON" -I -B "$dir/$hook" "$@"; fi
 :; for py in python3 python py; do
 :;   if command -v "$py" >/dev/null 2>&1 && "$py" -c "import sys" >/dev/null 2>&1; then
-:;     exec "$py" "$dir/$hook" "$@"
+:;     exec "$py" -I -B "$dir/$hook" "$@"
 :;   fi
 :; done
 :; echo "{\"systemMessage\": \"godmode: no working python interpreter found (tried python3, python, py) - set GODMODE_PYTHON to the interpreter path; every godmode hook is inert until then\"}"
@@ -36,5 +40,5 @@ if not defined gm_py (
   echo {"systemMessage": "godmode: no working python interpreter found (tried python, python3, py) - set GODMODE_PYTHON to the interpreter path; every godmode hook is inert until then"}
   exit /b 0
 )
-"!gm_py!" "%~dp0%~1" %2 %3 %4 %5 %6
+"!gm_py!" -I -B "%~dp0%~1" %2 %3 %4 %5 %6
 exit /b !ERRORLEVEL!
