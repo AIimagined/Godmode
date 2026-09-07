@@ -1919,6 +1919,14 @@ def main(argv: list[str] | None = None) -> int:
             # not the one the operator is about to trust, and its transcript
             # arrives under its own key.
             subagent = args.event == "subagent-stop"
+            # Cursor's stop payload: {conversation_id, status, loop_count,
+            # transcript_path}; a loop_count above zero is its re-fire, the
+            # same moment Claude marks with stop_hook_active.
+            cursor_stop = current_host() == "cursor" or (
+                str(submitted.get("hook_event_name") or "") == "stop"
+                and "conversation_id" in submitted)
+            if cursor_stop and int(submitted.get("loop_count") or 0) > 0:
+                submitted["stop_hook_active"] = True
             if subagent and not submitted.get("transcript_path"):
                 agent_transcript = (submitted.get("agent_transcript_path")
                                     or submitted.get("agentTranscriptPath"))
@@ -2100,6 +2108,13 @@ def main(argv: list[str] | None = None) -> int:
                     # becomes the note, and the parked echo carries it to
                     # the next prompt boundary.
                     print(json.dumps({"systemMessage": block_body["reason"]},
+                                     ensure_ascii=False))
+                elif cursor_stop:
+                    # Cursor's stop contract (obligation 9869): a
+                    # `followup_message` keeps the agent working, bounded by
+                    # the manifest's loop_limit; Claude's decision key means
+                    # nothing there.
+                    print(json.dumps({"followup_message": block_body["reason"]},
                                      ensure_ascii=False))
                 else:
                     print(json.dumps(block_body, ensure_ascii=False))

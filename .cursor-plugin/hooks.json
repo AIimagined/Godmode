@@ -37,6 +37,18 @@
           }
         ]
       }
+    ],
+    "stop": [
+      {
+        "loop_limit": 1,
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/hooks/run-hook.cmd\" godmode_session_hook.py stop",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

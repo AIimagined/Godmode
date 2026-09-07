@@ -102,7 +102,7 @@ GROK_HOOK_EVENTS = frozenset({
 # Addendum 5 (spec, verified fetch): Cursor's own camelCase dialect names
 # `sessionStart`, `preToolUse`, `beforeShellExecution` verbatim among its
 # documented event list.
-CURSOR_HOOK_EVENTS = frozenset({"sessionStart", "preToolUse", "beforeShellExecution"})
+CURSOR_HOOK_EVENTS = frozenset({"sessionStart", "preToolUse", "beforeShellExecution", "stop"})
 
 # Addendum 4a (spec, verified fetch, correcting Addendum 4): Gemini CLI's own
 # event list names `SessionStart` and `BeforeTool` verbatim (the pre-tool
@@ -598,6 +598,17 @@ def build_cursor_manifest() -> dict[str, Any]:
                     "matcher": CURSOR_SHELL_TEXT_MATCHER,
                     "failClosed": True,
                     "hooks": [_shell_entry(root, GATE_FAST_HOOK, timeout=3)],
+                },
+            ],
+            # Sweep 2026-09-07 (obligation 9869): Cursor's stop contract is a
+            # `followup_message` under a manifest `loop_limit` (a first-party
+            # Cursor plugin in the research ledger ships exactly this shape);
+            # without a stop hook the done-bar never fired on Cursor.
+            # `loop_limit: 1` is the same once-only bound the Claude block has.
+            "stop": [
+                {
+                    "loop_limit": 1,
+                    "hooks": [_shell_entry(root, SESSION_HOOK, "stop", timeout=10)],
                 },
             ],
         },
