@@ -26,9 +26,18 @@ def read_first_json(cap: int = CAP_BYTES) -> bytes:
     try:
         if sys.stdin is None or sys.stdin.isatty():
             return b""
-        fd = sys.stdin.fileno()
     except (AttributeError, ValueError, OSError):
         return b""
+    try:
+        fd = sys.stdin.fileno()
+    except (AttributeError, ValueError, OSError):
+        # No descriptor (a test's StringIO, a host that hands a text stream):
+        # nothing to poll, so the plain read is the only read.
+        try:
+            text = sys.stdin.read()
+        except Exception:  # noqa: BLE001
+            return b""
+        return text.encode("utf-8", "replace") if isinstance(text, str) else bytes(text or b"")
     buffer = bytearray()
     decoder = json.JSONDecoder()
     while len(buffer) < cap:

@@ -133,6 +133,9 @@ class NewSurfaceTests(unittest.TestCase):
             "precompact": "pre-compact hook",
             "sessionend": "session-end hook",
             "stop": "session-end hook",
+            # Obligation 9867: SubagentStop runs the Stop branch's own claim
+            # scan, advisory only - the same registered surface.
+            "subagentstop": "session-end hook",
             "posttooluse": "post-edit hook",
         }
         unaccounted = []
