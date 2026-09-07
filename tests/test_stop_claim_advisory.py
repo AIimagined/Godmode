@@ -362,19 +362,34 @@ class BriefEchoTests(unittest.TestCase):
             env=environment,
         )
 
-    def test_a_grok_session_start_parks_the_brief_and_the_prompt_delivers_it(self) -> None:
+    def test_a_grok_session_start_parks_the_brief_for_the_first_tool_call(self) -> None:
+        """Grok's guide: SessionStart stdout is ignored, an allowing prompt
+        hook's stdout is discarded, and only a PreToolUse `additionalContext`
+        reaches the model. So the prompt boundary leaves the brief alone on
+        Grok; `tests/test_grok_brief_delivery.py` pins the delivery. The
+        payload carries `hook_event_name: SessionStart` because the live
+        Grok payload does (probe 2026-09-05) - the earlier `{}` hid that
+        this branch read Grok as a Claude session and never parked."""
         with _project() as (project, state, archive):
-            done = self._session_start(project, state,
-                                       {"GROK_PLUGIN_ROOT": "C:/x"})
+            environment = dict(os.environ)
+            environment["GODMODE_STATE_HOME"] = str(state)
+            environment.pop("CLAUDE_CODE_ENTRYPOINT", None)
+            environment["GROK_PLUGIN_ROOT"] = "C:/x"
+            done = subprocess.run(
+                [sys.executable, str(HOOK), "session-start", "--project", str(project)],
+                input=json.dumps({"hook_event_name": "SessionStart", "cwd": str(project)}),
+                capture_output=True, text=True, encoding="utf-8", timeout=180,
+                env=environment)
             self.assertEqual(done.returncode, 0, done.stderr)
             echo = archive.root / "godmode-brief-echo.json"
             self.assertTrue(echo.exists())
-            first = self._prompt2(project, state)
-            self.assertIn("continuity brief", first.stdout)
-            self.assertIn("additionalContext", first.stdout)
-            self.assertFalse(echo.exists())
-            second = self._prompt2(project, state)
-            self.assertNotIn("continuity brief", second.stdout)
+            prompt = subprocess.run(
+                [sys.executable, str(HOOK), "user-prompt", "--project", str(project)],
+                input=json.dumps({"prompt": "resume the work"}),
+                capture_output=True, text=True, encoding="utf-8", timeout=180,
+                env=environment)
+            self.assertNotIn("continuity brief", prompt.stdout)
+            self.assertTrue(echo.exists(), "left for the first allowed tool call")
 
     def test_a_bare_host_parks_nothing(self) -> None:
         with _project() as (project, state, archive):

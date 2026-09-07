@@ -32,6 +32,7 @@ fails if they ever disagree about where a segment ends.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -475,15 +476,31 @@ def ungoverned_project(start: Path) -> bool:
     return False
 
 
+def brief_pending(start: Path) -> bool:
+    """Grok only: the session-start hook parked a continuity brief that the
+    first allowed tool call must carry (obligation 8584 - Grok reads no
+    other hook output). One stat on a marker in the git dir; a worktree's
+    `.git` file escalates anyway. Any doubt reads as pending, which costs
+    one full-hook run, never a missed delivery."""
+    if not (os.environ.get("GROK_AGENT") or os.environ.get("GROK_HOOK_EVENT")):
+        return False
+    try:
+        git = start / ".git"
+        return git.is_file() or (git / "godmode-brief-pending").exists()
+    except Exception:  # noqa: BLE001 - doubt escalates
+        return True
+
+
 def main() -> int:
     raw = sys.stdin.buffer.read()
     payload = _parse_payload(raw)
     table = _load_table()
-    if fast_verdict(payload, table) == "allow":
-        return 0
     # Same project the full hook would resolve: the payload's `cwd` when
     # it carries one, else the process directory.
     cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) else None
+    if fast_verdict(payload, table) == "allow" and not brief_pending(
+            Path(cwd) if cwd else Path.cwd()):
+        return 0
     if payload and ungoverned_project(Path(cwd) if cwd else Path.cwd()):
         # Nothing was initialized for this checkout: no archive, no
         # policy, no pins. Silent allow, the same answer the full hook

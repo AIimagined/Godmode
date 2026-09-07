@@ -1093,6 +1093,32 @@ def checkpoint_age(record: dict[str, Any], *, now: Any = None,
     return days, note
 
 
+def _take_parked_brief(archive: Chronicle, anchor: Any) -> str:
+    """The continuity brief parked at session start, rendered for delivery,
+    and removed together with the fast gate's marker. Empty when nothing is
+    parked. Best-effort: a brief that cannot be read is dropped, never a
+    reason to block the call it was riding."""
+    parked = archive.root / "godmode-brief-echo.json"
+    rendered = ""
+    try:
+        if parked.exists():
+            payload = json.loads(parked.read_text(encoding="utf-8"))
+            parked.unlink()
+            rendered = str(payload.get("brief") or "")[:4000]
+    except Exception:  # noqa: BLE001
+        rendered = ""
+    try:
+        common = getattr(anchor, "git_common_dir", None)
+        if common:
+            (Path(common) / "godmode-brief-pending").unlink(missing_ok=True)
+    except OSError:
+        pass
+    if not rendered:
+        return ""
+    return ("godmode continuity brief (bounded, local; stored claims are leads "
+            "until current inspection confirms them): " + rendered)
+
+
 def _silenced_by_ask_only(policy: dict[str, Any], preview: dict[str, Any]) -> bool:
     """True when the policy names `ask_only`, this call would have asked,
     its tier is R2/R3, and its category is not on the list. R4 and R5 are
@@ -1697,7 +1723,12 @@ def main(argv: list[str] | None = None) -> int:
                     brief["oversight"] = pulse
             except Exception:  # noqa: BLE001
                 pass
-            if claude_session:
+            # Grok's live SessionStart payload carries `hook_event_name:
+            # SessionStart` too (probe 2026-09-05), so it read as a Claude
+            # session here and the parking below never ran live - the
+            # reason obligation 8584 stayed unproven. Grok ignores this
+            # stdout either way; the host decides the branch, not the key.
+            if claude_session and current_host() != "grok":
                 _emit_claude_context(brief)
             else:
                 print(json.dumps({"godmode": "context", "brief": brief}))
@@ -1714,6 +1745,16 @@ def main(argv: list[str] | None = None) -> int:
                         (archive.root / "godmode-brief-echo.json").write_text(
                             json.dumps({"brief": rendered}, ensure_ascii=False),
                             encoding="utf-8")
+                        # Grok's guide: SessionStart stdout is ignored and an
+                        # allowing UserPromptSubmit hook's stdout is discarded;
+                        # only a PreToolUse `additionalContext` reaches the
+                        # model. The fast gate answers most calls without
+                        # opening the archive, so this marker - one stat in
+                        # the git dir, never in the tree - is how it knows to
+                        # escalate the first call so the brief can ride it.
+                        if anchor.git_common_dir:
+                            (Path(anchor.git_common_dir) / "godmode-brief-pending"
+                             ).write_text("", encoding="utf-8")
                     except OSError:
                         pass
             return 0
@@ -1959,7 +2000,10 @@ def main(argv: list[str] | None = None) -> int:
             # ignore SessionStart stdout (Grok). Delivered once.
             brief_echo = archive.root / "godmode-brief-echo.json"
             try:
-                if brief_echo.exists():
+                # Not on Grok: its guide says an allowing prompt hook's stdout
+                # is discarded, so consuming the brief here lost it. The
+                # first allowed tool call delivers it instead (obligation 8584).
+                if brief_echo.exists() and current_host() != "grok":
                     parked = json.loads(brief_echo.read_text(encoding="utf-8"))
                     brief_echo.unlink()
                     rendered = str(parked.get("brief") or "")[:4000]
@@ -2632,9 +2676,23 @@ def main(argv: list[str] | None = None) -> int:
                             or evidence_pipe_advisory(operation)
                             or checkpoint_advisory
                             or promotion)
+                body: dict[str, Any] = {}
+                if current_host() == "grok":
+                    # Obligation 8584: the parked continuity brief rides the
+                    # first allowed call as PreToolUse `additionalContext`,
+                    # the one hook output Grok's guide says reaches the
+                    # model. Delivered once; an explicit allow so the extra
+                    # body is never read as anything else.
+                    brief_context = _take_parked_brief(archive, anchor)
+                    if brief_context:
+                        body = {"decision": "allow",
+                                "hookSpecificOutput": {
+                                    "hookEventName": "PreToolUse",
+                                    "additionalContext": brief_context}}
                 if advisory:
-                    print(json.dumps({"systemMessage": advisory},
-                                     ensure_ascii=False))
+                    body["systemMessage"] = advisory
+                if body:
+                    print(json.dumps(body, ensure_ascii=False))
                 return 0
             if not preview["allow"]:
                 body, _code = render_decision(
