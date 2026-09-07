@@ -25,7 +25,10 @@ from .godmode_errors import ArchiveError
 from .godmode_stop import OperatorStop
 
 CEILINGS_FILENAME = ".godmode-ceilings.json"
-DEFAULT_CEILINGS = {"tokens": 0, "tool_calls": 0, "seconds": 0}  # 0 = no ceiling
+# `paid_iterations` (nineteenth field report, obligation 9868): checks a
+# session has had blocked for dialling out under `verify --offline`
+# before the Stop notices name the runaway; 0 disables it like the rest.
+DEFAULT_CEILINGS = {"tokens": 0, "tool_calls": 0, "seconds": 0, "paid_iterations": 3}  # 0 = no ceiling
 METER_FILENAME = "godmode-meter.json"
 # The operator's own escape hatch (U-R1): presence, not content, stops a
 # watchdog-boundary run regardless of what the skip-pattern scan finds.

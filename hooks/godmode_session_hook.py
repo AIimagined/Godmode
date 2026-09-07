@@ -557,14 +557,20 @@ def _investigation_nudge(archive: Any, submitted: dict) -> str | None:
     )
 
 
-def _tripwire_nudges(archive: Any, session: str | None) -> list[str]:
-    """Two runaway shapes measured against the archive's own baseline.
+def _tripwire_nudges(archive: Any, session: str | None,
+                     project: Path | None = None) -> list[str]:
+    """Three runaway shapes measured against the archive's own record.
 
     Absorbed from a production harness playbook's trip-wire table
     (2026-09-03): a session whose recorded activity runs far past the
     archive's per-session average is a runaway-loop shape, and a spike of
     protected-class refusals is a permission-drift shape. Counts only,
     once per session per wire, honest below a five-session baseline.
+
+    The third wire (nineteenth field report, obligation 9868): checks this
+    session had blocked for dialling out under `verify --offline`, against
+    the declared `paid_iterations` ceiling - six paid iterations on one lane
+    went unremarked until the operator's own rule stopped them.
     """
     if not session:
         return []
@@ -573,6 +579,7 @@ def _tripwire_nudges(archive: Any, session: str | None) -> list[str]:
         fired: set[str] = set()
         actions: dict[str, int] = {}
         refusals: dict[str, int] = {}
+        paid = 0
         for record in archive.select(limit=500):
             kind = record.get("kind")
             data = record.get("data") or {}
@@ -586,8 +593,24 @@ def _tripwire_nudges(archive: Any, session: str | None) -> list[str]:
                 continue
             if kind in ("action", "attestation"):
                 actions[rec_session] = actions.get(rec_session, 0) + 1
+                if (kind == "attestation" and rec_session == session
+                        and "under --offline" in str(data.get("result") or "")
+                        and str(data.get("status") or "") == "blocked"):
+                    paid += 1
             elif kind == "refusal":
                 refusals[rec_session] = refusals.get(rec_session, 0) + 1
+        if "paid" not in fired and paid and project is not None:
+            from godmode_runtime.godmode_guardrails import declared_ceilings
+            ceiling = int(declared_ceilings(project).get("paid_iterations", 0) or 0)
+            if ceiling and paid >= ceiling:
+                out.append(
+                    f"godmode: {paid} check(s) this session were blocked for "
+                    "dialling out under --offline, at the declared paid_iterations "
+                    f"ceiling of {ceiling} - the paid-lane runaway shape; stop "
+                    "iterating on that lane until the reason it reaches out is "
+                    "named (`.godmode-ceilings.json` raises the ceiling on purpose)")
+                archive.append("action", "tripwire-nudge",
+                               {"session": session, "wire": "paid"})
         prior_counts = [c for s, c in actions.items() if s != session]
         mine = actions.get(session, 0)
         if "runaway" not in fired and len(prior_counts) >= 5 and mine >= 20:
@@ -615,6 +638,73 @@ def _tripwire_nudges(archive: Any, session: str | None) -> list[str]:
     except Exception:  # noqa: BLE001
         return out
     return out
+
+
+_TURN_BASELINE = "godmode-turn-baseline.json"
+
+
+def _record_turn_baseline(archive: Any, project: Path, submitted: dict) -> None:
+    """The tree as it stood when this prompt arrived: `git stash create`
+    (a commit object nobody references; HEAD when the tree is clean), the
+    session, and the archive's last sequence. Two plugins in the research
+    ledger take the same baseline per prompt so a Stop judges only the
+    turn's own change (obligation 9868). Best-effort, disposable state
+    beside the archive, never in the tree."""
+    try:
+        from godmode_runtime.godmode_anchor import run_git
+        sha = (run_git(project, "-c", "user.name=godmode", "-c",
+                       "user.email=godmode@localhost", "stash", "create") or "").strip()
+        if not sha:
+            sha = (run_git(project, "rev-parse", "HEAD") or "").strip()
+        if not sha:
+            return
+        last = 0
+        for record in archive.select(limit=1):
+            last = int(record.get("sequence", 0))
+        (archive.root / _TURN_BASELINE).write_text(json.dumps({
+            "session": _session_key(submitted), "sha": sha, "sequence": last}),
+            encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _turn_diff_nudge(archive: Any, project: Path, submitted: dict) -> str | None:
+    """Files changed since this turn's baseline with no check and no claim
+    recorded in between, named once; the baseline is consumed either way."""
+    path = archive.root / _TURN_BASELINE
+    try:
+        if not path.exists():
+            return None
+        parked = json.loads(path.read_text(encoding="utf-8"))
+        path.unlink()
+        session = _session_key(submitted)
+        if session is not None and parked.get("session") != session:
+            return None
+        from godmode_runtime.godmode_anchor import run_git
+        changed = [line.strip() for line in
+                   (run_git(project, "diff", "--name-only", str(parked.get("sha", "")))
+                    or "").splitlines() if line.strip()]
+        untracked = [line[3:].strip() for line in
+                     (run_git(project, "status", "--porcelain") or "").splitlines()
+                     if line.startswith("??")]
+        changed = sorted(set(changed) | set(untracked))[:200]
+        if not changed:
+            return None
+        since = int(parked.get("sequence", 0))
+        for record in archive.select(limit=500):
+            if int(record.get("sequence", 0)) <= since:
+                break
+            data = record.get("data") or {}
+            if record.get("kind") in ("attestation", "claim") and (
+                    session is None or str(data.get("session") or "") in ("", session)):
+                return None
+        shown = ", ".join(changed[:4]) + (f" (+{len(changed) - 4} more)" if len(changed) > 4 else "")
+        return (f"godmode: {len(changed)} file(s) changed this turn ({shown}) with no "
+                "check or claim recorded since the prompt - `godmode verify <name> "
+                "--command \"<check>\"` attests one, `godmode atlas closure` names the "
+                "dependents the change did not touch")
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _marginal_return_nudges(archive: Any, submitted: dict,
@@ -1913,7 +2003,11 @@ def main(argv: list[str] | None = None) -> int:
                 notices.extend(_marginal_return_nudges(
                     archive, submitted, _session_key(submitted)))
                 notices.extend(_tripwire_nudges(
-                    archive, _session_key(submitted)))
+                    archive, _session_key(submitted), Path(anchor.project_root)))
+                if not subagent:
+                    turn_note = _turn_diff_nudge(archive, Path(anchor.project_root), submitted)
+                    if turn_note:
+                        notices.append(turn_note)
             if touched:
                 notices.append(
                     "godmode: this reply relates to unfinished "
@@ -2119,6 +2213,7 @@ def main(argv: list[str] | None = None) -> int:
                         "additionalContext": joined},
                     "additionalContext": joined,
                 }, ensure_ascii=False))
+            _record_turn_baseline(archive, Path(anchor.project_root), submitted)
             try:
                 from godmode_runtime.godmode_requests import record_request
                 record_request(
