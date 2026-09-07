@@ -82,6 +82,37 @@ class PromptShapeTests(unittest.TestCase):
             self.assertEqual(done.returncode, 0, done.stderr)
             self.assertIn("preflight", _context(done))
 
+    def test_plan_shaped_prompt_names_the_plan_verb(self) -> None:
+        """Thirteenth field report (obligation 9700): 198 plan-shaped asks,
+        zero plan records; the census flagged it afterwards, nothing named
+        the verb when the ask arrived."""
+        with _project() as (project, state):
+            done = _fire(project, state, "make a plan for the migration and break it into milestones")
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertIn("godmode plan", _context(done))
+
+    def test_reversal_shaped_prompt_names_the_independent_check(self) -> None:
+        with _project() as (project, state):
+            done = _fire(project, state, "turns out the diagnosis was wrong, the real cause is elsewhere")
+            self.assertEqual(done.returncode, 0, done.stderr)
+            context = _context(done)
+            self.assertIn("verify", context)
+            self.assertIn("differential", context)
+
+    def test_ship_shape_names_the_local_precheck_too(self) -> None:
+        """Fifteenth field report (obligation 9769): precheck never fired
+        where nothing left the machine; the ship nudge names --about."""
+        with _project() as (project, state):
+            done = _fire(project, state, "looks good, push it and cut a release")
+            self.assertIn("precheck --about", _context(done))
+
+    def test_fix_shape_names_the_atlas_closure(self) -> None:
+        """Twelfth field report (obligation 9683): atlas sat unused because
+        nothing named it before a fix."""
+        with _project() as (project, state):
+            done = _fire(project, state, "fix the login bug, it keeps failing")
+            self.assertIn("atlas closure", _context(done))
+
     def test_same_shape_speaks_once_per_session(self) -> None:
         with _project() as (project, state):
             _fire(project, state, "fix the login bug")

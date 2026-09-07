@@ -545,20 +545,43 @@ def verify_promotion_advisory(archive: Chronicle, command: str,
         "session; carry on if this run is exploratory.")
 
 
-# The prompt's own shape names the verb. Three shapes only - a vocabulary
-# that grows past what a session can absorb teaches dismissal.
+# The prompt's own shape names the verb. Few shapes, each once per
+# session - a vocabulary that grows past what a session can absorb teaches
+# dismissal.
 _PROMPT_SHAPES = (
     ("fix", re.compile(r"(?i)\b(?:fix|debug|broken|not\s+working|failing|"
                        r"keeps?\s+fail|crash)"),
-     "godmode: fix-shaped work - if one check has already failed twice with "
-     "edits between, open `godmode remember --kind incident` before the next "
-     "attempt, and run the deciding check via `godmode verify` so its "
-     "outcome is attested."),
+     "godmode: fix-shaped work - `godmode atlas closure <files>` lists the "
+     "dependents a fix must retest; if one check has already failed twice "
+     "with edits between, open `godmode remember --kind incident` before "
+     "the next attempt, and run the deciding check via `godmode verify` so "
+     "its outcome is attested."),
     ("ship", re.compile(r"(?i)\b(?:push|release|ship|deploy|publish|"
                         r"cut\s+(?:a\s+)?(?:release|version|tag))"),
      "godmode: ship-shaped work - `godmode precheck --preflight` runs the "
      "scans and the demand-vs-use census on a disposable worktree before "
-     "anything leaves the machine."),
+     "anything leaves the machine; when nothing leaves the machine, "
+     "`godmode precheck --about \"<what ships>\"` runs the known-bad-shape "
+     "scan on the working tree instead."),
+    # Thirteenth field report (obligation 9700): 198 plan-shaped asks and
+    # zero plan records in one archive; a reversal is the demand for an
+    # independent check (8 warranted, 0 run). The census names both
+    # afterwards; these name the verb as the ask arrives.
+    ("plan", re.compile(r"(?i)\b(?:make\s+a\s+plan|plan\s+(?:for|out|the)|"
+                        r"roadmap|milestones?|spec\s+(?:it\s+)?out|"
+                        r"break\s+(?:this|it|the\s+work)\s+(?:down|into))\b"),
+     "godmode: plan-shaped work - record the contract before executing: "
+     "`godmode plan` (spec, acceptance criteria, steps) so `planmode check` "
+     "can hold the work to it; a plan that lives only in prose has no reader."),
+    ("reversal", re.compile(
+        r"(?i)(?:\bturns\s+out\b|\b(?:diagnosis|cause|fix|root\s+cause)\s+"
+        r"was\s+wrong\b|\bwrong\s+(?:fix|cause|diagnosis)\b|"
+        r"\bactually\s+the\s+(?:cause|bug|problem)\b|\bre-?check(?:ed)?\s+"
+        r"(?:the|that|my)\b|\breal\s+cause\s+is\b)"),
+     "godmode: reversal-shaped work - a diagnosis that reversed once is the "
+     "demand for an independent check: `godmode verify <name> --command "
+     "\"<deciding check>\"` attests the outcome and `godmode differential` "
+     "records the two states before the next edit."),
     ("resume", re.compile(r"(?i)\b(?:where\s+(?:are|were)\s+we|pick\s+up|"
                           r"continue\s+from|what.s\s+the\s+status)"),
      "godmode: resume-shaped work - `godmode resume` reads the recorded "
