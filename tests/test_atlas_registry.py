@@ -220,3 +220,45 @@ class PersistedIndexTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BuildCeilingTests(unittest.TestCase):
+    """Twelfth field report: `atlas map` ran past five minutes on a 2,176-file
+    repo with no budget and no partial result. The documentation linker was the
+    hotspot (one regex pass per document per module), and a build with no
+    ceiling has no honest answer on a repo it cannot finish."""
+
+    def test_documentation_scan_cost_is_per_document_not_per_module(self) -> None:
+        import time
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            for index in range(400):
+                (project / f"module_{index:03d}.py").write_text(
+                    "def run():\n    return 1\n", encoding="utf-8")
+            prose = ("lorem ipsum dolor sit amet, consectetur adipiscing elit " * 600)
+            for index in range(200):
+                (project / f"doc_{index:03d}.md").write_text(
+                    f"# Notes\n{prose}\nSee module_{index:03d} and module_399.\n",
+                    encoding="utf-8")
+            started = time.monotonic()
+            atlas = build(project)
+            elapsed = time.monotonic() - started
+            docs = [e for e in atlas.edges if e.relation == DOCUMENTS]
+            self.assertTrue(any(e.source == "doc_007.md" and "module_007.py" in e.target
+                                and e.line == 3 for e in docs), docs[:5])
+            self.assertEqual(sum(1 for e in docs if "module_399.py" in e.target), 200)
+            self.assertLess(elapsed, 10.0, f"documentation scan took {elapsed:.1f}s")
+
+    def test_time_budget_leaves_a_partial_map_with_a_stated_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / "alpha.py").write_text("def a():\n    return 1\n", encoding="utf-8")
+            (project / "beta.py").write_text("import alpha\n", encoding="utf-8")
+            atlas = build(project, budget_seconds=0.0)
+            self.assertEqual(atlas.files, [])
+            self.assertEqual(atlas.gap["unscanned"], 2)
+            self.assertIn("budget", atlas.gap["reason"])
+            self.assertEqual(atlas.view()["gap"], atlas.gap)
+            # No budget: no gap to state.
+            self.assertIsNone(build(project).gap)
+            self.assertNotIn("gap", build(project).view())

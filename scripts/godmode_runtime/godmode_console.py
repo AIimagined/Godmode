@@ -2194,7 +2194,18 @@ def cmd_atlas(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         report = load_index(Path(runtime.anchor.project_root) / args.source,
                             Path(runtime.anchor.project_root))
         return CommandResult(report, exit_code=0 if report["confidence"] == 1.0 else 1)
-    atlas = build_atlas(Path(runtime.anchor.project_root))
+    atlas = build_atlas(Path(runtime.anchor.project_root),
+                        budget_seconds=args.budget if args.budget > 0 else None)
+    result = _atlas_query(args, runtime, atlas)
+    if atlas.gap and isinstance(result.payload, dict):
+        # A bounded map answers every query with the bound attached; a
+        # dependents list from a half-read repo is otherwise indistinguishable
+        # from a complete one.
+        result.payload["gap"] = atlas.gap
+    return result
+
+
+def _atlas_query(args: argparse.Namespace, runtime: Runtime, atlas: Any) -> CommandResult:
     # The verb leaves a receipt (S13 audit: it fired constantly as a
     # library and never as a verb, and without a record the census could
     # not even ask). Best-effort, counts only, query verbs only - save/map
@@ -5027,6 +5038,9 @@ def _build_parser() -> argparse.ArgumentParser:
     scope_parser.set_defaults(handler=cmd_scope)
 
     atlas = sub.add_parser("atlas", help="Map the project's symbols and their relationships")
+    atlas.add_argument("--budget", type=float, default=120.0,
+                       help="Seconds the build may spend before it stops and states the gap "
+                            "(default 120; 0 means no ceiling)")
     atlas_sub = atlas.add_subparsers(dest="atlas_command", required=True)
     atlas_sub.add_parser("map").set_defaults(handler=cmd_atlas)
     atlas_affected = atlas_sub.add_parser("affected")

@@ -24,6 +24,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import time
 from typing import Any, Callable, Iterable
 
 from .godmode_constants import CODE_SUFFIXES, IGNORED_DIRECTORY_NAMES
@@ -107,6 +108,8 @@ class Atlas:
     # symbol id -> shingles over its (approximate) body, so duplicates are found
     # by what code does, not what it happens to be called.
     body_signatures: dict[str, frozenset] = field(default_factory=dict)
+    # Set when a build budget stopped the scan: what was read, what was not.
+    gap: dict[str, Any] | None = None
 
     # ---- queries -------------------------------------------------------------
 
@@ -345,12 +348,15 @@ class Atlas:
         }
 
     def view(self) -> dict[str, Any]:
-        return {
+        report = {
             "files": len(self.files),
             "symbols": len(self.symbols),
             "edges": len(self.edges),
             "diagnosis": self.diagnose(),
         }
+        if self.gap:
+            report["gap"] = self.gap
+        return report
 
 
 def speculative_seams(atlas: "Atlas") -> dict[str, Any]:
@@ -666,16 +672,31 @@ def slice_file(path: Path, start: int = 1, end: int | None = None, limit: int = 
     }
 
 
-def build(project: Path, suffixes: Iterable[str] | None = None) -> Atlas:
+def build(project: Path, suffixes: Iterable[str] | None = None,
+          budget_seconds: float | None = None) -> Atlas:
     # Registered suffixes are scanned even outside CODE_SUFFIXES: a registration
     # that still needed a constants edit would defeat the registry's purpose.
     allowed = set(suffixes) if suffixes else set(CODE_SUFFIXES) | set(EXTRACTORS)
     atlas = Atlas(project=project)
-    for path in sorted(project.rglob("*")):
-        if not path.is_file() or path.suffix.lower() not in allowed:
-            continue
-        if any(part in IGNORED_DIRECTORY_NAMES for part in path.parts):
-            continue
+    candidates = [
+        path for path in sorted(project.rglob("*"))
+        if path.is_file() and path.suffix.lower() in allowed
+        and not any(part in IGNORED_DIRECTORY_NAMES for part in path.parts)
+    ]
+    started = time.monotonic()
+    for position, path in enumerate(candidates):
+        # A build with no ceiling has no honest answer on a repo it cannot
+        # finish (twelfth field report: five minutes, no output). Past the
+        # budget the map stops and says what it did not read, so a query on it
+        # is bounded rather than silently short.
+        if budget_seconds is not None and time.monotonic() - started > budget_seconds:
+            atlas.gap = {
+                "reason": f"time budget of {budget_seconds:g}s reached",
+                "scanned": position,
+                "unscanned": len(candidates) - position,
+                "next_unscanned": candidates[position].relative_to(project).as_posix(),
+            }
+            break
         relative = path.relative_to(project).as_posix()
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -730,6 +751,7 @@ def _link_documentation(project: Path, atlas: Atlas) -> None:
              if len(stem := module_key(name)) >= 3}
     if not stems:
         return
+    odd_stems = [stem for stem in stems if not _WORD.fullmatch(stem)]
     for doc_path in sorted(project.rglob("*.md")):
         if not doc_path.is_file():
             continue
@@ -740,14 +762,31 @@ def _link_documentation(project: Path, atlas: Atlas) -> None:
             doc_text = doc_path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for stem, module_file in sorted(stems.items()):
-            if module_key(doc_relative) == stem:
+        own_stem = module_key(doc_relative)
+        # One pass per document: every word the prose contains, checked against
+        # the stem set, instead of one regex pass per module per document. On a
+        # 331-file repo the latter was 72,820 searches and 92 of 141 seconds.
+        first_line: dict[str, int] = {}
+        for match in _WORD.finditer(doc_text):
+            word = match.group(0)
+            if word in stems and word not in first_line and word != own_stem:
+                first_line[word] = doc_text.count("\n", 0, match.start()) + 1
+                if len(first_line) == len(stems):
+                    break
+        # A stem with punctuation in it ("my-module") is not one word; the
+        # per-stem search stays for those few.
+        for stem in odd_stems:
+            if stem == own_stem or stem in first_line:
                 continue
             match = re.search(rf"\b{re.escape(stem)}\b", doc_text)
             if match:
-                line = doc_text.count("\n", 0, match.start()) + 1
-                atlas.edges.append(
-                    Edge(doc_relative, f"{module_file}::<module>", DOCUMENTS, INFERRED, line))
+                first_line[stem] = doc_text.count("\n", 0, match.start()) + 1
+        for stem, line in sorted(first_line.items()):
+            atlas.edges.append(
+                Edge(doc_relative, f"{stems[stem]}::<module>", DOCUMENTS, INFERRED, line))
+
+
+_WORD = re.compile(r"\w+")
 
 
 def _file_sha256(path: Path) -> str | None:
