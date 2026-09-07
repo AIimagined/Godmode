@@ -175,7 +175,14 @@ def main() -> int:
                             + "\n".join(shown))
     if not messages:
         return 0
-    print(json.dumps({"systemMessage": "\n".join(messages)}))
+    # Obligation 9860: `systemMessage` reaches the operator only; the model
+    # reads `additionalContext`. Both, one object, never a decision.
+    text = "\n".join(messages)
+    print(json.dumps({
+        "systemMessage": text,
+        "hookSpecificOutput": {"hookEventName": "PostToolUse",
+                               "additionalContext": text},
+    }))
     return 0
 
 

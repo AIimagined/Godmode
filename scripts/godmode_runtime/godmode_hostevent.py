@@ -397,6 +397,11 @@ def _detect_from_shape(raw: Any) -> str | None:
 # changing what it matches for Claude.
 _PRETOOL_EVENT_NAMES = frozenset({
     "PreToolUse", "pre_tool_use", "preToolUse", "BeforeTool",
+    # Cursor's shell event (found 2026-09-07 by the advisory-channel test):
+    # the adapter recognised it, this set did not, so the hook took its
+    # non-pretool branch, dumped the preview and exited 0 - a Cursor shell
+    # call never received a `permission` key at all.
+    "beforeShellExecution",
 })
 
 

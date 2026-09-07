@@ -88,13 +88,15 @@ def _decide(project: Path, tool: str, tool_input: dict) -> dict:
     if not body:
         return {"decision": "allow", "reason": "", "system_message": None}
     parsed = json.loads(body)
-    specific = parsed.get("hookSpecificOutput")
-    if specific:
+    specific = parsed.get("hookSpecificOutput") or {}
+    if specific.get("permissionDecision"):
         return {
             "decision": str(specific.get("permissionDecision", "?")),
             "reason": str(specific.get("permissionDecisionReason", "")),
             "system_message": None,
         }
+    # An advisory rides hookSpecificOutput.additionalContext too (obligation
+    # 9860) - that is not a decision.
     return {"decision": "allow", "reason": "",
             "system_message": parsed.get("systemMessage")}
 

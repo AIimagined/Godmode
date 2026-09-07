@@ -1093,30 +1093,88 @@ def checkpoint_age(record: dict[str, Any], *, now: Any = None,
     return days, note
 
 
-def _take_parked_brief(archive: Chronicle, anchor: Any) -> str:
-    """The continuity brief parked at session start, rendered for delivery,
-    and removed together with the fast gate's marker. Empty when nothing is
-    parked. Best-effort: a brief that cannot be read is dropped, never a
+def _advisory_body(host: str, event_name: str, text: str) -> dict[str, Any]:
+    """One stdout object carrying an advisory on BOTH channels a host has.
+
+    Sweep 2026-09-07 (planning-with-files, measured on Claude Code):
+    `systemMessage` is shown to the operator and the model never sees it.
+    So a note addressed to the model rides `hookSpecificOutput.
+    additionalContext` (Claude, Codex; Grok delivers it with the call's
+    result) or `agent_message` (Cursor's own model-facing key), and the
+    operator keeps the `systemMessage`/`user_message`. Never a decision:
+    nothing here carries `permissionDecision`, `decision` or `permission`.
+    """
+    if host == "cursor":
+        return {"user_message": text, "agent_message": text}
+    return {
+        "systemMessage": text,
+        "hookSpecificOutput": {"hookEventName": event_name, "additionalContext": text},
+    }
+
+
+def _echo_contexts(parked: dict[str, Any]) -> list[str]:
+    """The claim echo's parked items rendered as model context."""
+    contexts: list[str] = []
+    sentences = [str(s)[:200] for s in (parked.get("sentences") or [])][:3]
+    touched = [str(s)[:120] for s in (parked.get("obligations") or [])][:2]
+    notices = [str(s)[:400] for s in (parked.get("notices") or [])][:3]
+    if sentences:
+        listed = "; ".join(f"'{s}'" for s in sentences)
+        contexts.append(
+            "godmode: your previous reply made "
+            f"{len(sentences)} claim-shaped statement(s) "
+            f"with no record: {listed}. Record each with "
+            "`godmode claim --cite <evidence>` (it grades "
+            "honestly) or soften the wording this turn.")
+    if touched:
+        contexts.append(
+            "godmode: open obligation(s) the previous turn "
+            "touched: " + ", ".join(touched)
+            + " - act on them or close them on the record.")
+    # Stop-time notices (investigation nudge, timeline advisories, ...)
+    # were operator-only `systemMessage`; parked at Stop, they reach the
+    # model here.
+    contexts.extend(notices)
+    return contexts
+
+
+def _take_parked_context(archive: Chronicle, anchor: Any, submitted: dict[str, Any]) -> str:
+    """Everything parked for a Grok session, rendered for delivery on the
+    first allowed tool call, and removed together with the fast gate's
+    marker: the continuity brief (obligation 8584) and the claim echo, since
+    Grok discards an allowing prompt hook's stdout. Empty when nothing is
+    parked. Best-effort: a park that cannot be read is dropped, never a
     reason to block the call it was riding."""
+    pieces: list[str] = []
     parked = archive.root / "godmode-brief-echo.json"
-    rendered = ""
     try:
         if parked.exists():
             payload = json.loads(parked.read_text(encoding="utf-8"))
             parked.unlink()
             rendered = str(payload.get("brief") or "")[:4000]
+            if rendered:
+                pieces.append(
+                    "godmode continuity brief (bounded, local; stored claims are leads "
+                    "until current inspection confirms them): " + rendered)
     except Exception:  # noqa: BLE001
-        rendered = ""
+        pass
+    echo = archive.root / "godmode-claim-echo.json"
+    try:
+        if echo.exists():
+            payload = json.loads(echo.read_text(encoding="utf-8"))
+            echo.unlink()
+            current = _session_key(submitted)
+            if current is None or payload.get("session") == current:
+                pieces.extend(_echo_contexts(payload))
+    except Exception:  # noqa: BLE001
+        pass
     try:
         common = getattr(anchor, "git_common_dir", None)
         if common:
             (Path(common) / "godmode-brief-pending").unlink(missing_ok=True)
     except OSError:
         pass
-    if not rendered:
-        return ""
-    return ("godmode continuity brief (bounded, local; stored claims are leads "
-            "until current inspection confirms them): " + rendered)
+    return " ".join(pieces)
 
 
 def _silenced_by_ask_only(policy: dict[str, Any], preview: dict[str, Any]) -> bool:
@@ -1937,6 +1995,21 @@ def main(argv: list[str] | None = None) -> int:
                     shown_notices.append(
                         f"({len(notices) - 2} more in `godmode doctor`)")
                 print(json.dumps({"systemMessage": " ".join(shown_notices)}))
+                # Obligation 9860: a Stop systemMessage reaches the operator
+                # only. Parked beside the claim echo, the notices reach the
+                # model at the next prompt boundary (or, on Grok, on the
+                # first allowed tool call).
+                try:
+                    echo = archive.root / "godmode-claim-echo.json"
+                    parked = {}
+                    if echo.exists():
+                        parked = json.loads(echo.read_text(encoding="utf-8"))
+                    parked["notices"] = [_ascii_echo(n)[:400] for n in shown_notices]
+                    parked["session"] = _session_key(submitted)
+                    echo.write_text(json.dumps(parked, ensure_ascii=False),
+                                    encoding="utf-8")
+                except Exception:  # noqa: BLE001
+                    pass
             return 0
 
         if args.event == "user-prompt":
@@ -1960,7 +2033,10 @@ def main(argv: list[str] | None = None) -> int:
             contexts: list[str] = []
             echo_path = archive.root / "godmode-claim-echo.json"
             try:
-                if echo_path.exists():
+                # Not on Grok: an allowing prompt hook's stdout is discarded
+                # there, so the echo waits for the first allowed tool call
+                # (`_take_parked_context`) instead of dying here unread.
+                if echo_path.exists() and current_host() != "grok":
                     parked = json.loads(echo_path.read_text(encoding="utf-8"))
                     echo_path.unlink()
                     # Field report #4 (2026-09-01): after a restart the echo
@@ -1977,23 +2053,7 @@ def main(argv: list[str] | None = None) -> int:
                     # on a host that states identity) still dies unread.
                     if current is not None and parked.get("session") != current:
                         parked = {}
-                    sentences = [str(s)[:200]
-                                 for s in (parked.get("sentences") or [])][:3]
-                    touched = [str(s)[:120]
-                               for s in (parked.get("obligations") or [])][:2]
-                    if sentences:
-                        listed = "; ".join(f"'{s}'" for s in sentences)
-                        contexts.append(
-                            "godmode: your previous reply made "
-                            f"{len(sentences)} claim-shaped statement(s) "
-                            f"with no record: {listed}. Record each with "
-                            "`godmode claim --cite <evidence>` (it grades "
-                            "honestly) or soften the wording this turn.")
-                    if touched:
-                        contexts.append(
-                            "godmode: open obligation(s) the previous turn "
-                            "touched: " + ", ".join(touched)
-                            + " - act on them or close them on the record.")
+                    contexts.extend(_echo_contexts(parked))
             except Exception:  # noqa: BLE001
                 pass
             # S8 addendum: the parked continuity brief, for hosts that
@@ -2677,20 +2737,34 @@ def main(argv: list[str] | None = None) -> int:
                             or checkpoint_advisory
                             or promotion)
                 body: dict[str, Any] = {}
-                if current_host() == "grok":
-                    # Obligation 8584: the parked continuity brief rides the
-                    # first allowed call as PreToolUse `additionalContext`,
-                    # the one hook output Grok's guide says reaches the
-                    # model. Delivered once; an explicit allow so the extra
-                    # body is never read as anything else.
-                    brief_context = _take_parked_brief(archive, anchor)
-                    if brief_context:
+                host = current_host()
+                if host == "grok":
+                    # Obligation 8584: everything parked (the continuity
+                    # brief, the claim echo) rides the first allowed call as
+                    # PreToolUse `additionalContext`, the one hook output
+                    # Grok's guide says reaches the model. Delivered once;
+                    # an explicit allow so the extra body is never read as
+                    # anything else.
+                    parked_context = _take_parked_context(archive, anchor, submitted)
+                    if parked_context:
                         body = {"decision": "allow",
                                 "hookSpecificOutput": {
                                     "hookEventName": "PreToolUse",
-                                    "additionalContext": brief_context}}
+                                    "additionalContext": parked_context}}
                 if advisory:
-                    body["systemMessage"] = advisory
+                    # Obligation 9860: the model reads additionalContext (or
+                    # Cursor's agent_message); the operator keeps the
+                    # systemMessage. One object, both channels.
+                    note = _advisory_body(host, "PreToolUse", advisory)
+                    specific = dict(body.get("hookSpecificOutput") or {})
+                    if "hookSpecificOutput" in note:
+                        extra = note.pop("hookSpecificOutput")
+                        specific["hookEventName"] = "PreToolUse"
+                        specific["additionalContext"] = " ".join(
+                            s for s in (specific.get("additionalContext", ""),
+                                        extra["additionalContext"]) if s)
+                        body["hookSpecificOutput"] = specific
+                    body.update(note)
                 if body:
                     print(json.dumps(body, ensure_ascii=False))
                 return 0

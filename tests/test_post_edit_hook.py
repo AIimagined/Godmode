@@ -59,7 +59,10 @@ class PostEditHookTests(unittest.TestCase):
             code, out = _run(project, doc, tool="Edit")
         self.assertEqual(code, 0)
         payload = json.loads(out)
-        self.assertNotIn("hookSpecificOutput", payload)  # advisory only, never a decision
+        # Advisory only, never a decision: the model-facing context rides
+        # hookSpecificOutput (obligation 9860) but no decision key ever does.
+        self.assertNotIn("permissionDecision", payload.get("hookSpecificOutput") or {})
+        self.assertNotIn("decision", payload)
         self.assertIn("local-path", payload["systemMessage"])
         self.assertIn("notes.md", payload["systemMessage"])
 
