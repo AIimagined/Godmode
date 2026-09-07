@@ -13,6 +13,9 @@ from typing import Any
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
+# The launcher starts hooks with `-I` (obligation 9866), which drops the
+# script's own directory from sys.path; the shared stdin reader lives there.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # Only names every `pre-action` call pays for. `pre-action` fires once per
 # tool call - the hot path - while session-start/user-prompt/pre-compact/
@@ -95,7 +98,10 @@ def _input() -> tuple[dict[str, Any], bool]:
                 reconfigure(encoding="utf-8", errors="replace")
             except (ValueError, OSError):
                 pass
-    raw = sys.stdin.read()
+    # Obligation 9863: resolve on the first complete JSON object, never on
+    # EOF - a Windows host's pipe close can lag past the hook timeout.
+    from godmode_stdin import read_first_json
+    raw = read_first_json().decode("utf-8", "replace")
     if not raw.strip():
         return {}, False
     try:

@@ -503,7 +503,12 @@ def spoken_allow(payload: dict[str, Any]) -> None:
 
 
 def main() -> int:
-    raw = sys.stdin.buffer.read()
+    # Obligation 9863: the first complete JSON object, never EOF (a Windows
+    # host's pipe close can lag past the hook timeout). The reader is a
+    # sibling module; `-I` keeps this directory off sys.path by design.
+    sys.path.insert(0, str(HOOKS_DIR))
+    from godmode_stdin import read_first_json
+    raw = read_first_json()
     payload = _parse_payload(raw)
     table = _load_table()
     # Same project the full hook would resolve: the payload's `cwd` when
@@ -523,8 +528,10 @@ def main() -> int:
     # Escalate: re-feed the exact bytes read from stdin to the full hook and
     # mirror its stdout/stderr/exit code verbatim - the fast gate must be
     # invisible to the host on every path except the one it actually skips.
+    # `-I -B` again (obligation 9866): interpreter flags do not inherit, and
+    # an isolation that ends at the first escalation is none.
     result = subprocess.run(
-        [sys.executable, str(FULL_HOOK), "pre-action"],
+        [sys.executable, "-I", "-B", str(FULL_HOOK), "pre-action"],
         input=raw,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

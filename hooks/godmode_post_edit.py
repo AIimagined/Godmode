@@ -119,7 +119,10 @@ def main() -> int:
                     reconfigure(encoding="utf-8", errors="replace")
                 except (ValueError, OSError):
                     pass
-        payload = json.loads(sys.stdin.read() or "{}")
+        # Obligation 9863: first complete JSON object, never EOF.
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from godmode_stdin import read_first_json
+        payload = json.loads(read_first_json().decode("utf-8", "replace") or "{}")
     except ValueError:
         return 0
     if not isinstance(payload, dict):
