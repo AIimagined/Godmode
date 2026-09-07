@@ -63,6 +63,55 @@ class NetgateError(GodmodeError):
     """The detector could not prove it detects; results are not trustworthy."""
 
 
+# A closed local port: every proxy-honouring client fails fast instead of
+# reaching a paid endpoint. Port 9 is the discard service, unbound on any
+# ordinary machine.
+OFFLINE_PROXY = "http://127.0.0.1:9"
+
+# What the audit cannot see, stated once and carried on every offline result.
+OFFLINE_GAP = (
+    "the audit sees sockets opened by Python interpreters the check starts and "
+    "traffic from clients that honour proxy variables; a runtime that does "
+    "neither is unseen, and whether a provider refunds a cancelled call is the "
+    "provider's semantics, not this audit's"
+)
+
+
+def audit_environment(temporary: Path, offline: bool = False) -> tuple[dict[str, str], Path]:
+    """`(env, audit_file)` for a child that must report every socket it opens.
+
+    Copy-and-modify, never replace: on Windows a bare environment loses
+    SYSTEMROOT and friends and the child fails for unrelated reasons. With
+    `offline`, every proxy variable also points at `OFFLINE_PROXY` so a
+    client that honours them cannot reach anything even when the audit hook
+    is not in its process.
+    """
+    bootstrap = temporary / "bootstrap"
+    bootstrap.mkdir(exist_ok=True)
+    (bootstrap / "sitecustomize.py").write_text(_AUDITOR, encoding="utf-8")
+    audit_file = temporary / "net-audit.jsonl"
+    env = os.environ.copy()
+    env["GODMODE_NET_AUDIT"] = str(audit_file)
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = str(bootstrap) + (os.pathsep + existing if existing else "")
+    if offline:
+        for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+                     "http_proxy", "https_proxy", "all_proxy"):
+            env[name] = OFFLINE_PROXY
+        env["NO_PROXY"] = env["no_proxy"] = ""
+        env["GODMODE_OFFLINE"] = "1"
+    return env, audit_file
+
+
+def read_audit(audit_file: Path) -> list[dict[str, Any]]:
+    connections: list[dict[str, Any]] = []
+    if audit_file.exists():
+        for line in audit_file.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                connections.append(json.loads(line))
+    return connections
+
+
 def capture(command: list[str], project: Path) -> dict[str, Any]:
     """Run a command with a socket-auditing bootstrap and report what it dialled.
 
@@ -71,20 +120,7 @@ def capture(command: list[str], project: Path) -> dict[str, Any]:
     interpreter is enlisted via sitecustomize and reports through a file.
     """
     with tempfile.TemporaryDirectory() as temporary:
-        bootstrap = Path(temporary) / "bootstrap"
-        bootstrap.mkdir()
-        (bootstrap / "sitecustomize.py").write_text(_AUDITOR, encoding="utf-8")
-        audit_file = Path(temporary) / "net-audit.jsonl"
-
-        # Copy-and-modify, never replace: on Windows a bare environment loses
-        # SYSTEMROOT and friends and the child fails for unrelated reasons.
-        env = os.environ.copy()
-        env["GODMODE_NET_AUDIT"] = str(audit_file)
-        existing = env.get("PYTHONPATH", "")
-        env["PYTHONPATH"] = (
-            str(bootstrap) + (os.pathsep + existing if existing else "")
-        )
-
+        env, audit_file = audit_environment(Path(temporary))
         completed = subprocess.run(
             command,
             cwd=str(project),
@@ -93,12 +129,7 @@ def capture(command: list[str], project: Path) -> dict[str, Any]:
             text=True,
             timeout=_CHILD_TIMEOUT,
         )
-
-        connections: list[dict[str, Any]] = []
-        if audit_file.exists():
-            for line in audit_file.read_text(encoding="utf-8").splitlines():
-                if line.strip():
-                    connections.append(json.loads(line))
+        connections = read_audit(audit_file)
 
     return {
         "command": list(command),

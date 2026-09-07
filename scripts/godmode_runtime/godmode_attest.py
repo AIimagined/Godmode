@@ -255,8 +255,15 @@ def run_check(
     command: list[str],
     rule_ids: list[str] | None = None,
     timeout: int = 900,
+    offline: bool = False,
 ) -> dict[str, Any]:
     """Run a declared check and attest its exit code, rather than its report.
+
+    `offline` (obligation 9792, seventeenth and eighteenth field reports: a
+    negative test believed free made a paid call inside a check-shaped
+    command) runs the check under the netgate socket audit with every proxy
+    variable pointed at a closed local port; any connection the audit sees
+    is a finding and the check is attested `blocked` whatever its exit code.
 
     An attestation an agent writes about its own work is a report. The gate it
     satisfies is then only as good as the agent's willingness to say the check
@@ -276,20 +283,44 @@ def run_check(
     # of that attestation is about something else.
     before = _tree_state()
 
-    try:
-        completed = subprocess.run(
-            command, cwd=str(project), capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=timeout,
-        )
-        code = completed.returncode
-        tail = ((completed.stdout or "") + (completed.stderr or "")).strip().splitlines()
-        detail = " | ".join(tail[-3:])[:300] if tail else "(no output)"
-    except FileNotFoundError:
-        code, detail = 127, f"command not found: {command[0]}"
-    except subprocess.TimeoutExpired:
-        code, detail = 124, f"timed out after {timeout}s"
+    import tempfile
+
+    from .godmode_netgate import OFFLINE_GAP, OFFLINE_PROXY, audit_environment, read_audit
+
+    connections: list[dict[str, Any]] = []
+    with tempfile.TemporaryDirectory() as temporary:
+        env, audit_file = (audit_environment(Path(temporary), offline=True)
+                           if offline else (None, None))
+        try:
+            completed = subprocess.run(
+                command, cwd=str(project), capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=timeout, env=env,
+            )
+            code = completed.returncode
+            tail = ((completed.stdout or "") + (completed.stderr or "")).strip().splitlines()
+            detail = " | ".join(tail[-3:])[:300] if tail else "(no output)"
+        except FileNotFoundError:
+            code, detail = 127, f"command not found: {command[0]}"
+        except subprocess.TimeoutExpired:
+            code, detail = 124, f"timed out after {timeout}s"
+        if audit_file is not None:
+            connections = read_audit(audit_file)
 
     passed = code == 0
+    audit: dict[str, Any] | None = None
+    if offline:
+        audit = {"connections": connections[:20], "count": len(connections),
+                 "proxies": OFFLINE_PROXY, "gap": OFFLINE_GAP}
+        if connections:
+            # The exit code said pass; the audit says the check reached out.
+            # A check that spends is not the check that was declared.
+            passed = False
+            first = connections[0]
+            detail = (f"{len(connections)} connection attempt(s) under --offline, first "
+                      f"{first.get('event')} {' '.join(first.get('args', []))[:120]}; "
+                      + detail)[:300]
+        else:
+            detail = (f"offline: no connection seen, proxies at {OFFLINE_PROXY}; " + detail)[:300]
     # Recorded on the attestation rather than raised: a check that writes is
     # sometimes legitimate, and refusing every one of them is how a gate gets
     # switched off. What must not happen is the result being read later as a
@@ -307,9 +338,11 @@ def run_check(
                    "result describes a tree that no longer exists" if mutated else "")),
         evidence=[citation],
         rule_ids=rule_ids,
-        reason="" if passed else f"check failed with exit {code}",
+        reason=("" if passed else
+                (f"check dialled out {len(connections)} time(s) under --offline"
+                 if connections else f"check failed with exit {code}")),
     )
-    return {
+    outcome: dict[str, Any] = {
         "check": name,
         "command": command,
         "exit_code": code,
@@ -323,6 +356,9 @@ def run_check(
         # miss reads exactly like a fabrication.
         "citation": citation,
     }
+    if audit is not None:
+        outcome["offline"] = audit
+    return outcome
 
 
 def plant_and_observe(

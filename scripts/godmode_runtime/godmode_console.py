@@ -826,6 +826,7 @@ def cmd_verify(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         runtime.archive, _session(runtime, args.session), Path(runtime.anchor.project_root),
         args.name, shlex.split(args.command), rule_ids=args.rule,
         timeout=getattr(args, "timeout", 900),
+        offline=bool(getattr(args, "offline", False)),
     )
     # The runner decides, not the caller: a failing check exits non-zero here too.
     # `citation` is returned so a later claim quotes what was stored rather than
@@ -4457,6 +4458,10 @@ def _build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--timeout", type=int, default=900,
                         help="Seconds before the check is recorded as timed "
                              "out (default 900)")
+    verify.add_argument("--offline", action="store_true",
+                        help="Run under the netgate socket audit with every proxy "
+                             "variable pointed at a closed local port; any "
+                             "connection seen blocks the attestation")
     verify.set_defaults(handler=cmd_verify)
 
     plant = sub.add_parser("plant", help="Prove a guard fails by planting a violation")
