@@ -723,12 +723,50 @@ def next_actions(archive: Chronicle, project: Path | None = None,
         pass
     try:
         census = utilization(archive, project)
+        bound = _bound_role_documents(project)
         for name, family in (census.get("families") or {}).items():
             if family.get("verdict") != "dormant-with-demand":
                 continue
             verb = _FAMILY_VERBS.get(name)
+            role = _FAMILY_ROLES.get(name)
+            if role and role in bound:
+                # Thirteenth field report (obligation 9701): a repository
+                # that keeps its own ledger document read the record verb
+                # as double entry with no reader. The bound document is the
+                # ledger; the record follows from absorbing it.
+                path = bound[role]
+                verb = (f"write it in {path} (the bound {role} document) and "
+                        f"run `godmode absorb {path}` so the ledger reads it")
             if verb:
                 actions.append(f"{name} demanded and never fired - {verb}")
     except Exception:  # noqa: BLE001
         pass
     return actions[:limit]
+
+
+# Census family -> the role whose bound document is that family's ledger.
+_FAMILY_ROLES = {
+    "learning": "lessons",
+    "checklist": "checklist",
+}
+
+
+def _bound_role_documents(project: Path | None) -> dict[str, str]:
+    """role -> project-relative path for every declared, resolving role."""
+    if project is None:
+        return {}
+    try:
+        from .godmode_corpus import resolve_roles
+        resolution = resolve_roles(Path(project))
+    except Exception:  # noqa: BLE001
+        return {}
+    bound: dict[str, str] = {}
+    for binding in getattr(resolution, "bindings", []) or []:
+        role = getattr(binding, "role", None)
+        path = getattr(binding, "path", None)
+        if role and path and role not in bound:
+            try:
+                bound[role] = Path(path).relative_to(Path(project)).as_posix()
+            except ValueError:
+                bound[role] = str(path)
+    return bound

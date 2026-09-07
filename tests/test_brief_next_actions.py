@@ -63,6 +63,35 @@ class NextActionsTests(unittest.TestCase):
             actions = next_actions(archive, root)
             self.assertTrue(any("criterion" in a for a in actions), actions)
 
+    def test_a_bound_role_document_replaces_the_record_verb(self) -> None:
+        """Thirteenth field report (obligation 9701): a repository that keeps
+        LESSONS.md as its ledger read `remember --kind lesson` as double
+        entry with no reader. When roles bind that document, the demand
+        names the document and the absorb that lets the ledger read it."""
+        import json
+        with _project() as (root, archive):
+            (root / "docs").mkdir()
+            (root / "docs" / "LESSONS.md").write_text("# Lessons\n", encoding="utf-8")
+            (root / ".godmode-roles.json").write_text(
+                json.dumps({"roles": {"lessons": "docs/LESSONS.md"}}), encoding="utf-8")
+            archive.append("incident", "the build broke twice",
+                           {"failure_class": "plan-departure", "value": "x"}, evidence=[])
+            actions = next_actions(archive, root)
+            learning = [a for a in actions if a.startswith("learning")]
+            self.assertTrue(learning, actions)
+            self.assertIn("docs/LESSONS.md", learning[0])
+            self.assertIn("absorb", learning[0])
+            self.assertNotIn("remember --kind lesson", learning[0])
+
+    def test_an_unbound_role_keeps_the_record_verb(self) -> None:
+        with _project() as (root, archive):
+            archive.append("incident", "the build broke twice",
+                           {"failure_class": "plan-departure", "value": "x"}, evidence=[])
+            actions = next_actions(archive, root)
+            learning = [a for a in actions if a.startswith("learning")]
+            self.assertTrue(learning, actions)
+            self.assertIn("remember --kind lesson", learning[0])
+
     def test_bounded_and_stringly(self) -> None:
         with _project() as (root, archive):
             (root / "README.md").write_text("x", encoding="utf-8")
