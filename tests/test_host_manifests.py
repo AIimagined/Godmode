@@ -157,6 +157,17 @@ class SharedHooksFileTests(unittest.TestCase):
         self.assertLessEqual(timeout, 10)
         self.assertGreater(timeout, 3)
 
+    def test_session_start_timeout_covers_a_cold_shell_spawn(self) -> None:
+        """Probe 2026-09-07 (Grok 1.0.13 Windows): session_start ran 14.8 s
+        and 18.2 s (hook_execution elapsed_ms) against the shipped 10 s;
+        the same payload runs here in under a second and a cold `pwsh`
+        alone costs 3.3 s. Grok's own default is 30 s and Claude's 60 s;
+        a brief that dies at 10 s never parks (obligation 9861)."""
+        with _built_project() as project:
+            manifest = self._shared(project)
+        timeout = manifest["hooks"]["SessionStart"][0]["hooks"][0]["timeout"]
+        self.assertGreaterEqual(timeout, 30)
+
     def test_every_timeout_is_explicit_and_bounded(self) -> None:
         with _built_project() as project:
             manifest = self._shared(project)

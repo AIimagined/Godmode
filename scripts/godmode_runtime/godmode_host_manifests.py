@@ -581,7 +581,7 @@ def build_cursor_manifest() -> dict[str, Any]:
         "version": 1,
         "hooks": {
             "sessionStart": [
-                {"hooks": [_shell_entry(root, SESSION_HOOK, "session-start", timeout=10)]},
+                {"hooks": [_shell_entry(root, SESSION_HOOK, "session-start", timeout=30)]},
             ],
             "preToolUse": [
                 {

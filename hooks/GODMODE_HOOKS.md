@@ -83,7 +83,7 @@ reason in both `hooks status` and the session-start brief until a fresh probe
 passes — never a silent downgrade.
 
 **Costs and limits, stated.** `hooks.json` sets an 8s timeout on `PreToolUse`
-(`SessionStart` gets 10s, `UserPromptSubmit` gets 30s). Measured directly
+(`SessionStart` gets 30s - Grok's own default, after a live probe on 2026-09-07 measured its session_start hook at 14.8 s and 18.2 s where a cold `pwsh` alone costs 3.3 s and the hook itself under a second; `UserPromptSubmit` gets 60s). Measured directly
 against `godmode_gate_fast.py` on Windows (2026-08-14, `python
 hooks/godmode_gate_fast.py < payload.json`, 10 timed runs after one unmeasured
 warm-up, median of the sorted sample): a fast-path allow (`git status`) has a
