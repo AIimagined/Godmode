@@ -87,7 +87,40 @@ def _run(project: Path, state: Path, payload: dict) -> subprocess.CompletedProce
     )
 
 
+def _transcript_two_turns(base: Path, earlier_tool_output: str, final_text: str) -> Path:
+    """A tool result in an EARLIER turn, then a fresh human prompt, then the
+    final assistant text: the shape of a status line that restates what git
+    status printed one turn ago."""
+    path = base / "transcript.jsonl"
+    lines = [
+        json.dumps({"type": "user", "message": {"content": "check the tree"}}),
+        json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}]}}),
+        json.dumps({"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": earlier_tool_output}]}}),
+        json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Tree read."}]}}),
+        json.dumps({"type": "user", "message": {"content": "now summarise the state"}}),
+        json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": final_text}]}}),
+    ]
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
 class StopAdvisoryTests(unittest.TestCase):
+    def test_a_readout_of_an_earlier_turns_tool_output_is_still_a_readout(self) -> None:
+        """Fifteenth field report 2026-09-07: 'State: engine 0.8.30 absorbed,
+        17 files uncommitted' was blocked as a claim because git status had
+        printed the 17 one turn earlier and the exemption only read this
+        turn's tool output. A bounded look-back covers the session."""
+        with _project() as (project, state, _archive):
+            transcript = _transcript_two_turns(
+                project, "M a.ts\nM b.ts\n... 17 files changed, engine 0.8.30",
+                "State: engine 0.8.30 absorbed, 17 files uncommitted.")
+            done = _run(project, state, {"session_id": "s1",
+                                         "transcript_path": str(transcript)})
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertNotIn("17 files", done.stdout)
+
     def test_an_unrecorded_claim_in_the_final_text_is_named(self) -> None:
         with _project() as (project, state, _archive):
             transcript = _transcript(project, f"All done. {CLAIM_SENTENCE}.")

@@ -83,6 +83,12 @@ class CompletionGateTests(unittest.TestCase):
             payload = json.loads(done.stdout)
             self.assertEqual(payload.get("decision"), "block")
             self.assertIn("godmode claim", payload.get("reason", ""))
+            # Thirteenth field report (obligation 9702): three sessions read
+            # observed grades as "grading without execution" because the
+            # done bar never named the executing form. It names it first.
+            reason = payload.get("reason", "")
+            self.assertIn("--verify", reason)
+            self.assertLess(reason.index("--verify"), reason.index("soften"))
 
     def test_antigravity_hears_the_block_as_decision_continue(self) -> None:
         """Tenth field report 2026-09-05: Antigravity's Stop contract is

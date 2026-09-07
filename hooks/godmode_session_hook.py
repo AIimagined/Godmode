@@ -870,11 +870,18 @@ _ATTRIBUTED_SPEECH = re.compile(
 
 
 def _turn_tool_output(submitted: dict[str, Any]) -> str:
-    """The tool results of THIS turn, from the host transcript's tail:
-    every `tool_result` block after the last human prompt. Read in memory,
-    bounded, never stored (the 4018 privacy decision). Empty when the host
-    sends no transcript (Grok) - the readout exemption then simply never
-    applies, which is the advisory's prior behaviour."""
+    """Recent tool results from the host transcript's tail, this turn's
+    first. Read in memory, bounded, never stored (the 4018 privacy
+    decision). Empty when the host sends no transcript (Grok) - the readout
+    exemption then simply never applies, which is the advisory's prior
+    behaviour.
+
+    Fifteenth field report 2026-09-07: 'State: engine 0.8.30 absorbed, 17
+    files uncommitted' was blocked as a claim because git status had printed
+    the 17 one turn earlier and this read stopped at the last human prompt.
+    A status line restates what the session saw, not only what this turn
+    saw, so the walk continues past human prompts up to the same line and
+    size caps - a bounded look-back, not the whole session."""
     path = submitted.get("transcript_path") or submitted.get("transcriptPath")
     if not path:
         return ""
@@ -893,12 +900,12 @@ def _turn_tool_output(submitted: dict[str, Any]) -> str:
             continue
         parts = (entry.get("message") or {}).get("content")
         if isinstance(parts, str):
-            break  # the human prompt that opened this turn
+            continue  # a human prompt: keep walking into the earlier turn
         if not isinstance(parts, list):
             continue
         results = [p for p in parts if isinstance(p, dict) and p.get("type") == "tool_result"]
         if not results:
-            break  # a text-only user entry is the human, not a tool
+            continue  # a text-only user entry is the human, not a tool
         for part in results:
             body = part.get("content")
             if isinstance(body, list):
@@ -911,7 +918,9 @@ def _turn_tool_output(submitted: dict[str, Any]) -> str:
     return "\n".join(chunks).lower()
 
 
-_READOUT_NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
+# A dotted version (0.8.30) is one number, not "0.8" and a stray "30" that
+# then fails its own boundary check (fifteenth field report, 2026-09-07).
+_READOUT_NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)*")
 
 
 def _observed_readout(sentence: str, observed: str) -> bool:
@@ -1866,10 +1875,13 @@ def main(argv: list[str] | None = None) -> int:
                     "reason": (
                         f"godmode gate, deliberate block, not a crash - THE DONE BAR: this reply says work is "
                         f"done, but {len(done_shaped)} of those statements "
-                        f"have no evidence on record: {shown}. Save each as "
-                        "a claim with its proof (`godmode claim \"<text>\" "
-                        "--cite <evidence>`) or soften the wording, then "
-                        "finish. This check blocks only once."),
+                        f"have no evidence on record: {shown}. Record each "
+                        "with the check that proves it: `godmode claim "
+                        "\"<text>\" --grade verified --cite \"cmd:<check>\" "
+                        "--verify` runs the check and attests it; `godmode "
+                        "claim \"<text>\" --cite <evidence>` records an "
+                        "observed grade; or soften the wording. Then finish. "
+                        "This check blocks only once."),
                     "systemMessage": " ".join(notices) if notices else
                         "godmode: completion blocked once pending a record; "
                         "the re-fire passes.",

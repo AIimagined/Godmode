@@ -1,0 +1,1 @@
+The done bar names the executing claim form first: `godmode claim "<text>" --grade verified --cite "cmd:<check>" --verify` runs the check and attests it; the observed form and softening follow. Three sessions read observed grades as grading without execution because the block text never offered the form that executes. Thirteenth field report, obligation 9702.

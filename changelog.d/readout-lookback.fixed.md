@@ -1,0 +1,1 @@
+The done bar's readout exemption looks back across the session's recent tool output, not only this turn's: a status line restating what git status printed one turn earlier ('17 files uncommitted') was blocked as a claim. Dotted versions (0.8.30) count as one number. Fifteenth field report, obligation 9768.
