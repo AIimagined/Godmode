@@ -1,1 +1,0 @@
-A dormant-with-demand family whose ledger is a bound role document names the document, not the record verb: with `lessons` bound to `docs/LESSONS.md`, the learning demand says to write it there and `godmode absorb` it, instead of `remember --kind lesson` beside a file the project already keeps. Thirteenth field report, obligation 9701.
