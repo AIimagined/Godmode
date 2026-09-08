@@ -1,1 +1,0 @@
-A zero atlas budget scanned files on Windows Python 3.11: the check was `elapsed > budget`, and that interpreter's monotonic clock ticks every 15.6 ms, so elapsed read zero for the first files. A budget already spent is spent at zero (`>=`); caught by the 0.3.20 CI matrix.

@@ -6,6 +6,17 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.3.21] - 2026-09-08
+
+### Added
+
+- A tag push is refused until a `ci` attestation names the tagged commit green. The 0.3.20 tag went public on a local suite green on one OS and one interpreter while the CI matrix was red on both Windows legs; the rule "CI green before the tag" was maintainer prose and nothing could refuse. The pre-action gate now reads `git push <remote> refs/tags/<tag>`, a bare tag name, `tag <name>`, `--tags` and `--follow-tags`, and denies until `godmode attest ci --status ran --result "<tag> <sha7> green" --evidence <run url>` is on record for that commit; a staged capability is left in place for the retry.
+
+### Fixed
+
+- A zero atlas budget scanned files on Windows Python 3.11: the check was `elapsed > budget`, and that interpreter's monotonic clock ticks every 15.6 ms, so elapsed read zero for the first files. A budget already spent is spent at zero (`>=`); caught by the 0.3.20 CI matrix.
+- The bound role document in a next-action demand was rendered as an absolute path when the project path carried an 8.3 element (the CI runner's `RUNNER~1` temp directory): the binding resolved the long form, `relative_to` against the unresolved project failed, and the fallback printed the absolute path. Both sides are resolved now; the demand reads `write it in docs/LESSONS.md` again.
+
 ## [0.3.20] - 2026-09-08
 
 ### Added
