@@ -14,7 +14,13 @@
 :; # writing no byte-code into the plugin cache. The hooks put the plugin's
 :; # own directories on sys.path themselves.
 :; hook="$1"; shift
-:; dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+:; # No external commands before the interpreter is found: the gate runs
+:; # under a reduced PATH where `dirname` may be missing (2026-09-08).
+:; dir=$0
+:; case "$dir" in *\\*) dir=${dir%\\*} ;; esac
+:; case "$dir" in */*) dir=${dir%/*} ;; esac
+:; [ "$dir" = "$0" ] && dir=.
+:; dir=$(CDPATH= cd -- "$dir" && pwd)
 :; if [ -n "${GODMODE_PYTHON:-}" ]; then exec "$GODMODE_PYTHON" -I -B "$dir/$hook" "$@"; fi
 :; for py in python3 python py; do
 :;   if command -v "$py" >/dev/null 2>&1 && "$py" -c "import sys" >/dev/null 2>&1; then
