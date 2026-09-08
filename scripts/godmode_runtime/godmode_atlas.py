@@ -689,7 +689,9 @@ def build(project: Path, suffixes: Iterable[str] | None = None,
         # finish (twelfth field report: five minutes, no output). Past the
         # budget the map stops and says what it did not read, so a query on it
         # is bounded rather than silently short.
-        if budget_seconds is not None and time.monotonic() - started > budget_seconds:
+        # `>=`: a coarse clock (Windows 3.11, 15.6 ms ticks) reads zero for
+        # the first files, and a zero budget must still read nothing.
+        if budget_seconds is not None and time.monotonic() - started >= budget_seconds:
             atlas.gap = {
                 "reason": f"time budget of {budget_seconds:g}s reached",
                 "scanned": position,

@@ -83,6 +83,41 @@ class NextActionsTests(unittest.TestCase):
             self.assertIn("absorb", learning[0])
             self.assertNotIn("remember --kind lesson", learning[0])
 
+    def test_a_bound_document_is_named_relative_under_an_aliased_project_path(self) -> None:
+        """CI 2026-09-08: the Windows runner's temp directory carries an 8.3
+        element (RUNNER~1), the role binding resolves it to the long form,
+        and `relative_to` against the unresolved project failed - so the
+        demand named an absolute path instead of docs/LESSONS.md. The same
+        mismatch comes from a symlinked project directory on any OS, so the
+        alias is a symlink where one can be made and the 8.3 name otherwise."""
+        import json
+        with tempfile.TemporaryDirectory(prefix="godmode-longername-") as temporary:
+            base = Path(temporary)
+            real = base / "project-with-a-long-name"
+            real.mkdir()
+            root = base / "alias"
+            try:
+                os.symlink(str(real), str(root), target_is_directory=True)
+            except (OSError, NotImplementedError):
+                import ctypes
+                buffer = ctypes.create_unicode_buffer(1024)
+                ctypes.windll.kernel32.GetShortPathNameW(str(real), buffer, 1024)
+                root = Path(buffer.value)
+            # An alias that resolves to itself cannot reproduce the CI shape;
+            # the assertion below then holds trivially, on the record.
+            (root / "docs").mkdir()
+            (root / "docs" / "LESSONS.md").write_text("# Lessons\n", encoding="utf-8")
+            (root / ".godmode-roles.json").write_text(
+                json.dumps({"roles": {"lessons": "docs/LESSONS.md"}}), encoding="utf-8")
+            with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(base / "state")}, clear=False):
+                archive = Chronicle(resolve_anchor(root))
+                archive.initialize()
+                archive.append("incident", "the build broke twice",
+                               {"failure_class": "plan-departure", "value": "x"}, evidence=[])
+                learning = [a for a in next_actions(archive, root) if a.startswith("learning")]
+            self.assertTrue(learning)
+            self.assertIn("write it in docs/LESSONS.md", learning[0])
+
     def test_an_unbound_role_keeps_the_record_verb(self) -> None:
         with _project() as (root, archive):
             archive.append("incident", "the build broke twice",

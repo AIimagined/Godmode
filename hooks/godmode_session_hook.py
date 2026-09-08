@@ -30,6 +30,7 @@ from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_runtime.godmode_errors import GodmodeError  # noqa: E402
 from godmode_runtime.godmode_attest import attested_rule_ids, latest_session  # noqa: E402
 from godmode_runtime.godmode_guardrails import check_ceilings  # noqa: E402
+from godmode_runtime.godmode_release_gate import tag_push_refusal  # noqa: E402
 from godmode_runtime.godmode_guardrails import meter_tool_call, watchdog  # noqa: E402
 from godmode_runtime.godmode_hookproof import (  # noqa: E402
     DEGRADE_REASON_MALFORMED_PAYLOAD, PROBE_PREFIX, degraded_reason,
@@ -2554,6 +2555,14 @@ def main(argv: list[str] | None = None) -> int:
                     })
                 except GodmodeError:
                     record_hook_degradation(archive, current_host(), "inline-scan-record-failed")
+        elif (ci_gap := tag_push_refusal(operation, Path(anchor.project_root), archive)) is not None:
+            # A tag push is a release and CI on the tagged commit is its
+            # proof (0.3.20, 2026-09-08: the tag went public with the matrix
+            # red). Refused before any capability is spent, so the retry
+            # after `godmode attest ci` finds it still staged.
+            preview["allow"] = False
+            preview["reason"] = ci_gap
+            preview["governance_block"] = True
         elif (staged := _broker(archive).consume_staged(operation)) is not None:
             # An operator authorised this exact command with the password, and
             # left it where the hook can read it. Without this the refusal

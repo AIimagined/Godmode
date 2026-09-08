@@ -766,7 +766,9 @@ def _bound_role_documents(project: Path | None) -> dict[str, str]:
         path = getattr(binding, "path", None)
         if role and path and role not in bound:
             try:
-                bound[role] = Path(path).relative_to(Path(project)).as_posix()
+                # Both sides resolved: an 8.3 element in the project path
+                # (RUNNER~1 on the CI runner) otherwise fails relative_to.
+                bound[role] = Path(path).resolve().relative_to(Path(project).resolve()).as_posix()
             except ValueError:
                 bound[role] = str(path)
     return bound

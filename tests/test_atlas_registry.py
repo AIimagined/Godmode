@@ -262,3 +262,16 @@ class BuildCeilingTests(unittest.TestCase):
             # No budget: no gap to state.
             self.assertIsNone(build(project).gap)
             self.assertNotIn("gap", build(project).view())
+
+    def test_a_coarse_clock_still_honours_a_zero_budget(self) -> None:
+        """CI 2026-09-08: Windows Python 3.11's monotonic clock ticks every
+        15.6 ms, so `elapsed > 0.0` read false for the first files and a zero
+        budget scanned them. A budget already spent is spent at zero."""
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / "alpha.py").write_text("def a():\n    return 1\n", encoding="utf-8")
+            with mock.patch("godmode_runtime.godmode_atlas.time.monotonic", return_value=100.0):
+                atlas = build(project, budget_seconds=0.0)
+            self.assertEqual(atlas.files, [])
+            self.assertEqual(atlas.gap["unscanned"], 1)
