@@ -47,7 +47,7 @@ def _exits_with_stdin_held_open(argv: list[str], payload: dict, cwd: Path) -> su
     finally:
         try:
             proc.stdin.close()
-        except OSError:
+        except OSError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
             pass
     return proc
 

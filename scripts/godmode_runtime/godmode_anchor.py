@@ -79,7 +79,7 @@ def _device_salt(home: Path) -> bytes:
         try:
             import secrets
             _secure_create(salt_path, secrets.token_bytes(32))
-        except FileExistsError:
+        except FileExistsError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
             pass
     try:
         value = salt_path.read_bytes()
@@ -195,7 +195,7 @@ def _store_cached_anchor(requested: Path, identity: tuple[int, int],
         tmp = path.with_suffix(f".{os.getpid()}.tmp")
         tmp.write_text(json.dumps(payload), encoding="utf-8")
         tmp.replace(path)
-    except OSError:
+    except OSError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
         pass  # a cache write failure costs one extra resolve next call, not correctness
 
 

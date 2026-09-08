@@ -33,7 +33,11 @@ REGISTRY_SCHEMA = "godmode-eval-registry-v1"
 # that is what tells the registry check below "this digest is supposed to
 # have moved." An edit that lands without a bump is exactly the drift U-S1
 # exists to catch.
-SCENARIO_VERSIONS: dict[str, int] = {}
+SCENARIO_VERSIONS: dict[str, int] = {
+    # 2026-09-09: the staging function gained a swallow-ok reason on its
+    # deliberate handler (the ratchet pass); a body change earns a version.
+    "removal-forgotten": 2,
+}
 
 
 def scenario_id(name: str) -> str:
@@ -265,7 +269,7 @@ def _removal_forgotten(project: Path, archive: Chronicle) -> tuple[bool, str]:
     try:
         record_removal(archive, "old-endpoint", {"reason": "superseded"})
         return False, "a five-answers-and-a-shrug removal was accepted"
-    except ArchiveError:
+    except ArchiveError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
         pass
     record_removal(archive, "old-endpoint", {
         "reason": "superseded", "location": "api/v1.py", "replacement": "api/v2.py",
@@ -517,7 +521,7 @@ SCENARIO_DIGEST_REGISTRY: dict[str, str] = {
     'forged-capability.local.v1': '250ce59903c459fd44f1e68e1b1017c3b70fd16453fb4d4830f99ee2ec43646e',
     'wrong-environment.local.v1': '184383991ce41367a19035741f096d0e77c38999eeab440d6eaa26d923677b90',
     'stale-backlog.local.v1': 'a1f07f4c8cecb942decfd733deede81ec85670e1539b22dfb2e3942a087901ba',
-    'removal-forgotten.local.v1': 'dd01df73e7df5711d8544dfb01bd4dd00b512efb5e95be70704d99a1610b7895',
+    'removal-forgotten.local.v2': '0226b546c3fd46c4b4005d462d8d9ec6a839ea0d8025ae063fbecd66e55092aa',
     'unfalsifiable-absence.local.v1': '0e1aebe361078a9bb0ef01977ad257d62b255f07cee7df8cd1240fb1fbb8e731',
     'undocumented-change.local.v1': '8d4e8ed0df33a72e82db48c4c66a11ea473d16cac62a6e62a974bbf21837898b',
     'drifted-citation.local.v1': 'da6c808c44ec3235d9fcd64d66713b83687be570cecac14f791dda5316288abe',
@@ -652,7 +656,7 @@ def _self_check() -> None:
     # U-S1: every scenario carries a versioned id and a content digest, and
     # the shipped registry is clean against the code as it actually reads.
     for entry in report["scenarios"]:
-        assert entry["id"] == f"{entry['scenario']}.local.v1", entry
+        assert entry["id"] == scenario_id(entry["scenario"]), entry
         assert len(entry["digest"]) == 64, entry
     assert report["registry"]["blocking"] is False, report["registry"]
     assert report["registry"]["findings"] == [], report["registry"]

@@ -134,7 +134,10 @@ class ScenarioIdTests(unittest.TestCase):
     def test_every_scenario_has_a_local_versioned_id(self) -> None:
         report = scen.run()
         for entry in report["scenarios"]:
-            self.assertEqual(entry["id"], f"{entry['scenario']}.local.v1", entry)
+            # The declared version, not a literal v1: a body change earns a
+            # bump (removal-forgotten went to v2 on 2026-09-09).
+            self.assertEqual(entry["id"], scen.scenario_id(entry["scenario"]), entry)
+            self.assertRegex(entry["id"], r"\.local\.v\d+$")
 
     def test_digest_is_a_sha256_hex_string(self) -> None:
         report = scen.run()

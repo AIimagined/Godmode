@@ -242,7 +242,7 @@ def record_step(
                     "dirty": len([l for l in porcelain.stdout.splitlines()
                                   if l.strip()]),
                 }
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
             pass
     return archive.append("attestation", step, data, evidence=evidence or [])
 
@@ -1106,6 +1106,23 @@ _PASS_VERDICT_VOCAB = re.compile(
 )
 
 
+# A run-shaped claim reports the outcome of something that was executed:
+# tests, a suite, a build, CI, a check. It is the claim an executed
+# attestation can settle, which is why its grade is composed, never
+# asserted (obligations 10118, 10245).
+_RUN_SHAPED = re.compile(
+    r"(?i)\b(?:tests?|suite|build|ci|checks?|pipeline|matrix|legs?|lint(?:er)?|"
+    r"typecheck|benchmark)\b[^.;]{0,60}?\b(?:pass(?:es|ed|ing)?|green|succeed(?:s|ed)?|"
+    r"ok|clean|complete[sd]?)\b"
+    r"|\b(?:pass(?:es|ed)?|green)\b[^.;]{0,40}?\b(?:tests?|suite|build|ci|checks?|legs?)\b"
+)
+
+
+def is_run_shaped(text: str) -> bool:
+    """Whether a claim reports the outcome of an executed run."""
+    return bool(_RUN_SHAPED.search(_strip_quoted(text)))
+
+
 def looks_like_pass_verdict(text: str) -> tuple[bool, str]:
     """Whether a claim is a review's all-clear rather than a specific fact."""
     match = _PASS_VERDICT_VOCAB.search(text)
@@ -1566,6 +1583,113 @@ def _guard_pin_reason(project: Path, archive: Chronicle, text: str,
     return guard_pin_reason(project, archive, text, citations)
 
 
+def evidence_versions(project: Path, citations: list[str]) -> dict[str, dict[str, str]]:
+    """The version of every file-shaped citation at record time (obligation
+    10248, grounded claims): a sha256 of the file, or of the cited line
+    range, so a later sweep can tell whether the evidence still says what
+    the claim leaned on."""
+    import hashlib
+
+    versions: dict[str, dict[str, str]] = {}
+    for citation in citations:
+        match = _FILE_CITE.match(str(citation))
+        if not match:
+            continue
+        target = Path(project) / match.group("path")
+        if not target.is_file():
+            continue
+        start, end = match.group("start"), match.group("end")
+        try:
+            if start:
+                lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+                lo = int(start)
+                hi = int(end) if end else lo
+                payload = "\n".join(lines[lo - 1:hi]).encode("utf-8")
+                kind = "range"
+            else:
+                payload = target.read_bytes()
+                kind = "file"
+        except OSError:
+            continue
+        versions[str(citation)] = {"kind": kind, "hash": hashlib.sha256(payload).hexdigest()}
+    return versions
+
+
+def stale_claims(archive: Chronicle, project: Path, limit: int = 500) -> list[dict[str, Any]]:
+    """Claims whose recorded evidence version no longer matches the tree:
+    `changed` when the file or range differs, `vanished` when it is gone.
+    Resolved claims are skipped; the newest record per claim text wins."""
+    latest: dict[str, dict[str, Any]] = {}
+    for record in archive.select(kind="claim", limit=limit):
+        data = record.get("data") or {}
+        text = str(data.get("text") or record.get("subject") or "")
+        if data.get("resolves") is not None or not data.get("evidence_versions"):
+            continue
+        latest[text] = record
+    stale: list[dict[str, Any]] = []
+    for text, record in latest.items():
+        data = record.get("data") or {}
+        recorded = data.get("evidence_versions") or {}
+        current = evidence_versions(Path(project), list(recorded))
+        for citation, version in recorded.items():
+            now = current.get(citation)
+            if now is None:
+                reason = "vanished"
+            elif now.get("hash") != version.get("hash"):
+                reason = "changed"
+            else:
+                continue
+            stale.append({
+                "sequence": record.get("sequence"),
+                "text": text[:120],
+                "citation": citation,
+                "reason": reason,
+                "grade": data.get("grade"),
+            })
+    return stale
+
+
+def executed_predicates(archive: Chronicle, project: Path,
+                        citations: list[str]) -> dict[str, Any]:
+    """The deterministic picker for a run-shaped claim (obligations 10118,
+    10245): the grade is composed from executed predicates, never asserted.
+
+    For the first `cmd:` citation: `check_ran` - an attestation with that
+    command as evidence exists and ran green; `exit_recorded` - it carries
+    the exit code; `head_matches` - its worktree head is the current HEAD.
+    All three compose `verified`; anything less stays `observed`, and the
+    caller names the check that would settle it.
+    """
+    predicates = {"check_ran": False, "exit_recorded": False,
+                  "head_matches": False, "attestation": None, "grade": "observed"}
+    cmd_citations = [str(c) for c in citations if str(c).startswith("cmd:")]
+    if not cmd_citations:
+        return predicates
+    head = ""
+    try:
+        import subprocess
+
+        done = subprocess.run(["git", "rev-parse", "HEAD"], cwd=project,
+                              capture_output=True, text=True, timeout=30)
+        head = done.stdout.strip()[:12] if done.returncode == 0 else ""
+    except Exception:  # noqa: BLE001
+        head = ""
+    wanted = set(cmd_citations)
+    for record in reversed(archive.select(kind="attestation", limit=500)):
+        data = record.get("data") or {}
+        if not any(str(e) in wanted for e in record.get("evidence") or []):
+            continue
+        predicates["attestation"] = record.get("sequence")
+        predicates["exit_recorded"] = "exit " in str(data.get("result", ""))
+        predicates["check_ran"] = data.get("status") == "ran"
+        worktree = data.get("worktree") or {}
+        predicates["head_matches"] = bool(head) and worktree.get("head") == head
+        break
+    if predicates["check_ran"] and predicates["exit_recorded"] and predicates["head_matches"]:
+        predicates["grade"] = "verified"
+    return predicates
+
+
 def record_claim(
     archive: Chronicle,
     project: Path,
@@ -1917,6 +2041,24 @@ def record_claim(
                     "are true, say what differs")
                 break
 
+    composed: dict[str, Any] = {}
+    if effective == "observed" and (pass_verdict or fix_claim or is_run_shaped(text)):
+        # Deterministic picker (obligations 10118, 10245): a run-shaped
+        # claim is graded by executed predicates. Green attestation for the
+        # cited command on this tree composes verified; otherwise the
+        # record names the check that would settle it.
+        predicates = executed_predicates(archive, project, citations)
+        if predicates["grade"] == "verified":
+            effective = "verified"
+            composed["composed_from"] = ["check_ran", "exit_recorded", "head_matches"]
+            composed["composed_attestation"] = predicates["attestation"]
+        elif cmd_citations:
+            composed["settleable_by"] = (
+                "claim --verify (runs the cited command and attests it), or "
+                "verify --command \"<command>\" then cite its attestation")
+        else:
+            composed["settleable_by"] = (
+                "claim --verify --cite \"cmd:<the command that proves it>\"")
     record = archive.append(
         "claim",
         text[:120],
@@ -1925,6 +2067,10 @@ def record_claim(
             "text": text,
             "claimed_grade": grade,
             "grade": effective,
+            **composed,
+            # Grounded claims (obligation 10248): the evidence's version at
+            # record time, so `stale_claims` can tell when it moved.
+            "evidence_versions": evidence_versions(project, citations),
             "unresolved": unresolved,
             "unsupported": unsupported,
             "downgraded": effective != grade,
@@ -2641,7 +2787,7 @@ def _self_check() -> None:
             try:
                 record_step(archive, session, "preflight", "skipped")
                 raise AssertionError("a reasonless skip must be refused")
-            except ArchiveError:
+            except ArchiveError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
                 pass
 
             # An attested step opens the gate. 'empty' counts: finding nothing is a finding.

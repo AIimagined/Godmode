@@ -597,6 +597,20 @@ _PROMPT_SHAPES = (
      "with evidence tiers; declared and verified are different columns."),
     # The largest lesson source in every field corpus is the operator's
     # own catch - and the catch-moment is when the evidence is freshest.
+    # Twenty-first field report (obligation 10116): zero help on an RCA.
+    # The verbs exist; nothing named them when a failure was chased.
+    ("investigation", re.compile(
+        r"(?i)(?:\broot[\s-]?cause\b|\brca\b|\bwhy\s+(?:did|does|is|was|are)\b[^?.]{0,60}"
+        r"\b(?:fail|failing|failed|break|broken|crash|wrong|slow|red)\b|"
+        r"\binvestigat|\bdiagnos|\bwhat\s+caused\b|\bdeep[\s-]?dive\b|\bpost-?mortem\b)"),
+     "godmode: investigation-shaped work - `godmode mistakes` lists prior "
+     "incidents of this class; `godmode error-pattern` matches the failure "
+     "text against declared patterns; `godmode incident --failure-class "
+     "<class>` records the failure while the evidence is fresh; `godmode "
+     "differential` records the two states before and after a change; "
+     "`godmode plant` proves a guard fails when broken; `godmode verify "
+     "<name> --command \"<deciding check>\"` attests the deciding check "
+     "so the root cause is a record, not a story."),
     ("correction", re.compile(
         r"(?i)(?:\bthat.s\s+(?:wrong|incorrect|not\s+right)\b|"
         r"\bwhy\s+(?:did|do|have|are)\s+you\s+(?:miss|not|skip|ignor)|"
@@ -634,3 +648,33 @@ def prompt_shape_nudge(archive: Chronicle, prompt: str,
     except Exception:  # noqa: BLE001
         return None
     return text
+
+
+_FAILURE_SIGNAL = re.compile(
+    r"(?im)(?:^Traceback \(most recent call last\)|\bexit(?:ed)?(?: code)?\s+[1-9]\d*\b|"
+    r"\bFAILED\b|\b(?:Error|Exception)\b:|\bcommand not found\b|\bfatal:|"
+    r"\bpanic:|\bsegmentation fault\b|\bnpm ERR!|\bERROR\b)")
+
+
+def failure_nudge(archive: Chronicle, tool_output: str,
+                  session: str | None) -> str | None:
+    """One sentence, once per session, when a tool run failed and the RCA
+    verbs are the next move (obligation 10116). Read at Stop from the
+    turn's tool output, because PostToolUseFailure is not in the shared
+    manifest every host reads."""
+    if not tool_output or not session or not _FAILURE_SIGNAL.search(tool_output):
+        return None
+    try:
+        for record in archive.select(kind="action", limit=200):
+            if record["subject"] == "failure-nudge" and                     record["data"].get("session") == session:
+                return None
+        archive.append("action", "failure-nudge", {"session": session})
+    except Exception:  # noqa: BLE001
+        return None
+    return (
+        "godmode: a tool run failed this turn - before the next attempt, "
+        "`godmode error-pattern` matches the failure text against declared "
+        "patterns, `godmode mistakes` lists prior incidents of this class, "
+        "and `godmode incident --failure-class <class> \"<what happened>\"` "
+        "records it while the evidence is fresh; the fix's deciding check "
+        "goes through `godmode verify` so its outcome is attested.")

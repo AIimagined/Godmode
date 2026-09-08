@@ -361,11 +361,11 @@ class AttemptHandle:
         else:
             try:
                 os.killpg(os.getpgid(process.pid), 9)
-            except (ProcessLookupError, PermissionError):
+            except (ProcessLookupError, PermissionError):  # godmode: swallow-ok: best-effort read: the failure is the non-event here
                 pass  # already gone, or never got its own group - fall through
         try:
             process.kill()  # belt-and-braces: reaches the leaf even if the above no-ops
-        except OSError:
+        except OSError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
             pass
 
 

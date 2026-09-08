@@ -113,6 +113,25 @@ class CompletionGateTests(unittest.TestCase):
             self.assertEqual((done.stdout or "").strip(), "")
 
     def test_a_recorded_done_claim_is_not_blocked(self) -> None:
+        # A done claim no command can settle: recorded observed is enough.
+        settled_by_reading = "The migration is complete"
+        with _project() as (project, state, archive):
+            (project / "README.md").write_text("x", encoding="utf-8")
+            from godmode_runtime.godmode_attest import record_claim
+            record_claim(archive, project, "S-test", settled_by_reading, "observed",
+                         cites=["file:README.md"])
+            done = _run(project, state, {
+                "transcript_path": str(_transcript(project, f"Done. {settled_by_reading}."))})
+            self.assertEqual(done.returncode, 0, done.stderr)
+            body = (done.stdout or "").strip()
+            if body:
+                self.assertNotEqual(json.loads(body).get("decision"), "block")
+
+    def test_a_run_shaped_done_claim_on_an_asserted_grade_is_named_once(self) -> None:
+        # Twenty-first field report (obligations 10118, 10245): "all tests
+        # pass" recorded observed on a README citation was passing the bar.
+        # The grade is composed from executed predicates now; an asserted
+        # one is named once, with the executed check as the remedy.
         with _project() as (project, state, archive):
             (project / "README.md").write_text("x", encoding="utf-8")
             from godmode_runtime.godmode_attest import record_claim
@@ -121,9 +140,30 @@ class CompletionGateTests(unittest.TestCase):
             done = _run(project, state, {
                 "transcript_path": str(_transcript(project, f"Done. {DONE_CLAIM}."))})
             self.assertEqual(done.returncode, 0, done.stderr)
+            payload = json.loads(done.stdout)
+            self.assertEqual(payload.get("decision"), "block")
+            self.assertIn("executed check", payload["reason"])
+            self.assertIn("--verify", payload["reason"])
+
+    def test_a_run_shaped_done_claim_verified_by_an_attestation_passes(self) -> None:
+        import subprocess as _sp
+        import sys as _sys
+        with _project() as (project, state, archive):
+            from godmode_runtime.godmode_attest import open_session, record_claim, run_check
+            _sp.run(["git", "init", "-q"], cwd=project, check=True)
+            _sp.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q",
+                     "--allow-empty", "-m", "first"], cwd=project, check=True)
+            session = open_session(archive, "S-test")
+            command = [_sys.executable, "-c", "import sys; sys.exit(0)"]
+            outcome = run_check(archive, session, project, "suite", command)
+            record_claim(archive, project, session, DONE_CLAIM, "observed",
+                         cites=[outcome["citation"]])
+            done = _run(project, state, {
+                "transcript_path": str(_transcript(project, f"Done. {DONE_CLAIM}."))})
+            self.assertEqual(done.returncode, 0, done.stderr)
             body = (done.stdout or "").strip()
             if body:
-                self.assertNotEqual(json.loads(body).get("decision"), "block")
+                self.assertNotEqual(json.loads(body).get("decision"), "block", body)
 
     def test_an_ordinary_unrecorded_claim_stays_advisory(self) -> None:
         with _project() as (project, state, _archive):

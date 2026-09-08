@@ -37,6 +37,29 @@ from typing import Any
 from .godmode_errors import ArchiveError
 
 
+def swallow_ratchet_finding(project: Path | str) -> dict[str, str] | None:
+    """A file whose silent-handler count rose above its committed ceiling
+    (obligation 10273). None when the tree holds the ratchet."""
+    from .godmode_swallow import BASELINE_FILENAME, scan_project
+
+    try:
+        report = scan_project(Path(project))
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unscannable tree is reported by the scanner's own verb, never as a gate crash
+        return None
+    regressions = report.get("regressions") or []
+    if not regressions:
+        return None
+    named = "; ".join(f"{r['path']} {r['current']} > {r['baseline']}" for r in regressions[:4])
+    more = f" (+{len(regressions) - 4} more)" if len(regressions) > 4 else ""
+    return {
+        "check": "swallow-ratchet",
+        "detail": (f"{len(regressions)} file(s) above the committed swallow ceiling "
+                   f"in {BASELINE_FILENAME}: {named}{more}. Handle the exception, "
+                   "or mark a deliberate one `# godmode: swallow-ok: <reason>`; "
+                   "the ceiling only ever falls"),
+    }
+
+
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, check=False)
 
@@ -135,6 +158,13 @@ def push_preflight(project: Path | str,
                                   "private list; run the scrub before staging "
                                   "the push",
                     })
+        # The swallow ratchet (obligation 10273): a file whose count of
+        # silent exception handlers rose above its committed ceiling is a
+        # mechanical finding. The scanner and its baseline existed; nothing
+        # at this gate read them.
+        ratchet = swallow_ratchet_finding(worktree)
+        if ratchet is not None:
+            mechanical.append(ratchet)
         # THE RATCHET RULE, applied to this gate's own miss: three releases
         # went red in CI on stale pins because "run the full suite first"
         # lived as a lesson, and the suite hook here waited on a per-call
@@ -149,7 +179,7 @@ def push_preflight(project: Path | str,
                         if stored:
                             import shlex
                             suite = shlex.split(str(stored))
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
         if suite:
             # 3600, not 1800: this repo's own designated suite runs ~27
@@ -303,6 +333,34 @@ def push_preflight(project: Path | str,
                 })
         except Exception:  # noqa: BLE001
             skipped.append("open-asks scan: unavailable")
+        # Feature reach (2026-09-09, obligation 10119): a declared hook host
+        # with no interception proof on this archive is a finding, not
+        # silence - "unverifiable" was green over the host-reach gap for
+        # twenty releases.
+        try:
+            from .godmode_reach import reach_finding
+            finding = reach_finding(archive)
+            if finding is not None:
+                judgment.append(finding)
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: a scan that cannot run is named in skipped, never a gate crash
+            skipped.append("host-reach scan: unavailable")
+        # Grounded claims (obligation 10248): a claim whose cited evidence
+        # changed or vanished since it was recorded is a judgment finding.
+        try:
+            from .godmode_attest import stale_claims
+            stale = stale_claims(archive, Path(project))
+            if stale:
+                named = "; ".join(f"seq {s['sequence']} ({s['citation']} {s['reason']})"
+                                  for s in stale[:3])
+                judgment.append({
+                    "check": "stale-claims",
+                    "detail": (f"{len(stale)} claim(s) cite evidence that changed or "
+                               f"vanished since they were recorded: {named}. "
+                               "`godmode claim --stale` lists them; re-record or "
+                               "resolve each superseded before the record is trusted"),
+                })
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: a scan that cannot run is named in skipped, never a gate crash
+            skipped.append("stale-claims scan: unavailable")
     return {
         "mechanical": mechanical,
         "judgment": judgment,

@@ -121,7 +121,7 @@ def serve(project: str) -> None:
             # open session or a refusal must not fail the handshake.
             try:
                 _cli(project, "session", "open")
-            except Exception:
+            except Exception:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
                 pass
             result = {
                 "protocolVersion": "2024-11-05",

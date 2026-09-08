@@ -98,7 +98,7 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
             os.fsync(handle.fileno())
         try:
             os.chmod(temporary, 0o600)
-        except OSError:
+        except OSError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
             pass
         os.replace(temporary, path)
     finally:
@@ -195,7 +195,7 @@ class Chronicle:
         if self.config.is_file():
             try:
                 keys.update(self._read_json(self.config).get("adopted_keys", []))
-            except ArchiveError:
+            except ArchiveError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
                 pass
         if key is not None:
             self._accepted_keys_cache_key, self._accepted_keys_cache = key, keys
@@ -281,7 +281,7 @@ class Chronicle:
             try:
                 os.chmod(self.root, 0o700)
                 os.chmod(self.events, 0o700)
-            except OSError:
+            except OSError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
                 pass
         if self.config.exists():
             existing = self._read_json(self.config)
@@ -342,7 +342,7 @@ class Chronicle:
                     if age > 120:
                         self.lock_path.unlink(missing_ok=True)
                         continue
-                except OSError:
+                except OSError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
                     pass
                 if time.monotonic() >= deadline:
                     raise ArchiveError("Godmode archive is busy; retry after the active write")

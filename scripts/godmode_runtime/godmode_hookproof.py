@@ -1032,7 +1032,7 @@ def run_probe(
                 archive, host, latency_ms=latency_ms,
                 timeout_budget_ms=timeout_budget_ms, warning=warning,
             )
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
             pass
 
     def _fail(detail: str, reason: str) -> dict[str, Any]:
@@ -1043,7 +1043,7 @@ def run_probe(
                 {"host": str(host)[:80], "reason": reason},
                 evidence=[],
             )
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
             pass
         return result
 

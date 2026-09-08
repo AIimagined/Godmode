@@ -352,7 +352,7 @@ def record_measurement(
         # a check on unchanged code is zero once one pass is recorded).
         last_mutation = max(mutations, default=0)
         data["tail_checks"] = sum(1 for t in check_turns if t > last_mutation)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
         pass
     data["measured"] = True
     data["session"] = str(session)[:80] if session else None

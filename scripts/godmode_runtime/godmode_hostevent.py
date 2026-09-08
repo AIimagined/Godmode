@@ -414,6 +414,10 @@ _PRETOOL_EVENT_NAMES = frozenset({
     # non-pretool branch, dumped the preview and exited 0 - a Cursor shell
     # call never received a `permission` key at all.
     "beforeShellExecution",
+    # Codex's PermissionRequest (2026-09-08): the same tool payload, fired
+    # when Codex would ask; the full hook classifies it like a pre-tool call
+    # and answers in the PermissionRequest decision dialect.
+    "PermissionRequest",
 })
 
 
@@ -479,7 +483,7 @@ def record_unrecognized_tool(archive: Any, host: str, tool: str) -> None:
              "category": "unrecognized-tool", "tier": "R3"},
             evidence=[],
         )
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
         pass
 
 
@@ -520,7 +524,7 @@ def record_malformed_apply_patch(archive: Any, host: str, tool: str) -> None:
              "category": "apply-patch-malformed-directive", "tier": "R3"},
             evidence=[],
         )
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
         pass
 
 
@@ -1387,7 +1391,7 @@ def capture_payload_probe(archive: Any, raw: Any, event: HostEvent) -> None:
             },
             evidence=[],
         )
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
         pass
 
 
@@ -1411,7 +1415,10 @@ def capture_payload_probe(archive: Any, raw: Any, event: HostEvent) -> None:
 # capability escape hatch by its exact command.
 # Antigravity belongs here: its documented decision vocabulary includes a
 # real "ask" (and "force_ask") - antigravity.google/docs/hooks.
-HOSTS_WITH_ASK = frozenset({"claude", "cursor", "antigravity"})
+# Codex joined 2026-09-08: its PreToolUse wire accepts permissionDecision
+# "ask" (hooks/src/schema.rs PreToolUsePermissionDecisionWire) and its
+# PermissionRequest hook is an ask surface of its own.
+HOSTS_WITH_ASK = frozenset({"claude", "cursor", "antigravity", "codex"})
 
 
 def render_decision(host: str, event_name: str, base_decision: str,
@@ -1422,6 +1429,16 @@ def render_decision(host: str, event_name: str, base_decision: str,
     """
     if base_decision == "allow":
         return {}, 0
+    if host == "codex" and event_name == "PermissionRequest":
+        # Codex is already about to ask: an ask from godmode adds nothing,
+        # so silence leaves Codex's own approval in charge; only a deny
+        # speaks, in the PermissionRequest decision dialect.
+        if base_decision != "deny":
+            return {}, 0
+        return {"hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": {"behavior": "deny", "message": reason},
+        }}, 0
     effective = base_decision if (base_decision != "ask" or host in HOSTS_WITH_ASK) else "deny"
     grok_decision = "deny" if base_decision == "ask" else base_decision
     claude_key = {

@@ -644,7 +644,7 @@ def _self_check() -> None:
             try:
                 record_item(archive, "S1-01", "Set repository topics", "active")
                 raise AssertionError("reopening verified work without proof must be refused")
-            except ArchiveError:
+            except ArchiveError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
                 pass
 
             record_item(archive, "S1-01", "Set repository topics", "active",

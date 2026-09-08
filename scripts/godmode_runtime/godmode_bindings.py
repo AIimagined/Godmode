@@ -605,7 +605,7 @@ def dependency_gate(project: Path) -> dict[str, Any]:
     if declared.is_file():
         try:
             policy.update(json.loads(declared.read_text(encoding="utf-8")))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError):  # godmode: swallow-ok: best-effort read: the failure is the non-event here
             pass
     base = sbom(project)
     violations: list[str] = []

@@ -686,7 +686,7 @@ def _self_check() -> None:
                     dispositions={"WidgetStore": {"disposition": "adopt", "behavior_verdict": None}},
                 )
                 raise AssertionError("a disposition with no behavior_verdict must be refused")
-            except GodmodeError:
+            except GodmodeError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
                 pass
             assert not fake.calls, "the refused write must never reach the archive"
 

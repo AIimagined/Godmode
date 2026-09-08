@@ -80,7 +80,19 @@ from . import godmode_hostevent as hostevent
 # `apply_patch` - Codex's documented file-edit tool - behind a key that
 # never fires, so Codex file edits reached no boundary at all. Codex now
 # rides the shared CamelCase events, and its tool names join that matcher.
-CODEX_HOOK_EVENTS = frozenset({"SessionStart", "UserPromptSubmit", "PreToolUse"})
+# 2026-09-08, read from openai/codex main (config/src/hook_config.rs):
+# HookEventsToml takes twelve PascalCase keys - PreToolUse, PermissionRequest,
+# PostToolUse, PreCompact, PostCompact, SessionStart, SessionEnd,
+# UserPromptSubmit, SubagentStart, SubagentStop, Stop, Interrupt. Codex
+# rides every key the shared file carries, plus PermissionRequest, which
+# only the project projection declares (the shared file is Claude's too).
+CODEX_HOOK_EVENTS = frozenset({
+    "SessionStart", "UserPromptSubmit", "PreToolUse", "PreCompact",
+    "SessionEnd", "Stop", "SubagentStop", "PostToolUse",
+})
+# The project projection (`hooks wire --host codex`) adds Codex's own ask
+# surface; the shared file cannot carry it because Claude reads that file.
+CODEX_PROJECT_EVENTS = CODEX_HOOK_EVENTS | {"PermissionRequest"}
 
 # Plan amendments (CX-3 additions, spec Addendum 6 verbatim): "register
 # PreCompact + SessionEnd" alongside Addendum 2026-08-16's own confirmed
@@ -102,7 +114,15 @@ GROK_HOOK_EVENTS = frozenset({
 # Addendum 5 (spec, verified fetch): Cursor's own camelCase dialect names
 # `sessionStart`, `preToolUse`, `beforeShellExecution` verbatim among its
 # documented event list.
-CURSOR_HOOK_EVENTS = frozenset({"sessionStart", "preToolUse", "beforeShellExecution", "stop"})
+CURSOR_HOOK_EVENTS = frozenset({
+    "sessionStart", "preToolUse", "beforeShellExecution", "stop",
+    # 2026-09-09 (obligation 10120): Cursor's own documented prompt, edit,
+    # compact, session-end and subagent events, each routed to the hook
+    # branch that serves the same feature on Claude. Payload field names
+    # and channels are unverified until a probe inside Cursor chronicles
+    # them; the reach table says so.
+    "beforeSubmitPrompt", "afterFileEdit", "preCompact", "sessionEnd", "subagentStop",
+})
 
 # Addendum 4a (spec, verified fetch, correcting Addendum 4): Gemini CLI's own
 # event list names `SessionStart` and `BeforeTool` verbatim (the pre-tool
@@ -111,7 +131,13 @@ CURSOR_HOOK_EVENTS = frozenset({"sessionStart", "preToolUse", "beforeShellExecut
 # ...) stays unemitted: CX-3 only asks for the BeforeTool hook fragment, and
 # emitting names this module has no builder logic for would be exactly the
 # "declare it, never call it" honesty gap CX-1 exists to prevent elsewhere.
-GEMINI_HOOK_EVENTS = frozenset({"SessionStart", "BeforeTool"})
+GEMINI_HOOK_EVENTS = frozenset({
+    "SessionStart", "BeforeTool",
+    # 2026-09-09 (obligation 10120): AfterTool carries the edit findings,
+    # AfterAgent the stop notices as text (Gemini's hooks cannot block a
+    # reply, so the done-bar itself cannot fire there). Channel unverified.
+    "AfterTool", "AfterAgent",
+})
 # Antigravity (antigravity.google/docs/hooks, fetched 2026-08-29): five
 # lifecycle events (PreToolUse, PostToolUse, PreInvocation, PostInvocation,
 # Stop). Only the two below are emitted: PreToolUse is the gate, Stop is
@@ -119,7 +145,14 @@ GEMINI_HOOK_EVENTS = frozenset({"SessionStart", "BeforeTool"})
 # on Windows, discuss.ai.google.dev) says Stop/PostToolUse hooks may never
 # fire there - shipped anyway because the contract is documented, with the
 # gap named on the artifact registry entry.
-ANTIGRAVITY_HOOK_EVENTS = frozenset({"PreToolUse", "Stop"})
+ANTIGRAVITY_HOOK_EVENTS = frozenset({
+    "PreToolUse", "Stop",
+    # 2026-09-09 (obligation 10120): PreInvocation is Antigravity's prompt
+    # boundary (nudges, claim echo, request recording); PostToolUse carries
+    # the edit findings. Both from its documented five-event list; channel
+    # unverified until a live probe.
+    "PreInvocation", "PostToolUse",
+})
 
 # Addendum 2 confirmed fact + CX-3's own instruction: Codex's matcher is the
 # union of every tool `godmode_hostevent._adapt_codex` recognises, including
@@ -213,6 +246,7 @@ SHARED_COMMAND_PREFIX = 'cd "${CLAUDE_PLUGIN_ROOT}/hooks"; ./run-hook.cmd'
 
 SESSION_HOOK = "hooks/godmode_session_hook.py"
 GATE_FAST_HOOK = "hooks/godmode_gate_fast.py"
+POST_EDIT_HOOK = "hooks/godmode_post_edit.py"
 
 
 def _shell_entry(root_var: str, script: str, *args: str, timeout: int) -> dict[str, Any]:
@@ -324,17 +358,50 @@ def codex_project_hooks(plugin_root) -> dict:
     for event, blocks in shared["hooks"].items():
         out_blocks = []
         for block in blocks:
-            entries = [{
-                "type": "command",
-                "command": entry["command"].replace(
-                    '"${CLAUDE_PLUGIN_ROOT}/',
-                    '"' + root.as_posix() + "/"),
-            } for entry in block.get("hooks", [])]
+            entries = [_codex_project_entry(root, entry["command"])
+                       for entry in block.get("hooks", [])]
             out = {"matcher": block["matcher"]} if "matcher" in block else {}
             out["hooks"] = entries
             out_blocks.append(out)
         projected["hooks"][event] = out_blocks
+    # Codex's own ask surface (read from openai/codex main 2026-09-08): a
+    # PermissionRequest hook answers {behavior: allow|deny, message}. The
+    # full hook classifies; an R4/R5 denies, an ask stays silent so Codex
+    # asks the operator, an allow stays silent so godmode never grants what
+    # the host would have asked about.
+    pre_tool = [b for b in projected["hooks"].get("PreToolUse", []) if "matcher" in b]
+    matcher = pre_tool[0]["matcher"] if pre_tool else None
+    permission = {"matcher": matcher} if matcher else {}
+    permission["hooks"] = [_codex_project_entry(
+        root, SHARED_COMMAND_PREFIX + " godmode_session_hook.py pre-action")]
+    projected["hooks"]["PermissionRequest"] = [permission]
     return projected
+
+
+def _codex_project_entry(root, shared_command: str) -> dict:
+    """One projected handler: the POSIX command with the absolute root, plus
+    `commandWindows` for the shell Codex actually uses on Windows.
+
+    Codex runs a hook command under the user's detected shell (core
+    session/mod.rs build_hooks_config), PowerShell on Windows, and takes
+    `commandWindows.unwrap_or(command)` there (hooks/src/engine/discovery.rs).
+    In PowerShell the sh-syntax `cd "..."; ./run-hook.cmd` half-works and a
+    `${VAR}` reads as an empty PowerShell variable, so the Windows form is
+    the call operator on the absolute launcher path and nothing else.
+    """
+    posix = shared_command.replace('"${CLAUDE_PLUGIN_ROOT}/', '"' + root.as_posix() + "/")
+    tail = shared_command.split("./run-hook.cmd", 1)[1].strip()
+    # A project-level hook carries no plugin-root variable, so host detection
+    # has nothing to read: the live probe of 2026-09-09 (Codex 0.153.4,
+    # Windows) chronicled its session anchor as `claude`. The command names
+    # the host itself; Codex's handler schema has no env field.
+    posix = posix.replace("; ./run-hook.cmd", "; GODMODE_HOST=codex ./run-hook.cmd", 1)
+    return {
+        "type": "command",
+        "command": posix,
+        "commandWindows": (f"$env:GODMODE_HOST='codex'; "
+                           f'& "{root.as_posix()}/hooks/run-hook.cmd" {tail}'),
+    }
 
 
 def write_codex_project_hooks(plugin_root, project, *, force: bool = False) -> dict:
@@ -411,6 +478,31 @@ def build_antigravity_fragment() -> dict:
                             "type": "command",
                             "command": f"{root}/hooks/run-hook.cmd godmode_session_hook.py stop",
                             "timeout": 10,
+                        },
+                    ],
+                },
+            ],
+            # 2026-09-09 (obligation 10120): the prompt boundary and the
+            # edit findings, on Antigravity's own documented events.
+            "PreInvocation": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": f"{root}/hooks/run-hook.cmd godmode_session_hook.py user-prompt",
+                            "timeout": 30,
+                        },
+                    ],
+                },
+            ],
+            "PostToolUse": [
+                {
+                    "matcher": ANTIGRAVITY_TOOL_MATCHER,
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": f"{root}/hooks/run-hook.cmd godmode_post_edit.py",
+                            "timeout": 5,
                         },
                     ],
                 },
@@ -611,6 +703,24 @@ def build_cursor_manifest() -> dict[str, Any]:
                     "hooks": [_shell_entry(root, SESSION_HOOK, "stop", timeout=10)],
                 },
             ],
+            # 2026-09-09 (obligation 10120): the prompt boundary, the edit
+            # findings, the compaction brief, the session-end checkpoint and
+            # the subagent done-bar ride Cursor's own events.
+            "beforeSubmitPrompt": [
+                {"hooks": [_shell_entry(root, SESSION_HOOK, "user-prompt", timeout=60)]},
+            ],
+            "afterFileEdit": [
+                {"hooks": [_shell_entry(root, POST_EDIT_HOOK, timeout=5)]},
+            ],
+            "preCompact": [
+                {"hooks": [_shell_entry(root, SESSION_HOOK, "pre-compact", timeout=10)]},
+            ],
+            "sessionEnd": [
+                {"hooks": [_shell_entry(root, SESSION_HOOK, "session-end", timeout=10)]},
+            ],
+            "subagentStop": [
+                {"hooks": [_shell_entry(root, SESSION_HOOK, "subagent-stop", timeout=10)]},
+            ],
         },
     }
 
@@ -688,6 +798,36 @@ def build_gemini_fragment() -> dict[str, Any]:
                     ],
                 },
             ],
+            # 2026-09-09 (obligation 10120): Gemini's documented AfterTool and
+            # AfterAgent, milliseconds like the rest of this fragment.
+            "AfterTool": [
+                {
+                    "matcher": GEMINI_TOOL_MATCHER,
+                    "hooks": [
+                        {
+                            "name": "godmode-post-edit",
+                            "type": "command",
+                            "command": f"{root}/hooks/run-hook.cmd godmode_post_edit.py",
+                            "timeout": 5000,
+                            "description": "Godmode post-edit quality and impact findings.",
+                        },
+                    ],
+                },
+            ],
+            "AfterAgent": [
+                {
+                    "matcher": "*",
+                    "hooks": [
+                        {
+                            "name": "godmode-stop-notices",
+                            "type": "command",
+                            "command": f"{root}/hooks/run-hook.cmd godmode_session_hook.py stop",
+                            "timeout": 10000,
+                            "description": "Godmode stop notices (advisory: Gemini cannot block a reply).",
+                        },
+                    ],
+                },
+            ],
         },
     }
 
@@ -736,6 +876,12 @@ HOOK_ARTIFACTS: dict[str, dict[str, Any]] = {
     "codex": {
         "mode": "merge-into-shared",
         "allowed_events": CODEX_HOOK_EVENTS,
+        "gap": "plugin-scope hooks on Windows: Codex runs the shared file's "
+               "command under PowerShell, where `${CLAUDE_PLUGIN_ROOT}` is an "
+               "empty PowerShell variable; the per-handler `commandWindows` "
+               "Codex accepts is set only in the project projection "
+               "(`hooks wire --host codex`), because whether Claude and Grok "
+               "tolerate that key in the shared file is unverified",
     },
     "grok": {
         "mode": "merge-into-shared",

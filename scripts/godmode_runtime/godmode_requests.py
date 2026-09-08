@@ -345,6 +345,42 @@ def open_stated_requests(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return survivors
 
 
+def serve_requests(archive: Any, answered_text: str,
+                   session: str | None = None) -> list[str]:
+    """Close every open stated request the reply visibly answers
+    (obligation 10117: asks nagged at every stop until closed by hand).
+
+    The bar is the one `review_requests` already applies: at least half of
+    the request's keywords echoed in the reply. The closure is a request
+    record with status `served` carrying the served request's digest, the
+    same shape a hand-written closure takes, so every reader honours it.
+    Returns the digests closed.
+    """
+    records = archive.select(kind="request", limit=200)
+    haystack = (answered_text or "").lower()
+    served: list[str] = []
+    if not haystack:
+        return served
+    for record in open_stated_requests(records):
+        data = record.get("data") or {}
+        identifier = str(data.get("digest", ""))
+        keywords = [str(k) for k in (data.get("keywords") or [])]
+        if not identifier or not keywords:
+            continue
+        echoed = sum(1 for word in keywords if word in haystack)
+        if echoed / len(keywords) < 0.5:
+            continue
+        archive.append("request", f"ask:{identifier[:12]}", {
+            "status": "served",
+            "digest": identifier,
+            "served_by": "reply",
+            "session": session,
+            "source": "runtime",
+        })
+        served.append(identifier)
+    return served
+
+
 def review_requests(records: list[dict[str, Any]],
                     answered_text: str = "") -> dict[str, Any]:
     """Requests with no closure, interruptions first.

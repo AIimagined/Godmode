@@ -65,3 +65,13 @@ exists, write the record via direct archive access
 ## Completion
 
 Report the classification, whether authorization was required, what actually ran, the recovery boundary, and fresh verification. If execution was outside the available host boundary, stop after the preview and say so plainly.
+
+## Verbs at the moment of demand
+
+- Before anything leaves the machine: `godmode precheck --preflight` (suite, scans, census, reach on a disposable worktree); `godmode egress --staged` says exactly what a push would send; `godmode privacy` and `godmode untrusted` scan for what must not leave; `godmode netgate` audits what dialled out.
+- Cutting a release: `godmode changelog merge --set-version X`, `godmode version --reconcile`, `godmode bindings --write`, `godmode release` compares two releases, `godmode checksums` and `godmode sbom` record what shipped, `godmode license` classifies what was read.
+- A protected operation: `godmode authorize stage --operation "<exact command>"` after the operator's password, `godmode stage` inspects what is staged, `godmode capabilities` and `godmode approvals` list what stands, `godmode ceilings` sets spend bounds, `godmode protect` pins a file, `godmode fence` and `godmode scope` bound what an edit may touch, `godmode boundaries` shows the host's enforcement table.
+- A rule to keep or a decision to weigh: `godmode register` pins an evaluator, `godmode precedent` records how a prior case was decided, `godmode recurring` schedules a standing check, `godmode sop` records a procedure, `godmode arbitrate` settles two conflicting records, `godmode governance` reports the posture.
+- Undoing or removing: `godmode rollback` and `godmode rewind` restore a recorded state, `godmode removal` records a deliberate deletion, `godmode expunge --sequence N --reason` retracts one record, `godmode branches` lists what diverged.
+- Configuration and environment: `godmode config check`, `godmode operator --policy` (which layer decided each gate), `godmode environment`, `godmode locale check`, `godmode extensions`, `godmode paired-artifact` (files that must stay in sync), `godmode parity` and `godmode upstream` against the reference repository, `godmode freshness` for research that aged.
+- Measuring the project: `godmode metrics`, `godmode metric-contract`, `godmode trends`, `godmode minimality`, `godmode assurance`, `godmode trust`, `godmode selftest`.

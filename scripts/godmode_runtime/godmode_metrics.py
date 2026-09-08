@@ -239,7 +239,7 @@ def _duplicates_and_regressions(
             pairs = atlas.duplicates()
             duplicates = (float(len(pairs)),
                           f"{len(pairs)} near-duplicate pairs across {len(atlas.symbols)} symbols")
-    except Exception:  # pragma: no cover - an unbuildable atlas measures nothing
+    except Exception:  # pragma: no cover - an unbuildable atlas measures nothing  # godmode: swallow-ok: pragma: no cover - an unbuildable atlas measures nothing
         pass
 
     regressions: tuple[float | None, str] = (None, "no protected fixes recorded")
@@ -719,7 +719,7 @@ def next_actions(archive: Chronicle, project: Path | None = None,
                 f"resolve scored claim {record['sequence']} "
                 f"('{str(record.get('subject', ''))[:60]}'): `godmode claim "
                 f"--resolve {record['sequence']} --outcome held|failed`")
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
         pass
     try:
         census = utilization(archive, project)
@@ -739,7 +739,7 @@ def next_actions(archive: Chronicle, project: Path | None = None,
                         f"run `godmode absorb {path}` so the ledger reads it")
             if verb:
                 actions.append(f"{name} demanded and never fired - {verb}")
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
         pass
     return actions[:limit]
 

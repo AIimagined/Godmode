@@ -28,6 +28,34 @@
           }
         ]
       }
+    ],
+    "AfterTool": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "name": "godmode-post-edit",
+            "type": "command",
+            "command": "${extensionPath}/hooks/run-hook.cmd godmode_post_edit.py",
+            "timeout": 5000,
+            "description": "Godmode post-edit quality and impact findings."
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "godmode-stop-notices",
+            "type": "command",
+            "command": "${extensionPath}/hooks/run-hook.cmd godmode_session_hook.py stop",
+            "timeout": 10000,
+            "description": "Godmode stop notices (advisory: Gemini cannot block a reply)."
+          }
+        ]
+      }
     ]
   }
 }

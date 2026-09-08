@@ -711,6 +711,10 @@ _OPERATOR_FIELDS = {
 
 def cmd_operator(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     """S21-06: typed operator profile, portable, with no personal name anywhere."""
+    if getattr(args, "policy", False):
+        # Obligation 10274: which layer decided each authorization key.
+        from .godmode_sentinel import explain_policy
+        return CommandResult(explain_policy(runtime.archive))
     path = Path(runtime.anchor.project_root) / OPERATOR_FILENAME
     if not path.is_file():
         return CommandResult(
@@ -876,6 +880,20 @@ def _load_timeline(transcript_path: str | None) -> dict[str, Any] | None:
 def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     if getattr(args, "text_flag", None) and not args.text:
         args.text = args.text_flag
+    if getattr(args, "stale", False):
+        # Grounded claims (obligation 10248): every claim whose recorded
+        # evidence version no longer matches the tree.
+        from .godmode_attest import stale_claims
+        _require_archive(runtime)
+        found = stale_claims(runtime.archive, Path(runtime.anchor.project_root))
+        return CommandResult({
+            "stale": len(found),
+            "claims": found,
+            "remedy": ("re-read the cited evidence and either re-record the claim "
+                       "(`godmode claim ... --cite file:<path>#L<a>-L<b>`) or "
+                       "resolve it superseded (`godmode claim --resolve <seq> "
+                       "--outcome superseded`)") if found else None,
+        }, exit_code=1 if found else 0)
     if getattr(args, "scan", False):
         # Public-surface enforcement: the sentences on README and its
         # siblings that are claims by definition, minus the ones whose line
@@ -1952,6 +1970,11 @@ def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             "last_proof": last_proof(runtime.archive, host),
             # CX-5: the five-level grade (was HARD/UNAVAILABLE only).
             "verdict": level,
+            # Feature reach per host (2026-09-09, obligation 10119): which
+            # hook-borne feature can fire on this host and why not.
+            "reach": __import__(
+                "godmode_runtime.godmode_reach", fromlist=["reach_table"]
+            ).reach_table().get(host, {}),
         }
         payload.update(_hooks_health_fields(runtime.archive, host, level))
         return CommandResult(payload)
@@ -2218,7 +2241,7 @@ def _atlas_query(args: argparse.Namespace, runtime: Runtime, atlas: Any) -> Comm
                 runtime.archive.append(
                     "action", "atlas-query",
                     {"verb": args.atlas_command}, evidence=[])
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
             pass
     if args.atlas_command == "save":
         return CommandResult(save_index(atlas, Path(runtime.anchor.project_root) / args.to))
@@ -2599,7 +2622,7 @@ def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
                 runtime.archive, args.subject, args.value)
             if rebuilt:
                 payload.setdefault("advisories", []).append(rebuilt)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
             pass
     return CommandResult(payload)
 
@@ -2769,6 +2792,11 @@ def _doctor_host(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         "archive_writable": writable,
         "archive_root": "<local-state>",
         "interception": grade,
+        # Reach, not wiring (2026-09-09, obligation 10119): the features
+        # that cannot fire on this host, and why, on day one.
+        "reach": __import__(
+            "godmode_runtime.godmode_reach", fromlist=["host_reach"]
+        ).host_reach(host),
         **({"project_hooks": project_hooks} if project_hooks is not None else {}),
         "issues": issues,
         "healthy": not issues,
@@ -2863,6 +2891,13 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
                 "godmode_runtime.godmode_metrics", fromlist=["oversight_pulse"]
             ).oversight_pulse(runtime.archive, records=records),
             "issues": issues,
+            # Verb reach (2026-09-09, obligation 10121): how many console
+            # verbs no skill line or hook nudge names. Ratcheted ceilings.
+            "verb_reach": __import__(
+                "godmode_runtime.godmode_verbreach", fromlist=["doctor_metric"]
+            ).doctor_metric(verbs=__import__(
+                "godmode_runtime.godmode_verbreach", fromlist=["parser_verbs"]
+            ).parser_verbs(_build_parser())),
             "deep_scan": args.deep,
             "network_used": False,
             "background_process": False,
@@ -4359,6 +4394,10 @@ def _build_parser() -> argparse.ArgumentParser:
     charter.add_argument("--reason", help="The reason text for --review-advisory")
 
     operator = sub.add_parser("operator", help="Validate the typed operator profile")
+    operator.add_argument("--policy", action="store_true",
+                          help="Explain the effective authorization policy: the "
+                               "operator layer above the project file, and which "
+                               "layer decided each key (tightest wins)")
     operator.set_defaults(handler=cmd_operator)
 
     lessons = sub.add_parser("lessons", help="The promote-or-retire pipeline over recorded lessons")
@@ -4555,6 +4594,9 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="Run every cmd: citation through the attested "
                             "checker first, so the claim stands on "
                             "attestations in one command")
+    claim.add_argument("--stale", action="store_true",
+                       help="List claims whose cited file evidence changed or "
+                            "vanished since they were recorded (grounded claims)")
     claim.add_argument("--timeout", type=int, default=900,
                        help="--verify only: seconds per check (default 900)")
     claim.add_argument("--refuted-by", dest="refuted_by", default=None,
@@ -5948,7 +5990,7 @@ def main(argv: list[str] | None = None) -> int:
         if reconfigure is not None:
             try:
                 reconfigure(encoding="utf-8", errors="replace")
-            except (OSError, ValueError):  # pragma: no cover - exotic stream
+            except (OSError, ValueError):  # pragma: no cover - exotic stream  # godmode: swallow-ok: pragma: no cover - exotic stream
                 pass
     # Output flags are global, so argparse would demand they precede the
     # subcommand. Requiring a remembered argument order is the same friction that

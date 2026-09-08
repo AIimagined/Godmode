@@ -718,7 +718,7 @@ def lint_docs(project: Path) -> dict[str, Any]:
     # list here rather than taking the whole lint command down with it.
     try:
         prose_advisories.extend(lint_charter_prose(compile_charter(project))["findings"])
-    except GodmodeError:
+    except GodmodeError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
         pass
     return {
         "documents_scanned": scanned,

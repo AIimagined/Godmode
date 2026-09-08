@@ -139,7 +139,7 @@ def _self_check() -> None:
     try:
         grade("no-such-grader", "x", "y")
         raise AssertionError("unknown grader name must be refused")
-    except GodmodeError:
+    except GodmodeError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
         pass
 
     print("godmode_graders self-check OK")

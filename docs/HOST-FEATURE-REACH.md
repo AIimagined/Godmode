@@ -161,3 +161,22 @@ work is measured against, and `hooks status` will carry the same matrix.
 7. Every verb nothing names gets a demand path (a skill line, a nudge, or
    retirement); the count of unnamed verbs is a doctor metric with a
    ceiling.
+
+## Status, 2026-09-09
+
+| Item | State |
+|---|---|
+| 1. Reach table in code | done: `scripts/godmode_runtime/godmode_reach.py`; `hooks status` carries the host's row, `doctor --host` names what cannot fire; a test holds every feature to a status on every host |
+| 2. Output-channel table | the per-host dialects stay in `render_decision` and `_advisory_body`; the reach table states each channel's status per feature |
+| 3. Wire the hosts' own events | done: Cursor `beforeSubmitPrompt`, `afterFileEdit`, `preCompact`, `sessionEnd`, `subagentStop`; Antigravity `PreInvocation`, `PostToolUse`; Gemini `AfterTool`, `AfterAgent`; Codex every shared event plus `PermissionRequest` in the project projection, with `commandWindows` for PowerShell |
+| 4. Live proof per host | Codex: proven 2026-09-09 (0.153.4, Windows 11, PowerShell 7) through `codex exec --enable hooks`: SessionStart, UserPromptSubmit, PreToolUse and SessionEnd fired, a forced push was refused and Codex reported "Command blocked by PreToolUse hook". Cursor and Gemini are not installed on the development machine; Antigravity's new events await a probe |
+| 5. Install-time reach report | done: `doctor --host <name>` returns `reach.cannot_fire` and `reach.partial` |
+| 6. Gate and census turn red | done: the preflight gate raises `host-reach` for every declared host with no interception proof on the archive; `doctor` reports `verb_reach` |
+| 7. Demand path per verb | done: 120 verbs, 100 named by a skill line, 34 by a nudge, 0 by nothing, 0 without a demand path; ceilings pinned at zero |
+
+The Codex column of the reach table now reads `yes` for the pre-tool gate,
+request recording and the auto checkpoint, `partial` for the rest with the
+reason stated per cell. Codex also gained an ask: its PreToolUse wire
+accepts `permissionDecision: ask`, and on `PermissionRequest` a godmode
+deny answers in Codex's own `{behavior: deny, message}` dialect while an
+ask or allow stays silent so Codex's approval flow decides.

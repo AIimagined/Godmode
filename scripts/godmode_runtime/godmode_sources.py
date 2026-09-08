@@ -61,7 +61,7 @@ def required_sources_view(project: Path, archive: Any) -> dict[str, Any]:
                     status = str((record.get("data") or {}).get("status") or "active")
                     exempt[_norm(subject[len(EXEMPTION_PREFIX):])] = (
                         status not in ("retired", "closed"))
-    except Exception:
+    except Exception:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
         pass
     exempted = [p for p in required if exempt.get(p)]
     unread = [p for p in required if p not in cited and not exempt.get(p)]
@@ -92,7 +92,7 @@ def adopt_from_docs(archive: Any, project: Path) -> dict[str, Any]:
             if subject.startswith(ADOPTED_PREFIX):
                 existing[subject[len(ADOPTED_PREFIX):]] = str(
                     (record.get("data") or {}).get("digest") or "")
-    except Exception:
+    except Exception:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
         pass
     adopted: list[str] = []
     unchanged: list[str] = []
@@ -195,7 +195,7 @@ def guard_pin_reason(project: Path, archive: Any, text: str,
                         f"lesson seq:{record.get('sequence')} "
                         f"({str(record.get('subject', ''))[:60]})")
                     break
-        except Exception:
+        except Exception:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
             pass
     if not pins:
         return ""

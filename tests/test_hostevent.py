@@ -887,7 +887,8 @@ class RenderDecisionTests(unittest.TestCase):
         # this asserts the fold, and that the caller's reason travels intact.
         reason = ('refused: unclassified-mutation (R3). stage a capability: '
                   '`godmode authorize stage --operation "..."`')
-        for host in ("grok", "codex", "gemini", "unknown"):
+        # Codex left this list on 2026-09-08: its PreToolUse wire accepts "ask".
+        for host in ("grok", "gemini", "unknown"):
             body, _code = he.render_decision(host, "PreToolUse", "ask", reason)
             self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "deny")
             self.assertEqual(body["hookSpecificOutput"]["permissionDecisionReason"], reason)

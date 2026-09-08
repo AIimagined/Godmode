@@ -1987,7 +1987,7 @@ def _canonical_path_text(path: Path) -> str:
     text = str(path)
     try:
         text = os.path.realpath(text)
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # godmode: swallow-ok: best-effort read: the failure is the non-event here
         pass
     return os.path.normcase(os.path.normpath(text))
 
@@ -2257,7 +2257,7 @@ def _shown_path(path: str, project_root: Path | None) -> str:
     if project_root is not None:
         try:
             text = Path(path).resolve().relative_to(Path(project_root).resolve()).as_posix()
-        except (OSError, ValueError):
+        except (OSError, ValueError):  # godmode: swallow-ok: best-effort read: the failure is the non-event here
             pass
     return text if len(text) <= 80 else "..." + text[-77:]
 
@@ -4164,18 +4164,27 @@ class CapabilityBroker:
             # exit the same way if entry was previously chronicled.
             _chronicle_observe_transition(self.archive, False)
             return {}
-        path = Path(root) / POLICY_FILENAME
+        # Two layers, tightest wins (obligation 10274, 2026-09-09): an
+        # operator-level file under the state home is the governance
+        # ceiling; the project file may only tighten it. Without an
+        # operator file the project policy is exactly what it always was.
+        # The observe transition is chronicled on the composed result, so
+        # deleting either file while under observe still records the exit.
+        project_policy = self._parse_policy_file(Path(root) / POLICY_FILENAME)
+        operator_policy = self._parse_policy_file(operator_policy_path())
+        if operator_policy is None:
+            policy = project_policy or {}
+        else:
+            policy = compose_policies(operator_policy, project_policy or {})
+        _chronicle_observe_transition(self.archive, policy.get("gate_mode") == GATE_MODE_OBSERVE)
+        return policy
+
+    def _parse_policy_file(self, path: Path) -> dict[str, Any] | None:
+        """One policy file, validated; None when absent."""
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
-            # The reviewer's live repro, in reverse: deleting (or renaming
-            # away) `.godmode-authorization-policy.json` while under observe
-            # is a live read of "no key at all," i.e. not observe - chronicle
-            # the exit here too, not only on the path that finds `raw` a
-            # well-formed dict, or restoring enforcement by deleting the file
-            # would leave the loosening's own exit unrecorded.
-            _chronicle_observe_transition(self.archive, False)
-            return {}
+            return None
         except json.JSONDecodeError as exc:
             # Broken JSON is not transient. Retrying only delays the same
             # refusal, so it refuses immediately.
@@ -4202,8 +4211,7 @@ class CapabilityBroker:
                     raw = json.loads(path.read_text(encoding="utf-8"))
                     break
                 except FileNotFoundError:
-                    _chronicle_observe_transition(self.archive, False)
-                    return {}
+                    return None
                 except (OSError, json.JSONDecodeError):
                     continue
             if raw is None:
@@ -4312,14 +4320,8 @@ class CapabilityBroker:
                     f"not {mode!r}"
                 )
             policy["gate_mode"] = GATE_MODE_OBSERVE
-        # CX final review F1, part 2: chronicle the transition (if any) the
-        # moment it is observed live - see `_chronicle_observe_transition`'s
-        # docstring for why this belongs in the reader itself rather than in
-        # any one caller (the hook's pre-tool path, session-start, `assess`,
-        # `apply_profile`'s regression coverage - every one of them reads
-        # through here, and the loosening must be visible regardless of
-        # which happens to read the file first).
-        _chronicle_observe_transition(self.archive, policy.get("gate_mode") == GATE_MODE_OBSERVE)
+        # The observe transition is chronicled by `_policy` on the composed
+        # result (CX final review F1, part 2), so every reader sees it.
         return policy
 
     def _classify(self, operation: str) -> dict[str, Any]:
@@ -4750,6 +4752,87 @@ class CapabilityBroker:
 # does on a malformed file - deliberately not swallowed here, so a caller
 # with different failure-mode needs (fail-safe vs. fail-loud) decides for
 # itself rather than this function silently picking one for every caller.
+OPERATOR_POLICY_FILENAME = "godmode-authorization-policy.json"
+_NAG_ORDER = {"quiet": 0, "standard": 1, "strict": 2}
+
+
+def operator_policy_path() -> Path:
+    """The operator-level policy: under GODMODE_STATE_HOME when set, else
+    the user profile's .godmode directory. Outside every repository, so
+    nothing the code under review can write reaches it."""
+    home = os.environ.get("GODMODE_STATE_HOME")
+    base = Path(home) if home else Path.home() / ".godmode"
+    return base / OPERATOR_POLICY_FILENAME
+
+
+def compose_policies(operator: dict[str, Any], project: dict[str, Any]) -> dict[str, Any]:
+    """Tightest wins, key by key. The project layer may add protected
+    categories, approvals, tool gates and ask_only categories, shorten the
+    TTL, raise the nag posture and keep the interpreter at ask; it cannot
+    remove, lengthen, lower, loosen, or switch the gate to observe unless
+    the operator layer already did."""
+    out: dict[str, Any] = {}
+    for key in ("password_required", "approval_required", "ask_only"):
+        merged = tuple(dict.fromkeys(list(operator.get(key, ())) + list(project.get(key, ()))))
+        if merged:
+            out[key] = merged
+    ttls = [v for v in (operator.get("capability_ttl_seconds"),
+                        project.get("capability_ttl_seconds")) if v is not None]
+    if ttls:
+        out["capability_ttl_seconds"] = min(ttls)
+    postures = [v for v in (operator.get("nag_posture"), project.get("nag_posture")) if v]
+    if postures:
+        out["nag_posture"] = max(postures, key=lambda v: _NAG_ORDER.get(v, 1))
+    gates: dict[str, str] = dict(operator.get("tool_gates", {}))
+    for tool, verdict in (project.get("tool_gates") or {}).items():
+        gates[tool] = "deny" if "deny" in (verdict, gates.get(tool)) else verdict
+    if gates:
+        out["tool_gates"] = gates
+    inlines = [v for v in (operator.get("inline_interpreter"),
+                           project.get("inline_interpreter")) if v]
+    if inlines:
+        out["inline_interpreter"] = "ask" if "ask" in inlines else "scan"
+    if (operator.get("gate_mode") == GATE_MODE_OBSERVE
+            and project.get("gate_mode") == GATE_MODE_OBSERVE):
+        out["gate_mode"] = GATE_MODE_OBSERVE
+    return out
+
+
+def explain_policy(archive: Any) -> dict[str, Any]:
+    """Which layer decided each effective key (`operator --policy`)."""
+    broker = CapabilityBroker(archive)
+    anchor = getattr(archive, "anchor", None)
+    root = getattr(anchor, "project_root", None)
+    project_path = Path(root) / POLICY_FILENAME if root else None
+    operator_path = operator_policy_path()
+    project = (broker._parse_policy_file(project_path) if project_path else None) or {}  # noqa: SLF001
+    operator = broker._parse_policy_file(operator_path)  # noqa: SLF001
+    effective = broker._policy()  # noqa: SLF001
+    keys = []
+    for key, value in sorted(effective.items()):
+        in_op = operator is not None and key in operator
+        in_pr = key in project
+        if in_op and in_pr:
+            op_same = operator.get(key) == value
+            pr_same = project.get(key) == value
+            decided = "operator" if op_same and not pr_same else (
+                "project" if pr_same and not op_same else "both")
+        elif in_op:
+            decided = "operator"
+        else:
+            decided = "project"
+        keys.append({"key": key, "value": value, "decided_by": decided})
+    return {
+        "layers": {
+            "operator": {"path": str(operator_path), "present": operator is not None},
+            "project": {"path": str(project_path) if project_path else None,
+                        "present": bool(project)},
+        },
+        "rule": "tightest wins: the project layer may only tighten the operator ceiling",
+        "keys": keys,
+    }
+
+
 def local_authorization_policy(archive: Any) -> dict[str, Any]:
     return CapabilityBroker(archive)._policy()  # noqa: SLF001
 

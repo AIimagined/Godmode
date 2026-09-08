@@ -78,3 +78,15 @@ Read [godmode-evidence-cycle.md](references/godmode-evidence-cycle.md) for the a
 record and completion checklist.
 
 Before recording the closing lesson, contrast the failed attempt with the nearest succeeding one - the difference between the two trajectories, not the failure alone, is what generalizes into a guard.
+
+## Verbs at the moment of demand
+
+Each line names the one verb for the situation; run it then, not after.
+
+- The same failure again: `godmode recurrences` lists repeated commands and failures before a third attempt; `godmode error-pattern` matches the failure text against declared patterns.
+- A hypothesis to test: `godmode experiment` records the setup and outcome; `godmode forecast` records the prediction before the run so the result can refute it.
+- Two states to compare: `godmode differential` records both before the next edit; `godmode replay` re-reads a recorded run; `godmode inspect <seq>` opens one record in full.
+- A guard that must be proven: `godmode plant` breaks the target and shows the guard fails; `godmode fuzz` drives the parser with malformed inputs; `godmode scenarios` runs the recorded scenario suite against the current tree.
+- Where a change reaches: `godmode topology` maps the call structure, `godmode explain-context` says why a file is in context, `godmode drift` names what moved since the last inventory.
+- Something silently swallowing errors: `godmode swallow` lists the handlers and holds the committed ceiling.
+- A slow path: `godmode benchmark` times it cold, and `godmode watchdog` bounds a run that may not return; `godmode watch` follows a file or log while the run is live.

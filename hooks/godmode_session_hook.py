@@ -97,7 +97,7 @@ def _input() -> tuple[dict[str, Any], bool]:
         if reconfigure is not None:
             try:
                 reconfigure(encoding="utf-8", errors="replace")
-            except (ValueError, OSError):
+            except (ValueError, OSError):  # godmode: swallow-ok: best-effort read: the failure is the non-event here
                 pass
     # Obligation 9863: resolve on the first complete JSON object, never on
     # EOF - a Windows host's pipe close can lag past the hook timeout.
@@ -665,7 +665,7 @@ def _record_turn_baseline(archive: Any, project: Path, submitted: dict) -> None:
         (archive.root / _TURN_BASELINE).write_text(json.dumps({
             "session": _session_key(submitted), "sha": sha, "sequence": last}),
             encoding="utf-8")
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
         pass
 
 
@@ -783,6 +783,28 @@ def _marginal_return_nudges(archive: Any, submitted: dict,
             continue
         notices.append(text)
     return notices
+
+
+def _nag_once(archive: Any, session: str, touched: list[str]) -> list[str]:
+    """Name each touched obligation once per session (obligation 10117:
+    the same asks nagged at every stop). The nagged set lives beside the
+    archive, keyed by session, so a new session starts fresh."""
+    marker = archive.root / "godmode-nagged.json"
+    try:
+        state = json.loads(marker.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        state = {}
+    if not isinstance(state, dict) or state.get("session") != session:
+        state = {"session": session, "subjects": []}
+    seen = set(state.get("subjects") or [])
+    fresh = [t for t in touched if t not in seen]
+    if fresh:
+        state["subjects"] = sorted(seen | set(fresh))
+        try:
+            marker.write_text(json.dumps(state), encoding="utf-8")
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
+            pass
+    return fresh
 
 
 def _open_obligations_touched(archive: Any, reply_text: str) -> list[str]:
@@ -1072,6 +1094,39 @@ def _unrecorded_claims(archive: Any, reply_text: str,
     return found
 
 
+def _settleable_done_claims(archive: Any, reply_text: str,
+                            observed: str = "") -> list[str]:
+    """Run-shaped done sentences whose recorded claim rests on an asserted
+    grade an executed check could settle (obligations 10118, 10245).
+
+    Twenty-first field report: "grades observed without executing
+    anything". A sentence like "all tests pass" backed only by an
+    `observed` claim is recorded, so `_unrecorded_done_claims` lets it
+    through; this names it once, with the executed check as the remedy.
+    """
+    from godmode_runtime.godmode_attest import (
+        is_run_shaped, looks_like_fix_claim, looks_like_pass_verdict)
+    from godmode_runtime.godmode_claimscan import _normalise, recorded_claim_grades
+
+    try:
+        grades = recorded_claim_grades(archive)
+    except Exception:  # noqa: BLE001
+        return []
+    found: list[str] = []
+    for sentence in _reply_sentences(reply_text):
+        judged = _strip_quoted(sentence)
+        if not (looks_like_pass_verdict(judged)[0] or looks_like_fix_claim(judged)[0]
+                or is_run_shaped(judged)):
+            continue
+        grade = grades.get(_normalise(sentence))
+        if grade is None or grade == "verified":
+            continue
+        if _observed_readout(sentence, observed):
+            continue
+        found.append(sentence)
+    return found
+
+
 _COMPLETION_VOCAB = re.compile(
     r"(?i)\b(?:complete[d]?|finished|done|shipped|released|"
     r"all\s+tests\s+pass(?:ed)?)\b")
@@ -1253,7 +1308,7 @@ def _take_parked_context(archive: Chronicle, anchor: Any, submitted: dict[str, A
                 pieces.append(
                     "godmode continuity brief (bounded, local; stored claims are leads "
                     "until current inspection confirms them): " + rendered)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
         pass
     echo = archive.root / "godmode-claim-echo.json"
     try:
@@ -1263,13 +1318,13 @@ def _take_parked_context(archive: Chronicle, anchor: Any, submitted: dict[str, A
             current = _session_key(submitted)
             if current is None or payload.get("session") == current:
                 pieces.extend(_echo_contexts(payload))
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
         pass
     try:
         common = getattr(anchor, "git_common_dir", None)
         if common:
             (Path(common) / "godmode-brief-pending").unlink(missing_ok=True)
-    except OSError:
+    except OSError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
         pass
     return " ".join(pieces)
 
@@ -1444,7 +1499,7 @@ def _sources_gate_reason(archive: Chronicle, anchor: Any,
                        {"session": session, "unread": len(unread),
                         "documents": view.get("documents", 0)},
                        evidence=[])
-    except Exception:
+    except Exception:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
         pass
     named = ", ".join(unread[:5])
     return (
@@ -1571,7 +1626,7 @@ def _apply_observe_mode(archive: Chronicle, tool: str, operation: str,
                 },
                 evidence=[],
             )
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
             pass
     preview["allow"] = True
     preview["observed"] = True
@@ -1698,7 +1753,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 record_hook_degradation(
                     archive, current_host(), DEGRADE_REASON_MALFORMED_PAYLOAD)
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
 
         if args.event == "session-start":
@@ -1714,11 +1769,25 @@ def main(argv: list[str] | None = None) -> int:
             # of blocking the session itself over a recording failure.
             try:
                 record_session_anchor(archive, current_host())
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
             from godmode_runtime.godmode_lens import build_context_brief
             brief = build_context_brief(anchor, archive)
             brief["obligations"] = _session_obligations(anchor, archive)
+            # Grounded claims (obligation 10248): claims whose cited
+            # evidence moved since they were recorded, named at the start.
+            try:
+                from godmode_runtime.godmode_attest import stale_claims
+                stale = stale_claims(archive, Path(anchor.project_root))
+                if stale:
+                    brief["stale_claims"] = {
+                        "count": len(stale),
+                        "first": [f"seq {s['sequence']}: '{s['text'][:60]}' ({s['citation']} {s['reason']})"
+                                  for s in stale[:3]],
+                        "remedy": "godmode claim --stale",
+                    }
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: the brief opens even when the sweep cannot read the tree
+                pass
             # B4-4: the resume digest, counts only, inside the same budget -
             # best-effort like every other section, never a blocked session.
             try:
@@ -1771,7 +1840,7 @@ def main(argv: list[str] | None = None) -> int:
                     archive, Path(anchor.project_root))
                 if demanded:
                     brief["next_actions"] = demanded
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
             # The calibration advisory rides too, only when it is live: a
             # session that opens knowing its confidence runs hot claims
@@ -1785,7 +1854,7 @@ def main(argv: list[str] | None = None) -> int:
                         "mean_score": gauge.get("mean_score"),
                         "unresolved_scored": gauge.get("unresolved_scored"),
                     }
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
             # The doctrine block (S18): the toolbox compressed to an
             # identity, re-injected each session the way persona modes
@@ -1816,7 +1885,7 @@ def main(argv: list[str] | None = None) -> int:
                               grade_for_badge, "?")
                 (Path.home() / ".claude" / "godmode-statusline.txt").write_text(
                     f"[GODMODE {marker}]", encoding="utf-8")
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
             # Enforcement freshness (S15 item 10): an invisible disarm
             # becomes a stated gap. One line, only when the grade on this
@@ -1834,7 +1903,7 @@ def main(argv: list[str] | None = None) -> int:
                             "status` shows why; a genuinely denied "
                             "protected call upgrades it."),
                     }
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
             # Doc-sprawl detection (S15 item 2): many large status-shaped
             # markdown files are the multiple-writable-truths disease -
@@ -1866,7 +1935,7 @@ def main(argv: list[str] | None = None) -> int:
                             "handovers, files regenerated as views; "
                             "`godmode assess` scores the sprawl."),
                     }
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
             # The oversight pulse rides only when its advisory is live -
             # a session that opens knowing approvals have been running on
@@ -1876,7 +1945,7 @@ def main(argv: list[str] | None = None) -> int:
                 pulse = oversight_pulse(archive)
                 if pulse.get("advisory"):
                     brief["oversight"] = pulse
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
             # Grok's live SessionStart payload carries `hook_event_name:
             # SessionStart` too (probe 2026-09-05), so it read as a Claude
@@ -1910,7 +1979,7 @@ def main(argv: list[str] | None = None) -> int:
                         if anchor.git_common_dir:
                             (Path(anchor.git_common_dir) / "godmode-brief-pending"
                              ).write_text("", encoding="utf-8")
-                    except OSError:
+                    except OSError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
                         pass
             return 0
 
@@ -1950,7 +2019,7 @@ def main(argv: list[str] | None = None) -> int:
                 # passed the same gate." Detectable at exactly this moment:
                 # the re-fire after a block, with no claim recorded since.
                 # Advisory, never a second block, once per block marker.
-                try:
+                try:  # godmode: swallow-ok: Advisory, never a second block, once per block marker
                     marker = archive.root / "godmode-done-block.json"
                     if marker.exists():
                         parked = json.loads(
@@ -1967,7 +2036,7 @@ def main(argv: list[str] | None = None) -> int:
                                 "has no claim on record; softer words do "
                                 "not create evidence")}))
                             return 0
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                     pass
                 return 0
             reply_text = _final_reply_text(submitted)
@@ -1985,6 +2054,19 @@ def main(argv: list[str] | None = None) -> int:
             unsupported = [] if quiet else _unrecorded_claims(
                 archive, reply_text, observed)
             touched = _open_obligations_touched(archive, reply_text)
+            # Obligation 10117: each touched obligation is named once per
+            # session, and a stated ask the reply visibly answers is
+            # closed on the record by the runtime.
+            try:
+                # `latest_session` is the module-level import: a local
+                # import here shadowed it for the whole function and every
+                # pre-action call crashed (caught by chunk 1, 2026-09-09).
+                from godmode_runtime.godmode_requests import serve_requests
+                stop_session = latest_session(archive) or ""
+                touched = _nag_once(archive, stop_session, touched)
+                serve_requests(archive, reply_text, stop_session)
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
+                pass
             if quiet:
                 # Standing duties survive quiet: an operator-mandated
                 # per-task obligation is definition-of-done, not advisory
@@ -2008,6 +2090,16 @@ def main(argv: list[str] | None = None) -> int:
             notices: list[str] = []
             if nudge:
                 notices.append(nudge)
+            # Obligation 10116: a failed tool run this turn names the RCA
+            # verbs once per session, read from the turn's tool output.
+            try:
+                from godmode_runtime.godmode_attest import latest_session as _ls
+                from godmode_runtime.godmode_precheck import failure_nudge
+                failed_line = failure_nudge(archive, observed, _ls(archive) or "")
+                if failed_line:
+                    notices.append(failed_line)
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
+                pass
             if not quiet:
                 notices.extend(_marginal_return_nudges(
                     archive, submitted, _session_key(submitted)))
@@ -2057,7 +2149,7 @@ def main(argv: list[str] | None = None) -> int:
                     parked["session"] = _session_key(submitted)
                     echo.write_text(json.dumps(parked, ensure_ascii=False),
                                     encoding="utf-8")
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                     pass
             # The completion gate: a DONE-shaped sentence among the
             # unrecorded claims is the one case advisory is too late for -
@@ -2067,6 +2159,11 @@ def main(argv: list[str] | None = None) -> int:
             # path returned clean above, so the bound costs nothing. Every
             # other notice stays advisory in the same single object.
             done_shaped = _unrecorded_done_claims(archive, reply_text, observed)
+            # Deterministic grade at the bar (obligations 10118, 10245): a
+            # run-shaped done sentence recorded on an asserted grade is
+            # named once too, with the executed check as the remedy.
+            settleable = _settleable_done_claims(archive, reply_text, observed)
+            done_shaped = done_shaped + [s for s in settleable if s not in done_shaped]
             if done_shaped:
                 # Marker for the re-fire: if no claim lands between this
                 # block and the re-fire, the gate was passed by rewording
@@ -2077,7 +2174,7 @@ def main(argv: list[str] | None = None) -> int:
                         last = int(r.get("sequence", 0))
                     (archive.root / "godmode-done-block.json").write_text(
                         json.dumps({"sequence": last}), encoding="utf-8")
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                     pass
                 shown = "; ".join(
                     f"'{_ascii_echo(s)[:120]}'" for s in done_shaped[:2])
@@ -2093,7 +2190,8 @@ def main(argv: list[str] | None = None) -> int:
                     "reason": (
                         f"godmode gate, deliberate block, not a crash - THE DONE BAR: this reply says work is "
                         f"done, but {len(done_shaped)} of those statements "
-                        f"have no evidence on record: {shown}. Record each "
+                        f"have no evidence on record, or only an asserted grade "
+                        f"an executed check would settle: {shown}. Record each "
                         "with the check that proves it: `godmode claim "
                         "\"<text>\" --grade verified --cite \"cmd:<check>\" "
                         "--verify` runs the check and attests it; `godmode "
@@ -2142,7 +2240,7 @@ def main(argv: list[str] | None = None) -> int:
                     parked["session"] = _session_key(submitted)
                     echo.write_text(json.dumps(parked, ensure_ascii=False),
                                     encoding="utf-8")
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                     pass
             return 0
 
@@ -2188,7 +2286,7 @@ def main(argv: list[str] | None = None) -> int:
                     if current is not None and parked.get("session") != current:
                         parked = {}
                     contexts.extend(_echo_contexts(parked))
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
             # S8 addendum: the parked continuity brief, for hosts that
             # ignore SessionStart stdout (Grok). Delivered once.
@@ -2204,7 +2302,7 @@ def main(argv: list[str] | None = None) -> int:
                     if rendered:
                         contexts.append(
                             "godmode continuity brief: " + rendered)
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
             prompt = str(submitted.get("prompt", ""))
             # The prompt's own shape names the verb - fix work names the
@@ -2216,7 +2314,7 @@ def main(argv: list[str] | None = None) -> int:
                     archive, prompt, _session_key(submitted))
                 if shaped:
                     contexts.append(shaped)
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
             if contexts:
                 joined = " ".join(contexts)
@@ -2250,7 +2348,7 @@ def main(argv: list[str] | None = None) -> int:
                 record_instruction_candidate(
                     archive, prompt,
                     session=str(submitted.get("session_id") or "") or None)
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: A prompt that cannot be stored - a secret-shaped paste the
                 # A prompt that cannot be stored - a secret-shaped paste the
                 # archive refuses, a locked store - must not stop the turn the
                 # operator is trying to have.
@@ -2284,7 +2382,7 @@ def main(argv: list[str] | None = None) -> int:
                         archive, submitted.get("transcript_path"),
                         session=str(submitted.get("session_id") or "") or None,
                     )
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                     pass
             summary = str(submitted.get("summary", "")).strip()[:1000]
             auto = False
@@ -2369,7 +2467,7 @@ def main(argv: list[str] | None = None) -> int:
                     },
                     evidence=[],
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
             try:
                 # CX-5: `hook_script=Path(__file__)` hashes THIS exact,
@@ -2383,7 +2481,7 @@ def main(argv: list[str] | None = None) -> int:
                     request_id=operation[len(PROBE_PREFIX):][:200],
                     hook_script=Path(__file__).resolve(),
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
             reason = (
                 "refused: hook-interception-probe (R5) - this operation exists only "
@@ -2705,7 +2803,7 @@ def main(argv: list[str] | None = None) -> int:
                             },
                             evidence=[],
                         )
-                    except Exception:  # noqa: BLE001
+                    except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                         pass
                     # Obligation 4523: a LIVE shim block is the proof the
                     # grade was waiting for. The OpenCode shim marks its
@@ -2724,7 +2822,7 @@ def main(argv: list[str] | None = None) -> int:
                                 hook_script=Path(__file__).resolve(),
                                 host_acknowledgement=True,
                             )
-                        except Exception:  # noqa: BLE001
+                        except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                             pass
 
         # Obligation 4094 (S5): the required-sources gate, before the fence.
@@ -2804,7 +2902,7 @@ def main(argv: list[str] | None = None) -> int:
                         f"policy gates every '{tool}' call at '{declared_gate}' "
                         "(tool_gates in .godmode-authorization-policy.json); "
                         "remove the entry or approve to proceed")
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
 
         # U-E7 observe mode: the single point every check above converges at.

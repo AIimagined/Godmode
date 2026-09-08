@@ -296,10 +296,12 @@ class CodexShellCommandTests(unittest.TestCase):
                 "permission_mode": "default", "turn_id": "01a0", "tool_name": "Bash",
                 "tool_use_id": "call_1", "tool_input": {"command": command}}
 
-    def test_an_unmodified_codex_bash_payload_never_yields_ask(self) -> None:
-        # Codex does not support "ask": it marks the hook failed and runs the
-        # command. So an R3/R4 verdict must land as "deny" here, the way the
-        # Grok contract already folds it.
+    def test_an_unmodified_codex_bash_payload_asks_where_claude_would(self) -> None:
+        # Until 2026-09-08 this asserted "deny": Codex was believed to mark a
+        # hook failed on any decision but allow/deny. Its PreToolUse wire
+        # (hooks/src/schema.rs, PreToolUsePermissionDecisionWire, read from
+        # openai/codex main) accepts "ask", so an R2/R3 verdict now reaches
+        # Codex as the ask it is, the way Claude's does.
         for command in ("rm -rf build", "git add -A"):
             with _hosted() as (project, state):
                 done = _run(self._codex_bash(command), project, state,
@@ -308,19 +310,20 @@ class CodexShellCommandTests(unittest.TestCase):
                 (done.stdout or "").strip(),
                 f"empty stdout; exit={done.returncode} stderr={done.stderr[:300]!r}")
             body = json.loads(done.stdout)
-            self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "deny",
+            self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "ask",
                              (command, body))
 
-    def test_turn_id_alone_is_enough_to_deny_rather_than_ask(self) -> None:
+    def test_turn_id_alone_is_enough_to_read_the_payload_as_codex(self) -> None:
         # Even without the env markers (a hook launched some other way), the
-        # payload's own Codex extension decides.
+        # payload's own Codex extension decides the dialect: an ask, not the
+        # deny a host without an ask surface would receive.
         with _hosted() as (project, state):
             done = _run(self._codex_bash("rm -rf build"), project, state)
         self.assertTrue(
             (done.stdout or "").strip(),
             f"empty stdout; exit={done.returncode} stderr={done.stderr[:300]!r}")
         body = json.loads(done.stdout)
-        self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "deny", body)
+        self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "ask", body)
 
     def test_a_force_push_reaches_r5(self) -> None:
         with _hosted() as (project, state):
@@ -359,7 +362,9 @@ class CodexApplyPatchTests(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout)
         self.assertEqual(done.stdout.strip(), "")
 
-    def test_a_target_outside_the_tree_reaches_the_scope_fence_and_denies(self) -> None:
+    def test_a_target_outside_the_tree_reaches_the_scope_fence_and_asks(self) -> None:
+        # The fence's verdict for a write outside the tree is an ask; Codex
+        # receives it unfolded since 2026-09-08 (its wire accepts "ask").
         with _hosted() as (project, state):
             outside = project.parent / "elsewhere.py"
             patch = f"*** Add File: {outside}\n+print(1)\n"
@@ -372,7 +377,7 @@ class CodexApplyPatchTests(unittest.TestCase):
             (done.stdout or "").strip(),
             f"empty stdout; exit={done.returncode} stderr={done.stderr[:300]!r}")
         body = json.loads(done.stdout)
-        self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "ask")
 
 
 class UnrecognizedToolAcrossHostsTests(unittest.TestCase):

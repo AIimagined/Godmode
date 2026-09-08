@@ -49,7 +49,7 @@ def declared_ceilings(project: Path) -> dict[str, int]:
             # taking the caller down with an AttributeError.
             if isinstance(declared, dict):
                 ceilings.update({k: int(v) for k, v in declared.items() if k in ceilings})
-        except (OSError, json.JSONDecodeError, ValueError, TypeError):
+        except (OSError, json.JSONDecodeError, ValueError, TypeError):  # godmode: swallow-ok: best-effort read: the failure is the non-event here
             pass
     return ceilings
 
@@ -196,7 +196,7 @@ def meter_tool_call(archive: Chronicle, session: str, tool: str) -> dict[str, An
     try:
         _meter_path(archive).write_text(
             json.dumps(meter, sort_keys=True), encoding="utf-8")
-    except OSError:
+    except OSError:  # godmode: swallow-ok: A meter that cannot be written must not stop the tool call it precedes
         # A meter that cannot be written must not stop the tool call it precedes.
         pass
     return read_meter(archive, session)

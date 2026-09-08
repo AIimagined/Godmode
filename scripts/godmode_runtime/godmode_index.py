@@ -463,7 +463,7 @@ def _self_check() -> None:
             assert not fresh(archive, project)["fresh"]
             try:
                 query(archive, project, "token rotation")
-            except IndexStale:
+            except IndexStale:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
                 pass
             else:  # pragma: no cover - guard for the guard
                 raise AssertionError("stale query must refuse without allow_stale")

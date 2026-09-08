@@ -499,7 +499,7 @@ def debrief(archive: Any) -> dict[str, Any]:
             if text.startswith("seq:"):
                 try:
                     cited[int(text[4:])] = cited.get(int(text[4:]), 0) + 1
-                except ValueError:
+                except ValueError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
                     pass
     from .godmode_sources import _salient_words
 

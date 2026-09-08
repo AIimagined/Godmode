@@ -49,6 +49,61 @@
           }
         ]
       }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/hooks/run-hook.cmd\" godmode_session_hook.py user-prompt",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "afterFileEdit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/hooks/run-hook.cmd\" godmode_post_edit.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "preCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/hooks/run-hook.cmd\" godmode_session_hook.py pre-compact",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "sessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/hooks/run-hook.cmd\" godmode_session_hook.py session-end",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "subagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/hooks/run-hook.cmd\" godmode_session_hook.py subagent-stop",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

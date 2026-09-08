@@ -68,6 +68,22 @@ def _recorded_claims(archive: Any) -> set[str]:
     return out
 
 
+def recorded_claim_grades(archive: Any) -> dict[str, str]:
+    """normalised claim text -> its latest recorded grade."""
+    if not archive.initialized():
+        return {}
+    grades: dict[str, str] = {}
+    for record in archive.read_events(verify=False):
+        if record.get("kind") != "claim":
+            continue
+        data = record.get("data") or {}
+        grade = str(data.get("grade") or "observed")
+        for text in (data.get("text"), record.get("subject")):
+            if isinstance(text, str) and text.strip():
+                grades[_normalise(text)] = grade
+    return grades
+
+
 def scan_public_surfaces(project: Path | str, archive: Any,
                          surfaces: tuple[str, ...] = PUBLIC_SURFACES) -> dict[str, Any]:
     project = Path(project)

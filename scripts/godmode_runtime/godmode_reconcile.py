@@ -211,7 +211,7 @@ def doc_triggers(project: Path) -> dict[str, list[str]]:
             declared = loaded.get("triggers") if isinstance(loaded, dict) else None
             if isinstance(declared, dict) and declared:
                 return {str(k): [str(v) for v in vs] for k, vs in declared.items()}
-        except (OSError, json.JSONDecodeError, TypeError):
+        except (OSError, json.JSONDecodeError, TypeError):  # godmode: swallow-ok: best-effort read: the failure is the non-event here
             pass
     return DEFAULT_DOC_TRIGGERS
 

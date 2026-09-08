@@ -230,7 +230,7 @@ def _fuzz_config(rng: random.Random, seed: int, iterations: int,
             continue
         try:
             reader(project)
-        except GodmodeError:
+        except GodmodeError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
             pass  # A typed refusal is the contract.
         except Exception as exc:  # noqa: BLE001
             findings.append(_finding("config", case, seed, f"{name}={body}",

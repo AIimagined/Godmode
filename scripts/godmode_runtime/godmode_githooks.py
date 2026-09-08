@@ -583,7 +583,7 @@ def _malformed_stdin_result(
             {"host": "git", "git_hook": hook_name[:40], "enforced": declared},
             evidence=[],
         )
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
         pass
     result: dict[str, Any] = {
         "git_hook": hook_name, "policy_declared": declared,
@@ -678,7 +678,7 @@ def _inspection_failed_result(
             {"host": "git", "git_hook": hook_name[:40], "enforced": declared},
             evidence=[],
         )
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
         pass
     result: dict[str, Any] = {
         "git_hook": hook_name, "policy_declared": declared,
@@ -810,7 +810,7 @@ def run_git_verify(archive: Any, *, host: str = "git", timeout: int = 30) -> dic
                 "action", SUBJECT_PROBE_FAILED,
                 {"host": host, "reason": "git-verify-failed"}, evidence=[],
             )
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
             pass
         return result
 

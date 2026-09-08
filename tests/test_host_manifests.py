@@ -705,24 +705,20 @@ class RegistrationReportAndInstallVerifyTests(unittest.TestCase):
             )
             result = bindings.install_verify(project, "codex", state_path=state)
         self.assertEqual(result["verdict"], "partial")
-        self.assertEqual(result["missing_events"], ["PreToolUse", "UserPromptSubmit"])
+        self.assertEqual(result["missing_events"],
+                         sorted(host_manifests.CODEX_HOOK_EVENTS - {"SessionStart"}))
         self.assertEqual(result["registered_events"], ["SessionStart"])
 
     def test_install_verify_passes_when_every_declared_event_registers(self) -> None:
         with _built_project() as project:
             state = project / "fake-codex-config.toml"
-            # All three CamelCase events Codex actually fires (Sprint 4:
-            # the snake_case pair is retired), each trusted AND enabled.
-            state.write_text(
-                '[hooks.state."godmode@x:hooks/hooks.json:SessionStart:0:0"]\n'
+            # Every CamelCase event the shared file carries (eight since
+            # 2026-09-08), each trusted AND enabled.
+            state.write_text("".join(
+                f'[hooks.state."godmode@x:hooks/hooks.json:{event}:0:0"]\n'
                 'trusted_hash = "sha256:deadbeef"\n'
                 "enabled = true\n\n"
-                '[hooks.state."godmode@x:hooks/hooks.json:PreToolUse:0:0"]\n'
-                'trusted_hash = "sha256:deadbeef"\n'
-                "enabled = true\n\n"
-                '[hooks.state."godmode@x:hooks/hooks.json:UserPromptSubmit:0:0"]\n'
-                'trusted_hash = "sha256:deadbeef"\n'
-                "enabled = true\n",
+                for event in sorted(host_manifests.CODEX_HOOK_EVENTS)),
                 encoding="utf-8",
             )
             result = bindings.install_verify(project, "codex", state_path=state)
@@ -830,7 +826,9 @@ class CodexProjectFallbackTests(unittest.TestCase):
         doc = codex_project_hooks(PLUGIN_ROOT)
         shared = json.loads(
             (PLUGIN_ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
-        self.assertEqual(sorted(doc["hooks"]), sorted(shared["hooks"]))
+        # The projection adds PermissionRequest, Codex's own ask surface.
+        self.assertEqual(sorted(doc["hooks"]),
+                         sorted(set(shared["hooks"]) | {"PermissionRequest"}))
         for blocks in doc["hooks"].values():
             for block in blocks:
                 for entry in block["hooks"]:

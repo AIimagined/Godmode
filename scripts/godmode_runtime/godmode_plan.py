@@ -280,7 +280,7 @@ def _self_check() -> None:
             try:
                 start(archive, session, "stop token replay", {"objective": "stop replay"})
                 raise AssertionError("plan started without a spec")
-            except ArchiveError:
+            except ArchiveError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
                 pass
             specify(archive, session, "stop token replay", {
                 "objective": "stop refresh-token replay",

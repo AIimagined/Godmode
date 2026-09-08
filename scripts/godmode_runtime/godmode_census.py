@@ -18,6 +18,9 @@ from __future__ import annotations
 from typing import Any
 
 from .godmode_chronicle import Chronicle
+from .godmode_verbreach import (  # noqa: F401 - the census's verb unit lives beside it
+    UNDEMANDED_VERB_CEILING, UNNAMED_VERB_CEILING, verb_reach,
+)
 
 # Record kinds a capability writes when it is genuinely used, with the surface
 # a reader would recognise. A kind absent from the archive means the surface was
