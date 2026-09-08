@@ -67,6 +67,32 @@ that host today, with the reason.
 | SubagentStop advisory | yes | **no** | yes | **no** | **no** | **no** |
 | Grok headless plugin hooks | n/a | n/a | **no**: plugin-scope hooks do not dispatch in `grok -p`; project-scope hooks do | n/a | n/a | n/a |
 
+## The verb layer
+
+The CLI has 120 top-level verbs. Measured on 2026-09-08 against the skills
+shipped with the plugin, the hook nudges, and the public docs:
+
+| Named by | Verbs |
+|---|---|
+| a shipped skill | 5 |
+| a hook nudge (prompt shape, done-bar, advisory) | 26 |
+| public docs only | 34 |
+| nothing | 57 |
+
+A verb nothing names is reachable on every host and fires on none: the model
+has no reason to run it. The utilization census (`godmode_census.py`) did not
+see this, because it counts record kinds, and every kind has been written at
+least once here; it reports "every tracked surface has been used" over the
+same archive. The unit it counts is the wrong one for this question.
+
+## Adapters without hooks
+
+| Host | Surface | Reach |
+|---|---|---|
+| OpenCode | a plugin shim on `tool.execute.before` (`adapters/opencode`) | the pre-tool gate only, relayed as a throw; no session, prompt, edit or stop feature can fire |
+| pi | an extension on `tool_call` (`adapters/pi`) | the pre-tool gate only; pi has no permission surface, so a deny is advisory |
+| Goose | an MCP server exposing four verbs as tools: `claim`, `checkpoint`, `status_remaining`, `resume` (`adapters/goose`) | those four verbs on demand; no hook-borne feature at all |
+
 ## Root causes
 
 1. **Claude's event set was the design baseline.** Each feature was built on
@@ -95,6 +121,19 @@ that host today, with the reason.
    an operator installing on Cursor is told the plugin is wired when most
    of it is dormant there.
 
+## Why twenty releases did not catch it
+
+Each release was shaped by a field report; a report names one symptom on one
+host; the fix repaired that channel on that host; the done-bar verified the
+fix's own evidence and passed it. The gap for the gate on Codex and Grok was
+recorded on 2026-08-29 (the Codex adapter's README and the capability
+coverage table both say so), and it was never generalised to the other
+hosts or the other features, because no artefact joined features to hosts
+and no gate turned "unverifiable" red. The census was green for the wrong
+unit. The maintainer closed obligations one at a time and did not run the
+same-class sweep after each; the Grok brief fix on 2026-09-07 proved the
+channel pattern and still repaired only that channel.
+
 ## The program
 
 Each item is an obligation on the record; this table is the contract the
@@ -116,3 +155,9 @@ work is measured against, and `hooks status` will carry the same matrix.
    Grok's are, before any host's row says "yes".
 5. An install-time reach report: `doctor --host <name>` names the features
    that cannot fire there and why, so an operator knows on day one.
+6. The preflight gate treats "unverifiable" on a declared host as a finding,
+   and the census counts verbs against what names them, so the two
+   instruments that were green over this gap turn red over the next one.
+7. Every verb nothing names gets a demand path (a skill line, a nudge, or
+   retirement); the count of unnamed verbs is a doctor metric with a
+   ceiling.
