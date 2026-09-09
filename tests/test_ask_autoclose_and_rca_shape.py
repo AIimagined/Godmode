@@ -25,32 +25,14 @@ sys.path.insert(0, str(PLUGIN_ROOT / "hooks"))
 from godmode_runtime.godmode_attest import open_session  # noqa: E402
 from godmode_runtime.godmode_precheck import failure_nudge, prompt_shape_nudge  # noqa: E402
 from godmode_runtime.godmode_requests import (  # noqa: E402
-    open_stated_requests, record_request, serve_requests,
+    open_stated_requests, record_request,
 )
 from test_godmode_runtime import isolated_project  # noqa: E402
 from godmode_session_hook import _nag_once  # noqa: E402
 
 
-class ServeRequestsTests(unittest.TestCase):
-    def test_a_reply_that_covers_the_ask_closes_it_on_the_record(self) -> None:
-        with isolated_project() as (project, _state, _anchor, archive):
-            archive.initialize()
-            session = open_session(archive, "t")
-            record_request(archive, "please rename the launcher directory variable", session=session)
-            self.assertEqual(len(open_stated_requests(archive.select(kind="request", limit=50))), 1)
-            served = serve_requests(archive, "Done: the launcher directory variable is renamed.", session)
-            self.assertEqual(len(served), 1)
-            self.assertEqual(open_stated_requests(archive.select(kind="request", limit=50)), [])
-            closure = archive.select(kind="request", limit=1)[-1]
-            self.assertEqual(closure["data"]["status"], "served")
-
-    def test_a_reply_that_does_not_cover_the_ask_leaves_it_open(self) -> None:
-        with isolated_project() as (project, _state, _anchor, archive):
-            archive.initialize()
-            session = open_session(archive, "t")
-            record_request(archive, "please rename the launcher directory variable", session=session)
-            self.assertEqual(serve_requests(archive, "Working on something else entirely.", session), [])
-            self.assertEqual(len(open_stated_requests(archive.select(kind="request", limit=50))), 1)
+# ServeRequestsTests removed 2026-09-09: the runtime no longer closes asks by
+# word overlap (field reports 23-25; see tests/test_field_reports_23_25.py).
 
 
 class NagOnceTests(unittest.TestCase):
@@ -75,13 +57,14 @@ class RcaShapeTests(unittest.TestCase):
             for verb in ("mistakes", "error-pattern", "incident", "differential", "verify"):
                 self.assertIn(verb, text)
 
-    def test_a_failed_tool_run_names_the_rca_verbs_once_per_session(self) -> None:
+    def test_a_failed_tool_run_names_the_record_once_per_session(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
             output = "Traceback (most recent call last):\n  File x\nValueError: boom\nexit 1"
             text = failure_nudge(archive, output, "s1")
             self.assertIsNotNone(text)
-            self.assertIn("error-pattern", text)
+            self.assertIn("attested check", text)
+            self.assertNotIn("`godmode error-pattern`", text)
             self.assertIsNone(failure_nudge(archive, output, "s1"))
             self.assertIsNone(failure_nudge(archive, "all good, exit 0", "s2"))
 

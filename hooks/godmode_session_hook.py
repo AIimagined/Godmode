@@ -807,7 +807,8 @@ def _nag_once(archive: Any, session: str, touched: list[str]) -> list[str]:
     return fresh
 
 
-def _open_obligations_touched(archive: Any, reply_text: str) -> list[str]:
+def _open_obligations_touched(archive: Any, reply_text: str,
+                              session_id: str | None = None) -> list[str]:
     """Open obligations whose vocabulary the turn's final text shares (S9,
     report 16 2026-08-29): an obligation recorded mid-session surfaced only
     at resume and session close - inert for the whole middle. The turn
@@ -871,6 +872,10 @@ def _open_obligations_touched(archive: Any, reply_text: str) -> list[str]:
         for record in open_stated_requests(
                 archive.select(kind="request", limit=200)):
             data = record.get("data") or {}
+            # Only asks stated in THIS host session ride the turn boundary;
+            # an ask from another session has no live turn to attach to.
+            if str(data.get("session") or "") != str(session_id or ""):
+                continue
             # Requests store no raw prompt text (privacy) - only a digest
             # and the extracted keywords, which are exactly the match
             # vocabulary this surface needs.
@@ -969,6 +974,12 @@ def _reply_sentences(reply_text: str) -> list[str]:
             continue
         line = stripped.lstrip("-*>").strip()
         if not line or "|" in line or line.count("·") >= 2:
+            continue
+        # A short line ending in a colon is a label for what follows, not
+        # a statement (field report 24: "Fix alternatives ranked:" armed
+        # the done-bar).
+        label = line.strip("*_ ")
+        if label.endswith(":") and len(label.split()) <= 8:
             continue
         for chunk in _SENTENCE_SPLIT.split(line):
             sentence = chunk.strip().strip("*_`").strip()
@@ -1088,7 +1099,10 @@ def _unrecorded_claims(archive: Any, reply_text: str,
     for sentence in _reply_sentences(reply_text):
         if _ATTRIBUTED_SPEECH.match(sentence.strip()):
             continue
-        if not is_claim(sentence):
+        # A quoted span is a mention, not this reply's assertion (field
+        # report 24: a reviewer's quoted numbers were flagged as claims) -
+        # the same rule the done-bar detector already applies.
+        if not is_claim(_strip_quoted(sentence)):
             continue
         if _normalise(sentence) in recorded:
             continue
@@ -1266,6 +1280,89 @@ def _advisory_body(host: str, event_name: str, text: str) -> dict[str, Any]:
         "systemMessage": text,
         "hookSpecificOutput": {"hookEventName": event_name, "additionalContext": text},
     }
+
+
+def _write_without_read_advisory(submitted: dict[str, Any], tool: str,
+                                 targets: list[str], project_root: Path) -> str | None:
+    """A Write that replaces a tracked file this session never read (field
+    report 26, the reporter's L-424: the previous contents were lost and
+    only the host's "updated" wording gave it away). Read from the host
+    transcript in memory, never stored; a new file has nothing to lose and
+    says nothing; a session with no transcript cannot be judged."""
+    if tool != "Write" or not targets:
+        return None
+    target = Path(str(targets[0]))
+    if not target.is_absolute():
+        target = Path(project_root) / target
+    if not target.is_file():
+        return None
+    transcript = submitted.get("transcript_path") or submitted.get("transcriptPath")
+    if not transcript:
+        return None
+    try:
+        lines = Path(str(transcript)).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    norm = str(target.resolve()).replace("\\", "/").lower()
+    base = target.name.lower()
+    for line in lines[-8000:]:
+        if base not in line.lower():
+            continue
+        try:
+            entry = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if entry.get("type") != "assistant":
+            continue
+        for part in (entry.get("message") or {}).get("content") or []:
+            if not isinstance(part, dict) or part.get("type") != "tool_use":
+                continue
+            data = part.get("input") or {}
+            if part.get("name") in ("Read", "Edit", "NotebookEdit", "Write"):
+                seen = str(data.get("file_path", "")).replace("\\", "/").lower()
+                if seen and (seen == norm or norm.endswith("/" + seen.lstrip("./"))
+                             or seen.endswith("/" + base) and seen.split("/")[-1] == base):
+                    return None
+            elif part.get("name") in ("Bash", "PowerShell") and base in str(data.get("command", "")).lower():
+                return None
+    from godmode_runtime.godmode_anchor import run_git
+    try:
+        rel = str(target.resolve().relative_to(Path(project_root).resolve())).replace("\\", "/")
+    except ValueError:
+        rel = target.name
+    if not (run_git(project_root, "ls-files", "--", rel) or "").strip():
+        return None
+    try:
+        count = sum(1 for _ in target.open(encoding="utf-8", errors="replace"))
+    except OSError:
+        count = 0
+    return (f"godmode: this Write replaces {rel} ({count} tracked line(s)) and this "
+            "session never read it - the contents being overwritten are not on "
+            "record; read it first, or change it with Edit so the diff is visible")
+
+
+def _observe_advisory_once(archive: Any, session: str | None, category: str,
+                           text: str | None) -> str | None:
+    """The observe-mode advisory for one category, once per session. Field
+    report 23: every `node -e` read carried the same opaque-payload warning,
+    fifteen times in one session; the refusal record still lands per call
+    (`observe --report` counts them), only the sentence is bounded. No
+    session key means no bound, so the advisory is delivered."""
+    if not text:
+        return None
+    if not session:
+        return text
+    try:
+        for record in archive.select(kind="action", limit=300):
+            data = record.get("data") or {}
+            if record.get("subject") == "observe-advisory" and \
+                    data.get("session") == session and data.get("category") == category:
+                return None
+        archive.append("action", "observe-advisory",
+                       {"session": session, "category": category})
+    except Exception:  # noqa: BLE001 - an unwritable receipt delivers rather than silences
+        return text
+    return text
 
 
 def _echo_contexts(parked: dict[str, Any]) -> list[str]:
@@ -2057,18 +2154,25 @@ def main(argv: list[str] | None = None) -> int:
             observed = _turn_tool_output(submitted)
             unsupported = [] if quiet else _unrecorded_claims(
                 archive, reply_text, observed)
-            touched = _open_obligations_touched(archive, reply_text)
+            # Field reports 23-25 (2026-09-09): the ask pool spanned every
+            # session the project ever had (86 open asks, up to 30 days
+            # old) and a bag-of-words match against a 90-word reply nagged
+            # on 34 of 42 real replies; only this session's own asks are a
+            # turn-boundary matter (0 of 42). Older asks stay reviewable
+            # at handover (`checkpoint --review`, session close).
+            touched = _open_obligations_touched(
+                archive, reply_text,
+                session_id=str(submitted.get("session_id") or "") or None)
             # Obligation 10117: each touched obligation is named once per
-            # session, and a stated ask the reply visibly answers is
-            # closed on the record by the runtime.
+            # session. The runtime no longer closes asks by word overlap:
+            # replayed on the reporter's session, that closure would have
+            # "served" an ask on 41 of 42 replies.
             try:
                 # `latest_session` is the module-level import: a local
                 # import here shadowed it for the whole function and every
                 # pre-action call crashed (caught by chunk 1, 2026-09-09).
-                from godmode_runtime.godmode_requests import serve_requests
                 stop_session = latest_session(archive) or ""
                 touched = _nag_once(archive, stop_session, touched)
-                serve_requests(archive, reply_text, stop_session)
             except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
             if quiet:
@@ -2099,7 +2203,8 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 from godmode_runtime.godmode_attest import latest_session as _ls
                 from godmode_runtime.godmode_precheck import failure_nudge
-                failed_line = failure_nudge(archive, observed, _ls(archive) or "")
+                failed_line = failure_nudge(archive, observed, _ls(archive) or "",
+                                            project=Path(anchor.project_root))
                 if failed_line:
                     notices.append(failed_line)
             except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
@@ -2315,7 +2420,8 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 from godmode_runtime.godmode_precheck import prompt_shape_nudge
                 shaped = prompt_shape_nudge(
-                    archive, prompt, _session_key(submitted))
+                    archive, prompt, _session_key(submitted),
+                    resume_doc=project_resume_doc(Path(anchor.project_root)))
                 if shaped:
                     contexts.append(shaped)
             except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
@@ -2977,7 +3083,18 @@ def main(argv: list[str] | None = None) -> int:
                             archive, operation, _session_key(submitted))
                     except Exception:  # noqa: BLE001
                         promotion = None
-                advisory = (preview.get("observe_advisory")
+                blind_write = None
+                try:
+                    blind_write = _write_without_read_advisory(
+                        submitted, tool, list(event.targets or []),
+                        Path(anchor.project_root))
+                except Exception:  # noqa: BLE001  # godmode: swallow-ok: an advisory never fails the call it rides
+                    blind_write = None
+                advisory = (blind_write
+                            or _observe_advisory_once(
+                                archive, _session_key(submitted),
+                                str(preview.get("category", "")),
+                                preview.get("observe_advisory"))
                             or evidence_pipe_advisory(operation)
                             or checkpoint_advisory
                             or promotion)

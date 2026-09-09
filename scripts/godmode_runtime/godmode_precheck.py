@@ -109,6 +109,10 @@ _OPEN_KINDS = frozenset({"obligation", "incident", "request"})
 _DISCHARGED = frozenset({"closed", "done", "discharged", "resolved", "complete",
                          "completed", "fixed", "refused"})
 
+# Seconds the precheck atlas walk may take before it answers with what it
+# has and says so. Field report 26: an unbounded build outlasted the suite.
+PRECHECK_ATLAS_BUDGET_SECONDS = 20.0
+
 _WORD = re.compile(r"[A-Za-z][A-Za-z0-9_]{2,}")
 _STOPWORDS = frozenset("""
 add the a an and or of to in on at is it this that for with from by as into
@@ -281,8 +285,13 @@ def precheck(project_root: Path | str, archive: Chronicle, task: str,
     symbols_examined = 0
     from .godmode_atlas import build as build_atlas
 
-    atlas = build_atlas(root)
-    searched.append(f"atlas symbols in {root.name or '.'}")
+    # Field report 26: `precheck --about` did not return in five minutes on
+    # a TypeScript tree whose full atlas build takes nine. A gate that
+    # outlasts the suite is not a gate: the build is bounded, and the bound
+    # is stated in `searched` so a partial map never reads as a full one.
+    atlas = build_atlas(root, budget_seconds=PRECHECK_ATLAS_BUDGET_SECONDS)
+    searched.append(f"atlas symbols in {root.name or '.'}"
+                    + (f" (bounded: {atlas.gap})" if getattr(atlas, "gap", None) else ""))
     for symbol in atlas.symbols:
         symbols_examined += 1
         name = str(getattr(symbol, "name", symbol))
@@ -623,10 +632,16 @@ _PROMPT_SHAPES = (
 
 
 def prompt_shape_nudge(archive: Chronicle, prompt: str,
-                       session: str | None) -> str | None:
+                       session: str | None,
+                       resume_doc: str | None = None) -> str | None:
     """One sentence when the prompt's shape names a verb, once per shape
     per session - the receipt contract `verify_promotion_advisory` uses,
-    keyed additionally by shape so fix and ship each get their one say."""
+    keyed additionally by shape so fix and ship each get their one say.
+
+    `resume_doc` is the project's own state document when it keeps one
+    (field report 23: `godmode resume` was pushed at a project whose
+    STATE.md already carried the resume); the resume shape then says
+    nothing."""
     if not prompt:
         return None
     matched = next(((name, text) for name, pattern, text in _PROMPT_SHAPES
@@ -634,6 +649,8 @@ def prompt_shape_nudge(archive: Chronicle, prompt: str,
     if not matched:
         return None
     shape, text = matched
+    if shape == "resume" and resume_doc:
+        return None
     if not session:
         return None
     key = session
@@ -660,10 +677,57 @@ _FAILURE_SIGNAL = re.compile(
     r"\bMemoryError\b|\bheap out of memory\b|\bENOMEM\b)")
 
 
+def changes_since_last_green(archive: Chronicle, project: Path | None) -> dict[str, Any]:
+    """What the record already knows about this tree: the newest attestation
+    that ran and carries a worktree head, its age, and every file changed
+    since that head (tracked diff plus untracked). Empty `project` or no git
+    gives the honest shape - `attested` None, `changed` from nothing."""
+    out: dict[str, Any] = {"attested": None, "head": None, "age_days": None,
+                           "changed": [], "prior_incidents": 0}
+    try:
+        for record in reversed(archive.select(kind="attestation", limit=200)):
+            data = record.get("data") or {}
+            head = (data.get("worktree") or {}).get("head")
+            if data.get("status") == "ran" and head:
+                out["attested"] = str(record.get("subject", ""))
+                out["head"] = str(head)
+                stamp = str(record.get("recorded_at", ""))[:19]
+                try:
+                    from datetime import datetime, timezone
+                    then = datetime.fromisoformat(stamp).replace(tzinfo=timezone.utc)
+                    out["age_days"] = round((datetime.now(timezone.utc) - then).total_seconds() / 86400, 1)
+                except ValueError:
+                    out["age_days"] = None  # an unparseable stamp is an unknown age, stated as such
+                break
+        out["prior_incidents"] = len(archive.select(kind="incident", limit=500))
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable archive reports nothing; this rides a hook that never raises into the host
+        return out
+    if project is None:
+        return out
+    from .godmode_anchor import run_git
+    changed: set[str] = set()
+    if out["head"]:
+        changed.update((run_git(project, "diff", "--name-only", out["head"]) or "").split())
+    else:
+        changed.update((run_git(project, "diff", "--name-only", "HEAD") or "").split())
+    for line in (run_git(project, "status", "--porcelain") or "").splitlines():
+        if line.startswith("??"):
+            changed.add(line[3:].strip())
+    out["changed"] = sorted(p for p in changed if p)[:200]
+    return out
+
+
+def _named_files(paths: list[str], cap: int = 4) -> str:
+    shown = ", ".join(paths[:cap])
+    return shown + (f" (+{len(paths) - cap} more)" if len(paths) > cap else "")
+
+
 def failure_nudge(archive: Chronicle, tool_output: str,
-                  session: str | None) -> str | None:
-    """One sentence, once per session, when a tool run failed and the RCA
-    verbs are the next move (obligation 10116). Read at Stop from the
+                  session: str | None, project: Path | None = None) -> str | None:
+    """One line, once per session, when a tool run failed: what the record
+    already knows about this tree, never a list of verbs to run (field
+    reports 21-25: a verb-naming line reached four sessions in 368
+    tracebacks and pointed at nothing when it did). Read at Stop from the
     turn's tool output, because PostToolUseFailure is not in the shared
     manifest every host reads."""
     if not tool_output or not session or not _FAILURE_SIGNAL.search(tool_output):
@@ -676,23 +740,28 @@ def failure_nudge(archive: Chronicle, tool_output: str,
     except Exception:  # noqa: BLE001
         return None
     if _MEMORY_KILL.search(tool_output):
-        # Field report 22: three memory kills in one session and nothing
-        # named them. A kill is not a bug in the code under test; it is a
-        # run that outgrew its box, and the next move is a smaller box.
+        # Field report 22: a kill is not a bug in the code under test; it
+        # is a run that outgrew its box, and the next move is a smaller box.
         return (
             "godmode: a tool run was killed for memory this turn (137/OOM) - "
-            "run the next attempt under `godmode watchdog` with a bound, "
-            "split the run (`--only`, a chunk of the suite, one target), and "
-            "record it once: `godmode incident --failure-class memory-kill "
-            "\"<what was running and how large>\"`; a kill that recurs "
-            "earns a ceiling in `godmode ceilings`, not another retry.")
-    return (
-        "godmode: a tool run failed this turn - before the next attempt, "
-        "`godmode error-pattern` matches the failure text against declared "
-        "patterns, `godmode mistakes` lists prior incidents of this class, "
-        "and `godmode incident --failure-class <class> \"<what happened>\"` "
-        "records it while the evidence is fresh; the fix's deciding check "
-        "goes through `godmode verify` so its outcome is attested.")
+            "the next attempt needs a bound (`godmode watchdog`) or a smaller "
+            "scope; a kill that recurs is a ceiling, not a retry (failure "
+            "class memory-kill).")
+    known = changes_since_last_green(archive, project)
+    changed = known["changed"]
+    if known["attested"]:
+        age = f"{known['age_days']} day(s) ago" if known["age_days"] is not None else "at an unknown time"
+        line = (f"godmode: a tool run failed this turn; last attested check "
+                f"'{known['attested']}' ran {age} at {known['head']}; "
+                f"{len(changed)} file(s) changed since"
+                + (f": {_named_files(changed)}" if changed else ""))
+    else:
+        line = ("godmode: a tool run failed this turn; no attested check on "
+                f"record for this tree; {len(changed)} uncommitted file(s)"
+                + (f": {_named_files(changed)}" if changed else ""))
+    if known["prior_incidents"]:
+        line += f"; {known['prior_incidents']} prior incident(s) on record"
+    return line + "."
 
 
 _MEMORY_KILL = re.compile(

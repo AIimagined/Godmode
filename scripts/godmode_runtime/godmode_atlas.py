@@ -734,8 +734,54 @@ def build(project: Path, suffixes: Iterable[str] | None = None,
             )
             if len(body) >= 40:
                 atlas.body_signatures[symbol.id] = _shingles(body)
+    _resolve_relative_imports(atlas)
     _link_documentation(project, atlas)
     return atlas
+
+
+# Suffixes a bare relative import may resolve to, by the importing file's own
+# family, in the order a bundler or interpreter would try them; "" first so an
+# explicit extension wins. A TypeScript file never imports a Python module,
+# so the family bound is what keeps a resolved edge honest.
+_JS_FAMILY = (".ts", ".tsx", ".js", ".mjs", ".cjs", ".jsx")
+_RESOLVE_SUFFIXES: dict[str, tuple[str, ...]] = {
+    **{suffix: ("",) + _JS_FAMILY for suffix in _JS_FAMILY},
+    ".py": ("", ".py"),
+}
+
+
+def _resolve_relative_imports(atlas: "Atlas") -> None:
+    """Point a generic `./x` or `../x` import at the scanned file it names.
+
+    Field report 26 (2026-09-09): on a TypeScript tree with 19,000 edges the
+    dependents query answered nothing, because every generic import edge
+    carried the raw specifier (`./providers`) as its target and `inferred`
+    as its evidence, and `affected` follows extracted edges to file paths.
+    The import line is literal and the file is on disk, so a specifier that
+    resolves to a scanned file becomes an extracted edge to that file; one
+    that does not resolve stays exactly as it was.
+    """
+    import posixpath
+
+    files = set(atlas.files)
+    resolved: list[Edge] = []
+    for edge in atlas.edges:
+        target = edge.target
+        spec = target[:-len("::<module>")] if target.endswith("::<module>") else ""
+        if edge.evidence != INFERRED or not spec.startswith("."):
+            resolved.append(edge)
+            continue
+        source_path = edge.source.split("::", 1)[0]
+        family = posixpath.splitext(source_path)[1].lower()
+        suffixes = _RESOLVE_SUFFIXES.get(family, ("", family) if family else ("",))
+        base = posixpath.normpath(posixpath.join(posixpath.dirname(source_path), spec))
+        hit = next((cand + suffix
+                    for cand in (base, base + "/index")
+                    for suffix in suffixes
+                    if cand + suffix in files), None)
+        resolved.append(Edge(edge.source, f"{hit}::<module>", edge.relation, EXTRACTED, edge.line)
+                        if hit else edge)
+    atlas.edges = resolved
 
 
 def _link_documentation(project: Path, atlas: Atlas) -> None:

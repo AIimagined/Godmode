@@ -2262,7 +2262,8 @@ def _atlas_query(args: argparse.Namespace, runtime: Runtime, atlas: Any) -> Comm
         # the tree by default is what makes this runnable at the moment it
         # matters - nobody thinks to list what they just edited, which is the
         # same reason `affected` stayed a query nobody ran.
-        changed = list(args.changed) if args.changed else _working_tree_changes(
+        listed = list(args.changed or []) + list(getattr(args, "changed_positional", None) or [])
+        changed = listed if listed else _working_tree_changes(
             Path(runtime.anchor.project_root))
         report = unfollowed_dependents(atlas, changed, depth=args.depth)
         return CommandResult(report, exit_code=1 if report["findings"] else 0)
@@ -2515,6 +2516,7 @@ def cmd_checkpoint(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # What was learned, beside what was verified: an incident newer than the
     # newest lesson is a failure that taught nothing on the record yet.
     # Advisory - the checkpoint itself is already written above.
+    advisories: list[str] = []
     last_incident = max(
         (r["sequence"] for r in runtime.archive.select(kind="incident", limit=500)),
         default=None)
@@ -2523,12 +2525,49 @@ def cmd_checkpoint(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             (r["sequence"] for r in runtime.archive.select(kind="lesson", limit=500)),
             default=0)
         if last_incident > last_lesson:
-            result.payload["advisories"] = [
+            advisories.append(
                 f"incident seq:{last_incident} postdates the newest lesson; "
                 "if it taught something, record it now "
-                "(godmode remember --kind lesson) while the evidence is fresh"
-            ]
+                "(godmode remember --kind lesson) while the evidence is fresh")
+    # Field reports 23-25: a 22-file regression sat two days under
+    # checkpoints whose status said "code-green" with no evidence, while
+    # the newest attestation was eight days old. Both facts were already
+    # on the record; nothing said them. Named here from the data alone.
+    try:
+        from .godmode_precheck import changes_since_last_green, _named_files
+        known = changes_since_last_green(runtime.archive, Path(runtime.anchor.project_root))
+        if known["changed"]:
+            cited = " ".join(
+                " ".join(str(e) for e in (r.get("evidence") or []))
+                for r in runtime.archive.select(limit=500)
+                if r.get("kind") in ("attestation", "claim"))
+            unnamed = [p for p in known["changed"] if p not in cited]
+            if unnamed:
+                if known["attested"]:
+                    age = (f"{known['age_days']} day(s) ago"
+                           if known["age_days"] is not None else "at an unknown time")
+                    advisories.append(
+                        f"{len(unnamed)} file(s) changed since the last attested check "
+                        f"'{known['attested']}' ({age}, {known['head']}) and named by no "
+                        f"attestation or claim: {_named_files(unnamed)}")
+                else:
+                    advisories.append(
+                        f"no attested check on record for this tree; {len(unnamed)} "
+                        f"changed file(s) named by no attestation or claim: "
+                        f"{_named_files(unnamed)}")
+        if _GREEN_WORDS.search(str(args.status or "")) and not args.evidence:
+            advisories.append(
+                f"status says '{args.status}' with no evidence; the run this "
+                "status describes is attested by `godmode verify <name> "
+                "--command \"<check>\"`, and only that record can be re-run")
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: an advisory never fails the checkpoint it rides
+        pass
+    if advisories:
+        result.payload["advisories"] = advisories
     return result
+
+
+_GREEN_WORDS = re.compile(r"(?i)\b(?:green|pass(?:ed|es|ing)?|verified|all\s+tests|suite\s+\d)\b")
 
 
 def cmd_checklist_update(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -5137,6 +5176,11 @@ def _build_parser() -> argparse.ArgumentParser:
     atlas_load.set_defaults(handler=cmd_atlas)
     atlas_closure = atlas_sub.add_parser(
         "closure", help="Dependents of what changed that were not themselves changed")
+    # Field report 26: the fix-shaped nudge says `godmode atlas closure
+    # <files>` and the parser only took `--changed`; the documented shape
+    # was refused. One meaning, two spellings, like the record verbs.
+    atlas_closure.add_argument("changed_positional", nargs="*", default=None,
+                               help="Changed paths (alias for --changed)")
     atlas_closure.add_argument("--changed", nargs="+", default=None,
                                help="Changed paths; defaults to the working tree")
     atlas_closure.add_argument("--depth", type=int, default=1)

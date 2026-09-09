@@ -195,8 +195,11 @@ class RequestTurnSurfaceTests(unittest.TestCase):
             done = subprocess.run(
                 [sys.executable, str(hook), "stop",
                  "--project", str(_project_of(archive))],
+                # Field reports 23-25: only an ask stated in THIS host
+                # session rides the turn boundary, so the payload names
+                # the session the ask was recorded under.
                 input=json.dumps({"transcript_path": str(transcript),
-                                  "session_id": "S-req2"}),
+                                  "session_id": "S-req"}),
                 capture_output=True, text=True, encoding="utf-8",
                 errors="replace", timeout=180, env=dict(os.environ))
             self.assertEqual(done.returncode, 0, done.stderr)

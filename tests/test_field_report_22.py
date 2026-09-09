@@ -41,7 +41,7 @@ class MemoryKillTests(unittest.TestCase):
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
             text = failure_nudge(archive, "Traceback (most recent call last):\nValueError: x", "s1")
-            self.assertIn("error-pattern", text)
+            self.assertIn("attested check", text)
             self.assertNotIn("memory-kill", text)
 
 
