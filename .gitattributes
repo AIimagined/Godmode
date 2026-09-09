@@ -11,3 +11,4 @@ NOTICE text eol=lf
 *.png binary
 *.jpg binary
 hooks/run-hook.cmd text eol=lf
+bin/godmode text eol=lf

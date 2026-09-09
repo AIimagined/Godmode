@@ -45,6 +45,19 @@ class PolyglotLauncherTests(unittest.TestCase):
         self.assertIn("exec ", text)
         self.assertIn("GODMODE_PYTHON", text)
 
+    def test_sh_half_and_shim_walk_the_off_path_homes(self) -> None:
+        # 2026-09-10: a Dock-launched host has no Homebrew on PATH, and
+        # stock /usr/bin/python3 is a stub until the developer tools exist.
+        for relative in ("hooks/run-hook.cmd", "bin/godmode"):
+            text = (PLUGIN_ROOT / relative).read_text(encoding="utf-8")
+            for home in ("/opt/homebrew/bin/python3", "/usr/local/bin/python3",
+                         "$HOME/.pyenv/shims/python3", "/usr/bin/python3"):
+                self.assertIn(home, text, f"{relative} lacks {home}")
+            walk = next(line for line in text.splitlines()
+                        if "for " in line and "/opt/homebrew/bin/python3" in line)
+            self.assertLess(walk.index("/opt/homebrew/bin/python3"), walk.index("/usr/bin/python3"),
+                            f"{relative}: stock python3 must be probed last")
+
     def test_cmd_half_is_label_free(self) -> None:
         text = (PLUGIN_ROOT / "hooks" / "run-hook.cmd").read_text(
             encoding="utf-8")

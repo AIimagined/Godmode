@@ -2775,6 +2775,21 @@ def _doctor_host(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             except (OSError, subprocess.TimeoutExpired):
                 ok = False
         interpreters[candidate] = ok
+    # 2026-09-10 (macOS): the launcher walks these when PATH has none of
+    # the above; doctor reports the same walk so the answer matches.
+    if os.name != "nt":
+        for home in ("/opt/homebrew/bin/python3", "/usr/local/bin/python3",
+                     "/opt/local/bin/python3",
+                     os.path.expanduser("~/.pyenv/shims/python3"),
+                     "/Library/Frameworks/Python.framework/Versions/Current/bin/python3",
+                     os.path.expanduser("~/.local/bin/python3"), "/usr/bin/python3"):
+            if os.access(home, os.X_OK):
+                try:
+                    interpreters[home] = subprocess.run(
+                        [home, "-c", "import sys"], capture_output=True,
+                        timeout=20).returncode == 0
+                except (OSError, subprocess.TimeoutExpired):
+                    interpreters[home] = False
     writable = False
     writable_detail = ""
     try:
@@ -2823,6 +2838,17 @@ def _doctor_host(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
                              "targets_exist": not missing, "missing": missing}
             for item in missing:
                 issues.append(f"{relative} names a path that does not exist: {item}")
+    # 2026-09-10 (macOS): a launcher or shim copied without its mode bit
+    # fails as `Permission denied` before any interpreter is asked, and
+    # nothing else in the wiring can say so. POSIX only; Windows runs the
+    # cmd half and has no mode bit to lose.
+    if os.name != "nt":
+        for relative in ("hooks/run-hook.cmd", "bin/godmode"):
+            launcher = _PACKAGE_ROOT / relative
+            if launcher.is_file() and not os.access(launcher, os.X_OK):
+                issues.append(
+                    f"{relative} lost its executable bit; every hook through it is "
+                    f"inert until `chmod +x \"{launcher}\"`")
     if not present:
         issues.append(f"hook artifact missing for {host}: {artifact_path or 'no artifact registered'}")
     elif not parses:

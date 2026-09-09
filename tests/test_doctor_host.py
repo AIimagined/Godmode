@@ -68,6 +68,24 @@ class DoctorHostTests(unittest.TestCase):
         self.assertIn("project_hooks", report)
         self.assertFalse(report["project_hooks"]["targets_exist"], report["project_hooks"])
 
+    @unittest.skipIf(sys.platform == "win32", "mode bits are a POSIX fact")
+    def test_a_launcher_without_its_executable_bit_is_named(self) -> None:
+        import os
+        from unittest import mock
+        launcher = PLUGIN_ROOT / "hooks" / "run-hook.cmd"
+        real_access = os.access
+        def no_exec(path, mode, *args, **kwargs):
+            if mode == os.X_OK and Path(str(path)) == launcher:
+                return False
+            return real_access(path, mode, *args, **kwargs)
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            with mock.patch.object(os, "access", no_exec):
+                code, payload = _doctor(project, "--host", "claude")
+        issues = " ".join(payload.get("issues") or [])
+        self.assertIn("run-hook.cmd lost its executable bit", issues)
+        self.assertIn("chmod +x", issues)
+
     def test_an_unknown_host_is_refused_with_the_known_list(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()

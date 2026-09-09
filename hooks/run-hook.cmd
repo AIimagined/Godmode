@@ -27,6 +27,17 @@
 :;     exec "$py" -I -B "$dir/$hook" "$@"
 :;   fi
 :; done
+:; # Off-PATH fallbacks (2026-09-10): a host launched from the Dock or a
+:; # login item runs hooks under a PATH without Homebrew, MacPorts, pyenv
+:; # or the python.org framework, and stock /usr/bin/python3 is a stub
+:; # that fails the probe until the developer tools are installed. Each
+:; # candidate is probed the same way; the order is the one a shell would
+:; # resolve with a full login PATH.
+:; for py in /opt/homebrew/bin/python3 /usr/local/bin/python3 /opt/local/bin/python3 "$HOME/.pyenv/shims/python3" /Library/Frameworks/Python.framework/Versions/Current/bin/python3 "$HOME/.local/bin/python3" /usr/bin/python3; do
+:;   if [ -x "$py" ] && "$py" -c "import sys" >/dev/null 2>&1; then
+:;     exec "$py" -I -B "$dir/$hook" "$@"
+:;   fi
+:; done
 :; echo "{\"systemMessage\": \"godmode: no working python interpreter found (tried python3, python, py) - set GODMODE_PYTHON to the interpreter path; every godmode hook is inert until then\"}"
 :; exit 0
 @echo off

@@ -37,6 +37,10 @@ the numbers are in the changelog; this release acts on them.
   bound was hit; on one field tree the unbounded walk outlasted the suite.
 - **A `Write` over a tracked file the session never read is named at the
   call**, with the number of lines being replaced.
+- **macOS off-PATH interpreters.** The hook launcher and the `godmode`
+  shim probe Homebrew, `/usr/local/bin`, MacPorts, pyenv shims, the
+  python.org framework and `~/.local/bin` after the PATH probe, with stock
+  `/usr/bin/python3` last; `doctor --host` reports a lost executable bit.
 - **Record verbs take one shape.** `remember`, `checkpoint`, `attest`,
   `claim`, `build`, `plan`, `criterion` each accept their text positionally
   or by flag; both with different text is refused (obligation 10372).

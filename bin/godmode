@@ -26,6 +26,18 @@ else
       break
     fi
   done
+  # Off-PATH fallbacks (2026-09-10): the same list the hook launcher walks,
+  # for a terminal or host whose PATH lacks Homebrew, MacPorts, pyenv or
+  # the python.org framework; stock /usr/bin/python3 last, since it is a
+  # stub until the developer tools are installed.
+  if [ -z "$python" ]; then
+    for candidate in /opt/homebrew/bin/python3 /usr/local/bin/python3 /opt/local/bin/python3 "$HOME/.pyenv/shims/python3" /Library/Frameworks/Python.framework/Versions/Current/bin/python3 "$HOME/.local/bin/python3" /usr/bin/python3; do
+      if [ -x "$candidate" ] && "$candidate" -c "import sys" >/dev/null 2>&1; then
+        python=$candidate
+        break
+      fi
+    done
+  fi
 fi
 
 if [ -z "$python" ]; then

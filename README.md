@@ -46,6 +46,16 @@ $ grok plugin marketplace add AIimagined/Godmode
 $ grok plugin install godmode --trust
 ```
 
+**macOS note.** Every hook and the `godmode` shim resolve an interpreter
+by probing `python3`, `python`, then `py` on the hook's PATH, and then the
+usual off-PATH homes (`/opt/homebrew/bin`, `/usr/local/bin`, MacPorts,
+pyenv shims, the python.org framework, `~/.local/bin`, and stock
+`/usr/bin/python3` last, since it is a stub until the developer tools are
+installed). A host launched from the Dock carries a shorter PATH than your
+terminal, which is why the off-PATH list exists. `GODMODE_PYTHON=<path>`
+overrides the probe. `godmode doctor --host claude` reports which
+interpreter answered and whether the launcher kept its executable bit.
+
 **Codex** - install the same package through Codex's own plugin flow, then
 wire the hooks per project (Codex's CLI ignores plugin-bundled hooks; see
 the host table): run `godmode hooks wire` inside the project and trust the
