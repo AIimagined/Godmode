@@ -64,6 +64,13 @@ answers all three with gates that read a record instead of prose.
 - Two-layer authorization policy, tightest wins: an operator-level file
   under the state home is the ceiling the project file may only tighten;
   `godmode operator --policy` names which layer decided each key.
+- Field report 22, answered in the same cut: a tool run killed for memory
+  gets its own Stop notice (a bounded rerun under `watchdog`, a smaller
+  scope, `incident --failure-class memory-kill`); an obligation parked
+  with `--status blocked` is no longer nagged; `precheck --preflight
+  --dirty` validates a snapshot of the working tree so the gate can run
+  before a gated commit. CLI syntax consistency across the record verbs is
+  the one item from that report this cut does not close; it is filed.
 
 ## What the 0.3.20 matrix found
 

@@ -2992,7 +2992,8 @@ def cmd_precheck(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         from .godmode_preflight import push_preflight
         report = push_preflight(Path(runtime.anchor.project_root),
                                 suite=getattr(args, "suite", None),
-                                archive=runtime.archive)
+                                archive=runtime.archive,
+                                dirty=bool(getattr(args, "dirty", False)))
         return CommandResult(report, exit_code=1 if report["verdict"] == "findings" else 0)
     if not args.about:
         # A missing argument is a usage refusal like every other verb's,
@@ -5420,6 +5421,11 @@ def _build_parser() -> argparse.ArgumentParser:
     precheck_parser.add_argument("--changed", nargs="+", default=None,
                                  help="Changed paths, for the paired-artifact check "
                                       "(GAP-2); defaults to the working tree")
+    precheck_parser.add_argument("--dirty", action="store_true",
+                                 help="--preflight only: validate a snapshot of the "
+                                      "working tree's tracked changes instead of "
+                                      "refusing a dirty tree (field report 22: the "
+                                      "gate could only run after a gated commit)")
     precheck_parser.add_argument("--preflight", action="store_true",
                                  help="Push preflight instead: validate HEAD in a "
                                       "disposable worktree - banned-term scan plus the "

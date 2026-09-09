@@ -827,7 +827,11 @@ def _open_obligations_touched(archive: Any, reply_text: str) -> list[str]:
         standing_notices: list[str] = []
         for subject, record in latest.items():
             data = record.get("data") or {}
-            if str(data.get("status", "open")) in ("closed", "done", "retired"):
+            # Field report 22 (2026-09-09): an obligation parked with
+            # --status blocked kept nagging. Blocked, parked and deferred
+            # are deliberate holds, not open work the turn should chase.
+            if str(data.get("status", "open")) in (
+                    "closed", "done", "retired", "blocked", "parked", "deferred"):
                 continue
             # A STANDING obligation (a recorded field pair: a standing duty that died on busy turns, twice) has no
             # subject to match - it applies to every task - so it surfaces

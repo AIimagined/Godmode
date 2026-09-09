@@ -653,7 +653,11 @@ def prompt_shape_nudge(archive: Chronicle, prompt: str,
 _FAILURE_SIGNAL = re.compile(
     r"(?im)(?:^Traceback \(most recent call last\)|\bexit(?:ed)?(?: code)?\s+[1-9]\d*\b|"
     r"\bFAILED\b|\b(?:Error|Exception)\b:|\bcommand not found\b|\bfatal:|"
-    r"\bpanic:|\bsegmentation fault\b|\bnpm ERR!|\bERROR\b)")
+    r"\bpanic:|\bsegmentation fault\b|\bnpm ERR!|\bERROR\b|"
+    # Field report 22 (2026-09-09): "no help with the memory kills". A
+    # process the kernel or the host killed for memory leaves one of these.
+    r"\bKilled\b|\bexit(?:ed)?(?: code)?\s+137\b|\bOOM\b|\bout of memory\b|"
+    r"\bMemoryError\b|\bheap out of memory\b|\bENOMEM\b)")
 
 
 def failure_nudge(archive: Chronicle, tool_output: str,
@@ -671,6 +675,17 @@ def failure_nudge(archive: Chronicle, tool_output: str,
         archive.append("action", "failure-nudge", {"session": session})
     except Exception:  # noqa: BLE001
         return None
+    if _MEMORY_KILL.search(tool_output):
+        # Field report 22: three memory kills in one session and nothing
+        # named them. A kill is not a bug in the code under test; it is a
+        # run that outgrew its box, and the next move is a smaller box.
+        return (
+            "godmode: a tool run was killed for memory this turn (137/OOM) - "
+            "run the next attempt under `godmode watchdog` with a bound, "
+            "split the run (`--only`, a chunk of the suite, one target), and "
+            "record it once: `godmode incident --failure-class memory-kill "
+            "\"<what was running and how large>\"`; a kill that recurs "
+            "earns a ceiling in `godmode ceilings`, not another retry.")
     return (
         "godmode: a tool run failed this turn - before the next attempt, "
         "`godmode error-pattern` matches the failure text against declared "
@@ -678,3 +693,8 @@ def failure_nudge(archive: Chronicle, tool_output: str,
         "and `godmode incident --failure-class <class> \"<what happened>\"` "
         "records it while the evidence is fresh; the fix's deciding check "
         "goes through `godmode verify` so its outcome is attested.")
+
+
+_MEMORY_KILL = re.compile(
+    r"(?i)(?:\bKilled\b|\bexit(?:ed)?(?: code)?\s+137\b|\bOOM\b|\bout of memory\b|"
+    r"\bMemoryError\b|\bheap out of memory\b|\bENOMEM\b)")

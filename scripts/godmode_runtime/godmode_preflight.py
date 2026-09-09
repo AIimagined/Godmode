@@ -82,21 +82,42 @@ def _term_list(repo: Path) -> Path | None:
 
 def push_preflight(project: Path | str,
                    suite: list[str] | None = None,
-                   archive: Any = None) -> dict[str, Any]:
+                   archive: Any = None,
+                   dirty: bool = False) -> dict[str, Any]:
     repo = Path(project)
     status = _git(repo, "status", "--porcelain=v1")
     if status.returncode != 0:
         raise ArchiveError("preflight needs a git repository")
+    # Field report 22 (2026-09-09): "preflight only runs on a committed
+    # tree, so here it can only run after the owner's gated commit". With
+    # `dirty=True` the gate validates a snapshot of the working tree's
+    # tracked changes (`git stash create`, which leaves the tree untouched)
+    # instead of HEAD; the report names which one it validated.
+    validated = "HEAD"
+    ref = "HEAD"
     if status.stdout.strip():
-        raise ArchiveError(
-            "preflight refuses a dirty tree: it validates a committed state, "
-            "and a dirty tree is not a state anyone can push - commit or "
-            "stash first"
-        )
+        if not dirty:
+            raise ArchiveError(
+                "preflight refuses a dirty tree: it validates a committed state, "
+                "and a dirty tree is not a state anyone can push - commit or "
+                "stash first, or pass --dirty to validate a snapshot of the "
+                "working tree's tracked changes"
+            )
+        snapshot = _git(repo, "stash", "create")
+        sha = snapshot.stdout.decode("utf-8", errors="replace").strip()
+        if snapshot.returncode == 0 and sha:
+            ref = sha
+            validated = f"working-tree snapshot {sha[:12]}"
+        else:
+            validated = "HEAD (the tree had no tracked changes to snapshot)"
 
     mechanical: list[dict[str, Any]] = []
     judgment: list[dict[str, Any]] = []
     skipped: list[str] = []
+    if status.stdout.strip() and any(line.startswith("??") for line in
+                                     status.stdout.decode("utf-8", errors="replace").splitlines()):
+        skipped.append("untracked files are not in the snapshot: `git add -N` "
+                       "them or commit first for full fidelity")
 
     # The worktree lives BESIDE the repo - the only location with a green
     # experiment behind it (3206 tests, 2026-09-04). The two special zones
@@ -117,7 +138,7 @@ def push_preflight(project: Path | str,
             "temp dir - scratch-allowance-sensitive suite assertions may "
             "read soft there")
     worktree = scratch / "head"
-    added = _git(repo, "worktree", "add", "--detach", str(worktree), "HEAD")
+    added = _git(repo, "worktree", "add", "--detach", str(worktree), ref)
     if added.returncode != 0:
         raise ArchiveError(
             "preflight could not create its disposable worktree: "
@@ -366,6 +387,7 @@ def push_preflight(project: Path | str,
         "judgment": judgment,
         "skipped": skipped,
         "verdict": ("findings" if mechanical or judgment else "clean"),
+        "validated": validated,
         # The effect of a control action is confirmed, never assumed: the
         # cleanup claim is checked against the filesystem, and an
         # unconfirmed removal is stated rather than silently believed.
