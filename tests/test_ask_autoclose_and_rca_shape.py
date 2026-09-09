@@ -31,8 +31,35 @@ from test_godmode_runtime import isolated_project  # noqa: E402
 from godmode_session_hook import _nag_once  # noqa: E402
 
 
-# ServeRequestsTests removed 2026-09-09: the runtime no longer closes asks by
-# word overlap (field reports 23-25; see tests/test_field_reports_23_25.py).
+class NoAutoServeTests(unittest.TestCase):
+    """Field reports 23-25 (2026-09-09): the keyword-overlap closure this class
+    used to prove would have closed an ask on 41 of 42 real replies. An ask
+    now closes by hand or leaves the turn boundary with its session."""
+
+    def test_a_reply_that_covers_the_ask_does_not_close_it(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            session = open_session(archive, "t")
+            record_request(archive, "please rename the launcher directory variable", session=session)
+            self.assertEqual(len(open_stated_requests(archive.select(kind="request", limit=50))), 1)
+            archive.append("checkpoint", "Done: the launcher directory variable is renamed.",
+                           {"status": "active", "next": []}, evidence=[])
+            self.assertEqual(len(open_stated_requests(archive.select(kind="request", limit=50))), 1)
+            self.assertEqual([r for r in archive.select(kind="request", limit=50)
+                              if (r.get("data") or {}).get("status") == "served"], [])
+
+    def test_the_runtime_closure_is_gone(self) -> None:
+        from godmode_runtime import godmode_requests
+        self.assertFalse(hasattr(godmode_requests, "serve_requests"))
+        self.assertTrue(hasattr(godmode_requests, "open_stated_requests"))
+
+    def test_a_hand_closure_still_closes(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            record = record_request(archive, "please rename the launcher directory variable", session="s")
+            archive.append("request", record["subject"],
+                           {"digest": record["data"]["digest"], "status": "closed", "value": "done"})
+            self.assertEqual(open_stated_requests(archive.select(kind="request", limit=50)), [])
 
 
 class NagOnceTests(unittest.TestCase):
