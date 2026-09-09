@@ -2731,6 +2731,24 @@ def _guide_growth(records: list[dict[str, Any]]) -> dict[str, Any]:
                     "generalizing"}
 
 
+def _launcher_mode_issues(package_root: Path, posix: bool | None = None) -> list[str]:
+    """2026-09-10 (macOS): a launcher or shim copied without its mode bit
+    fails as `Permission denied` before any interpreter is asked, and
+    nothing else in the wiring can say so. POSIX only; Windows runs the
+    cmd half and has no mode bit to lose. `posix` is overridable so the
+    check is testable on every OS."""
+    if not (os.name != "nt" if posix is None else posix):
+        return []
+    issues: list[str] = []
+    for relative in ("hooks/run-hook.cmd", "bin/godmode"):
+        launcher = package_root / relative
+        if launcher.is_file() and not os.access(launcher, os.X_OK):
+            issues.append(
+                f"{relative} lost its executable bit; every hook through it is "
+                f"inert until `chmod +x \"{launcher}\"`")
+    return issues
+
+
 def _doctor_host(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     """`doctor --host <name>`: the wiring a field machine can check itself.
 
@@ -2838,17 +2856,7 @@ def _doctor_host(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
                              "targets_exist": not missing, "missing": missing}
             for item in missing:
                 issues.append(f"{relative} names a path that does not exist: {item}")
-    # 2026-09-10 (macOS): a launcher or shim copied without its mode bit
-    # fails as `Permission denied` before any interpreter is asked, and
-    # nothing else in the wiring can say so. POSIX only; Windows runs the
-    # cmd half and has no mode bit to lose.
-    if os.name != "nt":
-        for relative in ("hooks/run-hook.cmd", "bin/godmode"):
-            launcher = _PACKAGE_ROOT / relative
-            if launcher.is_file() and not os.access(launcher, os.X_OK):
-                issues.append(
-                    f"{relative} lost its executable bit; every hook through it is "
-                    f"inert until `chmod +x \"{launcher}\"`")
+    issues.extend(_launcher_mode_issues(_PACKAGE_ROOT))
     if not present:
         issues.append(f"hook artifact missing for {host}: {artifact_path or 'no artifact registered'}")
     elif not parses:
