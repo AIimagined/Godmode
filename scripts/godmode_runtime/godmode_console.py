@@ -809,6 +809,9 @@ def cmd_session_open(args: argparse.Namespace, runtime: Runtime) -> CommandResul
 
 
 def cmd_attest(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    args.step = _one_text(args, "step", "step_flag", "attest step")
+    if not args.step:
+        raise ArchiveError("attest needs the step name: `godmode attest <step> --status ran` or --step <step>")
     _require_archive(runtime)
     record = record_step(
         runtime.archive,
@@ -878,8 +881,7 @@ def _load_timeline(transcript_path: str | None) -> dict[str, Any] | None:
 
 
 def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
-    if getattr(args, "text_flag", None) and not args.text:
-        args.text = args.text_flag
+    args.text = _one_text(args, "text", "text_flag", "claim text")
     if getattr(args, "stale", False):
         # Grounded claims (obligation 10248): every claim whose recorded
         # evidence version no longer matches the tree.
@@ -1012,6 +1014,9 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 
 def cmd_criterion(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    args.text = _one_text(args, "text", "text_flag", "criterion text")
+    if not args.text:
+        raise ArchiveError("criterion needs its text: `godmode criterion --task <slug> \"<what passing looks like>\"` or --text")
     _require_archive(runtime)
     record = record_criterion(
         runtime.archive,
@@ -2404,6 +2409,9 @@ def cmd_history(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 
 def cmd_plan(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    args.title = _one_text(args, "title_positional", "title", "plan title")
+    if not args.title:
+        raise ArchiveError("plan needs its title: `godmode plan \"<title>\" --step ...` or --title")
     if not args.step:
         raise ArchiveError("Plan requires at least one --step")
     record = _append(
@@ -2421,6 +2429,9 @@ def cmd_plan(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 
 def cmd_build(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    args.summary = _one_text(args, "summary_positional", "summary", "build summary")
+    if not args.summary:
+        raise ArchiveError("build needs its summary: `godmode build \"<what changed>\"` or --summary")
     if args.status in {"complete", "fixed"} and not args.evidence:
         raise ArchiveError("Completion requires at least one --evidence reference")
     record = _append(
@@ -2462,8 +2473,7 @@ def cmd_checkpoint(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         # Reported, never failed: a standing obligation that looks stale is a
         # question for the operator, not a verdict the runtime is entitled to.
         return CommandResult(report, exit_code=0)
-    if getattr(args, "summary_positional", None) and not args.summary:
-        args.summary = args.summary_positional
+    args.summary = _one_text(args, "summary_positional", "summary", "checkpoint summary")
     # Naming the missing flag rather than letting argparse describe a
     # requirement that only applies when not reviewing.
     if not args.summary or not args.status:
@@ -2555,11 +2565,11 @@ def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # hand-written request therefore landed in the archive and was read by
     # nothing. The default is now per-kind; an explicit --status still wins,
     # which is what keeps `--kind request --status closed` a closure.
-    text = getattr(args, "text", None)
+    text = _one_text(args, "text", "value", "remember text")
     if args.value is None and text:
         args.value = text
-        if args.subject is None:
-            args.subject = " ".join(text.split()[:8])[:MAX_SUBJECT].strip()
+    if args.subject is None and text:
+        args.subject = " ".join(text.split()[:8])[:MAX_SUBJECT].strip()
     if args.subject is not None and args.value is None and args.status:
         # A status change carries no new value: the paste-ready closure the
         # stop hook prescribes (`--kind request --subject "ask:<hex>"
@@ -4191,6 +4201,20 @@ def _evidence(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--evidence", action="append", default=[], help="Evidence reference or digest; repeatable")
 
 
+def _one_text(args: argparse.Namespace, positional: str, flag: str, label: str) -> str | None:
+    """The one shape every record verb shares (obligation 10372, field
+    report 22): the primary text is accepted positionally or through the
+    verb's named flag, one meaning in two spellings. Given both ways with
+    different text it is ambiguous and refused, never silently picked."""
+    spoken = getattr(args, positional, None)
+    named = getattr(args, flag, None)
+    if spoken and named and spoken != named:
+        raise ArchiveError(
+            f"{label} was given twice and differently - positional {spoken!r} "
+            f"and flag {named!r}; pass it one way")
+    return named or spoken or None
+
+
 # Printed directly by main(), never routed through CommandResult/JSON: a
 # static orientation page is prose for a terminal, not data for a caller,
 # and JSON-wrapping a multi-line string turns every newline into an
@@ -4477,7 +4501,9 @@ def _build_parser() -> argparse.ArgumentParser:
     session_close.set_defaults(handler=cmd_session_close)
 
     attest = sub.add_parser("attest", help="Record that a mandated step ran, found nothing, or was skipped")
-    attest.add_argument("step")
+    attest.add_argument("step", nargs="?", default=None)
+    attest.add_argument("--step", dest="step_flag", default=None,
+                        help="Alias for the positional step name")
     attest.add_argument("--status", choices=list(STATUSES), required=True)
     attest.add_argument("--result", default="")
     attest.add_argument("--reason", default="", help="Required when the status is 'skipped'")
@@ -4585,7 +4611,8 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="Close the claim at SEQ with --outcome and evidence; a claim resolves at most once")
     claim.add_argument("--outcome", choices=list(RESOLUTION_OUTCOMES), default=None,
                        help="With --resolve: held (the claim survived the check) or failed")
-    claim.add_argument("--cite", action="append", default=[], help="rec:<hash> or file:<path>#L<n>; repeatable")
+    claim.add_argument("--cite", "--evidence", dest="cite", action="append", default=[],
+                       help="rec:<hash> or file:<path>#L<n>; repeatable (--evidence is the same flag)")
     claim.add_argument("--external", action="store_true",
                        help="Claim about an external API/library; requires a doc:/url: primary source")
     claim.add_argument("--transcript",
@@ -4616,9 +4643,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     criterion.add_argument("--task", required=True, type=subject_text,
                            help="Slug identifying the work this criterion judges")
-    criterion.add_argument("text")
-    criterion.add_argument("--cite", action="append", default=[],
-                           help="cmd:<command> the criterion will be judged by; repeatable")
+    criterion.add_argument("text", nargs="?", default=None)
+    criterion.add_argument("--text", dest="text_flag", default=None,
+                           help="Alias for the positional criterion text")
+    criterion.add_argument("--cite", "--evidence", dest="cite", action="append", default=[],
+                           help="cmd:<command> the criterion will be judged by; repeatable "
+                                "(--evidence is the same flag)")
     criterion.add_argument("--transcript",
                            help="This session's transcript path; enables the ordering check "
                                 "(a criterion recorded after work has started)")
@@ -5266,14 +5296,18 @@ def _build_parser() -> argparse.ArgumentParser:
     history.set_defaults(handler=cmd_history)
 
     plan = sub.add_parser("plan", help="Record a private execution contract")
-    plan.add_argument("--title", required=True, type=subject_text)
+    plan.add_argument("title_positional", nargs="?", default=None, type=subject_text,
+                      help="Alias for --title")
+    plan.add_argument("--title", required=False, type=subject_text)
     plan.add_argument("--step", action="append", default=[])
     plan.add_argument("--obligation", action="append", default=[])
     _evidence(plan)
     plan.set_defaults(handler=cmd_plan)
 
     build = sub.add_parser("build", help="Record an implementation result")
-    build.add_argument("--summary", required=True)
+    build.add_argument("summary_positional", nargs="?", default=None,
+                       help="Alias for --summary")
+    build.add_argument("--summary", required=False)
     build.add_argument("--status", choices=["started", "changed", "complete", "fixed", "failed"], default="changed")
     build.add_argument("--file", action="append", default=[])
     build.add_argument("--hypothesis")

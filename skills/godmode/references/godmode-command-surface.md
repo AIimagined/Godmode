@@ -83,3 +83,31 @@ and `--json` work on every command and may appear in any position;
 | `watch` | Per-boundary anomaly scan over this session's attestations |
 
 Run `bin/godmode <command> --help` (`bin\godmode.cmd` on Windows; the shim probes python3, python, then py) for flags and sub-verbs.
+
+## Record verbs: one shape
+
+Every verb that writes a record from text you dictate - `remember`,
+`checkpoint`, `attest`, `claim`, `build`, `plan`, `criterion` - takes that
+text in one shape, two spellings that mean the same thing:
+
+| Verb | Positional | Named flag | Always required with it |
+| --- | --- | --- | --- |
+| `remember` | `"<whole record>"` | `--value` (`--subject` labels it) | `--kind` |
+| `checkpoint` | `"<summary>"` | `--summary` | `--status` |
+| `attest` | `<step>` | `--step` | `--status` |
+| `claim` | `"<claim>"` | `--text` | - |
+| `build` | `"<summary>"` | `--summary` | - |
+| `plan` | `"<title>"` | `--title` | `--step` |
+| `criterion` | `"<pass condition>"` | `--text` | `--task` |
+
+The rules, enforced once in the console (`_one_text`):
+
+- Positional or flag, either alone records; both with the same text is one
+  record; both with different text is refused as ambiguous, never picked.
+- Neither given is refused with the verb's paste-ready line.
+- `remember` derives `--subject` from the opening words when it is not given.
+- `--evidence` is repeatable on every record verb; on `claim` and `criterion`
+  it is the same flag as `--cite`.
+- Fixed-form records (`removal record`, `register set`, `metric-contract
+  register`) name every field by flag and take no positional; that is the
+  one deliberate exception.

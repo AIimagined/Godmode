@@ -6,6 +6,10 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+### Fixed
+
+- Record verbs take one shape. `remember`, `checkpoint`, `attest`, `claim`, `build`, `plan` and `criterion` each accept their primary text positionally or through the verb's named flag (`--value`, `--summary`, `--step`, `--text`, `--summary`, `--title`, `--text`), one meaning in two spellings, resolved by one helper: both spellings with different text are refused as ambiguous instead of one silently winning (claim let the positional win, checkpoint and remember let the flag win). `attest --step`, `build "<summary>"`, `plan "<title>"` and `criterion --text` are new spellings; `--evidence` is accepted as the same flag as `--cite` on `claim` and `criterion`. The rule is documented once in the command-surface reference (obligation 10372, field report 22).
+
 ## [0.3.21] - 2026-09-09
 
 ### Added
