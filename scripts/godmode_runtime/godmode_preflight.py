@@ -115,6 +115,22 @@ def shard_modules(tests_dir: Path, shards: int) -> list[list[str]]:
     return [names[i::shards] for i in range(max(1, shards))]
 
 
+def _remote_ref(repo: Path) -> str:
+    """The remote ref the current branch is measured against: its configured
+    upstream, else `origin/<branch>` when that ref exists (this repository
+    pushes with an explicit `git push origin main` and never set an
+    upstream), else nothing - which means everything is unpushed."""
+    upstream = _git(repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+    if upstream.returncode == 0 and upstream.stdout.strip():
+        return upstream.stdout.decode("utf-8", errors="replace").strip()
+    branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.decode("utf-8", errors="replace").strip()
+    if branch and branch != "HEAD":
+        candidate = f"origin/{branch}"
+        if _git(repo, "rev-parse", "--verify", "--quiet", candidate).returncode == 0:
+            return candidate
+    return ""
+
+
 def _head_sha(repo: Path) -> str:
     done = _git(repo, "rev-parse", "HEAD")
     return done.stdout.decode("utf-8", errors="replace").strip() if done.returncode == 0 else ""
@@ -267,6 +283,7 @@ def push_preflight(project: Path | str,
                             suite = shlex.split(str(stored))
             except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
+        suite_designated = bool(suite)
         if suite and suite_shards > 1 and "discover" in " ".join(suite):
             # One process over 3,400 tests is killed for memory on the
             # reference machine; N sequential shards finish. Each shard's
@@ -291,6 +308,7 @@ def push_preflight(project: Path | str,
                     break
             run = None
             suite = None  # the sharded run stands in for the single process below
+            suite_designated = True
         if suite:
             # 3600, not 1800: this repo's own designated suite runs ~27
             # minutes on the reference machine, and a timeout kill is
@@ -342,7 +360,7 @@ def push_preflight(project: Path | str,
                               "a person decides whether this state ships"
                               + (": " + " | ".join(lines) if lines else ""),
                 })
-        else:
+        elif not suite_designated:
             skipped.append(
                 "suite: no command designated - pass --suite once, or record "
                 "it durably: precheck --designate-suite \"<cmd>\"")
@@ -416,8 +434,7 @@ def push_preflight(project: Path | str,
                 # that is already on the remote is a standing judgment: the
                 # scrub is the operator's, and it must not turn every gate red
                 # forever while nothing new leaks.
-                upstream = _git(repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
-                remote_ref = upstream.stdout.decode("utf-8", errors="replace").strip() if upstream.returncode == 0 else ""
+                remote_ref = _remote_ref(repo)
                 history = _git(repo, "log", "-p", "--all").stdout.decode(
                     "utf-8", errors="replace").lower()
                 if remote_ref:

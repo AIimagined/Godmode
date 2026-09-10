@@ -690,7 +690,10 @@ def _origin_slug(project: Path | None) -> str | None:
     return f"{match.group(1)}/{match.group(2)}".lower() if match else None
 
 
-_LOCAL_READ_TOOLS = ("Read", "Grep", "Glob", "NotebookRead", "view_file", "read_file")
+_LOCAL_READ_TOOLS = ("Read", "Grep", "Glob", "NotebookRead", "view_file", "read_file",
+                     "Edit", "MultiEdit", "NotebookEdit")  # an Edit read the file it edits (Part 5)
+_SHELL_READ_TOOLS = ("Bash", "PowerShell", "shell", "run_command")
+_PATH_TOKEN = re.compile(r"(?<![\w])((?:[A-Za-z]:)?(?:[\w.-]+[/\\])+[\w.-]+\.[A-Za-z0-9]{1,6})(?![\w])")
 
 
 def _external_verdict_nudge(submitted: dict[str, Any], reply_text: str,
@@ -739,6 +742,21 @@ def _external_verdict_nudge(submitted: dict[str, Any], reply_text: str,
                     fetched[origin] = fetched.get(origin, 0) + 1
                     read_names.setdefault(origin, []).append(Path(local).name)
                     continue
+            if origin and origin in named and str(part.get("name") or "") in _SHELL_READ_TOOLS and root:
+                # Part 5: a read through an interpreter or a shell tool
+                # (`python -c "open(...)"`, `sed -n`, `cat`) is a read; the
+                # file it names sits under the project root or is a relative
+                # path that exists there.
+                command = str(payload.get("command") or "")
+                named_files = [m for m in _PATH_TOKEN.findall(command)]
+                for candidate in named_files:
+                    lowered = candidate.replace("\\", "/").lower()
+                    inside = lowered.startswith(root) or (
+                        not Path(candidate).is_absolute() and (project / candidate).is_file())
+                    if inside:
+                        fetched[origin] = fetched.get(origin, 0) + 1
+                        read_names.setdefault(origin, []).append(Path(candidate).name)
+                        break
             for slug in named:
                 if slug not in blob:
                     continue

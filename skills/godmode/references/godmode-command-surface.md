@@ -68,6 +68,7 @@ and `--json` work on every command and may appear in any position;
 | `remember` | Record a decision, invariant, lesson, or obligation |
 | `removal` | Remember why something was deleted |
 | `report` | Emit a sanitized bounded report |
+| `retest` | Every test that pins a changed file, as one command per runner; --run attests it |
 | `resume` | Build a bounded continuity brief |
 | `rewind` | Preview a rollback to a prior verified checkpoint |
 | `roles` | Resolve authority documents by role |

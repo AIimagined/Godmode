@@ -40,6 +40,9 @@
   `session close` and `status remaining --digest`) reports how often a claim graded
   `verified` was later resolved `failed`, with a Wilson 95% interval and
   the refusals beside it.
+- **`godmode retest`.** Every test that pins a changed file, as one
+  command per runner; `--run` executes it and attests the exit code, and
+  the changed source files no test pins are named.
 - **Measurement environment.** `precheck` on a latency, duplicate-request,
   or re-render task lists the environment the deciding number must come
   from. A quoted sentence is no longer read as a claim. A process-control

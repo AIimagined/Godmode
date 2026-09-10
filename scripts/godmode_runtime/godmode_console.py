@@ -1682,6 +1682,30 @@ def cmd_drift(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult(report, exit_code=1 if report["verdict"] == "drift-detected" else 0)
 
 
+def cmd_retest(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    from .godmode_retest import retest_plan
+
+    project = Path(runtime.anchor.project_root)
+    plan = retest_plan(project, base=args.base)
+    if not args.run:
+        return CommandResult(plan, exit_code=0)
+    _require_archive(runtime)
+    session = _session(runtime, args.session)
+    outcomes = []
+    for entry in plan["commands"]:
+        if not entry.get("command"):
+            continue
+        argv = shlex.split(entry["command"])
+        if argv and argv[0] == "python":
+            argv[0] = sys.executable
+        outcome = run_check(runtime.archive, session, project, f"retest:{entry['runner']}", argv,
+                            timeout=args.timeout)
+        outcomes.append({"runner": entry["runner"], "passed": outcome["passed"], "citation": outcome.get("citation")})
+    plan["outcomes"] = outcomes
+    failed = [o for o in outcomes if not o["passed"]]
+    return CommandResult(plan, exit_code=1 if failed else 0)
+
+
 def cmd_ratchet(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     from .godmode_ratchet import declared_ratchets, last_values, run_ratchets
 
@@ -5964,6 +5988,16 @@ def _build_parser() -> argparse.ArgumentParser:
     law_promote.add_argument("--guard", required=True)
     law_promote.add_argument("--subject", required=True)
     law_promote.set_defaults(handler=cmd_law_promote)
+
+    retest = sub.add_parser(
+        "retest",
+        help="Every test that pins a changed file (names its path, module, or stem), as one command "
+             "per runner; --run executes it and attests the exit code as `retest`")
+    retest.add_argument("--base", default="HEAD")
+    retest.add_argument("--run", action="store_true")
+    retest.add_argument("--session")
+    retest.add_argument("--timeout", type=int, default=900)
+    retest.set_defaults(handler=cmd_retest)
 
     ratchet = sub.add_parser(
         "ratchet",

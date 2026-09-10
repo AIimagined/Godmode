@@ -73,6 +73,19 @@ class StageGateTests(unittest.TestCase):
             self.assertIsNone(preflight_gate(archive, project, "git push origin main"))
 
 
+class RemoteRefTests(unittest.TestCase):
+    def test_origin_branch_stands_in_for_a_missing_upstream(self) -> None:
+        from godmode_runtime.godmode_preflight import _remote_ref
+
+        with isolated_project() as (project, _s, _a, _archive):
+            git = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-C", str(project)]
+            subprocess.run(["git", "init", "-q", "-b", "main", str(project)], check=True, capture_output=True)
+            subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "x"], check=True, capture_output=True)
+            self.assertEqual(_remote_ref(project), "")
+            subprocess.run(git + ["update-ref", "refs/remotes/origin/main", "HEAD"], check=True, capture_output=True)
+            self.assertEqual(_remote_ref(project), "origin/main")
+
+
 class AttestationSemanticsTests(unittest.TestCase):
     def test_judgment_findings_ride_a_ran_attestation_and_mechanical_ones_fail_it(self) -> None:
         import inspect

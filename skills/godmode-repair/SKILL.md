@@ -38,7 +38,7 @@ Length is the usual cause. An answer that needs a table of contents has already 
 
 ## Record it
 
-`godmode remember --kind lesson --subject "<what did not land>" --guard "<the shape to
+`godmode remember --kind lesson --subject "<what did not land>" --value "<the rule>" --guard "<the shape to
 avoid>"`
 
 Recorded as a lesson rather than a note because the failure is generalisable: what did
