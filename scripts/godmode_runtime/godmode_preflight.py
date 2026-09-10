@@ -411,17 +411,37 @@ def push_preflight(project: Path | str,
         # Counts and commit ids only, never the term.
         if terms_path is not None:
             try:
+                # Split by range (2026-09-10): a term in an UNPUSHED commit is
+                # mechanical - rewrite before the push. A term only in history
+                # that is already on the remote is a standing judgment: the
+                # scrub is the operator's, and it must not turn every gate red
+                # forever while nothing new leaks.
+                upstream = _git(repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+                remote_ref = upstream.stdout.decode("utf-8", errors="replace").strip() if upstream.returncode == 0 else ""
                 history = _git(repo, "log", "-p", "--all").stdout.decode(
                     "utf-8", errors="replace").lower()
-                history_hits = sum(
-                    1 for pattern in patterns if pattern.search(history))
-                if history_hits:
+                if remote_ref:
+                    unpushed = _git(repo, "log", "-p", f"{remote_ref}..HEAD").stdout.decode(
+                        "utf-8", errors="replace").lower()
+                else:
+                    # No upstream: nothing is on any remote, so every hit is
+                    # unpushed and mechanical.
+                    unpushed = history
+                unpushed_hits = sum(1 for pattern in patterns if unpushed and pattern.search(unpushed))
+                history_hits = sum(1 for pattern in patterns if pattern.search(history))
+                if unpushed_hits:
                     mechanical.append({
                         "check": "history-terms",
-                        "detail": f"{history_hits} private term(s) appear in "
-                                  "commit HISTORY (diffs or messages) - the "
-                                  "tree is not the exposure surface; a "
-                                  "history rewrite is the only removal",
+                        "detail": f"{unpushed_hits} private term(s) appear in commits not yet on "
+                                  f"{remote_ref} (diffs or messages) - rewrite those commits before "
+                                  "the push; the tree is not the exposure surface",
+                    })
+                elif history_hits:
+                    judgment.append({
+                        "check": "history-terms-pushed",
+                        "detail": f"{history_hits} private term(s) appear in history already on the "
+                                  "remote and in no unpushed commit - standing; a history rewrite is "
+                                  "the only removal and it is the operator's call",
                     })
             except Exception:  # noqa: BLE001
                 skipped.append("history-terms scan: unavailable")
@@ -499,8 +519,19 @@ def push_preflight(project: Path | str,
         # The attestation `authorize stage` reads before it stages a push.
         # A preflight that ran no suite attests `incomplete`, never `ran`.
         try:
+            suite_red = any(j.get("check") == "suite" for j in judgment)
+            if suite_skipped:
+                status = "incomplete"
+            elif mechanical or suite_red:
+                status = "failed"
+            else:
+                # Judgment findings (open asks, host reach, stale claims, standing
+                # history terms) are the operator's to weigh at the password; the
+                # attestation records them and does not hide behind them.
+                status = "ran"
             archive.append("attestation", "preflight", {
-                "status": "ran" if verdict == "clean" else ("incomplete" if suite_skipped else "failed"),
+                "status": status,
+                "judgment": [str(j.get("check")) for j in judgment][:8],
                 "session": session or "",
                 "head": _head_sha(repo), "validated": validated,
                 "findings": len(mechanical) + len(judgment), "gates": len(workflow_gate_commands(repo)),

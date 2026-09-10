@@ -73,5 +73,17 @@ class StageGateTests(unittest.TestCase):
             self.assertIsNone(preflight_gate(archive, project, "git push origin main"))
 
 
+class AttestationSemanticsTests(unittest.TestCase):
+    def test_judgment_findings_ride_a_ran_attestation_and_mechanical_ones_fail_it(self) -> None:
+        import inspect
+
+        from godmode_runtime import godmode_preflight as pf
+
+        source = inspect.getsource(pf.push_preflight)
+        self.assertIn('status = "ran"', source)
+        self.assertIn('elif mechanical or suite_red:', source)
+        self.assertIn('"history-terms-pushed"', source)
+
+
 if __name__ == "__main__":
     unittest.main()
