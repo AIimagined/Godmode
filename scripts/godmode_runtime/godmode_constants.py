@@ -94,6 +94,24 @@ EVENT_KINDS = frozenset(
     }
 )
 
+# Every subject an `action` record is written under. The kinds above are
+# pinned; the action subjects were inline literals a reader matched by
+# string, so a typo on either side was a silently dead rule (absorbed from
+# a threat-detection harness's KnownActions census, 2026-09-10). A new
+# subject is added here first; `tests/test_action_subjects.py` greps every
+# writer and reader for the literal and fails on one this set lacks.
+ACTION_SUBJECTS = frozenset(
+    {
+        "atlas-query", "capability-consumed", "capability-issued", "chain-reanchored",
+        "failure-nudge", "gate-asked", "git-hook-inspection-failed", "git-hook-malformed-input",
+        "git-hooks-installed", "host-payload-capture", "interpreter-inline-read-only",
+        "interrupted-intent", "law-debrief", "laws-delivered", "observe-advisory",
+        "preflight-skipped", "prompt-shape-nudge", "recurrence-nudge", "registry-nudge",
+        "sources-gate", "tripwire-nudge", "verify-promotion-nudge", "would-have-required-read",
+        "would-have-required-reobserve", "would-have-required-restore", "would-have-stopped-loop",
+    }
+)
+
 # Statuses that put a record out of force. Read by the contradiction check
 # (a value that no longer binds cannot contradict one that does) and by the
 # reversal check (an answer that was withdrawn is not a competing answer).

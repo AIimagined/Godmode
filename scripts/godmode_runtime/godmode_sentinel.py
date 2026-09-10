@@ -3576,7 +3576,12 @@ def _categorize(normalized: str, project_root: Path | None = None,
             category, protected, impact = _write_verdict(destination, project_root, archive)
             return category, protected, list(impact)
         for category, pattern, impact in _ACTION_PATTERNS:
-            if pattern.search(command_position):
+            # Field feedback 2026-09-11: `sed -i ... docs/release-notes.md`
+            # read as a release. The external-write verbs are judged on the
+            # bare words of the command, never on a word inside a path.
+            haystack = (_without_path_tokens(command_position)
+                        if category == "release-or-external-write" else command_position)
+            if pattern.search(haystack):
                 return category, True, list(impact)
         # A DB client invoked at all, verb visible or not (see `_DB_CLIENT_HEAD`'s
         # own comment for why the verb-anchored pattern above is not enough).
@@ -3918,6 +3923,14 @@ def _downgrade_harmless_fetches(segments: list[str],
         )
         downgraded[index] = cleared
     return downgraded
+
+
+def _without_path_tokens(text: str) -> str:
+    """The command with every path-shaped token (one carrying a slash,
+    a backslash, or a file extension) removed, so a verb-word inside a
+    filename is not read as the verb."""
+    return " ".join(token for token in str(text).split()
+                    if not ("/" in token or "\\" in token or re.search(r"\.[A-Za-z0-9]{1,6}$", token)))
 
 
 def classify_action(operation: str, extra_protected: tuple[str, ...] = (),

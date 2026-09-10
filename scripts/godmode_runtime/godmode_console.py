@@ -29,6 +29,7 @@ from .godmode_githooks import (
 )
 from .godmode_constants import DEFAULT_CONTEXT_BUDGET, EVENT_KINDS, RUNTIME_VERSION
 from .godmode_attest import (
+    split_command,
     advisory_decay,
     agent_fingerprint,
     close_session,
@@ -852,7 +853,7 @@ def cmd_verify(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     outcome = run_check(
         runtime.archive, _session(runtime, args.session), Path(runtime.anchor.project_root),
-        args.name, shlex.split(args.command), rule_ids=args.rule,
+        args.name, split_command(args.command), rule_ids=args.rule,
         timeout=getattr(args, "timeout", 900),
         offline=bool(getattr(args, "offline", False)),
     )
@@ -866,7 +867,7 @@ def cmd_plant(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     outcome = plant_and_observe(
         runtime.archive, _session(runtime, args.session), Path(runtime.anchor.project_root),
-        args.name, shlex.split(args.command), target=args.file,
+        args.name, split_command(args.command), target=args.file,
         replace=args.replace, with_text=args.with_text, append=args.append,
         rule_ids=args.rule,
     )
@@ -964,11 +965,13 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
                 runtime.archive, _session(runtime, args.session),
                 Path(runtime.anchor.project_root),
                 f"claim-verify-{len(check_results) + 1}",
-                shlex.split(str(cite)[len("cmd:"):]),
+                split_command(str(cite)[len("cmd:"):]),
                 timeout=getattr(args, "timeout", 900) or 900,
             )
             check_results.append({"citation": outcome.get("citation"),
-                                  "passed": outcome.get("passed")})
+                                  "passed": outcome.get("passed"),
+                                  "exit_code": outcome.get("exit_code"),
+                                  "executed": outcome.get("exit_code") != 127})
             # The claim cites exactly what was attested - shell-splitting
             # can normalise the command string, and a near-miss cite would
             # resolve nothing.
@@ -976,6 +979,12 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             if attested and attested != cite:
                 args.cite = [attested if c == cite else c
                              for c in (args.cite or [])]
+    # Field feedback 2026-09-11: a claim arrived `--grade verified` beside
+    # a cited check that had just failed, and the record said "verified".
+    # A check run red this instant caps the grade at observed, whatever
+    # the caller asserted.
+    if check_results and any(not c.get("passed") for c in check_results) and args.grade == "verified":
+        args.grade = "observed"
     record = record_claim(
         runtime.archive,
         Path(runtime.anchor.project_root),
@@ -1003,8 +1012,15 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         from .godmode_attest import falsifiable
 
         passed = sum(1 for c in check_results if c.get("passed"))
-        support = (f"{passed}/{len(check_results)} cited command(s) executed "
-                   "and attested just now")
+        executed = sum(1 for c in check_results if c.get("executed", True))
+        missing = [str(c.get("citation") or "")[:50] for c in check_results if not c.get("executed", True)]
+        support = (f"{executed}/{len(check_results)} cited command(s) executed just now, "
+                   f"{passed} passed")
+        if missing:
+            support += (f"; not found on this machine: {missing[0]} - a runner the shell "
+                        "cannot start proves nothing; run it where it exists, then cite it")
+        elif passed < executed:
+            support += "; a check that ran red caps the grade at observed"
         decoration = [str(c.get("citation") or "") for c in check_results
                       if not falsifiable(str(c.get("citation") or ""))]
         if decoration:
@@ -1100,7 +1116,7 @@ def cmd_perimeter(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     outcomes = []
     for entry in active_perimeter(runtime.archive):
         outcome = run_check(runtime.archive, session, Path(runtime.anchor.project_root),
-                            f"perimeter:{entry['digest']}", shlex.split(entry["command"]),
+                            f"perimeter:{entry['digest']}", split_command(entry["command"]),
                             timeout=args.timeout)
         outcomes.append({"command": entry["command"], "passed": outcome["passed"],
                          "citation": outcome.get("citation")})
@@ -1718,7 +1734,7 @@ def cmd_retest(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     for entry in plan["commands"]:
         if not entry.get("command"):
             continue
-        argv = shlex.split(entry["command"])
+        argv = split_command(entry["command"])
         if argv and argv[0] == "python":
             argv[0] = sys.executable
         outcome = run_check(runtime.archive, session, project, f"retest:{entry['runner']}", argv,

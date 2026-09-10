@@ -647,8 +647,12 @@ class SupportHeadlineTests(unittest.TestCase):
     def test_verified_run_names_the_execution(self) -> None:
         import sys as _sys2
         text = self._claim(
-            ["--verify", "--cite", f"cmd:{_sys2.executable} -c print(42)"])
-        self.assertIn("executed and attested", text)
+            ["--verify", "--cite", f'cmd:"{_sys2.executable}" -c print(42)'])
+        # Field feedback 2026-09-11: the old wording counted passes as
+        # "executed", and on Windows this very cite never ran (backslashes
+        # eaten by the split, a space in the path unquoted) while the
+        # assertion on the wording alone stayed green.
+        self.assertIn("1/1 cited command(s) executed just now, 1 passed", text)
 
     def test_unexecuted_cmd_cite_names_the_gap(self) -> None:
         import sys as _sys2

@@ -328,6 +328,33 @@ def record_step(
     return archive.append("attestation", step, data, evidence=evidence or [])
 
 
+def split_command(text: str) -> list[str]:
+    """A cited command as argv. POSIX splitting everywhere, with one Windows
+    correction (field feedback 2026-09-11: `claim --verify` reported
+    "0/1 cited command(s) executed" on every project command): a backslash
+    in a Windows path is a path separator, not an escape, so it is
+    protected before the split. Quoting rules stay POSIX, which is how the
+    citations are typed.
+    """
+    import os
+    import shlex
+    raw = str(text)
+    if os.name == "nt":
+        raw = raw.replace("\\", "\\\\")
+    return shlex.split(raw)
+
+
+def resolve_executable(command: list[str]) -> list[str]:
+    """argv with its head resolved through PATH (and PATHEXT on Windows), so
+    `npx`, `tsc`, `vitest` - `.cmd` shims on Windows that CreateProcess
+    cannot find by bare name - run instead of failing with 127."""
+    import shutil
+    if not command:
+        return command
+    found = shutil.which(str(command[0]))
+    return [found, *command[1:]] if found else list(command)
+
+
 def run_check(
     archive: Chronicle,
     session: str,
@@ -374,7 +401,7 @@ def run_check(
                            if offline else (None, None))
         try:
             completed = subprocess.run(
-                command, cwd=str(project), capture_output=True, text=True,
+                resolve_executable(command), cwd=str(project), capture_output=True, text=True,
                 encoding="utf-8", errors="replace", timeout=timeout, env=env,
             )
             code = completed.returncode

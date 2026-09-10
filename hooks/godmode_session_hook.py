@@ -1794,15 +1794,11 @@ def _iteration_notices(archive: Any, project: Path, submitted: dict[str, Any]) -
                                f"{spent['messages']} assistant messages)")
         try:
             from godmode_runtime.godmode_guardrails import declared_ceilings
-            from godmode_runtime.godmode_iteration import context_size
+            from godmode_runtime.godmode_iteration import context_advice, context_size
             window = int(declared_ceilings(project).get("context_window") or 0)
-            size = context_size(transcript)
-            if window and size["source"] == "measured" and size["tokens"] >= int(window * 0.7):
-                notices.append(
-                    f"godmode: context at {size['tokens']:,} of a {window:,} window (measured from the last "
-                    "assistant usage); a steered compact at a phase boundary keeps the goal, invariants, "
-                    "acceptance commands, failed approaches and last green - auto-compact keeps what it finds "
-                    "interesting. The brief after compact carries the ledger either way.")
+            advice = context_advice(context_size(transcript), window)
+            if advice:
+                notices.append(advice)
         except Exception:  # noqa: BLE001  # godmode: swallow-ok: a window that cannot be measured adds nothing
             pass
         plateau = commit_score_plateau(project)
@@ -2830,7 +2826,7 @@ def main(argv: list[str] | None = None) -> int:
                 block_body = {
                     "decision": "continue" if current_host() == "antigravity" else "block",
                     "reason": scope_reason,
-                    "systemMessage": " ".join(notices) if notices else
+                    "systemMessage": "\n".join(notices) if notices else
                         "godmode: completion blocked once pending the open scope; the re-fire passes.",
                 }
                 print(json.dumps(block_body, ensure_ascii=False))
@@ -2840,7 +2836,7 @@ def main(argv: list[str] | None = None) -> int:
                     "decision": "continue" if current_host() == "antigravity" else "block",
                     "reason": (f"godmode gate, deliberate block, not a crash - STALL: {stall_block[len('godmode: '):]} "
                                "An operator-stated record clears it; continuing does not."),
-                    "systemMessage": " ".join(notices) if notices else stall_block,
+                    "systemMessage": "\n".join(notices) if notices else stall_block,
                 }, ensure_ascii=False))
                 return 0
             # Deterministic grade at the bar (obligations 10118, 10245): a
@@ -2882,7 +2878,7 @@ def main(argv: list[str] | None = None) -> int:
                         "claim \"<text>\" --cite <evidence>` records an "
                         "observed grade; or soften the wording. Then finish. "
                         "This check blocks only once."),
-                    "systemMessage": " ".join(notices) if notices else
+                    "systemMessage": "\n".join(notices) if notices else
                         "godmode: completion blocked once pending a record; "
                         "the re-fire passes.",
                 }
@@ -2910,7 +2906,7 @@ def main(argv: list[str] | None = None) -> int:
                 if len(notices) > 2:
                     shown_notices.append(
                         f"({len(notices) - 2} more in `godmode doctor`)")
-                print(json.dumps({"systemMessage": " ".join(shown_notices)}))
+                print(json.dumps({"systemMessage": "\n".join(shown_notices)}))
                 # Obligation 9860: a Stop systemMessage reaches the operator
                 # only. Parked beside the claim echo, the notices reach the
                 # model at the next prompt boundary (or, on Grok, on the
@@ -3691,8 +3687,13 @@ def main(argv: list[str] | None = None) -> int:
                 # auto-checkpoint. Counted here, after every gate said yes,
                 # so a refused edit never inflates the count.
                 checkpoint_advisory = None
+                # Prose appends are not the drift a checkpoint bounds
+                # (field feedback 2026-09-11: a doc pass of ten files
+                # tripped the count every turn); only code-shaped targets tick.
                 if event.targets and tool in (
-                        "Write", "Edit", "NotebookEdit", "apply_patch"):
+                        "Write", "Edit", "NotebookEdit", "apply_patch") and any(
+                        not str(target).lower().endswith((".md", ".txt", ".rst"))
+                        for target in event.targets):
                     checkpoint_advisory = _checkpoint_pressure(archive, anchor)
                 # An allowed call may still deserve one sentence: a test run
                 # piped through a truncating filter destroys the evidence the

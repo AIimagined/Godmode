@@ -122,17 +122,29 @@ def context_size(transcript_path: str | Path | None) -> dict[str, Any]:
     on the most recent turn. Compaction playbook (2026-09-10): the danger
     line is ~70 percent, not the auto-compact trigger; a steered compact at
     a phase boundary keeps what a bare one drops."""
-    out: dict[str, Any] = {"tokens": 0, "source": "unavailable", "turn": None}
+    out: dict[str, Any] = {"tokens": 0, "source": "unavailable", "turn": None,
+                           "compactions": 0, "last_compaction_post_tokens": None}
     if not transcript_path:
         return out
     try:
         lines = Path(str(transcript_path)).read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return out
+    compactions = 0
+    post_tokens: int | None = None
     for index, line in enumerate(lines):
         try:
             entry = json.loads(line)
         except (json.JSONDecodeError, ValueError):
+            continue
+        # The host's own compaction marker (2026-09-11): what a compact
+        # left behind is the one number that says whether another can help.
+        if entry.get("type") == "system" and entry.get("subtype") == "compact_boundary":
+            compactions += 1
+            try:
+                post_tokens = int((entry.get("compactMetadata") or {}).get("postTokens") or 0)
+            except (TypeError, ValueError):
+                post_tokens = None
             continue
         if entry.get("type") != "assistant":
             continue
@@ -145,8 +157,38 @@ def context_size(transcript_path: str | Path | None) -> dict[str, Any]:
                 total += int(usage.get(key) or 0)
             except (TypeError, ValueError):
                 total += 0  # a non-numeric usage field counts as nothing, stated
-        out = {"tokens": total, "source": "measured", "turn": index}
+        out = {"tokens": total, "source": "measured", "turn": index,
+               "compactions": compactions, "last_compaction_post_tokens": post_tokens}
+    out["compactions"] = compactions
+    out["last_compaction_post_tokens"] = post_tokens
     return out
+
+
+def context_advice(size: dict[str, Any], window: int) -> str | None:
+    """The tripwire's sentence, or None below the line. Three shapes
+    (2026-09-11): a measurement past the declared window names a stale
+    declaration instead of advising a compact that cannot reach it; a
+    compaction that already ran and left more than half the window says
+    another will free little; otherwise the steered-compact advice."""
+    if not window or size.get("source") != "measured":
+        return None
+    tokens = int(size.get("tokens") or 0)
+    if tokens > window:
+        return (f"godmode: context measured at {tokens:,} against a declared window of {window:,} - "
+                "the declaration is stale (a larger-context model?); set `context_window` in "
+                "`.godmode-ceilings.json` to the model's real window before this line means anything")
+    if tokens < int(window * 0.7):
+        return None
+    post = size.get("last_compaction_post_tokens")
+    if int(size.get("compactions") or 0) and post is not None and int(post) >= window * 0.5:
+        return (f"godmode: context at {tokens:,} of a {window:,} window and a compaction already ran "
+                f"this session, leaving {int(post):,} - the recent window alone fills the budget, so "
+                "another compact frees little; checkpoint and start a fresh session at the next "
+                "phase boundary")
+    return (f"godmode: context at {tokens:,} of a {window:,} window (measured from the last "
+            "assistant usage); a steered compact at a phase boundary keeps the goal, invariants, "
+            "acceptance commands, failed approaches and last green - auto-compact keeps what it finds "
+            "interesting. The brief after compact carries the ledger either way.")
 
 
 def _digest(command: str) -> str:
