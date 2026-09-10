@@ -279,8 +279,13 @@ def record_request(archive: Any, text: str, *, session: str | None = None,
     )
 
 
-def _closed_digests(records: list[dict[str, Any]]) -> set[str]:
-    """Digests an operator has closed.
+def _closed_digests(records: list[dict[str, Any]]) -> dict[str, int]:
+    """Digests an operator has closed, each with the sequence of its LATEST
+    closure. Membership answers "was this ever closed"; the sequence lets
+    `open_stated_requests` close only the records that precede the closure
+    (field incident 2026-09-11: a closure keyed on the subject digest also
+    closed an ask restated after it, so the stop gate named an ask the
+    closure command could not find).
 
     A closure written by the runtime carries the digest. A closure written by a
     person does not: `remember --kind request --status closed --subject "..."`
@@ -293,20 +298,21 @@ def _closed_digests(records: list[dict[str, Any]]) -> set[str]:
     So the subject is digested as a fallback. It is the same normalisation the
     request was recorded under, which is what makes retyping the line enough.
     """
-    closed: set[str] = set()
+    closed: dict[str, int] = {}
     for record in records:
         if record.get("kind") != "request":
             continue
         data = record.get("data") or {}
         if str(data.get("status", "")).lower() not in CLOSED_STATUSES:
             continue
+        sequence = int(record.get("sequence", 0) or 0)
         identifier = data.get("digest")
         if identifier:
-            closed.add(str(identifier))
+            closed[str(identifier)] = max(sequence, closed.get(str(identifier), 0))
             continue
         subject = str(record.get("subject", "")).strip()
         if subject:
-            closed.add(digest(subject))
+            closed[digest(subject)] = max(sequence, closed.get(digest(subject), 0))
     return closed
 
 
@@ -349,9 +355,11 @@ def open_stated_requests(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if str(data.get("source", "stated")) != "stated":
             continue
         if subject not in reopened:
-            if identifier in closed:
-                continue
-            if digest(subject) in closed:
+            # A closure closes what came before it, never an ask restated
+            # after it (2026-09-11).
+            asked_at = int(record.get("sequence", 0) or 0)
+            closed_at = max(closed.get(identifier, 0), closed.get(digest(subject), 0))
+            if closed_at > asked_at:
                 continue
         survivors.append(record)
     # One ask, one row: the original (keyed by the prompt digest) and its

@@ -41,7 +41,11 @@ def open_scope(archive: Any, session_id: str | None) -> dict[str, list[str]]:
             out["temporaries"].append(
                 f"{subject} still on record - restore it, then `godmode remember --kind obligation "
                 f"--subject \"{subject}\" --status closed`")
-    requests = [r for r in records if r.get("kind") == "request"]
+    # The request-only window, the same one the closure command reads
+    # (2026-09-11): a window over every kind stopped short of the closure
+    # in a busy session, and the gate named an ask the closure had already
+    # answered.
+    requests = archive.select(kind="request", limit=600)
     for record in open_stated_requests(requests):
         data = record.get("data") or {}
         if session_id and str(data.get("session") or "") != str(session_id):
