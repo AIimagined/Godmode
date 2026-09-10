@@ -2584,7 +2584,50 @@ def cmd_history(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult({"records": [_event_view(record) for record in records]})
 
 
+def _latest_plan(runtime: Runtime) -> dict[str, Any] | None:
+    plans = runtime.archive.select(kind="plan", limit=200)
+    return plans[-1] if plans else None
+
+
 def cmd_plan(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    done = list(getattr(args, "done", None) or [])
+    if done or getattr(args, "close", False):
+        # 2026-09-10: a plan's steps stayed pending forever because nothing
+        # could finish one; the scope gate then named nineteen built steps
+        # as open. A finished step or a closed plan is a new plan record
+        # cloned from the latest, so the history keeps every state.
+        _require_archive(runtime)
+        latest = _latest_plan(runtime)
+        if latest is None:
+            raise ArchiveError("no plan on record to finish a step of")
+        data = dict(latest.get("data") or {})
+        steps = [dict(s) for s in (data.get("steps") or [])]
+        finished: list[str] = []
+        for wanted in done:
+            hit = None
+            if str(wanted).isdigit() and 1 <= int(wanted) <= len(steps):
+                hit = steps[int(wanted) - 1]
+            else:
+                needle = str(wanted).strip().lower()
+                matches = [s for s in steps if needle and needle in str(s.get("text", "")).lower()]
+                if len(matches) == 1:
+                    hit = matches[0]
+                elif len(matches) > 1:
+                    raise ArchiveError(f"--done {wanted!r} matches {len(matches)} steps; name one, or its number")
+            if hit is None:
+                raise ArchiveError(f"--done {wanted!r} matches no step of the latest plan; steps are numbered 1.."
+                                   f"{len(steps)}")
+            hit["status"] = "done"
+            finished.append(str(hit.get("text", ""))[:80])
+        if getattr(args, "close", False):
+            for step in steps:
+                step["status"] = "done"
+            data["status"] = "closed"
+        data["steps"] = steps
+        pending = sum(1 for s in steps if s.get("status") != "done")
+        record = _append(runtime, "plan", str(latest.get("subject", "plan")), data, args.evidence)
+        return CommandResult({"record": record, "finished": finished, "pending": pending,
+                              "closed": data.get("status") == "closed"})
     args.title = _one_text(args, "title_positional", "title", "plan title")
     if not args.title:
         raise ArchiveError("plan needs its title: `godmode plan \"<title>\" --step ...` or --title")
@@ -2870,6 +2913,20 @@ def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         # open ask is refused with the open list, paste-ready.
         if str(status).lower() in _CLOSED_REQUEST_STATUSES:
             _require_request_closure_target(runtime, args.subject)
+        else:
+            # A reopen typed by hand carried none of the fields the open-ask
+            # census keys on, so it reopened nothing (2026-09-10). Copy them
+            # from the newest record of the same ask.
+            prior = None
+            for record in runtime.archive.select(kind="request", limit=400):
+                if str(record.get("subject", "")) == str(args.subject):
+                    prior = record
+            if prior is not None:
+                previous = prior.get("data") or {}
+                for key in ("digest", "keywords", "session", "source", "text_digest"):
+                    if key in previous:
+                        data[key] = previous[key]
+                data["reopened"] = True
     payload: dict[str, Any] = {
         "record": _append(runtime, args.kind, args.subject, data, args.evidence)
     }
@@ -5647,6 +5704,10 @@ def _build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--title", required=False, type=subject_text)
     plan.add_argument("--step", action="append", default=[])
     plan.add_argument("--obligation", action="append", default=[])
+    plan.add_argument("--done", action="append", default=[], metavar="STEP",
+                      help="Finish a step of the latest plan, by number or by a unique substring; repeatable")
+    plan.add_argument("--close", action="store_true",
+                      help="Finish every step of the latest plan and close it")
     _evidence(plan)
     plan.set_defaults(handler=cmd_plan)
 

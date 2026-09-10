@@ -256,8 +256,11 @@ def push_preflight(project: Path | str,
         # preflight of this project - the control survives forgetting.
         if not suite and archive is not None:
             try:
-                for record in archive.select(kind="criterion", limit=200):
-                    if record.get("subject") == "preflight-suite":
+                # The designation is old by design (recorded once); a small
+                # newest-N window missed it on 2026-09-10 and the gate ran
+                # with no suite, attesting a green it never earned.
+                for record in archive.read_events():
+                    if record.get("kind") == "criterion" and record.get("subject") == "preflight-suite":
                         stored = (record.get("data") or {}).get("command")
                         if stored:
                             import shlex
@@ -344,8 +347,10 @@ def push_preflight(project: Path | str,
                 "suite: no command designated - pass --suite once, or record "
                 "it durably: precheck --designate-suite \"<cmd>\"")
         # The workflow's own gates, in the worktree, first red stops. These
-        # are the steps only CI ran before 2026-09-10.
-        if not judgment and not mechanical:
+        # are the steps only CI ran before 2026-09-10. A history-terms or
+        # open-ask finding is about the past or the record; the gates are
+        # about the tree, so only a red suite skips them.
+        if not any(j.get("check") == "suite" for j in judgment):
             import sys as _sys
             for command in workflow_gate_commands(repo):
                 argv = command.split()
@@ -487,11 +492,16 @@ def push_preflight(project: Path | str,
         except Exception:  # noqa: BLE001  # godmode: swallow-ok: a scan that cannot run is named in skipped, never a gate crash
             skipped.append("stale-claims scan: unavailable")
     verdict = "findings" if mechanical or judgment else "clean"
+    suite_skipped = any(str(item).startswith("suite:") for item in skipped)
+    if suite_skipped and verdict == "clean":
+        verdict = "incomplete"
     if archive is not None:
         # The attestation `authorize stage` reads before it stages a push.
+        # A preflight that ran no suite attests `incomplete`, never `ran`.
         try:
             archive.append("attestation", "preflight", {
-                "status": "ran" if verdict == "clean" else "failed", "session": session or "",
+                "status": "ran" if verdict == "clean" else ("incomplete" if suite_skipped else "failed"),
+                "session": session or "",
                 "head": _head_sha(repo), "validated": validated,
                 "findings": len(mechanical) + len(judgment), "gates": len(workflow_gate_commands(repo)),
             }, evidence=[])
@@ -502,6 +512,7 @@ def push_preflight(project: Path | str,
         "judgment": judgment,
         "skipped": skipped,
         "verdict": verdict,
+        "suite_ran": not suite_skipped and not any(j.get("check") == "suite" for j in judgment),
         "validated": validated,
         # The effect of a control action is confirmed, never assumed: the
         # cleanup claim is checked against the filesystem, and an

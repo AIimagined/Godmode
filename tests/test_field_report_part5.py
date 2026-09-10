@@ -119,5 +119,52 @@ class LocalReadsCountTests(unittest.TestCase):
             self.assertIn("only readme.md", notices[0].lower())
 
 
+class PlanStepTests(unittest.TestCase):
+    def test_a_step_can_be_finished_and_a_plan_closed(self) -> None:
+        from godmode_runtime.godmode_console import _build_parser
+        from godmode_runtime.godmode_iteration import open_scope
+
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            archive.append("plan", "ship it", {"status": "active", "steps": [
+                {"text": "wire the wrapper", "status": "pending"},
+                {"text": "write the migration note", "status": "pending"}], "obligations": []}, evidence=[])
+            self.assertEqual(len(open_scope(archive, None)["steps"]), 2)
+            import godmode_runtime.godmode_console as console
+            args = _build_parser().parse_args(["plan", "--done", "wrapper"])
+            runtime = console.Runtime(anchor=archive.anchor, archive=archive) if hasattr(archive, "anchor") else None
+            if runtime is None:
+                self.skipTest("runtime construction differs")
+            out = console.cmd_plan(args, runtime)
+            self.assertEqual(out.payload["finished"], ["wire the wrapper"])
+            self.assertEqual(out.payload["pending"], 1)
+            self.assertEqual(len(open_scope(archive, None)["steps"]), 1)
+            out = console.cmd_plan(_build_parser().parse_args(["plan", "--close"]), runtime)
+            self.assertTrue(out.payload["closed"])
+            self.assertEqual(open_scope(archive, None)["steps"], [])
+
+
+class ReopenAskTests(unittest.TestCase):
+    def test_a_closed_ask_reopened_by_hand_is_open_again(self) -> None:
+        from godmode_runtime.godmode_requests import open_stated_requests, record_request
+
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            record = record_request(archive, "update the about text on the repository", session="s1")
+            subject = record["subject"]
+            self.assertEqual(len(open_stated_requests(archive.select(kind="request", limit=50))), 1)
+            import godmode_runtime.godmode_console as console
+            from godmode_runtime.godmode_console import _build_parser
+            runtime = console.Runtime(anchor=archive.anchor, archive=archive)
+            console.cmd_remember(_build_parser().parse_args(
+                ["remember", "--kind", "request", "--subject", subject, "--status", "closed"]), runtime)
+            self.assertEqual(open_stated_requests(archive.select(kind="request", limit=50)), [])
+            console.cmd_remember(_build_parser().parse_args(
+                ["remember", "--kind", "request", "--subject", subject, "--status", "open",
+                 "--value", "not yet done"]), runtime)
+            reopened = open_stated_requests(archive.select(kind="request", limit=50))
+            self.assertEqual([r["subject"] for r in reopened], [subject])
+
+
 if __name__ == "__main__":
     unittest.main()

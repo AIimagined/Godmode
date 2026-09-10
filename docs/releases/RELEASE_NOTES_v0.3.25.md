@@ -33,6 +33,9 @@
 - **"Sources unread" reads local files.** Reading the project's own files
   counts as reading its repository; when the nudge still fires it names
   what was read.
+- **A plan step can be finished.** `godmode plan --done <step>` and
+  `plan --close`; a closed ask can be reopened with `remember --kind
+  request --status open`.
 - **Measurement environment.** `precheck` on a latency, duplicate-request,
   or re-render task lists the environment the deciding number must come
   from. A quoted sentence is no longer read as a claim. A process-control

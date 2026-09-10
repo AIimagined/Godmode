@@ -330,19 +330,39 @@ def open_stated_requests(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         identifier = str((record.get("data") or {}).get("digest", ""))
         if identifier:
             latest[identifier] = record
+    # A reopen written by hand (`--status open` over a closed ask, 2026-09-10)
+    # is later than the closure it undoes: the newest record per subject
+    # decides, and a closure older than a reopen closes nothing.
+    newest_by_subject: dict[str, dict[str, Any]] = {}
+    for record in records:
+        if record.get("kind") == "request":
+            newest_by_subject[str(record.get("subject", "")).strip()] = record
+    reopened = {subject for subject, record in newest_by_subject.items()
+                if (record.get("data") or {}).get("reopened")
+                and str((record.get("data") or {}).get("status", "open")) == "open"}
     survivors: list[dict[str, Any]] = []
     for identifier, record in latest.items():
         data = record.get("data") or {}
+        subject = str(record.get("subject", "")).strip()
         if str(data.get("status", "open")) != "open":
             continue
         if str(data.get("source", "stated")) != "stated":
             continue
-        if identifier in closed:
-            continue
-        if digest(str(record.get("subject", "")).strip()) in closed:
-            continue
+        if subject not in reopened:
+            if identifier in closed:
+                continue
+            if digest(subject) in closed:
+                continue
         survivors.append(record)
-    return survivors
+    # One ask, one row: the original (keyed by the prompt digest) and its
+    # reopen (keyed by the subject digest) share a subject.
+    by_subject: dict[str, dict[str, Any]] = {}
+    for record in survivors:
+        subject = str(record.get("subject", "")).strip()
+        current = by_subject.get(subject)
+        if current is None or int(record.get("sequence", 0)) > int(current.get("sequence", 0)):
+            by_subject[subject] = record
+    return sorted(by_subject.values(), key=lambda r: int(r.get("sequence", 0)))
 
 
 # `serve_requests` (obligation 10117) closed an ask when half its keywords
