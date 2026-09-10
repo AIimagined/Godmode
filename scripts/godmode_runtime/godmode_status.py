@@ -33,7 +33,8 @@ _AUTHORITY = re.compile(
     r"single source of truth|source of truth|\bSSOT\b|authoritative (?:list|record|doc)",
     re.IGNORECASE,
 )
-_SKIP_DIRS = {".git", "node_modules", "dist", "build", "__pycache__", ".venv", "venv", "coverage"}
+_SKIP_DIRS = {".git", "node_modules", "dist", "build", "__pycache__", ".venv", "venv", "coverage",
+              ".godmode-repo"}  # the tool's own clone inside a project is not the project
 _TEXT_SUFFIXES = {".md", ".mdx", ".rst", ".txt", ".adoc"}
 
 
@@ -421,21 +422,48 @@ def authority_claims(project: Path, limit: int = 5000) -> list[dict[str, Any]]:
     return found
 
 
+def declared_authorities(project: Path) -> set[str]:
+    """The bound authority documents, project-relative. opencode field
+    report 2026-09-10: seven spec files each claiming primacy over its own
+    domain are a spec-driven convention, not a collision; only a claimant
+    outside the bound roles competes."""
+    try:
+        from .godmode_sources import _required_paths
+
+        return set(_required_paths(Path(project)))
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: unresolved roles read as no declaration
+        return set()
+
+
+def unbound_claims(project: Path, claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    declared = declared_authorities(project)
+    return [entry for entry in claims if entry["path"] not in declared]
+
+
 def survey(archive: Chronicle, project: Path) -> dict[str, Any]:
     current = items(archive)
     claims = authority_claims(project)
+    unbound = unbound_claims(project, claims)
     by_state: dict[str, int] = {}
     for entry in current.values():
         by_state[entry["state"]] = by_state.get(entry["state"], 0) + 1
+    if len(claims) <= 1:
+        verdict = "single-writer"
+    elif not unbound:
+        verdict = "declared-authorities"
+    else:
+        verdict = "competing-authority"
     return {
         "items": len(current),
         "by_state": dict(sorted(by_state.items())),
         "authority_claims": {
             "files": len(claims),
             "total": sum(entry["claims"] for entry in claims),
+            "declared": len(claims) - len(unbound),
+            "unbound": [entry["path"] for entry in unbound][:10],
             "top": claims[:10],
         },
-        "verdict": "single-writer" if len(claims) <= 1 else "competing-authority",
+        "verdict": verdict,
     }
 
 

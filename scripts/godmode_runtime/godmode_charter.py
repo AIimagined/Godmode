@@ -350,8 +350,46 @@ def compile_charter(project: Path) -> dict[str, Any]:
         "enforcement": counts,
         "by_role": dict(sorted(by_role.items())),
         "documents": len(resolution.bindings),
+        "linked_not_compiled": _linked_not_compiled(resolution),
         "compiled": [rule.view() for rule in rules],
     }
+
+
+_MD_LINK = re.compile(r"\[[^\]]*\]\(([^)\s#]+\.md)(?:#[^)]*)?\)")
+
+
+def _linked_not_compiled(resolution: Any) -> list[str]:
+    """Markdown links from the compiled documents to documents that exist
+    and are not bound to any role. Codex assessment 2026-09-10: AGENTS.md
+    linked a constitution and the active specs, the charter compiled one
+    document, and nothing said what it had not read. Bind one with
+    `.godmode-roles.json` (or `init --roles`) to compile it."""
+    project = Path(resolution.project).resolve()
+    bound: set[Path] = set()
+    paths: list[Path] = []
+    for binding in resolution.bindings:
+        path = binding.path if binding.path.is_absolute() else project / binding.path
+        bound.add(path.resolve())
+        paths.append(path)
+    linked: list[str] = []
+    for path in paths:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for target in _MD_LINK.findall(text):
+            if "://" in target:
+                continue
+            candidate = (path.parent / target).resolve()
+            if not candidate.is_file() or candidate in bound:
+                continue
+            try:
+                relative = candidate.relative_to(project).as_posix()
+            except ValueError:
+                continue
+            if relative not in linked:
+                linked.append(relative)
+    return linked[:20]
 
 
 # A rule about migrations is irrelevant to a stylesheet however the task is worded.

@@ -67,6 +67,15 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual([e["name"] for e in listing], ["hello"])
         self.assertEqual(listing[0]["version"], "0.1.0")
 
+    def test_listing_runs_through_the_console(self) -> None:
+        # `extensions list` raised NameError for the policy filename from the
+        # day it shipped; the direct call above never crossed the console.
+        with _home_with_extension() as (_home, project):
+            code, payload = _run(["extensions", "list"], project)
+        self.assertEqual(code, 0, payload)
+        self.assertEqual(payload["policy"], POLICY_FILENAME)
+        self.assertEqual(payload["count"], 1)
+
     def test_run_is_refused_until_the_policy_names_it(self) -> None:
         with _home_with_extension() as (_home, project):
             code, payload = _run(["extensions", "run", "hello", "--", "x"], project)

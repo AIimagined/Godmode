@@ -88,11 +88,32 @@ def _from_minimality(report: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def quality_report(project: Path | str, archive: Any = None) -> dict[str, Any]:
+def quality_report(project: Path | str, archive: Any = None,
+                   deep: bool = False) -> dict[str, Any]:
+    """opencode field report 2026-09-10: `quality` took two minutes where
+    `integrity` took one second. The atlas build and the pairwise duplicate
+    scan behind minimality are the cost; they run on `--deep`, every
+    section reports its seconds, and the deferred one is named."""
+    import time
+
     project = Path(project)
-    findings = (_from_docslint(lint_docs(project))
-                + _from_swallow(scan_project(project))
-                + _from_minimality(minimality_report(project, archive)))
+    timings: dict[str, float] = {}
+    started = time.perf_counter()
+    findings = _from_docslint(lint_docs(project))
+    timings["docs"] = round(time.perf_counter() - started, 2)
+    started = time.perf_counter()
+    findings += _from_swallow(scan_project(project))
+    timings["swallow"] = round(time.perf_counter() - started, 2)
+    sources = ["docs", "swallow"]
+    deferred = None
+    if deep:
+        started = time.perf_counter()
+        findings += _from_minimality(minimality_report(project, archive))
+        timings["minimality"] = round(time.perf_counter() - started, 2)
+        sources.append("minimality")
+    else:
+        deferred = ("minimality: the atlas build and pairwise duplicate scan; "
+                    "`quality --deep` or `godmode minimality` runs it")
     findings.sort(key=lambda f: (RANK[f["severity"]], f["source"], f["path"], f["line"]))
     counts = {level: 0 for level in RANK}
     for finding in findings:
@@ -100,7 +121,9 @@ def quality_report(project: Path | str, archive: Any = None) -> dict[str, Any]:
     return {
         "findings": findings,
         "counts": counts,
-        "sources": ["docs", "swallow", "minimality"],
+        "sources": sources,
+        "timings_seconds": timings,
+        **({"deferred": deferred} if deferred else {}),
         "remediation": "proposals only - this command executes nothing",
         "verdict": "findings-present" if findings else "clean",
     }

@@ -1305,6 +1305,13 @@ _WEAK_VERBS = re.compile(
     r"|enhance[sd]?|polish(?:ed|ing)?)\b"
 )
 
+# Field report part 5 (2026-09-10): a check the same agent ran and attested is
+# graded on its exit code; the note names what would make it independent. It
+# rides its own field so the advisories list keeps meaning "something to fix".
+SELF_ATTESTED_NOTE = (
+    "self-attested: the cited check was run and attested by this same agent; "
+    "the grade stands on the exit code, and an attestation from another agent "
+    "or model (`godmode verify` from a reviewer session) would make it independent")
 LATE_CRITERION_FINDING = "criterion must precede the work it judges"
 
 
@@ -2248,10 +2255,7 @@ def record_claim(
         except Exception:  # noqa: BLE001  # godmode: swallow-ok: the advisory is best-effort; the grade already stands
             own = {}
         if own.get("self_attested"):
-            advisories.append(
-                "self-attested: the cited check was run and attested by this same agent; "
-                "the grade stands on the exit code, and an attestation from another agent "
-                "or model (`godmode verify` from a reviewer session) would make it independent")
+            composed["independence"] = SELF_ATTESTED_NOTE
     if effective == "observed" and (pass_verdict or fix_claim or is_run_shaped(text)):
         # Deterministic picker (obligations 10118, 10245): a run-shaped
         # claim is graded by executed predicates. Green attestation for the
@@ -2263,10 +2267,7 @@ def record_claim(
             composed["composed_from"] = ["check_ran", "exit_recorded", "head_matches"]
             composed["composed_attestation"] = predicates["attestation"]
             if predicates.get("self_attested"):
-                advisories.append(
-                    "self-attested: the cited check was run and attested by this same agent; "
-                    "the grade stands on the exit code, and an attestation from another agent "
-                    "or model (`godmode verify` from a reviewer session) would make it independent")
+                composed["independence"] = SELF_ATTESTED_NOTE
         elif predicates.get("checker_authored"):
             composed["settleable_by"] = (
                 f"the cited checker names {predicates['checker_authored']}, a file this session "

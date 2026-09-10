@@ -222,6 +222,15 @@ class Chronicle:
         records = sorted(events.glob("*.json"))
         if not records:
             return None
+        # Once adopted, the previous location is history, not a finding:
+        # adopt() records the inherited key in this archive's config.
+        try:
+            inherited = str(self._read_json(config).get("project_key") or "")
+            own = self._read_json(self.config) if self.config.is_file() else {}
+            if inherited and inherited in set(own.get("adopted_keys") or []):
+                return None
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable config reads as not adopted
+            pass
         return {
             "source": str(previous),
             "records": len(records),

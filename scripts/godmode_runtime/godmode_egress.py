@@ -515,7 +515,7 @@ def scan_project(project: Path, limit: int = DEFAULT_SCAN_LIMIT) -> dict[str, An
             continue
         if path.suffix.lower() not in {".md", ".mdx", ".txt", ".rst", ".json", ".yaml", ".yml"}:
             continue
-        if any(part in {".git", "node_modules", "__pycache__"} for part in path.parts):
+        if any(part in {".git", "node_modules", "__pycache__", ".godmode-repo"} for part in path.parts):
             continue
         # Same boundary the swallow scanner draws (CX-3 fix round): host-agent
         # worktrees nested under THIS project are duplicate checkouts of

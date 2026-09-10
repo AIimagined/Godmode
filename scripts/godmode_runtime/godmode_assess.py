@@ -24,7 +24,7 @@ from .godmode_errors import ArchiveError, GodmodeError
 from .godmode_reconcile import reconcile_capabilities
 from .godmode_roi import would_have_summary
 from .godmode_sentinel import GATE_MODE_OBSERVE, local_authorization_policy
-from .godmode_status import authority_claims
+from .godmode_status import authority_claims, unbound_claims
 
 # What an agent will realistically spend reading rules before starting work.
 TYPICAL_COLD_START_TOKENS = 2_500
@@ -188,12 +188,15 @@ def assess(project: Path, budget: int = TYPICAL_COLD_START_TOKENS,
     report["authority_claims"] = {
         "files": len(claims), "assertions": total_claims, "top": claims[:8],
     }
-    if len(claims) > 1:
+    unbound = unbound_claims(project, claims)
+    report["authority_claims"]["unbound"] = [entry["path"] for entry in unbound][:8]
+    if len(claims) > 1 and unbound:
         findings.append(_finding(
             "high", "competing-authority",
-            f"{len(claims)} files assert primacy ({total_claims} assertions). When several sources "
-            "claim to be authoritative the effective number is zero: whichever was read last wins, "
-            "which is a function of session order rather than correctness.",
+            f"{len(claims)} files assert primacy ({total_claims} assertions), {len(unbound)} of them "
+            f"outside the bound authority roles ({', '.join(e['path'] for e in unbound[:3])}). When "
+            "several sources claim to be authoritative the effective number is zero: whichever was "
+            "read last wins, which is a function of session order rather than correctness.",
             "Keep status in one writable store and generate the rest as read-only views.",
         ))
 
@@ -447,7 +450,9 @@ def _self_check() -> None:
             "# Gates\n- Never commit without an explicit ask.\n"
             "This document is the single source of truth.\n", encoding="utf-8"
         )
-        (project / "docs" / "STATE.md").write_text(
+        # An unbound claimant: a bound role document claiming primacy over
+        # its own domain is declared, not competing (2026-09-10).
+        (project / "docs" / "NOTES.md").write_text(
             "The SSOT for state lives here instead.\n", encoding="utf-8"
         )
         (project / "a.py").write_text("import b\n", encoding="utf-8")

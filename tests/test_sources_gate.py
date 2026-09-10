@@ -211,6 +211,20 @@ class SourcesGateTests(unittest.TestCase):
         self.assertIn("sources-exemption", first)
         self.assertIsNone(second)
 
+    def test_a_transcript_read_credits_the_gate(self) -> None:
+        import json
+
+        with isolated_project() as (project, _s, anchor, archive):
+            archive.initialize()
+            _bind(project)
+            session = open_session(archive, "gate-transcript")
+            transcript = project / "t.jsonl"
+            transcript.write_text(json.dumps({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": "1", "name": "Read",
+                 "input": {"file_path": str(project / "GODMODE.md")}}]}}) + "\n", encoding="utf-8")
+            first = self._gate()(archive, anchor, session, transcript_path=str(transcript))
+        self.assertIsNone(first)
+
     def test_quiet_when_every_source_is_cited(self) -> None:
         with isolated_project() as (project, _s, anchor, archive):
             archive.initialize()

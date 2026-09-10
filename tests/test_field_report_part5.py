@@ -203,7 +203,8 @@ class SelfAttestedTests(unittest.TestCase):
             self.assertTrue(predicates.get("self_attested"), predicates)
             record = record_claim(archive, project, "s1", "the json module imports", "verified", cites=[citation])
             self.assertEqual(record["data"]["grade"], "verified", record["data"])
-            self.assertTrue(any("self-attested" in a for a in record["data"].get("advisories", [])), record["data"])
+            self.assertIn("self-attested", str(record["data"].get("independence", "")), record["data"])
+            self.assertEqual(record["data"].get("advisories", []), [])
 
 
 class HostControlToolTests(unittest.TestCase):

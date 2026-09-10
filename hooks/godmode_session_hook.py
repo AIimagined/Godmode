@@ -2070,7 +2070,8 @@ def _broker(archive: Chronicle) -> Any:
 
 
 def _sources_gate_reason(archive: Chronicle, anchor: Any,
-                         session: str | None) -> str | None:
+                         session: str | None,
+                         transcript_path: str | None = None) -> str | None:
     """Obligation 4094 (S5): the required-sources counter gates, not only
     reports. Returns the ask reason for the first otherwise-allowed pre-tool
     call of a session while a bound authority document is uncited and
@@ -2543,23 +2544,30 @@ def main(argv: list[str] | None = None) -> int:
             # markdown files are the multiple-writable-truths disease -
             # whichever was read last wins. One line with the numbers and
             # the cure; below threshold, silence (two sprint files are a
-            # convention, not a disease). Root level only - a docs/archive
-            # of generated views is the healthy end state, not sprawl.
+            # convention, not a disease). Root and docs/ - a project whose
+            # handovers and sprint files live under docs/ (21 handovers,
+            # a 300 KB SSOT, field walk 2026-09-10) has the same disease
+            # one directory down; a docs/archive of generated views is
+            # the healthy end state and stays out.
             try:
                 root_path = Path(anchor.project_root)
                 shaped = [
                     f for pattern in ("SPRINT*.md", "HANDOVER*.md",
                                       "TODO*.md", "*-SSOT*.md",
                                       "ABSORPTION*.md")
-                    for f in root_path.glob(pattern)
+                    for base in (root_path, root_path / "docs")
+                    for f in base.glob(pattern)
                     if f.is_file() and f.stat().st_size >= 2048
                 ]
                 shaped = sorted(set(shaped))
                 if len(shaped) >= 6:
                     total_kb = sum(f.stat().st_size for f in shaped) // 1024
+                    largest = max(shaped, key=lambda f: f.stat().st_size)
                     brief["doc_sprawl"] = {
                         "files": len(shaped),
                         "kilobytes": total_kb,
+                        "largest": f"{largest.relative_to(root_path).as_posix()} "
+                                   f"({largest.stat().st_size // 1024} KB)",
                         "advisory": (
                             f"{len(shaped)} status-shaped markdown files "
                             f"({total_kb} KB) hold writable truth side by "
@@ -3553,7 +3561,9 @@ def main(argv: list[str] | None = None) -> int:
         # naming the unread files and both escapes (cite it, or exempt it on
         # the record). Observe mode converts it like every other would-ask.
         if pretool and preview.get("allow") and not preview.get("capability_consumed"):
-            sources_reason = _sources_gate_reason(archive, anchor, session)
+            sources_reason = _sources_gate_reason(
+                archive, anchor, session,
+                transcript_path=submitted.get("transcript_path") or submitted.get("transcriptPath"))
             if sources_reason is not None:
                 preview["allow"] = False
                 preview["sources_gate"] = True

@@ -37,6 +37,22 @@ class RequiredSourceReadTests(unittest.TestCase):
             expected = "agents.md" if os.name == "nt" else "AGENTS.md"
             self.assertIn(expected, reads)
 
+    def test_the_view_keeps_each_required_documents_own_spelling(self) -> None:
+        from godmode_runtime.godmode_sources import required_sources_view
+
+        with isolated_project() as (project, _s, _a, archive):
+            (project / "CLAUDE.md").write_text("# rules\n", encoding="utf-8")
+            view = required_sources_view(project, archive)
+            self.assertIn("CLAUDE.md", view["unread"], view)
+            self.assertNotIn("claude.md", view["unread"])
+            transcript = project / "t.jsonl"
+            transcript.write_text(json.dumps({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": "1", "name": "Read",
+                 "input": {"file_path": str(project / ("Claude.md" if os.name == "nt" else "CLAUDE.md"))}}]}}) + "\n",
+                encoding="utf-8")
+            after = required_sources_view(project, archive, transcript_path=transcript)
+            self.assertNotIn("CLAUDE.md", after["unread"], after)
+
 
 class GitlessDoctorTests(unittest.TestCase):
     def test_doctor_names_a_repository_without_git(self) -> None:

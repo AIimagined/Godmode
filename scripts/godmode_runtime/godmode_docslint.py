@@ -48,7 +48,7 @@ _PUBLIC_SUFFIXES = frozenset({".md", ".mdx", ".rst", ".txt"})
 _PRIVATE_PARTS = frozenset({
     ".godmode-private", ".research", ".planning", ".sprints", ".checkpoints",
     ".handovers", ".evidence", ".decisions", ".lessons", ".git", "node_modules",
-    "tests", "evals",
+    "tests", "evals", ".godmode-repo",
 })
 
 CHECKS: dict[str, dict[str, Any]] = {

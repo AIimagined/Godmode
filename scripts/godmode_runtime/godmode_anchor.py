@@ -307,6 +307,14 @@ def resolve_anchor(project: str | Path) -> ProjectAnchor:
             f"git\0{common_path}".encode("utf-8")
         ).hexdigest()[:24]
         head_value, branch_value = _head_and_branch(project_root)
+        archive_root = canonical_path(common_path / ARCHIVE_DIRNAME)
+        if not archive_root.exists() and not os.access(common_path, os.W_OK):
+            # Codex assessment 2026-09-10: a host that protects git metadata
+            # made every archive write fail (session open, resume --refresh,
+            # checkpoint). Before the first record exists, an unwritable
+            # .git sends the archive to application data under the same
+            # git-derived key, so it still follows the repository.
+            archive_root = canonical_path(application_home() / "projects" / project_key)
         anchor = ProjectAnchor(
             schema_version=SCHEMA_VERSION,
             project_root=str(project_root),
@@ -317,7 +325,7 @@ def resolve_anchor(project: str | Path) -> ProjectAnchor:
             branch=branch_value,
             head=head_value,
             remote_hashes=_remote_hashes(project_root),
-            archive_root=str(canonical_path(common_path / ARCHIVE_DIRNAME)),
+            archive_root=str(archive_root),
         )
         if identity is not None:
             _store_cached_anchor(requested, identity, anchor)

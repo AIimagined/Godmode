@@ -309,12 +309,14 @@ def push_preflight(project: Path | str,
                                                                   f"{SUITE_TIMEOUT_SECONDS}s without a verdict"})
                     break
                 if shard.returncode != 0:
-                    tail = (shard.stderr or shard.stdout or b"")[-20000:].decode("utf-8", errors="replace")
-                    lines = [ln for ln in tail.splitlines() if ln.startswith(("FAIL", "ERROR", "Ran "))][-8:]
+                    # Every shard runs: one gate round names every red test
+                    # instead of the first shard's, so the next round is
+                    # the green one rather than the next discovery.
+                    tail = (shard.stderr or shard.stdout or b"")[-40000:].decode("utf-8", errors="replace")
+                    lines = [ln for ln in tail.splitlines() if ln.startswith(("FAIL", "ERROR", "Ran "))][-12:]
                     judgment.append({"check": "suite",
                                      "detail": f"suite shard {index} exited {shard.returncode}"
                                                + (": " + " | ".join(lines) if lines else "")})
-                    break
             run = None
             suite = None  # the sharded run stands in for the single process below
             suite_designated = True

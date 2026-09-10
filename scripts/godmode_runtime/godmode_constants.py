@@ -103,7 +103,7 @@ SETTLED_STATUSES = frozenset({"retired", "superseded", "withdrawn", "revoked"})
 
 IGNORED_DIRECTORY_NAMES = frozenset(
     {
-        ".git", ".hg", ".svn", ".godmode", ".godmode-private",
+        ".git", ".hg", ".svn", ".godmode", ".godmode-private", ".godmode-repo",
         ".godmode-state", ".research", ".planning", ".sprints",
         ".checkpoints", ".handovers", ".evidence", ".decisions", ".lessons",
         "node_modules", "coverage", "dist", "build", "target", "__pycache__",

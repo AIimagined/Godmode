@@ -24,9 +24,14 @@ _MAX_TEST_FILES = 250
 
 
 def _norm(path: Any) -> str:
-    text = str(path).replace("\\", "/").lstrip("./")
-    # Grok field report 2026-09-10: `Agents.md` and `AGENTS.md` are one file
-    # on Windows and read as two here; the comparison folds case there.
+    return str(path).replace("\\", "/").lstrip("./")
+
+
+def _fold(path: Any) -> str:
+    """The comparison key. Grok field report 2026-09-10: `Agents.md` and
+    `AGENTS.md` are one file on Windows and read as two here; the key folds
+    case there while every displayed path keeps the file's own spelling."""
+    text = _norm(path)
     return text.lower() if os.name == "nt" else text
 
 
@@ -66,7 +71,7 @@ def transcript_reads(transcript_path: str | Path | None, project: Path) -> set[s
                 elif Path(candidate).is_absolute():
                     continue
                 if (Path(project) / text).is_file():
-                    out.add(_norm(text))
+                    out.add(_fold(text))
     return out
 
 
@@ -102,18 +107,18 @@ def required_sources_view(project: Path, archive: Any,
             for reference in record.get("evidence") or []:
                 text = str(reference)
                 if text.startswith("file:"):
-                    cited.add(_norm(text[len("file:"):]))
+                    cited.add(_fold(text[len("file:"):]))
             if record.get("kind") == "decision":
                 subject = str(record.get("subject") or "")
                 if subject.startswith(EXEMPTION_PREFIX):
                     status = str((record.get("data") or {}).get("status") or "active")
-                    exempt[_norm(subject[len(EXEMPTION_PREFIX):])] = (
+                    exempt[_fold(subject[len(EXEMPTION_PREFIX):])] = (
                         status not in ("retired", "closed"))
     except Exception:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
         pass
     cited |= transcript_reads(transcript_path, Path(project))
-    exempted = [p for p in required if exempt.get(p)]
-    unread = [p for p in required if p not in cited and not exempt.get(p)]
+    exempted = [p for p in required if exempt.get(_fold(p))]
+    unread = [p for p in required if _fold(p) not in cited and not exempt.get(_fold(p))]
     return {
         "documents": len(required),
         "required": required,
@@ -205,7 +210,7 @@ def guard_pin_reason(project: Path, archive: Any, text: str,
     when no pin is found. Bounded: first matching test file wins, lessons
     scanned via the archive's own bounded select.
     """
-    cited_norm = {_norm(str(c)[len("file:"):]) for c in citations
+    cited_norm = {_fold(str(c)[len("file:"):]) for c in citations
                   if str(c).startswith("file:")}
     surfaces: list[str] = []
     for path in cited_norm:
@@ -219,7 +224,7 @@ def guard_pin_reason(project: Path, archive: Any, text: str,
         for count, test_file in enumerate(sorted(tests_dir.rglob("*.py"))):
             if count >= _MAX_TEST_FILES:
                 break
-            rel = _norm(test_file.relative_to(project).as_posix())
+            rel = _fold(test_file.relative_to(project).as_posix())
             if rel in cited_norm:
                 continue
             try:

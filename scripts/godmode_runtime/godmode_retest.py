@@ -15,7 +15,7 @@ from typing import Any
 from .godmode_anchor import run_git
 
 _TEST_FILE = re.compile(r"(?i)(^|/)(tests?|spec|__tests__|specs)/|(^|/)(test_[^/]+|[^/]+[._-](test|spec))\.[a-z]+$")
-_SKIP_DIRS = ("node_modules/", ".git/", "dist/", "build/", ".venv/", "venv/")
+_SKIP_DIRS = ("node_modules/", ".git/", "dist/", "build/", ".venv/", "venv/", ".godmode-repo/")
 _PY_RUNNER = ("py",)
 _JS_RUNNER = ("ts", "tsx", "js", "jsx", "mjs", "cjs")
 

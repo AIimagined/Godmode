@@ -166,7 +166,7 @@ from .godmode_scope import scope as scope_change
 from .godmode_status import ITEM_TYPES, STATES, handover, record_item, remaining, render_view, survey
 from .godmode_corpus import build_brief, resolve_roles
 from .godmode_detect import bootstrap_charter
-from .godmode_profile import PROFILE_NAMES, apply_profile
+from .godmode_profile import POLICY_FILENAME, PROFILE_NAMES, apply_profile
 from .godmode_egress import notice as egress_notice
 from .godmode_egress import scan_project as scan_untrusted
 from .godmode_egress import scan_staged
@@ -511,6 +511,13 @@ def cmd_init(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # and would make an adoptable archive look like a populated one.
     orphaned = runtime.archive.orphaned()
     runtime.archive.initialize()
+    adopted = None
+    if orphaned and orphaned.get("adoptable"):
+        # opencode field report 2026-09-10: a project that ran `git init`
+        # after godmode was initialised had to find `adopt` by itself.
+        # init relinks the stranded records; adopt stays for the
+        # non-empty case, which needs a decision.
+        adopted = runtime.archive.adopt(Path(orphaned["source"]))
     payload = {
         "initialized": True,
         "already_initialized": already,
@@ -518,11 +525,18 @@ def cmd_init(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         "archive": "<git-metadata>" if runtime.anchor.is_git else "<os-application-data>",
         "network_used": False,
     }
-    if orphaned:
+    if orphaned and adopted:
+        payload["adopted"] = adopted
+        payload["next_action"] = (
+            f"{orphaned['records']} records written before this project became a git "
+            "repository were relinked to its git identity; nothing more to do."
+        )
+    elif orphaned:
         payload["orphaned_archive"] = orphaned
         payload["next_action"] = (
-            "Records exist under this project's previous identity. Run `adopt` to relink "
-            "them, or continue and they stay unreachable."
+            "Records exist under this project's previous identity and this archive already "
+            "holds records of its own. Run `adopt --confirm` to relink them, or continue and "
+            "they stay unreachable."
         )
     if args.roles:
         payload["roles_scaffolded"] = _scaffold_roles(
@@ -1024,6 +1038,7 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
          "unresolved": data["unresolved"], "unsupported": data.get("unsupported", []),
          "blast_radius": data.get("blast_radius"),
          "advisories": data.get("advisories", []),
+         **({"independence": data["independence"]} if data.get("independence") else {}),
          **({"verified_checks": check_results} if check_results else {})},
         exit_code=1 if data["downgraded"] else 0,
     )
@@ -1361,7 +1376,8 @@ def cmd_quality(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # C-05. Aggregation only; every remedy is a proposal and nothing here
     # writes. A `high` finding is a defect the reader must answer for, so
     # it - and only it - reaches the exit status; the rest are questions.
-    report = quality_report(Path(runtime.anchor.project_root), runtime.archive)
+    report = quality_report(Path(runtime.anchor.project_root), runtime.archive,
+                            deep=bool(getattr(args, "deep", False)))
     exit_code = 1 if report["counts"]["high"] else 0
     # C-63: the same findings in a shape an editor consumes. The exit
     # status is the same in every format - a format is a view, not a
@@ -3177,7 +3193,12 @@ def _doctor_host(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             commands: list[str] = []
             try:
                 doc = json.loads(candidate.read_text(encoding="utf-8"))
-                for groups in (doc.get("hooks") or {}).values():
+                event_groups = list((doc.get("hooks") or {}).values())
+                # Antigravity's shape keeps the event lists under the
+                # `godmode` key; a dead path there was invisible here.
+                event_groups += [value for value in (doc.get("godmode") or {}).values()
+                                 if isinstance(value, list)]
+                for groups in event_groups:
                     for group in groups if isinstance(groups, list) else []:
                         for handler in (group.get("hooks") or []) if isinstance(group, dict) else []:
                             command = str((handler or {}).get("command", ""))
@@ -3235,12 +3256,25 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # is about, in JSON and in prose.
     project = str(runtime.anchor.project_root)
     if not runtime.archive.initialized():
+        issues = [{"code": "not-initialized", "severity": "error",
+                   "detail": f"Not initialized for {project}. Run init."}]
+        try:
+            stranded = runtime.archive.orphaned()
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable previous location is not a finding
+            stranded = None
+        if stranded:
+            # opencode field report 2026-09-10: after `git init` the
+            # records sat under the previous identity and doctor said
+            # only "run init" - init relinks them, and this says so.
+            issues.append({"code": "archive-predates-git-init", "severity": "warning",
+                           "detail": f"{stranded['records']} records exist under this project's "
+                                     f"previous identity ({stranded['reason']}); `godmode init` "
+                                     "relinks them"})
         return CommandResult(
             {
                 "project": project,
                 "healthy": False,
-                "issues": [{"code": "not-initialized", "severity": "error",
-                            "detail": f"Not initialized for {project}. Run init."}],
+                "issues": issues,
                 "network_used": False,
             },
             exit_code=1,
@@ -3288,6 +3322,22 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         from .godmode_host_manifests import runtime_census_issues
 
         issues.extend(runtime_census_issues(RUNTIME_VERSION))
+    try:
+        stranded = runtime.archive.orphaned()
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable previous location is not a finding
+        stranded = None
+    if stranded:
+        issues.append({"code": "archive-predates-git-init", "severity": "warning",
+                       "detail": f"{stranded['records']} records exist under this project's previous "
+                                 f"identity ({stranded['reason']}); "
+                                 + ("`godmode init` relinks them" if stranded.get("adoptable")
+                                    else "`godmode adopt --confirm` relinks them")})
+    common_dir = getattr(runtime.anchor, "git_common_dir", None)
+    if common_dir and not str(runtime.archive.root).startswith(str(common_dir)):
+        issues.append({"code": "archive-in-application-data", "severity": "info",
+                       "detail": "git metadata is not writable from this host, so the archive lives "
+                                 "in application data keyed by the git identity; records follow "
+                                 "the repository, not the checkout path"})
     if not getattr(runtime.anchor, "is_git", True):
         # Grok field report 2026-09-10: identity showed branch and head as
         # null and doctor said healthy. Without git, rewind, the integrity
@@ -3962,7 +4012,7 @@ def upstream_skill_hits(tree: Path, keyword: str, limit: int = 40) -> list[dict[
             continue
         candidates = root.rglob("*.md") if root != tree else tree.glob("*.md")
         for path in sorted(candidates):
-            if path in seen or any(part in ("node_modules", ".git") for part in path.parts):
+            if path in seen or any(part in ("node_modules", ".git", ".godmode-repo") for part in path.parts):
                 continue
             seen.add(path)
             try:
@@ -5336,6 +5386,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "quality",
         help="Every quality finding - docs, swallowed errors, minimality - "
              "worst first, with a proposed remedy each; executes nothing")
+    quality_parser.add_argument(
+        "--deep", action="store_true",
+        help="run the minimality section too (atlas build and pairwise duplicate "
+             "scan; minutes on a large tree); the report names its seconds per section")
     quality_parser.add_argument(
         "--format", choices=("json", "editor", "sarif"), default="json",
         help="editor: one `path:line: severity: message` per line; "
