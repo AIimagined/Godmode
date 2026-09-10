@@ -6,6 +6,24 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.3.23] - 2026-09-10
+
+### Fixed
+
+- A filter is not the run (field report 27, 2026-09-10). A run-shaped claim whose cited `cmd:` ends in a read or filter tool (`grep`, `rg`, `tail`, `cat`, `echo`, `test`, `jq`, `Select-String`, and the rest of that family) no longer composes `verified` when that command exits 0; the record names the filter and says the run itself must be cited. A grep over a log that matched a partial number had been graded as proof of a suite run.
+- A closure that names no open ask is refused with the open list. `remember --kind request --status closed` with a subject that matches no open ask's id or text digest had closed nothing and been accepted silently, so the ask kept nagging; it now refuses and lists every open ask as `ask:<hex> '<its words>'`, paste-ready.
+
+- A sentence about the ledger's own bookkeeping ("Checkpoint complete", "Claim recorded") is no longer read as a completion claim about the work (field report 28).
+- `remember --kind lesson --subject <x> --guard <y>` records, as the repair skill shows; the guard is the lesson's value when no other is given (field report 28).
+
+- The Stop turn-diff line names the files a command wrote apart from the ones Edit or Write touched (field report 29: a skills tree rewritten mid-run by a sync script read like twenty deliberate edits).
+
+### Added
+
+- `privacy --repo` scans the tracked tree the way a docs-privacy pass does by hand: emails, home paths (the Windows, macOS and Linux user-home shapes), private-range or host-positioned IP addresses, credential-format secret shapes, and files at or over `--large-bytes` (default 5000000), each named by path, line and kind with the value masked; RFC 2606 and no-reply placeholders are skipped. Exit 1 on findings.
+- A verdict on an unread repository is named at Stop (self-observed 2026-09-10: two repositories were judged from their README and file tree, and the gate saw nothing because the prose carried no number or done-verb). When a session's prompts named a GitHub repository, the reply passes a verdict on it, and no source file of that repository was fetched this session (README and tree reads do not count), Stop names the repository and the count.
+- A number-bearing claim cited to lines that carry none of its numbers is graded unsupported, the same mechanical triage a cite-checker runs before reading: term overlap alone had let "3384 tests" stand on a line that said something else.
+
 ## [0.3.22] - 2026-09-09
 
 ### Changed

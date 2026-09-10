@@ -466,8 +466,11 @@ class DogfoodingTests(unittest.TestCase):
              target="scripts/godmode_runtime/godmode_attest.py",
              command=[sys.executable, "-m", "unittest",
                       "tests.test_godmode_runtime.AttestationTests"],
-             replace='    return "corroborated" if terms & window else "unsupported"',
-             with_text='    return "corroborated"'),
+             # 0.3.23: the guard is the term check and the numbers check that
+             # follow; a single-line needle (a CRLF checkout never matches a
+             # two-line one) plants an unconditional corroboration ahead of both.
+             replace='    if not (terms & window):',
+             with_text='    if False:\n        return "unsupported"\n    return "corroborated"\n    if False:'),
         dict(name="environment-production-marker", rule="R-242ba2f803",
              target="scripts/godmode_runtime/godmode_reconcile.py",
              command=[sys.executable, "-m", "unittest", "tests.test_environment_markers"],

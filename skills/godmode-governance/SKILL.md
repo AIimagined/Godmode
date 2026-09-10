@@ -68,6 +68,7 @@ Report the classification, whether authorization was required, what actually ran
 
 ## Verbs at the moment of demand
 
+- Before a docs or release pass that must carry nothing personal: `godmode privacy --repo` names every email, home path, host-positioned IP address, secret shape and oversized tracked file by path and line, value masked.
 - Before anything leaves the machine: `godmode precheck --preflight` (suite, scans, census, reach on a disposable worktree); `godmode egress --staged` says exactly what a push would send; `godmode privacy` and `godmode untrusted` scan for what must not leave; `godmode netgate` audits what dialled out.
 - Cutting a release: `godmode changelog merge --set-version X`, `godmode version --reconcile`, `godmode bindings --write`, `godmode release` compares two releases, `godmode checksums` and `godmode sbom` record what shipped, `godmode license` classifies what was read.
 - A protected operation: `godmode authorize stage --operation "<exact command>"` after the operator's password, `godmode stage` inspects what is staged, `godmode capabilities` and `godmode approvals` list what stands, `godmode ceilings` sets spend bounds, `godmode protect` pins a file, `godmode fence` and `godmode scope` bound what an edit may touch, `godmode boundaries` shows the host's enforcement table.

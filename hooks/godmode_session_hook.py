@@ -669,6 +669,66 @@ def _record_turn_baseline(archive: Any, project: Path, submitted: dict) -> None:
         pass
 
 
+_REPO_SLUG = re.compile(r"github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?(?=[/\s)\"'<>\]]|$)")
+_VERDICT_WORDS = re.compile(
+    r"(?i)\b(?:transfer|borrow|absorb|adopt|integrat|verdict|helpful|useful|worth|"
+    r"nothing to|does not|doesn't|lacks|has no|is not an?|recommend)\w*")
+_SOURCE_READ_MARKERS = ("/contents/", "raw.githubusercontent.com/", "/blob/", "/raw/",
+                        "git clone", "repo clone", "/git/blobs/")
+
+
+def _external_verdict_nudge(submitted: dict[str, Any], reply_text: str) -> list[str]:
+    """A reply that judges a GitHub repository the session never read past
+    its README (self-observed 2026-09-10: two repositories assessed from
+    README and tree, the gate silent because the prose had no number or
+    done-verb). Prompts name the repositories; tool calls show what of them
+    was fetched; README and tree reads do not count as reading code."""
+    transcript = submitted.get("transcript_path") or submitted.get("transcriptPath")
+    if not transcript or not reply_text:
+        return []
+    try:
+        lines = Path(str(transcript)).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    named: dict[str, str] = {}
+    fetched: dict[str, int] = {}
+    for line in lines[-6000:]:
+        try:
+            entry = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        message = entry.get("message") or {}
+        if entry.get("type") == "user" and isinstance(message.get("content"), str):
+            for owner, repo in _REPO_SLUG.findall(message["content"]):
+                named[f"{owner}/{repo}".lower()] = f"{owner}/{repo}"
+            continue
+        if entry.get("type") != "assistant":
+            continue
+        for part in message.get("content") or []:
+            if not isinstance(part, dict) or part.get("type") != "tool_use":
+                continue
+            blob = json.dumps(part.get("input") or {}).lower()
+            for slug in named:
+                if slug not in blob:
+                    continue
+                if any(marker in blob for marker in _SOURCE_READ_MARKERS) and "readme" not in blob:
+                    fetched[slug] = fetched.get(slug, 0) + 1
+    if not named or not _VERDICT_WORDS.search(reply_text):
+        return []
+    lowered = reply_text.lower()
+    notices: list[str] = []
+    for slug, shown in named.items():
+        repo = slug.split("/", 1)[1]
+        if slug not in lowered and repo not in lowered:
+            continue
+        if fetched.get(slug, 0) == 0:
+            notices.append(
+                f"godmode: this reply judges {shown} - 0 source files of it were "
+                "fetched this session (README and tree reads do not count); a "
+                "verdict on unread code is a hypothesis, say so or read it")
+    return notices[:3]
+
+
 def _turn_diff_nudge(archive: Any, project: Path, submitted: dict) -> str | None:
     """Files changed since this turn's baseline with no check and no claim
     recorded in between, named once; the baseline is consumed either way."""
@@ -700,12 +760,58 @@ def _turn_diff_nudge(archive: Any, project: Path, submitted: dict) -> str | None
                     session is None or str(data.get("session") or "") in ("", session)):
                 return None
         shown = ", ".join(changed[:4]) + (f" (+{len(changed) - 4} more)" if len(changed) > 4 else "")
-        return (f"godmode: {len(changed)} file(s) changed this turn ({shown}) with no "
+        line = (f"godmode: {len(changed)} file(s) changed this turn ({shown}) with no "
                 "check or claim recorded since the prompt - `godmode verify <name> "
                 "--command \"<check>\"` attests one, `godmode atlas closure` names the "
                 "dependents the change did not touch")
+        # Field report 29 (2026-09-10): a skills tree rewritten mid-run by a
+        # sync script was the one risky event of a cut, and the count above
+        # read the same as twenty deliberate edits. Files the turn changed
+        # through no Edit/Write call were written by a command - that is
+        # the shape to name.
+        edited = _paths_edited_this_turn(submitted)
+        by_command = [p for p in changed if not any(
+            e == p.replace("\\", "/").lower() or e.endswith("/" + p.replace("\\", "/").lower())
+            for e in (edited or []))]
+        if edited is not None and len(by_command) >= 3:
+            named = ", ".join(by_command[:4]) + (f" (+{len(by_command) - 4} more)" if len(by_command) > 4 else "")
+            line += (f"; {len(by_command)} of them were written by a command, not by an "
+                     f"Edit or Write ({named}) - a generator or sync ran; read that diff "
+                     "before anything cites the tree")
+        return line
     except Exception:  # noqa: BLE001
         return None
+
+
+def _paths_edited_this_turn(submitted: dict[str, Any]) -> list[str] | None:
+    """Lower-cased, slash-normalised file_path values of every Edit/Write/
+    NotebookEdit call since the last human prompt; None when the host sent
+    no transcript (then nothing can be judged)."""
+    transcript = submitted.get("transcript_path") or submitted.get("transcriptPath")
+    if not transcript:
+        return None
+    try:
+        lines = Path(str(transcript)).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    edited: list[str] = []
+    for line in reversed(lines[-4000:]):
+        try:
+            entry = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        message = entry.get("message") or {}
+        if entry.get("type") == "user" and isinstance(message.get("content"), str):
+            break
+        if entry.get("type") != "assistant":
+            continue
+        for part in message.get("content") or []:
+            if isinstance(part, dict) and part.get("type") == "tool_use" \
+                    and part.get("name") in ("Edit", "Write", "NotebookEdit", "MultiEdit"):
+                path = str((part.get("input") or {}).get("file_path", "")).replace("\\", "/").lower()
+                if path:
+                    edited.append(path)
+    return edited
 
 
 def _marginal_return_nudges(archive: Any, submitted: dict,
@@ -1176,6 +1282,12 @@ def _strip_quoted(sentence: str) -> str:
     return _QUOTED_SPAN.sub(" ", sentence)
 
 
+_PROCESS_SENTENCE = re.compile(
+    r"(?i)^(?:the\s+)?(?:checkpoint|claim|attestation|record|ledger|session|obligation|"
+    r"plan|handoff|handover)s?\b[^.]{0,60}\b(?:complete[d]?|recorded|written|closed|"
+    r"opened|saved|attested|logged)\b")
+
+
 def _unrecorded_done_claims(archive: Any, reply_text: str,
                             observed: str = "") -> list[str]:
     """DONE-shaped sentences in the reply with no claim record behind them.
@@ -1216,6 +1328,11 @@ def _unrecorded_done_claims(archive: Any, reply_text: str,
                      r"pending|blocked|queued|outstanding|unfinished|"
                      r"deferred|on\s+hold|to-?do)\b",
                      judged):
+            continue
+        # A sentence about the ledger's own bookkeeping ("Checkpoint
+        # complete", "Claim recorded") is process, not a claim about the
+        # work (field report 28, 2026-09-10).
+        if _PROCESS_SENTENCE.match(judged.strip()):
             continue
         if not (_COMPLETION_VOCAB.search(judged)
                 or looks_like_fix_claim(judged)[0]
@@ -2215,6 +2332,7 @@ def main(argv: list[str] | None = None) -> int:
                 notices.extend(_tripwire_nudges(
                     archive, _session_key(submitted), Path(anchor.project_root)))
                 if not subagent:
+                    notices.extend(_external_verdict_nudge(submitted, reply_text))
                     turn_note = _turn_diff_nudge(archive, Path(anchor.project_root), submitted)
                     if turn_note:
                         notices.append(turn_note)

@@ -2598,6 +2598,31 @@ def cmd_checklist_update(args: argparse.Namespace, runtime: Runtime) -> CommandR
     return CommandResult(payload)
 
 
+from .godmode_requests import CLOSED_STATUSES as _CLOSED_REQUEST_STATUSES  # noqa: E402
+
+
+def _require_request_closure_target(runtime: Runtime, subject: str) -> None:
+    from .godmode_requests import digest as request_text_digest
+    from .godmode_requests import open_stated_requests
+    if not runtime.archive.initialized():
+        return
+    opened = open_stated_requests(runtime.archive.select(kind="request", limit=600))
+    wanted = subject.strip()
+    for record in opened:
+        identifier = str((record.get("data") or {}).get("digest", ""))
+        if wanted in (str(record.get("subject", "")).strip(), identifier) or \
+                request_text_digest(wanted) == identifier:
+            return
+    if not opened:
+        raise ArchiveError(f"no open ask matches '{wanted[:80]}' - there are no open asks on record")
+    listed = "; ".join(
+        f"{record.get('subject')} '{' '.join(str(w) for w in ((record.get('data') or {}).get('keywords') or [])[:6])}'"
+        for record in opened[-8:])
+    raise ArchiveError(
+        f"no open ask matches '{wanted[:80]}' - a closure must name the ask's id. Open: {listed}. "
+        "Close one with `godmode remember --kind request --subject \"ask:<hex>\" --status closed`")
+
+
 def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # `remember` defaulted every kind to `active`, and a request is read only
     # when it says `open`: the review and the detector both filter on it. A
@@ -2609,6 +2634,11 @@ def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         args.value = text
     if args.subject is None and text:
         args.subject = " ".join(text.split()[:8])[:MAX_SUBJECT].strip()
+    # Field report 28 (2026-09-10): the repair skill shows `--kind lesson
+    # --subject --guard` and the CLI refused it for lacking --value; the
+    # guard IS the lesson's value when no other is given.
+    if args.kind == "lesson" and args.value is None and getattr(args, "guard", None):
+        args.value = args.guard
     if args.subject is not None and args.value is None and args.status:
         # A status change carries no new value: the paste-ready closure the
         # stop hook prescribes (`--kind request --subject "ask:<hex>"
@@ -2650,6 +2680,12 @@ def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         # line enough to close the prompt it came from.
         data["digest"] = request_digest(args.subject)
         data["source"] = getattr(args, "source", "stated")
+        # Field report 27 (2026-09-10): a closure typed with the ask's own
+        # words as the subject matched no digest, closed nothing, and was
+        # accepted silently - the ask kept nagging. A closure that names no
+        # open ask is refused with the open list, paste-ready.
+        if str(status).lower() in _CLOSED_REQUEST_STATUSES:
+            _require_request_closure_target(runtime, args.subject)
     payload: dict[str, Any] = {
         "record": _append(runtime, args.kind, args.subject, data, args.evidence)
     }
@@ -3149,6 +3185,13 @@ def cmd_boundaries_propose_ui(args: argparse.Namespace, runtime: Runtime) -> Com
 
 
 def cmd_privacy(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if getattr(args, "repo", False):
+        # Field report 27: a docs-privacy pass got every finding from
+        # `git ls-files` and grep by hand. This is that pass, over the
+        # tracked tree, with the values masked.
+        from .godmode_repo_privacy import scan_tracked
+        report = scan_tracked(Path(runtime.anchor.project_root), int(getattr(args, "large_bytes", 5_000_000)))
+        return CommandResult(report, exit_code=0 if report.get("verdict") == "clean" else 1)
     _require_archive(runtime)
     findings: list[str] = []
     scanned = 0
@@ -5577,7 +5620,14 @@ def _build_parser() -> argparse.ArgumentParser:
     propose_ui = boundaries_sub.add_parser(
         "propose-ui", help="Propose design globs to declare; prints, never writes")
     propose_ui.set_defaults(handler=cmd_boundaries_propose_ui)
-    sub.add_parser("privacy", help="Audit the local privacy boundary").set_defaults(handler=cmd_privacy)
+    privacy = sub.add_parser("privacy", help="Audit the local privacy boundary")
+    privacy.add_argument("--repo", action="store_true",
+                         help="Scan the TRACKED tree instead of the archive: emails, home paths, "
+                              "IP addresses, secret shapes, and files at or over --large-bytes, "
+                              "each named by path and line with the value masked")
+    privacy.add_argument("--large-bytes", type=int, default=5_000_000,
+                         help="--repo: report tracked files at or over this size (default 5000000)")
+    privacy.set_defaults(handler=cmd_privacy)
 
     law = sub.add_parser(
         "law",

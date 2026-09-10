@@ -626,8 +626,21 @@ def _position_support(project: Path, citation: str, claim: str) -> str | None:
     end = int(match.group("end") or start)
     low = max(0, start - 1 - POSITION_WINDOW)
     high = min(len(lines), end + POSITION_WINDOW)
-    window = _salient(" ".join(lines[low:high]))
-    return "corroborated" if terms & window else "unsupported"
+    window_text = " ".join(lines[low:high])
+    window = _salient(window_text)
+    if not (terms & window):
+        return "unsupported"
+    # A number-bearing claim must find its numbers in the cited window
+    # (2026-09-10, the triage a cite-checker runs before reading anything):
+    # "3384 tests" corroborated by a line that shares the word "tests" and
+    # says 12 is the drift term overlap cannot see.
+    numbers = {n for n in _CLAIM_NUMBERS.findall(claim) if len(n.replace(",", "")) >= 2}
+    if numbers and not any(n in window_text or n.replace(",", "") in window_text for n in numbers):
+        return "unsupported"
+    return "corroborated"
+
+
+_CLAIM_NUMBERS = re.compile(r"\d[\d,]*(?:\.\d+)?")
 
 
 def _citation_resolves(project: Path, archive: Chronicle, citation: str,
@@ -1649,6 +1662,38 @@ def stale_claims(archive: Chronicle, project: Path, limit: int = 500) -> list[di
     return stale
 
 
+# Commands that read or filter and never run the thing a run-shaped claim
+# describes (field report 27, 2026-09-10: "final suite exit 0" was graded
+# verified because the cited grep over a log exited 0). A filter's exit
+# code is the filter's verdict, not the run's.
+_FILTER_HEADS = frozenset({
+    "grep", "rg", "egrep", "fgrep", "ag", "echo", "printf", "cat", "head", "tail", "wc",
+    "sort", "uniq", "cut", "tr", "awk", "sed", "ls", "find", "test", "[", "true", "false",
+    "type", "which", "where", "stat", "file", "less", "more", "jq", "select-string",
+    "get-content", "findstr", "write-output", "write-host",
+})
+
+
+def filter_head(citation: str) -> str | None:
+    """The filter that decides the cited command's exit code, or None when
+    the command's last stage is a run. `cd x; ...` and `A && B` prefixes are
+    dropped; the last pipeline stage is the one whose exit code the shell
+    reports, so that is the stage judged."""
+    command = str(citation)[len("cmd:"):] if str(citation).startswith("cmd:") else str(citation)
+    for separator in (";", "&&", "||"):
+        command = command.split(separator)[-1]
+    stage = command.split("|")[-1].strip()
+    tokens = stage.split()
+    while tokens and "=" in tokens[0] and not tokens[0].startswith(("-", "/", ".")):
+        tokens = tokens[1:]  # VAR=value prefix
+    if not tokens:
+        return None
+    head = tokens[0].replace("\\", "/").split("/")[-1].lower()
+    if head.endswith(".exe"):
+        head = head[:-4]
+    return head if head in _FILTER_HEADS else None
+
+
 def executed_predicates(archive: Chronicle, project: Path,
                         citations: list[str]) -> dict[str, Any]:
     """The deterministic picker for a run-shaped claim (obligations 10118,
@@ -1661,10 +1706,12 @@ def executed_predicates(archive: Chronicle, project: Path,
     caller names the check that would settle it.
     """
     predicates = {"check_ran": False, "exit_recorded": False,
-                  "head_matches": False, "attestation": None, "grade": "observed"}
+                  "head_matches": False, "attestation": None, "grade": "observed",
+                  "filter_head": None}
     cmd_citations = [str(c) for c in citations if str(c).startswith("cmd:")]
     if not cmd_citations:
         return predicates
+    predicates["filter_head"] = filter_head(cmd_citations[0])
     head = ""
     try:
         import subprocess
@@ -1685,7 +1732,8 @@ def executed_predicates(archive: Chronicle, project: Path,
         worktree = data.get("worktree") or {}
         predicates["head_matches"] = bool(head) and worktree.get("head") == head
         break
-    if predicates["check_ran"] and predicates["exit_recorded"] and predicates["head_matches"]:
+    if (predicates["check_ran"] and predicates["exit_recorded"]
+            and predicates["head_matches"] and not predicates["filter_head"]):
         predicates["grade"] = "verified"
     return predicates
 
@@ -2052,6 +2100,11 @@ def record_claim(
             effective = "verified"
             composed["composed_from"] = ["check_ran", "exit_recorded", "head_matches"]
             composed["composed_attestation"] = predicates["attestation"]
+        elif predicates.get("filter_head"):
+            composed["settleable_by"] = (
+                f"the cited command is a filter ('{predicates['filter_head']}'), not "
+                "the run it describes - its exit code is the filter's, not the "
+                "suite's; cite cmd:<the run itself> and verify --command \"<that run>\"")
         elif cmd_citations:
             composed["settleable_by"] = (
                 "claim --verify (runs the cited command and attests it), or "
