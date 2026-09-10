@@ -1,0 +1,1 @@
+- `checksums` hashes text files with CR stripped and binary files byte-for-byte, and the report names the rule, so two honest clones of a project without an `eol=lf` attribute produce one manifest on Windows and Linux alike.

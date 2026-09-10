@@ -629,6 +629,12 @@ def release_checksums(project: Path) -> dict[str, Any]:
 
     Deterministic from content alone, so two independent clones produce
     identical output (S1-10's reproducibility claim is checkable).
+
+    Text files are hashed with CR stripped (2026-09-10, found reading a
+    clone detector's baseline hashing): a project with no `eol=lf`
+    attribute checks out CRLF under Windows autocrlf and LF elsewhere, and
+    a manifest over raw bytes then disagreed between two honest clones.
+    Binary files (a NUL in the first 8 KiB) are hashed byte-for-byte.
     """
     import hashlib
 
@@ -642,13 +648,17 @@ def release_checksums(project: Path) -> dict[str, Any]:
         path = project / name
         if not path.is_file():
             continue
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        raw = path.read_bytes()
+        if b"\x00" not in raw[:8192]:
+            raw = raw.replace(b"\r", b"")
+        digest = hashlib.sha256(raw).hexdigest()
         lines.append(f"{digest}  {name}")
     body = "\n".join(lines) + "\n"
     return {
         "files": len(lines),
         "manifest": body,
         "manifest_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+        "normalization": "text files hashed with CR stripped; binary files byte-for-byte",
     }
 
 
