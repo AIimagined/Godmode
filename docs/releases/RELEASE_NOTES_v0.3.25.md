@@ -12,6 +12,21 @@
 - **`doctor` reads your `ask_only` list.** An entry for
   `git-history-or-remote` or `release-or-external-write` is named as a
   warning, because under an auto-answered mode it is an allow.
+- **A check must be able to fail.** A `--verify` citation whose command
+  only reports state (`git status`, `echo`, `ls`, `cat`) cannot contradict
+  the claim, so the grade stays below `verified` and the support line says
+  which citation is decoration.
+- **A claim knows the code it describes.** Every existing file a claim's
+  text names is hashed at record time; when that file changes, the claim
+  shows as stale in `claim --stale` and in the session brief.
+- **Project ratchets.** Declare the repository's own debt counters in
+  `.godmode-ratchets.json` (name to command); `godmode ratchet run` records
+  each value and names every counter that rose, and `integrity` carries
+  the same finding as its thirteenth monitor.
+- **Measurement environment.** `precheck` on a latency, duplicate-request,
+  or re-render task lists the environment the deciding number must come
+  from. A quoted sentence is no longer read as a claim. A process-control
+  call's advisory names `checkpoint --owes` for the restore.
 - **Release notes as a verb.** `godmode release-notes build <version>`
   derives the note from that version's CHANGELOG section, grouped by
   kind, with a Verifying section built from the tests the entries name;

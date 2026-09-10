@@ -979,9 +979,17 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # as "checked" and the path to "verified" is in the payload itself.
     cmd_count = sum(1 for c in (args.cite or []) if str(c).startswith("cmd:"))
     if check_results:
+        from .godmode_attest import falsifiable
+
         passed = sum(1 for c in check_results if c.get("passed"))
         support = (f"{passed}/{len(check_results)} cited command(s) executed "
                    "and attested just now")
+        decoration = [str(c.get("citation") or "") for c in check_results
+                      if not falsifiable(str(c.get("citation") or ""))]
+        if decoration:
+            support += (f"; {len(decoration)} of them cannot fail for the claim's negation "
+                        f"({decoration[0][:50]}) - the grade stays below verified until a check "
+                        "whose exit code contradicts the claim is cited")
     elif cmd_count:
         support = (f"nothing executed - {cmd_count} cmd cite(s) taken on the "
                    "record's word; re-run with --verify to execute them")
@@ -1520,8 +1528,20 @@ def cmd_method(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         contributing_conditions=args.conditions,
     )
     sequence, reason = select_method(shape)
+    observed_in = str(getattr(args, "observed_in", "unknown") or "unknown")
+    # Field report file 2026-09-10, Part 4: the decisive step of a latency
+    # task was a production build re-measured before any fix; the method
+    # was going to bless two wrong fixes from dev numbers.
+    environment = {
+        "observed_in": observed_in,
+        "question": None if observed_in == "production" else (
+            "was this observed in the environment where it matters? Reproduce on a production build "
+            "(or the shipped configuration) before choosing a fix; dev servers double-invoke effects and "
+            "serve bundles users never run. Pass --observed-in production once it is."),
+    }
     return CommandResult(
         {
+            "measurement_environment": environment,
             "shape": shape.view(),
             "sequence": sequence,
             "reason": reason,
@@ -1660,6 +1680,20 @@ def cmd_drift(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     report = compare_sessions(runtime.archive)
     return CommandResult(report, exit_code=1 if report["verdict"] == "drift-detected" else 0)
+
+
+def cmd_ratchet(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    from .godmode_ratchet import declared_ratchets, last_values, run_ratchets
+
+    _require_archive(runtime)
+    project = Path(runtime.anchor.project_root)
+    if args.action == "list":
+        declared = declared_ratchets(project)
+        previous = last_values(runtime.archive)
+        return CommandResult({"declared": [{"name": n, "last": (previous.get(n) or {}).get("value")}
+                                           for n in declared]})
+    report = run_ratchets(runtime.archive, project, timeout=args.timeout)
+    return CommandResult(report, exit_code=0 if report["ok"] else 1)
 
 
 def cmd_release_notes(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -5238,6 +5272,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     method = sub.add_parser("method", help="Select an analysis method from the evidence shape")
     method.add_argument("--reports", type=int, default=1)
+    method.add_argument("--observed-in", dest="observed_in", default="unknown",
+                        choices=["production", "staging", "dev", "unknown"],
+                        help="Where the failure was observed; anything but production carries the "
+                             "measurement-environment question into the answer")
     method.add_argument("--unreproducible", action="store_true")
     method.add_argument("--ordering", action="store_true", help="An ordering, race or latch-time question")
     method.add_argument("--components", action="store_true", help="Components and failure modes are enumerable")
@@ -5849,6 +5887,14 @@ def _build_parser() -> argparse.ArgumentParser:
     law_promote.add_argument("--subject", required=True)
     law_promote.set_defaults(handler=cmd_law_promote)
 
+    ratchet = sub.add_parser(
+        "ratchet",
+        help="Run the project's declared debt counters (.godmode-ratchets.json: name -> command), "
+             "record each value, name every counter that rose")
+    ratchet.add_argument("action", choices=["run", "list"])
+    ratchet.add_argument("--timeout", type=int, default=600)
+    ratchet.set_defaults(handler=cmd_ratchet)
+
     release_notes = sub.add_parser(
         "release-notes",
         help="Build a version's release note from its CHANGELOG section, or check an existing one: "
@@ -5960,7 +6006,7 @@ def _build_parser() -> argparse.ArgumentParser:
     locale_check.set_defaults(handler=cmd_locale_check)
 
     integrity = sub.add_parser(
-        "integrity", help="Run the twelve test-integrity monitors over the current diff"
+        "integrity", help="Run the thirteen test-integrity monitors over the current diff"
     )
     integrity.add_argument("--base", default="HEAD", help="Git ref to diff against")
     integrity.set_defaults(handler=cmd_integrity)

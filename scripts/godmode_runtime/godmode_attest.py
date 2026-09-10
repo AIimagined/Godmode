@@ -1775,6 +1775,42 @@ def filter_head(citation: str) -> str | None:
     return head if head in _FILTER_HEADS else None
 
 
+# Field report file 2026-09-10, Part 4: `--verify` on `git status --short`
+# graded a claim "verified" that the command could not contradict. A
+# check earns the grade only when its exit code can fail for the claim's
+# negation; these heads report state and never fail on it.
+_NON_VERDICT_HEADS = re.compile(
+    r"(?i)^\s*(?:git\s+(?:status|log|diff|show|rev-parse|branch|remote|ls-files|describe)\b|"
+    r"(?:ls|dir|cat|type|echo|printf|head|tail|wc|date|pwd|env|printenv|find|tree|stat|which|where|whoami|"
+    r"uname|hostname|id|history|true)\b)")
+
+
+def falsifiable(command: str) -> bool:
+    """Whether the cited command's exit code can contradict a claim."""
+    text = str(command)
+    if text.startswith("cmd:"):
+        text = text[4:]
+    return not _NON_VERDICT_HEADS.match(text.strip())
+
+
+_PATH_IN_TEXT = re.compile(r"(?<![\w/])((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,6})\b")
+
+
+def subject_files(project: Path, text: str, limit: int = 6) -> list[str]:
+    """Paths the claim text names that exist in the tree - the code the
+    claim is ABOUT, hashed at record time so a later edit to that file
+    marks the claim as made against superseded code (Part 4, 4.10)."""
+    out: list[str] = []
+    for match in _PATH_IN_TEXT.finditer(text or ""):
+        candidate = match.group(1)
+        if candidate in out or not (Path(project) / candidate).is_file():
+            continue
+        out.append(candidate)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def executed_predicates(archive: Chronicle, project: Path,
                         citations: list[str],
                         transcript_path: str | Path | None = None) -> dict[str, Any]:
@@ -1787,13 +1823,14 @@ def executed_predicates(archive: Chronicle, project: Path,
     All three compose `verified`; anything less stays `observed`, and the
     caller names the check that would settle it.
     """
-    predicates = {"check_ran": False, "exit_recorded": False,
+    predicates = {"check_ran": False, "exit_recorded": False, "falsifiable": True,
                   "head_matches": False, "attestation": None, "grade": "observed",
                   "filter_head": None, "checker_authored": None, "operational_error": None}
     cmd_citations = [str(c) for c in citations if str(c).startswith("cmd:")]
     if not cmd_citations:
         return predicates
     predicates["filter_head"] = filter_head(cmd_citations[0])
+    predicates["falsifiable"] = falsifiable(cmd_citations[0])
     if transcript_path:
         # Oracle contract (research brief Slice A): a checker this session
         # wrote is not independent, and an operational error in its last
@@ -1828,6 +1865,7 @@ def executed_predicates(archive: Chronicle, project: Path,
         break
     if (predicates["check_ran"] and predicates["exit_recorded"]
             and predicates["head_matches"] and not predicates["filter_head"]
+            and predicates["falsifiable"]
             and not predicates["checker_authored"] and not predicates["operational_error"]):
         predicates["grade"] = "verified"
     return predicates
@@ -1975,6 +2013,14 @@ def record_claim(
     if grade == "verified":
         if not citations:
             effective, reason = "hypothesis", "no citation"
+        elif cmd_citations and not any(falsifiable(c) for c in cmd_citations):
+            # Field report file 2026-09-10, Part 4: `git status --short`
+            # graded a claim verified that it could not contradict.
+            effective, reason = (
+                "observed",
+                f"the cited check ({str(cmd_citations[0])[4:][:40]}) reports state and cannot fail "
+                "for the claim's negation; cite a command whose exit code contradicts the claim",
+            )
         elif unresolved:
             # A command that ran in an earlier session is a different failure
             # from one that never ran, and saying so is the difference between
@@ -2228,7 +2274,8 @@ def record_claim(
             **composed,
             # Grounded claims (obligation 10248): the evidence's version at
             # record time, so `stale_claims` can tell when it moved.
-            "evidence_versions": evidence_versions(project, citations),
+            "evidence_versions": evidence_versions(
+                project, list(citations) + [f"file:{p}" for p in subject_files(project, text)]),
             "unresolved": unresolved,
             "unsupported": unsupported,
             "downgraded": effective != grade,

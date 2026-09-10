@@ -35,6 +35,7 @@ MASKS: dict[str, tuple[str, ...]] = {
     "change": ("files", "plan"),
     "criterion": ("task", "session"),
     "perimeter": ("status", "digest"),
+    "ratchet": ("name", "value", "previous"),
     "database": ("rung", "decision", "status"),
     "decision": ("status",),
     "differential": ("subject", "method"),

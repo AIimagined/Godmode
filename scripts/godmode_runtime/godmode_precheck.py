@@ -462,6 +462,12 @@ _SURFACES: tuple[tuple[str, str, str], ...] = (
     (r"(?i)\b(?:queue|worker|job|cron|background|async|concurren|parallel)\b", "race and retry",
      "the concurrent case and the poisoned-job case"),
     (r"(?i)\b(?:cache|memo|redis)\b", "invalidation", "what clears the cache and what is served stale"),
+    # Part 4, 4.5: dev-observed duplicates were StrictMode; the decisive step
+    # was a production build re-measured before any fix.
+    (r"(?i)\b(?:latency|slow|perf(?:ormance)?|duplicate|double[- ]?(?:load|render|request|fetch)|timing|"
+     r"waterfall|re-?render|N\+1|n\+1)\b", "measurement environment",
+     "the number that decides the fix comes from the environment that ships (a production build, real "
+     "data), not the dev server: StrictMode double-invokes effects and dev bundles are not what users run"),
 )
 
 

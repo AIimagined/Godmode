@@ -46,7 +46,7 @@ and `--json` work on every command and may appear in any position;
 | `history` | Read structured local history |
 | `init` | Initialize the private local archive |
 | `inspect` | Capture an on-demand repository snapshot |
-| `integrity` | Run the twelve test-integrity monitors over the current diff |
+| `integrity` | Run the thirteen test-integrity monitors over the current diff |
 | `inventory` | Repository inventory operations |
 | `lessons` | The promote-or-retire pipeline over recorded lessons |
 | `locale` | Localized guidance surfaces |
@@ -61,6 +61,7 @@ and `--json` work on every command and may appear in any position;
 | `planmode` | Gate mutation behind an approved plan contract |
 | `plant` | Prove a guard fails by planting a violation |
 | `privacy` | Audit the local privacy boundary |
+| `ratchet` | Run the project's declared debt counters, record each value, name every counter that rose |
 | `recurrences` | Find controls that blocked twice on the same cause |
 | `reflect` | Check a claim against what the record already says |
 | `release-notes` | Build a version's release note from its CHANGELOG section, or check one: present, covered, no empty section, no narration, a Verifying section |

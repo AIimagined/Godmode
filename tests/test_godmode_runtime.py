@@ -1524,10 +1524,10 @@ class IntegrityTests(unittest.TestCase):
             report = self._analyze(project, archive)
             self.assertNotIn("skip-quarantine", [f["monitor"] for f in report["findings"]])
 
-    def test_all_twelve_monitors_are_present(self) -> None:
+    def test_all_thirteen_monitors_are_present(self) -> None:
         from godmode_runtime.godmode_integrity import MONITORS
 
-        self.assertEqual(len(MONITORS), 12, sorted(MONITORS))  # twelve since 0.3.24: oracle shapes and false-green shapes
+        self.assertEqual(len(MONITORS), 13, sorted(MONITORS))  # thirteen since 0.3.25: oracle shapes, false-green shapes, project ratchet
 
 
 class ChangelogTests(unittest.TestCase):

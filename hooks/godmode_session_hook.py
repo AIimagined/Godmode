@@ -1288,6 +1288,7 @@ def _strip_quoted(sentence: str) -> str:
     return _QUOTED_SPAN.sub(" ", sentence)
 
 
+_QUOTED_SENTENCE = re.compile(r"[\"\u201c\u2018']\s*(?:\S+\s+){3,}\S+\s*[\"\u201d\u2019']")
 _PROCESS_SENTENCE = re.compile(
     r"(?i)^(?:the\s+)?(?:checkpoint|claim|attestation|record|ledger|session|obligation|"
     r"plan|handoff|handover)s?\b[^.]{0,60}\b(?:complete[d]?|recorded|written|closed|"
@@ -1338,6 +1339,10 @@ def _unrecorded_done_claims(archive: Any, reply_text: str,
         # A sentence about the ledger's own bookkeeping ("Checkpoint
         # complete", "Claim recorded") is process, not a claim about the
         # work (field report 28, 2026-09-10).
+        if _QUOTED_SENTENCE.search(judged):
+            # Part 4, 4.2: a quotation of the operator ("everything strictly
+            # 100% perfect") is someone else's sentence, not this reply's claim.
+            continue
         if _PROCESS_SENTENCE.match(judged.strip()):
             continue
         if not (_COMPLETION_VOCAB.search(judged)
@@ -2108,6 +2113,13 @@ def _apply_observe_mode(archive: Chronicle, tool: str, operation: str,
         f"({preview.get('category', 'unclassified-mutation')}, "
         f"{preview.get('tier', 'R?')}). {reason}"
     )[:500]
+    if str(preview.get("category", "")) == "process-control":
+        # Part 4, 4.7: a stopped dev server and a port taken for a production
+        # build were restored from memory, not from the record.
+        preview["observe_advisory"] += (
+            " A process stopped or a port taken is temporary state: `godmode checkpoint "
+            "\"<what you did>\" --status active --owes \"<the restore>\"` keeps it on the "
+            "scope gate until it is closed.")
     return preview
 
 

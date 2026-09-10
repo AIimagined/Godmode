@@ -10,6 +10,13 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 - A would-ask folds to deny when the host's permission mode has no human behind the ask (`auto`, `dontAsk`, `bypassPermissions` on Claude Code), with the staged-capability remedy in the reason; `gate-asked` records carry the permission mode. `doctor` names an `ask_only` entry for `git-history-or-remote` or `release-or-external-write`.
 - Release notes for 0.3.25 (`docs/releases/RELEASE_NOTES_v0.3.25.md`).
+- A cited check that cannot fail for the claim's negation (`git status`, `echo`, `ls`, `cat`, and the other state reports) no longer earns `verified`; the claim's support line names it.
+- A claim records the hash of every existing file its text names, so `stale_claims` and the session brief mark a claim made against code that was later replaced.
+- A sentence quoting someone else (four or more words inside quotation marks) is not a claim at Stop or on the next prompt.
+- `precheck` lists the measurement environment for a latency, duplicate-request, or re-render task: the deciding number comes from a production build, not the dev server.
+- `godmode ratchet run` executes the project's declared debt counters (`.godmode-ratchets.json`, name to command), records each value, and names every counter that rose; the thirteenth integrity monitor, `project-ratchet`, reads those records.
+- `method --observed-in production|staging|dev|unknown` carries the measurement-environment question into the method answer unless the failure was observed in production.
+- The observe advisory on a process-control call (a server stopped, a port taken) names `checkpoint --owes` for the restore.
 - `godmode release-notes build <version>` derives `docs/releases/RELEASE_NOTES_v<version>.md` from that version's CHANGELOG section (grouped by kind, a Verifying section from the tests the entries name); `release-notes check <version>` holds an existing note to the shape: present, every entry covered, no empty section, no process narration, a Verifying section. The docs lint gains `release-note-narration` (a note says what the reader gets, not how the release was made) with a `narration_from` floor in `.godmode-docslint.json`.
 - README describes the 0.3.24 surface: iteration controls, the scope gate and the oracle, the ledger after a compaction, the new sentinel shapes, the node scan, and the numbers as of this cut.
 

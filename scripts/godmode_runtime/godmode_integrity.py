@@ -426,6 +426,23 @@ def _false_green_shapes(ctx: dict[str, Any]) -> list[dict[str, Any]]:
     return findings
 
 
+def _project_ratchet(ctx: dict[str, Any]) -> list[dict[str, Any]]:
+    """Part 4, 4.8: the project's own debt counters, declared in
+    `.godmode-ratchets.json` and recorded by `godmode ratchet run`; a rise
+    between the last two records is named. Advisory: the counter is the
+    project's, the verdict on it is the project's too."""
+    from .godmode_ratchet import ratchet_findings
+
+    archive = ctx.get("archive")
+    if archive is None:
+        return []
+    try:
+        rows = ratchet_findings(archive)
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable archive names no ratchet
+        return []
+    return [_finding("project-ratchet", ".godmode-ratchets.json", r["detail"], blocking=False) for r in rows]
+
+
 MONITORS: dict[str, Callable[[dict[str, Any]], list[dict[str, Any]]]] = {
     "assertion-diff": _assertion_diff,
     "skip-quarantine": _skip_quarantine,
@@ -439,6 +456,7 @@ MONITORS: dict[str, Callable[[dict[str, Any]], list[dict[str, Any]]]] = {
     "harness-node-dropped": _harness_node_dropped,
     "oracle-tamper": _test_weakened_with_source_edit,
     "false-green-shape": _false_green_shapes,
+    "project-ratchet": _project_ratchet,
 }
 
 
