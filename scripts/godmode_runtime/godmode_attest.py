@@ -1858,6 +1858,13 @@ def executed_predicates(archive: Chronicle, project: Path,
         if not any(str(e) in wanted for e in record.get("evidence") or []):
             continue
         predicates["attestation"] = record.get("sequence")
+        # Three projects read on 2026-09-10 share one rule: the reviewer may
+        # not be the author. The chronicle stamps every record with the
+        # agent that wrote it, so the attestation names its runner.
+        from .godmode_constants import agent_id as _current_agent
+        attester = str((record.get("agent") or {}).get("agent_id") or "")
+        predicates["attesting_agent"] = attester
+        predicates["self_attested"] = bool(attester) and attester == _current_agent()
         predicates["exit_recorded"] = "exit " in str(data.get("result", ""))
         predicates["check_ran"] = data.get("status") == "ran"
         worktree = data.get("worktree") or {}
@@ -2232,6 +2239,19 @@ def record_claim(
                 break
 
     composed: dict[str, Any] = {}
+    if effective == "verified" and cmd_citations:
+        # A claim that arrives verified on a resolving cmd citation never
+        # enters the composition below; the reviewer-is-author rule still
+        # applies to it.
+        try:
+            own = executed_predicates(archive, project, citations, transcript_path=transcript_path)
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: the advisory is best-effort; the grade already stands
+            own = {}
+        if own.get("self_attested"):
+            advisories.append(
+                "self-attested: the cited check was run and attested by this same agent; "
+                "the grade stands on the exit code, and an attestation from another agent "
+                "or model (`godmode verify` from a reviewer session) would make it independent")
     if effective == "observed" and (pass_verdict or fix_claim or is_run_shaped(text)):
         # Deterministic picker (obligations 10118, 10245): a run-shaped
         # claim is graded by executed predicates. Green attestation for the
@@ -2242,6 +2262,11 @@ def record_claim(
             effective = "verified"
             composed["composed_from"] = ["check_ran", "exit_recorded", "head_matches"]
             composed["composed_attestation"] = predicates["attestation"]
+            if predicates.get("self_attested"):
+                advisories.append(
+                    "self-attested: the cited check was run and attested by this same agent; "
+                    "the grade stands on the exit code, and an attestation from another agent "
+                    "or model (`godmode verify` from a reviewer session) would make it independent")
         elif predicates.get("checker_authored"):
             composed["settleable_by"] = (
                 f"the cited checker names {predicates['checker_authored']}, a file this session "

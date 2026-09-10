@@ -191,5 +191,20 @@ class FalseGreenRateTests(unittest.TestCase):
             self.assertIn("false_green", calibration_digest(archive))
 
 
+class SelfAttestedTests(unittest.TestCase):
+    def test_a_check_run_by_the_claiming_agent_is_named_self_attested(self) -> None:
+        from godmode_runtime.godmode_attest import executed_predicates, record_claim, run_check
+
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            outcome = run_check(archive, "s1", project, "claim-verify-1", [sys.executable, "-c", "import json"])
+            citation = outcome["citation"]
+            predicates = executed_predicates(archive, project, [citation])
+            self.assertTrue(predicates.get("self_attested"), predicates)
+            record = record_claim(archive, project, "s1", "the json module imports", "verified", cites=[citation])
+            self.assertEqual(record["data"]["grade"], "verified", record["data"])
+            self.assertTrue(any("self-attested" in a for a in record["data"].get("advisories", [])), record["data"])
+
+
 if __name__ == "__main__":
     unittest.main()
