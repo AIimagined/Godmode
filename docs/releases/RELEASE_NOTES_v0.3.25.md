@@ -23,6 +23,16 @@
   `.godmode-ratchets.json` (name to command); `godmode ratchet run` records
   each value and names every counter that rose, and `integrity` carries
   the same finding as its thirteenth monitor.
+- **Temporary state, noticed.** A process stopped and not restarted, a
+  server started on a port and never stopped, a table updated once, a
+  stash never popped, a persistent environment variable: named at Stop
+  from the transcript, with the `checkpoint --owes` remedy.
+- **The one-variable rule as data.** A check that flipped red to green
+  with three or more files edited between the runs is named as
+  unattributed.
+- **"Sources unread" reads local files.** Reading the project's own files
+  counts as reading its repository; when the nudge still fires it names
+  what was read.
 - **Measurement environment.** `precheck` on a latency, duplicate-request,
   or re-render task lists the environment the deciding number must come
   from. A quoted sentence is no longer read as a claim. A process-control

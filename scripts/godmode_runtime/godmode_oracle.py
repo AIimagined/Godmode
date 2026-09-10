@@ -321,3 +321,130 @@ def created_uncited(transcript_path: str | Path | None, archive: Any, project: P
         if relative not in haystack and resolved.name not in haystack:
             out.append(relative)
     return out
+
+
+def _tool_calls(transcript_path: str | Path | None) -> list[tuple[int, str, dict[str, Any], str | None]]:
+    """(turn, tool name, input, result text or None) in transcript order;
+    the result is the tool_result that answered the call, when one did."""
+    if not transcript_path:
+        return []
+    try:
+        lines = Path(str(transcript_path)).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    calls: list[tuple[int, str, dict[str, Any], str | None]] = []
+    index_by_id: dict[str, int] = {}
+    for turn, raw in enumerate(lines):
+        try:
+            entry = json.loads(raw)
+        except ValueError:
+            continue
+        message = entry.get("message") if isinstance(entry, dict) else None
+        parts = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(parts, list):
+            continue
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "tool_use":
+                index_by_id[str(part.get("id"))] = len(calls)
+                calls.append((turn, str(part.get("name") or ""), dict(part.get("input") or {}), None))
+            elif part.get("type") == "tool_result":
+                position = index_by_id.get(str(part.get("tool_use_id")))
+                if position is None:
+                    continue
+                content = part.get("content")
+                if isinstance(content, list):
+                    content = " ".join(str(c.get("text", "")) for c in content if isinstance(c, dict))
+                turn_, name, payload, _ = calls[position]
+                calls[position] = (turn_, name, payload, str(content or "")[:4000])
+    return calls
+
+
+_SHELL_TOOLS = ("Bash", "PowerShell", "shell", "run_command")
+_STOP_PROCESS = re.compile(r"(?i)\b(?:Stop-Process|taskkill|pkill|killall|kill\s+(?:-\d+\s+)?\d+)\b")
+_DEV_SERVER = re.compile(r"(?i)\b(?:npm\s+run\s+dev|pnpm\s+dev|yarn\s+dev|next\s+dev|vite(?:\s|$)|flask\s+run|uvicorn|rails\s+s(?:erver)?)\b")
+_SERVE_PORT = re.compile(r"(?i)\b(?:next\s+start|npm\s+(?:run\s+)?start|node\s+\S+|python\s+-m\s+http\.server|serve)\b[^|;&]*?(?:-p|--port)[= ]?(\d{2,5})")
+_SQL_UPDATE = re.compile(r"(?i)\bUPDATE\s+([A-Za-z_][\w.\"]*)\s+SET\b")
+_STASH = re.compile(r"(?i)\bgit\s+stash\b(?!\s+(?:pop|apply|list|show|drop))")
+_STASH_BACK = re.compile(r"(?i)\bgit\s+stash\s+(?:pop|apply)\b")
+_PERSISTENT_ENV = re.compile(r"(?i)\bsetx\s+\w+|\[Environment\]::SetEnvironmentVariable")
+
+
+def unrestored_temporaries(transcript_path: str | Path | None) -> list[dict[str, str]]:
+    """Field reports Part 3, Part 4 and the RCA pass (2026-09-10): a dev
+    server stopped, a production server started on a port, a role bumped
+    with an UPDATE, a stash never popped - restored from memory, or not.
+    Every shape below is a temporary state this session created and no
+    later call in the same transcript reversed. Heuristic and bounded:
+    it names what it saw, and the restore may have happened outside the
+    transcript; the reader decides."""
+    calls = _tool_calls(transcript_path)
+    commands = [(turn, str(payload.get("command") or "")) for turn, name, payload, _ in calls
+                if name in _SHELL_TOOLS and payload.get("command")]
+    out: list[dict[str, str]] = []
+    stops = [turn for turn, c in commands if _STOP_PROCESS.search(c)]
+    restarts = [turn for turn, c in commands if _DEV_SERVER.search(c)]
+    if stops and not any(r > stops[-1] for r in restarts):
+        out.append({"kind": "process", "detail": "a process was stopped and no dev-server start followed"})
+    for turn, c in commands:
+        for port in _SERVE_PORT.findall(c):
+            later_stop = any(t > turn and (_STOP_PROCESS.search(cc) or port in cc and "kill" in cc.lower())
+                             for t, cc in commands)
+            if not later_stop:
+                out.append({"kind": "process", "detail": f"a server was started on port {port} and no stop followed"})
+    seen_tables: dict[str, list[int]] = {}
+    for turn, c in commands:
+        for table in _SQL_UPDATE.findall(c):
+            seen_tables.setdefault(table.strip('"'), []).append(turn)
+    for table, turns in seen_tables.items():
+        if len(turns) == 1:
+            out.append({"kind": "data", "detail": f"table {table} was updated once and no reverting update followed"})
+    stash_turns = [turn for turn, c in commands if _STASH.search(c)]
+    if stash_turns and not any(t > stash_turns[-1] for t, c in commands if _STASH_BACK.search(c)):
+        out.append({"kind": "worktree", "detail": "git stash was created and never popped or applied"})
+    if any(_PERSISTENT_ENV.search(c) for _, c in commands):
+        out.append({"kind": "environment", "detail": "a persistent environment variable was set (setx / SetEnvironmentVariable)"})
+    unique: list[dict[str, str]] = []
+    for item in out:
+        if item not in unique:
+            unique.append(item)
+    return unique[:6]
+
+
+_RED = re.compile(r"(?i)\b(?:FAILED|FAIL:|ERROR:|Error:|Traceback|assert(?:ion)?(?:Error)?|\d+ failed)\b")
+
+
+def unattributed_flips(transcript_path: str | Path | None, threshold: int = 3) -> list[dict[str, Any]]:
+    """The one-variable rule as data: two consecutive runs of the same
+    verdict-bearing command that flipped red to green with `threshold` or
+    more distinct files edited in between. Whatever flipped it is not
+    attributed to any one change; the reader decides whether that matters
+    (it does in an investigation, it may not in a fix)."""
+    calls = _tool_calls(transcript_path)
+    last_red: dict[str, tuple[int, int]] = {}  # command -> (turn, call index)
+    out: list[dict[str, Any]] = []
+    for position, (turn, name, payload, result) in enumerate(calls):
+        if name not in _SHELL_TOOLS or not payload.get("command") or result is None:
+            continue
+        command = " ".join(str(payload["command"]).split())
+        red = bool(_RED.search(result))
+        previous = last_red.get(command)
+        if red:
+            last_red[command] = (turn, position)
+            continue
+        if previous is None:
+            continue
+        edited: list[str] = []
+        for _t, n, p, _r in calls[previous[1] + 1:position]:
+            if n in ("Edit", "Write", "NotebookEdit", "MultiEdit"):
+                path = str(p.get("file_path") or p.get("path") or "")
+                if path and path not in edited:
+                    edited.append(path)
+        if len(edited) >= threshold:
+            out.append({"command": command[:80], "files": [Path(p).name for p in edited][:8],
+                        "detail": f"`{command[:60]}` flipped red to green with {len(edited)} files edited between "
+                                  f"the two runs ({', '.join(Path(p).name for p in edited[:4])}); the flip is not "
+                                  "attributed to any one change - revert all but one, or record which one and why"})
+        last_red.pop(command, None)
+    return out[:3]

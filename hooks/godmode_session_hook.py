@@ -677,7 +677,24 @@ _SOURCE_READ_MARKERS = ("/contents/", "raw.githubusercontent.com/", "/blob/", "/
                         "git clone", "repo clone", "/git/blobs/")
 
 
-def _external_verdict_nudge(submitted: dict[str, Any], reply_text: str) -> list[str]:
+def _origin_slug(project: Path | None) -> str | None:
+    """owner/repo of the project's origin remote, lowercased, or None."""
+    if project is None:
+        return None
+    try:
+        from godmode_runtime.godmode_anchor import run_git
+        url = (run_git(project, "remote", "get-url", "origin") or "").strip()
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: no remote means the project is not a slug anyone named
+        return None
+    match = re.search(r"[:/]([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$", url)
+    return f"{match.group(1)}/{match.group(2)}".lower() if match else None
+
+
+_LOCAL_READ_TOOLS = ("Read", "Grep", "Glob", "NotebookRead", "view_file", "read_file")
+
+
+def _external_verdict_nudge(submitted: dict[str, Any], reply_text: str,
+                            project: Path | None = None) -> list[str]:
     """A reply that judges a GitHub repository the session never read past
     its README (self-observed 2026-09-10: two repositories assessed from
     README and tree, the gate silent because the prose had no number or
@@ -692,6 +709,13 @@ def _external_verdict_nudge(submitted: dict[str, Any], reply_text: str) -> list[
         return []
     named: dict[str, str] = {}
     fetched: dict[str, int] = {}
+    read_names: dict[str, list[str]] = {}
+    # The project's own repository is read with local tools whose inputs
+    # carry paths, not the slug (RCA pass, 2026-09-10: "sources unread"
+    # named docs read this session). Reads under the project root count
+    # for the origin slug.
+    origin = _origin_slug(project)
+    root = str(project.resolve()).replace("\\", "/").lower() if project is not None else None
     for line in lines[-6000:]:
         try:
             entry = json.loads(line)
@@ -707,12 +731,22 @@ def _external_verdict_nudge(submitted: dict[str, Any], reply_text: str) -> list[
         for part in message.get("content") or []:
             if not isinstance(part, dict) or part.get("type") != "tool_use":
                 continue
-            blob = json.dumps(part.get("input") or {}).lower()
+            payload = part.get("input") or {}
+            blob = json.dumps(payload).lower()
+            if origin and origin in named and str(part.get("name") or "") in _LOCAL_READ_TOOLS and root:
+                local = str(payload.get("file_path") or payload.get("path") or payload.get("pattern") or "")
+                if local and local.replace("\\", "/").lower().startswith(root):
+                    fetched[origin] = fetched.get(origin, 0) + 1
+                    read_names.setdefault(origin, []).append(Path(local).name)
+                    continue
             for slug in named:
                 if slug not in blob:
                     continue
-                if any(marker in blob for marker in _SOURCE_READ_MARKERS) and "readme" not in blob:
-                    fetched[slug] = fetched.get(slug, 0) + 1
+                if any(marker in blob for marker in _SOURCE_READ_MARKERS):
+                    tail = blob.split(slug, 1)[1][:80]
+                    read_names.setdefault(slug, []).append(tail.strip("/\"' ").split("/")[-1][:40] or "?")
+                    if "readme" not in blob:
+                        fetched[slug] = fetched.get(slug, 0) + 1
     if not named or not _VERDICT_WORDS.search(reply_text):
         return []
     lowered = reply_text.lower()
@@ -722,10 +756,13 @@ def _external_verdict_nudge(submitted: dict[str, Any], reply_text: str) -> list[
         if slug not in lowered and repo not in lowered:
             continue
         if fetched.get(slug, 0) == 0:
+            seen = [n for n in read_names.get(slug, []) if n][:4]
             notices.append(
                 f"godmode: this reply judges {shown} - 0 source files of it were "
-                "fetched this session (README and tree reads do not count); a "
-                "verdict on unread code is a hypothesis, say so or read it")
+                "fetched this session"
+                + (f" (only {', '.join(seen)} and the tree were read)" if seen
+                   else " (README and tree reads do not count)")
+                + "; a verdict on unread code is a hypothesis, say so or read it")
     return notices[:3]
 
 
@@ -1612,6 +1649,26 @@ def _iteration_notices(archive: Any, project: Path, submitted: dict[str, Any]) -
                 f"godmode: {len(orphans)} file(s) written this session that no claim, change, or checkpoint "
                 f"names ({shown}); a throwaway left in the tree is a file the next reader trusts - cite it, "
                 "record it, or delete it")
+        try:
+            from godmode_runtime.godmode_oracle import unattributed_flips, unrestored_temporaries
+            temporaries = unrestored_temporaries(transcript)
+            flips = unattributed_flips(transcript)
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable transcript names nothing
+            temporaries, flips = [], []
+        if temporaries:
+            shown = "; ".join(item["detail"] for item in temporaries[:4])
+            notices.append(
+                f"godmode: {len(temporaries)} temporary state(s) this session with no restore seen ({shown}); "
+                "restore each, or put it on the scope gate: `godmode checkpoint \"<what you did>\" --status "
+                "active --owes \"<the restore>\"`")
+            try:
+                archive.append("action", "would-have-required-restore",
+                               {"count": len(temporaries), "kinds": sorted({i["kind"] for i in temporaries})},
+                               evidence=[])
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: the observe receipt is best-effort
+                pass
+        for flip in flips[:1]:
+            notices.append("godmode: " + flip["detail"])
         stale = reobserve_needed(transcript)
         if stale:
             notices.append("godmode: " + stale["detail"])
@@ -2618,7 +2675,8 @@ def main(argv: list[str] | None = None) -> int:
                 notices.extend(_tripwire_nudges(
                     archive, _session_key(submitted), Path(anchor.project_root)))
                 if not subagent:
-                    notices.extend(_external_verdict_nudge(submitted, reply_text))
+                    notices.extend(_external_verdict_nudge(
+                        submitted, reply_text, Path(anchor.project_root)))
                     iteration_notes, stall_block = _iteration_notices(
                         archive, Path(anchor.project_root), submitted)
                     notices.extend(iteration_notes)
