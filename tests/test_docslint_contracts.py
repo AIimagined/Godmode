@@ -145,3 +145,31 @@ class ContractConfigurationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NarrationTests(unittest.TestCase):
+    """A release note lists what the reader gets; the story of how it was
+    made is a finding."""
+
+    def test_process_narration_in_a_release_note_is_named(self) -> None:
+        holder = _project({"contracts": {"RELEASE_NOTES_*.md": ["Verifying"]}}, **{
+            "docs/releases/RELEASE_NOTES_v9.9.9.md": (
+                "# Godmode v9.9.9\n\nThe batch release. After three cuts the operator said the pattern "
+                "was the problem.\n\n## Added\n\n- A thing.\n\n## Verifying\n\n- run it\n"),
+        })
+        with holder:
+            report = lint_docs(Path(holder.name))
+        codes = _codes(report)
+        self.assertIn("release-note-narration", codes)
+
+    def test_a_note_that_lists_changes_is_clean(self) -> None:
+        holder = _project({"contracts": {"RELEASE_NOTES_*.md": ["Verifying"]}}, **{
+            "docs/releases/RELEASE_NOTES_v9.9.9.md": (
+                "# Godmode v9.9.9\n\n## Added\n\n- `godmode perimeter add` declares a boot check.\n\n"
+                "## Verifying\n\n- `python -m unittest tests.test_x`\n"),
+            "docs/GUIDE.md": "# Guide\n\nThe operator runs this session.\n",
+        })
+        with holder:
+            report = lint_docs(Path(holder.name))
+        self.assertNotIn("release-note-narration", _codes(report))
+

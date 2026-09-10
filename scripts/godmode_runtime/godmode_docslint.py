@@ -291,6 +291,49 @@ def _contract_findings(relative: str, text: str,
     return findings
 
 
+# 2026-09-10: two release notes narrated how the release was made (who
+# asked, what was pushed, which report it answered) instead of what the
+# reader gets. A release note is a list of changes and how to use them;
+# the story belongs in the commit message or the ledger.
+_RELEASE_NOTE = re.compile(r"(?i)(?:^|/)RELEASE_NOTES_[^/]*\.md$")
+_NARRATION = re.compile(
+    r"(?i)\b(?:the operator (?:said|asked|wanted|pointed)|field report|the reporter(?:'s)?|"
+    r"we (?:pushed|cut|released|shipped|built)|cut the same day|the batch release|"
+    r"(?:pushed|released|shipped) with no|Part [123]\b|the sweep was|"
+    r"red-then-green|the session (?:runs|found)|research brief|product requirements|"
+    r"after (?:one|two|three|four) cuts?)\b")
+_NOTE_VERSION = re.compile(r"RELEASE_NOTES_v?(\d+)\.(\d+)\.(\d+)")
+
+
+def _narration_findings(relative: str, text: str, floor: str | None = None) -> list[dict[str, Any]]:
+    """`floor` (config key `narration_from`, e.g. "0.3.24") keeps the rule off
+    notes already published before it existed; a note at or above the floor
+    is held to it."""
+    if not _RELEASE_NOTE.search(relative):
+        return []
+    if floor:
+        found = _NOTE_VERSION.search(relative)
+        try:
+            floor_tuple = tuple(int(p) for p in str(floor).lstrip("v").split("."))
+        except ValueError:
+            floor_tuple = ()
+        if found and floor_tuple and tuple(int(g) for g in found.groups()) < floor_tuple:
+            return []
+    findings: list[dict[str, Any]] = []
+    for number, line in enumerate(text.splitlines(), 1):
+        match = _NARRATION.search(line)
+        if match:
+            findings.append({
+                "path": relative, "line": number, "check": "release-note-narration",
+                "severity": "medium",
+                "why": f"a release note says what the reader gets, not how the release was made "
+                       f"(`{match.group(0)}`)",
+                "remedy": "state the change and how to use it; the story goes in the commit "
+                          "message or the ledger, not the note",
+            })
+    return findings
+
+
 def _matches(relative: str, pattern: str) -> bool:
     """`**` spans directories; a pattern without a slash matches the basename,
     so `RELEASE_NOTES_*.md` need not be written as a path to be useful."""
@@ -705,6 +748,7 @@ def lint_docs(project: Path) -> dict[str, Any]:
         findings.extend(lint_text(relative, text, ignore=ignore))
         if contracts:
             findings.extend(_contract_findings(relative, text, contracts))
+            findings.extend(_narration_findings(relative, text, config.get("narration_from")))
         findings.extend(_figure_findings(relative, text, project))
         findings.extend(_self_pin_findings(relative, text, RUNTIME_VERSION))
         prose_advisories.extend(_stale_open_marker_findings(relative, text))

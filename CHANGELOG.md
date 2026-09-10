@@ -8,15 +8,16 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ### Added
 
-- A would-ask folds to deny when the host's permission mode has no human behind the ask (`auto`, `dontAsk`, `bypassPermissions` on Claude Code), with the staged-capability remedy in the reason; `gate-asked` records carry the permission mode. Three releases on 2026-09-10 were pushed with no password because the local policy listed the external-write categories under `ask_only` and the host's auto classifier answered every ask. `doctor` names an `ask_only` entry for `git-history-or-remote` or `release-or-external-write`.
-- Release notes for 0.3.25 (`docs/releases/RELEASE_NOTES_v0.3.25.md`) name the incident, the fold, and the red-then-green proof against the 0.3.24 tag.
+- A would-ask folds to deny when the host's permission mode has no human behind the ask (`auto`, `dontAsk`, `bypassPermissions` on Claude Code), with the staged-capability remedy in the reason; `gate-asked` records carry the permission mode. `doctor` names an `ask_only` entry for `git-history-or-remote` or `release-or-external-write`.
+- Release notes for 0.3.25 (`docs/releases/RELEASE_NOTES_v0.3.25.md`).
+- `godmode release-notes build <version>` derives `docs/releases/RELEASE_NOTES_v<version>.md` from that version's CHANGELOG section (grouped by kind, a Verifying section from the tests the entries name); `release-notes check <version>` holds an existing note to the shape: present, every entry covered, no empty section, no process narration, a Verifying section. The docs lint gains `release-note-narration` (a note says what the reader gets, not how the release was made) with a `narration_from` floor in `.godmode-docslint.json`.
 - README describes the 0.3.24 surface: iteration controls, the scope gate and the oracle, the ledger after a compaction, the new sentinel shapes, the node scan, and the numbers as of this cut.
 
 ## [0.3.24] - 2026-09-10
 
 ### Added
 
-- The scope gate. A reply that declares the work complete while the record still holds this host session's operator asks, the active plan's pending steps, criteria no claim cites, or a hypothesis that has failed three checkpoints is blocked once at Stop with the list and each item's closing command (the operator's own observation, 2026-09-10: everything is declared complete, then one more item asked for in this release is named for the next).
+- The scope gate. A reply that declares the work complete while the record still holds this host session's operator asks, the active plan's pending steps, criteria no claim cites, or a hypothesis that has failed three checkpoints is blocked once at Stop with the list and each item's closing command.
 - A repeat-failure ask inside the turn. The fourth run of a command that has failed three times this session with no file edited since the last failure is asked about on hosts with an ask, with the count; the transcript is the evidence.
 - Loop episodes at Stop. Six attempts (four novice, eight strict) on one error signature over the same hunks with no new file, assertion, or error class are named with the turn where new information last arrived, and a `would-have-stopped-loop` receipt is recorded; eight edits since the last read of the file under repair, or an error class that changed since that read, names a re-observe with its own receipt.
 - The ExecCritic oracle shapes. Integrity names a test weakened in the same diff as its source (blocking), an assertion literal moved (not blocking), a harness node dropped (blocking), a new test never observed red, and a cited check whose file this session edited; `session close` refuses a regression (a step green earlier this session, red later, no green since). Six new staged scenarios, each pinned by digest.
@@ -35,9 +36,9 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 - Measured spend. `ceilings` compares a declared `tokens` ceiling against the token usage the host itself wrote into the transcript (input, output, cache creation, summed over assistant messages), and Stop names an exceeded ceiling with the measured number; self-reported spend is no longer the only source.
 - A commit-score plateau detector. `score = <n>` in commit subjects on the current branch is read; four newest scored commits that did not beat the best before them are named at Stop with the numbers. The stall streak (`stall_escalation`) is now wired at Stop: the redirect threshold is a notice, the halt threshold blocks until an operator-stated record clears it.
 - Static false-green shapes as an integrity monitor over changed Python test files: no check at all, a constant or tuple asserted, a value compared to itself, an assertion after return, a comparison returned or left bare, an assert inside a try whose except passes, an empty raises context. Named, not blocking. Twelve monitors.
-- `checkpoint --owes "<restore>"` records a temporary change (a role bump, a throwaway spec) as an open obligation; the scope gate names it until it is closed (field report file, Part 3: the restore happened from a state file, not from the gate).
-- Files written this session that no claim, change, or checkpoint names are listed at Stop with their paths (Part 3: two throwaway specs sat in the tree until the agent happened to delete them).
-- A new test file that is untracked counts as added in the integrity and oracle diff readers (Part 3: the coverage pairing called three tested routes untested because the tests were untracked).
+- `checkpoint --owes "<restore>"` records a temporary change (a role bump, a throwaway spec) as an open obligation; the scope gate names it until it is closed.
+- Files written this session that no claim, change, or checkpoint names are listed at Stop with their paths.
+- A new test file that is untracked counts as added in the integrity and oracle diff readers.
 - A bare `godmode status` prints the survey; the evidence-pipe advisory stays quiet behind `tee` or `pipefail`; a control-character finding on a 0x08 carries the byte-built repair.
 - Host pages for Cursor and Antigravity (`docs/hosts/`) with the wired events, the known issues, and the proof recipe that earns HARD; `docs/COMPACTION-AND-LEDGER.md` maps the compaction playbook onto the commands that carry each line.
 
@@ -46,7 +47,7 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 - The read-only Python payload scan is the default posture (`inline_interpreter` defaults to `scan`): the allowlist is parsed with `ast` and refuses anything off the table, and the ask on every read-only `python -c` or heredoc was the field's most repeated complaint. `"ask"` still opts out.
 - `drift` removes a step the host transcript shows running from its dropped list; `recurrences` skips a step whose last attestation is green; `loop` resets a repeated-action count when a mutation record sits between the runs.
 - `claim` predicates `checker_authored` and `operational_error` read the transcript when `--transcript` is given: a check whose file this session edited, or a result that is an operational error rather than a verdict, downgrades the claim.
-- A parked ask nag is dropped the turn its ask is closed; it no longer rides the next prompt (field report file, finding 3).
+- A parked ask nag is dropped the turn its ask is closed; it no longer rides the next prompt.
 - A sentence that lists what is pending or owed is not a claim, numbers or not.
 - The code-of-law skill reads `GODMODE-CODE-OF-LAW.md` only when it exists; `godmode law compile` writes it.
 

@@ -1662,6 +1662,19 @@ def cmd_drift(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult(report, exit_code=1 if report["verdict"] == "drift-detected" else 0)
 
 
+def cmd_release_notes(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    from .godmode_constants import RUNTIME_VERSION
+    from .godmode_release_notes import build_notes, check_notes
+
+    version = str(args.version or RUNTIME_VERSION)
+    project = Path(runtime.anchor.project_root)
+    if args.action == "build":
+        report = build_notes(project, version, force=bool(args.force))
+        return CommandResult(report, exit_code=0 if report.get("written") else 1)
+    report = check_notes(project, version)
+    return CommandResult(report, exit_code=0 if report["ok"] else 1)
+
+
 def cmd_changelog_check(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     report = check_fragments(Path(runtime.anchor.project_root), base=args.base)
     return CommandResult(report, exit_code=0 if report["satisfied"] else 1)
@@ -5836,6 +5849,16 @@ def _build_parser() -> argparse.ArgumentParser:
     law_promote.add_argument("--subject", required=True)
     law_promote.set_defaults(handler=cmd_law_promote)
 
+    release_notes = sub.add_parser(
+        "release-notes",
+        help="Build a version's release note from its CHANGELOG section, or check an existing one: "
+             "present, every entry covered, no empty section, no process narration, a Verifying section")
+    release_notes.add_argument("action", choices=["build", "check"])
+    release_notes.add_argument("version", nargs="?", default=None,
+                               help="Version, e.g. 0.3.25; defaults to the runtime version")
+    release_notes.add_argument("--force", action="store_true", help="build: overwrite an existing note")
+    release_notes.set_defaults(handler=cmd_release_notes)
+
     changelog = sub.add_parser("changelog", help="Fragment-based release notes")
     changelog_sub = changelog.add_subparsers(dest="changelog_command", required=True)
     changelog_check = changelog_sub.add_parser(
@@ -5937,7 +5960,7 @@ def _build_parser() -> argparse.ArgumentParser:
     locale_check.set_defaults(handler=cmd_locale_check)
 
     integrity = sub.add_parser(
-        "integrity", help="Run the nine test-integrity monitors over the current diff"
+        "integrity", help="Run the twelve test-integrity monitors over the current diff"
     )
     integrity.add_argument("--base", default="HEAD", help="Git ref to diff against")
     integrity.set_defaults(handler=cmd_integrity)

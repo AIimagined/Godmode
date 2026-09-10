@@ -18,10 +18,10 @@ inputs:
     default: origin/main...
   gates:
     description: >-
-      Comma-separated gates to run. Supported: integrity, changelog, grid,
-      config, locale.
+      Comma-separated gates to run. Supported: integrity, changelog,
+      release-notes, grid, config, locale.
     required: false
-    default: integrity,changelog
+    default: integrity,changelog,release-notes
   project:
     description: Path to the repository under review.
     required: false
@@ -70,6 +70,11 @@ runs:
       if: contains(inputs.gates, 'changelog')
       shell: bash
       run: $GODMODE_PY "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" changelog check --base "${{ inputs.base }}"
+
+    - name: Release note for the current version
+      if: contains(inputs.gates, 'release-notes')
+      shell: bash
+      run: $GODMODE_PY "${{ github.action_path }}/scripts/godmode.py" --project "${{ inputs.project }}" release-notes check
 
     - name: Adversarial control grid
       if: contains(inputs.gates, 'grid')

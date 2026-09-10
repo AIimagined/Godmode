@@ -1,5 +1,8 @@
 {
   "contracts": {
-    "RELEASE_NOTES_*.md": ["Verifying"]
-  }
+    "RELEASE_NOTES_*.md": [
+      "Verifying"
+    ]
+  },
+  "narration_from": "0.3.24"
 }
