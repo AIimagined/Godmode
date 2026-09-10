@@ -3768,8 +3768,9 @@ def cmd_authorize_stage(args: argparse.Namespace, runtime: Runtime) -> CommandRe
     on the wrong command.
     """
     _require_archive(runtime)
+    staged_digest = None
     if args.from_last_refusal:
-        operation = stage_from_refusal(runtime.archive, nth=args.nth)
+        operation, staged_digest = stage_from_refusal(runtime.archive, nth=args.nth, with_digest=True)
         print(json.dumps(
             {"from_last_refusal": True, "nth": args.nth, "operation": operation},
             ensure_ascii=False,
@@ -3798,7 +3799,7 @@ def cmd_authorize_stage(args: argparse.Namespace, runtime: Runtime) -> CommandRe
         import getpass
 
         password = getpass.getpass("Godmode authorization password: ")
-    broker.stage(operation, password, args.ttl)
+    broker.stage(operation, password, args.ttl, operation_digest=staged_digest)
     preview = classify_action(operation)
     return CommandResult({
         "staged": True,

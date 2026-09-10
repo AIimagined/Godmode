@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -3527,6 +3528,12 @@ def main(argv: list[str] | None = None) -> int:
                             str(preview["category"])[:200] or "refusal",
                             {
                                 "operation": operation[:500],
+                                # Field incident 2026-09-11: `authorize stage
+                                # --from-last-refusal` staged a digest of the
+                                # 500-character cut and the real retry missed.
+                                "operation_truncated": len(operation) > 500,
+                                "operation_digest": hashlib.sha256(
+                                    operation.strip().encode()).hexdigest(),
                                 "tool": tool or "operation",
                                 "tier": str(preview.get("tier", "R?")),
                                 "category": preview["category"],

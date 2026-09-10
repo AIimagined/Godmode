@@ -51,8 +51,13 @@ def _require_tty() -> None:
     if not _stdin_is_interactive():
         raise AuthorizationError(
             "No interactive terminal is available for password entry. "
-            "Run this command from an interactive shell, or pass "
-            "--password-stdin and pipe the password on standard input."
+            "An agent's shell and a chat's `!` command prefix have none: "
+            "run this command in a separate terminal window, where it "
+            "prompts for the password - `<plugin-root>/bin/godmode.cmd` on "
+            "Windows, `<plugin-root>/bin/godmode` elsewhere, if `godmode` is "
+            "not on PATH. Piping a typed password with --password-stdin "
+            "leaves it in the transcript; that flag is for a file or a "
+            "secret manager."
         )
 
 
@@ -2000,6 +2005,29 @@ _UNRESOLVED_EXPANSION = re.compile(r"(?:^|[\\/])~|[$`]|%[A-Za-z_][A-Za-z0-9_]*%"
 _NULL_DEVICE = re.compile(r"(?i)^(?:/dev/null|nul|\$null|/dev/std(?:out|err))$")
 
 
+def _is_host_memory(target: Path) -> bool:
+    """Whether a path lands in the host's own project-memory directory
+    (`~/.claude/projects/<slug>/memory/`), the location the host itself
+    writes durable notes to. Field incident 2026-09-11: a memory write was
+    refused as "outside the working tree" - true, and beside the point,
+    since that tree is the host's, not the repository's. Like the scratch
+    allowance, it is a property of the machine (the user's home), so
+    nothing a clone ships can widen it.
+    """
+    try:
+        home = Path(_canonical_path_text(Path.home()))
+        candidate = Path(_canonical_path_text(Path(str(target))))
+    except (OSError, ValueError, RuntimeError):
+        return False
+    try:
+        rel = candidate.relative_to(home)
+    except ValueError:
+        return False
+    parts = rel.parts
+    return (len(parts) >= 5 and parts[0] == ".claude" and parts[1] == "projects"
+            and parts[3] == "memory")
+
+
 def _is_scratch(target: Path, project_root: Path | None = None) -> bool:
     """Whether a path lands in the operating system's temporary directory.
 
@@ -2388,7 +2416,8 @@ def _write_verdict(path: str, project_root: Path | None, archive: Any) -> tuple[
     if _SENSITIVE_EDIT.search(path):
         return ("worktree-file-mutation", True,
                 [f"not an ordinary working file: {_shown_path(path, project_root)}"])
-    if not _contained(path, project_root) and not _is_scratch(Path(path), project_root):
+    if (not _contained(path, project_root) and not _is_scratch(Path(path), project_root)
+            and not _is_host_memory(Path(path))):
         return ("worktree-file-mutation", True,
                 [f"outside the working tree: {_shown_path(path, project_root)}"])
     return "worktree-file-mutation", False, ["a file in the working tree"]
@@ -3057,9 +3086,16 @@ _TIER_BY_CATEGORY = {
     # staged or supplied capability, never by a one-key confirmation.
     "pinned-evaluator-mutation": "R5",
     "evaluator-unpin": "R5",
+    "password-in-transcript": "R5",
 }
 
 _GIT_PUSH = re.compile(r"(?i)\bgit\s+push\b")
+
+# A shell-literal head (echo/printf/Write-Output or a bare quoted string)
+# piped into an `authorize` verb that reads --password-stdin.
+_PASSWORD_PIPED_LITERAL = re.compile(
+    r"""(?is)(?:^|[;&|(]\s*)(?:echo|printf|write-output|"[^"\n]*"|'[^'\n]*')[^|\n]*\|"""
+    r"""[^|\n]*\bauthorize\s+(?:setup|stage|issue|grant)\b[^|\n]*--password-stdin""")
 
 # Destructive, effectively irreversible forms. Each escalation is scoped to
 # the category whose text it inspects, so `git stash drop` (a git mutation)
@@ -3366,7 +3402,8 @@ def _categorize(normalized: str, project_root: Path | None = None,
         if _SENSITIVE_EDIT.search(path):
             return ("worktree-file-mutation", True,
                     [f"not an ordinary working file: {_shown_path(path, project_root)}"])
-        if not _contained(path, project_root) and not _is_scratch(Path(path), project_root):
+        if (not _contained(path, project_root) and not _is_scratch(Path(path), project_root)
+                and not _is_host_memory(Path(path))):
             return ("worktree-file-mutation", True,
                     [f"outside the working tree: {_shown_path(path, project_root)}"])
         # Writing a "new" file onto an existing filename is an overwrite bet.
@@ -3620,6 +3657,10 @@ def _categorize(normalized: str, project_root: Path | None = None,
                 and _is_scratch(Path(write_target.strip().strip("\"'")), project_root)):
             return ("local-compute-or-state", False,
                     [f"{kind} write to the system temp directory"])
+        if (write_target and not _SENSITIVE_EDIT.search(write_target)
+                and _is_host_memory(Path(write_target.strip().strip("\"'")))):
+            return ("local-compute-or-state", False,
+                    [f"{kind} write to the host's project-memory directory"])
         # The same act as an `Edit`, judged the same way. Refusing every
         # redirect while permitting the declared edit of the same path gated
         # the honest form and not the other, which is all cost and no cover.
@@ -3935,6 +3976,23 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     normalized = operation.strip()
     if not normalized:
         raise AuthorizationError("Operation description cannot be empty")
+
+    # Field incident 2026-09-11: `echo <password> | ... authorize stage
+    # --password-stdin` typed by an agent put the authorization password in
+    # two transcripts. A literal piped into the password flag is refused
+    # outright - the flag exists for a file or a secret manager, and the
+    # prompt exists for a person at a terminal.
+    if _PASSWORD_PIPED_LITERAL.search(normalized):
+        return {
+            "protected": True,
+            "category": "password-in-transcript",
+            "operation_digest": hashlib.sha256(normalized.encode()).hexdigest(),
+            "impact": ["pipes a typed password into --password-stdin; the transcript "
+                       "would keep it. Type it at the prompt in a separate terminal window"],
+            "tier": "R5",
+            "second_confirmation_required": True,
+            "external_repo_ref": None,
+        }
 
     # B3-5 detection: a repository outside this project entering the work,
     # named wherever it appears in the operation - a URL a compound command
@@ -4578,7 +4636,12 @@ class CapabilityBroker:
         password: str,
         ttl_seconds: int | None = None,
         context: dict[str, str] | None = None,
+        operation_digest: str | None = None,
     ) -> str:
+        """`operation_digest` (field incident 2026-09-11): the digest of the
+        FULL operation when `operation` is the refusal record's 500-character
+        cut of it. The category still comes from classifying the text given;
+        the token is bound to the digest the retry will present."""
         import hmac
         import secrets
         policy = self._policy()
@@ -4606,7 +4669,7 @@ class CapabilityBroker:
         now = int(time.time())
         body = {
             "version": 1,
-            "operation_digest": classification["operation_digest"],
+            "operation_digest": operation_digest or classification["operation_digest"],
             "category": classification["category"],
             "issued_at": now,
             "expires_at": now + ttl_seconds,
@@ -4637,7 +4700,8 @@ class CapabilityBroker:
         _atomic_json(self.path, data)
 
     def stage(
-        self, operation: str, password: str, ttl_seconds: int | None = None
+        self, operation: str, password: str, ttl_seconds: int | None = None,
+        operation_digest: str | None = None,
     ) -> str:
         """Authorise one exact operation and leave it where the hook can find it.
 
@@ -4652,7 +4716,7 @@ class CapabilityBroker:
         metadata directory rather than in the working tree, so a cloned
         repository cannot carry one.
         """
-        token = self.issue(operation, password, ttl_seconds)
+        token = self.issue(operation, password, ttl_seconds, operation_digest=operation_digest)
         body = json.loads(_decode(token.split(".")[1]))
         data = self._load()
         staged = [
@@ -4981,7 +5045,7 @@ def local_authorization_policy(archive: Any) -> dict[str, Any]:
     return CapabilityBroker(archive)._policy()  # noqa: SLF001
 
 
-def stage_from_refusal(archive: Any, nth: int = 1) -> str:
+def stage_from_refusal(archive: Any, nth: int = 1, with_digest: bool = False) -> Any:
     """The operation named by the nth-most-recent STAGEABLE refusal on record.
 
     The refusal that names a remedy nobody can perform used to be answered by
@@ -5019,7 +5083,15 @@ def stage_from_refusal(archive: Any, nth: int = 1) -> str:
     stageable = [record for record in records if not record["data"].get("observed")]
     if len(stageable) < nth:
         raise AuthorizationError("No refusal is on record; nothing to stage")
-    return str(stageable[-nth]["data"].get("operation", ""))
+    data = stageable[-nth]["data"]
+    operation = str(data.get("operation", ""))
+    if not with_digest:
+        return operation
+    # Field incident 2026-09-11: the record keeps the operation cut at 500
+    # characters; a digest over the cut text matched nothing when the real
+    # command was retried. The record now carries the full digest too.
+    digest = str(data.get("operation_digest") or "") if data.get("operation_truncated") else ""
+    return operation, (digest or None)
 
 
 def _self_check() -> None:
