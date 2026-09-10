@@ -4,11 +4,12 @@ All notable changes to Godmode will be documented in this file.
 
 The format follows Keep a Changelog principles, and releases use semantic versioning.
 
-## [Unreleased]
+## [0.3.25] - 2026-09-10
 
 ### Added
 
 - A would-ask folds to deny when the host's permission mode has no human behind the ask (`auto`, `dontAsk`, `bypassPermissions` on Claude Code), with the staged-capability remedy in the reason; `gate-asked` records carry the permission mode. Three releases on 2026-09-10 were pushed with no password because the local policy listed the external-write categories under `ask_only` and the host's auto classifier answered every ask. `doctor` names an `ask_only` entry for `git-history-or-remote` or `release-or-external-write`.
+- Release notes for 0.3.25 (`docs/releases/RELEASE_NOTES_v0.3.25.md`) name the incident, the fold, and the red-then-green proof against the 0.3.24 tag.
 - README describes the 0.3.24 surface: iteration controls, the scope gate and the oracle, the ledger after a compaction, the new sentinel shapes, the node scan, and the numbers as of this cut.
 
 ## [0.3.24] - 2026-09-10
