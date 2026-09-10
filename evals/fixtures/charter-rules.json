@@ -18,12 +18,6 @@
       "trigger": "before_mutation",
       "verify": "attestation_present"
     },
-    "R-5590f3b009": {
-      "enforcement": "ADVISORY",
-      "text_hash": "b59db74f0413a7ad",
-      "trigger": "always",
-      "verify": "none"
-    },
     "R-56305a9e8f": {
       "enforcement": "HARD",
       "text_hash": "9e9404b494b372e4",
@@ -95,6 +89,12 @@
       "text_hash": "9da1de908466b152",
       "trigger": "before_completion",
       "verify": "attestation_present"
+    },
+    "R-e9e778e13a": {
+      "enforcement": "ADVISORY",
+      "text_hash": "b4feaaaadfb3b87e",
+      "trigger": "always",
+      "verify": "none"
     }
   },
   "schema": "godmode-charter-snapshot-v1",

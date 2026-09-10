@@ -76,16 +76,12 @@
         56
       ],
       [
-        "GODMODE-CODE-OF-LAW.md",
-        36
+        "docs/FIXED-REGISTRY.md",
+        1
       ],
       [
-        "GODMODE-CODE-OF-LAW.md",
-        61
-      ],
-      [
-        "GODMODE-CODE-OF-LAW.md",
-        31
+        "GODMODE.md",
+        42
       ]
     ],
     "prepare a release: changelog, version surfaces, and docs": [
@@ -94,12 +90,12 @@
         1
       ],
       [
-        "GODMODE.md",
-        34
-      ],
-      [
         "GODMODE-CODE-OF-LAW.md",
         116
+      ],
+      [
+        "GODMODE.md",
+        34
       ],
       [
         "docs/RELEASE-CHECKLIST.md",
