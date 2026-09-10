@@ -3699,7 +3699,7 @@ def main(argv: list[str] | None = None) -> int:
                 # tripped the count every turn); only code-shaped targets tick.
                 if event.targets and tool in (
                         "Write", "Edit", "NotebookEdit", "apply_patch") and any(
-                        not str(target).lower().endswith((".md", ".txt", ".rst"))
+                        not str(target).lower().endswith((".md", ".markdown", ".rst"))
                         for target in event.targets):
                     checkpoint_advisory = _checkpoint_pressure(archive, anchor)
                 # An allowed call may still deserve one sentence: a test run

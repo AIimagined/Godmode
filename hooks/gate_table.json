@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_from": "b95682ef646a",
+  "generated_from": "dc63524c03a3",
   "floor": {
     "claude-code": [
       "git status",

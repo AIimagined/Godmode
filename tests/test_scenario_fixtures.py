@@ -90,12 +90,27 @@ class NegativeControlTests(unittest.TestCase):
         def noop_lock(self, timeout_seconds=5.0):
             yield
 
+        # The race is forced, not hoped for (2026-09-11: with five threads
+        # on an idle Windows box the window between reading the tail and
+        # writing the record closed on its own, and the control read as
+        # "guard disabled, chain still intact"). Every writer pauses after
+        # reading the tail so they all write the same next sequence.
+        import time as _time
+        original_tail = Chronicle._chain_tail
+
+        def slow_tail(self):
+            tail = original_tail(self)
+            _time.sleep(0.05)
+            return tail
+
         original_lock = Chronicle.write_lock
         Chronicle.write_lock = noop_lock
+        Chronicle._chain_tail = slow_tail
         try:
             report = scen.run(only="concurrent-agent-collision")
         finally:
             Chronicle.write_lock = original_lock
+            Chronicle._chain_tail = original_tail
         self.assertFalse(report["scenarios"][0]["caught"])
         self.assertIn("sequence is not contiguous",
                       report["scenarios"][0]["observed"].lower())

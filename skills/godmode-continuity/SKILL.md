@@ -61,6 +61,7 @@ record types or interpreting detector output.
 ## Verbs at the moment of demand
 
 - Opening and closing: `godmode session open` states identity, dirty files, plan, obligations and the host's enforcement table; `godmode session close` refuses an unattested rule or an uncited claim; `godmode brief` prints the continuity brief on demand.
+- Memory hygiene: `godmode hygiene` lists near-duplicate and contradicting lessons and decisions among the newest active records per kind; supersede the loser with `remember --status superseded`.
 - What happened: `godmode history` walks the record, `godmode actions` lists tool actions the gate saw, `godmode inventory` snapshots the tree, `godmode drift` names what moved since, `godmode report` and `godmode export` render the record for a reader or another tool, `godmode index` rebuilds the lookup index.
 - When the anchor is wrong: `godmode reanchor` re-binds the archive to the repository, `godmode rewind` returns to a recorded state, `godmode replay` re-reads a recorded run.
 - Work in flight: `godmode planmode check` holds an edit to the approved plan, `godmode build` records a build outcome, `godmode fleet` lists the sessions on this machine, `godmode examples` and `godmode guide` show the recorded rules in use, `godmode selftest` proves the install itself, and `godmode claim --stale` names claims whose cited evidence moved.

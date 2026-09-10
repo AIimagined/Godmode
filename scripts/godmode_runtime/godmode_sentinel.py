@@ -2041,10 +2041,6 @@ def _is_scratch(target: Path, project_root: Path | None = None) -> bool:
     a property of the machine, not of the repository, so nothing a clone ships
     can widen it.
     """
-    # `$TEMP/x.txt`, `%TEMP%/x.txt`, `$TMPDIR/x` (2026-09-11): the redirect
-    # names the scratch directory through the variable the shell will
-    # expand; unexpanded, it read as a relative path outside the tree.
-    target = Path(os.path.expandvars(str(target)))
     try:
         # _canonical_path_text, not bare normcase/normpath: the temp dir is
         # the most alias-prone path on any machine (Windows spells it
@@ -3662,8 +3658,12 @@ def _categorize(normalized: str, project_root: Path | None = None,
         # sensitive-named target (`/tmp/id_rsa` keeps its ask), and
         # `_is_scratch` resolves traversal first, so `/tmp/../etc/passwd`
         # never reaches this return.
+        # `> "$TEMP/x.txt"`, `%TEMP%`, `$TMPDIR` (2026-09-11): a redirect names
+        # the scratch directory through the variable the shell will expand;
+        # unexpanded it read as a relative path outside the tree. Expanded
+        # here, for the redirect only - a `cp` destination keeps its ask.
         if (write_target and not _SENSITIVE_EDIT.search(write_target)
-                and _is_scratch(Path(write_target.strip().strip("\"'")), project_root)):
+                and _is_scratch(Path(os.path.expandvars(write_target.strip().strip("\"'"))), project_root)):
             return ("local-compute-or-state", False,
                     [f"{kind} write to the system temp directory"])
         if (write_target and not _SENSITIVE_EDIT.search(write_target)

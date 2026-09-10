@@ -1748,10 +1748,18 @@ def stale_claims(archive: Chronicle, project: Path, limit: int = 500) -> list[di
     `changed` when the file or range differs, `vanished` when it is gone.
     Resolved claims are skipped; the newest record per claim text wins."""
     latest: dict[str, dict[str, Any]] = {}
-    for record in archive.select(kind="claim", limit=limit):
+    records = archive.select(kind="claim", limit=limit)
+    # A claim a later record resolves (held, failed, superseded) is settled;
+    # its evidence moving afterwards is history, not staleness (2026-09-11:
+    # three resolved claims stayed on the stale list through a whole gate).
+    resolved = {int((r.get("data") or {}).get("resolves"))
+                for r in records if (r.get("data") or {}).get("resolves") is not None}
+    for record in records:
         data = record.get("data") or {}
         text = str(data.get("text") or record.get("subject") or "")
         if data.get("resolves") is not None or not data.get("evidence_versions"):
+            continue
+        if int(record.get("sequence", 0) or 0) in resolved:
             continue
         latest[text] = record
     stale: list[dict[str, Any]] = []
