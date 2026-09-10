@@ -16,6 +16,14 @@ import os
 # discovering from behaviour.
 READ_ONLY_TOOLS = frozenset({
     "Read", "Glob", "Grep", "WebFetch", "WebSearch", "TodoWrite",
+    # Host control tools (2026-09-10): they carry no operation text and
+    # touch no file or shell - stopping a background task, reading its
+    # output, arming a monitor, loading a tool schema, asking the operator a
+    # question. The gate refused `TaskStop` as "Operation description cannot
+    # be empty", which is the fail-closed answer to a call that needed none.
+    "TaskStop", "TaskOutput", "Monitor", "ScheduleWakeup", "ListAgents", "ToolSearch",
+    "AskUserQuestion", "EnterPlanMode", "ExitPlanMode", "Skill", "SendMessage",
+    "NotebookRead", "PushNotification", "CronList",
 })
 
 # U-V2 disposition register vocabulary. It lives here rather than in

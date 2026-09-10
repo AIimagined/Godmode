@@ -206,5 +206,16 @@ class SelfAttestedTests(unittest.TestCase):
             self.assertTrue(any("self-attested" in a for a in record["data"].get("advisories", [])), record["data"])
 
 
+class HostControlToolTests(unittest.TestCase):
+    def test_stopping_a_background_task_is_not_refused(self) -> None:
+        from test_ask_only_hook import _decide, _project
+
+        with _project() as (root, _archive):
+            for tool, payload in (("TaskStop", {"task_id": "b31t1tutg"}), ("TaskOutput", {"task_id": "x"}),
+                                  ("ToolSearch", {"query": "select:TaskStop"}), ("Monitor", {"command": "tail -f x"})):
+                with self.subTest(tool=tool):
+                    self.assertEqual(_decide(root, tool, payload, permission_mode="auto"), "allow")
+
+
 if __name__ == "__main__":
     unittest.main()

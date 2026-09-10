@@ -234,7 +234,7 @@ class HostEvent:
 _CLAUDE_TOOLS = frozenset({
     "Bash", "PowerShell", "Write", "Edit", "NotebookEdit", "MultiEdit",
     "Read", "Glob", "Grep", "WebFetch", "WebSearch", "TodoWrite",
-})
+}) | READ_ONLY_TOOLS
 _CODEX_TOOLS = frozenset({"shell_command", "apply_patch", "functions.exec"})
 # Grok tool map, Addendum 6 verbatim: run_terminal_command/write/search_replace.
 _GROK_TOOLS = frozenset({"run_terminal_command", "write", "search_replace"})
