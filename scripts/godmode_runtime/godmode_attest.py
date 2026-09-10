@@ -2805,11 +2805,57 @@ def calibration_digest(archive: Chronicle) -> dict[str, Any]:
         if data.get("confidence") is not None:
             with_confidence += 1
     out: dict[str, Any] = {"claims": recorded, "with_confidence": with_confidence, "scored": scored}
+    out["false_green"] = false_green_rate(archive)
     if recorded >= 10 and scored == 0:
         out["detail"] = (f"{recorded} claims recorded, 0 ever scored: calibration is idle. "
                          "A claim with `--confidence` scores itself when `claim --resolve <seq> "
                          "--outcome held|failed` closes it.")
     return out
+
+
+def wilson_interval(successes: int, trials: int, z: float = 1.96) -> tuple[float, float] | None:
+    """Wilson score interval, the small-sample interval a rate of 1 in 16
+    needs; None when there were no trials."""
+    if trials <= 0:
+        return None
+    p = successes / trials
+    denominator = 1 + z * z / trials
+    centre = (p + z * z / (2 * trials)) / denominator
+    half = z * ((p * (1 - p) / trials + z * z / (4 * trials * trials)) ** 0.5) / denominator
+    return (round(max(0.0, centre - half), 4), round(min(1.0, centre + half), 4))
+
+
+def false_green_rate(archive: Chronicle) -> dict[str, Any]:
+    """The rate at which a claim this record graded `verified` was later
+    resolved `failed`: the record's own false greens. The denominator is
+    verified claims that were resolved at all, because only a resolved
+    claim can be wrong; the refusals (claims downgraded at record time)
+    are reported beside the rate, since a gate that refuses more makes the
+    record safer and the measurement weaker at once (own measurement,
+    2026-09-10)."""
+    grades: dict[int, str] = {}
+    downgraded = 0
+    for record in archive.select(kind="claim", limit=1000):
+        data = record.get("data") or {}
+        if data.get("resolves") is not None:
+            continue
+        grades[int(record.get("sequence", 0))] = str(data.get("grade") or "")
+        if data.get("downgraded"):
+            downgraded += 1
+    held = failed = 0
+    for record in archive.select(kind="claim", limit=1000):
+        data = record.get("data") or {}
+        target = data.get("resolves")
+        if target is None or grades.get(int(target)) != "verified":
+            continue
+        if str(data.get("outcome")) == "failed":
+            failed += 1
+        elif str(data.get("outcome")) == "held":
+            held += 1
+    trials = held + failed
+    return {"verified_resolved": trials, "false_greens": failed,
+            "rate": (round(failed / trials, 4) if trials else None),
+            "wilson95": wilson_interval(failed, trials), "refusals": downgraded}
 
 
 def half_done_pairs(

@@ -166,5 +166,30 @@ class ReopenAskTests(unittest.TestCase):
             self.assertEqual([r["subject"] for r in reopened], [subject])
 
 
+class FalseGreenRateTests(unittest.TestCase):
+    def test_verified_then_failed_claims_are_the_false_greens_with_refusals_beside(self) -> None:
+        from godmode_runtime.godmode_attest import calibration_digest, false_green_rate, wilson_interval
+
+        self.assertIsNone(wilson_interval(0, 0))
+        low, high = wilson_interval(1, 16)
+        self.assertLess(low, 0.0625)
+        self.assertGreater(high, 0.0625)
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            seqs = []
+            for grade, downgraded in (("verified", False), ("verified", False), ("verified", False),
+                                      ("observed", True), ("hypothesis", True)):
+                record = archive.append("claim", f"claim {len(seqs)}", {"text": "x", "grade": grade,
+                                                                         "downgraded": downgraded}, evidence=[])
+                seqs.append(record["sequence"])
+            archive.append("claim", "resolution", {"resolves": seqs[0], "outcome": "held", "grade": "observed"}, evidence=[])
+            archive.append("claim", "resolution", {"resolves": seqs[1], "outcome": "failed", "grade": "observed"}, evidence=[])
+            archive.append("claim", "resolution", {"resolves": seqs[3], "outcome": "failed", "grade": "observed"}, evidence=[])
+            rate = false_green_rate(archive)
+            self.assertEqual((rate["verified_resolved"], rate["false_greens"], rate["refusals"]), (2, 1, 2))
+            self.assertEqual(rate["rate"], 0.5)
+            self.assertIn("false_green", calibration_digest(archive))
+
+
 if __name__ == "__main__":
     unittest.main()

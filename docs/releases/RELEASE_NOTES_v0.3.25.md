@@ -36,6 +36,10 @@
 - **A plan step can be finished.** `godmode plan --done <step>` and
   `plan --close`; a closed ask can be reopened with `remember --kind
   request --status open`.
+- **The record's own false-green rate.** The calibration digest (in
+  `session close` and `status remaining --digest`) reports how often a claim graded
+  `verified` was later resolved `failed`, with a Wilson 95% interval and
+  the refusals beside it.
 - **Measurement environment.** `precheck` on a latency, duplicate-request,
   or re-render task lists the environment the deciding number must come
   from. A quoted sentence is no longer read as a claim. A process-control
