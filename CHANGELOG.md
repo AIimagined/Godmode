@@ -6,6 +6,10 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [0.3.25] - 2026-09-10
 
+### Fixed
+
+- `precheck --about` raised a NameError in the registry and design lookups between two commits of this cut; the preflight gate's own suite run caught it, and the preflight now also runs the composite action's gates (integrity and changelog against HEAD~1, release-notes check) so a commit that CI's action job would refuse is refused locally first.
+
 ### Added
 
 - A would-ask folds to deny when the host's permission mode has no human behind the ask (`auto`, `dontAsk`, `bypassPermissions` on Claude Code), with the staged-capability remedy in the reason; `gate-asked` records carry the permission mode. `doctor` names an `ask_only` entry for `git-history-or-remote` or `release-or-external-write`.

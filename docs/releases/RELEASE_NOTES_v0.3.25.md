@@ -95,6 +95,13 @@
   warning means your policy file lists an external-write category under
   `ask_only`.
 
+## Fixed
+
+- `precheck --about` raised in the registry and design lookups between two
+  commits of this cut; the preflight gate caught it, and the preflight now
+  also runs the composite action's own gates (integrity and changelog
+  against HEAD~1, release-notes check).
+
 ## Limits
 
 - The fold covers the modes Claude Code documents. A host that sends no

@@ -107,6 +107,15 @@ def workflow_gate_commands(repo: Path) -> list[str]:
         match = _RUN_LINE.match(line)
         if match and not _SKIP_GATE.search(match.group("cmd")):
             out.append(match.group("cmd"))
+    # The composite action's job diffs HEAD~1 on every push (assertion diff,
+    # skip quarantine, changelog fragment, release note); a commit it would
+    # refuse is refused here first. Its default gates, in its order.
+    if (Path(repo) / "action.yml").is_file():
+        out.extend([
+            "python scripts/godmode.py --project . integrity --base HEAD~1",
+            "python scripts/godmode.py --project . changelog check --base HEAD~1",
+            "python scripts/godmode.py --project . release-notes check",
+        ])
     return out
 
 
