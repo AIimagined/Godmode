@@ -425,6 +425,7 @@ def precheck(project_root: Path | str, archive: Chronicle, task: str,
                     or rejected_precedent_hits)
     report = {
         "task": task,
+        "missing_surface": missing_surface(task),
         "already_built": already_built,
         "already_rejected": already_rejected,
         "already_reported": already_reported,
@@ -443,6 +444,38 @@ def precheck(project_root: Path | str, archive: Chronicle, task: str,
         # matter how confident the hit - GAP-2 v1 is a question, not a gate.
         report["paired_artifacts"] = paired_artifact_findings(archive, changed_files)
     return report
+
+
+_SURFACES: tuple[tuple[str, str, str], ...] = (
+    (r"(?i)\b(?:auth|login|sign[- ]?in|session|token|permission|role|admin)\b", "authorization check",
+     "who may call this, and the test that proves the denied case"),
+    (r"(?i)\b(?:api|endpoint|fetch|request|client|upstream|webhook|http)\b", "retries and timeouts",
+     "what happens on a timeout or a 5xx, and the bound on retries"),
+    (r"(?i)\b(?:tenants?|org(?:anization)?s?|workspaces?|customers?|accounts?)\b", "tenant isolation",
+     "the query or path that carries the tenant id, and the cross-tenant denied case"),
+    (r"(?i)\b(?:migration|schema|table|column|database|db)\b", "migration and rollback",
+     "the migration's reverse step, and the data left behind on rollback"),
+    (r"(?i)\b(?:upload|file|attachment|image|video|import)\b", "input limits",
+     "size and type limits on what arrives, and the rejected case"),
+    (r"(?i)\b(?:payment|checkout|order|invoice|billing|charge)\b", "idempotency",
+     "what a retried request does the second time, and the test for it"),
+    (r"(?i)\b(?:queue|worker|job|cron|background|async|concurren|parallel)\b", "race and retry",
+     "the concurrent case and the poisoned-job case"),
+    (r"(?i)\b(?:cache|memo|redis)\b", "invalidation", "what clears the cache and what is served stale"),
+)
+
+
+def missing_surface(task: str) -> list[dict[str, str]]:
+    """PRD C-1: the invisible twenty percent, from the task text alone -
+    surfaces a feature of this shape needs and that agents leave out.
+    Obligations to discharge or waive, never generated code."""
+    out: list[dict[str, str]] = []
+    for pattern, surface, why in _SURFACES:
+        if re.search(pattern, task or ""):
+            out.append({"surface": surface, "why": why,
+                        "record": f"godmode remember --kind obligation --subject \"{surface}: {task[:40]}\" "
+                                  f"--value \"{why}\""})
+    return out
 
 
 def render(report: dict[str, Any]) -> str:

@@ -6,6 +6,44 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ## [Unreleased]
 
+## [0.3.24] - 2026-09-10
+
+### Added
+
+- The scope gate. A reply that declares the work complete while the record still holds this host session's operator asks, the active plan's pending steps, criteria no claim cites, or a hypothesis that has failed three checkpoints is blocked once at Stop with the list and each item's closing command (the operator's own observation, 2026-09-10: everything is declared complete, then one more item asked for in this release is named for the next).
+- A repeat-failure ask inside the turn. The fourth run of a command that has failed three times this session with no file edited since the last failure is asked about on hosts with an ask, with the count; the transcript is the evidence.
+- Loop episodes at Stop. Six attempts (four novice, eight strict) on one error signature over the same hunks with no new file, assertion, or error class are named with the turn where new information last arrived, and a `would-have-stopped-loop` receipt is recorded; eight edits since the last read of the file under repair, or an error class that changed since that read, names a re-observe with its own receipt.
+- The ExecCritic oracle shapes. Integrity names a test weakened in the same diff as its source (blocking), an assertion literal moved (not blocking), a harness node dropped (blocking), a new test never observed red, and a cited check whose file this session edited; `session close` refuses a regression (a step green earlier this session, red later, no green since). Six new staged scenarios, each pinned by digest.
+- Perimeter checks. `godmode perimeter add|run|list|retire`: a boot, an import walk, or a typed route that `session close` refuses to close without a `ran` attestation this session (PRD O-4).
+- The ledger in the brief. Every session start, including the one after a compaction, carries goal, invariants, acceptance commands, files in play, failed approaches, last green, open obligations, and the current step, rebuilt from records; `status remaining --digest --transcript` prints it with the loop episodes and measured spend.
+- A context tripwire. `ceilings` gains `context_window` (default 200,000); Stop names the window at or above seventy percent of it, measured from the last assistant usage in the transcript.
+- The authority stack at session open: the hash and line count of every instruction file, documents past 200 lines named, and a conflict between a file that forbids editing tests and a plan step that edits one.
+- The missing surface in `precheck`: authorization, retries and timeouts, tenant isolation, migration rollback, input limits, idempotency, races, invalidation, derived from the task text as obligations to discharge or waive.
+- The dirty-diff ask: `git add -A` or `git add .` with an approved plan fence and files outside it asks with the file names (denies in the strict profile).
+- Sentinel categories `hook-as-code-write` (R3: `.git/hooks`, workflows, host settings and hook files, on the edit, redirect, and declared-write paths), `release-freeze-mutation` (R3), `container-host-escape` (R3: a docker socket mount), and `recovery-point-destruction` (R5: `vssadmin delete shadows`, `wmic shadowcopy delete`, `wbadmin delete`, restore-point removal; all previously read-only inspection). Sixteen gate-corpus rows.
+- Read-only node payloads under the scan posture (`node -e` / `node -p` / heredoc): a token allowlist that refuses any require or import outside the read-only module table, eval, Function, import(), a network object, a process binding, or a writing fs member; print-only runs are no longer a mutation.
+- The unread truncated log: a tool output the host saved to a file that no later tool call opened is named at Stop with the file name and a `would-have-required-read` receipt.
+- The repo-config trap in the brief: keys in the repository's own git config that run or redirect a command when the tree is opened (`core.fsmonitor`, `core.hooksPath`, shell aliases, filters, external diff), by key name and value hash.
+- `doctor` names an interpreter wildcard in a host's permission allow list and an MCP server run through `npx` without a pinned version, by entry name.
+- The archive read index: reads parse and hash only the record files after the indexed prefix (stat identity of the first N files), rewritten when the tail passes 200 records; an in-place rewrite of an indexed file drops the prefix and the full walk catches it; `GODMODE_VERIFY_READS=1` disables it. A read that took four seconds takes one.
+- Measured spend. `ceilings` compares a declared `tokens` ceiling against the token usage the host itself wrote into the transcript (input, output, cache creation, summed over assistant messages), and Stop names an exceeded ceiling with the measured number; self-reported spend is no longer the only source.
+- A commit-score plateau detector. `score = <n>` in commit subjects on the current branch is read; four newest scored commits that did not beat the best before them are named at Stop with the numbers. The stall streak (`stall_escalation`) is now wired at Stop: the redirect threshold is a notice, the halt threshold blocks until an operator-stated record clears it.
+- Static false-green shapes as an integrity monitor over changed Python test files: no check at all, a constant or tuple asserted, a value compared to itself, an assertion after return, a comparison returned or left bare, an assert inside a try whose except passes, an empty raises context. Named, not blocking. Twelve monitors.
+- `checkpoint --owes "<restore>"` records a temporary change (a role bump, a throwaway spec) as an open obligation; the scope gate names it until it is closed (field report file, Part 3: the restore happened from a state file, not from the gate).
+- Files written this session that no claim, change, or checkpoint names are listed at Stop with their paths (Part 3: two throwaway specs sat in the tree until the agent happened to delete them).
+- A new test file that is untracked counts as added in the integrity and oracle diff readers (Part 3: the coverage pairing called three tested routes untested because the tests were untracked).
+- A bare `godmode status` prints the survey; the evidence-pipe advisory stays quiet behind `tee` or `pipefail`; a control-character finding on a 0x08 carries the byte-built repair.
+- Host pages for Cursor and Antigravity (`docs/hosts/`) with the wired events, the known issues, and the proof recipe that earns HARD; `docs/COMPACTION-AND-LEDGER.md` maps the compaction playbook onto the commands that carry each line.
+
+### Changed
+
+- The read-only Python payload scan is the default posture (`inline_interpreter` defaults to `scan`): the allowlist is parsed with `ast` and refuses anything off the table, and the ask on every read-only `python -c` or heredoc was the field's most repeated complaint. `"ask"` still opts out.
+- `drift` removes a step the host transcript shows running from its dropped list; `recurrences` skips a step whose last attestation is green; `loop` resets a repeated-action count when a mutation record sits between the runs.
+- `claim` predicates `checker_authored` and `operational_error` read the transcript when `--transcript` is given: a check whose file this session edited, or a result that is an operational error rather than a verdict, downgrades the claim.
+- A parked ask nag is dropped the turn its ask is closed; it no longer rides the next prompt (field report file, finding 3).
+- A sentence that lists what is pending or owed is not a claim, numbers or not.
+- The code-of-law skill reads `GODMODE-CODE-OF-LAW.md` only when it exists; `godmode law compile` writes it.
+
 ## [0.3.23] - 2026-09-10
 
 ### Fixed

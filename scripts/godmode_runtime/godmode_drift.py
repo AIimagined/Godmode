@@ -11,6 +11,9 @@ named rather than assumed.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import os
 from typing import Any
 
@@ -50,7 +53,43 @@ def sessions(archive: Chronicle) -> list[dict[str, Any]]:
     ]
 
 
-def compare(archive: Chronicle, threshold: int = 1) -> dict[str, Any]:
+def unrouted_steps(transcript_path: str | Path | None, steps: set[str]) -> set[str]:
+    """Steps whose command text ran in the host transcript without going
+    through `godmode verify` (field report file 2026-09-10, finding on
+    `drift`: the full suite ran six times and tsc nine, none routed, and
+    the detector called them dropped). A step matches when its name, or a
+    `cmd:` it was attested with, appears in a Bash/PowerShell call."""
+    if not transcript_path or not steps:
+        return set()
+    try:
+        lines = Path(str(transcript_path)).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return set()
+    commands: list[str] = []
+    for line in lines[-12000:]:
+        try:
+            entry = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if entry.get("type") != "assistant":
+            continue
+        for part in (entry.get("message") or {}).get("content") or []:
+            if isinstance(part, dict) and part.get("type") == "tool_use" and part.get("name") in ("Bash", "PowerShell"):
+                commands.append(" ".join(str((part.get("input") or {}).get("command", "")).split()).lower())
+    joined = "\n".join(commands)
+    found: set[str] = set()
+    for step in steps:
+        needle = " ".join(str(step).split()).lower()
+        if needle.startswith("cmd:"):
+            needle = needle[4:]
+        core = needle.split("(", 1)[0].strip()
+        if core and (core in joined or any(core in c for c in commands)):
+            found.add(step)
+    return found
+
+
+def compare(archive: Chronicle, threshold: int = 1,
+            transcript_path: str | Path | None = None) -> dict[str, Any]:
     """Flag sessions where the step set shrank, and say whether the agent changed."""
     history = sessions(archive)
     findings: list[dict[str, Any]] = []
@@ -62,6 +101,8 @@ def compare(archive: Chronicle, threshold: int = 1) -> dict[str, Any]:
     for index, current in enumerate(history):
         if index:
             dropped = sorted(baseline - set(current["steps"]))
+            ran_unrouted = unrouted_steps(transcript_path, set(dropped))
+            dropped = [step for step in dropped if step not in ran_unrouted]
             if len(dropped) >= threshold:
                 findings.append(
                     {

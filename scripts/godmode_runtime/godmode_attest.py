@@ -157,6 +157,7 @@ def opening_handshake(archive: Chronicle, anchor: Any, project: Path) -> dict[st
         # what a dirty count silently hides.
         "repo_state": state,
         "active_plan": {"id": plan["id"], "state": plan["state"]} if plan else None,
+        "authority": authority_stack(project, archive, plan),
         "open_obligations": sorted(set(obligations))[:20],
         "protected_invariants": sorted(set(invariants))[:20],
         "required_sources": {
@@ -182,6 +183,86 @@ def opening_handshake(archive: Chronicle, anchor: Any, project: Path) -> dict[st
             "finish or abort it before substantive work"
         )
     return handshake
+
+
+def authority_stack(project: Path, archive: Chronicle, plan: dict[str, Any] | None) -> dict[str, Any]:
+    """PRD A-1/A-2: which documents instruct this session, as hashes and
+    keywords only, and whether two of them conflict on a contested path.
+    Content-free per the privacy contract."""
+    import hashlib
+    import re as _re
+
+    names = ("CLAUDE.md", "AGENTS.md", "GODMODE.md", "GEMINI.md", ".cursorrules", "GODMODE-CODE-OF-LAW.md")
+    stack: list[dict[str, Any]] = []
+    forbids_tests = False
+    for name in names:
+        path = project / name
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        stack.append({"document": name, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
+                      "lines": text.count("\n") + 1})
+        if _re.search(r"(?i)\b(?:do not|don't|never)\s+(?:modify|edit|touch|change)\b[^.\n]{0,40}\btests?\b", text):
+            forbids_tests = True
+    conflicts: list[str] = []
+    # Compaction playbook (2026-09-10): a rule past line 200 of an
+    # instruction file is summarised at the same rate as a debug log;
+    # named with the count, so the operator can move it to a hook or a
+    # path-scoped rule.
+    long_documents = [f"{d['document']} ({d['lines']} lines)" for d in stack if d["lines"] > 200]
+    if forbids_tests and plan:
+        steps = " ".join(str(step.get("text", "")) for step in (plan.get("steps") or []))
+        if _re.search(r"(?i)\b(?:write|add|create|edit|fix)\b[^.]{0,40}\btests?\b", steps):
+            conflicts.append("an instruction file forbids modifying tests while the active plan has a step that "
+                             "writes or edits a test - name which authority wins before touching test paths")
+    return {"documents": stack, "authority_conflict": conflicts, "long_documents": long_documents}
+
+
+def perimeter_digest(command: str) -> str:
+    import hashlib
+    return hashlib.sha256(" ".join(str(command).split()).encode("utf-8")).hexdigest()[:12]
+
+
+def record_perimeter(archive: Chronicle, command: str, session: str) -> dict[str, Any]:
+    """PRD O-4: a perimeter check is a command that must have RUN this
+    session before closure - a boot, an import walk, a typed route - the
+    check a green unit suite never performs. Retiring one is a record too."""
+    command = " ".join(str(command).split())
+    if not command:
+        raise ArchiveError("a perimeter check needs a command")
+    return archive.append("perimeter", command, {"status": "active", "digest": perimeter_digest(command),
+                                                 "session": session}, evidence=[])
+
+
+def active_perimeter(archive: Chronicle) -> list[dict[str, Any]]:
+    latest: dict[str, dict[str, Any]] = {}
+    for record in archive.select(kind="perimeter", limit=200):
+        data = record.get("data") or {}
+        latest[str(data.get("digest") or "")] = {"command": str(record.get("subject", "")),
+                                                  "digest": str(data.get("digest") or ""),
+                                                  "status": str(data.get("status") or "")}
+    return [entry for entry in latest.values() if entry["status"] == "active"]
+
+
+def unrun_perimeter(archive: Chronicle, session: str) -> list[dict[str, Any]]:
+    """Active perimeter checks with no `ran` attestation in this session."""
+    ran: set[str] = set()
+    for record in archive.select(kind="attestation", limit=1000):
+        data = record.get("data") or {}
+        if data.get("session") == session and data.get("status") == "ran":
+            ran.add(str(record.get("subject", "")))
+    out = []
+    for entry in active_perimeter(archive):
+        step = f"perimeter:{entry['digest']}"
+        # run_check attests under `check:<name>`; a hand-written attest may use the bare step.
+        if step not in ran and f"check:{step}" not in ran:
+            out.append({**entry, "step": step,
+                        "detail": f"perimeter check never ran this session: {entry['command'][:80]} "
+                                  f"(`godmode perimeter run`)"})
+    return out
 
 
 def _sessions(archive: Chronicle) -> list[dict[str, Any]]:
@@ -1695,7 +1776,8 @@ def filter_head(citation: str) -> str | None:
 
 
 def executed_predicates(archive: Chronicle, project: Path,
-                        citations: list[str]) -> dict[str, Any]:
+                        citations: list[str],
+                        transcript_path: str | Path | None = None) -> dict[str, Any]:
     """The deterministic picker for a run-shaped claim (obligations 10118,
     10245): the grade is composed from executed predicates, never asserted.
 
@@ -1707,11 +1789,23 @@ def executed_predicates(archive: Chronicle, project: Path,
     """
     predicates = {"check_ran": False, "exit_recorded": False,
                   "head_matches": False, "attestation": None, "grade": "observed",
-                  "filter_head": None}
+                  "filter_head": None, "checker_authored": None, "operational_error": None}
     cmd_citations = [str(c) for c in citations if str(c).startswith("cmd:")]
     if not cmd_citations:
         return predicates
     predicates["filter_head"] = filter_head(cmd_citations[0])
+    if transcript_path:
+        # Oracle contract (research brief Slice A): a checker this session
+        # wrote is not independent, and an operational error in its last
+        # run is "could not judge", never a pass.
+        from .godmode_oracle import (checker_authored, edited_paths_from_transcript,
+                                     last_result_for, operational_error_in)
+        command_text = cmd_citations[0][len("cmd:"):]
+        predicates["checker_authored"] = checker_authored(
+            command_text, edited_paths_from_transcript(transcript_path))
+        last = last_result_for(transcript_path, command_text)
+        if last is not None:
+            predicates["operational_error"] = operational_error_in(last)
     head = ""
     try:
         import subprocess
@@ -1733,7 +1827,8 @@ def executed_predicates(archive: Chronicle, project: Path,
         predicates["head_matches"] = bool(head) and worktree.get("head") == head
         break
     if (predicates["check_ran"] and predicates["exit_recorded"]
-            and predicates["head_matches"] and not predicates["filter_head"]):
+            and predicates["head_matches"] and not predicates["filter_head"]
+            and not predicates["checker_authored"] and not predicates["operational_error"]):
         predicates["grade"] = "verified"
     return predicates
 
@@ -1750,6 +1845,7 @@ def record_claim(
     blast_radius: str | None = None,
     confidence: float | None = None,
     refuted_by: str | None = None,
+    transcript_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Persist a claim, downgrading it when its citations do not resolve.
 
@@ -2095,11 +2191,20 @@ def record_claim(
         # claim is graded by executed predicates. Green attestation for the
         # cited command on this tree composes verified; otherwise the
         # record names the check that would settle it.
-        predicates = executed_predicates(archive, project, citations)
+        predicates = executed_predicates(archive, project, citations, transcript_path=transcript_path)
         if predicates["grade"] == "verified":
             effective = "verified"
             composed["composed_from"] = ["check_ran", "exit_recorded", "head_matches"]
             composed["composed_attestation"] = predicates["attestation"]
+        elif predicates.get("checker_authored"):
+            composed["settleable_by"] = (
+                f"the cited checker names {predicates['checker_authored']}, a file this session "
+                "wrote - a checker the same trajectory authored is not independent; cite a frozen "
+                "suite or a checker written before this episode")
+        elif predicates.get("operational_error"):
+            composed["settleable_by"] = (
+                f"the cited command's last run ended in an operational error ('{predicates['operational_error']}') "
+                "- the checker could not judge; fix the harness, re-run, then cite it")
         elif predicates.get("filter_head"):
             composed["settleable_by"] = (
                 f"the cited command is a filter ('{predicates['filter_head']}'), not "
@@ -2487,9 +2592,19 @@ def recurrences(archive: Chronicle, limit: int = 500) -> dict[str, Any]:
     template, a habit, a missing default - keeps reproducing the violation.
     """
     seen: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    _records = archive.select(kind="attestation", limit=limit)
+    _last: dict[str, str] = {}
+    for _r in _records:
+        _last[str(_r["subject"])] = str((_r.get("data") or {}).get("status", ""))
+    _later_green = {step for step, status in _last.items() if status == "ran"}
     for record in archive.select(kind="attestation", limit=limit):
         data = record["data"]
         if data.get("status") != "blocked":
+            continue
+        # Field report file 2026-09-10, finding on `recurrences`: a check run
+        # deliberately red and later green is a RED-GREEN cycle, not a
+        # control blocking twice on one cause.
+        if record["subject"] in _later_green:
             continue
         cause = (data.get("reason") or data.get("result") or "")[:80]
         key = (record["subject"], cause)
@@ -2556,7 +2671,15 @@ def close_session(archive: Chronicle, session: str, charter: dict[str, Any]) -> 
     from .godmode_plan import unattested_accept_commands
 
     unattested_accept = unattested_accept_commands(archive, session)
-    allowed = not unattested and not downgraded and not half_done and not unattested_accept
+    # Regression-zero (research brief Slice C, SWE-EVO Fix Rate): a step
+    # attested green earlier in this session and red later, with no green
+    # after, is a regression; closure cannot call the work complete over it.
+    regressions = regressed_steps(archive, session)
+    # PRD O-4: a declared perimeter check that never ran this session is
+    # the "suite green, app does not boot" gap; closure waits for the run.
+    perimeter = unrun_perimeter(archive, session)
+    allowed = (not unattested and not downgraded and not half_done
+               and not unattested_accept and not regressions and not perimeter)
     verdict: dict[str, Any] = {
         "session": session,
         "closed": allowed,
@@ -2564,6 +2687,10 @@ def close_session(archive: Chronicle, session: str, charter: dict[str, Any]) -> 
         "downgraded_claims": downgraded,
         "half_done_pairs": half_done,
         "unattested_accept_commands": unattested_accept,
+        "regressions": regressions,
+        "perimeter_unrun": perimeter,
+        "obligations": obligations_digest(archive),
+        "calibration": calibration_digest(archive),
         "watch_for": [] if allowed else [text for text, _ in RATIONALIZATIONS],
     }
     if allowed and not charter.get("compiled"):
@@ -2571,6 +2698,71 @@ def close_session(archive: Chronicle, session: str, charter: dict[str, Any]) -> 
         verdict["detail"] = ("closed with 0 compiled rules - nothing could have "
                              "blocked; write GODMODE.md directives so this gate means something")
     return verdict
+
+
+def regressed_steps(archive: Chronicle, session: str) -> list[dict[str, Any]]:
+    """Steps whose attestations in this session went green then red with no
+    later green: the previously attested guard is red now."""
+    history: dict[str, list[tuple[int, str]]] = {}
+    for record in archive.select(kind="attestation", limit=1000):
+        data = record.get("data") or {}
+        if data.get("session") != session:
+            continue
+        history.setdefault(str(record.get("subject", "")), []).append(
+            (int(record.get("sequence", 0)), str(data.get("status", ""))))
+    out: list[dict[str, Any]] = []
+    for step, runs in history.items():
+        runs.sort()
+        statuses = [status for _seq, status in runs]
+        if "ran" in statuses:
+            first_green = statuses.index("ran")
+            after = statuses[first_green + 1:]
+            if after and after[-1] in ("blocked", "failed") and "ran" not in after:
+                out.append({"step": step, "green_at": runs[first_green][0], "red_at": runs[-1][0],
+                            "detail": f"'{step}' was attested green at seq {runs[first_green][0]} and is red "
+                                      f"at seq {runs[-1][0]} with no green since - a regression, not progress"})
+    return out
+
+
+def obligations_digest(archive: Chronicle) -> dict[str, int]:
+    """open / attested / waived over the latest record per obligation
+    subject (SWE-EVO partial-vs-resolved: never a fake 100%)."""
+    latest: dict[str, str] = {}
+    for record in archive.select(kind="obligation", limit=500):
+        latest[str(record.get("subject", ""))] = str((record.get("data") or {}).get("status", "open")).lower()
+    digest = {"open": 0, "attested": 0, "waived": 0}
+    for status in latest.values():
+        if status in ("closed", "done", "attested", "retired", "complete", "completed"):
+            digest["attested"] += 1
+        elif status in ("waived", "blocked", "parked", "deferred", "declined"):
+            digest["waived"] += 1
+        else:
+            digest["open"] += 1
+    return digest
+
+
+def calibration_digest(archive: Chronicle) -> dict[str, Any]:
+    """How many claims carried a confidence and how many were ever scored;
+    field report file 2026-09-10, finding 9: 0 scored after 2,729 records
+    and nothing said so."""
+    recorded = 0
+    with_confidence = 0
+    scored = 0
+    for record in archive.select(kind="claim", limit=1000):
+        data = record.get("data") or {}
+        if data.get("resolves") is not None:
+            if data.get("score") is not None:
+                scored += 1
+            continue
+        recorded += 1
+        if data.get("confidence") is not None:
+            with_confidence += 1
+    out: dict[str, Any] = {"claims": recorded, "with_confidence": with_confidence, "scored": scored}
+    if recorded >= 10 and scored == 0:
+        out["detail"] = (f"{recorded} claims recorded, 0 ever scored: calibration is idle. "
+                         "A claim with `--confidence` scores itself when `claim --resolve <seq> "
+                         "--outcome held|failed` closes it.")
+    return out
 
 
 def half_done_pairs(

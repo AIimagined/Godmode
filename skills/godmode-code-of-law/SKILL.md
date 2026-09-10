@@ -1,11 +1,11 @@
 ---
 name: godmode-code-of-law
-description: Use at the start of every session and before every new task - read GODMODE-CODE-OF-LAW.md at the project root, the project's generated Code of Law, and follow its guards before acting.
+description: Use at the start of every session and before every new task - read GODMODE-CODE-OF-LAW.md at the project root when it exists (the project's generated Code of Law; `godmode law compile` writes it), and follow its guards before acting.
 ---
 
 # The project's Code of Law
 
-Read `GODMODE-CODE-OF-LAW.md` at the project root before substantive work. Every law
+Read `GODMODE-CODE-OF-LAW.md` at the project root before substantive work, if it exists. A project with no guarded lessons yet has no file, and that is not an error: `godmode law compile` writes it once at least one lesson carries a guard. Every law
 was recorded by this project from its own corrections and carries its
 archive provenance. Follow each law's guard; when one seems wrong, say so
 and retire the underlying lesson (`godmode lessons`) rather than silently

@@ -480,9 +480,9 @@ class DogfoodingTests(unittest.TestCase):
              target="scripts/godmode_runtime/godmode_attest.py",
              command=[sys.executable, "-m", "unittest",
                       "tests.test_godmode_runtime.KernelCompletionTests"],
-             replace='    allowed = not unattested and not downgraded and not half_done '
-                     'and not unattested_accept',
-             with_text='    allowed = not unattested and not downgraded and not unattested_accept'),
+             replace='not downgraded and not half_done',
+             # CRLF working copies: a single-line needle, never a two-line one.
+             with_text='not downgraded'),
         # Sixth HARD rule, and it arrived by being read correctly rather
         # than by being written: `docs/FIXED-REGISTRY.md` states the
         # capability-pointer invariant in one sentence that the charter

@@ -72,8 +72,24 @@ MUTATING = (
     "python - <<'PY'\nimport json\nopen('out.json', 'w')\nPY",
 )
 
-STILL_OPAQUE = (
+NODE_READ_ONLY = (
     'node -e "console.log(1)"',
+    'node -e "const fs = require(\'fs\'); console.log(fs.readFileSync(\'package.json\', \'utf8\').length)"',
+    'node -p "require(\'./package.json\').version"',
+    'node -e "process.stdout.write(JSON.stringify(require(\'node:os\').cpus().length))"',
+)
+
+NODE_MUTATING = (
+    'node -e "require(\'fs\').writeFileSync(\'x\', \'1\')"',
+    'node -e "require(\'child_process\').execSync(\'ls\')"',
+    'node -e "eval(process.argv[1])"',
+    'node -e "import(\'fs\').then(m => m.rmSync(\'x\'))"',
+    'node -e "fetch(\'http://example.invalid\')"',
+    'node -e "require(process.argv[1])"',
+    'node -e "new Function(\'return 1\')()"',
+)
+
+STILL_OPAQUE = (
     'pwsh -Command "Get-ChildItem"',
     'sudo python -c "print(1)"',
     'bash -c "python -c \'print(1)\'"',
@@ -91,7 +107,7 @@ def _decision(operation: str, **kwargs) -> str:
 
 class ScanPostureClassifierTests(unittest.TestCase):
     def test_default_posture_is_unchanged(self) -> None:
-        for command in READ_ONLY + MUTATING + STILL_OPAQUE:
+        for command in READ_ONLY + MUTATING + STILL_OPAQUE + NODE_READ_ONLY + NODE_MUTATING:
             with self.subTest(command):
                 verdict = classify_action(command, project_root=PLUGIN_ROOT)
                 self.assertTrue(verdict["protected"])
@@ -104,6 +120,19 @@ class ScanPostureClassifierTests(unittest.TestCase):
                 self.assertFalse(verdict["protected"], verdict)
                 self.assertEqual(verdict["category"], "interpreter-inline-read-only")
                 self.assertEqual(verdict["tier"], "R1")
+
+    def test_node_read_only_payloads_are_cleared_under_scan(self) -> None:
+        for command in NODE_READ_ONLY:
+            with self.subTest(command):
+                verdict = classify_action(command, project_root=PLUGIN_ROOT, inline_scan=True)
+                self.assertFalse(verdict["protected"], verdict)
+                self.assertEqual(verdict["category"], "interpreter-inline-read-only")
+
+    def test_node_mutating_payloads_keep_the_floor_under_scan(self) -> None:
+        for command in NODE_MUTATING:
+            with self.subTest(command):
+                verdict = classify_action(command, project_root=PLUGIN_ROOT, inline_scan=True)
+                self.assertTrue(verdict["protected"], verdict)
 
     def test_mutating_or_unreadable_payloads_keep_the_floor_under_scan(self) -> None:
         for command in MUTATING + STILL_OPAQUE:
@@ -188,9 +217,12 @@ class ScanPosturePolicyTests(unittest.TestCase):
         self.assertEqual(len(cleared), 1, "the clearance must leave a record")
         self.assertEqual(cleared[0]["data"]["category"], "interpreter-inline-read-only")
 
-    def test_hook_keeps_asking_without_the_key(self) -> None:
+    def test_scan_is_the_default_and_ask_still_opts_out(self) -> None:
+        # 0.3.24: the ast allowlist is sound, and the ask on every read-only
+        # payload was the field's most repeated complaint, so scan is the
+        # default posture; an explicit "ask" keeps the old floor.
         with _project(None) as (root, _archive):
-            self.assertEqual(_decide(root, 'python -c "print(1)"'), "ask")
+            self.assertEqual(_decide(root, 'python -c "print(1)"'), "allow")
         with _project({"inline_interpreter": "ask"}) as (root, _archive):
             self.assertEqual(_decide(root, 'python -c "print(1)"'), "ask")
 

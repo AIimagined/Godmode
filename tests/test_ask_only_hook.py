@@ -65,7 +65,7 @@ def _decide(project: Path, tool: str, tool_input: dict) -> str:
 class AskOnlyHookTests(unittest.TestCase):
     def test_an_unlisted_r2_ask_is_allowed_and_recorded_as_silenced(self) -> None:
         with _project() as (root, archive):
-            decision = _decide(root, "Bash", {"command": "node -e \"console.log(1)\""})
+            decision = _decide(root, "Bash", {"command": "node -e \"require('fs').writeFileSync('x', '1')\""})
             silenced = [r for r in archive.read_events(verify=False)
                         if r.get("kind") == "action"
                         and (r.get("data") or {}).get("silenced_by") == "ask_only"]

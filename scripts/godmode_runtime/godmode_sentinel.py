@@ -911,6 +911,31 @@ _SENSITIVE_EDIT = re.compile(
     r"\.pem$|\.key$|(?:^|[/\\])" + re.escape(POLICY_FILENAME) + r"$"
 )
 
+# PRD X-1 (2026-09-10): three shapes the corpus never named. A write to a
+# hook, workflow, or host-settings file is code that will run without
+# another gate (hooks-as-code); a freeze marker created or removed is a
+# release decision; a docker socket mount hands the container the host.
+_HOOK_AS_CODE = re.compile(
+    r"(?i)(?:^|[/\\])(?:\.git[/\\]hooks[/\\]|\.github[/\\]workflows[/\\]|\.husky[/\\]|"
+    r"\.claude[/\\](?:settings(?:\.local)?\.json|hooks(?:[/\\]|\.json))|\.cursor[/\\]hooks\.json|"
+    r"\.codex[/\\]hooks\.json|\.agents[/\\]hooks\.json|\.gemini[/\\]settings\.json|"
+    r"\.pre-commit-config\.ya?ml|lefthook\.ya?ml)")
+_FREEZE_FILE = re.compile(r"(?i)(?:^|[/\\])(?:CODEFREEZE|\.freeze|FREEZE|\.codefreeze|RELEASE-FREEZE)(?:\.md|\.txt)?$")
+_FREEZE_MUTATION = re.compile(
+    r"(?i)\b(?:touch|rm|del|mv|cp|git\s+rm)\b[^|;&]*(?:^|[\s/\\])(?:CODEFREEZE|\.freeze|FREEZE|RELEASE-FREEZE)\b")
+# 2026-09-10 field roundup: a subagent wiped a drive and the parent agent
+# deleted the shadow copy while "recovering". Deleting a restore point is
+# the one act that turns a recoverable mistake into a permanent one, and
+# it classified as read-only inspection before this.
+_RECOVERY_POINT_DESTRUCTION = re.compile(
+    r"(?i)\bvssadmin(?:\.exe)?\b.{0,40}\b(?:delete|resize)\b.{0,30}\bshadow"
+    r"|\bwmic(?:\.exe)?\b.{0,40}\bshadowcopy\b.{0,40}\bdelete\b"
+    r"|\bwbadmin(?:\.exe)?\b.{0,40}\bdelete\b"
+    r"|\bDisable-ComputerRestore\b|\bRemove-ComputerRestorePoint\b"
+    r"|\bGet-CimInstance\b.{0,40}Win32_ShadowCopy.{0,80}\b(?:Remove-CimInstance|Delete)\b"
+    r"|\btmutil\b.{0,40}\bdelete")
+_DOCKER_SOCKET = re.compile(r"(?i)docker\.sock|/var/run/docker\.sock|npipe:////\./pipe/docker_engine")
+
 # ---------------------------------------------------------------------------
 # C1 (external audit, 2026-08-17): an interpreter handed a whole program as
 # one string argument matched `_LOCAL_COMPUTE` on its bare name alone -
@@ -1644,6 +1669,69 @@ def _python_inline_code(tokens: list[str]) -> str | None:
     return None
 
 
+# `node -e` under the scan posture (2026-09-10). No parser in the standard
+# library reads JavaScript, so this is a token allowlist, not an AST walk,
+# and it is deliberately narrower than the Python one: any require or
+# import outside the read-only module table, any dynamic require, eval,
+# Function, import(), a process binding, a network object, or any fs
+# member whose name spells a write refuses. `process.stdout.write` is the
+# one write that is output, not a file.
+_NODE_READ_ONLY_MODULES = frozenset({
+    "fs", "fs/promises", "path", "os", "util", "url", "crypto", "assert",
+    "readline", "zlib", "buffer", "events", "string_decoder", "querystring",
+})
+_NODE_REQUIRE = re.compile(r"""\brequire\s*\(\s*(?:(['"])(?P<lit>[^'"]*)\1|(?P<dyn>[^)]*))\)""")
+_NODE_IMPORT = re.compile(r"""\bimport\b[^;\n]*?\bfrom\s*(['"])(?P<mod>[^'"]*)\1|\bimport\s*(['"])(?P<bare>[^'"]*)\3""")
+_NODE_DENY = re.compile(
+    r"(?:\beval\b|\bnew\s+Function\b|\bFunction\s*\(|\bimport\s*\(|process\.(?:binding|dlopen|_linkedBinding)"
+    r"|\bglobalThis\s*\[|\bfetch\s*\(|\bXMLHttpRequest\b|\bWebSocket\b|\bDeno\b|\bBun\b"
+    r"|\b(?:write|writeSync|writev|writevSync|writeFile|writeFileSync|appendFile|appendFileSync|unlink|unlinkSync"
+    r"|rm|rmSync|rmdir|rmdirSync|rename|renameSync|mkdir|mkdirSync|mkdtemp|mkdtempSync|chmod|chmodSync|chown"
+    r"|chownSync|truncate|truncateSync|ftruncate|ftruncateSync|copyFile|copyFileSync|cp|cpSync|symlink|symlinkSync"
+    r"|link|linkSync|utimes|utimesSync|open|openSync|createWriteStream)\s*\()")
+_NODE_OUTPUT_WRITE = re.compile(r"process\.std(?:out|err)\.write\s*\(")
+
+
+def _node_payload_reads_only(code: str) -> bool:
+    if len(code) > _INLINE_SCAN_MAX_CHARS:
+        return False
+    stripped = _NODE_OUTPUT_WRITE.sub("stdout_print(", code)
+    if _NODE_DENY.search(stripped):
+        return False
+    for match in _NODE_REQUIRE.finditer(stripped):
+        if match.group("dyn") is not None:
+            return False
+        module = match.group("lit").removeprefix("node:")
+        if module.endswith(".json") and module.startswith("."):
+            continue  # a relative JSON require is a read, not code
+        if module not in _NODE_READ_ONLY_MODULES:
+            return False
+    for match in _NODE_IMPORT.finditer(stripped):
+        module = (match.group("mod") or match.group("bare") or "").removeprefix("node:")
+        if module not in _NODE_READ_ONLY_MODULES:
+            return False
+    return True
+
+
+def _node_inline_code(tokens: list[str]) -> str | None:
+    """The `-e`/`-p` payload among `tokens` (everything after a node head),
+    or None when node would run a file or read stdin; same operand rule as
+    `_python_inline_code`."""
+    previous_was_flag = False
+    for index, token in enumerate(tokens):
+        if not token.startswith("-"):
+            if (_is_path_shaped(token) or _FILE_SHAPED_TOKEN.search(token)
+                    or not previous_was_flag):
+                return None
+            previous_was_flag = False
+            continue
+        following = tokens[index + 1] if index + 1 < len(tokens) else None
+        if token in ("-e", "--eval", "-p", "--print") or _NODE_FLAG_TOKEN.match(token):
+            return following
+        previous_was_flag = True
+    return None
+
+
 def _scanned_inline_verdict(evidence: str, code: str | None,
                             family: str | None) -> tuple[str, bool, list[str]]:
     """`_opaque_inline_verdict`, then the scan posture's one downgrade: a
@@ -1659,6 +1747,15 @@ def _scanned_inline_verdict(evidence: str, code: str | None,
                  "scan posture: imports only from the read-only module table, "
                  "no exec/eval/dynamic import, no dunder access, no file opened "
                  "for writing"])
+    if (family == "node" and code is not None
+            and category == "interpreter-opaque-inline"
+            and not _OPAQUE_R5_EVIDENCE.search(evidence)
+            and _node_payload_reads_only(code)):
+        return ("interpreter-inline-read-only", False,
+                ["a node payload read as tokens under the inline_interpreter "
+                 "scan posture: requires only from the read-only module table, "
+                 "no eval/Function/import(), no network object, no fs member "
+                 "that writes"])
     return category, protected, impact
 
 
@@ -2281,6 +2378,13 @@ def _write_verdict(path: str, project_root: Path | None, archive: Any) -> tuple[
                 [f"this file is a pinned evaluator: {pinned}",
                  "unpin explicitly with the password, or the numbers it "
                  "produces stop meaning anything"])
+    if _HOOK_AS_CODE.search(path):
+        return ("hook-as-code-write", True,
+                [f"a hook, workflow, or host-settings file that runs without another gate: "
+                 f"{_shown_path(path, project_root)}"])
+    if _FREEZE_FILE.search(path):
+        return ("release-freeze-mutation", True,
+                [f"a release-freeze marker: {_shown_path(path, project_root)}"])
     if _SENSITIVE_EDIT.search(path):
         return ("worktree-file-mutation", True,
                 [f"not an ordinary working file: {_shown_path(path, project_root)}"])
@@ -2886,6 +2990,12 @@ def evidence_pipe_advisory(command: str) -> str | None:
     truncator = _EVIDENCE_TRUNCATOR.search(command, runner.end())
     if not truncator:
         return None
+    # Field report file 2026-09-10, Part 3: the advisory fired on a run
+    # whose full output was already captured. `tee` keeps every line and
+    # `pipefail`/PIPESTATUS keep the exit code; neither is a truncation.
+    between = command[runner.end():truncator.start()]
+    if re.search(r"\btee\b", between) or re.search(r"pipefail|PIPESTATUS", command):
+        return None
     return (
         "evidence-pipe: a verdict-bearing command is piped through a filter "
         "before its outcome is known - the exit code becomes the filter's and "
@@ -2905,6 +3015,12 @@ _TIER_BY_CATEGORY = {
     # trivially reversed and nothing leaves the machine.
     "git-branch-create": "R1",
     "worktree-file-mutation": "R2",
+    # PRD X-1: hooks-as-code, freeze markers, and a docker socket mount sit
+    # with history mutation, not with an ordinary file write.
+    "hook-as-code-write": "R3",
+    "release-freeze-mutation": "R3",
+    "container-host-escape": "R3",
+    "recovery-point-destruction": "R5",
     # Recorded at the same tier as a file edit: it changes local state and
     # nothing leaves the machine.
     "local-repository-change": "R2",
@@ -3215,6 +3331,16 @@ def _categorize(normalized: str, project_root: Path | None = None,
     """Order is the security property: mutation flags are checked before the
     safe listings so a delete can never hide behind a read-only prefix, and
     everything unrecognized fails closed as a mutation."""
+    if _RECOVERY_POINT_DESTRUCTION.search(normalized):
+        return ("recovery-point-destruction", True,
+                ["deletes or shrinks a restore point, snapshot, or backup set; the one "
+                 "act that makes an earlier mistake permanent"])
+    if _DOCKER_SOCKET.search(normalized):
+        return ("container-host-escape", True,
+                ["mounts or names the docker socket; a container with the socket owns the host"])
+    if _FREEZE_MUTATION.search(normalized):
+        return ("release-freeze-mutation", True,
+                ["creates, removes, or moves a release-freeze marker"])
     edit = _TOOL_FILE_EDIT.match(normalized)
     if edit:
         path = edit.group("path").strip().strip("\"'")
@@ -3230,6 +3356,13 @@ def _categorize(normalized: str, project_root: Path | None = None,
                     [f"this file is a pinned evaluator: {pinned}",
                      "unpin explicitly with the password, or the numbers it "
                      "produces stop meaning anything"])
+        if _HOOK_AS_CODE.search(path):
+            return ("hook-as-code-write", True,
+                    [f"a hook, workflow, or host-settings file that runs without another gate: "
+                     f"{_shown_path(path, project_root)}"])
+        if _FREEZE_FILE.search(path):
+            return ("release-freeze-mutation", True,
+                    [f"a release-freeze marker: {_shown_path(path, project_root)}"])
         if _SENSITIVE_EDIT.search(path):
             return ("worktree-file-mutation", True,
                     [f"not an ordinary working file: {_shown_path(path, project_root)}"])
@@ -3490,6 +3623,13 @@ def _categorize(normalized: str, project_root: Path | None = None,
         # The same act as an `Edit`, judged the same way. Refusing every
         # redirect while permitting the declared edit of the same path gated
         # the honest form and not the other, which is all cost and no cover.
+        if write_target and _HOOK_AS_CODE.search(write_target):
+            return ("hook-as-code-write", True,
+                    [f"{kind} write to a hook, workflow, or host-settings file that runs "
+                     f"without another gate: {write_target[:80]}"])
+        if write_target and _FREEZE_FILE.search(write_target):
+            return ("release-freeze-mutation", True,
+                    [f"{kind} write to a release-freeze marker: {write_target[:80]}"])
         if (not write_target or not _contained(write_target, project_root)
                 or _SENSITIVE_EDIT.search(write_target)):
             return ("worktree-file-mutation", True,
@@ -3968,9 +4108,13 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # own argv split, the same view the opacity rules used.
         head = _normalized_interpreter_head(normalized)
         tokens = _argv_tokens(normalized) if head else None
-        if head and tokens and _interpreter_family(head[0]) == "python":
+        family = _interpreter_family(head[0]) if head else None
+        if head and tokens and family == "python":
             category, protected, impact = _scanned_inline_verdict(
                 normalized, _python_inline_code(tokens[1:]), "python")
+        elif head and tokens and family == "node":
+            category, protected, impact = _scanned_inline_verdict(
+                normalized, _node_inline_code(tokens[1:]), "node")
     if not protected and category in tuple(extra_protected):
         protected = True
         impact = list(impact) + ["protection extended by local authorization policy"]
@@ -4342,7 +4486,7 @@ class CapabilityBroker:
             archive=self.archive,
             # U-S4 approval-declarations - minimal isolated block.
             require_approval=policy.get("approval_required", ()),
-            inline_scan=policy.get("inline_interpreter") == "scan",
+            inline_scan=policy.get("inline_interpreter", "scan") == "scan",
         )
 
     def _mint_context(self) -> dict[str, str]:

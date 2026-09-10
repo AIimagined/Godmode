@@ -125,3 +125,86 @@ def scan_tracked(project: Path, large_bytes: int = 5_000_000) -> dict[str, Any]:
         "large_bytes_threshold": large_bytes,
         "verdict": "findings" if findings or large else "clean",
     }
+
+
+# Keys in a repository's own .git/config that run a command the moment a
+# host opens the tree - before any trust prompt and before any hook of
+# ours (core.fsmonitor RCE, Sep 2026, across seven hosts). Names only; the
+# value is hashed, never shown, because a trap's value is the payload.
+_TRAP_KEYS = (
+    "core.fsmonitor", "core.hookspath", "core.pager", "core.sshcommand", "core.editor",
+    "core.gitproxy", "core.askpass", "diff.external", "gpg.program", "credential.helper",
+    "sequence.editor", "merge.tool", "difftool.", "mergetool.", "filter.", "alias.",
+    "url.", "include.path", "includeif.",
+)
+
+
+def config_traps(project: Path) -> list[dict[str, str]]:
+    import hashlib
+    import subprocess
+
+    try:
+        run = subprocess.run(["git", "-C", str(project), "config", "--local", "--list"],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if run.returncode != 0:
+        return []
+    out: list[dict[str, str]] = []
+    for line in run.stdout.splitlines():
+        key, _, value = line.partition("=")
+        lowered = key.strip().lower()
+        hit = next((trap for trap in _TRAP_KEYS if lowered == trap or (trap.endswith(".") and lowered.startswith(trap))), None)
+        if hit is None:
+            continue
+        if hit in ("alias.", "filter.", "difftool.", "mergetool.", "url.") and not (
+                value.lstrip().startswith("!") or hit in ("filter.", "difftool.", "mergetool.")
+                or (hit == "url." and lowered.endswith(".insteadof"))):
+            continue
+        out.append({"key": key.strip(), "value_sha256": hashlib.sha256(value.encode("utf-8")).hexdigest()[:12],
+                    "why": "runs or redirects a command when the tree is opened or a git verb runs"})
+    return out
+
+
+# Field roundup 2026-09-10, item 9: a pre-approved interpreter wildcard
+# (`Bash(python:*)`) or an unpinned `npx` MCP server is a dependency layer
+# with no lockfile. Names only - the settings files hold secrets and are
+# read for these two keys and nothing else.
+_INTERPRETER_WILDCARD = re.compile(
+    r"\((?:python3?|node|bash|sh|zsh|pwsh|powershell|npx|npm|pip3?|uv|deno|bun)\b[^)]*\*\)")
+_PINNED_VERSION = re.compile(r"@\d")
+
+
+def host_permission_findings(project: Path) -> list[dict[str, str]]:
+    import json
+    import os
+
+    home = Path(os.path.expanduser("~"))
+    out: list[dict[str, str]] = []
+    for label, path in (("user", home / ".claude" / "settings.json"),
+                        ("project", project / ".claude" / "settings.json"),
+                        ("local", project / ".claude" / "settings.local.json")):
+        try:
+            allow = ((json.loads(path.read_text(encoding="utf-8")) or {}).get("permissions") or {}).get("allow") or []
+        except (OSError, ValueError, AttributeError):
+            continue
+        for entry in allow:
+            if isinstance(entry, str) and _INTERPRETER_WILDCARD.search(entry):
+                out.append({"code": "interpreter-wildcard-allow", "severity": "warning", "scope": label,
+                            "detail": f"{label} settings pre-approve {entry[:60]}: an interpreter wildcard runs any "
+                                      "payload without an ask; name the scripts instead"})
+    for label, path, key in (("project", project / ".mcp.json", "mcpServers"),
+                             ("user", home / ".claude.json", "mcpServers")):
+        try:
+            servers = (json.loads(path.read_text(encoding="utf-8")) or {}).get(key) or {}
+        except (OSError, ValueError, AttributeError):
+            continue
+        for name, spec in servers.items():
+            if not isinstance(spec, dict):
+                continue
+            argv = " ".join([str(spec.get("command") or "")] + [str(a) for a in (spec.get("args") or [])])
+            if "npx" in argv and not _PINNED_VERSION.search(argv):
+                out.append({"code": "unpinned-mcp-server", "severity": "warning", "scope": label,
+                            "detail": f"{label} MCP server {str(name)[:40]} runs npx without a pinned version: "
+                                      "the tool that runs next session is whatever the registry serves"})
+    return out

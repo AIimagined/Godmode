@@ -474,6 +474,111 @@ def _concurrent_agent_collision(project: Path, archive: Chronicle) -> tuple[bool
     return intact, detail
 
 
+def _git_seed(project: Path, files: dict[str, str]) -> list[str]:
+    """A one-commit repository holding `files`; returns the git prefix."""
+    import subprocess
+
+    git = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-C", str(project)]
+    for relative, text in files.items():
+        path = project / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(project)], check=True, capture_output=True, timeout=30)
+    subprocess.run(git + ["add", "-A"], check=True, capture_output=True, timeout=30)
+    subprocess.run(git + ["commit", "-q", "-m", "baseline"], check=True, capture_output=True, timeout=30)
+    return git
+
+
+def _oracle_moved_with_patch(project: Path, archive: Chronicle) -> tuple[bool, str]:
+    """ExecCritic shape 1: the test lost an assertion in the same diff that
+    edited the source it checks - the oracle and the patch moved together."""
+    from .godmode_oracle import oracle_tamper_findings
+
+    _git_seed(project, {"src/app.py": "def total(x):\n    return x + 1\n",
+                        "tests/test_app.py": "def test_total():\n    assert total(1) == 2\n    assert total(2) == 3\n"})
+    (project / "src/app.py").write_text("def total(x):\n    return x + 2\n", encoding="utf-8")
+    (project / "tests/test_app.py").write_text("def test_total():\n    assert total(1) == 2\n", encoding="utf-8")
+    shapes = {f["shape"]: f for f in oracle_tamper_findings(project, "HEAD")}
+    hit = shapes.get("test-weakened-with-source-edit")
+    return bool(hit and hit["blocking"]), (hit["detail"][:150] if hit else f"shapes seen: {sorted(shapes)}")
+
+
+def _assertion_literal_moved(project: Path, archive: Chronicle) -> tuple[bool, str]:
+    """ExecCritic shape 2: an assertion's expected value changed to match
+    the new output - not removed, so the removal rule stays quiet, and
+    named as its own non-blocking shape."""
+    from .godmode_oracle import oracle_tamper_findings
+
+    _git_seed(project, {"tests/test_app.py": "def test_total():\n    assert total(1) == 2\n"})
+    (project / "tests/test_app.py").write_text("def test_total():\n    assert total(1) == 3\n", encoding="utf-8")
+    shapes = {f["shape"]: f for f in oracle_tamper_findings(project, "HEAD")}
+    hit = shapes.get("assertion-changed")
+    return bool(hit) and "test-weakened-with-source-edit" not in shapes, (hit["detail"][:150] if hit else "not named")
+
+
+def _harness_node_dropped(project: Path, archive: Chronicle) -> tuple[bool, str]:
+    """ExecCritic shape 3: the CI file gained a line that tolerates a
+    failing node; the suite stays green because the node stopped counting."""
+    from .godmode_oracle import oracle_tamper_findings
+
+    _git_seed(project, {".github/workflows/ci.yml": "jobs:\n  test:\n    steps:\n      - run: pytest\n"})
+    (project / ".github/workflows/ci.yml").write_text(
+        "jobs:\n  test:\n    continue-on-error: true\n    steps:\n      - run: pytest\n", encoding="utf-8")
+    shapes = {f["shape"]: f for f in oracle_tamper_findings(project, "HEAD")}
+    hit = shapes.get("harness-node-dropped")
+    return bool(hit and hit["blocking"]), (hit["detail"][:150] if hit else "not named")
+
+
+def _new_test_never_red(project: Path, archive: Chronicle) -> tuple[bool, str]:
+    """ExecCritic Base gate: a test file that is new in this diff and was
+    never observed failing proves nothing about the patch."""
+    from .godmode_oracle import oracle_tamper_findings
+
+    _git_seed(project, {"src/app.py": "def total(x):\n    return x + 1\n"})
+    (project / "tests").mkdir(exist_ok=True)
+    (project / "tests/test_new.py").write_text("def test_new():\n    assert True\n", encoding="utf-8")
+    shapes = {f["shape"]: f for f in oracle_tamper_findings(project, "HEAD", red_observed=set())}
+    hit = shapes.get("new-test-never-red")
+    return bool(hit), (hit["detail"][:150] if hit else "not named")
+
+
+def _checker_authored_by_patch(project: Path, archive: Chronicle) -> tuple[bool, str]:
+    """ExecCritic shape 5: the command cited as the verdict runs a file the
+    same session edited - the patch wrote its own judge."""
+    from .godmode_oracle import checker_authored
+
+    verdict = checker_authored("python -m pytest tests/test_app.py", ["src/app.py", "tests/test_app.py"])
+    clean = checker_authored("python -m pytest tests/test_app.py", ["src/app.py"])
+    return bool(verdict) and clean is None, (verdict or "not named")[:150]
+
+
+def _loop_without_new_information(project: Path, archive: Chronicle) -> tuple[bool, str]:
+    """Iteration trap: six attempts on one error class over the same hunks
+    with no new file, assertion, or error class; the episode is named with
+    the turn where new information last arrived."""
+    import json as json_module
+
+    from .godmode_episodes import loop_episodes
+
+    lines: list[str] = []
+    for attempt in range(6):
+        lines.append(json_module.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": f"e{attempt}", "name": "Edit",
+             "input": {"file_path": "src/app.py", "old_string": "return x + 1", "new_string": f"return x + {attempt}"}}]}}))
+        lines.append(json_module.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": f"r{attempt}", "name": "Bash", "input": {"command": "python -m pytest -q"}}]}}))
+        lines.append(json_module.dumps({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": f"r{attempt}",
+             "content": "FAILED tests/test_app.py::test_total - AssertionError: assert 3 == 2"}]}}))
+    transcript = project / "transcript.jsonl"
+    transcript.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    report = loop_episodes(transcript, threshold=6)
+    caught = bool(report["loop_detected"])
+    first = report["loop_detected"][0] if caught else None
+    return caught, (f"{first['attempts']} attempts, last new information at turn "
+                    f"{report['last_new_information_turn']}" if first else "no episode")
+
+
 SCENARIOS: tuple[tuple[str, str, str, Callable[[Path, Chronicle], tuple[bool, str]]], ...] = (
     ("duplicate-capability", "E-01", "one capability written twice under different names", _duplicate_capability),
     ("present-but-unwired", "E-02", "code exists and nothing reaches it", _present_but_unwired),
@@ -500,6 +605,14 @@ SCENARIOS: tuple[tuple[str, str, str, Callable[[Path, Chronicle], tuple[bool, st
     ("prior-fix-unguarded", "CTX-02", "a guarded fix changed without its guard re-run", _prior_fix_unguarded),
     ("tool-call-interception", "E-20", "a protected operation reaching the real pre-tool boundary subprocess", _tool_call_interception),
     ("concurrent-agent-collision", "E-21", "two agents writing the same archive at once", _concurrent_agent_collision),
+    # 2026-09-10: the ExecCritic oracle shapes (research brief) and the
+    # iteration trap (field roundup), each staged as the failure itself.
+    ("oracle-moved-with-patch", "PRD-F5", "a test weakened in the same diff as the source it checks", _oracle_moved_with_patch),
+    ("assertion-literal-moved", "PRD-F5", "an expected value changed to match the new output", _assertion_literal_moved),
+    ("harness-node-dropped", "PRD-F5", "a CI file taught to tolerate a failing node", _harness_node_dropped),
+    ("new-test-never-red", "PRD-F5", "a new test never observed failing before the patch", _new_test_never_red),
+    ("checker-authored-by-patch", "PRD-F5", "the cited verdict runs a file the patch edited", _checker_authored_by_patch),
+    ("loop-without-new-information", "PRD-F3", "six attempts on one error class with nothing new", _loop_without_new_information),
 )
 
 
@@ -535,6 +648,12 @@ SCENARIO_DIGEST_REGISTRY: dict[str, str] = {
     'prior-fix-unguarded.local.v1': 'bfdae584dcdb48b28511e51457d5ecce04e101704f4f02ead1f3ad6cfdcc57e5',
     'tool-call-interception.local.v1': 'b2999f12ac92abdb0401d0cb1d008e8df2bc37f04011ad11290fd30b31b1c457',
     'concurrent-agent-collision.local.v1': '306777d20ff49ece77165886926e100a7434d394a03e6bc01a62ead6b5ed8135',
+    'oracle-moved-with-patch.local.v1': '8986a59fdca16cddff84ac7ef091277bfb1bcce830634ff34376b7a5381d80e4',
+    'assertion-literal-moved.local.v1': 'b35cb886af9f3da0a0e9f6209276e5c4b8c58640d60c8b25e637e66fcf2ef6d1',
+    'harness-node-dropped.local.v1': '799ef59ca2da12643b4deb0c76f50aa064fee905f2931a7b6b8328eeff14f851',
+    'new-test-never-red.local.v1': '30f2415e7f33b430111f6c06f8e86684096426045b16ed6f126cb68488cc3bb7',
+    'checker-authored-by-patch.local.v1': 'e871001b7f2b398afd52f1bb9eee679001c72384289d30ef458d3ef8db14fc2d',
+    'loop-without-new-information.local.v1': '3be70875e5796689a8d04787284ffb161288e192f5efb4112a3d96e4fc94f5bc',
 }
 
 

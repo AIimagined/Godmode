@@ -58,6 +58,15 @@ def _changed_files(project: Path, base: str) -> dict[str, str]:
         parts = line.split("\t")
         if len(parts) >= 2:
             files[parts[-1]] = parts[0][:1]
+    # Field report file 2026-09-10, Part 3: a NEW test file is untracked
+    # until it is added, and a diff against HEAD cannot see it - so the
+    # coverage pairing called three tested routes untested. Untracked
+    # files count as added.
+    untracked = run_git(project, "ls-files", "--others", "--exclude-standard")
+    for line in (untracked or "").splitlines():
+        path = line.strip()
+        if path and path not in files:
+            files[path] = "A"
     return files
 
 
@@ -73,20 +82,46 @@ def _finding(monitor: str, path: str, detail: str, blocking: bool) -> dict[str, 
 
 
 def _assertion_diff(ctx: dict[str, Any]) -> list[dict[str, Any]]:
+    from .godmode_oracle import split_assertion_changes
+
     findings = []
     for path in ctx["changed_tests"]:
         removed, added = ctx["diff"][path]
-        lost = [l.strip() for l in removed if _ASSERTION.match(l)]
-        kept = [l.strip() for l in added if _ASSERTION.match(l)]
-        gone = [l for l in lost if l not in kept]
-        if len(kept) < len(lost):
+        split = split_assertion_changes(removed, added, _ASSERTION)
+        # A bound or literal that moved is a changed assertion, named as
+        # such and not blocked (field report file 2026-09-10, finding 6:
+        # a widened timing margin read the same as a deleted assertion).
+        if split["changed"]:
+            findings.append(_finding(
+                "assertion-changed", path,
+                f"{len(split['changed'])} assertion(s) changed a literal or bound: "
+                + "; ".join(split["changed"][:3]),
+                blocking=False,
+            ))
+        if len(split["removed"]) > len(split["added"]):
             findings.append(_finding(
                 "assertion-diff", path,
-                f"{len(lost) - len(kept)} assertion(s) removed and not replaced: "
-                + "; ".join(gone[:3]),
+                f"{len(split['removed']) - len(split['added'])} assertion(s) removed and not replaced: "
+                + "; ".join(split["removed"][:3]),
                 blocking=True,
             ))
     return findings
+
+
+def _harness_node_dropped(ctx: dict[str, Any]) -> list[dict[str, Any]]:
+    """Oracle contract (Slice A, shape 2): a CI or harness file edited to
+    skip, ignore, or tolerate a node in the same diff."""
+    from .godmode_oracle import oracle_tamper_findings
+
+    return [_finding("harness-node-dropped", f["path"], f["detail"], blocking=True)
+            for f in ctx.get("oracle", []) if f["shape"] == "harness-node-dropped"]
+
+
+def _test_weakened_with_source_edit(ctx: dict[str, Any]) -> list[dict[str, Any]]:
+    """Oracle contract (Slice A, shape 1): the oracle and the patch moved in
+    one diff. Observe-first: advisory until the strict profile enforces."""
+    return [_finding("oracle-tamper", f["path"], f["detail"], blocking=False)
+            for f in ctx.get("oracle", []) if f["shape"] in ("test-weakened-with-source-edit", "new-test-never-red")]
 
 
 def _skip_quarantine(ctx: dict[str, Any]) -> list[dict[str, Any]]:
@@ -301,6 +336,96 @@ def pin_drift(archive: Chronicle, project: Path) -> list[dict[str, Any]]:
     return findings
 
 
+# Static false-green shapes (2026-09-10): a test that cannot fail. The
+# dynamic side (plant-and-observe, assertion removal, skip quarantine)
+# was here; the static side was not. Eight shapes, each one a test whose
+# green says nothing, read with `ast` over the whole changed test file so
+# a shape that spans lines (an assert after a return, a try whose except
+# passes) is seen as a shape, not as a grep hit. Own implementation.
+def _false_green_in_source(source: str) -> list[str]:
+    import ast
+
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return []
+    out: list[str] = []
+
+    def is_test(node: ast.AST) -> bool:
+        return isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test")
+
+    def const_true(expr: ast.AST) -> bool:
+        return (isinstance(expr, ast.Constant) and bool(expr.value) is True) or isinstance(expr, ast.Tuple) and bool(expr.elts)
+
+    def same_text(a: ast.AST, b: ast.AST) -> bool:
+        return ast.dump(a) == ast.dump(b)
+
+    for node in ast.walk(tree):
+        if not is_test(node):
+            continue
+        body = node.body
+        statements = [st for st in body if not (isinstance(st, ast.Expr) and isinstance(st.value, ast.Constant))]
+        has_assert = any(isinstance(st, ast.Assert) for st in ast.walk(node))
+        calls_assertion = any(isinstance(st, ast.Call) and isinstance(st.func, ast.Attribute)
+                              and st.func.attr.startswith(("assert", "expect")) for st in ast.walk(node))
+        raises_ctx = any(isinstance(st, ast.With) for st in ast.walk(node))
+        if statements and not has_assert and not calls_assertion and not raises_ctx and not any(
+                isinstance(st, ast.Raise) for st in ast.walk(node)):
+            out.append(f"{node.name}: no check at all - the body runs and nothing can fail")
+        terminal = False
+        for st in body:
+            if terminal and isinstance(st, ast.Assert):
+                out.append(f"{node.name}: an assertion after return/raise never runs")
+                break
+            if isinstance(st, (ast.Return, ast.Raise)):
+                terminal = True
+            if isinstance(st, ast.Return) and isinstance(st.value, ast.Compare):
+                out.append(f"{node.name}: returns a comparison instead of asserting it - the value is discarded")
+            if isinstance(st, ast.Expr) and isinstance(st.value, ast.Compare):
+                out.append(f"{node.name}: a bare comparison statement - computed and discarded, nothing checked")
+        for st in ast.walk(node):
+            if isinstance(st, ast.Assert):
+                if const_true(st.test):
+                    out.append(f"{node.name}: assert of a constant or a tuple - always true")
+                elif isinstance(st.test, ast.Compare) and len(st.test.comparators) == 1 and same_text(st.test.left, st.test.comparators[0]):
+                    out.append(f"{node.name}: a value compared to itself - always true")
+            if isinstance(st, ast.Try):
+                for handler in st.handlers:
+                    if handler.type is None or (isinstance(handler.type, ast.Name) and handler.type.id in ("Exception", "BaseException")):
+                        if all(isinstance(h, ast.Pass) for h in handler.body) and any(isinstance(b, ast.Assert) for b in st.body):
+                            out.append(f"{node.name}: an assert inside a try whose except passes - the failure is swallowed")
+            if isinstance(st, ast.With):
+                for item in st.items:
+                    call = item.context_expr
+                    if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr in ("raises", "assertRaises", "warns"):
+                        if all(isinstance(b, ast.Pass) for b in st.body):
+                            out.append(f"{node.name}: an empty raises/warns context - the call that should raise is never made")
+    return out
+
+
+def _false_green_shapes(ctx: dict[str, Any]) -> list[dict[str, Any]]:
+    """Observe-first, advisory: a changed Python test file carrying one of
+    the eight shapes is named with the test and the shape. Blocking is the
+    strict profile's call, not this monitor's."""
+    project = ctx.get("project")
+    findings: list[dict[str, Any]] = []
+    if project is None:
+        return findings
+    for path in ctx["changed_tests"]:
+        if not str(path).endswith(".py"):
+            continue
+        try:
+            source = (Path(project) / path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        hits = _false_green_in_source(source)
+        if hits:
+            findings.append(_finding("false-green-shape", path,
+                                     f"{len(hits)} test(s) in {path} cannot fail as written: " + "; ".join(hits[:3]),
+                                     blocking=False))
+    return findings
+
+
 MONITORS: dict[str, Callable[[dict[str, Any]], list[dict[str, Any]]]] = {
     "assertion-diff": _assertion_diff,
     "skip-quarantine": _skip_quarantine,
@@ -311,6 +436,9 @@ MONITORS: dict[str, Callable[[dict[str, Any]], list[dict[str, Any]]]] = {
     "harness-validity": _harness_validity,
     "negative-control": _negative_control,
     "protected-test-gate": _protected_test_gate,
+    "harness-node-dropped": _harness_node_dropped,
+    "oracle-tamper": _test_weakened_with_source_edit,
+    "false-green-shape": _false_green_shapes,
 }
 
 
@@ -319,6 +447,7 @@ def analyze(archive: Chronicle, project: Path, base: str = "HEAD") -> dict[str, 
     files = _changed_files(project, base)
     ctx: dict[str, Any] = {
         "archive": archive,
+        "project": project,
         "files": files,
         "changed_tests": sorted(p for p in files if _is_test_path(p) and files[p] != "D"),
         "changed_production": sorted(
@@ -328,6 +457,16 @@ def analyze(archive: Chronicle, project: Path, base: str = "HEAD") -> dict[str, 
         "protected": _protected(archive),
     }
     ctx["diff"] = {path: _diff_lines(project, base, path) for path in ctx["changed_tests"]}
+    try:
+        from .godmode_oracle import oracle_tamper_findings
+        seen_red = {
+            evidence[len("file:"):]
+            for record in archive.select(kind="attestation", limit=1000)
+            if str(record.get("subject", "")).startswith("guard:") and (record.get("data") or {}).get("status") == "ran"
+            for evidence in record.get("evidence", []) if str(evidence).startswith("file:")}
+        ctx["oracle"] = oracle_tamper_findings(project, base, red_observed=seen_red)
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: the oracle pass is one monitor among nine; the others still answer
+        ctx["oracle"] = []
 
     findings: list[dict[str, Any]] = []
     for monitor in MONITORS.values():
@@ -403,11 +542,18 @@ def source_damage(project: Path, base: str = "HEAD") -> list[dict[str, Any]]:
                          ({0x7f} if 0x7f in line else set()))
             if bad:
                 listed = ", ".join(f"0x{byte:02x}" for byte in bad)
+                hint = ""
+                if 0x08 in bad:
+                    # Field report file 2026-09-10, Part 3: two repairs of a
+                    # 0x08 went through the same heredoc and re-collapsed.
+                    hint = (" - a 0x08 is a collapsed backslash-b; repair it from a script "
+                            "file with bytes([92, 98]), never through a heredoc, and re-run "
+                            "integrity between attempts")
                 findings.append(_finding(
                     "control-characters", relative,
                     f"line {number} carries {listed}, which no editor writes - "
                     "the signature of a shell or script mangling content on the "
-                    "way to disk",
+                    "way to disk" + hint,
                     True))
                 break
 

@@ -30,7 +30,9 @@ Use the narrow record type:
 
 - `remember --kind decision|invariant|lesson|obligation` for durable knowledge.
 - `checklist update` for cumulative checks.
-- `checkpoint` for a recoverable state, next actions, active hypothesis, and evidence.
+- `checkpoint` for a recoverable state, next actions, active hypothesis, and evidence;
+  `--owes "<restore>"` for a temporary change left behind (a role bump, a throwaway
+  spec) that the scope gate names until it is closed.
 - `branches --record`, `version`, `db`, `sprint`, or `docs` for domain state.
 
 Record relative paths, statuses, hashes, and evidence references. Never record raw

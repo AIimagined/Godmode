@@ -49,7 +49,9 @@ change, outcome, and next discriminating action. Generalize a private lesson onl
 the mechanism is understood. Report no broader success than fresh verification proves.
 
 Deterministic support: `loop` detects repeated actions, reapplied patches,
-oscillation, and a spent hypothesis from the records; `mistakes` runs the
+oscillation, and a spent hypothesis from the records, and with `--transcript`
+names a loop episode (one error signature, the same hunks, nothing new for six
+attempts) with the turn where new information last arrived; `mistakes` runs the
 recurring-failure detectors; `method` selects the RCA method from the evidence
 shape and `method --check-record` refuses an incomplete one; `reflect` surfaces
 contradictions with prior claims; `integrity` blocks test-weakening changes;

@@ -81,23 +81,44 @@ def _finding(detector: str, detail: str, blocking: bool, citations: list[int]) -
 def _repeated_actions(
     records: list[dict[str, Any]], threshold: int = REPEAT_THRESHOLD
 ) -> list[dict[str, Any]]:
+    # Field report file 2026-09-10: 112 `npx vitest run` gate records were
+    # read as "nothing changed between runs" while the source changed
+    # before every one of them. A run after a mutation-shaped record (an
+    # edit, a change record, an attestation) is a new experiment; only
+    # runs with no such record between them count as the same attempt.
     counts: dict[str, list[int]] = {}
+    last_mutation_seq = 0
     for record in records:
-        if record["kind"] != "action":
+        kind = record["kind"]
+        subject = str(record.get("subject", ""))
+        if kind in ("change", "attestation", "checkpoint") or (
+                kind in ("action", "refusal") and subject in _MUTATION_SUBJECTS):
+            last_mutation_seq = int(record.get("sequence", 0))
+            continue
+        if kind != "action":
             continue
         data = {k: v for k, v in record["data"].items() if k not in ("at", "recorded_at")}
-        key = _signature({"subject": record["subject"], "data": data})
-        counts.setdefault(key, []).append(record["sequence"])
+        key = _signature({"subject": subject, "data": data})
+        runs = counts.setdefault(key, [])
+        if runs and last_mutation_seq > runs[-1]:
+            runs.clear()  # something changed since the last identical run: a new experiment
+        runs.append(record["sequence"])
     findings = []
     for sequences in counts.values():
         if len(sequences) >= threshold:
             findings.append(_finding(
                 "repeated-action",
-                f"the same normalised action ran {len(sequences)} times with nothing "
-                "changed between runs; what varied was hope, not input",
+                f"the same normalised action ran {len(sequences)} times with no edit, "
+                "change, or attestation recorded between runs; what varied was hope, not input",
                 True, sequences,
             ))
     return findings
+
+
+_MUTATION_SUBJECTS = frozenset({
+    "worktree-file-mutation", "scripted-source-edit", "local-repository-change",
+    "filesystem-mutation", "edit", "write", "notebookedit", "apply_patch",
+})
 
 
 def _repeated_patches(records: list[dict[str, Any]]) -> list[dict[str, Any]]:

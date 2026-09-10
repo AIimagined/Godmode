@@ -419,9 +419,18 @@ class Chronicle:
             return pinned[1]
         return self._events_identity()
 
-    def _drop_events_cache(self) -> None:
+    def _drop_events_cache(self, *, rewrite: bool = False) -> None:
         self._events_cache_key = None
         self._events_verified_key = None
+        if rewrite:
+            # An expunge or a re-seal rewrote files in place: an index
+            # written before it would hand the next read the expunged
+            # bytes. An append never reaches here with rewrite=True - the
+            # indexed prefix is untouched by a new file after it.
+            try:
+                (self.root / self._INDEX_NAME).unlink()
+            except OSError:  # godmode: swallow-ok: no index, or one the rewritten stats will reject anyway
+                pass
         if self._pinned_identity is not None:
             # A pin that went None would make every later read a full parse
             # AND a full verify (measured: 33 s per SessionStart); re-scan
@@ -434,8 +443,27 @@ class Chronicle:
                 and self._events_cache is not None:
             records = self._events_cache
         else:
-            records = [self._read_json(path) for path in self.event_paths()]
+            paths = self.event_paths()
+            trusted = 0
+            indexed = self._read_index(paths)
+            if indexed is not None:
+                # The on-disk index holds the first N records, parsed and
+                # chain-walked under those N files' exact stat identity
+                # (name, mtime, size). Only the files after N are parsed
+                # and only their links are re-hashed. Field report file
+                # 2026-09-10, finding 5: every CLI call re-read and
+                # re-hashed the whole archive (2.4-4 s per call).
+                trusted = len(indexed)
+                records = indexed + [self._read_json(path) for path in paths[trusted:]]
+            else:
+                records = [self._read_json(path) for path in paths]
             self._events_cache_key, self._events_cache = identity, records
+            if verify and (identity is None or identity != self._events_verified_key):
+                self.verify(records, trusted_prefix=trusted)
+                self._events_verified_key = identity
+                if len(records) - trusted > self._INDEX_TAIL_LIMIT:
+                    self._write_index(paths, records)
+            return records
         if verify:
             # Verified once per identity: the chain walk re-hashes every
             # record, and a hook call reads the archive seven times over
@@ -447,12 +475,74 @@ class Chronicle:
                 self._events_verified_key = identity
         return records
 
+    # --- on-disk read index -------------------------------------------------
+    # Written after a verified read, keyed by the stat identity of the first
+    # N record files; a read parses and verifies only the files after N and
+    # rewrites the index once the tail outgrows _INDEX_TAIL_LIMIT. Ignored
+    # under GODMODE_VERIFY_READS=1. Appends, expunge and reanchor still walk
+    # the chain they touch, so tamper evidence keeps its write-side check,
+    # and an in-place rewrite of any indexed file changes that file's stat
+    # and drops the whole prefix.
+    _INDEX_NAME = "godmode-events.index.json"
+    _INDEX_TAIL_LIMIT = 200
+
+    @staticmethod
+    def _prefix_identity(paths: list[Path]) -> str | None:
+        parts = []
+        for path in paths:
+            try:
+                stat = path.stat()
+            except OSError:
+                return None
+            parts.append(f"{path.name}:{stat.st_mtime_ns}:{stat.st_size}")
+        return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+
+    def _read_index(self, paths: list[Path]) -> list[dict[str, Any]] | None:
+        if os.environ.get("GODMODE_VERIFY_READS"):
+            return None
+        path = self.root / self._INDEX_NAME
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        records = payload.get("records")
+        count = payload.get("count")
+        if not isinstance(records, list) or count != len(records) or count > len(paths) or count == 0:
+            return None
+        if payload.get("identity") != self._prefix_identity(paths[:count]):
+            return None
+        return records
+
+    def _write_index(self, paths: list[Path], records: list[dict[str, Any]]) -> None:
+        count = min(len(paths), len(records))
+        identity = self._prefix_identity(paths[:count])
+        if identity is None or count == 0:
+            return
+        path = self.root / self._INDEX_NAME
+        try:
+            handle, temporary = tempfile.mkstemp(prefix=".index", suffix=".tmp", dir=str(self.root))
+            with os.fdopen(handle, "w", encoding="utf-8") as fh:
+                json.dump({"identity": identity, "count": count, "records": records[:count]},
+                          fh, separators=(",", ":"))
+            os.replace(temporary, path)
+        except OSError:
+            return
+
     def verify(self, records: list[dict[str, Any]] | None = None, *,
-               check_anchor: bool = True) -> dict[str, Any]:
+               check_anchor: bool = True, trusted_prefix: int = 0) -> dict[str, Any]:
         records = self.read_events(verify=False) if records is None else records
         previous: str | None = None
         expected_sequence = 1
-        for record in records:
+        for position, record in enumerate(records):
+            if position < trusted_prefix:
+                # Walked and hashed when the index was written; the files
+                # carry the same stat identity now. The link into the tail
+                # still starts from this record's sealed hash.
+                previous = record["record_hash"]
+                expected_sequence += 1
+                continue
             if record.get("schema_version") != SCHEMA_VERSION:
                 raise ArchiveError("Record schema mismatch")
             if record.get("project_key") not in self.accepted_keys():
@@ -799,7 +889,7 @@ class Chronicle:
         got shorter, never a silent repair.
         """
         with self.write_lock():
-            self._drop_events_cache()
+            self._drop_events_cache(rewrite=True)
             records = [self._read_json(path) for path in self.event_paths()]
             self.verify(records, check_anchor=False)
             previous = self._read_chain_anchor()
@@ -875,7 +965,7 @@ class Chronicle:
             self._write_head(len(records), previous)
             # The files just rewrote in place: whatever the cache holds is
             # pre-expunge and must never be extended by the tombstone.
-            self._drop_events_cache()
+            self._drop_events_cache(rewrite=True)
             tombstone = self._write_record(
                 "incident", "expunge", tombstone_data,
                 [f"expunged-sequence:{sequence}"],

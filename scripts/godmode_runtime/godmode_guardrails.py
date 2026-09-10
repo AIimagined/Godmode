@@ -28,7 +28,8 @@ CEILINGS_FILENAME = ".godmode-ceilings.json"
 # `paid_iterations` (nineteenth field report, obligation 9868): checks a
 # session has had blocked for dialling out under `verify --offline`
 # before the Stop notices name the runaway; 0 disables it like the rest.
-DEFAULT_CEILINGS = {"tokens": 0, "tool_calls": 0, "seconds": 0, "paid_iterations": 3}  # 0 = no ceiling
+DEFAULT_CEILINGS = {"tokens": 0, "tool_calls": 0, "seconds": 0, "paid_iterations": 3,
+                    "context_window": 200_000}  # 0 = no ceiling; context_window is the compaction tripwire
 METER_FILENAME = "godmode-meter.json"
 # The operator's own escape hatch (U-R1): presence, not content, stops a
 # watchdog-boundary run regardless of what the skip-pattern scan finds.

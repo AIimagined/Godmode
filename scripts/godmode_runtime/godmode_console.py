@@ -963,6 +963,7 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         args.grade,
         cites=args.cite,
         external=args.external,
+        transcript_path=getattr(args, "transcript", None),
         timeline=_load_timeline(getattr(args, "transcript", None)),
         blast_radius=getattr(args, "blast_radius", None),
         confidence=getattr(args, "confidence", None),
@@ -1032,6 +1033,50 @@ def cmd_criterion(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
          "advisories": data["advisories"]},
         exit_code=1 if data["late"] else 0,
     )
+
+
+def cmd_status_bare(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """`godmode status` with no sub-command is `status survey`."""
+    survey = _build_parser().parse_args(["status", "survey"])
+    for key in ("json", "brief", "terse", "project"):
+        if hasattr(args, key):
+            setattr(survey, key, getattr(args, key))
+    return survey.handler(survey, runtime)
+
+
+def cmd_perimeter(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    from .godmode_attest import active_perimeter, perimeter_digest, record_perimeter, unrun_perimeter
+
+    _require_archive(runtime)
+    session = _session(runtime, args.session)
+    if args.action == "add":
+        if not args.command:
+            raise ArchiveError("perimeter add needs the command: `godmode perimeter add \"python -c 'import app'\"`")
+        record = record_perimeter(runtime.archive, args.command, session)
+        return CommandResult({"sequence": record["sequence"], "command": record["subject"],
+                              "digest": record["data"]["digest"],
+                              "next": "godmode perimeter run - session close refuses until it has run this session"})
+    if args.action == "retire":
+        if not args.command:
+            raise ArchiveError("perimeter retire needs the command it retires")
+        command = " ".join(str(args.command).split())
+        record = runtime.archive.append("perimeter", command, {"status": "retired", "digest": perimeter_digest(command),
+                                                                "session": session}, evidence=[])
+        return CommandResult({"sequence": record["sequence"], "retired": command})
+    if args.action == "list":
+        unrun = {entry["digest"] for entry in unrun_perimeter(runtime.archive, session)}
+        rows = [{**entry, "ran_this_session": entry["digest"] not in unrun} for entry in active_perimeter(runtime.archive)]
+        return CommandResult({"perimeter": rows, "unrun": len(unrun)})
+    outcomes = []
+    for entry in active_perimeter(runtime.archive):
+        outcome = run_check(runtime.archive, session, Path(runtime.anchor.project_root),
+                            f"perimeter:{entry['digest']}", shlex.split(entry["command"]),
+                            timeout=args.timeout)
+        outcomes.append({"command": entry["command"], "passed": outcome["passed"],
+                         "citation": outcome.get("citation")})
+    failed = [o for o in outcomes if not o["passed"]]
+    return CommandResult({"ran": len(outcomes), "failed": len(failed), "outcomes": outcomes},
+                         exit_code=1 if failed or not outcomes else 0)
 
 
 def cmd_metric_contract_register(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -1513,7 +1558,63 @@ def cmd_remaining(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     report = remaining(runtime.archive, Path(runtime.anchor.project_root),
                        session=session, charter=_charter(runtime),
                        since_days=getattr(args, "since", None))
+    if getattr(args, "digest", False):
+        report["digest"] = session_digest(runtime, session, getattr(args, "transcript", None))
     return CommandResult(report, exit_code=1 if report["count"] else 0)
+
+
+def session_digest(runtime: Runtime, session: str | None, transcript: str | None) -> dict[str, Any]:
+    """PRD P-5 / §8: the fields a reviewer needs, from records and the host
+    transcript, in one object. Every field is a count or a position."""
+    from .godmode_attest import calibration_digest, obligations_digest
+    from .godmode_episodes import loop_episodes
+    from .godmode_hookproof import interception_state
+    from .godmode_iteration import measured_spend
+    from .godmode_anchor import current_host
+
+    archive = runtime.archive
+    episodes = loop_episodes(transcript)
+    claims = archive.select(kind="claim", limit=500)
+    in_session = [c for c in claims if (c.get("data") or {}).get("session") == session]
+    parked = 0
+    try:
+        echo = archive.root / "godmode-claim-echo.json"
+        if echo.exists():
+            parked = len((json.loads(echo.read_text(encoding="utf-8")) or {}).get("sentences") or [])
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: a parked file that cannot be read counts as none parked
+        parked = 0
+    refusals = [r for r in archive.select(kind="refusal", limit=500)
+                if (r.get("data") or {}).get("session") in (None, session) or True]
+    gate = {"would-deny": sum(1 for r in refusals if (r.get("data") or {}).get("observed") and (r.get("data") or {}).get("would_have") == "deny"),
+            "would-ask": sum(1 for r in refusals if (r.get("data") or {}).get("observed") and (r.get("data") or {}).get("would_have") == "ask"),
+            "denied": sum(1 for r in refusals if not (r.get("data") or {}).get("observed"))}
+    grades = {}
+    for c in in_session:
+        grades[str((c.get("data") or {}).get("grade"))] = grades.get(str((c.get("data") or {}).get("grade")), 0) + 1
+    obligations = obligations_digest(archive)
+    spend = measured_spend(transcript)
+    next_action = None
+    if episodes["loop_detected"]:
+        e = episodes["loop_detected"][0]
+        next_action = f"a loop of {e['attempts']} attempts on one error class; record the premise as failed and re-read the artifact"
+    elif obligations["open"]:
+        next_action = f"{obligations['open']} obligation(s) open; `godmode status remaining` lists them"
+    elif parked:
+        next_action = f"{parked} claim(s) parked unrecorded; record or soften them"
+    return {
+        "session": session,
+        "loop_episodes": len(episodes["episodes"]),
+        "loops_detected": len(episodes["loop_detected"]),
+        "error_classes": len({e["signature"] for e in episodes["episodes"]}),
+        "last_new_information_turn": episodes["last_new_information_turn"],
+        "claims": {"recorded": len(in_session), "by_grade": grades, "parked": parked},
+        "obligations": obligations,
+        "gate": gate,
+        "spend": {"tokens": spend["tokens"], "source": spend["source"], "messages": spend["messages"]},
+        "host": {"name": current_host(), "grade": interception_state(archive, current_host()) if archive.initialized() else "UNAVAILABLE"},
+        "calibration": calibration_digest(archive),
+        "next_action": next_action or "nothing open on the record",
+    }
 
 
 def cmd_status_survey(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -1690,7 +1791,34 @@ def cmd_planmode_arbitrate(args: argparse.Namespace, runtime: Runtime) -> Comman
     return CommandResult(arbitrate(runtime.archive))
 
 
+def _loop_threshold(runtime: Runtime) -> int:
+    """PRD §13 question 1, answered: novice 4, standard 6, strict 8."""
+    from .godmode_episodes import THRESHOLDS
+    try:
+        from .godmode_sentinel import local_authorization_policy
+        profile = str(local_authorization_policy(runtime.archive).get("profile") or "standard")
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable policy means the standard threshold
+        profile = "standard"
+    return THRESHOLDS.get(profile, THRESHOLDS["standard"])
+
+
 def cmd_loop(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if getattr(args, "transcript", None):
+        from .godmode_episodes import backtrack_context, loop_episodes
+        from .godmode_profile import PROFILE_NAMES  # noqa: F401
+        threshold = _loop_threshold(runtime)
+        report = loop_episodes(args.transcript, threshold=threshold)
+        if getattr(args, "episodes", False):
+            report["backtrack"] = [backtrack_context(runtime.archive, e) for e in report["loop_detected"]]
+        if report["loop_detected"] and runtime.archive.initialized():
+            try:
+                runtime.archive.append("action", "would-have-stopped-loop", {
+                    "episodes": len(report["loop_detected"]),
+                    "attempts": report["loop_detected"][0]["attempts"],
+                    "signature": report["loop_detected"][0]["signature"]}, evidence=[])
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: the observe receipt is best-effort; the report still answers
+                pass
+        return CommandResult(report, exit_code=1 if report["loop_detected"] else 0)
     _require_archive(runtime)
     if args.blame:
         verdict = model_blame_allowed(
@@ -2487,6 +2615,15 @@ def cmd_checkpoint(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # when the summary overflows - and the FULL summary rides in the data,
     # so nothing is lost to the cap.
     subject = args.summary
+    for owed in getattr(args, "owes", None) or []:
+        # Field report file 2026-09-10, Part 3: a temporary privilege bump
+        # and two throwaway specs were restored from a state file, not from
+        # the gate. The debt is an obligation; the scope gate names it.
+        text = " ".join(str(owed).split())
+        if text:
+            runtime.archive.append("obligation", f"temporary: {text}"[:200],
+                                   {"status": "open", "value": text, "restore": True,
+                                    "session": _session(runtime, getattr(args, "session", None))}, evidence=[])
     data: dict[str, Any] = {
         "status": args.status,
         "next": args.next_action,
@@ -2982,6 +3119,11 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         from .godmode_host_manifests import runtime_census_issues
 
         issues.extend(runtime_census_issues(RUNTIME_VERSION))
+    try:
+        from .godmode_repo_privacy import host_permission_findings
+        issues.extend(host_permission_findings(Path(project)))
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: a host settings file that cannot be read is not a finding
+        pass
     healthy = not any(issue["severity"] == "error" for issue in issues)
     return CommandResult(
         {
@@ -4771,6 +4913,17 @@ def _build_parser() -> argparse.ArgumentParser:
     criterion.add_argument("--session")
     criterion.set_defaults(handler=cmd_criterion)
 
+    perimeter = sub.add_parser(
+        "perimeter",
+        help="Perimeter checks (a boot, an import walk, a typed route) that must run this "
+             "session before `session close` - the check a green unit suite never performs")
+    perimeter.add_argument("action", choices=["add", "list", "run", "retire"])
+    perimeter.add_argument("command", nargs="?", default=None,
+                           help="For add/retire: the exact command (quote it)")
+    perimeter.add_argument("--session")
+    perimeter.add_argument("--timeout", type=int, default=900)
+    perimeter.set_defaults(handler=cmd_perimeter)
+
     # U-T3 anchored-metric contracts - minimal isolated block, mirrors the
     # `register` block below.
     metric_contract = sub.add_parser(
@@ -5082,7 +5235,10 @@ def _build_parser() -> argparse.ArgumentParser:
     method.set_defaults(handler=cmd_method)
 
     status = sub.add_parser("status", help="Single writable status store")
-    status_sub = status.add_subparsers(dest="status_command", required=True)
+    # Field report file 2026-09-10, Part 3: a bare `status` errored; it
+    # now prints the survey, the same as `status survey`.
+    status_sub = status.add_subparsers(dest="status_command", required=False)
+    status.set_defaults(handler=cmd_status_bare)
     status_set = status_sub.add_parser("set")
     status_set.add_argument("item")
     status_set.add_argument("--title", default="")
@@ -5105,6 +5261,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--since", type=int, metavar="DAYS",
         help="Hide open items older than DAYS (count reported as stale_hidden); "
              "the age split is always reported")
+    status_remaining.add_argument("--digest", action="store_true",
+                                  help="The session digest: loop episodes, error classes, parked claims, "
+                                       "obligations open/attested/waived, measured spend, host grade, next action")
+    status_remaining.add_argument("--transcript", default=None,
+                                  help="--digest: the host transcript to read loop episodes and spend from")
     status_remaining.set_defaults(handler=cmd_remaining)
     status_sub.add_parser(
         "render", help="The status document, rendered read-only from the store"
@@ -5450,6 +5611,10 @@ def _build_parser() -> argparse.ArgumentParser:
     checkpoint.add_argument("--next", dest="next_action", action="append", default=[])
     checkpoint.add_argument("--hypothesis")
     checkpoint.add_argument("--outcome")
+    checkpoint.add_argument("--owes", action="append", default=[],
+                            help="A temporary change this checkpoint leaves behind that must be restored "
+                                 "(an admin role bump, a throwaway spec); recorded as an open obligation "
+                                 "the scope gate names until it is closed. Repeatable.")
     _evidence(checkpoint)
     checkpoint.set_defaults(handler=cmd_checkpoint)
 
@@ -5708,6 +5873,11 @@ def _build_parser() -> argparse.ArgumentParser:
     loop.add_argument("--preflight", action="store_true",
                       help="Task 10b: audit .godmode-loop.json readiness (stop contract, "
                            "budget, verdict path, escalation thresholds) before cycle one")
+    loop.add_argument("--transcript", default=None,
+                        help="Read iteration episodes from this host transcript (PRD P-1/P-3): "
+                             "error signature, overlapping hunks, no new files, no new assertion")
+    loop.add_argument("--episodes", action="store_true",
+                        help="With --transcript: list every episode and the backtrack context for each loop")
     loop.set_defaults(handler=cmd_loop)
     # S16: the loop CONTRACT verbs live under the same noun - `godmode loop`
     # bare keeps the detector behavior; declare/tick/close carry the bounded

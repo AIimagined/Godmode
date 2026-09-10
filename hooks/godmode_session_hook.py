@@ -1205,6 +1205,12 @@ def _unrecorded_claims(archive: Any, reply_text: str,
     for sentence in _reply_sentences(reply_text):
         if _ATTRIBUTED_SPEECH.match(sentence.strip()):
             continue
+        # A sentence that lists what is pending or owed is the opposite of
+        # a claim, numbers or not (live Stop output 2026-09-10: "Pending
+        # from you: 555345 for the 10-file commit" was flagged).
+        if re.search(r"(?i)\b(?:pending|awaiting|owed|owner-owed|blocked on|still open|"
+                     r"outstanding|to-?do|next up)\b", _strip_quoted(sentence)):
+            continue
         # A quoted span is a mention, not this reply's assertion (field
         # report 24: a reviewer's quoted numbers were flagged as claims) -
         # the same rule the done-bar detector already applies.
@@ -1482,6 +1488,205 @@ def _observe_advisory_once(archive: Any, session: str | None, category: str,
     return text
 
 
+_ASK_ID = re.compile(r"ask:[0-9a-f]{12}")
+
+
+def _still_open_obligation_lines(archive: Any, lines: list[str]) -> list[str]:
+    """Parked obligation lines whose ask is still open on the record;
+    lines naming no ask id (obligations, standing duties) pass through."""
+    try:
+        from godmode_runtime.godmode_requests import open_stated_requests
+        open_ids = {str(r.get("subject", "")) for r in open_stated_requests(
+            archive.select(kind="request", limit=600))}
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable archive keeps the parked lines rather than losing them
+        return lines
+    kept: list[str] = []
+    for line in lines:
+        ids = _ASK_ID.findall(str(line))
+        if ids and not any(i in open_ids for i in ids):
+            continue
+        kept.append(line)
+    return kept
+
+
+def _scope_block_reason(archive: Any, reply_text: str, session_id: str | None) -> str | None:
+    """The 'one more pending, next release' pattern: a reply that declares
+    the work complete while the record still holds this session's asks,
+    the plan's pending steps, uncited criteria, or a hypothesis that has
+    failed three checkpoints. Returns the block reason with the list, or
+    None when nothing declared is open or the reply declares nothing."""
+    if not reply_text or not _COMPLETION_VOCAB.search(_strip_quoted(reply_text)):
+        return None
+    try:
+        from godmode_runtime.godmode_iteration import open_scope, scope_items
+        items = scope_items(open_scope(archive, session_id))
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: a scope that cannot be read never blocks a reply on a guess
+        return None
+    if not items:
+        return None
+    shown = "; ".join(_ascii_echo(i)[:160] for i in items[:4])
+    if len(items) > 4:
+        shown += f" (+{len(items) - 4} more)"
+    return (f"godmode gate, deliberate block, not a crash - SCOPE STILL OPEN: this reply says the work "
+            f"is complete, but {len(items)} item(s) this session declared are still open on the "
+            f"record: {shown}. Finish them, close each with the command its line shows, or say "
+            "plainly which are deferred and why. This check blocks only once.")
+
+
+def _repeat_failure_ask(submitted: dict[str, Any], operation: str) -> str | None:
+    """Iteration trap, in one number: the same command has failed three
+    times this session and nothing was edited since the last failure. The
+    fourth run is asked about, with the count."""
+    try:
+        from godmode_runtime.godmode_iteration import repeat_failures
+        seen = repeat_failures(submitted.get("transcript_path") or submitted.get("transcriptPath"), operation)
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: a transcript that cannot be read cannot count, so no ask
+        return None
+    if seen["failures"] >= 3 and not seen["mutated_since_last_failure"]:
+        return (f"this command has failed {seen['failures']} time(s) this session and no file was "
+                "edited since the last failure - a fourth run against an unchanged tree repeats the "
+                "result; approve only if something outside the tree changed")
+    return None
+
+
+def _iteration_notices(archive: Any, project: Path, submitted: dict[str, Any]) -> tuple[list[str], str | None]:
+    """Stop-time data from the iteration controls: a measured token spend
+    over a declared ceiling, a commit-score plateau, and the stall streak.
+    Returns (notices, block_reason); only a stall at the halt threshold
+    blocks."""
+    notices: list[str] = []
+    block: str | None = None
+    try:
+        from godmode_runtime.godmode_guardrails import check_ceilings
+        from godmode_runtime.godmode_iteration import commit_score_plateau, measured_spend
+        from godmode_runtime.godmode_loop import stall_escalation
+        from godmode_runtime.godmode_episodes import THRESHOLDS, loop_episodes, reobserve_needed
+        transcript = submitted.get("transcript_path") or submitted.get("transcriptPath")
+        try:
+            from godmode_runtime.godmode_sentinel import local_authorization_policy
+            profile = str(local_authorization_policy(archive).get("profile") or "standard")
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable policy means the standard threshold
+            profile = "standard"
+        episodes = loop_episodes(transcript, threshold=THRESHOLDS.get(profile, 6))
+        for episode in episodes["loop_detected"][:1]:
+            notices.append(
+                f"godmode: loop - {episode['attempts']} attempts on one error class "
+                f"({episode['command'][:60]}) across {len(episode['files'])} file(s) with no new file, "
+                f"assertion, or error since turn {episode['first_turn']}; last new information at turn "
+                f"{episodes['last_new_information_turn']}; the premise, not the hunk, is what to change")
+            try:
+                archive.append("action", "would-have-stopped-loop", {
+                    "attempts": episode["attempts"], "signature": episode["signature"],
+                    "files": episode["files"][:8], "profile": profile}, evidence=[])
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: the observe receipt is best-effort
+                pass
+        try:
+            from godmode_runtime.godmode_oracle import unread_truncated_outputs
+            unread = unread_truncated_outputs(transcript)
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable transcript is no evidence either way
+            unread = []
+        if unread:
+            names = ", ".join(Path(item["path"]).name for item in unread[:3])
+            notices.append(
+                f"godmode: {len(unread)} tool output(s) this session were truncated to a file never opened "
+                f"({names}); the failure's name may sit in the dropped lines - read the file, or grep it "
+                "for FAIL|Error|Traceback, before any verdict rests on that run")
+            try:
+                archive.append("action", "would-have-required-read", {
+                    "count": len(unread), "files": [Path(i["path"]).name for i in unread[:8]]}, evidence=[])
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: the observe receipt is best-effort
+                pass
+        try:
+            from godmode_runtime.godmode_oracle import created_uncited
+            orphans = created_uncited(transcript, archive, project)
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable transcript names no files
+            orphans = []
+        if orphans:
+            shown = ", ".join(orphans[:4]) + (f" (+{len(orphans) - 4} more)" if len(orphans) > 4 else "")
+            notices.append(
+                f"godmode: {len(orphans)} file(s) written this session that no claim, change, or checkpoint "
+                f"names ({shown}); a throwaway left in the tree is a file the next reader trusts - cite it, "
+                "record it, or delete it")
+        stale = reobserve_needed(transcript)
+        if stale:
+            notices.append("godmode: " + stale["detail"])
+            try:
+                archive.append("action", "would-have-required-reobserve", {
+                    "edits_since_read": stale["edits_since_read"],
+                    "error_class_changed": stale["error_class_changed"]}, evidence=[])
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: the observe receipt is best-effort
+                pass
+        spent = measured_spend(submitted.get("transcript_path") or submitted.get("transcriptPath"))
+        if spent["source"] == "measured":
+            verdict = check_ceilings(project, {"tokens": spent["tokens"], "source": "measured"})
+            for hit in verdict.get("exceeded") or []:
+                notices.append(f"godmode: measured spend {hit.get('spent')} {hit.get('ceiling')} is over the "
+                               f"declared ceiling {hit.get('limit')} (from the host transcript, "
+                               f"{spent['messages']} assistant messages)")
+        try:
+            from godmode_runtime.godmode_guardrails import declared_ceilings
+            from godmode_runtime.godmode_iteration import context_size
+            window = int(declared_ceilings(project).get("context_window") or 0)
+            size = context_size(transcript)
+            if window and size["source"] == "measured" and size["tokens"] >= int(window * 0.7):
+                notices.append(
+                    f"godmode: context at {size['tokens']:,} of a {window:,} window (measured from the last "
+                    "assistant usage); a steered compact at a phase boundary keeps the goal, invariants, "
+                    "acceptance commands, failed approaches and last green - auto-compact keeps what it finds "
+                    "interesting. The brief after compact carries the ledger either way.")
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: a window that cannot be measured adds nothing
+            pass
+        plateau = commit_score_plateau(project)
+        if plateau:
+            notices.append("godmode: " + plateau["detail"])
+        for finding in stall_escalation(archive.select(limit=600)):
+            text = f"godmode: {finding.get('detail', '')}"
+            if finding.get("detector") == "stall-escalation":
+                block = text
+            else:
+                notices.append(text)
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: a control that cannot run adds nothing at Stop
+        pass
+    return notices, block
+
+
+_GIT_ADD_ALL = re.compile(r"(?i)\bgit\s+add\s+(?:-A\b|--all\b|\.\s*$|\.\s)")
+
+
+def _dirty_diff_ask(archive: Any, project: Path, operation: str) -> dict[str, Any] | None:
+    """PRD X-3: `git add -A` / `git add .` with a plan fence declared and
+    untracked or modified files outside that fence is a dirty diff; ask in
+    standard, deny in strict, nothing when no fence exists (every project
+    that predates fences keeps its behaviour)."""
+    if not _GIT_ADD_ALL.search(operation or ""):
+        return None
+    try:
+        from godmode_runtime.godmode_fence import declared_fence
+        from godmode_runtime.godmode_anchor import run_git
+        fence = declared_fence(archive)
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable fence means no fence, which means no ask
+        return None
+    if not fence:
+        return None
+    import fnmatch
+    outside: list[str] = []
+    for line in (run_git(project, "status", "--porcelain") or "").splitlines():
+        path = line[3:].strip().replace("\\", "/")
+        if path and not any(fnmatch.fnmatch(path, pattern) or path.startswith(pattern.rstrip("*")) for pattern in fence):
+            outside.append(path)
+    if not outside:
+        return None
+    try:
+        from godmode_runtime.godmode_sentinel import local_authorization_policy
+        strict = str(local_authorization_policy(archive).get("profile") or "") == "strict"
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable policy is not strict
+        strict = False
+    shown = ", ".join(outside[:4]) + (f" (+{len(outside) - 4} more)" if len(outside) > 4 else "")
+    return {"tier": "R3" if strict else "R2",
+            "detail": (f"this add sweeps {len(outside)} file(s) outside the plan's editable set ({shown}); "
+                       "name the files, or amend the plan with `godmode planmode start --editable`")}
+
+
 def _echo_contexts(parked: dict[str, Any]) -> list[str]:
     """The claim echo's parked items rendered as model context."""
     contexts: list[str] = []
@@ -1535,6 +1740,11 @@ def _take_parked_context(archive: Chronicle, anchor: Any, submitted: dict[str, A
             echo.unlink()
             current = _session_key(submitted)
             if current is None or payload.get("session") == current:
+                # A nag parked at Stop for an ask closed since is dropped
+                # here, the turn it was closed (field report file 2026-09-10,
+                # finding 3: closed asks rode 3-5 more prompts).
+                payload["obligations"] = _still_open_obligation_lines(
+                    archive, list(payload.get("obligations") or []))
                 pieces.extend(_echo_contexts(payload))
     except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
         pass
@@ -1576,6 +1786,43 @@ def _session_counts(archive: Chronicle) -> dict[str, int]:
         kind = str(record.get("kind"))
         counts[kind] = counts.get(kind, 0) + 1
     return dict(sorted(counts.items()))
+
+
+def _ledger_block(archive: Chronicle) -> dict[str, Any]:
+    """Goal, invariants, acceptance, files in play, failed approaches, last
+    green, open obligations, current step - from records, bounded."""
+    records = archive.read_events()
+    plan = next((r for r in reversed(records) if r["kind"] == "plan"
+                 and (r.get("data") or {}).get("status") in ("active", "approved", None)
+                 and (r.get("data") or {}).get("state") != "closed"), None)
+    steps = ((plan or {}).get("data") or {}).get("steps") or []
+    pending = [str(s.get("text", ""))[:80] for s in steps if isinstance(s, dict) and s.get("status") != "done"]
+    invariants = [str(r.get("subject", ""))[:80] for r in records if r["kind"] == "invariant"]
+    criteria = [str((r.get("data") or {}).get("text", ""))[:80] for r in records if r["kind"] == "criterion"]
+    accept = [str(c)[:80] for c in (((plan or {}).get("data") or {}).get("contract") or {}).get("accept", []) or []]
+    failed = [str((r.get("data") or {}).get("hypothesis", r.get("subject", "")))[:80]
+              for r in records if r["kind"] == "checkpoint" and (r.get("data") or {}).get("status") == "failed"]
+    greens = [r for r in records if r["kind"] == "attestation" and (r.get("data") or {}).get("status") == "ran"]
+    changes = [r for r in records if r["kind"] == "change"]
+    files: list[str] = []
+    for record in reversed(changes[-5:]):
+        for path in ((record.get("data") or {}).get("files") or [])[:6]:
+            if path not in files:
+                files.append(str(path))
+    open_obligations = sum(1 for r in records if r["kind"] == "obligation"
+                           and (r.get("data") or {}).get("status") not in ("closed", "done", "waived"))
+    return {
+        "goal": str(plan.get("subject", ""))[:120] if plan else None,
+        "invariants": invariants[-3:],
+        "acceptance": (accept + criteria)[-3:],
+        "files_in_play": files[:8],
+        "failed_approaches": failed[-5:],
+        "last_green": ({"step": str(greens[-1].get("subject", ""))[:80], "seq": greens[-1].get("sequence")}
+                       if greens else None),
+        "open_obligations": open_obligations,
+        "current_step": pending[0] if pending else None,
+        "read_with": "godmode status remaining --digest",
+    }
 
 
 def _resume_digest(archive: Chronicle, project_root: Path,
@@ -1992,6 +2239,18 @@ def main(argv: list[str] | None = None) -> int:
             from godmode_runtime.godmode_lens import build_context_brief
             brief = build_context_brief(anchor, archive)
             brief["obligations"] = _session_obligations(anchor, archive)
+            try:
+                from godmode_runtime.godmode_repo_privacy import config_traps
+                traps = config_traps(Path(anchor.project_root))
+                if traps:
+                    brief["repo_config_traps"] = {
+                        "keys": [t["key"] for t in traps][:8],
+                        "advisory": (f"{len(traps)} key(s) in this repository's own git config run or redirect "
+                                     "a command when the tree is opened; read each value before any git verb, "
+                                     "and unset it if you did not put it there"),
+                    }
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: the brief opens even when git cannot be asked
+                pass
             # Grounded claims (obligation 10248): claims whose cited
             # evidence moved since they were recorded, named at the start.
             try:
@@ -2016,6 +2275,13 @@ def main(argv: list[str] | None = None) -> int:
                 # "nothing to resume", which is a claim. This says the
                 # digest could not be built and why.
                 brief["resume"] = {"unavailable": str(exc)[:160]}
+            # Compaction playbook (2026-09-10): the ledger fields that die in a
+            # summary, rebuilt from records on every start - including the
+            # start after a compact, which is where the chat lost them.
+            try:
+                brief["ledger"] = _ledger_block(archive)
+            except Exception as exc:  # noqa: BLE001  # godmode: swallow-ok: stated, not skipped - see the value written
+                brief["ledger"] = {"unavailable": str(exc)[:120]}
             # Sprint L1 (decision 4114): the top laws ride the brief so the
             # Code of Law fires without being fetched. Bounded, and stated
             # rather than skipped on failure - an absent `laws` block would
@@ -2306,6 +2572,7 @@ def main(argv: list[str] | None = None) -> int:
             # Counts and points only; the timeline stores digests, so the
             # command text never appears (the 4018 privacy decision).
             nudge = None if quiet else _investigation_nudge(archive, submitted)
+            stall_block: str | None = None
             # One stdout object or nothing: the host parses hook stdout as a
             # single JSON value, and two valid objects concatenated read as
             # "looks like JSON but is not valid JSON" - the whole delivery
@@ -2333,6 +2600,9 @@ def main(argv: list[str] | None = None) -> int:
                     archive, _session_key(submitted), Path(anchor.project_root)))
                 if not subagent:
                     notices.extend(_external_verdict_nudge(submitted, reply_text))
+                    iteration_notes, stall_block = _iteration_notices(
+                        archive, Path(anchor.project_root), submitted)
+                    notices.extend(iteration_notes)
                     turn_note = _turn_diff_nudge(archive, Path(anchor.project_root), submitted)
                     if turn_note:
                         notices.append(turn_note)
@@ -2386,6 +2656,29 @@ def main(argv: list[str] | None = None) -> int:
             # path returned clean above, so the bound costs nothing. Every
             # other notice stays advisory in the same single object.
             done_shaped = _unrecorded_done_claims(archive, reply_text, observed)
+            # Scope gate (2026-09-10): "everything is complete" with this
+            # session's asks, plan steps or criteria still open on the
+            # record is the "one more item, next release" pattern. Blocked
+            # once with the list; the re-fire passes like the done-bar.
+            scope_reason = _scope_block_reason(
+                archive, reply_text, str(submitted.get("session_id") or "") or None)
+            if scope_reason and not done_shaped:
+                block_body = {
+                    "decision": "continue" if current_host() == "antigravity" else "block",
+                    "reason": scope_reason,
+                    "systemMessage": " ".join(notices) if notices else
+                        "godmode: completion blocked once pending the open scope; the re-fire passes.",
+                }
+                print(json.dumps(block_body, ensure_ascii=False))
+                return 0
+            if stall_block and not done_shaped:
+                print(json.dumps({
+                    "decision": "continue" if current_host() == "antigravity" else "block",
+                    "reason": (f"godmode gate, deliberate block, not a crash - STALL: {stall_block[len('godmode: '):]} "
+                               "An operator-stated record clears it; continuing does not."),
+                    "systemMessage": " ".join(notices) if notices else stall_block,
+                }, ensure_ascii=False))
+                return 0
             # Deterministic grade at the bar (obligations 10118, 10245): a
             # run-shaped done sentence recorded on an asserted grade is
             # named once too, with the executed check as the remedy.
@@ -2823,8 +3116,29 @@ def main(argv: list[str] | None = None) -> int:
                 archive=archive,
                 extra_protected=policy.get("password_required", ()),
                 require_approval=policy.get("approval_required", ()),
-                inline_scan=policy.get("inline_interpreter") == "scan",
+                # Scan is the default since 0.3.24: the Python read-only
+                # allowlist is parsed with ast and refuses anything off
+                # the table, so it is sound; the field's top complaint was
+                # the ask on every read-only payload (three reports).
+                inline_scan=policy.get("inline_interpreter", "scan") == "scan",
             )
+            # Iteration trap (2026-09-10): the fourth run of a command that
+            # failed three times against an unchanged tree is asked about,
+            # with the count, on hosts that have an ask.
+            if tool in ("Bash", "PowerShell", "shell") and not preview.get("protected"):
+                dirty = _dirty_diff_ask(archive, Path(anchor.project_root), operation)
+                if dirty:
+                    preview = dict(preview)
+                    preview.update({"protected": True, "category": "dirty-diff",
+                                    "tier": dirty["tier"], "impact": [dirty["detail"]],
+                                    "second_confirmation_required": False})
+            if tool in ("Bash", "PowerShell", "shell") and not preview.get("protected"):
+                repeat = _repeat_failure_ask(submitted, operation)
+                if repeat:
+                    preview = dict(preview)
+                    preview.update({"protected": True, "category": "repeat-failure",
+                                    "tier": "R2", "impact": [repeat],
+                                    "second_confirmation_required": False})
         else:
             preview = {
                 "protected": True, "category": "unclassified-mutation",

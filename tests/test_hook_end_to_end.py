@@ -174,7 +174,10 @@ GIT_ASK_NOW = (
 # this task's own first-pass error: it would have asked on the single most
 # common way this and most Python projects run their test suite.
 INTERPRETER_ASK_NOW = (
-    ("the audit's own minimum-friction case", "Bash", {"command": 'python -c "print(1)"'}),
+    # 0.3.24: scan is the default posture, so a print-only payload is
+    # cleared by the ast allowlist; the ask case is a payload that writes.
+    ("the audit's own minimum-friction case", "Bash",
+     {"command": 'python -c "import shutil; shutil.rmtree(\'build\')"'}),
 )
 
 

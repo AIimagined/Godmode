@@ -69,7 +69,7 @@ def agent_id() -> str:
 
 
 PRODUCT = "Godmode"
-RUNTIME_VERSION = "0.3.23"
+RUNTIME_VERSION = "0.3.24"
 SCHEMA_VERSION = 1
 ARCHIVE_DIRNAME = "godmode-state"
 MAX_HASH_BYTES = 5 * 1024 * 1024
@@ -79,7 +79,7 @@ DEFAULT_RECORD_LIMIT = 24
 EVENT_KINDS = frozenset(
     {
         "action", "assumption", "attestation", "branch", "change", "checklist", "checkpoint",
-        "claim", "criterion", "database", "decision", "differential", "documentation",
+        "claim", "criterion", "perimeter", "database", "decision", "differential", "documentation",
         "incident", "invariant", "inventory", "lesson", "metric", "obligation", "pin",
         "plan", "refusal", "request",
         "session", "sprint", "upstream-diff", "verdict", "version",

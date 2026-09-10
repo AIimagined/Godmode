@@ -68,6 +68,7 @@ Report the classification, whether authorization was required, what actually ran
 
 ## Verbs at the moment of demand
 
+- Before declaring the work complete: the Stop gate blocks once when this session's asks, the plan's pending steps, or uncited criteria are still open on the record; close each with the command its line shows, or say which are deferred and why.
 - Before a docs or release pass that must carry nothing personal: `godmode privacy --repo` names every email, home path, host-positioned IP address, secret shape and oversized tracked file by path and line, value masked.
 - Before anything leaves the machine: `godmode precheck --preflight` (suite, scans, census, reach on a disposable worktree); `godmode egress --staged` says exactly what a push would send; `godmode privacy` and `godmode untrusted` scan for what must not leave; `godmode netgate` audits what dialled out.
 - Cutting a release: `godmode changelog merge --set-version X`, `godmode version --reconcile`, `godmode bindings --write`, `godmode release` compares two releases, `godmode checksums` and `godmode sbom` record what shipped, `godmode license` classifies what was read.

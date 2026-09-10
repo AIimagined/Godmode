@@ -34,6 +34,7 @@ MASKS: dict[str, tuple[str, ...]] = {
     "checkpoint": ("status", "next"),
     "change": ("files", "plan"),
     "criterion": ("task", "session"),
+    "perimeter": ("status", "digest"),
     "database": ("rung", "decision", "status"),
     "decision": ("status",),
     "differential": ("subject", "method"),

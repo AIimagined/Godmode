@@ -70,7 +70,9 @@ never that the host stopped the tool.
 Open substantive work with `session open` (the handshake states identity, dirty
 files, active plan, obligations, invariants, and the host's enforcement table),
 compile the project's rules with `charter`, and close through `session close` —
-an unattested HARD rule, an uncited claim, or a half-done pair blocks closure.
+an unattested HARD rule, an uncited claim, a half-done pair, a regression (a step
+green earlier this session and red since), or a declared perimeter check that
+never ran this session (`perimeter add|run`) blocks closure.
 `config check`, `roles`, and `operator` validate the project's declared
 configuration; `locale check` validates translated guidance.
 

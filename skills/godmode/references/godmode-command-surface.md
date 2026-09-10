@@ -56,6 +56,7 @@ and `--json` work on every command and may appear in any position;
 | `netgate` | Prove the CLI surfaces make zero network connections |
 | `operator` | Validate the typed operator profile |
 | `parity` | Compare neutral structure with an explicit local reference |
+| `perimeter` | Perimeter checks (a boot, an import walk, a typed route) that must run before `session close` |
 | `plan` | Record a private execution contract |
 | `planmode` | Gate mutation behind an approved plan contract |
 | `plant` | Prove a guard fails by planting a violation |

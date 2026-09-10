@@ -522,7 +522,9 @@ class CharterTests(unittest.TestCase):
     def test_compiler_self_check(self) -> None:
         from godmode_runtime.godmode_charter import _self_check
 
-        _self_check()
+        # The self-check raises on any failure; a clean run returns None,
+        # and that return is what this test asserts.
+        self.assertIsNone(_self_check())
 
     def test_rules_narrow_to_the_artefact_they_speak_about(self) -> None:
         from godmode_runtime.godmode_charter import applicable_rules, compile_charter, traits_of
@@ -572,7 +574,7 @@ class AttestationTests(unittest.TestCase):
     def test_attestation_self_check(self) -> None:
         from godmode_runtime.godmode_attest import _self_check
 
-        _self_check()
+        self.assertIsNone(_self_check())
 
     def test_unattested_hard_rule_blocks_the_gate(self) -> None:
         from godmode_runtime.godmode_attest import gate, open_session, record_step
@@ -872,7 +874,7 @@ class EgressTests(unittest.TestCase):
     def test_egress_self_check(self) -> None:
         from godmode_runtime.godmode_egress import _self_check
 
-        _self_check()
+        self.assertIsNone(_self_check())
 
     def test_sensitive_paths_and_secret_content_are_both_withheld(self) -> None:
         # Two independent reasons to withhold: what the file is, and what it holds.
@@ -914,7 +916,7 @@ class ScopeTests(unittest.TestCase):
     def test_scope_self_check(self) -> None:
         from godmode_runtime.godmode_scope import _self_check
 
-        _self_check()
+        self.assertIsNone(_self_check())
 
     def test_a_non_repository_reports_unavailable_not_zero(self) -> None:
         # An empty result is a claim about the tool until the tool succeeded.
@@ -962,7 +964,7 @@ class AssessTests(unittest.TestCase):
     def test_assess_self_check(self) -> None:
         from godmode_runtime.godmode_assess import _self_check
 
-        _self_check()
+        self.assertIsNone(_self_check())
 
     def test_selftest_proves_controls_by_exercising_them(self) -> None:
         # A control reported as enforced without being exercised is exactly the
@@ -1004,7 +1006,7 @@ class AtlasTests(unittest.TestCase):
     def test_atlas_self_check(self) -> None:
         from godmode_runtime.godmode_atlas import _self_check
 
-        _self_check()
+        self.assertIsNone(_self_check())
 
     def test_inferred_edges_never_inflate_a_blast_radius(self) -> None:
         # A guessed relationship reported as a dependency reads as a complete
@@ -1059,7 +1061,7 @@ class MethodTests(unittest.TestCase):
     def test_method_self_check(self) -> None:
         from godmode_runtime.godmode_method import _self_check
 
-        _self_check()
+        self.assertIsNone(_self_check())
 
     def test_selection_is_a_lookup_not_a_judgment(self) -> None:
         from godmode_runtime.godmode_method import Shape, select
@@ -1074,7 +1076,7 @@ class StatusTests(unittest.TestCase):
     def test_status_self_check(self) -> None:
         from godmode_runtime.godmode_status import _self_check
 
-        _self_check()
+        self.assertIsNone(_self_check())
 
     def test_remaining_work_is_derived_and_states_its_own_bounds(self) -> None:
         # A remaining-work list composed from memory reads as complete because a
@@ -1123,7 +1125,7 @@ class PlanModeTests(unittest.TestCase):
     def test_plan_self_check(self) -> None:
         from godmode_runtime.godmode_plan import _self_check
 
-        _self_check()
+        self.assertIsNone(_self_check())
 
     def test_incomplete_contract_holds_mutation_closed(self) -> None:
         from godmode_runtime.godmode_plan import approve, mutation_verdict, start
@@ -1206,7 +1208,7 @@ class DriftTests(unittest.TestCase):
     def test_drift_self_check(self) -> None:
         from godmode_runtime.godmode_drift import _self_check
 
-        _self_check()
+        self.assertIsNone(_self_check())
 
     def test_capabilities_names_what_it_cannot_enforce(self) -> None:
         from godmode_runtime.godmode_drift import capabilities
@@ -1243,7 +1245,7 @@ class BindingsTests(unittest.TestCase):
     def test_bindings_self_check(self) -> None:
         from godmode_runtime.godmode_bindings import _self_check
 
-        _self_check()
+        self.assertIsNone(_self_check())
 
     def test_committed_manifests_match_their_source(self) -> None:
         # Generation prevents the drift the agreement test could only detect.
@@ -1384,7 +1386,7 @@ class CorpusTests(unittest.TestCase):
     def test_role_resolution_self_check(self) -> None:
         from godmode_runtime.godmode_corpus import _self_check
 
-        _self_check()
+        self.assertIsNone(_self_check())
 
     def test_binding_order_is_deterministic(self) -> None:
         from godmode_runtime.godmode_corpus import resolve_roles
@@ -1522,10 +1524,10 @@ class IntegrityTests(unittest.TestCase):
             report = self._analyze(project, archive)
             self.assertNotIn("skip-quarantine", [f["monitor"] for f in report["findings"]])
 
-    def test_all_nine_monitors_are_present(self) -> None:
+    def test_all_twelve_monitors_are_present(self) -> None:
         from godmode_runtime.godmode_integrity import MONITORS
 
-        self.assertEqual(len(MONITORS), 9)
+        self.assertEqual(len(MONITORS), 12, sorted(MONITORS))  # twelve since 0.3.24: oracle shapes and false-green shapes
 
 
 class ChangelogTests(unittest.TestCase):
