@@ -44,4 +44,20 @@ Keep each pull request focused. Explain the behavior changed, the evidence colle
 the privacy or safety impact, and any remaining limitation. Do not include credentials,
 private project data, raw agent transcripts, or generated local continuity state.
 
+## Evidence gate
+
+A change is judged on the evidence it carries, not on how plausible its reasoning
+reads, and the bar is the same for a person and for an agent. Evidence is one of:
+
+- a reproduction or a linked real-world report: a failing case, an error text, or
+  an issue where the problem occurred - "this could fail" reasoning alone does not
+  clear the gate;
+- a regression test that fails on `main` and passes with the change, which is what
+  `godmode integrity` and the changelog gate check per commit;
+- one concern per pull request.
+
+Say when AI tooling was involved and to what extent. A valid change without evidence
+is queued behind proven work, not rejected; add the reproduction or the test and it
+moves forward.
+
 By contributing, you agree that your contribution is licensed under Apache-2.0.
