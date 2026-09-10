@@ -3899,7 +3899,45 @@ def cmd_recurring(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult({"report": render_recurrence(report)})
 
 
+def upstream_skill_hits(tree: Path, keyword: str, limit: int = 40) -> list[dict[str, Any]]:
+    """Skill and doc files in `tree` that mention `keyword`, with the first
+    matching lines. Text only, no record: a reading list."""
+    import re as _re
+
+    pattern = _re.compile(_re.escape(keyword), _re.IGNORECASE)
+    roots = [tree / "skills", tree / "docs", tree / ".agents", tree / ".claude", tree / ".codex", tree]
+    seen: set[Path] = set()
+    hits: list[dict[str, Any]] = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        candidates = root.rglob("*.md") if root != tree else tree.glob("*.md")
+        for path in sorted(candidates):
+            if path in seen or any(part in ("node_modules", ".git") for part in path.parts):
+                continue
+            seen.add(path)
+            try:
+                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            matches = [(n, line.strip()[:120]) for n, line in enumerate(lines, 1) if pattern.search(line)]
+            if matches:
+                hits.append({"path": str(path.relative_to(tree)).replace("\\", "/"), "matches": len(matches),
+                             "lines": [f"{n}: {text}" for n, text in matches[:3]]})
+            if len(hits) >= limit:
+                return hits
+    return hits
+
+
 def cmd_upstream(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if getattr(args, "skills", None):
+        if not args.path:
+            raise ArchiveError("upstream --skills needs --path <upstream tree> to read")
+        hits = upstream_skill_hits(Path(args.path), str(args.skills))
+        return CommandResult({"keyword": args.skills, "tree": args.path, "files": hits,
+                              "next": ("read each listed file before the parity verdict; record it with "
+                                       "`godmode remember --kind decision --subject \"absorb:<item>\"`")},
+                             exit_code=0 if hits else 1)
     """B3-1 (GAP-1): one `upstream-diff` record per run - a named package's
     (or, via `--path`, a forked/fully-copied external repo's) shipped
     surface diffed against this project's own equivalents. Each `--dispose
@@ -6347,6 +6385,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--path", metavar="VENDORED_TREE",
         help="Local path to a forked/fully-copied external repo - carries the "
              "same diff-against-upstream duty as a lockfile dependency")
+    upstream_parser.add_argument(
+        "--skills", metavar="KEYWORD", default=None,
+        help="With --path: list the upstream tree's skill and doc files (SKILL.md, docs/*.md, "
+             "*.md under skills/, .agents/, .claude/) that mention KEYWORD, with line numbers - the "
+             "parity read the field asked for (Part 5, 2026-09-10); records nothing")
     upstream_parser.add_argument(
         "--language", choices=("python", "node"), default="python",
         help="Resolution language for --diff (default: python)")

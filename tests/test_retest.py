@@ -55,5 +55,20 @@ class RetestTests(unittest.TestCase):
                              "python -m unittest tests.test_a")
 
 
+class UpstreamSkillsTests(unittest.TestCase):
+    def test_skill_files_mentioning_a_keyword_are_listed(self) -> None:
+        from godmode_runtime.godmode_console import upstream_skill_hits
+
+        with isolated_project() as (project, _s, _a, _archive):
+            (project / "skills" / "capture").mkdir(parents=True)
+            (project / "skills" / "capture" / "SKILL.md").write_text("# Capture\nUse capture before render.\n", encoding="utf-8")
+            (project / "docs").mkdir()
+            (project / "docs" / "other.md").write_text("nothing here\n", encoding="utf-8")
+            hits = upstream_skill_hits(project, "capture")
+            self.assertEqual([h["path"] for h in hits], ["skills/capture/SKILL.md"])
+            self.assertEqual(hits[0]["matches"], 2)
+            self.assertEqual(upstream_skill_hits(project, "zzz"), [])
+
+
 if __name__ == "__main__":
     unittest.main()
