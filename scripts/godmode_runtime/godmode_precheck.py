@@ -426,6 +426,8 @@ def precheck(project_root: Path | str, archive: Chronicle, task: str,
     report = {
         "task": task,
         "missing_surface": missing_surface(task),
+        "registry_matches": _registry_matches(project, task),
+        "design_mentions": _design_mentions(project, task),
         "already_built": already_built,
         "already_rejected": already_rejected,
         "already_reported": already_reported,
@@ -469,6 +471,23 @@ _SURFACES: tuple[tuple[str, str, str], ...] = (
      "the number that decides the fix comes from the environment that ships (a production build, real "
      "data), not the dev server: StrictMode double-invokes effects and dev bundles are not what users run"),
 )
+
+
+def _registry_matches(project: Path, task: str) -> list[dict[str, Any]]:
+    try:
+        from .godmode_registry import match_feedback, parse_registry, registry_path
+        path = registry_path(project)
+        return match_feedback(task, parse_registry(path)) if path else []
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable registry matches nothing
+        return []
+
+
+def _design_mentions(project: Path, task: str) -> list[dict[str, Any]]:
+    try:
+        from .godmode_registry import design_mentions
+        return design_mentions(project, task)
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: unreadable design documents mention nothing
+        return []
 
 
 def missing_surface(task: str) -> list[dict[str, str]]:

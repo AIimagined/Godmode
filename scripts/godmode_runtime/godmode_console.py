@@ -795,11 +795,18 @@ def cmd_session_open(args: argparse.Namespace, runtime: Runtime) -> CommandResul
     _require_archive(runtime)
     session = open_session(runtime.archive, args.label)
     handshake = opening_handshake(
-        runtime.archive, runtime.anchor, Path(runtime.anchor.project_root)
+        runtime.archive, runtime.anchor, Path(runtime.anchor.project_root), transcript_path=getattr(args, "transcript", None)
     )
     # Promoted so --brief shows the handshake's load-bearing facts, not only
     # the session id - the opening state is the feature, not decoration.
+    enforcement = handshake.get("enforcement") or {}
+    grade = str(enforcement.get("tool_call_interception") or "UNAVAILABLE")
+    reach = (f"host {enforcement.get('host', '?')} | pre-tool gate {grade}"
+             + (" (fail-open: a refusal reaches the model after the call)" if enforcement.get("fail_open_host") else "")
+             + ("; the day-one path is six verbs: init, session open, resume, remember, claim, checkpoint"
+                if grade in ("PARTIAL", "SOFT", "UNAVAILABLE", "DEGRADED") else ""))
     return CommandResult({
+        "reach": reach,
         "session": session,
         "branch": handshake.get("branch"),
         "dirty": handshake.get("dirty_files", {}).get("count"),
@@ -2378,6 +2385,22 @@ def cmd_checksums(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 
 def cmd_recurrences(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if getattr(args, "against", None):
+        from .godmode_registry import match_feedback, parse_registry, registry_path
+
+        project = Path(runtime.anchor.project_root)
+        path = registry_path(project, getattr(args, "registry", None))
+        if path is None:
+            return CommandResult({"refused": "no fixed registry found (docs/FIXED-REGISTRY.md or --registry PATH)"},
+                                 exit_code=1)
+        rows = parse_registry(path)
+        matches = match_feedback(str(args.against), rows)
+        return CommandResult({"registry": str(path.relative_to(project)).replace("\\", "/"), "rows": len(rows),
+                              "matches": matches,
+                              "next": ("run each match's guard before treating the report as new; a green guard "
+                                       "over a recurrence means the guard pinned the incident, not the class")
+                              if matches else "no registry row shares two distinctive words with this text"},
+                             exit_code=0)
     _require_archive(runtime)
     report = recurrences(runtime.archive)
     # A control that blocked twice on the same cause is a finding about the process,
@@ -2524,14 +2547,32 @@ def cmd_resume(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             current,
             evidence=[runtime.anchor.head] if runtime.anchor.head else [],
         )
-    return CommandResult(
-        build_context_brief(
-            runtime.anchor,
-            runtime.archive,
-            current_inventory=current,
-            token_budget=args.token_budget,
-        )
+    brief = build_context_brief(
+        runtime.anchor,
+        runtime.archive,
+        current_inventory=current,
+        token_budget=args.token_budget,
     )
+    # Grok field report 2026-09-10: `resume --brief` printed `records=3`.
+    # The scalars a model can work from ride the top of the payload.
+    try:
+        from .godmode_lens import ledger_block
+        ledger = ledger_block(runtime.archive)
+        from .godmode_anchor import run_git
+        dirty = len([l for l in (run_git(Path(runtime.anchor.project_root), "status", "--porcelain") or "").splitlines() if l.strip()])
+        checkpoints = [r for r in runtime.archive.select(kind="checkpoint", limit=50)]
+        next_steps = ((checkpoints[-1].get("data") or {}).get("next") or []) if checkpoints else []
+        brief = {
+            "goal": ledger.get("goal"),
+            "dirty": dirty,
+            "open_obligations": ledger.get("open_obligations"),
+            "current_step": ledger.get("current_step"),
+            "next": (next_steps[0] if next_steps else None),
+            **brief,
+        }
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: the brief still prints when the scalars cannot be derived
+        pass
+    return CommandResult(brief)
 
 
 def cmd_context_status(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -3247,6 +3288,14 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         from .godmode_host_manifests import runtime_census_issues
 
         issues.extend(runtime_census_issues(RUNTIME_VERSION))
+    if not getattr(runtime.anchor, "is_git", True):
+        # Grok field report 2026-09-10: identity showed branch and head as
+        # null and doctor said healthy. Without git, rewind, the integrity
+        # diff, the commit-score plateau and the dirty-diff ask cannot run.
+        issues.append({"code": "not-a-git-repository", "severity": "warning",
+                       "detail": "this project is not a git repository: rewind, integrity over a diff, "
+                                 "the commit-score plateau, the dirty-diff ask and the preflight cannot run; "
+                                 "claims still hash files. `git init` restores them"})
     try:
         from .godmode_repo_privacy import host_permission_findings
         issues.extend(host_permission_findings(Path(project)))
@@ -4932,6 +4981,8 @@ def _build_parser() -> argparse.ArgumentParser:
     session_sub = session.add_subparsers(dest="session_command", required=True)
     session_open = session_sub.add_parser("open")
     session_open.add_argument("--label", default="session")
+    session_open.add_argument("--transcript", default=None,
+                              help="This session's host transcript; reads in it count toward the required sources")
     session_open.set_defaults(handler=cmd_session_open)
     session_close = session_sub.add_parser("close")
     session_close.add_argument("--session")
@@ -5525,9 +5576,15 @@ def _build_parser() -> argparse.ArgumentParser:
     scenarios.add_argument("--only", help="Run a single scenario by name")
     scenarios.set_defaults(handler=cmd_scenarios)
 
-    sub.add_parser("recurrences", help="Find controls that blocked twice on the same cause").set_defaults(
-        handler=cmd_recurrences
-    )
+    recurrences_parser = sub.add_parser(
+        "recurrences",
+        help="Find controls that blocked twice on the same cause; with --against, match a new report "
+             "against the fixed registry's symptom column")
+    recurrences_parser.add_argument("--registry", metavar="PATH", default=None,
+                                    help="The fixed-registry markdown table (default: docs/FIXED-REGISTRY.md)")
+    recurrences_parser.add_argument("--against", metavar="TEXT", default=None,
+                                    help="A new report or feedback text to match against registry symptoms")
+    recurrences_parser.set_defaults(handler=cmd_recurrences)
     sbom_parser = sub.add_parser("sbom", help="List what ships and what it depends on")
     sbom_parser.add_argument("--format", choices=["spdx", "cyclonedx"],
                              help="Emit the claim in a standard SBOM format")

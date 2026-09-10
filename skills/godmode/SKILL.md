@@ -24,6 +24,16 @@ continuity without placing operational memory in tracked project files.
 5. Separate observed facts, declared intent, assumptions, conflicts, and open obligations.
 6. Route to the narrowest specialist below.
 
+## Day one on a host whose reach is PARTIAL or SOFT
+
+`godmode hooks status` (or the first line of `session open`) names the host's
+reach. Where the pre-tool gate is not HARD, the ceremony above buys nothing the
+host will enforce; the path is six verbs and no more: `init` once, `session open`,
+`resume`, `remember`, `claim`, `checkpoint`. Everything else is `godmode guide
+--tier N` when a task asks for it. On Grok the session brief rides the next
+allowed call and a refusal reaches the model after the call; treat both as
+advisories, and stage a protected operation with `authorize stage` before it.
+
 ## Routing
 
 - Use `godmode-continuity` for session recovery, inventory drift, checkpoints, handoffs,

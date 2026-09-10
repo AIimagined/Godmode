@@ -161,7 +161,7 @@ def _emit_claude_context(brief: dict[str, Any]) -> None:
     )
 
 
-def _session_obligations(anchor: Any, archive: Chronicle) -> dict[str, Any]:
+def _session_obligations(anchor: Any, archive: Chronicle, transcript_path: str | None = None) -> dict[str, Any]:
     """What this session already owes, computed at open rather than discovered late.
 
     Read-only and bounded: the hook runs on every session start, so a slow or noisy
@@ -694,6 +694,94 @@ _LOCAL_READ_TOOLS = ("Read", "Grep", "Glob", "NotebookRead", "view_file", "read_
                      "Edit", "MultiEdit", "NotebookEdit")  # an Edit read the file it edits (Part 5)
 _SHELL_READ_TOOLS = ("Bash", "PowerShell", "shell", "run_command")
 _PATH_TOKEN = re.compile(r"(?<![\w])((?:[A-Za-z]:)?(?:[\w.-]+[/\\])+[\w.-]+\.[A-Za-z0-9]{1,6})(?![\w])")
+
+
+_REPORT_SHAPED = re.compile(
+    r"(?i)\b(?:again|still|broken|bug|fail(?:ed|s|ing)?|missing|wrong|crash|regress|not working|does not|doesn't|"
+    r"stopped|blank|empty|duplicate|slow|stuck|hang)\b")
+
+
+def _registry_nudge(archive: Any, project: Path, prompt: str, session: str | None) -> str | None:
+    """Part 6: a new report whose words match a fixed-registry symptom is
+    named with the row and its guard - once per row per session."""
+    if not prompt or len(prompt) < 20 or not _REPORT_SHAPED.search(prompt):
+        return None
+    from godmode_runtime.godmode_registry import match_feedback, parse_registry, registry_path
+    path = registry_path(project)
+    if path is None:
+        return None
+    matches = match_feedback(prompt, parse_registry(path), limit=2)
+    if not matches:
+        return None
+    seen = {str((r.get("data") or {}).get("row")) for r in archive.select(kind="action", limit=300)
+            if r.get("subject") == "registry-nudge" and (r.get("data") or {}).get("session") == session}
+    fresh = [m for m in matches if m["id"] not in seen]
+    if not fresh:
+        return None
+    parts = []
+    for m in fresh:
+        guard = f"; guard: {m['guard'][:80]}" if m.get("guard") else ""
+        parts.append(f"{m['id'][:60]} (shares {', '.join(m['shared'][:4])}{guard})")
+        try:
+            archive.append("action", "registry-nudge", {"session": session, "row": m["id"][:80],
+                                                        "score": m["score"]}, evidence=[])
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: the once-per-row receipt is best-effort
+            pass
+    relative = str(path.relative_to(project)).replace("\\", "/")
+    return (f"godmode: this report matches {len(fresh)} fixed-registry row(s) in {relative}: " + "; ".join(parts)
+            + ". Run each guard before treating the report as new; a guard that stayed green over a recurrence "
+              "pinned the incident, not the class.")
+
+
+def _design_read_nudge(submitted: dict[str, Any], reply_text: str, project: Path) -> list[str]:
+    """A reply that calls something a product decision, by design, or out
+    of scope while a bound design or inventory document that describes it
+    was never opened this session (RCA feedback 2026-09-10: the agent
+    asked the operator about a feature the inventory already specified)."""
+    from godmode_runtime.godmode_registry import design_mentions, design_verdict_sentences
+
+    sentences = design_verdict_sentences(reply_text)
+    if not sentences:
+        return []
+    transcript = submitted.get("transcript_path") or submitted.get("transcriptPath")
+    opened: set[str] = set()
+    if transcript:
+        try:
+            for raw in Path(str(transcript)).read_text(encoding="utf-8", errors="replace").splitlines()[-6000:]:
+                if '"tool_use"' not in raw:
+                    continue
+                try:
+                    entry = json.loads(raw)
+                except ValueError:
+                    continue
+                for part in ((entry.get("message") or {}).get("content") or []):
+                    if isinstance(part, dict) and part.get("type") == "tool_use":
+                        opened.add(json.dumps(part.get("input") or {}).replace("\\\\", "/").lower())
+        except OSError:  # godmode: swallow-ok: an unreadable transcript names no design document; the nudge stays silent
+            pass
+    joined = " ".join(opened)
+    notices: list[str] = []
+    # The verdict sentence names the judgment; the sentence before it names
+    # the subject. Both feed the lookup.
+    all_sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", reply_text or "") if s.strip()]
+    for sentence in sentences[:2]:
+        query = sentence
+        if sentence in all_sentences:
+            position = all_sentences.index(sentence)
+            if position > 0:
+                query = all_sentences[position - 1] + " " + sentence
+        for hit in design_mentions(project, query, limit=3):
+            name = Path(hit["path"]).name.lower()
+            if name in joined:
+                continue
+            notices.append(
+                f"godmode: this reply calls it a design or product decision, and {hit['path']}:{hit['line']} "
+                f"describes it (shares {', '.join(hit['shared'][:3])}) - that file was not opened this session; "
+                "read the inventory before asking the operator what the design is")
+            break
+        if notices:
+            break
+    return notices[:1]
 
 
 def _external_verdict_nudge(submitted: dict[str, Any], reply_text: str,
@@ -1869,40 +1957,8 @@ def _session_counts(archive: Chronicle) -> dict[str, int]:
 
 
 def _ledger_block(archive: Chronicle) -> dict[str, Any]:
-    """Goal, invariants, acceptance, files in play, failed approaches, last
-    green, open obligations, current step - from records, bounded."""
-    records = archive.read_events()
-    plan = next((r for r in reversed(records) if r["kind"] == "plan"
-                 and (r.get("data") or {}).get("status") in ("active", "approved", None)
-                 and (r.get("data") or {}).get("state") != "closed"), None)
-    steps = ((plan or {}).get("data") or {}).get("steps") or []
-    pending = [str(s.get("text", ""))[:80] for s in steps if isinstance(s, dict) and s.get("status") != "done"]
-    invariants = [str(r.get("subject", ""))[:80] for r in records if r["kind"] == "invariant"]
-    criteria = [str((r.get("data") or {}).get("text", ""))[:80] for r in records if r["kind"] == "criterion"]
-    accept = [str(c)[:80] for c in (((plan or {}).get("data") or {}).get("contract") or {}).get("accept", []) or []]
-    failed = [str((r.get("data") or {}).get("hypothesis", r.get("subject", "")))[:80]
-              for r in records if r["kind"] == "checkpoint" and (r.get("data") or {}).get("status") == "failed"]
-    greens = [r for r in records if r["kind"] == "attestation" and (r.get("data") or {}).get("status") == "ran"]
-    changes = [r for r in records if r["kind"] == "change"]
-    files: list[str] = []
-    for record in reversed(changes[-5:]):
-        for path in ((record.get("data") or {}).get("files") or [])[:6]:
-            if path not in files:
-                files.append(str(path))
-    open_obligations = sum(1 for r in records if r["kind"] == "obligation"
-                           and (r.get("data") or {}).get("status") not in ("closed", "done", "waived"))
-    return {
-        "goal": str(plan.get("subject", ""))[:120] if plan else None,
-        "invariants": invariants[-3:],
-        "acceptance": (accept + criteria)[-3:],
-        "files_in_play": files[:8],
-        "failed_approaches": failed[-5:],
-        "last_green": ({"step": str(greens[-1].get("subject", ""))[:80], "seq": greens[-1].get("sequence")}
-                       if greens else None),
-        "open_obligations": open_obligations,
-        "current_step": pending[0] if pending else None,
-        "read_with": "godmode status remaining --digest",
-    }
+    from godmode_runtime.godmode_lens import ledger_block
+    return ledger_block(archive)
 
 
 def _resume_digest(archive: Chronicle, project_root: Path,
@@ -2033,7 +2089,7 @@ def _sources_gate_reason(archive: Chronicle, anchor: Any,
     try:
         from godmode_runtime.godmode_sources import required_sources_view
 
-        view = required_sources_view(Path(anchor.project_root), archive)
+        view = required_sources_view(Path(anchor.project_root), archive, transcript_path=transcript_path)
     except Exception:
         return None
     unread = view.get("unread") or []
@@ -2332,7 +2388,7 @@ def main(argv: list[str] | None = None) -> int:
                 pass
             from godmode_runtime.godmode_lens import build_context_brief
             brief = build_context_brief(anchor, archive)
-            brief["obligations"] = _session_obligations(anchor, archive)
+            brief["obligations"] = _session_obligations(anchor, archive, transcript_path=submitted.get("transcript_path") or submitted.get("transcriptPath"))
             try:
                 from godmode_runtime.godmode_repo_privacy import config_traps
                 traps = config_traps(Path(anchor.project_root))
@@ -2695,6 +2751,10 @@ def main(argv: list[str] | None = None) -> int:
                 if not subagent:
                     notices.extend(_external_verdict_nudge(
                         submitted, reply_text, Path(anchor.project_root)))
+                    try:
+                        notices.extend(_design_read_nudge(submitted, reply_text, Path(anchor.project_root)))
+                    except Exception:  # noqa: BLE001  # godmode: swallow-ok: unreadable design documents nudge nothing
+                        pass
                     iteration_notes, stall_block = _iteration_notices(
                         archive, Path(anchor.project_root), submitted)
                     notices.extend(iteration_notes)
@@ -2923,6 +2983,12 @@ def main(argv: list[str] | None = None) -> int:
             # The prompt's own shape names the verb - fix work names the
             # incident, ship work names the preflight - once per shape per
             # session, delivered to the model as context.
+            try:
+                registry_note = _registry_nudge(archive, Path(anchor.project_root), prompt, _session_key(submitted))
+                if registry_note:
+                    contexts.append(registry_note)
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: a registry that cannot be read nudges nothing
+                pass
             try:
                 from godmode_runtime.godmode_precheck import prompt_shape_nudge
                 shaped = prompt_shape_nudge(

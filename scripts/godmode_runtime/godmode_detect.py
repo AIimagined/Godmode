@@ -46,6 +46,8 @@ RULE_TEMPLATES: dict[str, str] = {
     "migrations-dir": "route schema changes through `{value}`",
     "default-branch": "the default branch is `{value}`",
     "stack": "this project's stack includes {value}",
+    "constitution": "read `{value}` before substantive work; it is the project's standing law",
+    "spec": "`{value}` specifies a feature; a change in that area is held to it",
 }
 
 
@@ -250,6 +252,28 @@ def _detect_go_and_rust(file_set: set[str]) -> list[dict[str, Any]]:
     return out
 
 
+_CONSTITUTION_CANDIDATES = (
+    ".specify/memory/constitution.md", "CONSTITUTION.md", "docs/CONSTITUTION.md", "constitution.md",
+    "SPEC.md", "docs/SPEC.md", "spec.md", "docs/features.md", "docs/INVENTORY.md", "INVENTORY.md",
+)
+
+
+def _detect_constitution(project: Path) -> list[dict[str, Any]]:
+    """Grok field report 2026-09-10: a Spec Kit repository's load-bearing
+    rules live in .specify/memory/constitution.md, and the capped walk
+    never reached it. These paths are probed by name before the walk."""
+    out: list[dict[str, Any]] = []
+    for candidate in _CONSTITUTION_CANDIDATES:
+        path = Path(project) / candidate
+        if path.is_file():
+            out.append(_detection("constitution", candidate, candidate))
+    specs = sorted(Path(project).glob(".specify/**/spec.md")) + sorted(Path(project).glob("specs/*/spec.md"))
+    for path in specs[:8]:
+        relative = path.relative_to(Path(project)).as_posix()
+        out.append(_detection("spec", relative, relative))
+    return out
+
+
 def detect_repo(project: Path, stats: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Scan a repo for evidence of its own conventions.
 
@@ -266,6 +290,9 @@ def detect_repo(project: Path, stats: dict[str, Any] | None = None) -> list[dict
         stats["capped"] = capped
 
     detections: list[dict[str, Any]] = []
+    # By name, before anything the capped walk found: the constitution is
+    # the load-bearing rule set on a Spec Kit repository.
+    detections.extend(_detect_constitution(project))
     if "package.json" in file_set:
         detections.extend(_detect_package_json(project))
     if "pyproject.toml" in file_set:

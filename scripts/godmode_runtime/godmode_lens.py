@@ -900,3 +900,39 @@ def compare_local_reference(project: str | Path, reference: str | Path) -> dict[
         "network_used": False,
     }
 
+
+def ledger_block(archive: Any) -> dict[str, Any]:
+    """Goal, invariants, acceptance, files in play, failed approaches, last
+    green, open obligations, current step - from records, bounded."""
+    records = archive.read_events()
+    plan = next((r for r in reversed(records) if r["kind"] == "plan"
+                 and (r.get("data") or {}).get("status") in ("active", "approved", None)
+                 and (r.get("data") or {}).get("state") != "closed"), None)
+    steps = ((plan or {}).get("data") or {}).get("steps") or []
+    pending = [str(s.get("text", ""))[:80] for s in steps if isinstance(s, dict) and s.get("status") != "done"]
+    invariants = [str(r.get("subject", ""))[:80] for r in records if r["kind"] == "invariant"]
+    criteria = [str((r.get("data") or {}).get("text", ""))[:80] for r in records if r["kind"] == "criterion"]
+    accept = [str(c)[:80] for c in (((plan or {}).get("data") or {}).get("contract") or {}).get("accept", []) or []]
+    failed = [str((r.get("data") or {}).get("hypothesis", r.get("subject", "")))[:80]
+              for r in records if r["kind"] == "checkpoint" and (r.get("data") or {}).get("status") == "failed"]
+    greens = [r for r in records if r["kind"] == "attestation" and (r.get("data") or {}).get("status") == "ran"]
+    changes = [r for r in records if r["kind"] == "change"]
+    files: list[str] = []
+    for record in reversed(changes[-5:]):
+        for path in ((record.get("data") or {}).get("files") or [])[:6]:
+            if path not in files:
+                files.append(str(path))
+    open_obligations = sum(1 for r in records if r["kind"] == "obligation"
+                           and (r.get("data") or {}).get("status") not in ("closed", "done", "waived"))
+    return {
+        "goal": str(plan.get("subject", ""))[:120] if plan else None,
+        "invariants": invariants[-3:],
+        "acceptance": (accept + criteria)[-3:],
+        "files_in_play": files[:8],
+        "failed_approaches": failed[-5:],
+        "last_green": ({"step": str(greens[-1].get("subject", ""))[:80], "seq": greens[-1].get("sequence")}
+                       if greens else None),
+        "open_obligations": open_obligations,
+        "current_step": pending[0] if pending else None,
+        "read_with": "godmode status remaining --digest",
+    }

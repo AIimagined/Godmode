@@ -301,9 +301,11 @@ def created_uncited(transcript_path: str | Path | None, archive: Any, project: P
     named: list[str] = []
     try:
         for record in archive.select(limit=600):
-            if record.get("kind") in ("claim", "change", "checkpoint", "build"):
+            if record.get("kind") in ("claim", "change", "checkpoint", "build", "attestation"):
                 named.append(" ".join(str(e) for e in (record.get("evidence") or [])))
-                named.append(" ".join(str(f) for f in ((record.get("data") or {}).get("files") or [])))
+                named.append(str(record.get("subject", "")))
+                # Part 6: a checkpoint carries file NAMES in its text, not paths.
+                named.append(json.dumps(record.get("data") or {}))
     except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable archive names nothing; every written file is then listed
         named = []
     haystack = " ".join(named).replace("\\", "/")

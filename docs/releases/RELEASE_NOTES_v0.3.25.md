@@ -46,6 +46,19 @@
 - **Self-attested is named.** A verified claim whose check was run by
   the claiming agent says so; an attestation from another agent or model
   makes it independent.
+- **Registry-aware recurrence.** `recurrences --against "<report>"`
+  matches a new report against the fixed registry's symptom column and
+  names the row and its guard; the prompt hook does the same once per
+  session for a report-shaped prompt.
+- **Design reads.** `precheck --about` lists the inventory and design
+  lines that describe the task; a reply that calls something a product
+  decision while such a line was never opened is named at Stop.
+- **Hosts whose gate is not HARD.** `session open` leads with the host
+  reach and names the six-verb day-one path; `resume --brief` is one
+  screen (goal, dirty, obligations, current step, next); reads seen in
+  the transcript count toward required sources with case folded on
+  Windows; `doctor` names a project without git; `init --detect` finds
+  the constitution and spec files by name.
 - **Measurement environment.** `precheck` on a latency, duplicate-request,
   or re-render task lists the environment the deciding number must come
   from. A quoted sentence is no longer read as a claim. A process-control

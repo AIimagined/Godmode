@@ -62,7 +62,7 @@ and `--json` work on every command and may appear in any position;
 | `plant` | Prove a guard fails by planting a violation |
 | `privacy` | Audit the local privacy boundary |
 | `ratchet` | Run the project's declared debt counters, record each value, name every counter that rose |
-| `recurrences` | Find controls that blocked twice on the same cause |
+| `recurrences` | Find controls that blocked twice on the same cause; --against matches a report to the fixed registry |
 | `reflect` | Check a claim against what the record already says |
 | `release-notes` | Build a version's release note from its CHANGELOG section, or check one: present, covered, no empty section, no narration, a Verifying section |
 | `remember` | Record a decision, invariant, lesson, or obligation |

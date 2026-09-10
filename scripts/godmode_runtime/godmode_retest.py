@@ -82,7 +82,7 @@ def commands(project: Path, pinned: dict[str, list[str]]) -> list[dict[str, Any]
             package = (Path(project) / "package.json").read_text(encoding="utf-8", errors="replace")
             if "jest" in package and "vitest" not in package:
                 runner = "jest"
-        except OSError:
+        except OSError:  # godmode: swallow-ok: no package.json means the default runner, stated in the command
             pass
         out.append({"runner": runner, "files": js,
                     "command": ("npx vitest run " if runner == "vitest" else "npx jest ") + " ".join(js)})

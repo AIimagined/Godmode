@@ -107,7 +107,7 @@ def open_session(archive: Chronicle, label: str) -> str:
     return f"S-{record['record_hash'][:12]}"
 
 
-def opening_handshake(archive: Chronicle, anchor: Any, project: Path) -> dict[str, Any]:
+def opening_handshake(archive: Chronicle, anchor: Any, project: Path, transcript_path: str | Path | None = None) ->  dict[str, Any]:
     """The fixed, model-independent sequence every session opens with.
 
     The order is part of the contract: whichever model opens the session, the
@@ -144,7 +144,7 @@ def opening_handshake(archive: Chronicle, anchor: Any, project: Path) -> dict[st
     # named, because a count with no list is not actionable.
     from .godmode_sources import required_sources_view
 
-    sources_view = required_sources_view(project, archive)
+    sources_view = required_sources_view(project, archive, transcript_path=transcript_path)
     sources_total = sources_view["documents"]
     unread = sources_view["unread"]
     sources_read = sources_view["read"]

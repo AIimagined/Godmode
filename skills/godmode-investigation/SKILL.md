@@ -48,6 +48,8 @@ Record the symptom, reproduction, confirmed or rejected hypothesis, evidence, at
 change, outcome, and next discriminating action. Generalize a private lesson only after
 the mechanism is understood. Report no broader success than fresh verification proves.
 
+Before treating a report as new: `recurrences --against "<the report>"` matches it against the fixed registry's symptom column (docs/FIXED-REGISTRY.md) and names the row and its guard; `precheck --about` carries the same matches and the inventory or design lines that describe the feature, and a reply that calls something a product decision while such a line was never opened is named at Stop.
+
 Deterministic support: `loop` detects repeated actions, reapplied patches,
 oscillation, and a spent hypothesis from the records, and with `--transcript`
 names a loop episode (one error signature, the same hunks, nothing new for six

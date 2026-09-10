@@ -9,6 +9,10 @@ name its surface and the lessons ledger before it may grade verified.
 """
 from __future__ import annotations
 
+import json
+import os
+import re
+
 import hashlib
 from pathlib import Path
 from typing import Any
@@ -20,7 +24,50 @@ _MAX_TEST_FILES = 250
 
 
 def _norm(path: Any) -> str:
-    return str(path).replace("\\", "/").lstrip("./")
+    text = str(path).replace("\\", "/").lstrip("./")
+    # Grok field report 2026-09-10: `Agents.md` and `AGENTS.md` are one file
+    # on Windows and read as two here; the comparison folds case there.
+    return text.lower() if os.name == "nt" else text
+
+
+def transcript_reads(transcript_path: str | Path | None, project: Path) -> set[str]:
+    """Project-relative paths a host transcript shows being read this
+    session: Read/Edit/Grep tool inputs, and shell or interpreter commands
+    that name a file under the project (the reader the handshake trusts
+    beside `file:` citations)."""
+    if not transcript_path:
+        return set()
+    try:
+        lines = Path(str(transcript_path)).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return set()
+    root = str(Path(project).resolve()).replace("\\", "/")
+    out: set[str] = set()
+    token = re.compile(r"(?<![\w])((?:[A-Za-z]:)?(?:[\w.-]+[/\\])*[\w.-]+\.[A-Za-z0-9]{1,6})(?![\w])")
+    for raw in lines[-8000:]:
+        if '"tool_use"' not in raw:
+            continue
+        try:
+            entry = json.loads(raw)
+        except ValueError:
+            continue
+        for part in ((entry.get("message") or {}).get("content") or []):
+            if not isinstance(part, dict) or part.get("type") != "tool_use":
+                continue
+            payload = part.get("input") or {}
+            candidates = [str(payload.get(k) or "") for k in ("file_path", "path", "notebook_path")]
+            candidates += token.findall(str(payload.get("command") or ""))
+            for candidate in candidates:
+                if not candidate:
+                    continue
+                text = candidate.replace("\\", "/")
+                if text.lower().startswith(root.lower()):
+                    text = text[len(root):].lstrip("/")
+                elif Path(candidate).is_absolute():
+                    continue
+                if (Path(project) / text).is_file():
+                    out.add(_norm(text))
+    return out
 
 
 def _required_paths(project: Path) -> list[str]:
@@ -37,7 +84,8 @@ def _required_paths(project: Path) -> list[str]:
         return []
 
 
-def required_sources_view(project: Path, archive: Any) -> dict[str, Any]:
+def required_sources_view(project: Path, archive: Any,
+                          transcript_path: str | Path | None = None) -> dict[str, Any]:
     """documents/read/unread/exempted for the bound authority roles.
 
     A source counts as read when any record cites it (`file:<path>`) - the
@@ -63,6 +111,7 @@ def required_sources_view(project: Path, archive: Any) -> dict[str, Any]:
                         status not in ("retired", "closed"))
     except Exception:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
         pass
+    cited |= transcript_reads(transcript_path, Path(project))
     exempted = [p for p in required if exempt.get(p)]
     unread = [p for p in required if p not in cited and not exempt.get(p)]
     return {
