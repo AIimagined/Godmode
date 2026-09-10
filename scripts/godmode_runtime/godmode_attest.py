@@ -1912,6 +1912,28 @@ def executed_predicates(archive: Chronicle, project: Path,
     return predicates
 
 
+_GRADE_RANK = {"unknown": 0, "hypothesis": 1, "observed": 2, "verified": 3}
+
+
+def _dependency_records(archive: Chronicle, sequences: list[int]) -> list[dict[str, Any]]:
+    """The named claims as (sequence, grade, text); an unknown sequence
+    grades `unknown`, the floor, so a typo cannot lift a claim."""
+    wanted = {int(n) for n in sequences}
+    found: dict[int, dict[str, Any]] = {}
+    for record in archive.select(kind="claim", limit=500):
+        sequence = int(record.get("sequence", 0) or 0)
+        if sequence in wanted:
+            data = record.get("data") or {}
+            found[sequence] = {"sequence": sequence, "grade": str(data.get("grade") or "unknown"),
+                               "text": str(data.get("text") or "")}
+    return [found.get(n, {"sequence": n, "grade": "unknown", "text": ""}) for n in sorted(wanted)]
+
+
+def _dependent_count(archive: Chronicle, sequence: int) -> int:
+    return sum(1 for record in archive.select(kind="claim", limit=500)
+               if int(sequence) in [int(n) for n in ((record.get("data") or {}).get("depends_on") or [])])
+
+
 def record_claim(
     archive: Chronicle,
     project: Path,
@@ -1925,6 +1947,7 @@ def record_claim(
     confidence: float | None = None,
     refuted_by: str | None = None,
     transcript_path: str | Path | None = None,
+    depends_on: list[int] | None = None,
 ) -> dict[str, Any]:
     """Persist a claim, downgrading it when its citations do not resolve.
 
@@ -2273,6 +2296,25 @@ def record_claim(
                 break
 
     composed: dict[str, Any] = {}
+    if depends_on:
+        # A claim rests on the claims it names (absorbed from a claim-graph
+        # guard, 2026-09-10): it inherits the weakest grade among them, and
+        # an unverified claim carrying three dependents is load-bearing.
+        dependencies = _dependency_records(archive, depends_on)
+        composed["depends_on"] = [int(n) for n in depends_on]
+        weakest = min(dependencies, key=lambda d: _GRADE_RANK.get(d["grade"], 0), default=None)
+        if weakest is not None and _GRADE_RANK.get(weakest["grade"], 0) < _GRADE_RANK.get(effective, 0):
+            effective = weakest["grade"]
+            composed["inherited_from"] = weakest["sequence"]
+        for dependency in dependencies:
+            if dependency["grade"] == "verified":
+                continue
+            resting = _dependent_count(archive, dependency["sequence"]) + 1
+            if resting >= 3:
+                advisories.append(
+                    f"load-bearing: {resting} claims rest on seq {dependency['sequence']} "
+                    f"('{dependency['text'][:60]}'), graded {dependency['grade']} - verify it or "
+                    "everything above it is a guess with a citation")
     if effective == "verified" and cmd_citations:
         # A claim that arrives verified on a resolving cmd citation never
         # enters the composition below; the reviewer-is-author rule still

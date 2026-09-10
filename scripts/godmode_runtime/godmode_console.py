@@ -998,6 +998,7 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         blast_radius=getattr(args, "blast_radius", None),
         confidence=getattr(args, "confidence", None),
         refuted_by=getattr(args, "refuted_by", None),
+        depends_on=getattr(args, "depends_on", None) or None,
     )
     data = record["data"]
     if check_results:
@@ -3024,6 +3025,11 @@ def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
                     if key in previous:
                         data[key] = previous[key]
                 data["reopened"] = True
+            if getattr(args, "intent_preserved", None):
+                # Two calibration signals, no longer one (2026-09-11): a
+                # reopen that keeps the decision and rewords it, versus one
+                # that replaces it.
+                data["intent_preserved"] = str(args.intent_preserved)
     payload: dict[str, Any] = {
         "record": _append(runtime, args.kind, args.subject, data, args.evidence)
     }
@@ -5166,6 +5172,8 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="Close the claim at SEQ with --outcome and evidence; a claim resolves at most once")
     claim.add_argument("--outcome", choices=list(RESOLUTION_OUTCOMES), default=None,
                        help="With --resolve: held (the claim survived the check) or failed")
+    claim.add_argument("--depends-on", dest="depends_on", type=int, action="append", default=[],
+                       metavar="SEQ", help="A claim this one rests on; the weaker grade is inherited")
     claim.add_argument("--cite", "--evidence", dest="cite", action="append", default=[],
                        help="rec:<hash> or file:<path>#L<n>; repeatable (--evidence is the same flag)")
     claim.add_argument("--external", action="store_true",
@@ -5987,6 +5995,8 @@ def _build_parser() -> argparse.ArgumentParser:
                                "subject to match - surfaces at every stop, "
                                "survives quiet posture (definition-of-done, "
                                "not advisory)")
+    remember.add_argument("--intent-preserved", dest="intent_preserved", choices=["kept", "replaced"],
+                          default=None, help="On a reopen: the agent's decision was kept and reworded, or replaced")
     remember.add_argument("--source", choices=["stated", "inferred"], default="stated",
                           help="Requests only: whether the operator stated this ask "
                                "or the agent inferred it on their behalf")

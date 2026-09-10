@@ -8,6 +8,8 @@ becomes the `retest` attestation the done bar can cite.
 """
 from __future__ import annotations
 
+import json
+
 import re
 from pathlib import Path
 from typing import Any
@@ -45,10 +47,43 @@ def _test_files(project: Path) -> list[str]:
     return [n for n in names if _TEST_FILE.search(n) and not any(s in n for s in _SKIP_DIRS)]
 
 
+TEST_MAP_FILENAME = ".godmode-test-map.json"
+
+
+def committed_test_map(project: Path) -> dict[str, list[str]]:
+    """`.godmode-test-map.json` at the project root: source path -> the test
+    files that pin it, committed by the project (absorbed from a hook
+    toolkit's test-cohesion map, 2026-09-10). Textual pinning cannot see a
+    test that reaches a module through a fixture or a CLI; the map can.
+    Entries naming a test file that does not exist are dropped, stated."""
+    path = Path(project) / TEST_MAP_FILENAME
+    if not path.is_file():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, list[str]] = {}
+    for source, tests in raw.items():
+        if not isinstance(tests, list):
+            continue
+        kept = [str(t).replace("\\", "/") for t in tests if (Path(project) / str(t)).is_file()]
+        if kept:
+            out[str(source).replace("\\", "/")] = kept
+    return out
+
+
 def pinning_tests(project: Path, changed: list[str]) -> dict[str, list[str]]:
     """test file -> the changed files it pins."""
     tests = _test_files(project)
     out: dict[str, list[str]] = {}
+    mapped = committed_test_map(project)
+    for path in changed:
+        for test in mapped.get(path, []):
+            if path not in out.setdefault(test, []):
+                out[test].append(path)
     for test in tests:
         if test in changed:
             out.setdefault(test, []).append(test)
