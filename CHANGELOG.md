@@ -10,6 +10,7 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 - A would-ask folds to deny when the host's permission mode has no human behind the ask (`auto`, `dontAsk`, `bypassPermissions` on Claude Code), with the staged-capability remedy in the reason; `gate-asked` records carry the permission mode. `doctor` names an `ask_only` entry for `git-history-or-remote` or `release-or-external-write`.
 - Release notes for 0.3.25 (`docs/releases/RELEASE_NOTES_v0.3.25.md`).
+- `precheck --preflight` runs the verify workflow's own gate steps (read from the workflow file) after the designated suite, takes `--suite-shards N` to run a `discover` suite as sequential shards, and records a `preflight` attestation at the validated commit; `authorize stage` refuses to stage a push or a release create without a green preflight at HEAD (`--without-preflight "<reason>"` is recorded). The verb-reach assertion names the verbs it finds unnamed.
 - A cited check that cannot fail for the claim's negation (`git status`, `echo`, `ls`, `cat`, and the other state reports) no longer earns `verified`; the claim's support line names it.
 - A claim records the hash of every existing file its text names, so `stale_claims` and the session brief mark a claim made against code that was later replaced.
 - A sentence quoting someone else (four or more words inside quotation marks) is not a claim at Stop or on the next prompt.

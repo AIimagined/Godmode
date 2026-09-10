@@ -80,10 +80,72 @@ def _term_list(repo: Path) -> Path | None:
     return None
 
 
+WORKFLOW_FILE = Path(".github") / "workflows" / "godmode-verify.yml"
+_RUN_LINE = re.compile(r"^\s*(?:-\s*)?run:\s*(?P<cmd>python\s.+?)\s*$")
+_SKIP_GATE = re.compile(r"unittest discover|--version\b")
+PUSH_SHAPED = re.compile(r"(?i)^\s*(?:git\s+push\b|gh\s+release\s+create\b)")
+
+
+def workflow_gate_commands(repo: Path) -> list[str]:
+    """Every single-line `run: python ...` step of the verify job, in order,
+    except the suite (designated separately) and the version smoke. Read
+    from the workflow file itself so a gate added there is a gate here
+    (Codex audit of 37 red runs, 2026-09-10: most were steps only CI ran)."""
+    path = Path(repo) / WORKFLOW_FILE
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    out: list[str] = []
+    in_verify = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if re.match(r"^[A-Za-z0-9_-]+:\s*$", stripped) and not line.startswith(" " * 4):
+            in_verify = stripped == "verify:"
+        if not in_verify:
+            continue
+        match = _RUN_LINE.match(line)
+        if match and not _SKIP_GATE.search(match.group("cmd")):
+            out.append(match.group("cmd"))
+    return out
+
+
+def shard_modules(tests_dir: Path, shards: int) -> list[list[str]]:
+    names = sorted(f"tests.{p.stem}" for p in Path(tests_dir).glob("test_*.py"))
+    return [names[i::shards] for i in range(max(1, shards))]
+
+
+def _head_sha(repo: Path) -> str:
+    done = _git(repo, "rev-parse", "HEAD")
+    return done.stdout.decode("utf-8", errors="replace").strip() if done.returncode == 0 else ""
+
+
+def preflight_gate(archive: Any, project: Path, operation: str) -> str | None:
+    """The reason a push-shaped operation may not be staged: no green
+    preflight attestation at the current HEAD. None when one exists or
+    the operation is not push-shaped."""
+    if archive is None or not PUSH_SHAPED.match(str(operation or "")):
+        return None
+    head = _head_sha(Path(project))
+    newest = None
+    for record in archive.select(kind="attestation", limit=1000):
+        if str(record.get("subject", "")) == "preflight":
+            newest = record
+    data = (newest or {}).get("data") or {}
+    if newest is not None and data.get("status") == "ran" and str(data.get("head", "")) == head:
+        return None
+    seen = (f"newest preflight is {data.get('status')} at {str(data.get('head', ''))[:7]}" if newest
+            else "no preflight attestation on record")
+    return (f"{seen}; HEAD is {head[:7]}. Run `godmode precheck --preflight --suite-shards 4` and stage "
+            "again, or `authorize stage --without-preflight \"<reason>\"` (recorded)")
+
+
 def push_preflight(project: Path | str,
                    suite: list[str] | None = None,
                    archive: Any = None,
-                   dirty: bool = False) -> dict[str, Any]:
+                   dirty: bool = False,
+                   suite_shards: int = 1,
+                   session: str | None = None) -> dict[str, Any]:
     repo = Path(project)
     status = _git(repo, "status", "--porcelain=v1")
     if status.returncode != 0:
@@ -202,6 +264,30 @@ def push_preflight(project: Path | str,
                             suite = shlex.split(str(stored))
             except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
+        if suite and suite_shards > 1 and "discover" in " ".join(suite):
+            # One process over 3,400 tests is killed for memory on the
+            # reference machine; N sequential shards finish. Each shard's
+            # verdict names its own tests.
+            import sys as _sys
+            for index, modules in enumerate(shard_modules(worktree / "tests", suite_shards)):
+                if not modules:
+                    continue
+                try:
+                    shard = subprocess.run([_sys.executable, "-m", "unittest", *modules], cwd=worktree,
+                                           capture_output=True, check=False, timeout=SUITE_TIMEOUT_SECONDS)
+                except subprocess.TimeoutExpired:
+                    judgment.append({"check": "suite", "detail": f"shard {index} killed after "
+                                                                  f"{SUITE_TIMEOUT_SECONDS}s without a verdict"})
+                    break
+                if shard.returncode != 0:
+                    tail = (shard.stderr or shard.stdout or b"")[-20000:].decode("utf-8", errors="replace")
+                    lines = [ln for ln in tail.splitlines() if ln.startswith(("FAIL", "ERROR", "Ran "))][-8:]
+                    judgment.append({"check": "suite",
+                                     "detail": f"suite shard {index} exited {shard.returncode}"
+                                               + (": " + " | ".join(lines) if lines else "")})
+                    break
+            run = None
+            suite = None  # the sharded run stands in for the single process below
         if suite:
             # 3600, not 1800: this repo's own designated suite runs ~27
             # minutes on the reference machine, and a timeout kill is
@@ -257,6 +343,24 @@ def push_preflight(project: Path | str,
             skipped.append(
                 "suite: no command designated - pass --suite once, or record "
                 "it durably: precheck --designate-suite \"<cmd>\"")
+        # The workflow's own gates, in the worktree, first red stops. These
+        # are the steps only CI ran before 2026-09-10.
+        if not judgment and not mechanical:
+            import sys as _sys
+            for command in workflow_gate_commands(repo):
+                argv = command.split()
+                if argv and argv[0] == "python":
+                    argv[0] = _sys.executable
+                try:
+                    gate = subprocess.run(argv, cwd=worktree, capture_output=True, check=False, timeout=900)
+                except (OSError, subprocess.SubprocessError) as exc:
+                    mechanical.append({"check": "workflow-gate", "detail": f"{command}: {exc.__class__.__name__}"})
+                    break
+                if gate.returncode != 0:
+                    tail = (gate.stdout or gate.stderr or b"")[-400:].decode("utf-8", errors="replace").strip()
+                    mechanical.append({"check": "workflow-gate",
+                                       "detail": f"{command} exited {gate.returncode}: {tail[-200:]}"})
+                    break
         # Standing process debt rides the preflight as judgment findings:
         # a push that never saw the dormant census is how commit stacks
         # queue over unstated criteria and assumptions (operator finding,
@@ -382,11 +486,22 @@ def push_preflight(project: Path | str,
                 })
         except Exception:  # noqa: BLE001  # godmode: swallow-ok: a scan that cannot run is named in skipped, never a gate crash
             skipped.append("stale-claims scan: unavailable")
+    verdict = "findings" if mechanical or judgment else "clean"
+    if archive is not None:
+        # The attestation `authorize stage` reads before it stages a push.
+        try:
+            archive.append("attestation", "preflight", {
+                "status": "ran" if verdict == "clean" else "failed", "session": session or "",
+                "head": _head_sha(repo), "validated": validated,
+                "findings": len(mechanical) + len(judgment), "gates": len(workflow_gate_commands(repo)),
+            }, evidence=[])
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: the report still prints; the gate simply finds no attestation
+            pass
     return {
         "mechanical": mechanical,
         "judgment": judgment,
         "skipped": skipped,
-        "verdict": ("findings" if mechanical or judgment else "clean"),
+        "verdict": verdict,
         "validated": validated,
         # The effect of a control action is confirmed, never assumed: the
         # cleanup claim is checked against the filesystem, and an

@@ -50,9 +50,13 @@ class VerbReachTests(unittest.TestCase):
 
     def test_the_unnamed_count_never_rises_above_the_ceiling(self) -> None:
         report = census.verb_reach(PLUGIN_ROOT)
-        self.assertLessEqual(report["counts"]["unnamed"], census.UNNAMED_VERB_CEILING)
+        self.assertLessEqual(report["counts"]["unnamed"], census.UNNAMED_VERB_CEILING,
+                             f"verbs named nowhere: {report['unnamed']}")
         # Named by a skill or a nudge is the demand path; docs-only is not.
-        self.assertLessEqual(report["counts"]["undemanded"], census.UNDEMANDED_VERB_CEILING)
+        # The message names the verbs (CI run 102, 2026-09-10: a bare count
+        # sent the reader to the census module to learn which two).
+        self.assertLessEqual(report["counts"]["undemanded"], census.UNDEMANDED_VERB_CEILING,
+                             f"verbs no shipped SKILL.md or hook nudge names: {report['undemanded']}")
 
     def test_doctor_carries_the_verb_reach_metric(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):

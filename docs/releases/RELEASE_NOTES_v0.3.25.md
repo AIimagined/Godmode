@@ -27,6 +27,14 @@
   or re-render task lists the environment the deciding number must come
   from. A quoted sentence is no longer read as a claim. A process-control
   call's advisory names `checkpoint --owes` for the restore.
+- **Preflight is the push gate's other half.** `godmode precheck
+  --preflight --suite-shards 4` validates HEAD in a disposable worktree:
+  the designated suite as sequential shards, then every gate step the
+  verify workflow declares, read from the workflow file, then the scans.
+  It records a `preflight` attestation at that commit, and `authorize
+  stage` refuses to stage a push or a release create without a green one
+  at HEAD. `--without-preflight "<reason>"` stages anyway and records the
+  reason.
 - **Release notes as a verb.** `godmode release-notes build <version>`
   derives the note from that version's CHANGELOG section, grouped by
   kind, with a Verifying section built from the tests the entries name;

@@ -3301,7 +3301,9 @@ def cmd_precheck(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         report = push_preflight(Path(runtime.anchor.project_root),
                                 suite=getattr(args, "suite", None),
                                 archive=runtime.archive,
-                                dirty=bool(getattr(args, "dirty", False)))
+                                dirty=bool(getattr(args, "dirty", False)),
+                                suite_shards=int(getattr(args, "suite_shards", 1) or 1),
+                                session=_session(runtime, getattr(args, "session", None)))
         return CommandResult(report, exit_code=1 if report["verdict"] == "findings" else 0)
     if not args.about:
         # A missing argument is a usage refusal like every other verb's,
@@ -3596,6 +3598,17 @@ def cmd_authorize_stage(args: argparse.Namespace, runtime: Runtime) -> CommandRe
         operation = args.operation
     else:
         raise ArchiveError("`authorize stage` requires --operation or --from-last-refusal")
+    from .godmode_preflight import preflight_gate
+
+    blocked = preflight_gate(runtime.archive, Path(runtime.anchor.project_root), operation)
+    if blocked and not getattr(args, "without_preflight", None):
+        # Codex audit 2026-09-10: 37 red CI runs, most on steps only CI ran.
+        # A push is staged only over a green preflight at this HEAD.
+        raise ArchiveError(f"refusing to stage a push: {blocked}")
+    if blocked:
+        runtime.archive.append("action", "preflight-skipped",
+                               {"reason": str(args.without_preflight)[:200], "operation": operation[:120]},
+                               evidence=[])
     broker = CapabilityBroker(runtime.archive)
     password = read_password_stdin() if args.password_stdin else None
     if password is None:
@@ -5806,6 +5819,10 @@ def _build_parser() -> argparse.ArgumentParser:
     precheck_parser.add_argument("--suite", nargs="+", default=None,
                                  help="With --preflight: the command to run inside the "
                                       "worktree (e.g. python -m unittest ...)")
+    precheck_parser.add_argument("--suite-shards", dest="suite_shards", type=int, default=1,
+                                 help="With --preflight: run a `discover` suite as N sequential "
+                                      "shards (one process over the whole suite is killed for "
+                                      "memory on small machines)")
     precheck_parser.add_argument("--designate-suite", metavar="CMD",
                                  help="Record the suite durably: every later "
                                       "--preflight runs it without being asked - "
@@ -6079,6 +6096,8 @@ def _build_parser() -> argparse.ArgumentParser:
         help="With --from-last-refusal, pick the nth-most-recent refusal (default 1)")
     staging.add_argument("--ttl", type=int, default=None)
     staging.add_argument("--password-stdin", action="store_true")
+    staging.add_argument("--without-preflight", metavar="REASON", default=None,
+                         help="Stage a push without a green preflight at HEAD; the reason is recorded")
     staging.set_defaults(handler=cmd_authorize_stage)
 
     listing = authorize_sub.add_parser("requests", help="Show recorded requests and outcomes")
