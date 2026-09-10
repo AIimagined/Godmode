@@ -2402,6 +2402,13 @@ def main(argv: list[str] | None = None) -> int:
             # Grounded claims (obligation 10248): claims whose cited
             # evidence moved since they were recorded, named at the start.
             try:
+                from godmode_runtime.godmode_hookproof import manifest_desync
+                desync = manifest_desync()
+                if desync:
+                    brief["hook_manifest_desync"] = desync
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable plugin directory leaves the brief as it was
+                pass
+            try:
                 from godmode_runtime.godmode_attest import stale_claims
                 stale = stale_claims(archive, Path(anchor.project_root))
                 if stale:

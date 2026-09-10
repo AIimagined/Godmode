@@ -983,7 +983,17 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # a cited check that had just failed, and the record said "verified".
     # A check run red this instant caps the grade at observed, whatever
     # the caller asserted.
+    held_results: list[dict[str, Any]] = []
+    if getattr(args, "verify", False):
+        from .godmode_heldback import run_held_checks
+        held_results = run_held_checks(runtime.archive, _session(runtime, args.session),
+                                       Path(runtime.anchor.project_root),
+                                       timeout=getattr(args, "timeout", 900) or 900)
     if check_results and any(not c.get("passed") for c in check_results) and args.grade == "verified":
+        args.grade = "observed"
+    if held_results and any(not r["passed"] for r in held_results) and args.grade == "verified":
+        # The held-back oracle (2026-09-10): a check the agent did not
+        # choose went red; the claim cannot be verified on the checks it did.
         args.grade = "observed"
     record = record_claim(
         runtime.archive,
@@ -1034,6 +1044,11 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     else:
         support = ("nothing executed - no cmd: citation to run; the grade "
                    "rests on document/file overlap only")
+    if held_results:
+        held_red = sum(1 for r in held_results if not r["passed"])
+        support += "; " + (
+            f"{len(held_results)} held-back check(s) ran, {held_red} red"
+            + (" - a check the agent did not choose disagrees; the grade stays observed" if held_red else ""))
     # Sixth field report 2026-09-05 (obligation 9313): the grade was honest
     # but the reader had to know the ladder to act on it. Name the next
     # grade and the exact flag that earns it; --brief shows the same line.
@@ -2182,6 +2197,66 @@ def cmd_hooks_statusline(args: argparse.Namespace, runtime: Runtime) -> CommandR
     return CommandResult(f"[GODMODE {marker} {grade}]")
 
 
+def time_hook(project: Path, event: str, runs: int = 3, host: str | None = None) -> dict[str, Any]:
+    """Wall-clock of the real hook script on a synthetic payload (the Grok
+    timing probe, ledgered 2026-09-07: a host measured 14.8 s for a
+    session start that ran in 0.6 s here). Reported beside the declared
+    timeout so a host that is slow to launch interpreters is named as
+    such, not guessed at."""
+    import subprocess
+    import time as _time
+
+    from .godmode_hookproof import _pretool_timeout_ms
+
+    hook = _PLUGIN_ROOT / "hooks" / "godmode_session_hook.py"
+    payload = {"session-start": {"hook_event_name": "SessionStart", "cwd": str(project)},
+               "pre-action": {"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                              "tool_input": {"command": "git status --short"}, "cwd": str(project)},
+               "stop": {"hook_event_name": "Stop", "cwd": str(project), "stop_hook_active": False}}[event]
+    elapsed: list[int] = []
+    for _ in range(runs):
+        started = _time.perf_counter()
+        subprocess.run([sys.executable, "-I", "-B", str(hook), event, "--project", str(project)],
+                       input=json.dumps(payload), capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=120)
+        elapsed.append(int((_time.perf_counter() - started) * 1000))
+    ordered = sorted(elapsed)
+    declared = _pretool_timeout_ms(host or current_host()) if event == "pre-action" else None
+    return {"event": event, "runs": runs, "elapsed_ms": elapsed, "median_ms": ordered[len(ordered) // 2],
+            "declared_timeout_ms": declared,
+            "verdict": ("over the declared timeout" if declared and ordered[len(ordered) // 2] > declared
+                        else "within the declared timeout" if declared else "no declared timeout for this event")}
+
+
+def cmd_hygiene(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    from .godmode_hygiene import hygiene
+    _require_archive(runtime)
+    report = hygiene(runtime.archive.select(limit=500), cap=int(getattr(args, "cap", 80) or 80))
+    return CommandResult(report, exit_code=0)
+
+
+def cmd_oracle(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    from .godmode_heldback import held_checks, hold_check, run_held_checks
+    _require_archive(runtime)
+    if args.oracle_command == "hold":
+        if getattr(args, "password_stdin", False):
+            password = read_password_stdin()
+        else:
+            from .godmode_sentinel import _require_tty
+            _require_tty()
+            import getpass
+            password = getpass.getpass("Godmode authorization password: ")
+        return CommandResult(hold_check(runtime.archive, args.command, password))
+    if args.oracle_command == "list":
+        return CommandResult({"held": [{"digest": c["digest"]} for c in held_checks(runtime.archive)],
+                              "note": "commands stay under the git metadata directory; the digest is the handle"})
+    results = run_held_checks(runtime.archive, _session(runtime, getattr(args, "session", None)),
+                              Path(runtime.anchor.project_root), timeout=int(getattr(args, "timeout", 900) or 900))
+    red = [r for r in results if not r["passed"]]
+    return CommandResult({"ran": len(results), "red": len(red), "results": results},
+                         exit_code=1 if red else 0)
+
+
 def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     """CX-1: `status` reads the chronicled proof back; `probe` produces a fresh one.
 
@@ -2222,6 +2297,9 @@ def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         }
         payload.update(_hooks_health_fields(runtime.archive, host, level))
         return CommandResult(payload)
+    if args.hooks_command == "time":
+        return CommandResult(time_hook(Path(runtime.anchor.project_root), args.event,
+                                       runs=max(1, int(args.runs)), host=host))
     if args.hooks_command == "probe":
         if not runtime.archive.initialized():
             return CommandResult(
@@ -2435,6 +2513,14 @@ def cmd_recurrences(args: argparse.Namespace, runtime: Runtime) -> CommandResult
                               if matches else "no registry row shares two distinctive words with this text"},
                              exit_code=0)
     _require_archive(runtime)
+    if getattr(args, "propose", False):
+        from .godmode_registry import proposed_rows
+        rows = proposed_rows(runtime.archive.select(limit=500))
+        return CommandResult({"proposed": rows,
+                              "next": ("each row is a class the record waived three times with one reason; "
+                                       "add it to the fixed registry with a guard, or name why it is not a class")
+                              if rows else "no reason recurs three times across waived work"},
+                             exit_code=0)
     report = recurrences(runtime.archive)
     # A control that blocked twice on the same cause is a finding about the process,
     # not about that one block.
@@ -5663,6 +5749,8 @@ def _build_parser() -> argparse.ArgumentParser:
                                     help="The fixed-registry markdown table (default: docs/FIXED-REGISTRY.md)")
     recurrences_parser.add_argument("--against", metavar="TEXT", default=None,
                                     help="A new report or feedback text to match against registry symptoms")
+    recurrences_parser.add_argument("--propose", action="store_true",
+                                    help="Registry rows the record proposes: a reason that waived work three times")
     recurrences_parser.set_defaults(handler=cmd_recurrences)
     sbom_parser = sub.add_parser("sbom", help="List what ships and what it depends on")
     sbom_parser.add_argument("--format", choices=["spdx", "cyclonedx"],
@@ -5703,6 +5791,25 @@ def _build_parser() -> argparse.ArgumentParser:
     reflect_parser = sub.add_parser("reflect", help="Check a claim against what the record already says")
     reflect_parser.add_argument("text")
     reflect_parser.set_defaults(handler=cmd_reflect)
+
+    hygiene_parser = sub.add_parser(
+        "hygiene", help="Near-duplicate and contradicting lessons and decisions, as a review list")
+    hygiene_parser.add_argument("--cap", type=int, default=80,
+                                help="Newest active records considered per kind (default 80)")
+    hygiene_parser.set_defaults(handler=cmd_hygiene)
+
+    oracle_parser = sub.add_parser(
+        "oracle", help="Held-back checks the operator designates; the done bar runs them, the agent never picks them")
+    oracle_sub = oracle_parser.add_subparsers(dest="oracle_command", required=True)
+    oracle_hold = oracle_sub.add_parser("hold", help="Designate a held-back check (password)")
+    oracle_hold.add_argument("--command", required=True, help="The check to hold back")
+    oracle_hold.add_argument("--password-stdin", action="store_true",
+                             help="Read the password from standard input instead of prompting")
+    oracle_hold.set_defaults(handler=cmd_oracle)
+    oracle_sub.add_parser("list", help="The held-back checks by digest").set_defaults(handler=cmd_oracle)
+    oracle_run = oracle_sub.add_parser("run", help="Run every held-back check and attest each outcome")
+    oracle_run.add_argument("--timeout", type=int, default=900)
+    oracle_run.set_defaults(handler=cmd_oracle)
 
     scope_parser = sub.add_parser("scope", help="Enumerate the work before reasoning about it")
     scope_parser.add_argument("--since", help="Compare against this ref instead of the working tree")
@@ -5799,6 +5906,12 @@ def _build_parser() -> argparse.ArgumentParser:
     hooks_probe.add_argument(
         "--host", help="Host label to record the proof under (default: detected)")
     hooks_probe.set_defaults(handler=cmd_hooks)
+    hooks_time = hooks_sub.add_parser(
+        "time", help="Time the real hook on a synthetic payload, against the declared timeout")
+    hooks_time.add_argument("--event", choices=["session-start", "pre-action", "stop"], default="pre-action")
+    hooks_time.add_argument("--runs", type=int, default=3)
+    hooks_time.add_argument("--host", help="Host whose declared timeout to compare against (default: detected)")
+    hooks_time.set_defaults(handler=cmd_hooks)
     hooks_sub.add_parser(
         "statusline",
         help="One compact plain-text segment for a terminal statusline: "

@@ -863,6 +863,160 @@
         "test:tests/test_law.py"
       ],
       "status": "built"
+    },
+    {
+      "id": "C-83",
+      "statement": "Two clones of a project without an eol attribute produce one checksums manifest: text hashed with CR stripped, binary byte-for-byte, the rule named in the report.",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_bindings.py"
+      ],
+      "guard": [
+        "test:tests/test_checksums_eol.py"
+      ],
+      "status": "built"
+    },
+    {
+      "id": "C-84",
+      "statement": "A shell literal piped into --password-stdin is refused outright so a typed password never reaches a transcript; a refusal record carries the full operation digest so staging from it works past the record cut.",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_sentinel.py"
+      ],
+      "guard": [
+        "test:tests/test_authorize_field_incident.py"
+      ],
+      "status": "built"
+    },
+    {
+      "id": "C-85",
+      "statement": "A request closure closes only the asks recorded before it; the stop gate and the closure command read one request window.",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_requests.py"
+      ],
+      "guard": [
+        "test:tests/test_request_closure_ordering.py"
+      ],
+      "status": "built"
+    },
+    {
+      "id": "C-86",
+      "statement": "The context tripwire names a stale window declaration when the measurement exceeds it and says when a compaction already ran and left the budget full.",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_iteration.py"
+      ],
+      "guard": [
+        "test:tests/test_context_tripwire.py"
+      ],
+      "status": "built"
+    },
+    {
+      "id": "C-87",
+      "statement": "Every action-record subject is pinned in one set; a census test greps every writer and reader for the literal.",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_constants.py"
+      ],
+      "guard": [
+        "test:tests/test_action_subjects.py"
+      ],
+      "status": "built"
+    },
+    {
+      "id": "C-88",
+      "statement": "A static check names any module.name read that no godmode module defines.",
+      "impl": [
+        "file:tests/test_phantom_attributes.py"
+      ],
+      "guard": [
+        "test:tests/test_phantom_attributes.py"
+      ],
+      "status": "built"
+    },
+    {
+      "id": "C-89",
+      "statement": "A reopened ask records whether the agent's decision was kept and reworded or replaced.",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_console.py"
+      ],
+      "guard": [
+        "test:tests/test_ledger_builds_0_3_25.py"
+      ],
+      "status": "built"
+    },
+    {
+      "id": "C-90",
+      "statement": "retest reads a committed source-to-tests map beside its textual pins.",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_retest.py"
+      ],
+      "guard": [
+        "test:tests/test_ledger_builds_0_3_25.py"
+      ],
+      "status": "built"
+    },
+    {
+      "id": "C-91",
+      "statement": "A claim names the claims it rests on, inherits the weakest grade among them, and an unverified claim with three dependents is named load-bearing.",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_attest.py"
+      ],
+      "guard": [
+        "test:tests/test_ledger_builds_0_3_25.py"
+      ],
+      "status": "built"
+    },
+    {
+      "id": "C-92",
+      "statement": "A hygiene pass lists near-duplicate and contradicting lessons and decisions among the newest active records per kind.",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_hygiene.py"
+      ],
+      "guard": [
+        "test:tests/test_ledger_builds_0_3_25c.py"
+      ],
+      "status": "built"
+    },
+    {
+      "id": "C-93",
+      "statement": "A reason that waived, parked, deferred or declined work three times is proposed as a fixed-registry row.",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_registry.py"
+      ],
+      "guard": [
+        "test:tests/test_ledger_builds_0_3_25c.py"
+      ],
+      "status": "built"
+    },
+    {
+      "id": "C-94",
+      "statement": "The session brief names a hook manifest that differs from another install of the same plugin and version.",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_hookproof.py"
+      ],
+      "guard": [
+        "test:tests/test_ledger_builds_0_3_25c.py"
+      ],
+      "status": "built"
+    },
+    {
+      "id": "C-95",
+      "statement": "The real hook is timed on a synthetic payload against the declared timeout.",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_console.py"
+      ],
+      "guard": [
+        "test:tests/test_ledger_builds_0_3_25c.py"
+      ],
+      "status": "built"
+    },
+    {
+      "id": "C-96",
+      "statement": "Operator-designated held-back checks live under the git metadata directory; claim verification runs them and a red one caps the grade.",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_heldback.py"
+      ],
+      "guard": [
+        "test:tests/test_ledger_builds_0_3_25c.py"
+      ],
+      "status": "built"
     }
   ],
   "detectors": [

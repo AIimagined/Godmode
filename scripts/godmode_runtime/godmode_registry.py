@@ -149,3 +149,34 @@ def design_mentions(project: Path, text: str, limit: int = 5) -> list[dict[str, 
 
 def design_verdict_sentences(reply: str) -> list[str]:
     return [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", reply or "") if _DESIGN_VERDICT.search(s)]
+
+
+WAIVER_STATUSES = frozenset({"waived", "parked", "deferred", "declined"})
+PROPOSAL_THRESHOLD = 3
+
+
+def proposed_rows(records: list[dict[str, Any]], threshold: int = PROPOSAL_THRESHOLD) -> list[dict[str, Any]]:
+    """Registry rows the record itself proposes (absorbed from a triage
+    learner's suppression-pattern rule, 2026-09-10): an obligation or ask
+    waived, parked, deferred or declined `threshold` times with the same
+    reason is a class, not three incidents. The row is proposed, never
+    written - the operator's registry stays the operator's."""
+    groups: dict[frozenset[str], dict[str, Any]] = {}
+    for record in records:
+        if record.get("kind") not in ("obligation", "request"):
+            continue
+        data = record.get("data") or {}
+        if str(data.get("status", "")).lower() not in WAIVER_STATUSES:
+            continue
+        reason = str(data.get("reason") or data.get("value") or "")
+        key = frozenset(tokens(reason))
+        if len(key) < 2:
+            continue
+        group = groups.setdefault(key, {"reason": reason[:160], "occurrences": 0, "subjects": []})
+        group["occurrences"] += 1
+        subject = str(record.get("subject", ""))[:80]
+        if subject not in group["subjects"]:
+            group["subjects"].append(subject)
+    proposals = [dict(group, symptom=" ".join(sorted(key))[:120])
+                 for key, group in groups.items() if group["occurrences"] >= threshold]
+    return sorted(proposals, key=lambda row: (-row["occurrences"], row["reason"]))

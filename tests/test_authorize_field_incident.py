@@ -53,6 +53,16 @@ class HostMemoryDirectoryTests(unittest.TestCase):
         self.assertTrue(elsewhere["protected"], elsewhere)
 
 
+class ScratchThroughAVariableTests(unittest.TestCase):
+    def test_a_redirect_into_the_temp_variable_is_a_scratch_write(self) -> None:
+        import os
+        variable = "$TEMP" if os.name == "nt" else "$TMPDIR"
+        with mock.patch.dict(os.environ, {variable[1:]: tempfile.gettempdir()}):
+            verdict = classify_action(f'python -m unittest tests.test_x > "{variable}/run.txt" 2>&1',
+                                      project_root=Path.cwd())
+        self.assertFalse(verdict["protected"], verdict)
+
+
 class NoTerminalMessageTests(unittest.TestCase):
     def test_the_no_terminal_message_names_where_a_terminal_is(self) -> None:
         with mock.patch.object(sys, "stdin", io.StringIO("")):

@@ -3,7 +3,10 @@
 What exists and where, so nothing is rebuilt blind.
 
 `capabilities.json` (repo root) is now the machine-checkable inventory of
-82 numbered capability statements (`C-01`…`C-82`; C-73 turned out to have
+96 numbered capability statements (`C-01`…`C-96`; `C-83`…`C-96` are the
+2026-09-11 builds: the held-back oracle, `depends_on`, hygiene, proposed
+registry rows, manifest desync, hook timing, the two static checks, and
+the incident fixes; C-73 turned out to have
 real content once code comments were searched, not only the sprint-ledger
 markdown — it is "rank-fusion context ranking," `rejected` on measurement
 per `godmode_corpus.rank`'s own docstring, a fix-round-1 correction; the

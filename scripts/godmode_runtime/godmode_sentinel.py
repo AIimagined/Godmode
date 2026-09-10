@@ -2041,6 +2041,10 @@ def _is_scratch(target: Path, project_root: Path | None = None) -> bool:
     a property of the machine, not of the repository, so nothing a clone ships
     can widen it.
     """
+    # `$TEMP/x.txt`, `%TEMP%/x.txt`, `$TMPDIR/x` (2026-09-11): the redirect
+    # names the scratch directory through the variable the shell will
+    # expand; unexpanded, it read as a relative path outside the tree.
+    target = Path(os.path.expandvars(str(target)))
     try:
         # _canonical_path_text, not bare normcase/normpath: the temp dir is
         # the most alias-prone path on any machine (Windows spells it
@@ -3926,11 +3930,16 @@ def _downgrade_harmless_fetches(segments: list[str],
 
 
 def _without_path_tokens(text: str) -> str:
-    """The command with every path-shaped token (one carrying a slash,
-    a backslash, or a file extension) removed, so a verb-word inside a
-    filename is not read as the verb."""
+    """The command with every path-shaped token (one carrying a slash, a
+    backslash, or a file extension) and every hyphenated name
+    (`release-notes`, `deploy-guide`) removed, so a verb-word inside a
+    filename or a compound name is not read as the verb. Field-caught
+    twice on 2026-09-11: a doc edit on `docs/release-notes.md`, and
+    `godmode release-notes check` itself."""
     return " ".join(token for token in str(text).split()
-                    if not ("/" in token or "\\" in token or re.search(r"\.[A-Za-z0-9]{1,6}$", token)))
+                    if not ("/" in token or "\\" in token
+                            or re.search(r"\.[A-Za-z0-9]{1,6}$", token)
+                            or re.match(r"^[A-Za-z][\w.]*-[\w.-]+$", token)))
 
 
 def classify_action(operation: str, extra_protected: tuple[str, ...] = (),

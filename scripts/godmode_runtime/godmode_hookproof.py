@@ -1092,3 +1092,56 @@ def run_probe(
     if not result["denied"]:
         return _fail("hook did not deny the probe operation", "not-denied")
     return _fail("hook denied the probe but wrote no matching proof record", "proof-not-recorded")
+
+
+def manifest_desync(package_root: Path | None = None, home: Path | None = None) -> dict[str, Any] | None:
+    """The running hook manifest against every other install of the same
+    plugin under the host's plugin directory (absorbed from a hook toolkit's
+    config-desync guard, 2026-09-10; the field case is a plugin-cache copy
+    truncated at 1 MiB while the marketplace source was whole). None when
+    they agree or nothing else is installed; otherwise the digests, so the
+    session brief can say which copy is the odd one out."""
+    import hashlib
+
+    root = package_root or _PACKAGE_ROOT
+    own = root / "hooks" / "hooks.json"
+    if not own.is_file():
+        return None
+    try:
+        own_digest = hashlib.sha256(own.read_bytes()).hexdigest()[:12]
+        identity = json.loads((root / "plugin.json").read_text(encoding="utf-8"))
+        name, version = identity.get("name"), identity.get("version")
+    except (OSError, ValueError):
+        return None
+    if not name:
+        return None
+    base = (home or Path.home()) / ".claude" / "plugins"
+    others: list[dict[str, str]] = []
+    # Bounded patterns, never `**`: the plugin directory holds every cached
+    # release and their node trees, and a recursive walk at session start
+    # timed the hook out (2026-09-11).
+    candidates: list[Path] = []
+    if base.is_dir():
+        for pattern in ("marketplaces/*/hooks/hooks.json", "marketplaces/*/*/hooks/hooks.json",
+                        "cache/*/*/*/hooks/hooks.json", "cache/*/*/hooks/hooks.json"):
+            candidates.extend(base.glob(pattern))
+    for candidate in sorted(set(candidates)):
+        other_root = candidate.parents[1]
+        if other_root.resolve() == root.resolve():
+            continue
+        try:
+            other = json.loads((other_root / "plugin.json").read_text(encoding="utf-8"))
+            digest = hashlib.sha256(candidate.read_bytes()).hexdigest()[:12]
+        except (OSError, ValueError):
+            continue
+        # Same plugin, same version: an older cached release differing is
+        # history, not desync.
+        if other.get("name") != name or other.get("version") != version or digest == own_digest:
+            continue
+        others.append({"path": str(other_root), "digest": digest})
+    if not others:
+        return None
+    return {"running": str(root), "running_digest": own_digest, "differs_from": others[:4],
+            "advisory": (f"the running hook manifest differs from {len(others)} other install(s) of "
+                         f"{name}; a plugin-cache copy can be a truncated one - compare sizes and "
+                         "recopy from the marketplace source, or reinstall")}

@@ -29,6 +29,8 @@ class ReleaseWordInsideAPathTests(unittest.TestCase):
             'sed -i "s/foo/bar/" docs/release-notes.md',
             "sed -i 's/x/y/' docs/deploy-guide.md",
             "cp templates/publish.yml .github/workflows/publish.yml",
+            "godmode release-notes check 0.3.25",
+            "python scripts/godmode.py --json release-notes build 0.3.25",
         ):
             self.assertNotEqual(classify_action(command)["category"], "release-or-external-write", command)
 

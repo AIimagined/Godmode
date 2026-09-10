@@ -82,6 +82,38 @@
 - **README** describes the current surface: the iteration controls, the
   scope gate and the oracle, the ledger after a compaction, the sentinel
   shapes added in 0.3.24, the node scan, and the numbers.
+- **Held-back checks.** `godmode oracle hold --command "<check>"` (with
+  the operator password) keeps a check under the git metadata directory,
+  where the agent never chose it; `claim --verify` runs every held check
+  after the cited ones, and a red one caps the grade at `observed`.
+  `oracle list` and `oracle run` read and run them by digest.
+- **Claims that rest on claims.** `claim --depends-on SEQ` records what a
+  claim rests on; the weakest grade among them is inherited, and an
+  unverified claim carrying three dependents is named load-bearing.
+- **Memory hygiene.** `godmode hygiene` lists near-duplicate and
+  contradicting lessons and decisions among the newest active records
+  per kind, as a review list; it decides nothing.
+- **Registry rows the record proposes.** `recurrences --propose` names a
+  reason that waived, parked, deferred or declined work three times as a
+  proposed fixed-registry row.
+- **A committed test map.** `retest` reads `.godmode-test-map.json`
+  (source path to the tests that pin it) beside its textual pins.
+- **Reopen with intent.** `remember --kind request --status open
+  --intent-preserved kept|replaced` records whether the operator kept the
+  agent's decision and reworded it, or replaced it.
+- **Hook manifest desync.** The session brief names a running hook
+  manifest that differs from another install of the same plugin and
+  version; a truncated plugin-cache copy is the case it was built for.
+- **Hook timing.** `godmode hooks time --event pre-action --runs 3`
+  measures the real hook on a synthetic payload against the declared
+  timeout.
+- **Two static checks.** `ACTION_SUBJECTS` pins every subject an action
+  record is written under, with a census over writers and readers; a
+  second test names any `module.name` read no godmode module defines.
+- **The tripwire says when compaction cannot help.** A measured context
+  past the declared window names a stale `context_window` declaration; a
+  compaction that already ran and left more than half the window says
+  another will free little.
 
 ## Using it
 
@@ -101,6 +133,28 @@
   commits of this cut; the preflight gate caught it, and the preflight now
   also runs the composite action's own gates (integrity and changelog
   against HEAD~1, release-notes check).
+- One memory-write incident, four defects: a write into the host's own
+  project-memory directory is an ordinary write, not "outside the working
+  tree"; the no-terminal error names a separate terminal window and the
+  shim path; a shell literal piped into `--password-stdin` is refused
+  outright (`password-in-transcript`, R5) so a typed password never lands
+  in a transcript; and a refusal record carries the full operation digest,
+  so `authorize stage --from-last-refusal` stages a command longer than
+  the 500-character record cut. A redirect into `$TEMP`, `%TEMP%` or
+  `$TMPDIR` is a scratch write.
+- A request closure closes only the asks recorded before it, and the
+  stop gate reads the same request window the closure command reads, so
+  the gate and `remember --kind request --status closed` agree.
+- Stop-hook notices arrive one per line. Checkpoint pressure counts
+  code-shaped edits, not prose appends.
+- `claim --verify` runs project commands on Windows (`npx`, `tsc`,
+  `vitest` shims resolve through PATHEXT; backslashes survive the split),
+  a check that just ran red caps the grade at `observed`, and the support
+  line counts runs and passes separately.
+- External-write verbs are judged on bare words, never on a word inside
+  a path.
+- `checksums` hashes text files with CR stripped, so two honest clones of
+  a project without an `eol=lf` attribute produce one manifest.
 
 ## Limits
 
@@ -116,3 +170,12 @@
   renders `ask`.
 - `godmode history --kind action --limit 5` after a gated call shows
   `permission_mode` on the `gate-asked` row.
+- `python -m unittest tests.test_authorize_field_incident
+  tests.test_request_closure_ordering tests.test_context_tripwire
+  tests.test_field_feedback_0_3_25b`: the four incident defects, the
+  closure ordering, the tripwire's three sentences, and the red-check cap.
+- `python -m unittest tests.test_ledger_builds_0_3_25
+  tests.test_ledger_builds_0_3_25c tests.test_action_subjects
+  tests.test_phantom_attributes tests.test_checksums_eol`: the held-back
+  oracle, `depends_on`, hygiene, proposed rows, manifest desync, hook
+  timing, the two static checks, and the checksums manifest.
