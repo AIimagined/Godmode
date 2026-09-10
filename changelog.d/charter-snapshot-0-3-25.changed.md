@@ -1,0 +1,1 @@
+- The charter eval snapshot follows the inventory document edited for the 2026-09-11 builds.

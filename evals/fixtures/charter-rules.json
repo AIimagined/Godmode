@@ -78,6 +78,12 @@
       "trigger": "always",
       "verify": "none"
     },
+    "R-d2d4cbffc5": {
+      "enforcement": "ADVISORY",
+      "text_hash": "fd2fa36520e1cd22",
+      "trigger": "always",
+      "verify": "none"
+    },
     "R-db95542fd0": {
       "enforcement": "HARD",
       "text_hash": "170a6518175c0060",
@@ -89,12 +95,6 @@
       "text_hash": "9da1de908466b152",
       "trigger": "before_completion",
       "verify": "attestation_present"
-    },
-    "R-e9e778e13a": {
-      "enforcement": "ADVISORY",
-      "text_hash": "b4feaaaadfb3b87e",
-      "trigger": "always",
-      "verify": "none"
     }
   },
   "schema": "godmode-charter-snapshot-v1",
