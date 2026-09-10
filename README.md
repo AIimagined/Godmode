@@ -5,7 +5,9 @@
 <p align="center">
   <b>Your coding agent says "done." Godmode is how you know.</b><br>
   A local, tamper-evident record of what the agent did, what it claimed, and what was verified -<br>
-  with a gate that classifies risky actions before they run.<br>
+  with a gate that classifies risky actions before they run,<br>
+  a loop that stops when nothing new arrives, an oracle check that names a test<br>
+  the patch weakened, and a ledger that survives compaction.<br>
   Zero runtime dependencies · zero network use · nothing leaves your machine.<br>
   Claude Code · Grok · Codex · OpenCode · Antigravity —
   <a href="#host-support">enforcement graded per host</a>
@@ -248,6 +250,17 @@ subprocess spawned; anything else escalates to the full classifier.
 $ godmode capabilities
 ```
 
+Shapes the corpus never named before 0.3.24 are named now: a write to a
+hook, workflow, or host-settings file (`hook-as-code-write`, R3); a
+release-freeze marker created or removed (R3); a docker socket mount
+(R3); a shadow copy, restore point, or backup catalog deleted
+(`recovery-point-destruction`, R5); `git add -A` sweeping files outside
+an approved plan fence (ask, deny in strict). An ask is only an ask when
+a person answers it: in a host permission mode where the host's own
+classifier answers (`auto`, `dontAsk`, `bypassPermissions`) a would-ask
+folds to deny with the staged-capability remedy, the same fold hosts
+with no ask dialog already get.
+
 `tool_call_interception` reports one of five levels
 (`UNAVAILABLE`/`SOFT`/`PARTIAL`/`HARD`/`DEGRADED`), never a claim the
 evidence cannot back. `HARD` needs a fresh, live, chronicled proof: a host
@@ -358,6 +371,63 @@ $ godmode egress --staged
 $ godmode netgate
 ```
 
+### The iteration controls
+
+An agent that retries the same fix for hours is spending, not learning.
+Godmode reads the host transcript, never the model's own account of it:
+a **loop episode** is one error signature, the same hunks, and no new
+file, assertion, or error class for six attempts (four in the novice
+profile, eight in strict). Stop names it with the turn where new
+information last arrived, and records a `would-have-stopped-loop`
+receipt. Inside the turn, the fourth run of a command that has failed
+three times against an unchanged tree is asked about with the count.
+Token spend is measured from the transcript's usage fields against a
+declared ceiling; the window is named at seventy percent of the
+`context_window` ceiling; a commit-score plateau and the stall streak
+are named, and the halt threshold blocks until an operator-stated
+record clears it.
+
+```console
+$ godmode loop --transcript <path>
+$ godmode status remaining --digest --transcript <path>
+```
+
+### The scope gate and the oracle
+
+"Everything is complete" is blocked once at Stop while the record still
+holds this session's operator asks, the plan's pending steps, criteria
+no claim cites, a hypothesis that failed three checkpoints, or a
+temporary change (`checkpoint --owes`) nobody restored - with the list
+and each item's closing command.
+
+Twelve integrity monitors read the diff since the last green: an
+assertion removed, a literal moved to match the new output, a skip
+added, a harness node taught to tolerate failure, a test file that is
+new and was never observed red, a test that cannot fail as written, and
+a test weakened in the same diff as the source it checks. `claim
+--verify` runs the cited command and records the exit code; a claim
+whose check runs a file this session edited is downgraded. A perimeter
+check (`perimeter add "<boot command>"`) must run this session before
+`session close`, and a step attested green earlier and red since refuses
+closure as a regression.
+
+```console
+$ godmode integrity --base HEAD
+$ godmode perimeter add "python -c 'import app'"
+$ godmode session close
+```
+
+### After a compaction
+
+The brief on every start, including the start after the host compacts
+the conversation, carries a ledger rebuilt from records: goal,
+invariants, acceptance commands, files in play, failed approaches, last
+green, open obligations, and the current step. `session open` records
+the hash and line count of every instruction file, names one past 200
+lines, and names a conflict between a file that forbids editing tests
+and a plan step that edits one. See
+[docs/COMPACTION-AND-LEDGER.md](docs/COMPACTION-AND-LEDGER.md).
+
 ### The loops
 
 Three loops keep the record teaching the project instead of just growing.
@@ -380,9 +450,11 @@ file. A second hand-written loosening, `"inline_interpreter": "scan"`,
 reads a Python `-c` or heredoc payload at a segment's head with the
 standard library's `ast` and clears it when every import is from a
 read-only module table and nothing executes, imports dynamically, reaches
-a dunder, or opens a file for writing; each clearance leaves an action
-record, anything unreadable keeps the ask, and other interpreters are not
-read.
+a dunder, or opens a file for writing; a `node -e`/`-p` payload is read as
+tokens against a read-only module table with no eval, Function, import(),
+network object, or writing fs member. Scan is the default posture since
+0.3.24; each clearance leaves an action record and anything unreadable
+keeps the ask.
 
 The **echo loop**: claim-shaped sentences in a reply that never became
 records, and open obligations the turn touched, are parked at Stop and
@@ -539,10 +611,11 @@ Every row below was run against this repository to write this document.
 
 | Claim | Reproduce it |
 |---|---|
-| 23 staged failure and attack shapes, all caught | `godmode scenarios --brief` → `all-caught \| total=23` |
+| 29 staged failure and attack shapes, all caught | `godmode scenarios --brief` → `all-caught \| total=29` |
+| 12 integrity monitors over the diff since the last green | `python -m unittest tests.test_godmode_runtime.IntegrityTests -v` |
 | 13 adversarial attacks on the controls, all held | `godmode grid --brief` → `controls-held \| passed=13` |
 | 81 capability entries reconciled, 0 dead pointers either direction | `godmode capabilities --reconcile` |
-| 142-command gate regression corpus, zero regressions | `python -m unittest tests.test_gate_corpus -v` |
+| 196-command gate regression corpus, zero regressions | `python -m unittest tests.test_gate_corpus -v` |
 | Repository text scanned clean of instruction-shaped strings | `python scripts/godmode.py untrusted --brief` → `data-only` |
 
 Two numbers below are a historical measurement, not a re-assertion of this
@@ -578,7 +651,7 @@ when no compatible boundary exists.
 | **Codex** | Same plugin package (`.codex-plugin/plugin.json`), same hooks convention | **One wiring step needed (Codex CLI host bug).** Codex 0.150.1 ignores plugin-bundled hook manifests entirely - its own bundled plugins' hooks also show `Installed: 0` in `/hooks` - which conflicts with its documented plugin-hook behaviour. Codex does load project-level config, so `godmode hooks wire` writes a `.codex/hooks.json` fallback projecting the shared hooks into absolute commands (`py -3` on Windows); the operator reviews and Trusts each command inside `codex`, then `/hooks` reports the events Installed and Active (verified live 2026-08-28: PreToolUse and SessionStart, 1/1, Trusted - hooks execute outside Codex's sandbox, which is why the trust step is Codex's own and cannot be automated). Skills and the CLI work with no fallback. |
 | **Grok** | Same plugin package (`.grok-plugin/plugin.json`), same hooks convention | **Live-proven (2026-08-28 field report, on Windows).** Real tool calls in a live Grok session run the gate: a protected command and an unmapped tool were denied and the host honored the deny (the tools did not run), and `godmode hooks status` reads HARD from a fresh probe whose proof record carries the host's acknowledgement. A second live session (2026-08-29) caught one claim here running ahead of the runtime: the read-only-builtin allowance was pinned under `GROK_AGENT`, a variable Grok's hook subprocess does not set - detection now also keys on `GROK_PLUGIN_ROOT`/`GROK_HOOK_EVENT`, the variables it does inject, pinned exactly so. A third live session (2026-08-29, Grok 1.0.5) then chronicled the pass: the previously denied builtin ran, `grep` and `read_file` pass, and `hooks status` reads HARD with Stop and PostToolUse in the declared events - the claim stands on that chronicle, not on the lab pin that first carried it. Grok sets `CLAUDE_PLUGIN_ROOT` as an alias and loads the shared `hooks/hooks.json`; on Windows it hands each command string to PowerShell and rewrites known `$VAR` refs to `$env:VAR`. A fourth live session (2026-09-05, Grok 1.0.13, Windows) found the quoted-path command shape parse-failing there and every hook fail-open; the entry is now `cd "${CLAUDE_PLUGIN_ROOT}/hooks"; ./run-hook.cmd <hook>`, pinned in a Grok session on that machine (project-scope hooks and a headless deny) and fed to pwsh by a Windows CI job on every run. Grok has no `ask` decision, so a would-ask folds to deny with the staged-capability remedy. |
 | **OpenCode** | Instruction-file adapter plus an optional Bun plugin shim ([`adapters/`](./adapters/README.md)) | Attestation, claim-downgrade, and plan-gate controls run through the host-independent CLI and hold. With `adapters/opencode/godmode.opencode.js` installed as an OpenCode plugin, every `bash`/`write`/`edit`/`patch` call runs through the real gate and a deny throws before the tool runs (fail-closed); `tool_call_interception` is declared `SOFT` until a live OpenCode block is chronicled as a proof. |
-| **Antigravity** | Native skill discovery (`.agents/skills/`) plus a dedicated hook artifact ([`.antigravity-plugin/hooks-fragment.json`](./.antigravity-plugin/hooks-fragment.json)) | **Skills and CLI live-proven (2026-08-29 field report):** an Antigravity agent cloned the repo, ran `godmode init --profile standard`, the full unit suite, the 23-scenario battery, and observe mode entirely through its own tools, with skills discovered from `.agents/skills/`. The hook side is transcribed from Antigravity's published hooks documentation (PreToolUse stdin nests the tool under `toolCall`; stdout is one JSON object `{decision, reason}`, and Antigravity has a real `ask`): the adapter maps `run_command` as shell and `view_file` as read, fails unknown names closed, and `godmode hooks wire --host antigravity` writes the project's `.agents/hooks.json`. `tool_call_interception` is declared SOFT - never probed live - and a community report says Stop hooks may not fire on Windows (IDE 1.107.0). |
+| **Antigravity** | Native skill discovery (`.agents/skills/`) plus a dedicated hook artifact ([`.antigravity-plugin/hooks-fragment.json`](./.antigravity-plugin/hooks-fragment.json)) | **Skills and CLI live-proven (2026-08-29 field report):** an Antigravity agent cloned the repo, ran `godmode init --profile standard`, the full unit suite, the scenario battery (23 at the time), and observe mode entirely through its own tools, with skills discovered from `.agents/skills/`. The hook side is transcribed from Antigravity's published hooks documentation (PreToolUse stdin nests the tool under `toolCall`; stdout is one JSON object `{decision, reason}`, and Antigravity has a real `ask`): the adapter maps `run_command` as shell and `view_file` as read, fails unknown names closed, and `godmode hooks wire --host antigravity` writes the project's `.agents/hooks.json`. `tool_call_interception` is declared SOFT - never probed live - and a community report says Stop hooks may not fire on Windows (IDE 1.107.0). |
 | **Cursor, Gemini CLI** | Instruction-file adapters ([`adapters/`](./adapters/README.md)) plus shipped pre-tool hook manifests (`.cursor-plugin/hooks.json`, `.gemini-plugin/hooks-fragment.json`) | Attestation, claim-downgrade, and plan-gate controls run through the host-independent CLI and hold. `tool_call_interception` reads `PARTIAL` (manifest present, not freshly proven) only when the session explicitly declares itself (`GODMODE_HOST=cursor`/`gemini`); by default neither host sets that, so an ordinary session still reads `UNAVAILABLE`. Neither manifest's wiring is live-probed — neither host is installed on the machine this was developed on — so PARTIAL stays a structural claim about what's shipped, not a proof the host calls it. Both adapters are built from those hosts' own published hook references (tool types and payload field names), and a checked-in test asserts every tool name each shipped manifest subscribes to resolves in the adapter that host uses. |
 | **CI (GitHub Action)** | `action.yml`, integrity and changelog gates | Runs the same CLI the rows above do; no hook boundary involved. |
 
@@ -594,6 +667,9 @@ is pinned by a mocked unit test, not live-probed on a POSIX host.
 | [docs/LADDER.md](docs/LADDER.md) | Four tiers of onboarding, one session each; `godmode guide --tier N` prints one |
 | [docs/CAPABILITY-COVERAGE.md](docs/CAPABILITY-COVERAGE.md) | What's `covered`, `partial`, or `not-claimed`, and at what grade |
 | [docs/releases/](docs/releases/) | Release notes; every number in them carries its own basis |
+| [docs/COMPACTION-AND-LEDGER.md](docs/COMPACTION-AND-LEDGER.md) | What survives a compaction, the ledger fields, the context tripwire, perimeter checks |
+| [docs/hosts/](docs/hosts/) | Per-host pages (Cursor, Antigravity): wired events, known issues, the proof recipe that earns HARD |
+| [docs/PROBLEM-STATEMENT-AND-PRD.md](docs/PROBLEM-STATEMENT-AND-PRD.md) | The problem statement and requirements the 0.3.24 sweep was built against |
 | [docs/LISTING.md](docs/LISTING.md) | Marketplace listing text and manifest audit |
 | [GODMODE.md](GODMODE.md) | Product guarantees, gates, and the start sequence |
 | [GODMODE_PRIVACY.md](GODMODE_PRIVACY.md) | What is stored, where, and what never leaves |

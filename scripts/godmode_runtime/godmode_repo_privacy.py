@@ -175,12 +175,28 @@ _INTERPRETER_WILDCARD = re.compile(
 _PINNED_VERSION = re.compile(r"@\d")
 
 
+_EXTERNAL_WRITE_CATEGORIES = ("git-history-or-remote", "release-or-external-write")
+
+
 def host_permission_findings(project: Path) -> list[dict[str, str]]:
     import json
     import os
 
     home = Path(os.path.expanduser("~"))
     out: list[dict[str, str]] = []
+    # 2026-09-10: the local policy listed the two external-write categories
+    # under ask_only, and the host answered every ask itself. Named here so
+    # the next doctor run says it before the next push does.
+    try:
+        policy = json.loads((project / ".godmode-authorization-policy.json").read_text(encoding="utf-8")) or {}
+        asked = [c for c in (policy.get("ask_only") or []) if c in _EXTERNAL_WRITE_CATEGORIES]
+    except (OSError, ValueError, AttributeError):
+        asked = []
+    if asked:
+        out.append({"code": "ask-only-external-write", "severity": "warning", "scope": "project",
+                    "detail": f"ask_only lists {', '.join(asked)}: a push or release asks instead of needing "
+                              "the staged capability, and in auto, dontAsk, or bypassPermissions mode the "
+                              "host answers that ask itself - the password is not in the path"})
     for label, path in (("user", home / ".claude" / "settings.json"),
                         ("project", project / ".claude" / "settings.json"),
                         ("local", project / ".claude" / "settings.local.json")):

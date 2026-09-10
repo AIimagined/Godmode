@@ -470,6 +470,21 @@ class PartThreeTests(unittest.TestCase):
             self.assertIn("bytes([92, 98])", hits[0]["detail"])
 
 
+class AskOnlyExternalWriteTests(unittest.TestCase):
+    def test_doctor_names_an_ask_only_external_write(self) -> None:
+        from godmode_runtime.godmode_repo_privacy import host_permission_findings
+
+        with isolated_project() as (project, _s, _a, _archive):
+            (project / ".godmode-authorization-policy.json").write_text(
+                json.dumps({"ask_only": ["worktree-discard", "git-history-or-remote"]}), encoding="utf-8")
+            codes = [f["code"] for f in host_permission_findings(project)]
+            self.assertIn("ask-only-external-write", codes)
+            (project / ".godmode-authorization-policy.json").write_text(
+                json.dumps({"ask_only": ["worktree-discard"]}), encoding="utf-8")
+            codes = [f["code"] for f in host_permission_findings(project)]
+            self.assertNotIn("ask-only-external-write", codes)
+
+
 class NodeScanTests(unittest.TestCase):
     """Field report file, fix 4: a print-only node run is not a mutation."""
 

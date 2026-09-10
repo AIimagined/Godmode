@@ -1985,6 +1985,13 @@ _REMOVAL_SHAPED = frozenset({
 })
 
 
+# Host permission modes in which a hook's "ask" never reaches a person
+# (Claude Code: the auto classifier answers, dontAsk denies silently,
+# bypassPermissions skips the prompt). `default`, `plan` and `acceptEdits`
+# still prompt for a shell command.
+_NO_HUMAN_ASK_MODES = frozenset({"auto", "dontAsk", "bypassPermissions"})
+
+
 def _decision_for(preview: dict[str, Any]) -> str:
     """`ask` or `deny`, from the tier the classifier already computed.
 
@@ -3289,9 +3296,27 @@ def main(argv: list[str] | None = None) -> int:
             # got. Claude/Cursor (both have `ask`) are UNCHANGED from
             # pre-CX-2: `effectively_denied` is only ever True for them when
             # `_decision_for` already said "deny".
+            # 2026-09-10: three releases were pushed with no password. The
+            # gate asked; the host's auto-mode classifier answered. An ask
+            # is only an ask when a human is on the other end - in `auto`,
+            # `dontAsk`, or `bypassPermissions` mode nobody is, so a
+            # would-ask folds to deny exactly as it does on a host with no
+            # ask at all, and the record names the mode.
+            permission_mode = str(host_field(submitted, "permission_mode") or "")
+            no_human_ask = permission_mode in _NO_HUMAN_ASK_MODES
             effectively_denied = (
                 _decision_for(preview) != "ask" or event.host not in HOSTS_WITH_ASK
+                or no_human_ask
             )
+            if no_human_ask and _decision_for(preview) == "ask" and event.host in HOSTS_WITH_ASK:
+                preview["forced_decision"] = "deny"
+                deny_reason = (
+                    f"refused: {preview['category']} ({preview.get('tier', 'R?')}) - the host is in "
+                    f"{permission_mode} mode, where an ask is answered by the host's classifier, not by "
+                    "you; a protected call needs a staged capability from the password holder. "
+                    "Stage this exact command: `godmode authorize stage --from-last-refusal` "
+                    "(type it with a leading '!' in the prompt)."
+                ) + governance_note
             preview["reason"] = deny_reason if effectively_denied else ask_reason
             if not effectively_denied and not observe:
                 # Obligation 4026 (S4): an enforce-mode ask was invisible -
@@ -3304,7 +3329,8 @@ def main(argv: list[str] | None = None) -> int:
                         "action", "gate-asked",
                         {"tier": str(preview.get("tier", "R?")),
                          "category": preview.get("category", "unclassified"),
-                         "tool": tool or "operation"},
+                         "tool": tool or "operation",
+                         "permission_mode": permission_mode or "unknown"},
                         evidence=[],
                     )
                 except Exception as error:  # noqa: BLE001
@@ -3572,7 +3598,8 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             if not preview["allow"]:
                 body, _code = render_decision(
-                    event.host, event.event, _decision_for(preview), preview["reason"])
+                    event.host, event.event,
+                    preview.get("forced_decision") or _decision_for(preview), preview["reason"])
                 print(json.dumps(body, ensure_ascii=False))
             elif current_host() == "antigravity":
                 # An allowed call with no operation text (a read tool):
