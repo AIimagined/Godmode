@@ -51,8 +51,19 @@ def record_incident(
     failure_class: str | None = None,
     turning_point: bool = False,
     cites: list[str] | None = None,
+    predicts: str | None = None,
 ) -> dict[str, Any]:
     """One incident, optionally classed, optionally the turning point.
+
+    `predicts` (absorbed 2026-09-11 from a multi-agent workspace's review
+    rules): a mechanism that explains the observation is not evidence for
+    it until it forbids something - name one consequence the hypothesis
+    requires, a check that must come out a particular way, and go look.
+
+    `predicts` (absorbed 2026-09-11 from a multi-agent workspace's review
+    rules): a mechanism that explains the observation is not evidence for
+    it until it forbids something - name one consequence the hypothesis
+    requires, a check that must come out a particular way, and go look.
 
     The class comes from `FAILURE_CLASSES` or is absent - an off-list word
     is refused with the list rendered, because the whole value of a class
@@ -71,6 +82,11 @@ def record_incident(
             "that shows the run never recovered past it"
         )
     advisories: list[str] = []
+    if not predicts:
+        advisories.append(
+            "no prediction: a mechanism that explains what was seen is not evidence for it "
+            "until it forbids something - record what the hypothesis predicts "
+            "(--predicts \"<check that must go a particular way>\") and run that check")
     # An investigation opened is an investigation running on assumptions;
     # unstated ones are the six-round failure mode (audit 2026-09-01).
     if not any(r.get("kind") == "assumption"
@@ -82,6 +98,7 @@ def record_incident(
     return archive.append(
         "incident", subject,
         {"detail": detail, "failure_class": failure_class,
+            "predicts": predicts,
          "turning_point": bool(turning_point),
          "advisories": advisories},
         evidence=cites or [],

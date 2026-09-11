@@ -1061,6 +1061,61 @@
         "test:tests/test_commonly_absorptions.py"
       ],
       "status": "built"
+    },
+    {
+      "id": "C-101",
+      "statement": "The git backstop refuses a private term in the staged diff at pre-commit and in the message at commit-msg, so history never carries what the tree scan cannot see.",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_githooks.py"
+      ],
+      "guard": [
+        "test:tests/test_cut_close_0_3_25.py"
+      ],
+      "status": "built"
+    },
+    {
+      "id": "C-102",
+      "statement": "An incident names what its hypothesis predicts; one without a prediction is told a mechanism that explains is not evidence.",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_mistakes.py"
+      ],
+      "guard": [
+        "test:tests/test_cut_close_0_3_25.py"
+      ],
+      "status": "built"
+    },
+    {
+      "id": "C-103",
+      "statement": "A swallow exemption says whether its reason names who hears the degraded path, and the scan counts the ones that do not.",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_swallow.py"
+      ],
+      "guard": [
+        "test:tests/test_cut_close_0_3_25.py"
+      ],
+      "status": "built"
+    },
+    {
+      "id": "C-104",
+      "statement": "Quantities that disagree across a time window are told to name each measurement's instant; closure lists the prose that names a symbol a change defines.",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_atlas.py"
+      ],
+      "guard": [
+        "test:tests/test_cut_close_0_3_25.py"
+      ],
+      "status": "built"
+    },
+    {
+      "id": "C-105",
+      "statement": "A static check names a docstring promise (sets, filters, selects, skips a backticked identifier) the function body never keeps.",
+      "impl": [
+        "file:tests/test_docstring_promises.py"
+      ],
+      "guard": [
+        "test:tests/test_docstring_promises.py"
+      ],
+      "status": "built"
     }
   ],
   "detectors": [

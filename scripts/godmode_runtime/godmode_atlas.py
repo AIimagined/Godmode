@@ -426,6 +426,55 @@ def _looks_like_a_test(path: str) -> bool:
             or "tests/" in path or "/test/" in path or path.startswith("test/"))
 
 
+_DEF_NAME = re.compile(r"^\s*(?:def|class)\s+([A-Za-z_]\w{3,})", re.M)
+_PROSE_SUFFIXES = (".md", ".rst", ".txt")
+
+
+def prose_mentions(project: Path, changed: Iterable[str], limit: int = 400) -> dict[str, list[str]]:
+    """Prose that names a symbol a changed file defines (absorbed 2026-09-11
+    from a multi-agent workspace's review rule: a diff shows changed code,
+    never the sentence three files away that described the old behaviour).
+    Symbol -> the documents and comment-carrying files that mention it,
+    outside the changed files themselves. Bounded: the first `limit`
+    candidate files, symbols of four characters or more."""
+    root = Path(project)
+    names: set[str] = set()
+    changed_set = {str(c).replace("\\", "/") for c in changed}
+    for relative in changed_set:
+        path = root / relative
+        if not path.is_file() or path.suffix.lower() != ".py":
+            continue
+        try:
+            names.update(_DEF_NAME.findall(path.read_text(encoding="utf-8", errors="replace")))
+        except OSError:
+            continue
+    if not names:
+        return {}
+    out: dict[str, list[str]] = {}
+    seen = 0
+    for path in sorted(root.rglob("*")):
+        if seen >= limit:
+            break
+        if not path.is_file() or path.suffix.lower() not in _PROSE_SUFFIXES + (".py",):
+            continue
+        relative = path.relative_to(root).as_posix()
+        if relative in changed_set or any(part.startswith(".") or part in ("node_modules", "__pycache__")
+                                          for part in path.parts):
+            continue
+        seen += 1
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if path.suffix.lower() == ".py":
+            # Comments and docstrings only: code references are the atlas's job.
+            text = "\n".join(line for line in text.splitlines() if line.lstrip().startswith("#") or '"""' in line)
+        for name in names:
+            if re.search(r"(?<![\w.])" + re.escape(name) + r"(?![\w])", text):
+                out.setdefault(name, []).append(relative)
+    return out
+
+
 def unfollowed_dependents(atlas: "Atlas", changed: Iterable[str],
                           depth: int = 1) -> dict[str, Any]:
     """What depended on this change and was not itself touched.

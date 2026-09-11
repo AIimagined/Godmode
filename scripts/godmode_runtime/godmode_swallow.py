@@ -104,6 +104,11 @@ _PY_ANNOTATION = re.compile(r"#\s*godmode:\s*swallow-ok\b(.*)")
 _JS_ANNOTATION = re.compile(r"//\s*godmode:\s*swallow-ok\b(.*)")
 
 
+_AUDIENCE = re.compile(r"(?i)\b(?:operator|user|caller|reader|host|agent|session|reviewer|nobody|"
+                       r"advisory|brief|doctor|notice|report|silent|silence|log(?:ged)?|stderr|stdout|"
+                       r"the next|says so|stated|named)\b")
+
+
 def _annotation(lines: list[str], start_line: int, end_line: int) -> tuple[bool, str | None, bool]:
     """Whether a swallow-ok marker sits anywhere in `[start_line, end_line]`
     (1-indexed, inclusive), and its reason text if one was given."""
@@ -520,6 +525,11 @@ def scan_project(project: Path, limit: int = DEFAULT_SCAN_LIMIT) -> dict[str, An
         else:
             file_findings, file_exemptions = _js_findings(relative, text)
         findings.extend(file_findings)
+        for exemption in file_exemptions:
+            # "Which way does this fail, and who hears it?" (absorbed 2026-09-11):
+            # a reason that names no audience says the failure was decided,
+            # not that anyone was told.
+            exemption["audience_named"] = bool(_AUDIENCE.search(str(exemption.get("reason") or "")))
         exemptions.extend(file_exemptions)
         if file_findings:
             counts[relative] = len(file_findings)
@@ -567,6 +577,7 @@ def scan_project(project: Path, limit: int = DEFAULT_SCAN_LIMIT) -> dict[str, An
         "unparsed": unparsed,
         "findings": findings,
         "exemptions": exemptions,
+        "audience_unstated": sum(1 for e in exemptions if not e.get("audience_named")),
         "counts": counts,
         "baseline_exists": baseline_exists,
         "baseline": baseline_map,

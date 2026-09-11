@@ -2302,12 +2302,18 @@ def record_claim(
                 continue
             prior_vocab = _salient_words(prior_text) - prior_numbers
             if len(own_vocab & prior_vocab) >= 3:
-                advisories.append(
-                    f"quantities disagree with seq {prior['sequence']} on "
-                    f"the same subject: {', '.join(sorted(prior_numbers))} "
-                    f"there vs {', '.join(sorted(numbers))} here - if this "
-                    "corrects it, resolve the elder superseded; if both "
-                    "are true, say what differs")
+                note = (f"quantities disagree with seq {prior['sequence']} on "
+                        f"the same subject: {', '.join(sorted(prior_numbers))} "
+                        f"there vs {', '.join(sorted(numbers))} here - if this "
+                        "corrects it, resolve the elder superseded; if both "
+                        "are true, say what differs")
+                if _WINDOW.search(text) or _WINDOW.search(prior_text):
+                    # Two measurements joined across a time gap describe two
+                    # populations (absorbed 2026-09-11): an age predicate is
+                    # never time-invariant, so each number needs its instant.
+                    note += ("; one of them names a time window, so they may describe different "
+                             "instants - state when each measurement was taken before joining them")
+                advisories.append(note)
                 break
 
     composed: dict[str, Any] = {}

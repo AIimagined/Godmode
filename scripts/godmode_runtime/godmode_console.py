@@ -2612,6 +2612,11 @@ def _atlas_query(args: argparse.Namespace, runtime: Runtime, atlas: Any) -> Comm
         changed = listed if listed else _working_tree_changes(
             Path(runtime.anchor.project_root))
         report = unfollowed_dependents(atlas, changed, depth=args.depth)
+        from .godmode_atlas import prose_mentions
+        report["prose"] = prose_mentions(Path(runtime.anchor.project_root), changed)
+        if report["prose"]:
+            report["prose_note"] = ("documents and comments that name a symbol the change defines - "
+                                    "read each for a sentence that was true before the change and is false now")
         return CommandResult(report, exit_code=1 if report["findings"] else 0)
     if args.atlas_command == "seams":
         report = speculative_seams(atlas)
@@ -3074,6 +3079,7 @@ def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             failure_class=getattr(args, "failure_class", None),
             turning_point=getattr(args, "turning_point", False),
             cites=args.evidence,
+            predicts=getattr(args, "predicts", None),
         )
         return CommandResult({"record": _event_view(record)})
     status = args.status or ("open" if args.kind == "request" else "active")
@@ -6113,6 +6119,8 @@ def _build_parser() -> argparse.ArgumentParser:
                                "subject to match - surfaces at every stop, "
                                "survives quiet posture (definition-of-done, "
                                "not advisory)")
+    remember.add_argument("--predicts", default=None,
+                          help="Incident only: a check the hypothesis requires to come out a particular way")
     remember.add_argument("--intent-preserved", dest="intent_preserved", choices=["kept", "replaced"],
                           default=None, help="On a reopen: the agent's decision was kept and reworded, or replaced")
     remember.add_argument("--source", choices=["stated", "inferred"], default="stated",

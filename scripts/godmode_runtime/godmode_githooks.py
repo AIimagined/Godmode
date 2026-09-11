@@ -106,7 +106,7 @@ from .godmode_sentinel import (
 # hook git supports is left alone: these four are the ones whose exit code
 # can plausibly stop (pre-commit/pre-push/pre-rebase) or at least loudly
 # flag (post-checkout) the operation classes this product already governs.
-HOOK_NAMES: tuple[str, ...] = ("pre-commit", "pre-push", "pre-rebase", "post-checkout")
+HOOK_NAMES: tuple[str, ...] = ("pre-commit", "commit-msg", "pre-push", "pre-rebase", "post-checkout")
 
 # The one policy key this whole boundary rides. Riding `declared_gate_ratchet`
 # (godmode_sentinel.py) rather than inventing a second small policy file -
@@ -213,8 +213,10 @@ def _hook_script(name: str, godmode_py: Path) -> str:
         "cannot run (failing closed)\" >&2\n"
         "    exit 1\n"
         "fi\n"
-        f'"$PYTHON" "{python_path}" guard --git-hook {name} --json\n'
-        "exit $?\n"
+        + (f'"$PYTHON" "{python_path}" guard --git-hook {name} --json < "$1"\n'
+           if name == "commit-msg" else
+           f'"$PYTHON" "{python_path}" guard --git-hook {name} --json\n')
+        + "exit $?\n"
     )
     header_lines = [
         "#!/bin/sh",
@@ -415,6 +417,7 @@ _BOUNDARY_NOTES: dict[str, str] = {
     "pre-push": "reads stdin ref-update lines and `git merge-base --is-ancestor` on the "
                 "shas git hands it; CANNOT see the --force/--force-with-lease flag itself, "
                 "only its non-fast-forward sha-level consequence",
+    "commit-msg": "reads the message from stdin and refuses a private term in it",
     "pre-commit": "sees the staged file-name list only (`git diff --cached --name-only`); "
                   "detects a pinned evaluator about to be committed, nothing about content",
     "pre-rebase": "sees only that a rebase is starting, never whether the commits it would "
@@ -700,8 +703,51 @@ def _inspection_failed_result(
     return result
 
 
+def _private_term_hits(project_root: Path, text: str) -> int:
+    """How many private-list terms the text carries. The list lives outside
+    the repository (`GODMODE_COVERAGE_TERMS` or a `.godmode-private/` above
+    it), so a clone without it scans nothing and says so via zero."""
+    from .godmode_preflight import _term_list
+    terms_path = _term_list(project_root)
+    if terms_path is None:
+        return 0
+    try:
+        terms = [line.strip() for line in terms_path.read_text(encoding="utf-8").splitlines()
+                 if line.strip() and not line.strip().startswith("#") and len(line.strip()) >= 2]
+    except OSError:
+        return 0
+    lowered = text.lower()
+    return sum(1 for term in terms if re.search(r"\b" + re.escape(term.lower()) + r"\b", lowered))
+
+
+def _evaluate_commit_msg(archive: Any, project_root: Path, message: str | None) -> dict[str, Any]:
+    """The commit message is exposure surface the tree scan never sees
+    (2026-09-10: a private term reached the remote inside one message and
+    stood there until a history rewrite). The message arrives on stdin
+    from the shim; a term in it refuses the commit before it exists."""
+    if message is None:
+        return _inspection_failed_result(archive, project_root, "commit-msg",
+                                         "the commit message could not be read")
+    hits = _private_term_hits(project_root, message)
+    if hits:
+        return {"git_hook": "commit-msg", "verdict": "block",
+                "reason": f"refused: {hits} private term(s) in the commit message - a message is "
+                          "history the tree scan never sees; reword it (the term is not echoed here)"}
+    return {"git_hook": "commit-msg", "verdict": "allow", "reason": "no private term in the message"}
+
+
 def _evaluate_pre_commit(archive: Any, project_root: Path) -> dict[str, Any]:
     staged = _staged_paths(project_root)
+    # The staged DIFF, not only the staged names: a term in a line about to
+    # be committed is exposure whatever the file's final state (2026-09-11).
+    diff = _git("diff", "--cached", cwd=project_root, timeout=30)
+    if diff.returncode == 0:
+        hits = _private_term_hits(project_root, diff.stdout or "")
+        if hits:
+            return {"git_hook": "pre-commit", "verdict": "block",
+                    "staged_files": len(staged or []),
+                    "reason": f"refused: {hits} private term(s) in the staged diff - a committed line "
+                              "is history even when a later commit removes it (the term is not echoed here)"}
     if staged is None:
         return _inspection_failed_result(
             archive, project_root, "pre-commit",
@@ -767,6 +813,8 @@ def evaluate_git_hook(
         return _evaluate_pre_push(archive, project_root, stdin_text)
     if name == "pre-commit":
         return _evaluate_pre_commit(archive, project_root)
+    if name == "commit-msg":
+        return _evaluate_commit_msg(archive, project_root, stdin_text)
     if name == "pre-rebase":
         return _evaluate_pre_rebase(archive, project_root)
     if name == "post-checkout":

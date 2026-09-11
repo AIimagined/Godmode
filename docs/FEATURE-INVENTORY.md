@@ -3,10 +3,11 @@
 What exists and where, so nothing is rebuilt blind.
 
 `capabilities.json` (repo root) is now the machine-checkable inventory of
-96 numbered capability statements (`C-01`…`C-96`; `C-83`…`C-96` are the
+105 numbered capability statements (`C-01`…`C-105`; `C-83`…`C-105` are the
 2026-09-11 builds: the held-back oracle, `depends_on`, hygiene, proposed
-registry rows, manifest desync, hook timing, the two static checks, and
-the incident fixes; C-73 turned out to have
+registry rows, manifest desync, hook timing, the two static checks, the
+gate's temp alias, the swallowed-script nudge, the windowed-absence
+advisory, the branch-deletion preview, the commit-time private-term guard, the incident prediction, the swallow audience, the prose closure, the docstring-promise check, and the incident fixes; C-73 turned out to have
 real content once code comments were searched, not only the sprint-ledger
 markdown — it is "rank-fusion context ranking," `rejected` on measurement
 per `godmode_corpus.rank`'s own docstring, a fix-round-1 correction; the
