@@ -1333,6 +1333,53 @@ def _observed_readout(sentence: str, observed: str) -> bool:
     return bool(words) and echoed >= min(needed, len(words))
 
 
+_SWALLOW_IN_SCRIPT = re.compile(
+    r"except\b[^\n]*:\s*\n(?:[ \t]*#[^\n]*\n)*[ \t]*(?:pass\b|return\b|continue\b|"
+    r"print\((?:0|\[\]|\"\"|'')\)|\w+\s*=\s*(?:\[\]|\{\}|0|None|\"\"|'')\s*(?:\n|$))")
+
+
+def _swallowed_script_nudge(transcript_path: str | None) -> str | None:
+    """Field report 2026-09-11: an agent's throwaway query script caught
+    the database's "no such column" and printed 0 rows; the reply said the
+    table held no errors. A zero from a script that swallows its own
+    exception is not a measurement. Every Write/Edit payload this session
+    that is Python-shaped is scanned for an except clause that discards
+    the error; the files are named, the fix is stated."""
+    if not transcript_path:
+        return None
+    try:
+        lines = Path(str(transcript_path)).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    offenders: list[str] = []
+    for raw in lines[-8000:]:
+        if '"tool_use"' not in raw:
+            continue
+        try:
+            entry = json.loads(raw)
+        except ValueError:
+            continue
+        for part in ((entry.get("message") or {}).get("content") or []):
+            if not isinstance(part, dict) or part.get("type") != "tool_use":
+                continue
+            if part.get("name") not in ("Write", "Edit", "NotebookEdit"):
+                continue
+            payload = part.get("input") or {}
+            body = str(payload.get("content") or payload.get("new_string") or payload.get("new_source") or "")
+            if "except" not in body or not _SWALLOW_IN_SCRIPT.search(body):
+                continue
+            name = str(payload.get("file_path") or payload.get("notebook_path") or "?").replace("\\", "/")
+            name = name.rsplit("/", 1)[-1]
+            if name not in offenders:
+                offenders.append(name)
+    if not offenders:
+        return None
+    return (f"godmode: {len(offenders)} script(s) written this session swallow an exception "
+            f"({', '.join(offenders[:3])}); a count or an empty result from one of them is not a "
+            "measurement until the except branch prints the error - re-run with the error visible "
+            "before any number from it is reported")
+
+
 def _unrecorded_claims(archive: Any, reply_text: str,
                        observed: str = "") -> list[str]:
     """Claim-shaped sentences in the reply with no claim record behind them.
@@ -2773,6 +2820,10 @@ def main(argv: list[str] | None = None) -> int:
                     turn_note = _turn_diff_nudge(archive, Path(anchor.project_root), submitted)
                     if turn_note:
                         notices.append(turn_note)
+                    swallow_note = _swallowed_script_nudge(
+                        submitted.get("transcript_path") or submitted.get("transcriptPath"))
+                    if swallow_note:
+                        notices.append(swallow_note)
             if touched:
                 notices.append(
                     "godmode: this reply relates to unfinished "

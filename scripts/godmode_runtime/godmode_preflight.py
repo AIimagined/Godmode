@@ -119,6 +119,28 @@ def workflow_gate_commands(repo: Path) -> list[str]:
     return out
 
 
+def aliased_temp_environment() -> dict[str, str] | None:
+    """The environment a CI runner gives a test: on Windows the temp
+    directory in its 8.3 short form (RUNNER~1), which is how four tests
+    green on this machine went red on the runners (2026-09-11). None
+    where the volume keeps no short name, so the shards run as before."""
+    if os.name != "nt":
+        return None
+    import ctypes
+    import tempfile
+    long_form = tempfile.gettempdir()
+    buffer = ctypes.create_unicode_buffer(260)
+    if ctypes.windll.kernel32.GetShortPathNameW(long_form, buffer, 260) == 0:
+        return None
+    short = buffer.value
+    if not short or short.lower() == long_form.lower():
+        return None
+    env = dict(os.environ)
+    env["TEMP"] = short
+    env["TMP"] = short
+    return env
+
+
 def shard_modules(tests_dir: Path, shards: int) -> list[list[str]]:
     names = sorted(f"tests.{p.stem}" for p in Path(tests_dir).glob("test_*.py"))
     return [names[i::shards] for i in range(max(1, shards))]
@@ -303,7 +325,8 @@ def push_preflight(project: Path | str,
                     continue
                 try:
                     shard = subprocess.run([_sys.executable, "-m", "unittest", *modules], cwd=worktree,
-                                           capture_output=True, check=False, timeout=SUITE_TIMEOUT_SECONDS)
+                                           capture_output=True, check=False, timeout=SUITE_TIMEOUT_SECONDS,
+                                           env=aliased_temp_environment())
                 except subprocess.TimeoutExpired:
                     judgment.append({"check": "suite", "detail": f"shard {index} killed after "
                                                                   f"{SUITE_TIMEOUT_SECONDS}s without a verdict"})

@@ -31,7 +31,8 @@ _ASSERTION = re.compile(r"^\s*(?:assert\b|self\.assert|expect\s*\(|\.should\b|as
 _OPERATIONAL_ERROR = re.compile(
     r"(?im)\b(?:ModuleNotFoundError|ImportError|Cannot find module|command not found|No such file or directory|"
     r"ENOENT|SyntaxError|is not recognized as an internal or external command|Permission denied|"
-    r"No module named)\b")
+    r"No module named|no such column|no such table|OperationalError|ProgrammingError|"
+    r"column .{1,80} does not exist|relation .{1,80} does not exist|Unknown column)\b")
 
 
 def _changed_files(project: Path, base: str) -> dict[str, str]:

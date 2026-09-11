@@ -1,0 +1,1 @@
+- The preflight suite shards run with the temp directory in its 8.3 short form on Windows, the spelling CI runners use, so a path alias that only a runner would surface is seen by the local gate; a database schema error in tool output is an operational error; a script written this session that discards an exception is named at Stop, since a zero it prints is not a measurement.
