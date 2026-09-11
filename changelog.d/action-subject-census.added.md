@@ -1,1 +1,0 @@
-- `ACTION_SUBJECTS` in the constants pins every subject an `action` record is written under; a test greps every writer and reader for the literal, so a typo on either side fails the suite instead of silently never matching.

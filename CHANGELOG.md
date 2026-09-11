@@ -4,11 +4,7 @@ All notable changes to Godmode will be documented in this file.
 
 The format follows Keep a Changelog principles, and releases use semantic versioning.
 
-## [0.3.25] - 2026-09-10
-
-### Fixed
-
-- `precheck --about` raised a NameError in the registry and design lookups between two commits of this cut; the preflight gate's own suite run caught it, and the preflight now also runs the composite action's gates (integrity and changelog against HEAD~1, release-notes check) so a commit that CI's action job would refuse is refused locally first.
+## [0.3.25] - 2026-09-11
 
 ### Added
 
@@ -56,6 +52,30 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 - The observe advisory on a process-control call (a server stopped, a port taken) names `checkpoint --owes` for the restore.
 - `godmode release-notes build <version>` derives `docs/releases/RELEASE_NOTES_v<version>.md` from that version's CHANGELOG section (grouped by kind, a Verifying section from the tests the entries name); `release-notes check <version>` holds an existing note to the shape: present, every entry covered, no empty section, no process narration, a Verifying section. The docs lint gains `release-note-narration` (a note says what the reader gets, not how the release was made) with a `narration_from` floor in `.godmode-docslint.json`.
 - README describes the 0.3.24 surface: iteration controls, the scope gate and the oracle, the ledger after a compaction, the new sentinel shapes, the node scan, and the numbers as of this cut.
+- `ACTION_SUBJECTS` in the constants pins every subject an `action` record is written under; a test greps every writer and reader for the literal, so a typo on either side fails the suite instead of silently never matching.
+- The preflight suite shards run with the temp directory in its 8.3 short form on Windows, the spelling CI runners use, so a path alias that only a runner would surface is seen by the local gate; a database schema error in tool output is an operational error; a script written this session that discards an exception is named at Stop, since a zero it prints is not a measurement.
+  - The external-verdict nudge resolves a transcript path the way it resolves the project root, so a read through the runners' temp alias is credited there too; the temp alias the gate runs under is a junction or symlink beside the temp directory when the volume keeps no 8.3 short name.
+- An absence claim whose text or cited search names a window (`last 500`, `--since`, a retention term) carries an advisory: a negative over a window is a negative over that window only, so the record asks for the store's actual extent; a branch-deletion preview names the pull requests the deletion would close and the `gh pr list --base` check to run first. Absorbed from a multi-agent workspace's incident-derived review rules.
+- The git backstop refuses a private term in the staged diff at `pre-commit` and in the message at the new `commit-msg` hook: a committed line or message is history even when a later commit removes it, which is how one term reached the remote on 2026-09-10. `remember --kind incident --predicts` records what a hypothesis requires and an incident without one is told so; a swallow exemption says whether its reason names who hears the degraded path; quantities that disagree across a time window are told to name each instant; `atlas closure` lists the prose that names a symbol a change defines; a static check names a docstring promise the body never keeps.
+- `remember --kind request --status open --intent-preserved kept|replaced` records on a reopen whether the operator kept the agent's decision and reworded it or replaced it; `retest` reads a committed `.godmode-test-map.json` (source path to the tests that pin it) beside its textual pins; `claim --depends-on SEQ` records what a claim rests on, inherits the weakest grade among them, and names an unverified claim carrying three dependents as load-bearing.
+- `godmode hygiene` lists near-duplicate and contradicting lessons and decisions among the newest active records per kind, as a review list; `recurrences --propose` names a reason that waived, parked, deferred or declined work three times as a proposed fixed-registry row; the session brief names a hook manifest that differs from another install of the same plugin (a truncated plugin-cache copy is the field case); `hooks time` measures the real hook on a synthetic payload against the declared timeout; `godmode oracle hold|list|run` keeps operator-designated held-back checks under the git metadata directory, `claim --verify` runs them, and a red one caps the grade at observed; a static test names any `module.name` no godmode module defines.
+
+### Changed
+
+- The charter eval snapshot follows the inventory document edited for the 2026-09-11 builds.
+- The charter eval snapshot follows the inventory document as edited for C-101 to C-105; the repository carries a Sponsor button file.
+
+### Fixed
+
+- `precheck --about` raised a NameError in the registry and design lookups between two commits of this cut; the preflight gate's own suite run caught it, and the preflight now also runs the composite action's gates (integrity and changelog against HEAD~1, release-notes check) so a commit that CI's action job would refuse is refused locally first.
+- The gate treats a write into the host's own project-memory directory (`~/.claude/projects/<slug>/memory/`) as an ordinary write, not as "outside the working tree"; the no-terminal error names a separate terminal window and the shim path; a shell literal piped into `--password-stdin` is refused outright (`password-in-transcript`, R5) so a typed password never lands in a transcript; and a refusal record carries the full operation digest, so `authorize stage --from-last-refusal` stages a command longer than the 500-character record cut. Field incident 2026-09-11.
+  - A redirect into `$TEMP`, `%TEMP%` or `$TMPDIR` is a scratch write: the variable is expanded before the scratch check, so a test run logged to the temp directory is not "outside the working tree". The external-write verbs also ignore a hyphenated name such as the notes verb itself.
+  - A claim a later record resolves (held, failed, superseded) no longer shows as stale; the temp-variable expansion applies to a redirect target only, so a `cp` into `/tmp` keeps its ask; checkpoint pressure exempts Markdown and reStructuredText, not every text file. Gate table regenerated for the `password-in-transcript` category.
+- `checksums` hashes text files with CR stripped and binary files byte-for-byte, and the report names the rule, so two honest clones of a project without an `eol=lf` attribute produce one manifest on Windows and Linux alike.
+- Stop-hook notices are delivered one per line instead of joined into one wall; the context tripwire names a stale `context_window` declaration when the measurement exceeds it, and says when a compaction already ran and left the budget full instead of advising another; the checkpoint-pressure count ticks on code-shaped edits only, not prose appends; `claim --verify` runs project commands on Windows (`npx`, `tsc`, `vitest` shims resolve through PATHEXT, backslashes survive the split), a check that just ran red caps the grade at observed, and the support line counts runs and passes separately; external-write verbs are judged on bare words, never on a word inside a path. Field feedback 2026-09-11.
+- `claim --verify` names the interpreter form (`node node_modules/<package>/<entry>.mjs`) when a package shim such as `npx` is absent from the hook's PATH; a claim citing a file this session wrote carries a self-authored-evidence note, since the done bar checks that a citation resolves, never that it is true; the archive write lock waits 20 seconds with a jittered back-off instead of 5; the fix-shaped hint names `remember --kind incident`, a verb that exists. Field feedback Part 10, 2026-09-11.
+- A request closure closes only the asks recorded before it, never an ask restated after it, and the stop gate reads the same request-only window the closure command reads, so the gate and `remember --kind request --status closed` agree on the open set. Field incident 2026-09-11.
+- A transcript read that spells the project through an alias (an 8.3 short name on Windows, the `/var` symlink on macOS) is credited by the sources gate; CI runners hand the temp directory out that way and every read went uncredited there.
 
 ## [0.3.24] - 2026-09-10
 

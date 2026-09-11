@@ -1,1 +1,0 @@
-- The charter eval snapshot follows the inventory document as edited for C-101 to C-105; the repository carries a Sponsor button file.

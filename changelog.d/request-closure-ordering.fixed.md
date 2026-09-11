@@ -1,1 +1,0 @@
-- A request closure closes only the asks recorded before it, never an ask restated after it, and the stop gate reads the same request-only window the closure command reads, so the gate and `remember --kind request --status closed` agree on the open set. Field incident 2026-09-11.

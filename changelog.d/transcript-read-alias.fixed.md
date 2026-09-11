@@ -1,1 +1,0 @@
-- A transcript read that spells the project through an alias (an 8.3 short name on Windows, the `/var` symlink on macOS) is credited by the sources gate; CI runners hand the temp directory out that way and every read went uncredited there.
