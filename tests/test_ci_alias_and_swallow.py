@@ -31,15 +31,13 @@ import godmode_session_hook as hook  # noqa: E402
 class AliasedTempTests(unittest.TestCase):
     def test_the_alias_names_the_same_directory_by_another_spelling(self) -> None:
         env = aliased_temp_environment()
-        if os.name != "nt":
-            self.assertIsNone(env)
-            return
         if env is None:
-            self.skipTest("this volume keeps no 8.3 short names")
+            self.skipTest("no short name, and no junction or symlink could be made here")
         self.assertNotEqual(env["TEMP"].lower(), tempfile.gettempdir().lower())
         self.assertEqual(os.path.realpath(env["TEMP"]).lower(),
                          os.path.realpath(tempfile.gettempdir()).lower())
         self.assertEqual(env["TMP"], env["TEMP"])
+        self.assertEqual(env["TMPDIR"], env["TEMP"])
 
 
 class DatabaseErrorTests(unittest.TestCase):

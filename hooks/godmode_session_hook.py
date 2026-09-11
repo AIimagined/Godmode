@@ -807,7 +807,20 @@ def _external_verdict_nudge(submitted: dict[str, Any], reply_text: str,
     # named docs read this session). Reads under the project root count
     # for the origin slug.
     origin = _origin_slug(project)
-    root = str(project.resolve()).replace("\\", "/").lower() if project is not None else None
+    root = os.path.realpath(str(project)).replace("\\", "/").lower() if project is not None else None
+
+    def _under_root(candidate: str) -> bool:
+        # The transcript may spell the project through an alias (an 8.3
+        # short name on a Windows runner, /var on macOS); the candidate is
+        # resolved the way the root is before the prefix check (2026-09-11).
+        text = candidate
+        if Path(candidate).is_absolute():
+            try:
+                text = os.path.realpath(candidate)
+            except (OSError, ValueError):
+                text = candidate
+        return text.replace("\\", "/").lower().startswith(root or "\0")
+
     for line in lines[-6000:]:
         try:
             entry = json.loads(line)
@@ -827,7 +840,7 @@ def _external_verdict_nudge(submitted: dict[str, Any], reply_text: str,
             blob = json.dumps(payload).lower()
             if origin and origin in named and str(part.get("name") or "") in _LOCAL_READ_TOOLS and root:
                 local = str(payload.get("file_path") or payload.get("path") or payload.get("pattern") or "")
-                if local and local.replace("\\", "/").lower().startswith(root):
+                if local and _under_root(local):
                     fetched[origin] = fetched.get(origin, 0) + 1
                     read_names.setdefault(origin, []).append(Path(local).name)
                     continue
@@ -839,8 +852,7 @@ def _external_verdict_nudge(submitted: dict[str, Any], reply_text: str,
                 command = str(payload.get("command") or "")
                 named_files = [m for m in _PATH_TOKEN.findall(command)]
                 for candidate in named_files:
-                    lowered = candidate.replace("\\", "/").lower()
-                    inside = lowered.startswith(root) or (
+                    inside = _under_root(candidate) or (
                         not Path(candidate).is_absolute() and (project / candidate).is_file())
                     if inside:
                         fetched[origin] = fetched.get(origin, 0) + 1

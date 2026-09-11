@@ -120,24 +120,41 @@ def workflow_gate_commands(repo: Path) -> list[str]:
 
 
 def aliased_temp_environment() -> dict[str, str] | None:
-    """The environment a CI runner gives a test: on Windows the temp
-    directory in its 8.3 short form (RUNNER~1), which is how four tests
-    green on this machine went red on the runners (2026-09-11). None
-    where the volume keeps no short name, so the shards run as before."""
-    if os.name != "nt":
-        return None
-    import ctypes
+    """The environment a CI runner gives a test: the temp directory under
+    another spelling - its 8.3 short name (RUNNER~1 on Windows runners) or
+    a symlinked root (/var -> /private/var on macOS). Four tests green on
+    the reference machine went red on both runners for exactly this
+    (2026-09-11), and that machine's volume keeps no short names, so the
+    alias is a junction or symlink beside the temp directory when no short
+    name exists. None only when no alias can be made; the shards then run
+    as before, and the gate says nothing it cannot show."""
+    import subprocess
     import tempfile
     long_form = tempfile.gettempdir()
-    buffer = ctypes.create_unicode_buffer(260)
-    if ctypes.windll.kernel32.GetShortPathNameW(long_form, buffer, 260) == 0:
-        return None
-    short = buffer.value
-    if not short or short.lower() == long_form.lower():
+    alias: str | None = None
+    if os.name == "nt":
+        import ctypes
+        buffer = ctypes.create_unicode_buffer(260)
+        if ctypes.windll.kernel32.GetShortPathNameW(long_form, buffer, 260) != 0:
+            short = buffer.value
+            if short and short.lower() != long_form.lower():
+                alias = short
+    if alias is None:
+        link = Path(long_form) / "godmode-temp-alias"
+        if not link.exists():
+            try:
+                os.symlink(long_form, str(link), target_is_directory=True)
+            except (OSError, NotImplementedError):
+                if os.name == "nt":
+                    subprocess.run(["cmd", "/c", "mklink", "/J", str(link), long_form],
+                                   capture_output=True, check=False, timeout=30)
+        if link.is_dir():
+            alias = str(link)
+    if alias is None:
         return None
     env = dict(os.environ)
-    env["TEMP"] = short
-    env["TMP"] = short
+    for key in ("TEMP", "TMP", "TMPDIR"):
+        env[key] = alias
     return env
 
 
