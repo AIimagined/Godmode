@@ -194,7 +194,10 @@ class UnwritableGitMetadataTests(unittest.TestCase):
                     mock.patch("godmode_runtime.godmode_anchor.os.access", side_effect=refused):
                 anchor = resolve_anchor(project)
                 self.assertTrue(anchor.is_git)
-                self.assertTrue(Path(anchor.archive_root).is_relative_to(home), anchor.archive_root)
+                # Realpath on both sides: a CI runner hands the state home out
+                # in 8.3 short form and the anchor stores it resolved.
+                self.assertTrue(Path(os.path.realpath(anchor.archive_root)).is_relative_to(
+                    Path(os.path.realpath(home))), anchor.archive_root)
                 archive = Chronicle(anchor)
                 archive.initialize()
                 archive.append("decision", "d1", {"value": "written"})

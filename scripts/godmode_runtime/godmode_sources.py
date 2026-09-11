@@ -46,7 +46,7 @@ def transcript_reads(transcript_path: str | Path | None, project: Path) -> set[s
         lines = Path(str(transcript_path)).read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return set()
-    root = str(Path(project).resolve()).replace("\\", "/")
+    root = os.path.realpath(str(project)).replace("\\", "/")
     out: set[str] = set()
     token = re.compile(r"(?<![\w])((?:[A-Za-z]:)?(?:[\w.-]+[/\\])*[\w.-]+\.[A-Za-z0-9]{1,6})(?![\w])")
     for raw in lines[-8000:]:
@@ -65,6 +65,16 @@ def transcript_reads(transcript_path: str | Path | None, project: Path) -> set[s
             for candidate in candidates:
                 if not candidate:
                     continue
+                # CI 2026-09-11 (Windows and macOS runners): the transcript
+                # spells the project through its short name (RUNNER~1) or
+                # its symlinked temp root (/var -> /private/var), the
+                # resolved root does not, and every read went uncredited.
+                # Absolute candidates are resolved the same way the root is.
+                if Path(candidate).is_absolute():
+                    try:
+                        candidate = os.path.realpath(candidate)
+                    except (OSError, ValueError):
+                        pass
                 text = candidate.replace("\\", "/")
                 if text.lower().startswith(root.lower()):
                     text = text[len(root):].lstrip("/")
