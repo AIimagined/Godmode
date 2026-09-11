@@ -331,7 +331,7 @@ class Chronicle:
         return value
 
     @contextmanager
-    def write_lock(self, timeout_seconds: float = 5.0) -> Iterator[None]:
+    def write_lock(self, timeout_seconds: float = 20.0) -> Iterator[None]:
         self.root.mkdir(parents=True, exist_ok=True)
         deadline = time.monotonic() + timeout_seconds
         descriptor: int | None = None
@@ -355,7 +355,12 @@ class Chronicle:
                     pass
                 if time.monotonic() >= deadline:
                     raise ArchiveError("Godmode archive is busy; retry after the active write")
-                time.sleep(0.05)
+                # Field feedback 2026-09-11 (Part 10): "busy; retry" twice in
+                # one pass with a hook and a CLI call writing together. A
+                # 20 s deadline with a growing, jittered wait outlasts any
+                # single append; the stale-lock sweep above still bounds it.
+                waited = timeout_seconds - (deadline - time.monotonic())
+                time.sleep(min(0.25, 0.05 + waited * 0.02) + (os.getpid() % 7) * 0.003)
         try:
             yield
         finally:

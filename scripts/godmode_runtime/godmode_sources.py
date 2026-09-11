@@ -73,7 +73,7 @@ def transcript_reads(transcript_path: str | Path | None, project: Path) -> set[s
                 if Path(candidate).is_absolute():
                     try:
                         candidate = os.path.realpath(candidate)
-                    except (OSError, ValueError):
+                    except (OSError, ValueError):  # godmode: swallow-ok: an unresolvable path keeps its own spelling
                         pass
                 text = candidate.replace("\\", "/")
                 if text.lower().startswith(root.lower()):

@@ -672,7 +672,7 @@ _PROMPT_SHAPES = (
         r"\binvestigat|\bdiagnos|\bwhat\s+caused\b|\bdeep[\s-]?dive\b|\bpost-?mortem\b)"),
      "godmode: investigation-shaped work - `godmode mistakes` lists prior "
      "incidents of this class; `godmode error-pattern` matches the failure "
-     "text against declared patterns; `godmode incident --failure-class "
+     "text against declared patterns; `godmode remember --kind incident --failure-class "
      "<class>` records the failure while the evidence is fresh; `godmode "
      "differential` records the two states before and after a change; "
      "`godmode plant` proves a guard fails when broken; `godmode verify "

@@ -1339,6 +1339,10 @@ SELF_ATTESTED_NOTE = (
     "self-attested: the cited check was run and attested by this same agent; "
     "the grade stands on the exit code, and an attestation from another agent "
     "or model (`godmode verify` from a reviewer session) would make it independent")
+SELF_AUTHORED_EVIDENCE_NOTE = (
+    "self-authored evidence: a cited file was written or edited by this same session; "
+    "a number it holds is this session's own statement, not a measurement - cite the "
+    "command that produced the number, or a file the session did not touch")
 LATE_CRITERION_FINDING = "criterion must precede the work it judges"
 
 
@@ -2307,6 +2311,20 @@ def record_claim(
                 break
 
     composed: dict[str, Any] = {}
+    if transcript_path and not cmd_citations:
+        # Field feedback 2026-09-11 (Part 10): a claim cited a file holding
+        # a wrong number the same session had written. The done bar checks
+        # that a citation resolves, never that it is true; what it can say
+        # is who wrote the evidence.
+        try:
+            from .godmode_oracle import edited_paths_from_transcript
+            edited = {str(e).replace("\\", "/").lower() for e in edited_paths_from_transcript(transcript_path)}
+            cited_files = [str(c)[5:].split("#", 1)[0].replace("\\", "/").lower()
+                           for c in citations if str(c).startswith("file:")]
+            if any(f and any(e.endswith(f) or f.endswith(e) for e in edited) for f in cited_files):
+                composed["independence"] = SELF_AUTHORED_EVIDENCE_NOTE
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable transcript adds no note
+            pass
     if depends_on:
         # A claim rests on the claims it names (absorbed from a claim-graph
         # guard, 2026-09-10): it inherits the weakest grade among them, and

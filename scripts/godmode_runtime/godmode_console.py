@@ -1030,6 +1030,11 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         if missing:
             support += (f"; not found on this machine: {missing[0]} - a runner the shell "
                         "cannot start proves nothing; run it where it exists, then cite it")
+            if re.search(r"(?i)\bcmd:(?:npx|npm|pnpm|yarn)\b", missing[0]):
+                # Part 10 (2026-09-11): the hook's runner had no npx on PATH;
+                # `node node_modules/vitest/vitest.mjs` attested for real.
+                support += ("; a package shim is often absent from the hook's PATH - cite the "
+                            "interpreter form instead, e.g. `node node_modules/<package>/<entry>.mjs`")
         elif passed < executed:
             support += "; a check that ran red caps the grade at observed"
         decoration = [str(c.get("citation") or "") for c in check_results
