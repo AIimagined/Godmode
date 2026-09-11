@@ -3496,11 +3496,16 @@ def _categorize(normalized: str, project_root: Path | None = None,
         from_output_flag = write_target is not None
 
     if _GIT_BRANCH_MUTATION.search(command_position):
-        return (
-            "git-branch-mutation",
-            True,
-            ["branch refs", "possibly unmerged local work"],
-        )
+        impact = ["branch refs", "possibly unmerged local work"]
+        # Absorbed 2026-09-11 from a multi-agent workspace's review rules:
+        # deleting a branch auto-closes every open pull request based on
+        # it, and nothing in the merge UI says so. Named, never queried -
+        # the classifier makes no network call.
+        named = re.search(r"(?i)\bgit\s+branch\b(?:\s+-\S+)*\s+([\w./-]+)\s*$", normalized)
+        branch = named.group(1) if named else "<branch>"
+        impact.append(f"every open pull request based on this branch closes with it; "
+                      f"`gh pr list --base {branch}` before deleting")
+        return ("git-branch-mutation", True, impact)
     if write_target is None and any(
             pattern.search(normalized) for pattern in _SAFE_INSPECTION_PATTERNS):
         return "read-only-inspection", False, ["local read-only state"]

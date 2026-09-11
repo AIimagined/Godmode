@@ -2082,6 +2082,7 @@ def record_claim(
     effective = grade
     reason = ""
     absence = is_absence_claim(text)
+    window_note = absence_window_advisory(text, citations) if absence else None
     if grade == "verified":
         if not citations:
             effective, reason = "hypothesis", "no citation"
@@ -2193,6 +2194,8 @@ def record_claim(
     # mutating R3+ commands (git branch -D) are not counted as mutations.
     # Wire to classify_action tiers when a task owns the sentinel.
     advisories: list[str] = []
+    if window_note:
+        advisories.append(window_note)
     # Field report 2026-09-02: an observed-grade claim citing a command that
     # was never attested recorded clean - "zero advisories on a claim it
     # cannot check". The verified ladder above downgrades; below verified,
@@ -2706,6 +2709,29 @@ _ABSENCE = re.compile(
     r"|\bnot? (?:present|found|used|imported|referenced|reachable)\b"
     r"|\bdoes not (?:exist|contain|appear|reference)\b"
 )
+
+
+_WINDOW = re.compile(
+    r"(?i)\b(?:last|past|latest|recent)\s+\d+\b|\b\d+\s*(?:d|h|m|days?|hours?|minutes?|weeks?)\b|"
+    r"--(?:since|until|before|after|limit|max-count|tail|head)\b|\blimit\s+\d+\b|\btail\s+-\d+\b|"
+    r"\bhead\s+-\d+\b|\bwithin\s+\d+\b|\bretention\b")
+
+
+def absence_window_advisory(text: str, citations: list[str]) -> str | None:
+    """A negative over a window is a negative over that window only
+    (absorbed from a multi-agent workspace's incident-derived review rules,
+    2026-09-11: "no exploitation in 48h" was really 3 hours of retained
+    logs; a filter argument is not a coverage guarantee). When an absence
+    claim or its cited search carries a window - last N, --since, a count
+    filter, a retention term - the record says so, and asks for the
+    store's actual extent beside the asked-for window."""
+    haystack = " ".join([text, *[str(c) for c in citations]])
+    hit = _WINDOW.search(haystack)
+    if not hit:
+        return None
+    return (f"a negative over a window ('{hit.group(0)}') is a negative over that window only: "
+            "state the extent the store actually held when it was asked, not the window the "
+            "query named, or the claim covers rows that were never looked at")
 
 
 def is_absence_claim(text: str) -> bool:

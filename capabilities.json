@@ -1017,6 +1017,50 @@
         "test:tests/test_ledger_builds_0_3_25c.py"
       ],
       "status": "built"
+    },
+    {
+      "id": "C-97",
+      "statement": "The preflight suite shards run under the temp directory's alias (8.3 short name, or a junction or symlink beside it), the spelling CI runners use.",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_preflight.py"
+      ],
+      "guard": [
+        "test:tests/test_ci_alias_and_swallow.py"
+      ],
+      "status": "built"
+    },
+    {
+      "id": "C-98",
+      "statement": "A script written this session whose except branch discards the error is named at Stop; a database schema error in tool output is an operational error.",
+      "impl": [
+        "file:hooks/godmode_session_hook.py"
+      ],
+      "guard": [
+        "test:tests/test_ci_alias_and_swallow.py"
+      ],
+      "status": "built"
+    },
+    {
+      "id": "C-99",
+      "statement": "An absence claim whose text or cited search names a window carries an advisory asking for the store's actual extent.",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_attest.py"
+      ],
+      "guard": [
+        "test:tests/test_commonly_absorptions.py"
+      ],
+      "status": "built"
+    },
+    {
+      "id": "C-100",
+      "statement": "A branch-deletion preview names the pull requests the deletion would close and the check to run first.",
+      "impl": [
+        "file:scripts/godmode_runtime/godmode_sentinel.py"
+      ],
+      "guard": [
+        "test:tests/test_commonly_absorptions.py"
+      ],
+      "status": "built"
     }
   ],
   "detectors": [
