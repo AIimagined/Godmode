@@ -6,6 +6,12 @@
       "trigger": "always",
       "verify": "none"
     },
+    "R-07e934ea14": {
+      "enforcement": "ADVISORY",
+      "text_hash": "81481306100d436f",
+      "trigger": "before_completion",
+      "verify": "second_probe_cited"
+    },
     "R-2259c5b00c": {
       "enforcement": "HARD",
       "text_hash": "a6d2ad57a9c431e3",
@@ -75,12 +81,6 @@
     "R-c090d76ad2": {
       "enforcement": "ADVISORY",
       "text_hash": "49e4f75d39f9d434",
-      "trigger": "always",
-      "verify": "none"
-    },
-    "R-d2d4cbffc5": {
-      "enforcement": "ADVISORY",
-      "text_hash": "fd2fa36520e1cd22",
       "trigger": "always",
       "verify": "none"
     },
