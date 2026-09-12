@@ -19,5 +19,8 @@
     "developer-tools",
     "governance gate for coding agents"
   ],
-  "skills": "./skills/"
+  "skills": "./skills/",
+  "experimental": {
+    "evals": "quality/evals"
+  }
 }

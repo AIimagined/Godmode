@@ -51,3 +51,6 @@ docs-site/
 # that races a test run.
 .dogfood-restore.json
 .godmode-authorization-policy*.json
+
+# Plugin eval run output.
+quality/evals/results/
