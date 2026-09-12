@@ -77,12 +77,8 @@
         "rollback",
         "rewind",
         "replay",
-        "precedent",
-        "method",
         "error-pattern",
         "metric-contract",
-        "recurrences",
-        "mistakes",
         "drift",
         "watchdog",
         "arbitrate",
@@ -115,7 +111,6 @@
         "brief",
         "charter",
         "operator",
-        "lessons",
         "config",
         "session",
         "resume",
@@ -130,8 +125,6 @@
         "locale",
         "environment",
         "removal",
-        "absorb",
-        "experiment",
         "fleet",
         "extensions",
         "paired-artifact",
@@ -146,7 +139,6 @@
         "assess",
         "topology",
         "precheck",
-        "law",
         "inspect",
         "slice"
       ]
@@ -162,6 +154,19 @@
       "verbs": [
         "atlas",
         "retest"
+      ]
+    },
+    "S7": {
+      "title": "Recursive self-improvement, measured",
+      "verbs": [
+        "lessons",
+        "law",
+        "mistakes",
+        "recurrences",
+        "precedent",
+        "absorb",
+        "experiment",
+        "method"
       ]
     }
   },
@@ -197,7 +202,7 @@
     "roadmap-2.4": "S2",
     "roadmap-add-1-prove-verifier-refuses": "S3",
     "roadmap-add-2-unmeasured-verdict": "S3",
-    "roadmap-add-3-law-emit-ci": "S4",
+    "roadmap-add-3-law-emit-ci": "S7",
     "review-immutable-distribution-identity": "S1",
     "review-ci-on-push-and-pr": "S1",
     "review-timing-out-of-unit-suite": "S1",
@@ -265,6 +270,56 @@
     "session-brief-dominated-by-112-open-obligations": "S4",
     "session-stale-baseline-203h-with-confidence-zero": "S4",
     "recorded-constraint-does-not-check-proposed-actions": "S3",
-    "s1t2-ci-gate-proof-blocked-on-operator-push": "S1"
-  }
+    "s1t2-ci-gate-proof-blocked-on-operator-push": "S1",
+    "owes-obligation-needs-the-temporary-prefix-to-close": "S4",
+    "rsi-classify-godmode-as-harness-level": "S7",
+    "rsi-guard-must-prove-it-prevents-the-next-instance": "S7",
+    "rsi-replay-a-proposed-rule-against-prior-cases": "S7",
+    "rsi-guards-carry-retirement-criteria": "S7",
+    "rsi-law-compile-emit-ci": "S7",
+    "rsi-persistent-versus-bounded-improvement": "S7",
+    "rsi-experience-bank-is-the-chronicle": "S7",
+    "rsi-no-implicit-acceptance-by-execution-feedback": "S7",
+    "rsi-structural-baseline-and-degradation-gate": "S7",
+    "rsi-single-structural-score-from-minimality-sections": "S7",
+    "rsi-consumes-loop-episodes-from-s5": "S7",
+    "rsi-consumes-blast-radius-from-s6": "S7",
+    "deep-source-sweep-capability": "S3",
+    "peer-findings-carry-an-evidence-grade": "S3",
+    "roadmap-items-need-source-verification-before-funding": "S3",
+    "unread-source-advisory-does-not-escalate": "S7",
+    "sentrux-geometric-mean-structural-score": "S7",
+    "sentrux-reachability-test-gap": "S6"
+  },
+  "evidence_grades": {
+    "note": "Where a work item came from. A source-grade item is read at file:line in the repository it describes. A surface-grade item is read from a README, a release note or a listing, and cannot fund engineering until it is verified at source. Recorded because 23 items below entered this plan at surface grade.",
+    "source": "read at file:line in the code it describes",
+    "surface": "read from README, release notes or a listing only",
+    "measured": "produced by a command run in this repository"
+  },
+  "surface_grade_items": [
+    "roadmap-1.1",
+    "roadmap-1.10",
+    "roadmap-1.11",
+    "roadmap-1.12",
+    "roadmap-1.13",
+    "roadmap-1.14",
+    "roadmap-1.15",
+    "roadmap-1.2",
+    "roadmap-1.3",
+    "roadmap-1.4",
+    "roadmap-1.5",
+    "roadmap-1.6",
+    "roadmap-1.7",
+    "roadmap-1.8",
+    "roadmap-1.9",
+    "roadmap-2.1",
+    "roadmap-2.2",
+    "roadmap-2.2b",
+    "roadmap-2.3",
+    "roadmap-2.4",
+    "roadmap-add-1-prove-verifier-refuses",
+    "roadmap-add-2-unmeasured-verdict",
+    "roadmap-add-3-law-emit-ci"
+  ]
 }
