@@ -239,6 +239,22 @@
     "minimality-reinvention-pressure": "S3",
     "operator-requests-never-reviewed": "S4",
     "coverage-depth-not-only-assignment": "S1",
-    "posix-smoke-blocked-no-wsl-no-docker": "S2"
+    "posix-smoke-blocked-no-wsl-no-docker": "S2",
+    "s4-trust-blind-to-authorization-policy": "S2",
+    "s4-refusal-remedy-not-actionable": "S2",
+    "improvement-spec-2026-08-08-triage": "S1",
+    "silence-b8-advisory-loses-to-project-rule": "S4",
+    "silence-b9-nudges-cover-only-three-prompt-shapes": "S4",
+    "silence-c14-sibling-over-collapse": "S3",
+    "silence-e21-brief-truncation-drops-next-actions": "S4",
+    "silence-e22-archive-scale-full-scan-unmeasured": "S3",
+    "silence-e23-advisory-stacking-per-turn": "S4",
+    "silence-e24-stale-recalls-without-freshness": "S4",
+    "silence-f25-subagent-calls-may-bypass-gate": "S2",
+    "silence-f26-concurrent-sessions-overwrite-parks": "S2",
+    "s13-deferred-acp-host-adapter": "S2",
+    "s13-deferred-export-otel-interop": "S3",
+    "s13-deferred-per-directory-emitter": "S4",
+    "s13-deferred-forge-promotion-bar": "S4"
   }
 }
