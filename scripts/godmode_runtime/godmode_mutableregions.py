@@ -131,3 +131,33 @@ def is_span_mutable(text: str, start: int, end: int) -> bool:
         region_start <= start and end <= region_end
         for region_start, region_end in mutable_ranges(text)
     )
+
+
+class FrozenRegionError(Exception):
+    """A patch was refused because its span is not inside a declared region."""
+
+
+def check_patch(text: str, start: int, end: int) -> None:
+    """Raise unless `[start, end)` lies wholly inside one declared region.
+
+    The refusal names the offsets and the regions that were available. A
+    refusal that does not say what it protected cannot be acted on, and an
+    editor handed a bare "denied" will retry the same edit.
+    """
+    if is_span_mutable(text, start, end):
+        return
+
+    regions = mutable_ranges(text)
+    if not regions:
+        raise FrozenRegionError(
+            f"refusing a patch at [{start}, {end}): this file declares no "
+            f"editable region, so all of it is frozen. Add a "
+            f"{MARKER_START_TEXT} / {MARKER_END_TEXT} pair around the part "
+            f"that may be edited."
+        )
+    raise FrozenRegionError(
+        f"refusing a patch at [{start}, {end}): it is not contained by any "
+        f"editable region. Declared editable ranges: {regions}. A patch that "
+        f"straddles a boundary is refused rather than trimmed, because a "
+        f"half-applied edit corrupts the file."
+    )
