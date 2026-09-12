@@ -356,7 +356,17 @@ def detect_context_issues(
     current_inventory: dict[str, Any] | None = None,
     *,
     archive: Chronicle | None = None,
+    now: datetime | None = None,
 ) -> list[dict[str, Any]]:
+    """Context problems worth telling the operator about.
+
+    `now` exists for tests. The staleness verdict below compares a recorded
+    timestamp against the current time, and a test that cannot hold the clock
+    still can only assert it by writing a timestamp far enough in the past to
+    be safely stale - which checks arithmetic nobody chose and cannot examine
+    the threshold at all. Production omits it and reads the real clock.
+    """
+    moment = now or datetime.now(timezone.utc)
     issues: list[dict[str, Any]] = []
     if anchor.is_git:
         # An unfinished git operation masquerades as ordinary dirty files, so
@@ -411,8 +421,8 @@ def detect_context_issues(
             and inventory_diff(latest_inventory["data"],
                                current_inventory)["clean"])
         if (captured and not tree_unchanged
-                and (datetime.now(timezone.utc) - captured).total_seconds() > 86_400):
-            age_hours = int((datetime.now(timezone.utc) - captured).total_seconds() // 3600)
+                and (moment - captured).total_seconds() > 86_400):
+            age_hours = int((moment - captured).total_seconds() // 3600)
             issues.append(
                 {"code": "stale-baseline", "severity": "warning",
                  "detail": f"Inventory is {age_hours}h old; confidence {baseline_confidence}.",
