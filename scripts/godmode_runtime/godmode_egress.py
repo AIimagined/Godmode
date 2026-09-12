@@ -539,6 +539,48 @@ def _without_git_ignored(project: Path, paths: list[Path]) -> list[Path]:
     return [path for relative, path in relatives.items() if relative not in ignored]
 
 
+def _logical_lines(text: str) -> list[tuple[int, str]]:
+    """`(first physical line number, joined text)` for each logical line.
+
+    A shell-style trailing backslash continues a line. The scanner reads one
+    physical line at a time, so a directive split across a continuation became
+    two halves that each match nothing, while the reader's shell joins them.
+
+    Joining is deliberately limited to explicit continuations. Joining
+    everything would defeat the scoping the directive patterns rely on - the
+    verb must govern the object within a few words - and turn every security
+    document that names a credential in one paragraph and a network command in
+    another into a finding.
+
+    An even number of trailing backslashes is an escaped backslash, not a
+    continuation, so `a literal backslash \\\\` ends its line. A continuation
+    left open at end of text is flushed rather than dropped.
+
+    The reported number is the FIRST physical line of the group: a number that
+    does not exist in the file is worse than no number.
+    """
+    out: list[tuple[int, str]] = []
+    pending: list[str] = []
+    start: int | None = None
+
+    for index, line in enumerate(text.splitlines(), 1):
+        if start is None:
+            start = index
+        stripped = line.rstrip()
+        trailing = len(stripped) - len(stripped.rstrip("\\"))
+        if trailing % 2 == 1:
+            pending.append(stripped[:-1].strip())
+            continue
+        pending.append(line.strip())
+        out.append((start, " ".join(part for part in pending if part)))
+        pending = []
+        start = None
+
+    if pending and start is not None:
+        out.append((start, " ".join(part for part in pending if part)))
+    return out
+
+
 def _concealment_findings(line: str, index: int) -> list[dict[str, Any]]:
     """Characters that hide what a line says, one finding per class.
 
@@ -583,12 +625,18 @@ def untrusted_directives(text: str, source: str = "repository") -> dict[str, Any
     never granted authority.
     """
     findings: list[dict[str, Any]] = []
+
+    # Concealment is judged per PHYSICAL line so its reported number points at
+    # the exact line carrying the character. It is also independent of the
+    # directive `break` below: a line can carry both a directive and a
+    # character that hides it, and reporting only the directive describes the
+    # line a reviewer sees rather than the one a parser receives.
     for index, line in enumerate(text.splitlines(), 1):
-        # Concealment first, and not subject to the `break` below: a line can
-        # carry both a directive and a character that hides it, and reporting
-        # only the directive would describe the line a reviewer sees rather
-        # than the one a parser receives.
         findings.extend(_concealment_findings(line, index))
+
+    # Directives are judged per LOGICAL line, so a continuation cannot split an
+    # instruction into two halves that each match nothing.
+    for index, line in _logical_lines(text):
         lowered = line.lower()
         for kind, pattern in _INJECTION:
             if re.search(pattern, lowered, re.IGNORECASE | re.MULTILINE):
