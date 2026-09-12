@@ -45,10 +45,17 @@ _PUBLIC_SUFFIXES = frozenset({".md", ".mdx", ".rst", ".txt"})
 # public changelog, so treating it as working material meant its prose was only
 # checked after it had shipped, when changing it is a rewrite of history rather
 # than an edit. It is public prose that has not been published yet.
+# `archive` is deliberately present, and for the opposite reason to the rest.
+# The others are working material that has not been published. An archived
+# document HAS been published and then retired: it is the record of what was
+# said at the time. Linting it demands edits, and editing it to satisfy a
+# linter rewrites the history the archive exists to keep - so a retired
+# document's prose is frozen, defects and all. Seven findings against four
+# documents retired on 2026-09-12 are what made this explicit.
 _PRIVATE_PARTS = frozenset({
     ".godmode-private", ".research", ".planning", ".sprints", ".checkpoints",
     ".handovers", ".evidence", ".decisions", ".lessons", ".git", "node_modules",
-    "tests", "evals", ".godmode-repo",
+    "tests", "evals", ".godmode-repo", "archive",
 })
 
 CHECKS: dict[str, dict[str, Any]] = {

@@ -21,6 +21,7 @@ import re
 from typing import Any
 
 from .godmode_anchor import run_git
+from .godmode_constants import IGNORED_DIRECTORY_NAMES
 from .godmode_sentinel import find_secret_shapes
 
 INFERENCE = "model-inference"
@@ -515,7 +516,12 @@ def scan_project(project: Path, limit: int = DEFAULT_SCAN_LIMIT) -> dict[str, An
             continue
         if path.suffix.lower() not in {".md", ".mdx", ".txt", ".rst", ".json", ".yaml", ".yml"}:
             continue
-        if any(part in {".git", "node_modules", "__pycache__", ".godmode-repo"} for part in path.parts):
+        # The shared list, not a private copy. The constant's own comment
+        # records the last time a walk kept its own: every other walk then
+        # descended into directories this one skipped. A fourth copy here was
+        # how another plugin's local session state reached this scan, turning a
+        # gate red locally and green in CI (2026-09-12).
+        if any(part in IGNORED_DIRECTORY_NAMES for part in path.parts):
             continue
         # Same boundary the swallow scanner draws (CX-3 fix round): host-agent
         # worktrees nested under THIS project are duplicate checkouts of

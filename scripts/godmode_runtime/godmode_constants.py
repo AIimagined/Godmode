@@ -135,6 +135,11 @@ IGNORED_DIRECTORY_NAMES = frozenset(
         # of "added/changed" paths no person had touched.
         ".next", ".nuxt", ".svelte-kit", ".turbo", ".cache",
         ".parcel-cache", ".angular", ".vercel", ".output",
+        # Other agent tooling's local session state. It exists on a developer
+        # machine and never in CI, so scanning it makes a gate red locally and
+        # green in CI for reasons that have nothing to do with the repository -
+        # which is exactly how `test_ci_gates` failed on 2026-09-12.
+        ".remember",
     }
 )
 

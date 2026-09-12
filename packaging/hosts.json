@@ -36,15 +36,19 @@
         "repository",
         "license",
         "keywords",
-        "skills"
+        "skills",
+        "experimental"
       ],
       "extra": {
         "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
         "keywords_prefix": [
           "claude-code-plugin"
-        ]
+        ],
+        "experimental": {
+          "evals": "quality/evals"
+        }
       },
-      "note": "hooks/hooks.json is loaded by convention; declaring a hooks key causes a duplicate-load error"
+      "note": "hooks/hooks.json is loaded by convention; declaring a hooks key causes a duplicate-load error `experimental` is Claude-only and lives here because it was once added straight to the generated manifest, which the generator then reported as drift."
     },
     "codex": {
       "path": ".codex-plugin/plugin.json",

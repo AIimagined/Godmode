@@ -316,7 +316,12 @@
     "selection-is-cost-aware-and-survives-arm-set-change": "S7",
     "degenerate-population-yields-a-repair-task": "S7",
     "load-bearing-assumption-named-before-work": "S7",
-    "feedback-written-from-having-built-against-the-product": "S7"
+    "feedback-written-from-having-built-against-the-product": "S7",
+    "quoted-literal-data-is-not-an-operation-substitution-path": "SB",
+    "gate-table-regenerated-after-a-classifier-change": "SB",
+    "untrusted-scan-follows-the-shared-ignore-list": "S1",
+    "manifest-source-holds-every-field-it-emits": "S1",
+    "retired-documents-are-not-linted": "S1"
   },
   "evidence_grades": {
     "note": "Where a work item came from. A source-grade item is read at file:line in the repository it describes. A surface-grade item is read from a README, a release note or a listing, and cannot fund engineering until it is verified at source. Recorded because 23 items below entered this plan at surface grade. A second batch added 2026-09-12 carries source grade: each was read at file and line in the code it describes before it entered this plan.",
