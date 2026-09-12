@@ -258,6 +258,11 @@
     "b5-agent-id-absent-from-writer-fingerprint": "S3",
     "verbreach-counts-mentions-not-invocations": "S4",
     "verbreach-ceiling-calibrated-at-120-verbs-now-126": "S1",
-    "atlas-beyond-python-needs-a-doctrine-decision": "S6"
+    "atlas-beyond-python-needs-a-doctrine-decision": "S6",
+    "session-heredoc-commit-body-escalates-to-r4": "SB",
+    "session-context-window-declared-200k-measured-255k": "S1",
+    "session-atlas-budget-flag-position-unguessable": "S4",
+    "session-brief-dominated-by-112-open-obligations": "S4",
+    "session-stale-baseline-203h-with-confidence-zero": "S4"
   }
 }
