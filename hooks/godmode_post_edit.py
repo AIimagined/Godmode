@@ -53,6 +53,15 @@ def _findings(project: Path, target: Path) -> list[str]:
         for f in findings:
             out.append(f"{relative}:{f.get('line', 0)}: {f.get('severity', '')}: "
                        f"{f.get('check', '')} - {f.get('why', '')}")
+
+    # R17: a constraint credited to an outside authority is read before it is
+    # changed. Not restricted by suffix - an attribution appears in a comment in
+    # any language, and this is the moment the edit is happening, which is the
+    # only moment the advisory is worth anything.
+    from godmode_runtime.godmode_attribution import attributed_constraints
+    for f in attributed_constraints(relative, text):
+        out.append(f"{relative}:{f.get('line', 0)}: {f.get('severity', '')}: "
+                   f"{f.get('check', '')} - {f.get('why', '')}")
     return out
 
 
