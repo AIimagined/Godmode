@@ -327,7 +327,8 @@
     "a-compaction-leaves-a-record": "S4",
     "attributed-constraint-advisory-fires-at-edit-time": "S3",
     "guidance-line-budget-and-hard-rule-attestation": "S4",
-    "every-finding-surface-carries-a-remedy": "S4"
+    "every-finding-surface-carries-a-remedy": "S4",
+    "every-eval-suite-carries-a-near-negative-control": "S4"
   },
   "evidence_grades": {
     "note": "Where a work item came from. A source-grade item is read at file:line in the repository it describes. A surface-grade item is read from a README, a release note or a listing, and cannot fund engineering until it is verified at source. Recorded because 23 items below entered this plan at surface grade. A second batch added 2026-09-12 carries source grade: each was read at file and line in the code it describes before it entered this plan.",
