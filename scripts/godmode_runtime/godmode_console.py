@@ -3103,6 +3103,15 @@ def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         return CommandResult({"record": _event_view(record)})
     status = args.status or ("open" if args.kind == "request" else "active")
     data: dict[str, Any] = {"value": args.value, "status": status}
+    if args.kind == "assumption":
+        # The same contract `--turning-point` holds for an incident: both are
+        # causal claims, and a causal claim with no citation is an assertion
+        # wearing a record's clothes.
+        from .godmode_mistakes import validate_load_bearing
+        load_bearing = bool(getattr(args, "load_bearing", False))
+        validate_load_bearing(load_bearing, args.evidence)
+        if load_bearing:
+            data["load_bearing"] = True
     if args.kind == "obligation" and getattr(args, "standing", False):
         data["standing"] = True
     if args.kind == "lesson":
@@ -6116,6 +6125,9 @@ def _build_parser() -> argparse.ArgumentParser:
     remember.add_argument("--failure-class", dest="failure_class", default=None,
                           help="incident only: one of the closed failure classes "
                                "(off-list refused with the list rendered)")
+    remember.add_argument("--load-bearing", dest="load_bearing", action="store_true",
+                          help="assumptions only: this is the premise the work rests on; "
+                               "requires --evidence naming what fails without it")
     remember.add_argument("--turning-point", dest="turning_point", action="store_true",
                           help="incident only: the first failure the run never recovered "
                                "from; requires --evidence")

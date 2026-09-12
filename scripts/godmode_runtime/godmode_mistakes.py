@@ -60,11 +60,6 @@ def record_incident(
     it until it forbids something - name one consequence the hypothesis
     requires, a check that must come out a particular way, and go look.
 
-    `predicts` (absorbed 2026-09-11 from a multi-agent workspace's review
-    rules): a mechanism that explains the observation is not evidence for
-    it until it forbids something - name one consequence the hypothesis
-    requires, a check that must come out a particular way, and go look.
-
     The class comes from `FAILURE_CLASSES` or is absent - an off-list word
     is refused with the list rendered, because the whole value of a class
     is that two records can share it. `turning_point` marks the first
@@ -890,3 +885,28 @@ def reinvention_advisory(archive: Any, subject: str, value: str) -> str | None:
         f"the record already holds this capability at seq {best[1]} "
         f"('{best[2]}') - reuse it, or say what differs; discovering the "
         "original mid-implementation is the expensive way")
+
+
+def validate_load_bearing(load_bearing: bool, cites: list[str] | None) -> None:
+    """An assumption marked load-bearing must say what fails without it.
+
+    The product already forces falsifiability after the fact: an incident's
+    hypothesis is not evidence until it forbids something. Nothing forced it
+    before the work started, so a plan could rest entirely on one unexamined
+    premise while every record about it looked locally justified.
+
+    This is deliberately the same contract `turning_point` holds above, not a
+    parallel one. Both are causal claims - "the run never recovered past this"
+    and "remove this and the plan fails" - and a causal claim with no citation
+    is an assertion wearing a record's clothes. A second convention would drift
+    from the first, which is the duplicate-authority failure this codebase has
+    been bitten by more than once.
+    """
+    if not load_bearing:
+        return
+    if not [c for c in (cites or []) if str(c).strip()]:
+        raise ArchiveError(
+            "a load-bearing assumption is a causal claim - pass --evidence "
+            "naming what fails without it. 'Requires evidence' alone does not "
+            "tell the next reader what the assumption was holding up."
+        )
