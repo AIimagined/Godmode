@@ -263,6 +263,8 @@
     "session-context-window-declared-200k-measured-255k": "S1",
     "session-atlas-budget-flag-position-unguessable": "S4",
     "session-brief-dominated-by-112-open-obligations": "S4",
-    "session-stale-baseline-203h-with-confidence-zero": "S4"
+    "session-stale-baseline-203h-with-confidence-zero": "S4",
+    "recorded-constraint-does-not-check-proposed-actions": "S3",
+    "s1t2-ci-gate-proof-blocked-on-operator-push": "S1"
   }
 }
