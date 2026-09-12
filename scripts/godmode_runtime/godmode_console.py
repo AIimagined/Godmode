@@ -30,6 +30,7 @@ from .godmode_githooks import (
 from .godmode_constants import DEFAULT_CONTEXT_BUDGET, EVENT_KINDS, RUNTIME_VERSION
 from .godmode_attest import (
     split_command,
+    unsupported_shell_grammar,
     advisory_decay,
     agent_fingerprint,
     close_session,
@@ -961,6 +962,24 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         for cite in list(args.cite or []):
             if not str(cite).startswith("cmd:"):
                 continue
+            # Incident 12606: a cited command runs as argv with no shell, so an
+            # operator becomes a literal argument. A redirect fails loudly, but
+            # an and-chain exits ZERO on its first conjunct and grades the claim
+            # `verified` without ever evaluating the rest - a false green from
+            # the mechanism meant to prevent them. Refuse by name instead.
+            offending = unsupported_shell_grammar(str(cite)[len("cmd:"):])
+            if offending:
+                return CommandResult({
+                    "refused": (
+                        f"the citation contains {offending!r}, which a cited "
+                        f"command cannot use: it is run as argv with no shell, "
+                        f"so the operator would become a literal argument. An "
+                        f"and-chain is the dangerous case - it exits zero on "
+                        f"its first part and never runs the rest."),
+                    "citation": str(cite)[:160],
+                    "remedy": ("cite one command, or put the multi-step check in "
+                               "a script and cite that script by path"),
+                }, exit_code=1)
             outcome = run_check(
                 runtime.archive, _session(runtime, args.session),
                 Path(runtime.anchor.project_root),

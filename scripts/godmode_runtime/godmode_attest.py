@@ -344,6 +344,57 @@ def split_command(text: str) -> list[str]:
     return shlex.split(raw)
 
 
+#: Shell grammar the citation runner cannot honour, because a cited command is
+#: executed as argv with no shell. Ordered longest-first so `&&` is reported
+#: rather than a bare `&`.
+_UNSUPPORTED_GRAMMAR = ("&&", "||", "$(", "|", ">", "<", ";", "`", "&")
+
+
+def unsupported_shell_grammar(text: str) -> str | None:
+    """The first shell operator in `text` that the runner will not honour.
+
+    Incident 12606. A cited command is `shlex.split` into argv and executed
+    directly, so an operator becomes a literal argument. Half of that fails
+    loudly - a redirect makes the command exit nonzero and the claim records at
+    a weaker grade. The other half exits ZERO for the wrong reason:
+
+        grep -q PRESENT file && grep -q ABSENT file   ->   exit 0
+
+    because `grep -q` succeeds on its first match and the second conjunct is
+    never evaluated. The verifier then reports executed, passed, and grades the
+    claim `verified` - a false green produced by the mechanism that exists to
+    prevent them.
+
+    So the operator is refused by name rather than run. Refusing is not the
+    lesser outcome: the alternative is a check reporting on a command nobody
+    ran. A multi-condition check belongs in a script cited by path, which keeps
+    the runner's model argv-with-no-shell and therefore auditable.
+
+    Operators inside quoted arguments are not grammar - `grep -q 'a && b' f`
+    searches for the text - so the scan walks the string tracking quotes rather
+    than matching anywhere.
+    """
+    raw = str(text)
+    quote: str | None = None
+    index = 0
+    while index < len(raw):
+        char = raw[index]
+        if quote:
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in "\"'":
+            quote = char
+            index += 1
+            continue
+        for token in _UNSUPPORTED_GRAMMAR:
+            if raw.startswith(token, index):
+                return token
+        index += 1
+    return None
+
+
 def resolve_executable(command: list[str]) -> list[str]:
     """argv with its head resolved through PATH (and PATHEXT on Windows), so
     `npx`, `tsc`, `vitest` - `.cmd` shims on Windows that CreateProcess
