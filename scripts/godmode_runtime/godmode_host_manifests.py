@@ -404,6 +404,21 @@ def _codex_project_entry(root, shared_command: str) -> dict:
     }
 
 
+def _record_installed(project, group: str, target) -> None:
+    """Note a host artifact in the project's install manifest.
+
+    Without this the writers below create files and nothing records which files
+    are ours, so "what did this install put here" is answerable only by
+    matching a glob against paths someone remembered. Never raises: a manifest
+    that cannot be written must not cost the operator the install.
+    """
+    try:
+        from .godmode_installmanifest import record
+        record(project, "godmode", group, [target])
+    except Exception:  # noqa: BLE001 - bookkeeping, never the operation
+        pass
+
+
 def write_codex_project_hooks(plugin_root, project, *, force: bool = False) -> dict:
     import json as _json
     from pathlib import Path as _Path
@@ -415,6 +430,7 @@ def write_codex_project_hooks(plugin_root, project, *, force: bool = False) -> d
                 "reason": "exists with different content; pass --force to overwrite"}
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(rendered, encoding="utf-8")
+    _record_installed(project, "codex-hooks", target)
     return {"written": True, "path": str(target),
             "events": sorted(codex_project_hooks(plugin_root)["hooks"]),
             "note": "Codex requires explicit trust: open codex, review each "
@@ -553,6 +569,7 @@ def write_antigravity_project_hooks(plugin_root, project, *,
     existing["godmode"] = entry
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(_json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+    _record_installed(project, "antigravity-hooks", target)
     return {"written": True, "path": str(target),
             "events": sorted(antigravity_emitted_events(fragment)),
             "note": "restart Antigravity, then run a protected command to "
@@ -581,6 +598,7 @@ def write_opencode_project_shim(plugin_root, project, *, force: bool = False) ->
                 "reason": "exists with different content; pass --force to overwrite"}
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(body, encoding="utf-8")
+    _record_installed(project, "opencode-shim", target)
     return {"written": True, "path": str(target),
             "env": {"GODMODE_PLUGIN_ROOT": str(root),
                     "GODMODE_PYTHON": "optional; defaults to python"},

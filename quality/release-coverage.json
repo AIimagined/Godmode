@@ -333,7 +333,9 @@
     "load-bearing-assumption-names-what-fails-without-it": "S7",
     "false-green-rate-excludes-unresolved-verified-claims": "S3",
     "census-separates-verb-assigned-from-verb-exercised": "S1",
-    "find-exec-read-classified-as-mutation": "SB"
+    "find-exec-read-classified-as-mutation": "SB",
+    "wire-frozen-region-enforcement-into-the-edit-path": "S2",
+    "install-writers-record-into-the-manifest": "S1"
   },
   "evidence_grades": {
     "note": "Where a work item came from. A source-grade item is read at file:line in the repository it describes. A surface-grade item is read from a README, a release note or a listing, and cannot fund engineering until it is verified at source. Recorded because 23 items below entered this plan at surface grade. A second batch added 2026-09-12 carries source grade: each was read at file and line in the code it describes before it entered this plan.",
