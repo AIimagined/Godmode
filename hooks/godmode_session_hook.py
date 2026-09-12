@@ -3127,6 +3127,18 @@ def main(argv: list[str] | None = None) -> int:
                 # bookkeeping, and it may never cost the operator a close.
                 record_hook_degradation(
                     archive, current_host(), "interrupted-intent-capture-failed")
+            if args.event == "pre-compact":
+                # A compaction destroys the evidence that it happened. Without
+                # this the ledger cannot say a session compacted at all, and
+                # every later "what I have seen so far" rests on an invisible
+                # gap. Never raises: bookkeeping about bookkeeping must not
+                # cost the operator the compaction they asked for.
+                from godmode_runtime.godmode_session_log import record_compaction
+                record_compaction(
+                    archive,
+                    session=str(submitted.get("session_id") or "") or None,
+                    trigger=submitted.get("trigger"),
+                )
             if args.event == "session-end":
                 # Best-effort, counts-only measurement of the host's own
                 # transcript. Never blocks the checkpoint below: a missing

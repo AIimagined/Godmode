@@ -64,3 +64,25 @@ red, in the diff since the last green.
   context notice, the perimeter refusal, and the long-document advisory.
 - `godmode scenarios` stages the six oracle and loop shapes and reports
   whether each was caught.
+
+## What godmode controls here, and what it does not
+
+Godmode does not compact anything. The host decides when to compact and which
+turns to discard, and godmode sees the event, captures in-flight work, and
+rebuilds the brief from records afterwards. Two consequences worth stating
+plainly, because both have been mistaken for godmode's behaviour:
+
+**The truncation boundary is the host's.** Where a transcript is cut, and
+whether the cut leaves a tool call separated from its result, is decided
+entirely by the host. A transcript that orphans a tool call is rejected by the
+model providers, so a host that compacts has to choose boundaries that keep
+each call with its result. Godmode neither makes that choice nor can repair it;
+the record it writes says a compaction happened, not what survived it.
+
+**A compaction leaves a record.** The `pre-compact` event writes one `action`
+record with subject `context-compacted`, carrying the trigger the host
+declared, the archive sequence at that moment, and nothing read from the
+transcript. That record exists because a compaction destroys the evidence that
+it happened: without it a session cannot say it compacted at all, and every
+later statement about what it has seen rests on a gap it cannot see. Read them
+with `godmode status remaining --digest` or by selecting `action` records.

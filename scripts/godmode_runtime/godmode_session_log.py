@@ -357,3 +357,53 @@ def record_measurement(
     data["measured"] = True
     data["session"] = str(session)[:80] if session else None
     return archive.append("metric", _SUBJECT, data, evidence=[])
+
+
+#: Triggers a host may declare for a compaction. Closed for the same reason the
+#: tool-name enum above is closed: a host can send any string, and a free-text
+#: field is exactly where a content leak would ride along.
+_COMPACTION_TRIGGERS = frozenset({"auto", "manual"})
+
+
+def record_compaction(
+    archive: Any, *, session: str | None = None, trigger: Any = None
+) -> dict[str, Any]:
+    """Write one `action` record saying a compaction happened.
+
+    Godmode does not compact anything - the host does - so the transferable
+    part of the compaction problem is not where the truncation boundary falls.
+    It is that a compaction destroys the evidence that it occurred. After two
+    of them a session cannot tell you it compacted at all, and every later
+    judgement about "what I have seen so far" rests on a gap it cannot see.
+
+    The record holds the declared trigger, the archive sequence at the time -
+    which is what lets a later reader place the boundary in the timeline - and
+    nothing read from the transcript. A compaction record is about the event,
+    not about what was evicted.
+
+    Never raises. This is bookkeeping about bookkeeping, and a locked or
+    refusing archive must not cost the operator the compaction they asked for.
+    """
+    raw = str(trigger).strip().lower() if trigger is not None else ""
+    if not raw:
+        declared = "unstated"
+    elif raw in _COMPACTION_TRIGGERS:
+        declared = raw
+    else:
+        declared = "other"
+
+    try:
+        existing = archive.select(limit=1)
+        at_sequence = int(existing[0]["sequence"]) if existing else 0
+    except Exception:  # noqa: BLE001 - a read failure is not worth the event
+        at_sequence = 0
+
+    data: dict[str, Any] = {"trigger": declared, "at_sequence": at_sequence}
+    if session:
+        data["session"] = session
+
+    try:
+        archive.append("action", "context-compacted", data)
+    except Exception as exc:  # noqa: BLE001 - see the docstring
+        return {"recorded": False, "reason": type(exc).__name__, **data}
+    return {"recorded": True, **data}

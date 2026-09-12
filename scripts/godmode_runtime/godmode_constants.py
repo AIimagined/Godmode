@@ -103,6 +103,10 @@ EVENT_KINDS = frozenset(
 ACTION_SUBJECTS = frozenset(
     {
         "atlas-query", "capability-consumed", "capability-issued", "chain-reanchored",
+        # A compaction is a context eviction that destroys the evidence it
+        # happened. Without a record, a session cannot say it compacted at all,
+        # and every later "what I have seen so far" rests on an invisible gap.
+        "context-compacted",
         "failure-nudge", "gate-asked", "git-hook-inspection-failed", "git-hook-malformed-input",
         "git-hooks-installed", "host-payload-capture", "interpreter-inline-read-only",
         "interrupted-intent", "law-debrief", "laws-delivered", "observe-advisory",
