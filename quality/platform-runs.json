@@ -1,0 +1,18 @@
+{
+  "schema": "godmode-platform-runs-v1",
+  "note": "One entry per platform a portability run was actually performed on. A platform absent from this file is unmeasured, which is not a pass. Written only by `platform_parity.py --record`, never as a side effect of reporting.",
+  "modules": [
+    "tests.test_install_manifest",
+    "tests.test_install_remove",
+    "tests.test_platform_parity"
+  ],
+  "runs": {
+    "Windows": {
+      "date": "2026-09-12",
+      "release": "11",
+      "python": "3.14.7",
+      "tests": 26,
+      "result": "pass"
+    }
+  }
+}
