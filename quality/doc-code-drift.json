@@ -1,0 +1,72 @@
+{
+  "handlers": 178,
+  "parser_only": [
+    "absorb",
+    "actions",
+    "adopt",
+    "assurance",
+    "branches",
+    "build",
+    "checklist",
+    "checksums",
+    "config",
+    "drift",
+    "environment",
+    "explain-context",
+    "export",
+    "expunge",
+    "fuzz",
+    "gate",
+    "guard",
+    "index",
+    "inventory",
+    "locale",
+    "method",
+    "metrics",
+    "mistakes",
+    "parity",
+    "privacy",
+    "recurrences",
+    "recurring",
+    "reflect",
+    "removal",
+    "report",
+    "rewind",
+    "roles",
+    "scope",
+    "slice",
+    "sop",
+    "sprint",
+    "stage",
+    "watch"
+  ],
+  "parser_verbs": 126,
+  "subcommand_drift": {
+    "attest": [
+      "ci",
+      "full-suite",
+      "host-proof-cursor"
+    ],
+    "guide": [
+      "one-page"
+    ],
+    "init": [
+      "start"
+    ],
+    "status": [
+      "the"
+    ]
+  },
+  "thin": {
+    "actions": 3,
+    "assurance": 2,
+    "environment": 3,
+    "expunge": 3,
+    "freshness": 3,
+    "fuzz": 3,
+    "grid": 3,
+    "netgate": 3,
+    "rewind": 3,
+    "selftest": 3
+  }
+}

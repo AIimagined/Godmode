@@ -232,8 +232,6 @@
     "feedback-zero-false-triggers-is-a-property-to-keep": "S4",
     "session-git-restore-staged-misclassified": "SB",
     "session-atlas-recall-smaller-than-exclusion": "S6",
-    "unbuilt-b5-fleet-governance": "S3",
-    "unbuilt-b6-rollback-replay-forecast-precedent": "S3",
     "unbuilt-forge-pivot-governance-from-history": "S4",
     "unbuilt-gemini-full-extension-manifest": "S2",
     "minimality-reinvention-pressure": "S3",
@@ -255,6 +253,11 @@
     "s13-deferred-acp-host-adapter": "S2",
     "s13-deferred-export-otel-interop": "S3",
     "s13-deferred-per-directory-emitter": "S4",
-    "s13-deferred-forge-promotion-bar": "S4"
+    "s13-deferred-forge-promotion-bar": "S4",
+    "b5-per-agent-trust-levels-not-built": "S3",
+    "b5-agent-id-absent-from-writer-fingerprint": "S3",
+    "verbreach-counts-mentions-not-invocations": "S4",
+    "verbreach-ceiling-calibrated-at-120-verbs-now-126": "S1",
+    "atlas-beyond-python-needs-a-doctrine-decision": "S6"
   }
 }
