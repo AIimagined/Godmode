@@ -415,7 +415,7 @@ def _record_installed(project, group: str, target) -> None:
     try:
         from .godmode_installmanifest import record
         record(project, "godmode", group, [target])
-    except Exception:  # noqa: BLE001 - bookkeeping, never the operation
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: the manifest is bookkeeping; an install must not fail because a note about it could not be written
         pass
 
 
