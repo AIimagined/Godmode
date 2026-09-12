@@ -2692,6 +2692,53 @@ def _without_heredoc_bodies(command: str) -> str:
     return "\n".join(kept)
 
 
+def _blank_quoted_heredoc_bodies(command: str) -> str:
+    """`command` with every *quoted* heredoc body blanked, length preserved.
+
+    Incident 12459: a documentation write was refused as a filesystem mutation
+    because the prose it carried described cleanup code and contained a
+    backticked command name. `_without_heredoc_bodies` was not at fault - it
+    strips correctly. The substitution scan was, and its sibling docstring says
+    why it was built that way: a substitution inside a heredoc body "really
+    does expand".
+
+    That is true of `<<EOF` and false of `<<'EOF'`. A quoted delimiter
+    suppresses **all** expansion - backticks, `$( )` and `$VAR` are literal
+    text handed to the consumer untouched - so scanning a quoted body for
+    substitutions reads the operator's prose as shell.
+
+    Unquoted bodies are deliberately left intact: those do expand, and R5
+    requires interpreter-fed bodies to stay scanned. A change that neutralised
+    both would break the gate rather than repair it.
+
+    Blanked in place rather than removed because the caller reuses the scan's
+    `(start, end)` spans against the original string; deleting characters would
+    silently shift every later offset.
+    """
+    if "<<" not in command:
+        return command
+    lines = command.splitlines(keepends=True)
+    out: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        out.append(line)
+        match = _HEREDOC.search(line)
+        index += 1
+        if not match or not match.group("quote"):
+            # No heredoc here, or an unquoted one whose body really expands.
+            continue
+        delimiter = match.group("delim")
+        while index < len(lines) and lines[index].strip() != delimiter:
+            body = lines[index]
+            out.append("".join(" " if ch != "\n" else "\n" for ch in body))
+            index += 1
+        if index < len(lines):
+            out.append(lines[index])  # the delimiter line, kept verbatim
+            index += 1
+    return "".join(out)
+
+
 def _raw_segments(command: str) -> list[str]:
     """The character-level split shared by `shell_segments` and
     `split_segments`: one state machine, quote- and backslash-aware, so the
@@ -4077,7 +4124,13 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
 
     # What a substitution runs is a command like any other, judged alongside
     # the line that contains it rather than taken on trust or refused on sight.
-    inner, sub_unparsed, sub_blanked, sub_spans = _substitution_scan(normalized)
+    # A *quoted* heredoc body is literal data: the shell expands nothing inside
+    # it, so scanning it for substitutions reads prose as shell (incident
+    # 12459). Blanked in place so the spans below still index `normalized`.
+    # Unquoted bodies are left intact - those really do expand, and R5 requires
+    # an interpreter-fed body to stay scanned.
+    inner, sub_unparsed, sub_blanked, sub_spans = _substitution_scan(
+        _blank_quoted_heredoc_bodies(normalized))
     if sub_unparsed:
         # C7 (security review): a `$(` opened and never validly closed (or
         # a backtick opened and never closed) before the text ended - a
@@ -4185,7 +4238,18 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         worst["external_repo_ref"] = external_repo_ref
         return worst
 
-    category, protected, impact = _categorize(normalized, project_root, archive,
+    # Incident 12459: a single-segment line carrying a QUOTED heredoc was
+    # categorised over its raw text, so the body's prose became vocabulary -
+    # a backticked command name in documentation read as that command, and a
+    # stray backtick read as an unresolved expansion that failed the write
+    # target's containment. A quoted delimiter suppresses every expansion, so
+    # the body is data the consumer receives verbatim.
+    #
+    # An interpreter-fed heredoc never reaches this line: it is recognised and
+    # returned above, body scanned, as R5 requires. Unquoted bodies are left
+    # intact here too, because those really do expand.
+    category, protected, impact = _categorize(_blank_quoted_heredoc_bodies(normalized),
+                                              project_root, archive,
                                               fetch_standalone=_allow_standalone_fetch)
     if inline_scan and category == "interpreter-opaque-inline":
         # Only a Python interpreter AT THE HEAD (quoted or pathed, never
