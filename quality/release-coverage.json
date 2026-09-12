@@ -231,6 +231,14 @@
     "feedback-continuity-across-session-boundary": "S4",
     "feedback-zero-false-triggers-is-a-property-to-keep": "S4",
     "session-git-restore-staged-misclassified": "SB",
-    "session-atlas-recall-smaller-than-exclusion": "S6"
+    "session-atlas-recall-smaller-than-exclusion": "S6",
+    "unbuilt-b5-fleet-governance": "S3",
+    "unbuilt-b6-rollback-replay-forecast-precedent": "S3",
+    "unbuilt-forge-pivot-governance-from-history": "S4",
+    "unbuilt-gemini-full-extension-manifest": "S2",
+    "minimality-reinvention-pressure": "S3",
+    "operator-requests-never-reviewed": "S4",
+    "coverage-depth-not-only-assignment": "S1",
+    "posix-smoke-blocked-no-wsl-no-docker": "S2"
   }
 }
