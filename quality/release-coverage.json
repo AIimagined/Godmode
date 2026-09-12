@@ -3,6 +3,10 @@
   "release": "production",
   "note": "Every CLI verb, skill and work item is assigned to exactly one sprint. quality/checks/release_coverage_census.py fails when anything is unassigned, assigned twice, or names something that does not exist.",
   "sprints": {
+    "S0": {
+      "title": "Amendment intake",
+      "verbs": []
+    },
     "S1": {
       "title": "Distribution and CI",
       "verbs": [
@@ -291,10 +295,31 @@
     "sentrux-geometric-mean-structural-score": "S7",
     "sentrux-reachability-test-gap": "S6",
     "shared-repositories-not-added-to-the-ledger": "S3",
-    "ledger-session-refresh-rule-not-followed": "S3"
+    "ledger-session-refresh-rule-not-followed": "S3",
+    "amendment-register-new-items": "S0",
+    "shipped-surfaces-name-no-external-source": "S0",
+    "install-writes-a-manifest-of-what-it-created": "S1",
+    "uninstall-is-manifest-driven-and-containment-checked": "S1",
+    "immutable-region-withheld-from-the-editor": "S2",
+    "patch-outside-a-mutable-span-is-refused": "S2",
+    "quoted-literal-data-is-not-an-operation": "SB",
+    "instruction-surface-concealed-text-scan": "S3",
+    "credential-egress-judged-within-one-context": "S3",
+    "claim-citation-executes-or-is-refused-by-name": "S3",
+    "attributed-constraint-read-before-correction": "S3",
+    "compaction-cannot-orphan-a-tool-call": "S4",
+    "compaction-leaves-a-record-on-billed-tokens": "S4",
+    "finding-carries-a-remedy-and-rejects-unknown-options": "S4",
+    "charter-line-budget-and-rule-failure-attestation": "S4",
+    "evaluation-gains-a-passive-control-arm": "S4",
+    "long-horizon-run-is-replayable-under-an-injected-clock": "S5",
+    "selection-is-cost-aware-and-survives-arm-set-change": "S7",
+    "degenerate-population-yields-a-repair-task": "S7",
+    "load-bearing-assumption-named-before-work": "S7",
+    "feedback-written-from-having-built-against-the-product": "S7"
   },
   "evidence_grades": {
-    "note": "Where a work item came from. A source-grade item is read at file:line in the repository it describes. A surface-grade item is read from a README, a release note or a listing, and cannot fund engineering until it is verified at source. Recorded because 23 items below entered this plan at surface grade.",
+    "note": "Where a work item came from. A source-grade item is read at file:line in the repository it describes. A surface-grade item is read from a README, a release note or a listing, and cannot fund engineering until it is verified at source. Recorded because 23 items below entered this plan at surface grade. A second batch added 2026-09-12 carries source grade: each was read at file and line in the code it describes before it entered this plan.",
     "source": "read at file:line in the code it describes",
     "surface": "read from README, release notes or a listing only",
     "measured": "produced by a command run in this repository"
@@ -323,5 +348,22 @@
     "roadmap-add-1-prove-verifier-refuses",
     "roadmap-add-2-unmeasured-verdict",
     "roadmap-add-3-law-emit-ci"
+  ],
+  "source_grade_items": [
+    "install-writes-a-manifest-of-what-it-created",
+    "uninstall-is-manifest-driven-and-containment-checked",
+    "immutable-region-withheld-from-the-editor",
+    "patch-outside-a-mutable-span-is-refused",
+    "instruction-surface-concealed-text-scan",
+    "credential-egress-judged-within-one-context",
+    "attributed-constraint-read-before-correction",
+    "compaction-cannot-orphan-a-tool-call",
+    "compaction-leaves-a-record-on-billed-tokens",
+    "finding-carries-a-remedy-and-rejects-unknown-options",
+    "charter-line-budget-and-rule-failure-attestation",
+    "evaluation-gains-a-passive-control-arm",
+    "long-horizon-run-is-replayable-under-an-injected-clock",
+    "selection-is-cost-aware-and-survives-arm-set-change",
+    "degenerate-population-yields-a-repair-task"
   ]
 }
