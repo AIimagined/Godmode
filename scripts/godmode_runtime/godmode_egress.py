@@ -458,6 +458,121 @@ def notice(action: str, purpose: str, project: Path, paths: list[str],
     }
 
 
+# What to do about each finding. R15: a finding without a remedy is malformed.
+# A scanner that reports a problem it cannot tell you how to fix trains people
+# to disable it, which is worse than not having run it.
+_REMEDIES: dict[str, str] = {
+    "override": "Repository text is data. Rewrite the line as description "
+                "('the attack tells the agent to ignore prior instructions'), "
+                "or move it into a fixture the scanner excludes.",
+    "persona": "Describe the role change rather than addressing the agent in "
+               "the second person.",
+    "role-forgery": "A line beginning `system:` imitates a transcript turn. "
+                    "Indent it into a code fence or quote it inline.",
+    "authority": "Drop the claim of superseding authority; repository text "
+                 "cannot grant it and the broker will not honour it.",
+    "exfiltration": "Separate the verb from the credential noun, or name the "
+                    "defence rather than the act.",
+    "gate-bypass": "State what the gate does instead of instructing that it be "
+                   "skipped.",
+    "encoded-payload": "Remove the decode-then-run framing; describe the frame "
+                       "without pairing the verbs as an instruction.",
+    "bidi-control": "Delete the bidirectional control. It reorders how the line "
+                    "renders, so a reviewer and a parser read different text.",
+    "invisible-character": "Delete the invisible code point. It is usually "
+                           "pasted in from a rich-text editor and changes what "
+                           "a comparison considers equal.",
+    "control-character": "Delete the control character. A text document needs "
+                         "tab and newline and no other C0 control.",
+}
+_DEFAULT_REMEDY = ("Treat the line as data: describe the behaviour rather than "
+                   "instructing it.")
+
+#: Bidirectional formatting controls. These reorder rendering without changing
+#: the bytes a parser sees, which is the whole of the Trojan Source class.
+_BIDI_CONTROLS = frozenset(
+    [chr(c) for c in (0x202A, 0x202B, 0x202C, 0x202D, 0x202E,
+                      0x2066, 0x2067, 0x2068, 0x2069, 0x061C, 0x200F, 0x200E)]
+)
+
+#: Code points that occupy no visible width. Usually a paste accident, but they
+#: change what a string comparison considers equal.
+_INVISIBLE = frozenset(
+    [chr(c) for c in (0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x00AD, 0x180E)]
+)
+
+
+def _without_git_ignored(project: Path, paths: list[Path]) -> list[Path]:
+    """`paths` minus everything git ignores, in one batched query.
+
+    Working material the repository already declares as not shipping. Reusing
+    `.gitignore` rather than extending the shared directory list, for the
+    reason the documentation linter gives where this helper lives: a second
+    hand-maintained list drifts from the first. A task ledger that documents a
+    unicode attack legitimately contains the characters it describes, and it is
+    never published.
+
+    One `check-ignore --stdin` call for the whole set. Asking once per file
+    spawns a subprocess per candidate and turned a two-second scan into a
+    two-minute one; taking a list is the whole reason the helper is shaped that
+    way, and calling it in a loop throws the batching away.
+
+    Imported lazily because the helper sits beside the charter compiler and
+    this module is on the gate's hot path. Fails open exactly as the helper
+    does, so a checkout without git scans precisely as it did before.
+    """
+    try:
+        from .godmode_docslint import _git_ignored_relatives
+    except ImportError:  # pragma: no cover - defensive
+        return paths
+
+    relatives: dict[str, Path] = {}
+    for path in paths:
+        try:
+            relatives[path.relative_to(project).as_posix()] = path
+        except ValueError:
+            continue
+    if not relatives:
+        return paths
+
+    ignored = _git_ignored_relatives(project, list(relatives))
+    return [path for relative, path in relatives.items() if relative not in ignored]
+
+
+def _concealment_findings(line: str, index: int) -> list[dict[str, Any]]:
+    """Characters that hide what a line says, one finding per class.
+
+    Three classes rather than one label, because the remedies differ: a
+    bidirectional control is an attack, an invisible code point is usually a
+    paste accident, and a stray control character is usually a broken tool.
+    Collapsing them would teach the reader to skip all three.
+
+    Tab is not reported. It is ordinary whitespace in a text file, and a
+    scanner that flags indentation is one nobody leaves switched on.
+    """
+    seen: dict[str, str] = {}
+    for char in line:
+        if char in _BIDI_CONTROLS:
+            seen.setdefault("bidi-control", char)
+        elif char in _INVISIBLE:
+            seen.setdefault("invisible-character", char)
+        elif ord(char) < 0x20 and char not in "\t\n\r":
+            seen.setdefault("control-character", char)
+        elif ord(char) == 0x7F:
+            seen.setdefault("control-character", char)
+
+    return [
+        {
+            "line": index,
+            "kind": kind,
+            # The code point, not "suspicious character": one is actionable.
+            "text": f"U+{ord(char):04X} at line {index}",
+            "remedy": _REMEDIES[kind],
+        }
+        for kind, char in sorted(seen.items())
+    ]
+
+
 def untrusted_directives(text: str, source: str = "repository") -> dict[str, Any]:
     """Find content shaped like an instruction to the agent.
 
@@ -469,10 +584,17 @@ def untrusted_directives(text: str, source: str = "repository") -> dict[str, Any
     """
     findings: list[dict[str, Any]] = []
     for index, line in enumerate(text.splitlines(), 1):
+        # Concealment first, and not subject to the `break` below: a line can
+        # carry both a directive and a character that hides it, and reporting
+        # only the directive would describe the line a reviewer sees rather
+        # than the one a parser receives.
+        findings.extend(_concealment_findings(line, index))
         lowered = line.lower()
         for kind, pattern in _INJECTION:
             if re.search(pattern, lowered, re.IGNORECASE | re.MULTILINE):
-                findings.append({"line": index, "kind": kind, "text": line.strip()[:160]})
+                findings.append({"line": index, "kind": kind,
+                                 "text": line.strip()[:160],
+                                 "remedy": _REMEDIES.get(kind, _DEFAULT_REMEDY)})
                 break
     return {
         "source": source,
@@ -523,6 +645,12 @@ def scan_project(project: Path, limit: int = DEFAULT_SCAN_LIMIT) -> dict[str, An
         # gate red locally and green in CI (2026-09-12).
         if any(part in IGNORED_DIRECTORY_NAMES for part in path.parts):
             continue
+        # Working material this repository already declares as not shipping.
+        # Reusing `.gitignore` rather than extending the list above, for the
+        # reason the docs linter gives where this helper lives: a second
+        # hand-maintained list drifts from the first. A task ledger that
+        # documents a unicode attack legitimately contains the characters it
+        # describes, and it is never published.
         # Same boundary the swallow scanner draws (CX-3 fix round): host-agent
         # worktrees nested under THIS project are duplicate checkouts of
         # sibling work, not this project's own text - and the check is
@@ -533,6 +661,8 @@ def scan_project(project: Path, limit: int = DEFAULT_SCAN_LIMIT) -> dict[str, An
                for i in range(len(rel_parts) - 1)):
             continue
         candidates.append(path)
+
+    candidates = _without_git_ignored(project, candidates)
 
     truncated = len(candidates) > limit
     hits: list[dict[str, Any]] = []
