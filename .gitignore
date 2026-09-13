@@ -54,3 +54,6 @@ docs-site/
 
 # Plugin eval run output.
 quality/evals/results/
+docs/superpowers/
+docs/RESEARCH-*.md
+docs/PROBLEM-STATEMENT-*.md

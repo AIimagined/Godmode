@@ -102,9 +102,14 @@ def link_findings(tracked: list[str]) -> list[str]:
                 target = target.split("#", 1)[0].strip()
                 if not target or target.startswith(("mailto:", "/")):
                     continue
-                resolved = (base / target).as_posix().replace("./", "")
+                # Resolve against the document's directory, then back to a
+                # repo-relative path. The first cut normalised the string
+                # instead of the path, so `../X` from `.github/` became
+                # `.github/.X` and reported a dangling link to a file that was
+                # tracked and present - the check, not the repository.
                 try:
-                    resolved = str(Path(resolved).resolve().relative_to(ROOT)).replace("\\", "/")
+                    absolute = (ROOT / base / target).resolve()
+                    resolved = absolute.relative_to(ROOT.resolve()).as_posix()
                 except (ValueError, OSError):
                     continue
                 if resolved not in known and not (ROOT / resolved).exists():
