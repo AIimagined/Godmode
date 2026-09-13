@@ -2,6 +2,11 @@
   "schema": "godmode-external-name-allowlist-v1",
   "note": "References that quality/checks/no_external_source_names.py would flag and that this project accepts anyway. An entry is a recorded decision, not a suppression: the reason travels with it. Keyed by path:line so a moved line loses its exemption and must be decided again.",
   "accepted": {
-    "scripts/godmode_runtime/godmode_attest.py:195": "`.cursorrules` here is a well-known agent-instruction filename in a list beside CLAUDE.md, AGENTS.md and GEMINI.md. It names a file the product reads, not a project it learned from. A ledger entry that happens to contain the same word is a collision, not a leak."
+    "scripts/godmode_runtime/godmode_attest.py:195": "`.cursorrules` here is a well-known agent-instruction filename in a list beside CLAUDE.md, AGENTS.md and GEMINI.md. It names a file the product reads, not a project it learned from. A ledger entry that happens to contain the same word is a collision, not a leak.",
+    "quality/external-name-allowlist.json:5": "The entry above quotes the filename it accepts.",
+    "quality/publication.json:5": "A directory path in this repository, declared unpublishable - the policy has to name the path it withholds.",
+    "quality/publication.json:6": "A directory path in this repository, declared unpublishable - the policy has to name the path it withholds.",
+    "quality/checks/no_external_source_names.py:62": "The same directory path, excluded from scanning because it is never published.",
+    "quality/checks/prepublication.py:67": "The same directory path, excluded from the citation scan because it is never published."
   }
 }

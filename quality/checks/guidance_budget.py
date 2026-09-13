@@ -29,7 +29,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from godmode_runtime.godmode_charter import compile_charter  # noqa: E402
 
 #: file -> (ceiling, measured-at-write-time). The second number is kept so a
-#: reader can see how much headroom the ceiling actually represents.
+#: reader can see how much margin the ceiling actually represents.
 BUDGETS: dict[str, tuple[int, int]] = {
     "GODMODE.md": (70, 49),
 }
