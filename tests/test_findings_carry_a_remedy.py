@@ -80,7 +80,7 @@ class EveryFindingSurfaceCarriesARemedy(unittest.TestCase):
             target = tmp / "README.md"
             with open(target, "w", encoding="utf-8", newline="") as handle:
                 handle.write("see https://github.com/someone/somerepo\n")
-            findings = N.scan(tmp, [target], ledger_names=None)
+            findings = N.scan(tmp, [target], deny_names=None)
             self.assertTrue(findings)
             for finding in findings:
                 self.assertTrue(finding.remedy.strip(), finding)
