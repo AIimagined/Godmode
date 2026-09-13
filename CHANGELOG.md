@@ -4,6 +4,32 @@ All notable changes to Godmode will be documented in this file.
 
 The format follows Keep a Changelog principles, and releases use semantic versioning.
 
+## [0.3.26] - 2026-09-13
+
+### Added
+
+- Install ownership: the host artifact writers record every path they create in a per-plugin install manifest (relative, POSIX-shaped, refused outside the install root). Uninstall reads only that manifest, validates every entry before anything moves, requires real containment, re-checks ownership, and moves artifacts into a timestamped archive instead of deleting them; another plugin's files and the project's own files beside them are left alone.
+- Frozen regions: a file can declare editable regions with a marker pair. The editor view withholds everything outside them behind a visible elision marker, and a patch or edit whose span touches frozen text is refused at the pre-tool boundary with the offsets and the available ranges. Opt-in: a file with no markers is unaffected.
+- The instruction scanner reports concealment separately from directives - bidirectional controls, invisible code points and stray control characters, each naming the code point - judges a directive across shell line continuations, skips what git ignores, and gives every finding a remedy.
+- An edit-time advisory when a changed line credits a constraint to an outside authority, so a deliberate deviation is not "fixed" by someone who has not read the authority.
+- The pre-compact hook writes a compaction record (the host's declared trigger from a closed set, and the archive sequence), so a session can tell that it compacted.
+- `remember` can mark an assumption load-bearing, which requires naming what fails without it.
+- The calibration digest reports `verified_unresolved` and `coverage` beside the false-green rate, so a rate over one resolved trial is read as unmeasured rather than clean.
+- Quality checks: `no_external_source_names` (forge links outside the project's own owner, plus a runtime-supplied deny list that reports `unmeasured` when absent), `prepublication` (deny names, citation markers, tracked paths under declared unpublishable prefixes, and link rot), a platform measurement matrix that never reports an unmeasured platform as passing, a guidance budget with attested hard rules, a remedy-on-every-finding invariant, and a rule that every routing eval suite carries near-negatives.
+- A plugin eval suite under `quality/evals` that runs each case with and without the plugin.
+
+### Fixed
+
+- Gate: a quoted heredoc body is literal data - backticks and `$(...)` inside it no longer read as commands. Unquoted and interpreter-fed heredocs are scanned as before.
+- Gate: `find -exec`/`-execdir` is judged by the command it runs against the existing safe-read vocabulary; an unknown or shell command stays protected, and `-delete`, `-ok` and `-okdir` keep their verdicts.
+- Gate: running a project script is classified by the commands written literally in it, naming the file. Bounded to readable files inside the project, one level, and literals: a command assembled at runtime inside an interpreter is not reachable by a hook.
+- A `cmd:` citation carrying shell grammar (`&&`, `|`, redirects) is refused at record time instead of executing as literal arguments and grading a claim whose later conditions never ran.
+- A retired lesson stops pinning the surface it named: lesson status is read newest-record-wins, like the other record kinds.
+- The untrusted-content scan uses the shared ignored-directory list, the Claude plugin manifest's experimental key is generated from source, and the documentation linter skips archived documents.
+- The staleness verdict takes an injectable clock, so the one-day threshold is tested on both sides.
+- Session start no longer walks the whole plugin cache or the whole project tree: the manifest-desync check globs only this plugin's own install paths, and the database inventory prunes ignored directories instead of walking into them and discarding the results. On a machine with 183 cached clones the hook dropped from 48s to 4.6s under a profiler.
+- The end-to-end Cursor shell fixture sends `Shell`, Cursor's documented tool type, instead of Claude's `Bash`; the adapter answered the wrong name unrecognized-tool, so the force-push scenario read `ask` where every host must read `deny`.
+
 ## [0.3.25] - 2026-09-11
 
 ### Added
