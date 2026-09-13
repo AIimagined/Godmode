@@ -15,9 +15,14 @@ the write removes the option.
 
 Two decisions that look like details and are not:
 
-**Absent markers mean nothing is editable, not everything.** A file that never
-opted in is fully frozen. The alternative fails open, and a guard that fails
-open on the most common input is decoration.
+**Absent markers mean opposite things to the two callers, deliberately.**
+`check_patch` refuses: it answers "may this exact span be patched", and a file
+with no declared editable region has nothing a patch may claim. `edit_verdict`
+allows: it answers the pre-tool boundary, where every project predating this
+feature has no markers and none may start refusing edits because it shipped.
+The first is a library contract, the second is a deployment decision, and
+collapsing them would either break every existing project or make the guard
+decoration.
 
 **An unclosed start yields no region.** "Editable to end of file" is exactly
 what a truncated or half-written marker would produce, so it is refused
@@ -26,6 +31,7 @@ instead.
 from __future__ import annotations
 
 import re
+from typing import Any
 
 #: The marker words. Chosen to be greppable and to say what they do.
 MARKER_START_TEXT = "GODMODE-EDITABLE-START"
@@ -161,3 +167,70 @@ def check_patch(text: str, start: int, end: int) -> None:
         f"straddles a boundary is refused rather than trimmed, because a "
         f"half-applied edit corrupts the file."
     )
+
+
+def edit_verdict(text: str, old_string: str | None) -> dict[str, Any]:
+    """Whether a machine-authored edit to `text` may proceed.
+
+    Answers in the shape the fence and design boundaries beside it already use,
+    so the pre-tool hook gains a third check rather than a new pattern.
+
+    Three decisions that are not obvious:
+
+    **Opt-in.** A file declaring no region allows everything. Every project
+    predating this has no markers, and none may start refusing edits because
+    the feature shipped.
+
+    **A whole-file write is refused where regions exist.** A write replaces the
+    frozen text along with everything else and carries no span to check, so
+    treating "no span" as "nothing to check" would make the guard avoidable by
+    choosing the blunter tool.
+
+    **A search string absent from the file is allowed.** That edit cannot
+    apply, the host will say so, and refusing here would report a
+    frozen-region violation for an edit that was never going to touch anything.
+
+    Every occurrence is checked, not merely the first: an editor replacing all
+    matches would otherwise reach frozen text through a token that also appears
+    inside the editable region.
+    """
+    ranges = mutable_ranges(text)
+    if not ranges:
+        return {"allowed": True,
+                "detail": "no editable region is declared in this file",
+                "remedy": ""}
+
+    if old_string is None:
+        return {
+            "allowed": False,
+            "detail": ("this file declares an editable region, and a whole-file "
+                       "write would replace the frozen text with it"),
+            "remedy": (f"edit inside the {MARKER_START_TEXT} / {MARKER_END_TEXT} "
+                       f"pair instead of rewriting the file"),
+        }
+
+    occurrences: list[int] = []
+    start = text.find(old_string)
+    while start != -1:
+        occurrences.append(start)
+        start = text.find(old_string, start + 1)
+
+    if not occurrences:
+        return {"allowed": True,
+                "detail": "the search text does not occur in this file",
+                "remedy": ""}
+
+    outside = [at for at in occurrences
+               if not is_span_mutable(text, at, at + len(old_string))]
+    if not outside:
+        return {"allowed": True,
+                "detail": f"every occurrence lies inside a declared editable region",
+                "remedy": ""}
+
+    return {
+        "allowed": False,
+        "detail": (f"{len(outside)} of {len(occurrences)} occurrence(s) of the "
+                   f"search text lie outside every declared editable region"),
+        "remedy": (f"edit inside the {MARKER_START_TEXT} / {MARKER_END_TEXT} "
+                   f"pair, or move the marker if the region is wrong"),
+    }

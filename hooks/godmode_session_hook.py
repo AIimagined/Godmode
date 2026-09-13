@@ -2311,6 +2311,41 @@ def _apply_observe_mode(archive: Chronicle, tool: str, operation: str,
     return preview
 
 
+def _frozen_region_verdict(project_root, target, submitted) -> dict:
+    """R13 at the pre-tool boundary: may this edit touch this file?
+
+    Reads the target and asks `edit_verdict`. The span comes from the host's
+    own `old_string`; a payload without one is a whole-file write, which
+    replaces frozen text along with everything else.
+
+    Fails OPEN on an unreadable target, deliberately and unlike the guards
+    beside it. A new file, a binary, or a path the hook cannot read has no
+    declared region to protect, and refusing every edit whose file could not be
+    opened would break ordinary work to defend a feature nobody had opted into.
+    """
+    # Imported outside the guard on purpose. The first cut caught ImportError
+    # here too, and an import that did not exist was swallowed as "unreadable
+    # target" - the guard ran inert for its whole first version and the wiring
+    # test is what caught it. A packaging error should surface, not fail open.
+    from godmode_runtime.godmode_mutableregions import edit_verdict
+
+    try:
+        path = Path(target)
+        if not path.is_absolute():
+            path = Path(project_root) / target
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):  # godmode: swallow-ok: an unreadable target declares no region to protect
+        return {"allowed": True, "detail": "", "remedy": ""}
+
+    tool_input = host_field(submitted, "tool_input")
+    old_string = None
+    if isinstance(tool_input, dict):
+        raw = tool_input.get("old_string")
+        if isinstance(raw, str):
+            old_string = raw
+    return edit_verdict(text, old_string)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="godmode-session-hook")
     parser.add_argument("event", choices=["stop", "session-start", "pre-compact", "session-end",
@@ -3696,6 +3731,18 @@ def main(argv: list[str] | None = None) -> int:
                     preview["allow"] = False
                     preview["fence"] = fenced["fence"]
                     preview["reason"] = f"{fenced['detail']}. {fenced['remedy']}"
+                    break
+
+                # R13: a file may declare which of its regions a machine edit
+                # may touch. Opt-in - a file with no markers is unaffected, so
+                # nothing that worked before starts refusing. The span comes
+                # from the host's own `old_string`; its absence means a
+                # whole-file write, which replaces frozen text too.
+                frozen = _frozen_region_verdict(Path(anchor.project_root), target, submitted)
+                if not frozen["allowed"]:
+                    preview["allow"] = False
+                    preview["frozen_region"] = True
+                    preview["reason"] = f"{frozen['detail']}. {frozen['remedy']}"
                     break
 
         # S16 (E56): declarative per-tool gates. The policy file may declare
