@@ -1,0 +1,13 @@
+{
+  "schema": "godmode-publication-policy-v1",
+  "note": "What this project considers unpublishable. Read by quality/checks/prepublication.py. Path prefixes and exemptions live here because a prefix is not sensitive; the names inside those paths are, and those are supplied at runtime from outside the repository.",
+  "unpublishable_prefixes": [
+    "docs/superpowers/",
+    ".superpowers/",
+    "docs/handovers/"
+  ],
+  "citation_exempt": [
+    "CHANGELOG.md"
+  ],
+  "citation_exempt_note": "CHANGELOG.md records what shipped in each version, including entries written before this policy existed. Rewriting released changelog text is a rewrite of history rather than an edit, so it is exempted and the policy applies to everything written from here on."
+}

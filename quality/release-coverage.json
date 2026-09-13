@@ -339,7 +339,9 @@
     "lesson-pin-has-no-reachable-retire-path": "S3",
     "false-green-rate-denominator-excludes-unresolved": "S3",
     "frozen-region-enforcement-wired-to-the-edit-boundary": "S2",
-    "false-green-rate-reports-its-coverage": "S3"
+    "false-green-rate-reports-its-coverage": "S3",
+    "prepublication-gate-runs-every-surface-rule-at-once": "S1",
+    "surface-name-check-is-policy-neutral": "S1"
   },
   "evidence_grades": {
     "note": "Where a work item came from. A source-grade item is read at file:line in the repository it describes. A surface-grade item is read from a README, a release note or a listing, and cannot fund engineering until it is verified at source. Recorded because 23 items below entered this plan at surface grade. A second batch added 2026-09-12 carries source grade: each was read at file and line in the code it describes before it entered this plan.",
