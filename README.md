@@ -669,7 +669,6 @@ is pinned by a mocked unit test, not live-probed on a POSIX host.
 | [docs/releases/](docs/releases/) | Release notes; every number in them carries its own basis |
 | [docs/COMPACTION-AND-LEDGER.md](docs/COMPACTION-AND-LEDGER.md) | What survives a compaction, the ledger fields, the context tripwire, perimeter checks |
 | [docs/hosts/](docs/hosts/) | Per-host pages (Cursor, Antigravity): wired events, known issues, the proof recipe that earns HARD |
-| [docs/PROBLEM-STATEMENT-AND-PRD.md](docs/PROBLEM-STATEMENT-AND-PRD.md) | The problem statement and requirements the 0.3.24 sweep was built against |
 | [docs/LISTING.md](docs/LISTING.md) | Marketplace listing text and manifest audit |
 | [GODMODE.md](GODMODE.md) | Product guarantees, gates, and the start sequence |
 | [GODMODE_PRIVACY.md](GODMODE_PRIVACY.md) | What is stored, where, and what never leaves |
