@@ -200,6 +200,14 @@ def adopt_from_docs(archive: Any, project: Path) -> dict[str, Any]:
     }
 
 
+#: A lesson in any of these states is not a standing pin. The settled set is
+#: the archive's own, imported rather than re-spelled so the two cannot drift;
+#: `candidate` joins it because a lesson not yet promoted is not a ruling.
+from .godmode_constants import SETTLED_STATUSES  # noqa: E402
+
+_SETTLED_OR_CANDIDATE = frozenset(SETTLED_STATUSES) | {"candidate"}
+
+
 def _salient_words(text: str) -> set[str]:
     words = set()
     for token in str(text).split():
@@ -248,9 +256,30 @@ def guard_pin_reason(project: Path, archive: Any, text: str,
     claim_words = _salient_words(text)
     if claim_words:
         try:
-            for record in archive.select(kind="lesson", limit=200):
+            records = list(archive.select(kind="lesson", limit=200))
+            # The newest record for a subject decides its status, the same
+            # supersession every other kind in this archive relies on. Reading
+            # each record's own status made retirement unreachable: records are
+            # append-only, so a later record marking a lesson retired left the
+            # original active and still pinning, and the refusal's own
+            # instruction - "retire it first" - named an action with no
+            # implementation. Any surface a lesson ever touched could then
+            # never be graded verified again.
+            newest_status: dict[str, tuple[int, str]] = {}
+            for record in records:
+                subject = str(record.get("subject", ""))
+                sequence = int(record.get("sequence") or 0)
+                status = str((record.get("data") or {}).get("status", "active"))
+                if subject not in newest_status or sequence >= newest_status[subject][0]:
+                    newest_status[subject] = (sequence, status)
+
+            for record in records:
                 data = record.get("data") or {}
-                if str(data.get("status", "active")) in ("retired", "candidate"):
+                subject = str(record.get("subject", ""))
+                status = newest_status.get(subject, (0, "active"))[1]
+                # `candidate` joins the settled set here: a lesson not yet
+                # promoted is not a standing pin either.
+                if status in _SETTLED_OR_CANDIDATE:
                     continue
                 lesson_words = _salient_words(
                     f"{record.get('subject', '')} {data.get('generalized_guard', '')}")
