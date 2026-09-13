@@ -1,0 +1,1 @@
+- The README opens with one promise and three outcomes - proven done, risky commands stopped before they run, context that survives - instead of a list of mechanisms; per-host enforcement strength stays one link away.

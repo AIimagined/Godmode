@@ -2,15 +2,11 @@
   <img src="./assets/godmode-logo.png" alt="Godmode" width="260">
 </h1>
 
+<h3 align="center">Your coding agent says "done." Godmode checks.</h3>
+
 <p align="center">
-  <b>Your coding agent says "done." Godmode is how you know.</b><br>
-  A local, tamper-evident record of what the agent did, what it claimed, and what was verified -<br>
-  with a gate that classifies risky actions before they run,<br>
-  a loop that stops when nothing new arrives, an oracle check that names a test<br>
-  the patch weakened, and a ledger that survives compaction.<br>
-  Zero runtime dependencies · zero network use · nothing leaves your machine.<br>
-  Claude Code · Grok · Codex · OpenCode · Antigravity —
-  <a href="#host-support">enforcement graded per host</a>
+  Godmode lives in your agent's hooks and keeps a local, tamper-evident record of what it actually ran, changed, and proved.<br>
+  "Tests pass" means a test ran. A force-push doesn't go through because the agent sounded sure.
 </p>
 
 <p align="center">
@@ -19,14 +15,16 @@
   <img alt="Runtime dependencies: zero" src="https://img.shields.io/badge/runtime%20dependencies-0-brightgreen">
 </p>
 
----
+- **Done means proven.** A claim backed only by a check that can't fail - `git status`, `echo`, `ls` - doesn't earn "verified".
+- **Risky commands stop before they run.** Force-pushes, deletes and releases are judged by what the command does, not how confidently it was asked for.
+- **Context that survives.** Compaction, a new session, a branch switch: the agent resumes from the record, not from memory.
 
-Your agent says "fixed it, the tests pass," and the same bug is back within
-the week because the fix it typed over never re-ran the guard that would
-have caught the regression. A number lands in a status report and nobody,
-the agent included, can point to where it came from. A `git push` gets
-approved because the message sounds confident, not because anything checked
-what the command itself does.
+<p align="center">
+  Zero dependencies · nothing leaves your machine · Claude Code · Codex · Grok · OpenCode · Antigravity
+  (<a href="#host-support">how strongly each host is enforced</a>)
+</p>
+
+---
 
 ## Install
 
