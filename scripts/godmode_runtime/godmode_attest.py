@@ -3057,7 +3057,21 @@ def false_green_rate(archive: Chronicle) -> dict[str, Any]:
         elif str(data.get("outcome")) == "held":
             held += 1
     trials = held + failed
+    # The population the rate did NOT see. Reported beside it because the rate
+    # alone misled: measured on this project 2026-09-13, it read
+    # `false_greens: 0, rate: 0.0` over a single trial while three hundred
+    # verified claims sat unresolved - three of them demonstrably false greens,
+    # recorded as an incident the same day. Zero over one trial is not a low
+    # rate, it is an unmeasured one wearing a clean bill of health.
+    #
+    # No threshold is introduced: a threshold is a policy nobody agreed, and
+    # the first argument about where it sits is what kills a check. A reader
+    # who sees one trial against three hundred untested claims needs no rule.
+    verified_total = sum(1 for grade in grades.values() if grade == "verified")
+    unresolved = max(verified_total - trials, 0)
     return {"verified_resolved": trials, "false_greens": failed,
+            "verified_unresolved": unresolved,
+            "coverage": (round(trials / verified_total, 4) if verified_total else None),
             "rate": (round(failed / trials, 4) if trials else None),
             "wilson95": wilson_interval(failed, trials), "refusals": downgraded}
 
