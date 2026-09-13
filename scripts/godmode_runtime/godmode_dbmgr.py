@@ -11,6 +11,7 @@ database happens elsewhere, deliberately, after this module has said its piece.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import re
 import sqlite3
@@ -37,13 +38,15 @@ NEEDS_INPUT = "needs-input"
 
 def _candidate_files(project: Path) -> list[Path]:
     found: list[Path] = []
-    for path in project.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in _SUFFIXES:
-            continue
-        relative = path.relative_to(project)
-        if any(part in IGNORED_DIRECTORY_NAMES for part in relative.parts[:-1]):
-            continue
-        found.append(path)
+    # Pruned walk, not rglob-then-filter: rglob descended into .git and
+    # node_modules before the ignore check threw the results away, ~8s of a
+    # session start on a large tree (2026-09-13).
+    for directory, dirnames, filenames in os.walk(project):
+        dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRECTORY_NAMES]
+        for filename in filenames:
+            path = Path(directory) / filename
+            if path.suffix.lower() in _SUFFIXES and path.is_file():
+                found.append(path)
     # Sorted by relative posix path so the inventory is identical across hosts.
     return sorted(found, key=lambda p: p.relative_to(project).as_posix())
 

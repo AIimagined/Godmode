@@ -1102,6 +1102,7 @@ def manifest_desync(package_root: Path | None = None, home: Path | None = None) 
     they agree or nothing else is installed; otherwise the digests, so the
     session brief can say which copy is the odd one out."""
     import hashlib
+    from glob import escape as glob_escape
 
     root = package_root or _PACKAGE_ROOT
     own = root / "hooks" / "hooks.json"
@@ -1119,11 +1120,16 @@ def manifest_desync(package_root: Path | None = None, home: Path | None = None) 
     others: list[dict[str, str]] = []
     # Bounded patterns, never `**`: the plugin directory holds every cached
     # release and their node trees, and a recursive walk at session start
-    # timed the hook out (2026-09-11).
+    # timed the hook out (2026-09-11). The cache patterns name the plugin
+    # too: a bare `cache/*/*/*` still listed every directory of every cached
+    # clone (183 leftover temp_git_* checkouts here), ~7s of a session start
+    # (2026-09-13).
     candidates: list[Path] = []
     if base.is_dir():
+        plugin = glob_escape(str(name))
         for pattern in ("marketplaces/*/hooks/hooks.json", "marketplaces/*/*/hooks/hooks.json",
-                        "cache/*/*/*/hooks/hooks.json", "cache/*/*/hooks/hooks.json"):
+                        f"cache/*/{plugin}/*/hooks/hooks.json", f"cache/*/{plugin}/hooks/hooks.json",
+                        f"cache/{plugin}/*/hooks/hooks.json"):
             candidates.extend(base.glob(pattern))
     for candidate in sorted(set(candidates)):
         other_root = candidate.parents[1]
