@@ -827,6 +827,87 @@ _FIND_MUTATION = re.compile(r"(?i)\bfind\b[^|;&]*?\s-(?:delete|exec|execdir|ok|o
 _FIND_EXEC_COMMAND = re.compile(r"(?i)\s-(?:exec|execdir)\s+(.+)$")
 
 
+#: Interpreters whose first non-flag argument is a script this classifier can
+#: read. Named rather than inferred: an unknown head stays an unknown command.
+_SCRIPT_HEADS = frozenset({
+    "python", "python3", "py", "node", "bun", "deno",
+    "ruby", "perl", "bash", "sh", "zsh", "pwsh", "powershell",
+})
+
+#: A command literal inside a script: a list of quoted words, or one quoted
+#: string handed to a shell-running call. Deliberately literal-only - see
+#: `_script_body_commands` for what that does and does not reach.
+_SCRIPT_LIST_CALL = re.compile(
+    r"""(?:run|call|check_call|check_output|Popen)\s*\(\s*\[([^\]]*)\]""")
+_SCRIPT_STRING_CALL = re.compile(
+    r"""(?:system|run|call|check_call|check_output|Popen)\s*\(\s*["']([^"']{2,400})["']""")
+_QUOTED_WORD = re.compile(r"""["']([^"']*)["']""")
+
+#: A script larger than this is not read. A gate must not become a file reader
+#: with no ceiling, and a protected command hidden past this point is covered
+#: by the stated limit below rather than by a bigger number.
+_MAX_SCRIPT_BYTES = 256 * 1024
+
+
+def _script_target(command_position: str, project_root):
+    """The script file this command runs, when it is one this project holds.
+
+    Only a file inside the project is read. A path outside it is not this
+    project's to inspect, and reading arbitrary filesystem paths because a
+    command mentioned them is a worse behaviour than the gap it closes.
+    """
+    if project_root is None:
+        return None
+    tokens = command_position.split()
+    if len(tokens) < 2:
+        return None
+    head = tokens[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if head.endswith(".exe"):
+        head = head[:-4]
+    if head not in _SCRIPT_HEADS:
+        return None
+    for token in tokens[1:]:
+        if token.startswith("-"):
+            continue
+        from pathlib import Path as _Path
+        candidate = _Path(token)
+        if not candidate.is_absolute():
+            candidate = _Path(project_root) / token
+        try:
+            resolved = candidate.resolve()
+            resolved.relative_to(_Path(project_root).resolve())
+        except (OSError, ValueError):
+            return None
+        return resolved if resolved.is_file() else None
+    return None
+
+
+def _script_body_commands(path) -> list:
+    """Command strings written literally inside `path`.
+
+    Reaches exactly one shape: a command spelled out as a literal in the file.
+    A command assembled at runtime, fetched, imported, or built from parts is
+    NOT reached and cannot be - a hook cannot see inside a running interpreter.
+    That limit is stated here rather than implied, because a reader who
+    believes this covers scripts will write one and trust it.
+    """
+    try:
+        if path.stat().st_size > _MAX_SCRIPT_BYTES:
+            return []
+        body = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+
+    found: list = []
+    for inner in _SCRIPT_LIST_CALL.findall(body):
+        words = _QUOTED_WORD.findall(inner)
+        if words:
+            found.append(" ".join(words))
+    for literal in _SCRIPT_STRING_CALL.findall(body):
+        found.append(literal)
+    return found
+
+
 def _find_action_mutates(command_position: str) -> bool:
     """Whether a `find` action in this segment actually mutates.
 
@@ -4040,7 +4121,11 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                     _allow_standalone_fetch: bool = True,
                     # `inline_interpreter: "scan"` - a read-only Python payload
                     # at a segment's head is cleared; see `_scanned_inline_verdict`.
-                    inline_scan: bool = False) -> dict[str, Any]:
+                    inline_scan: bool = False,
+                    # Incident 12890: running a script is judged by what the
+                    # script does. Depth-guarded so a script that runs an
+                    # interpreter cannot recurse without end.
+                    _script_depth: int = 0) -> dict[str, Any]:
     """Deterministic preview of what an operation would touch.
 
     A compound command is classified part by part and takes the risk of its
@@ -4271,6 +4356,43 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         worst["segments"] = len(segments)
         worst["external_repo_ref"] = external_repo_ref
         return worst
+
+    # Incident 12890: a protected command refused at the shell ran unrefused
+    # from inside a script, because the classifier reads the command string it
+    # is handed and a script is one allowed invocation. Any literal command in
+    # a readable project file is now judged as if it had been typed.
+    #
+    # Depth-guarded: a script that runs an interpreter is read once, not
+    # followed. One level closes the shape that occurred; chasing further turns
+    # a gate into an interpreter.
+    if _script_depth == 0:
+        script = _script_target(normalized, project_root)
+        if script is not None:
+            worst_inner = None
+            for inner_command in _script_body_commands(script):
+                inner = classify_action(
+                    inner_command, extra_protected, project_root, archive,
+                    require_approval, _allow_standalone_fetch=False,
+                    inline_scan=inline_scan, _script_depth=1)
+                if not inner.get("protected"):
+                    continue
+                if worst_inner is None or inner["tier"] > worst_inner["tier"]:
+                    worst_inner = inner
+            if worst_inner is not None:
+                try:
+                    shown = script.relative_to(Path(project_root)).as_posix()
+                except (ValueError, TypeError):
+                    shown = script.name
+                verdict = dict(worst_inner)
+                verdict["impact"] = [
+                    f"a protected command is written into {shown}, which this "
+                    f"line runs: {worst_inner['category']}",
+                    *worst_inner.get("impact", []),
+                ]
+                verdict["operation_digest"] = hashlib.sha256(
+                    normalized.encode()).hexdigest()
+                verdict["script_scanned"] = shown
+                return verdict
 
     # Incident 12459: a single-segment line carrying a QUOTED heredoc was
     # categorised over its raw text, so the body's prose became vocabulary -
