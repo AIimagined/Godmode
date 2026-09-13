@@ -60,3 +60,33 @@
 - Local and CI gates agree again: the untrusted-content scan uses the shared
   ignore list, the Claude manifest's experimental key is generated from
   source, and archived documents are not linted.
+
+## Limits
+
+- The gate reads literal commands in a project script, one level deep. A
+  command a script builds at runtime is not visible to any pre-tool hook.
+- Frozen regions are opt-in per file; nothing is frozen until a file
+  declares its markers.
+- A session keeps the plugin it started with; the faster session start
+  applies from the first session after the plugin is updated.
+
+## Verifying
+
+- `python -m unittest tests.test_install_manifest tests.test_install_remove
+  tests.test_install_manifest_end_to_end`: the manifest, contained and
+  reversible removal, and an install-then-uninstall that leaves a foreign
+  file untouched.
+- `python -m unittest tests.test_mutable_regions tests.test_patch_containment
+  tests.test_frozen_region_edit_verdict`: the redacted view, the refused
+  patch, and the refusal at the edit boundary.
+- `python -m unittest tests.test_script_body_escalation
+  tests.test_find_exec_classification tests.test_quoted_heredoc_substitution
+  tests.test_citation_shell_grammar tests.test_lesson_retirement`: the five
+  gate and claim fixes.
+- `python -m unittest tests.test_concealed_text_scan
+  tests.test_directive_continuations tests.test_attributed_constraints
+  tests.test_compaction_record tests.test_load_bearing_assumption
+  tests.test_false_green_coverage`: the scanner, the advisory, and the
+  records.
+- `python -m unittest tests.e2e.test_host_e2e`: force-push reads `deny` on
+  every host dialect, Cursor included.
