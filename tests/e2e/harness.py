@@ -262,7 +262,10 @@ def grok_write(file_path: str, cwd: str) -> dict[str, Any]:
 
 
 def cursor_shell(command: str, cwd: str) -> dict[str, Any]:
-    return {"hook_event_name": "beforeShellExecution", "tool_name": "Bash",
+    # `Shell`, Cursor's documented tool type - `Bash` is Claude's name, and
+    # the Cursor adapter rightly answered it unrecognized-tool/ask, so the
+    # force-push scenario read `ask` where it must read `deny`.
+    return {"hook_event_name": "beforeShellExecution", "tool_name": "Shell",
             "tool_input": {"command": command}, "cwd": cwd}
 
 
