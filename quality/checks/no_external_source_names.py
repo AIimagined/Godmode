@@ -1,30 +1,33 @@
-"""Check: no shipped surface names an outside project.
+"""Check: shipped surfaces carry no name a project has asked to keep out of them.
 
-Research provenance lives in a private ledger outside this repository. The rule
-that it never enters a tracked file was enforced by attention until now, and
-attention lost twice: two work-item keys naming an outside project sat in the
-coverage manifest for a day, and a session wrote a long source sweep whose
-entire subject was outside projects.
+Whether a project publishes the names of things it read, referenced, learned
+from, or depends on is the project's decision, not this tool's. Some projects
+publish all of it; some publish none of it. This check enforces whatever the
+project declared and takes no position of its own.
 
-Two classes are checked, and they fail differently:
+Two classes, failing differently:
 
-- `forge-url`  a link to a code-hosting forge that is not ours. Structural, so
-  it runs with no outside input.
-- `ledger-name` a name from the private source ledger. The ledger is
-  deliberately outside this repository, so this class needs a path supplied at
-  runtime through GODMODE_LEDGER_NAMES. When that is absent the class reports
+- `forge-url`  a link to a code-hosting forge under an owner that is not this
+  project's own. Structural, so it runs with no configuration.
+- `deny-name`  a name the project supplied at runtime through
+  GODMODE_DENY_NAMES, one per line. When no list is supplied the class reports
   `unmeasured`, never `clean` - an absent instrument is graded distinctly from
-  a negative result (R8).
+  a negative result (R8). A project that wants nothing hidden simply supplies
+  no list and the class stays quiet.
+
+The list lives outside the repository by design: its contents are the thing it
+protects, so committing it would publish exactly what it exists to withhold.
 
 Deliberate limits, stated so they are not mistaken for coverage:
 
 - A bare `owner/repo` pair in prose is not matched. A regex for it fires on
   every relative path in the tree, and a guard that cries wolf gets disabled.
-  The ledger class is what catches those, when the ledger is supplied.
+  The supplied list is what catches those, when one is supplied.
 - `tests/` is not scanned. Fixtures there legitimately carry sample forge URLs
-  because some of them test the code that detects forge URLs. The cost of this
-  exclusion is that a real leak inside a test body is invisible here.
+  because some of them test forge-URL detection. The cost is that a real leak
+  inside a test body is invisible here.
 """
+
 from __future__ import annotations
 
 import os
@@ -112,7 +115,7 @@ def load_allowlist() -> dict[str, str]:
     return dict(data.get("accepted", {}))
 
 
-def _ledger_pattern(names: list[str]) -> re.Pattern[str] | None:
+def _deny_pattern(names: list[str]) -> re.Pattern[str] | None:
     cleaned = [re.escape(n.strip()) for n in names if n.strip()]
     if not cleaned:
         return None
@@ -120,9 +123,9 @@ def _ledger_pattern(names: list[str]) -> re.Pattern[str] | None:
     return re.compile(r"(?<![A-Za-z0-9])(?:" + "|".join(cleaned) + r")(?![A-Za-z0-9])", re.IGNORECASE)
 
 
-def scan(root: Path, paths: list[Path], ledger_names: list[str] | None) -> list[Finding]:
+def scan(root: Path, paths: list[Path], deny_names: list[str] | None) -> list[Finding]:
     """Every outside-project identity in `paths`, as findings carrying a remedy."""
-    ledger = _ledger_pattern(ledger_names) if ledger_names else None
+    deny = _deny_pattern(deny_names) if deny_names else None
     allow = load_allowlist()
     findings: list[Finding] = []
 
@@ -153,33 +156,33 @@ def scan(root: Path, paths: list[Path], ledger_names: list[str] | None) -> list[
                     ),
                 ))
 
-            if ledger is not None:
-                found = ledger.search(line)
+            if deny is not None:
+                found = deny.search(line)
                 if found:
                     findings.append(Finding(
-                        path=rel, line=number, kind="ledger-name", matched=found.group(0),
+                        path=rel, line=number, kind="deny-name", matched=found.group(0),
                         remedy=(
-                            "A source ledger name must not appear in a tracked file. "
-                            "Restate the item by what it does, not where it was seen."
+                            "This name is on the project's deny list for shipped "
+                            "surfaces. Restate the item by what it does."
                         ),
                     ))
     return findings
 
 
-def report(ledger_names: list[str] | None, findings: list[Finding]) -> dict[str, str]:
-    """Per-class verdict. An unsupplied ledger is `unmeasured`, never `clean`."""
+def report(deny_names: list[str] | None, findings: list[Finding]) -> dict[str, str]:
+    """Per-class verdict. An unsupplied list is `unmeasured`, never `clean`."""
     forge = [f for f in findings if f.kind == "forge-url"]
-    ledger = [f for f in findings if f.kind == "ledger-name"]
+    denied = [f for f in findings if f.kind == "deny-name"]
     return {
         "forge_class": "findings" if forge else "clean",
-        "ledger_class": (
-            "unmeasured" if not ledger_names else ("findings" if ledger else "clean")
+        "deny_class": (
+            "unmeasured" if not deny_names else ("findings" if denied else "clean")
         ),
     }
 
 
-def _ledger_from_env() -> list[str] | None:
-    raw = os.environ.get("GODMODE_LEDGER_NAMES")
+def _deny_from_env() -> list[str] | None:
+    raw = os.environ.get("GODMODE_DENY_NAMES")
     if not raw:
         return None
     path = Path(raw)
@@ -193,15 +196,15 @@ def _ledger_from_env() -> list[str] | None:
 
 
 def main() -> int:
-    ledger_names = _ledger_from_env()
+    deny_names = _deny_from_env()
     paths = shipped_paths(ROOT)
-    findings = scan(ROOT, paths, ledger_names)
-    verdict = report(ledger_names, findings)
+    findings = scan(ROOT, paths, deny_names)
+    verdict = report(deny_names, findings)
 
     print(f"scanned {len(paths)} shipped surfaces")
     print(f"  forge-url   {verdict['forge_class']}")
-    print(f"  ledger-name {verdict['ledger_class']}"
-          + ("" if ledger_names else "  (set GODMODE_LEDGER_NAMES to a names file to measure)"))
+    print(f"  deny-name {verdict['deny_class']}"
+          + ("" if deny_names else "  (set GODMODE_DENY_NAMES to a names file to measure)"))
 
     accepted = load_allowlist()
     if accepted:
