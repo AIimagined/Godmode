@@ -820,6 +820,40 @@ def _shields_its_arguments(normalized: str) -> bool:
 # allowance would otherwise cover them.
 _FIND_MUTATION = re.compile(r"(?i)\bfind\b[^|;&]*?\s-(?:delete|exec|execdir|ok|okdir)\b")
 
+#: The -exec family hands `find` a command and every matching path. Which of
+#: those is a mutation depends entirely on the command, so the flag alone
+#: cannot decide. -delete always is; -ok/-okdir prompt and then exec, and keep
+#: the conservative reading.
+_FIND_EXEC_COMMAND = re.compile(r"(?i)\s-(?:exec|execdir)\s+(.+)$")
+
+
+def _find_action_mutates(command_position: str) -> bool:
+    """Whether a `find` action in this segment actually mutates.
+
+    A find that counts lines was refused as a filesystem mutation twice during
+    this project's own work, and the operator rephrased the command both times.
+    A gate that refuses line-counting teaches people to route around it, and a
+    gate routed around protects nothing.
+
+    So -exec/-execdir are judged by what they run, against the same safe-read
+    vocabulary the classifier already keeps for ordinary commands - not a
+    second list, which would drift from the first.
+
+    Unknown stays protected: `find` hands the command every matching path, so
+    an unrecognised head is exactly the case to fail closed on.
+    """
+    if not _FIND_MUTATION.search(command_position):
+        return False
+    exec_match = _FIND_EXEC_COMMAND.search(command_position)
+    if not exec_match:
+        return True  # -delete, -ok, -okdir: no command to judge
+    # Strip find's placeholder and terminators so the head is the first real
+    # token: `wc -l {} +` reads as `wc -l`.
+    inner = exec_match.group(1)
+    for noise in ("{}", "\\;", ";", "+"):
+        inner = inner.replace(noise, " ")
+    return not _SAFE_SHELL_READS.match(inner.strip())
+
 # Interpreters and task runners. Recorded as local compute rather than
 # protected: gating every `python -m unittest` would duplicate the host's own
 # execution consent and stop the gate being usable at all. The boundary is
@@ -3737,7 +3771,7 @@ def _categorize(normalized: str, project_root: Path | None = None,
             return ("worktree-file-mutation", True,
                     [f"{kind} write outside ordinary working files: {write_target[:80]}"])
         return "worktree-file-mutation", False, [f"{kind} write inside the working tree"]
-    if _FIND_MUTATION.search(command_position):
+    if _find_action_mutates(command_position):
         return "filesystem-mutation", True, ["local files", "recoverability"]
     # ROUND 4, Critical 1: EVERY check that can find executable code now runs
     # BEFORE the help/version fast-path, not after it. The old ordering put
