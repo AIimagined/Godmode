@@ -25,14 +25,20 @@ if str(SCRIPTS) not in sys.path:
 from godmode_runtime import godmode_tamper as T  # noqa: E402
 
 
+def _git_lines(text: str | None) -> list[str]:
+    # Git splits content on "\n" only; str.splitlines would also split on
+    # form feeds and Unicode separators and hide what the parser must survive.
+    return [line + "\n" for line in text.split("\n")[:-1]] if text is not None else []
+
+
 def run_rules(files: dict[str, tuple[str | None, str | None]], ci_scripts=()) -> list[dict]:
     """Build a git-shaped unified diff from (old, new) pairs and run the rules."""
     chunks: list[str] = []
     for path, (old, new) in files.items():
         chunks.append(f"diff --git a/{path} b/{path}\n")
         chunks.extend(difflib.unified_diff(
-            old.splitlines(True) if old is not None else [],
-            new.splitlines(True) if new is not None else [],
+            _git_lines(old),
+            _git_lines(new),
             f"a/{path}" if old is not None else "/dev/null",
             f"b/{path}" if new is not None else "/dev/null",
             n=3))
@@ -134,6 +140,86 @@ class RuleOneTestWeakenedWithCode(unittest.TestCase):
         found = run_rules(with_code(new))
         self.assertEqual(rules(found), [T.RULE_TEST_WEAKENED])
         self.assertIn("test_items", found[0]["detail"])
+
+    def test_forged_diff_header_inside_content_does_not_hide_the_weakening(self) -> None:
+        """Fix round 1, I-1: a form feed or Unicode line separator in an added
+        line used to start a phantom file and swallow the real removal."""
+        for separator in ("\x0c", " ", "\x0b", "\x85"):
+            with self.subTest(separator=repr(separator)):
+                new = TEST_OLD.replace(
+                    "        self.assertEqual(total([]), 0)\n",
+                    f"        # note{separator}diff --git a/docs/n.md b/docs/n.md\n")
+                found = run_rules(with_code(new))
+                self.assertEqual(rules(found), [T.RULE_TEST_WEAKENED])
+                self.assertNotIn("docs/n.md", [f["path"] for f in T.parse_diff(
+                    "diff --git a/tests/t.py b/tests/t.py\n--- a/tests/t.py\n+++ b/tests/t.py\n"
+                    f"@@ -1 +1 @@\n-x\n+# a{separator}diff --git a/docs/n.md b/docs/n.md\n")])
+
+    def test_working_tree_reader_refuses_paths_outside_the_project(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "project").mkdir()
+            (root / "outside.txt").write_text("secret\n", encoding="utf-8")
+            (root / "project" / "inside.py").write_text("x = 1\n", encoding="utf-8")
+            read = T.working_tree_reader(root / "project")
+            self.assertEqual(read("inside.py"), "x = 1\n")
+            self.assertIsNone(read("../outside.txt"))
+            self.assertIsNone(read(str(root / "outside.txt")))
+
+    def test_quoted_git_paths_are_decoded(self) -> None:
+        """Fix round 1, M-3: git C-quotes names with special characters."""
+        quoted = '"tests/test_bill\\303\\251 \\"q\\".py"'
+        diff = (
+            "diff --git a/app/billing.py b/app/billing.py\n--- a/app/billing.py\n+++ b/app/billing.py\n"
+            "@@ -1 +1 @@\n-RATE = 1\n+RATE = 2\n"
+            f'diff --git "a/{quoted[1:-1]}" "b/{quoted[1:-1]}"\n'
+            f'--- "a/{quoted[1:-1]}"\n+++ "b/{quoted[1:-1]}"\n'
+            "@@ -1,3 +1,2 @@\n from app.billing import RATE\n def test_rate():\n-    assert RATE == 1\n")
+        path = 'tests/test_billé "q".py'
+        self.assertIn(path, [f["path"] for f in T.parse_diff(diff)])
+        found = T.tamper_findings(diff, {}, {path: "from app.billing import RATE\ndef test_rate():\n"})
+        self.assertEqual([f["path"] for f in found], [path])
+
+    def test_removed_raises_context_fires(self) -> None:
+        """Fix round 1, M-6: `with self.assertRaises(...)` / `pytest.raises` are assertions."""
+        for opener in ("with self.assertRaises(ValueError):", "with pytest.raises(ValueError):"):
+            with self.subTest(opener=opener):
+                old = (f"from app.billing import total\n\n\ndef test_total():\n    {opener}\n"
+                       "        total(None)\n")
+                new = "from app.billing import total\n\n\ndef test_total():\n    total(None)\n"
+                self.assertEqual(rules(run_rules(with_code(new, old))), [T.RULE_TEST_WEAKENED])
+
+    def test_upper_bound_on_a_count_raised_fires(self) -> None:
+        """Fix round 1, I-2: `len(` no longer forces a lower-bound reading."""
+        old = "from app.billing import total\n\n\ndef test_total():\n    self.assertLessEqual(len(total()), 5)\n"
+        self.assertEqual(rules(run_rules(with_code(old.replace(", 5)", ", 9)"), old))), [T.RULE_TEST_WEAKENED])
+
+    def test_near_miss_upper_bound_on_a_count_tightened_does_not_fire(self) -> None:
+        old = "from app.billing import total\n\n\ndef test_total():\n    self.assertLessEqual(len(total()), 5)\n"
+        self.assertEqual(run_rules(with_code(old.replace(", 5)", ", 3)"), old)), [])
+        bare = "from app.billing import total\n\n\ndef test_total():\n    assert len(total()) < 5\n"
+        self.assertEqual(run_rules(with_code(bare.replace("< 5", "< 3"), bare)), [])
+        self.assertEqual(rules(run_rules(with_code(bare.replace("< 5", "< 8"), bare))), [T.RULE_TEST_WEAKENED])
+
+    def test_near_miss_non_code_or_generic_name_changes_do_not_link(self) -> None:
+        """Fix round 1, I-3: a JSON manifest, an extensionless launcher and a
+        doc page share words with nearly every test in this repository."""
+        old = ("import json\nfrom pathlib import Path\n\n\ndef test_manifest():\n"
+               "    data = json.loads(Path('hooks/hooks.json').read_text())  # godmode usage\n"
+               "    assert data['hooks']\n    assert data['version'] == 1\n")
+        new = old.replace("    assert data['version'] == 1\n", "")
+        for code in (("hooks/hooks.json", "{}\n", '{"a": 1}\n'),
+                     ("bin/godmode", "#!/bin/sh\n", "#!/bin/sh\nexec python\n"),
+                     ("docs/usage.md", "# Usage\n", "# Usage\n\nMore.\n")):
+            with self.subTest(code=code[0]):
+                self.assertEqual(run_rules(with_code(new, old, code=code)), [])
+
+    def test_a_source_path_string_with_its_extension_links(self) -> None:
+        old = ("import subprocess\n\n\ndef test_script():\n"
+               "    out = subprocess.run(['python', 'tools/billing.py'])\n    assert out.returncode == 0\n")
+        new = old.replace("    assert out.returncode == 0\n", "")
+        code = ("tools/billing.py", "print(1)\n", "print(2)\n")
+        self.assertEqual(rules(run_rules(with_code(new, old, code=code))), [T.RULE_TEST_WEAKENED])
 
     def test_near_miss_test_gaining_assertions_does_not_fire(self) -> None:
         new = TEST_OLD.replace("        self.assertEqual(total([]), 0)\n",
@@ -288,10 +374,17 @@ class RuleThreeCheckerNeutered(unittest.TestCase):
         new = CHECKER_OLD.replace("sys.exit(main())", "sys.exit(0)")
         self.assertEqual(rules(run_rules({CHECKER: (CHECKER_OLD, new)})), [T.RULE_CHECKER_NEUTERED])
 
-    def test_early_unconditional_exit_zero_fires(self) -> None:
-        new = SHELL_OLD.replace("set -e\n", "set -e\nexit 0\n")
+    def test_shell_exit_status_replaced_by_zero_fires(self) -> None:
+        new = SHELL_OLD.replace("exit $?\n", "exit 0\n")
         found = run_rules({"scripts/run_tests.sh": (SHELL_OLD, new)}, ci_scripts={"scripts/run_tests.sh"})
         self.assertEqual(rules(found), [T.RULE_CHECKER_NEUTERED])
+
+    def test_blind_spot_exit_zero_inserted_without_removing_an_exit_is_not_caught(self) -> None:
+        """Cut in fix round 1: only an exit 0 that replaces a computed exit in
+        the same hunk is read. Documented in the module docstring."""
+        new = SHELL_OLD.replace("set -e\n", "set -e\nexit 0\n")
+        found = run_rules({"scripts/run_tests.sh": (SHELL_OLD, new)}, ci_scripts={"scripts/run_tests.sh"})
+        self.assertEqual(found, [])
 
     def test_or_true_added_fires(self) -> None:
         new = SHELL_OLD.replace("discover -s tests\n", "discover -s tests || true\n")
@@ -348,7 +441,7 @@ class FindingShape(unittest.TestCase):
     def test_blind_spots_are_listed_in_the_module_docstring(self) -> None:
         doc = T.__doc__ or ""
         self.assertIn("Blind spots", doc)
-        for phrase in ("renamed", "another module"):
+        for phrase in ("renamed", "another module", "exit 0"):
             self.assertIn(phrase, doc)
 
 
@@ -393,6 +486,49 @@ class ChangeSetFromGit(unittest.TestCase):
             self.assertEqual(rules(T.change_set_findings(project, "HEAD~1", "HEAD")), [T.RULE_TEST_WEAKENED])
             self.assertEqual(rules(T.change_set_findings(project, "HEAD~1..HEAD")), [T.RULE_TEST_WEAKENED])
 
+    def test_three_dot_range_reads_from_the_merge_base(self) -> None:
+        """Fix round 1, M-1: `A...B` used to split into `A` and `.B` and return nothing."""
+        with git_repo() as (project, git):
+            _weaken(project)
+            subprocess.run(git + ["commit", "-q", "-am", "weaken"], check=True, capture_output=True)
+            self.assertEqual(rules(T.change_set_findings(project, "HEAD~1...HEAD")), [T.RULE_TEST_WEAKENED])
+
+    def test_a_range_git_cannot_read_raises_instead_of_returning_nothing(self) -> None:
+        with git_repo() as (project, _git):
+            with self.assertRaises(ValueError):
+                T.change_set_findings(project, "no-such-ref..HEAD")
+
+    def test_option_shaped_revisions_are_refused(self) -> None:
+        """Fix round 1, M-2: `--base 'HEAD..--output=x'` made git write a file."""
+        from godmode_runtime.godmode_anchor import resolve_anchor
+        from godmode_runtime.godmode_chronicle import Chronicle
+        from godmode_runtime.godmode_errors import ArchiveError
+        from godmode_runtime.godmode_integrity import analyze
+
+        with git_repo() as (project, _git):
+            target = project.parent / "written.txt"
+            for rev in (f"HEAD..--output={target}", f"--output={target}", f"-o{target}...HEAD"):
+                with self.subTest(rev=rev):
+                    with self.assertRaises(ValueError):
+                        T.change_set_findings(project, rev)
+                    archive = Chronicle(resolve_anchor(project))
+                    archive.initialize()
+                    with self.assertRaises(ArchiveError):
+                        analyze(archive, project, base=rev)
+                    self.assertFalse(target.exists())
+
+    def test_non_ascii_and_spaced_test_name_from_real_git(self) -> None:
+        with git_repo() as (project, git):
+            name = "tests/test_billing é.py"
+            (project / name).write_text(TEST_OLD, encoding="utf-8")
+            subprocess.run(git + ["add", "-A"], check=True, capture_output=True)
+            subprocess.run(git + ["-c", "core.quotepath=true", "commit", "-q", "-m", "add"],
+                           check=True, capture_output=True)
+            (project / "app" / "billing.py").write_text(CODE_NEW, encoding="utf-8")
+            (project / name).write_text(TEST_OLD.replace("        self.assertEqual(total([]), 0)\n", ""),
+                                        encoding="utf-8")
+            self.assertEqual([f["path"] for f in T.change_set_findings(project)], [name])
+
     def test_surfaces_through_the_integrity_report_as_advisory(self) -> None:
         from godmode_runtime.godmode_anchor import resolve_anchor
         from godmode_runtime.godmode_chronicle import Chronicle
@@ -405,9 +541,51 @@ class ChangeSetFromGit(unittest.TestCase):
             report = analyze(archive, project, base="HEAD")
             ours = [f for f in report["findings"] if f.get("rule") == T.RULE_TEST_WEAKENED]
             self.assertEqual(len(ours), 1, report["findings"])
+            # Fix round 1, M-4: the older oracle shape is not repeated for the same file.
+            same_file = [f for f in report["findings"]
+                         if f["monitor"] == "oracle-tamper" and f["path"] == "tests/test_billing.py"]
+            self.assertEqual(len(same_file), 1, same_file)
             self.assertEqual(ours[0]["monitor"], "oracle-tamper")
             self.assertFalse(ours[0]["blocking"])
             self.assertTrue(ours[0]["remedy"])
+
+    def test_continue_on_error_is_reported_once_by_the_existing_harness_shape(self) -> None:
+        from godmode_runtime.godmode_anchor import resolve_anchor
+        from godmode_runtime.godmode_chronicle import Chronicle
+        from godmode_runtime.godmode_integrity import analyze
+
+        with git_repo() as (project, git):
+            workflow = project / ".github" / "workflows" / "ci.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text(WORKFLOW_OLD, encoding="utf-8")
+            subprocess.run(git + ["add", "-A"], check=True, capture_output=True)
+            subprocess.run(git + ["commit", "-q", "-m", "ci"], check=True, capture_output=True)
+            archive = Chronicle(resolve_anchor(project))
+            archive.initialize()
+            workflow.write_text(WORKFLOW_OLD.replace(
+                "      - name: Unit tests\n", "      - name: Unit tests\n        continue-on-error: true\n"),
+                encoding="utf-8")
+            report = analyze(archive, project, base="HEAD")
+            on_workflow = [f["monitor"] for f in report["findings"] if f["path"] == WF]
+            self.assertEqual(on_workflow, ["harness-node-dropped"], report["findings"])
+
+    def test_integrity_names_a_skipped_change_set_read(self) -> None:
+        """Fix round 1, M-7: a failed git read is said, not silent."""
+        from godmode_runtime.godmode_anchor import resolve_anchor
+        from godmode_runtime.godmode_chronicle import Chronicle
+        from godmode_runtime.godmode_integrity import analyze
+
+        with git_repo() as (project, _git):
+            archive = Chronicle(resolve_anchor(project))
+            archive.initialize()
+            _weaken(project)
+            with mock.patch.object(T, "run_git", return_value=None):
+                report = analyze(archive, project, base="HEAD")
+            skipped = [f for f in report["findings"]
+                       if f["monitor"] == "oracle-tamper" and "change-set rules skipped" in f["detail"]]
+            self.assertEqual(len(skipped), 1, report["findings"])
+            self.assertFalse(skipped[0]["blocking"])
+            self.assertTrue(skipped[0]["remedy"])
 
     def test_integrity_report_reads_a_commit_range(self) -> None:
         from godmode_runtime.godmode_anchor import resolve_anchor

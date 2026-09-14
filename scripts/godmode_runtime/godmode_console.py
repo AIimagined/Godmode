@@ -6500,7 +6500,8 @@ def _build_parser() -> argparse.ArgumentParser:
     integrity = sub.add_parser(
         "integrity", help="Run the thirteen test-integrity monitors over the current diff"
     )
-    integrity.add_argument("--base", default="HEAD", help="Git ref to diff against")
+    integrity.add_argument("--base", default="HEAD",
+                           help="Git ref to diff the working tree against, or a range A..B / A...B")
     integrity.set_defaults(handler=cmd_integrity)
 
     guard = sub.add_parser("guard", help="Preview and authorize an exact operation without executing it")

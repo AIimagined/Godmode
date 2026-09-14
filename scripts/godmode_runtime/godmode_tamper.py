@@ -10,11 +10,13 @@ question for the reviewer, not a verdict.
 Rules
 -----
 `test-weakened-with-code`
-    A test file loses an assertion, loosens one (`assertEqual` to
+    A test file loses an assertion (including a `with assertRaises` /
+    `pytest.raises` block), loosens one (`assertEqual` to
     `assertIn`/`assertTrue`/`assertRegex`, `==` to a truthiness check, a
-    lower bound or count reduced), gains a skip / expectedFailure / xfail
-    marker, or loses a test function - and the same change set modifies a
-    non-test file whose module name the test file imports or names.
+    lower bound or count reduced, an upper bound raised), gains a skip /
+    expectedFailure / xfail marker, or loses a test function - and the same
+    change set modifies a non-test source file that the test imports, or
+    whose file name (with extension) the test spells.
 `ci-node-dropped`
     A GitHub workflow loses a job, a matrix entry, or a `run:` command that
     invokes tests or checks (a job whose body reappears under a new name is a
@@ -22,9 +24,8 @@ Rules
 `checker-neutered`
     A file under `quality/checks/`, or a script a workflow's `run:` names, is
     deleted; or its exit is forced to success (`|| true` added, `exit 0` /
-    `sys.exit(0)` replacing a computed exit, an unconditional `exit 0` placed
-    before more code in the same block); or a workflow gains
-    `continue-on-error: true`.
+    `sys.exit(0)` replacing a computed exit in the same hunk); or a workflow
+    gains `continue-on-error: true`.
 
 Blind spots
 -----------
@@ -32,9 +33,12 @@ Blind spots
   example `assertEqual(total(x), 5)` rewritten as
   `assertEqual(total(x), total(x))`) is read as a rename plus a same-strength
   rewrite and is not reported.
-- The test-to-code link is by name. A test that reaches the changed code only
-  through another module (it imports `app.api`, which calls the changed
-  `app/billing.py`) is not linked, so its weakening is not reported.
+- The test-to-code link is by import or file name. A test that reaches the
+  changed code only through another module (it imports `app.api`, which calls
+  the changed `app/billing.py`) is not linked, and changes to non-source files
+  (JSON manifests, launchers without an extension, docs) never link.
+- An `exit 0` inserted in a checker without removing an exit in the same hunk
+  (for example before the checks run) is not reported.
 - Conditional skips (`skipIf`, `skipUnless`, `pytest.mark.skipif`, a
   `skipTest` directly under an `if`) are not reported, so a skip gated on a
   condition that is always true passes unread.
@@ -48,6 +52,7 @@ Blind spots
 """
 from __future__ import annotations
 
+import codecs
 import re
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
@@ -76,8 +81,11 @@ Source = Callable[[str], "str | None"]
 
 _HUNK = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 _WORKFLOW = re.compile(r"(^|/)\.github/workflows/[^/]+\.ya?ml$")
-_ASSERT = re.compile(r"^\s*(?:assert\b|self\.assert[A-Z]\w*\s*\(|expect\s*\()")
-_METHOD = re.compile(r"\b(assert[A-Z]\w*)\s*\(")
+_ASSERT = re.compile(
+    r"^\s*(?:assert\b|self\.assert[A-Z]\w*\s*\(|expect\s*\(|with\s+(?:self\.assertRaises\w*|pytest\.raises)\s*\()")
+_METHOD = re.compile(r"\b(assert[A-Z]\w*|raises)\s*\(")
+_CODE_SUFFIXES = {".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".rb", ".mjs", ".cjs", ".sh", ".ps1"}
+_IMPORT_LINE = re.compile(r"^\s*(?:from\s+\S+\s+import\b|import\s|.*\brequire\s*\(|.*\bfrom\s+['\"])")
 _EXACT = {"assertEqual", "assertEquals", "assertIs", "assertListEqual", "assertDictEqual",
           "assertTupleEqual", "assertSetEqual", "assertCountEqual", "assertMultiLineEqual",
           "assertSequenceEqual", "assertAlmostEqual", "assertRaises", "assertRaisesRegex"}
@@ -105,11 +113,34 @@ _CONTINUE_ON_ERROR = re.compile(r"^\s*continue-on-error:\s*(?:true|'true'|\"true
 
 # --- diff parsing -------------------------------------------------------------
 
+def _unquote(raw: str) -> str:
+    """Decode a git C-quoted name (`"tests/a\\303\\251.py"`); plain names pass through."""
+    if len(raw) >= 2 and raw[0] == raw[-1] == '"':
+        return codecs.escape_decode(raw[1:-1].encode("utf-8"))[0].decode("utf-8", errors="replace")
+    return raw
+
+
 def _strip_prefix(raw: str) -> str | None:
-    path = raw.strip().split("\t", 1)[0].strip('"')
+    raw = raw.rstrip("\r\n")
+    path = _unquote(raw if raw.startswith('"') else raw.split("\t", 1)[0])
     if path == "/dev/null":
         return None
     return path[2:] if path[:2] in ("a/", "b/") else path
+
+
+def _header_paths(rest: str) -> tuple[str | None, str | None]:
+    """`a/P b/P` from a `diff --git` line: quoted tokens, or two equal halves
+    (a name containing ` b/` would mis-split on the separator)."""
+    if rest.startswith('"') or rest.endswith('"'):
+        tokens = re.findall(r'"(?:[^"\\]|\\.)*"|\S+', rest)
+        if len(tokens) == 2:
+            return _strip_prefix(tokens[0]), _strip_prefix(tokens[1])
+    half = (len(rest) - 1) // 2
+    if rest[half:half + 1] == " " and rest[:2] == "a/" and rest[half + 1:half + 3] == "b/" \
+            and rest[2:half] == rest[half + 3:]:
+        return rest[2:half], rest[half + 3:]
+    parts = rest.split(" b/", 1)
+    return _strip_prefix(parts[0]), parts[1] if len(parts) > 1 else None
 
 
 def parse_diff(text: str) -> list[dict[str, Any]]:
@@ -119,10 +150,13 @@ def parse_diff(text: str) -> list[dict[str, Any]]:
     current: dict[str, Any] | None = None
     hunk: list | None = None
     old_no = new_no = 0
-    for line in text.splitlines():
+    # Split on "\n" only, as git does: str.splitlines also breaks on form
+    # feeds and Unicode separators, so content could forge a file header.
+    for line in text.split("\n"):
+        line = line[:-1] if line.endswith("\r") else line
         if line.startswith("diff --git "):
-            parts = line[len("diff --git "):].split(" b/", 1)
-            current = {"old": _strip_prefix(parts[0]), "new": parts[1] if len(parts) > 1 else None, "hunks": []}
+            old_path, new_path = _header_paths(line[len("diff --git "):])
+            current = {"old": old_path, "new": new_path, "hunks": []}
             files.append(current)
             hunk = None
             continue
@@ -138,9 +172,9 @@ def parse_diff(text: str) -> list[dict[str, Any]]:
             elif line.startswith("new file mode"):
                 current["added"] = True
             elif line.startswith("rename from "):
-                current["old"] = line[len("rename from "):]
+                current["old"] = _unquote(line[len("rename from "):])
             elif line.startswith("rename to "):
-                current["new"] = line[len("rename to "):]
+                current["new"] = _unquote(line[len("rename to "):])
         match = _HUNK.match(line)
         if match:
             old_no, new_no = int(match.group(1)), int(match.group(2))
@@ -228,20 +262,32 @@ def _loosening(old: str, new: str) -> str | None:
         for b, a in zip(before, after):
             if b == a:
                 continue
-            lower = old_method in _LOWER_BOUND or ">" in old or "len(" in old or "count" in old.lower()
-            upper = old_method in _UPPER_BOUND or re.search(r"<(?!<)", old)
-            if (lower and a < b) or (upper and not lower and a > b):
+            # Direction comes from the method or operator; `len(`/`count` only
+            # reads as a lower bound when neither says otherwise.
+            upper = old_method in _UPPER_BOUND or (old_method not in _LOWER_BOUND
+                                                   and re.search(r"(?<![<-])<(?!<)", old))
+            lower = not upper and (old_method in _LOWER_BOUND or re.search(r"(?<![->])>(?!>)", old)
+                                   or "len(" in old or "count" in old.lower())
+            if (lower and a < b) or (upper and a > b):
                 return f"bound or count reduced: {old.strip()} -> {new.strip()}"
             break
     return None
 
 
-def _code_stem(path: str) -> str:
+def _names_code(source: str, path: str) -> bool:
+    """Whether a test source imports the module at `path`, or spells its file
+    name with the extension. A bare word is not enough: `hooks` or `godmode`
+    appears in nearly every test here."""
     p = Path(path)
     stem = p.stem
     if stem in ("__init__", "index", "mod", "main", "lib") and p.parent.name:
         stem = p.parent.name
-    return stem
+    if len(stem) < 3:
+        return False
+    word = re.compile(rf"(?<![\w-]){re.escape(stem)}(?![\w-])")
+    if re.search(rf"(?<![\w-]){re.escape(p.name)}(?![\w-])", source) and p.stem == stem:
+        return True
+    return any(_IMPORT_LINE.match(line) and word.search(line) for line in source.split("\n"))
 
 
 def _test_signals(entry: dict[str, Any], added_anywhere: set[str], defs_added_anywhere: set[str]) -> list:
@@ -285,7 +331,7 @@ def _test_signals(entry: dict[str, Any], added_anywhere: set[str], defs_added_an
 
 def _rule_test_weakened(files: list[dict[str, Any]], old: Source, new: Source) -> list[dict[str, Any]]:
     tests = [f for f in files if _TEST_PATH.search(f["path"])]
-    code = [f["path"] for f in files if not _TEST_PATH.search(f["path"]) and not _WORKFLOW.search(f["path"])]
+    code = [f["path"] for f in files if not _TEST_PATH.search(f["path"]) and Path(f["path"]).suffix in _CODE_SUFFIXES]
     if not tests or not code:
         return []
     added_anywhere = {t.strip() for f in files for _n, t, _h in _added(f)}
@@ -297,8 +343,7 @@ def _rule_test_weakened(files: list[dict[str, Any]], old: Source, new: Source) -
             continue
         source = (new(entry["new"]) if entry["new"] else None) or (old(entry["old"]) if entry["old"] else None) or ""
         source += "\n" + "\n".join(t for h in entry["hunks"] for _k, _o, _n, t in h)
-        linked = [p for p in code
-                  if len(_code_stem(p)) >= 3 and re.search(rf"(?<![\w-]){re.escape(_code_stem(p))}(?![\w-])", source)]
+        linked = [p for p in code if _names_code(source, p)]
         if not linked:
             continue
         side, line, _why, hunk = signals[0]
@@ -325,7 +370,7 @@ def _meaningful(line: str) -> bool:
 
 def workflow_jobs(text: str) -> dict[str, dict[str, Any]]:
     """Job name -> {line, body (list of lines), commands, matrix}."""
-    lines = text.splitlines()
+    lines = text.split("\n")
     start = next((i for i, l in enumerate(lines) if re.match(r"^jobs:\s*(#.*)?$", l)), None)
     if start is None:
         return {}
@@ -412,7 +457,7 @@ def _old_hunk_for(entry: dict[str, Any], line: int) -> list | None:
 
 
 def _find_line(text: str, needle: str, after: int = 0) -> int:
-    for number, line in enumerate(text.splitlines(), 1):
+    for number, line in enumerate(text.split("\n"), 1):
         if number > after and needle in " ".join(line.split()):
             return number
     return after or 1
@@ -483,12 +528,10 @@ def ci_invoked_scripts(workflow_texts: Iterable[str]) -> set[str]:
 def _rule_checker_neutered(files: list[dict[str, Any]], old: Source, new: Source,
                            ci_scripts: set[str]) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
-    scripts = set(ci_scripts)
-    scripts |= ci_invoked_scripts(old(f["old"]) or "" for f in files if f["old"] and _WORKFLOW.search(f["old"]))
     for entry in files:
         path = entry["old"] or entry["new"] or ""
         is_workflow = bool(_WORKFLOW.search(path))
-        is_checker = path.startswith("quality/checks/") or path in scripts
+        is_checker = path.startswith("quality/checks/") or path in ci_scripts
         if entry["status"] == "D" and is_checker:
             hunk = entry["hunks"][0] if entry["hunks"] else None
             findings.append(_finding(
@@ -497,7 +540,6 @@ def _rule_checker_neutered(files: list[dict[str, Any]], old: Source, new: Source
             continue
         if entry["status"] == "D" or not (is_checker or is_workflow):
             continue
-        after_lines = ((new(entry["new"]) if entry["new"] else None) or "").splitlines()
         for hunk in entry["hunks"]:
             removed = [t for k, _o, _n, t in hunk if k == "-"]
             removed_stripped = {t.strip() for t in removed}
@@ -512,26 +554,12 @@ def _rule_checker_neutered(files: list[dict[str, Any]], old: Source, new: Source
                         why = f"`|| true` added to a workflow command: {text.strip()[:80]}"
                 elif _OR_TRUE.search(text):
                     why = f"`|| true` added: {text.strip()[:80]}"
-                elif _EXIT_ZERO.match(text):
-                    if any(_EXIT_COMPUTED.search(r) for r in removed):
-                        why = f"exit forced to success, replacing a computed exit: {text.strip()}"
-                    elif _dead_code_follows(after_lines, new_line):
-                        why = f"unconditional success exit placed before more code: {text.strip()}"
+                elif _EXIT_ZERO.match(text) and any(_EXIT_COMPUTED.search(r) for r in removed):
+                    why = f"exit forced to success, replacing a computed exit: {text.strip()}"
                 if why:
                     findings.append(_finding(RULE_CHECKER_NEUTERED, entry["path"], new_line,
                                              f"{entry['path']}: {why}", _excerpt(hunk, new_line, "new")))
     return findings
-
-
-def _dead_code_follows(lines: list[str], line: int) -> bool:
-    if not 0 < line <= len(lines):
-        return False
-    column = _indent(lines[line - 1])
-    for later in lines[line:]:
-        if not _meaningful(later):
-            continue
-        return _indent(later) == column
-    return False
 
 
 # --- entry points ---------------------------------------------------------------
@@ -548,8 +576,8 @@ def tamper_findings(diff_text: str, old_source: "Source | Mapping[str, str] | No
                     new_source: "Source | Mapping[str, str] | None" = None,
                     ci_scripts: Iterable[str] = ()) -> list[dict[str, Any]]:
     """Every rule over one unified diff. `old_source`/`new_source` return a
-    file's text before/after the change (or None); `ci_scripts` names scripts
-    CI invokes beyond those the diff's own workflows show."""
+    file's text before/after the change (or None); `ci_scripts` names the
+    scripts CI invokes (`change_set_findings` reads them from the base tree)."""
     files = parse_diff(diff_text)
     old, new = _as_source(old_source), _as_source(new_source)
     return (_rule_test_weakened(files, old, new)
@@ -557,28 +585,57 @@ def tamper_findings(diff_text: str, old_source: "Source | Mapping[str, str] | No
             + _rule_checker_neutered(files, old, new, set(ci_scripts)))
 
 
+def unsafe_revision(revision: str) -> bool:
+    """A revision, or either side of an `A..B` / `A...B` range, that git would
+    parse as an option (`--output=<file>` writes a file)."""
+    return any(part.startswith("-") for part in re.split(r"\.\.\.?", str(revision)))
+
+
+def working_tree_reader(project: Path) -> Source:
+    """Reads a file under `project`; a path resolving outside it reads as None."""
+    root = Path(project).resolve()
+
+    def read(path: str) -> str | None:
+        try:
+            target = (root / path).resolve()
+            if target != root and root not in target.parents:
+                return None
+            return target.read_text(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            return None
+
+    return read
+
+
 def change_set_findings(project: Path, base: str = "HEAD", head: str | None = None) -> list[dict[str, Any]]:
     """The rules over `base..head`, or over the working tree against `base`
     when no head is given. `base` may itself be written `A..B`. Read-only git."""
     project = Path(project)
+    if unsafe_revision(base) or (head is not None and unsafe_revision(head)):
+        raise ValueError(f"revision looks like an option, refused: {base!r} {head!r}")
     if head is None and ".." in base:
-        base, head = base.split("..", 1)
+        three_dot = "..." in base
+        base, head = base.split("..." if three_dot else "..", 1)
         base, head = base or "HEAD", head or None
-    arguments = ["diff", "--no-color", "--no-ext-diff", "-M", "--unified=3", base] + ([head] if head else [])
-    diff = run_git(project, *arguments)
+        if three_dot:
+            merge_base = run_git(project, "merge-base", base, head or "HEAD")
+            if not merge_base:
+                raise ValueError(f"range not understood: no merge base for {base}...{head or 'HEAD'}")
+            base = merge_base
+    diff = run_git(project, "-c", "core.quotepath=false", "diff", "--no-color", "--no-ext-diff", "-M",
+                   "--unified=3", base, *([head] if head else []))
+    if diff is None:
+        raise ValueError(f"git diff could not read {base}{'..' + head if head else ''} (unknown revision or timed out)")
     if not diff:
         return []
 
     def old(path: str) -> str | None:
         return run_git(project, "show", f"{base}:{path}")
 
+    read_tree = working_tree_reader(project)
+
     def new(path: str) -> str | None:
-        if head:
-            return run_git(project, "show", f"{head}:{path}")
-        try:
-            return (project / path).read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            return None
+        return run_git(project, "show", f"{head}:{path}") if head else read_tree(path)
 
     listed = run_git(project, "ls-tree", "-r", "--name-only", base, "--", ".github/workflows") or ""
     workflows = [old(p) or "" for p in listed.splitlines() if _WORKFLOW.search(p)]

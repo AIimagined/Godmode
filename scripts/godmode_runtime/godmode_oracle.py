@@ -36,6 +36,9 @@ _OPERATIONAL_ERROR = re.compile(
 
 
 def _changed_files(project: Path, base: str) -> dict[str, str]:
+    if any(part.startswith("-") for part in re.split(r"\.\.\.?", str(base))):
+        # `--output=<file>` as a revision would make git write a file.
+        raise ValueError(f"base looks like a git option, refused: {base!r}")
     raw = run_git(project, "diff", "--name-status", "--no-renames", base) or ""
     files: dict[str, str] = {}
     for line in raw.splitlines():

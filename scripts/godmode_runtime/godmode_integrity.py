@@ -50,6 +50,11 @@ def _live_match(pattern: re.Pattern[str], line: str) -> bool:
 
 
 def _changed_files(project: Path, base: str) -> dict[str, str]:
+    from .godmode_tamper import unsafe_revision
+
+    if unsafe_revision(base):
+        # `--base --output=<file>` would make git write a file.
+        raise ArchiveError(f"--base looks like a git option, refused: {base!r}")
     raw = run_git(project, "diff", "--name-status", "--no-renames", base)
     if raw is None:
         raise ArchiveError("Integrity monitors need a Git repository to diff against")
@@ -124,9 +129,24 @@ def _test_weakened_with_source_edit(ctx: dict[str, Any]) -> list[dict[str, Any]]
     Also carries the three change-set rules from `godmode_tamper` (test
     weakened with its code, CI node dropped, checker neutered), each with a
     rule id, file:line, evidence excerpt and remedy - advisory, never blocking."""
+    tamper = ctx.get("tamper", [])
+    located = {rule["path"] for rule in tamper if rule["rule"] == "test-weakened-with-code"}
+    # A file the change-set rule already located is not reported twice.
     findings = [_finding("oracle-tamper", f["path"], f["detail"], blocking=False)
-                for f in ctx.get("oracle", []) if f["shape"] in ("test-weakened-with-source-edit", "new-test-never-red")]
-    for rule in ctx.get("tamper", []):
+                for f in ctx.get("oracle", [])
+                if f["shape"] in ("test-weakened-with-source-edit", "new-test-never-red")
+                and not (f["shape"] == "test-weakened-with-source-edit" and f["path"] in located)]
+    if ctx.get("tamper_skipped"):
+        finding = _finding("oracle-tamper", str(ctx.get("base", "")),
+                           f"change-set rules skipped: {ctx['tamper_skipped']}", blocking=False)
+        finding["remedy"] = "Use a --base git can read (a ref, A..B or A...B) and run integrity again."
+        findings.append(finding)
+    # `continue-on-error: true` and `|| true` in a workflow are already the
+    # blocking `harness-node-dropped` shape; that finding stands alone.
+    harness = {f["path"] for f in ctx.get("oracle", []) if f["shape"] == "harness-node-dropped"}
+    for rule in tamper:
+        if rule["rule"] == "checker-neutered" and rule["path"] in harness and "deleted" not in rule["detail"]:
+            continue
         finding = _finding("oracle-tamper", rule["path"], rule["detail"], blocking=False)
         finding.update({key: rule[key] for key in ("rule", "line", "location", "evidence", "remedy")})
         findings.append(finding)
@@ -497,8 +517,10 @@ def analyze(archive: Chronicle, project: Path, base: str = "HEAD") -> dict[str, 
     try:
         from .godmode_tamper import change_set_findings
         ctx["tamper"] = change_set_findings(project, base)
-    except Exception:  # noqa: BLE001  # godmode: swallow-ok: the change-set rules are advisory; the other monitors still answer
+    except Exception as exc:  # noqa: BLE001  # godmode: swallow-ok: the change-set rules are advisory; the skip is reported as a finding
         ctx["tamper"] = []
+        ctx["tamper_skipped"] = str(exc) or type(exc).__name__
+    ctx["base"] = base
 
     findings: list[dict[str, Any]] = []
     for monitor in MONITORS.values():
