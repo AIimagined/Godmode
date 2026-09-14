@@ -111,14 +111,25 @@ class CompileTests(unittest.TestCase):
 
 class TopLawsTests(unittest.TestCase):
     def test_top_laws_are_newest_guarded_first_and_bounded(self) -> None:
+        # Well past the old 200-char cap this test used to encode
+        # (`len(guard) <= 200`) - Guard text is never truncated (D-6), so
+        # the newest law's guard here must survive byte-for-byte.
+        long_guard = (
+            "a very long guard sentence that keeps going well past the two "
+            "hundred character mark so this fixture proves the compiled "
+            "guard is never cut short, no matter how far past any old "
+            "length cap the source guard runs."
+        )
+        self.assertGreater(len(long_guard), 200)
         with _project() as (_root, archive):
-            for index in range(6):
+            for index in range(5):
                 _lesson(archive, f"lesson-{index}", "v", guard=f"guard {index}")
+            _lesson(archive, "lesson-long", "v", guard=long_guard)
             top = top_laws(archive, 3)
         self.assertEqual(len(top), 3)
-        self.assertIn("guard 5", top[0]["guard"])
-        for law in top:
-            self.assertLessEqual(len(law["guard"]), 200)
+        # Newest first: the long-guard lesson was recorded last.
+        self.assertEqual(top[0]["guard"], long_guard)
+        self.assertIn("guard 4", top[1]["guard"])
 
 
 class BriefTests(unittest.TestCase):
