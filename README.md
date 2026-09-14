@@ -16,7 +16,7 @@
 </p>
 
 - **Done means proven.** A claim backed only by a check that can't fail - `git status`, `echo`, `ls` - doesn't earn "verified".
-- **Risky commands stop before they run.** Force-pushes, deletes and releases are judged by what the command does, not how confidently it was asked for.
+- **Risky commands stop before they run, on hosts with live-proven hooks.** Force-pushes, deletes and releases are judged by what the command does, not how confidently it was asked for.
 - **Context that survives.** Compaction, a new session, a branch switch: the agent resumes from the record, not from memory.
 
 <p align="center">
@@ -28,7 +28,7 @@
 
 ## Install
 
-One plugin package, four hosts. Per-host enforcement detail lives in
+One plugin package, five hosts. Per-host enforcement detail lives in
 [Host support](#host-support) - read it before you rely on any gate.
 
 **Claude Code**

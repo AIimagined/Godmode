@@ -16,6 +16,8 @@ language model choosing to comply.
 | Phishing / social engineering | Godmode never requests third-party credentials; the local approval prompt is clearly branded and runs on the user's machine only. |
 | Local privilege escalation | No sudo/admin request by default; an operation needing elevation states the exact need and safer alternatives before proceeding. |
 | Project memory leak | Continuity state lives outside the working tree; exports pass an allowlist and secret scan; the archive scanner (`godmode doctor`) checks for leaked secrets. |
+| Ledger record tampering | Records are hash-chained (SHA-256, unkeyed - a content-integrity check, not a signature); an in-place edit to any record breaks every hash computed after it. A `godmode-chain-anchor.json` sidecar records the chain's length and head hash on every append, and a later read must still pass through that anchored point, which catches a deleted tail up to the last anchor. A read trusts a record file's on-disk size and modification time as unchanged since its last verified read; set `GODMODE_VERIFY_READS=1` to force full re-verification on every read instead. This detects tampering; it does not authenticate the archive against an operator who also has filesystem write access to it (see Out of scope). |
+| Unaudited network egress | `godmode netgate` differentially audits five CLI surfaces (`init`, `inspect`, `resume`, `doctor`, `report`) and proves each makes zero outbound connections. It does not instrument hook subprocesses, and an operator-supplied check command (for example the command given to `claim --verify`, `ratchet run`, `oracle run`, `retest --run`, or `perimeter run`) runs verbatim and can reach the network - the audited "zero network" finding covers those five surfaces, not every command Godmode can be configured to run. |
 
 ## Security requirements
 
@@ -28,7 +30,7 @@ language model choosing to comply.
 | SEC-005 | No production mutation using local test credentials or generic administrator identities. |
 | SEC-006 | No destructive smoke tests against real project IDs or customer data. |
 | SEC-007 | Secret scan before memory write, file change, commit, outbound call, and diagnostics export. |
-| SEC-008 | Signed tags and published checksums for releases. |
+| SEC-008 | Annotated (unsigned) git tags and published checksums for releases. |
 
 ## Out of scope
 
