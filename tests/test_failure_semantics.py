@@ -617,6 +617,60 @@ class ModeTableTests(unittest.TestCase):
             self.assertEqual(
                 degradations[0]["data"]["reason"], DEGRADE_REASON_MALFORMED_PAYLOAD)
 
+    def test_row4_bom_prefixed_payload_from_cwd_leaves_the_host_grade_unchanged(self) -> None:
+        # G-4(a): a payload that fails to parse carries no session id and
+        # must not borrow this PROCESS's own cwd as if it were the caller's
+        # project - noise (a BOM byte on an otherwise-fine pipe) fired while
+        # the hook happens to be launched from inside a governed project
+        # must never resolve into, or record a degradation into, that
+        # project's own archive, and so must never flip its enforcement
+        # grade. No `--project` on either call below: a real host
+        # invocation (see hooks/hooks.json) never passes one for
+        # session-start either, relying entirely on its own cwd.
+        with isolated_project() as (project, state, _anchor, archive):
+            archive.initialize()
+            env = {**os.environ, "GODMODE_STATE_HOME": str(state), "GODMODE_HOST": "claude"}
+
+            def _grade() -> str:
+                done = subprocess.run(
+                    [sys.executable, str(HOOK), "session-start"],
+                    input=json.dumps({"cwd": str(project)}).encode("utf-8"),
+                    capture_output=True, timeout=60, cwd=str(project), env=env,
+                )
+                self.assertEqual(done.returncode, 0, done.stderr)
+                brief = json.loads(done.stdout.decode("utf-8").strip())
+                return brief["brief"]["obligations"]["enforcement"]["tool_call_interception"]
+
+            before = _grade()
+            bom_done = subprocess.run(
+                [sys.executable, str(HOOK), "session-start"],
+                input=b'\xef\xbb\xbf{"cwd": "' + str(project).encode("utf-8") + b'"}',
+                capture_output=True, timeout=60, cwd=str(project), env=env,
+            )
+            self.assertEqual(bom_done.returncode, 0, bom_done.stderr)
+            after = _grade()
+            self.assertEqual(before, after)
+            self.assertEqual(
+                archive.select(kind="action", subject=SUBJECT_HOOK_DEGRADED, limit=10), [])
+
+    def test_row4_pre_action_without_project_still_fails_closed_on_a_malformed_payload(
+        self,
+    ) -> None:
+        # G-4(a): the cwd-fallback refusal above must never weaken a
+        # PROTECTED pre-action call's fail-closed behaviour - it only stops
+        # that call from resolving or touching an archive to get there.
+        with isolated_project() as (project, state, _anchor, archive):
+            archive.initialize()
+            done = subprocess.run(
+                [sys.executable, str(HOOK), "pre-action"],
+                input="{not valid json at all", capture_output=True, text=True,
+                encoding="utf-8", timeout=60, cwd=str(project),
+                env={**os.environ, "GODMODE_STATE_HOME": str(state), "GODMODE_HOST": "claude"},
+            )
+            self.assertNotEqual(done.returncode, 0)
+            self.assertEqual(
+                archive.select(kind="action", subject=SUBJECT_HOOK_DEGRADED, limit=10), [])
+
     def test_row4_reads_are_unaffected_fast_path_still_silent(self) -> None:
         # Regression lock: a WELL-FORMED read-only tool call must still take
         # the zero-cost fast path (return 0, no archive touched at all) -

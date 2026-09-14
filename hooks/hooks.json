@@ -91,7 +91,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|PowerShell|Write|Edit|NotebookEdit|apply_patch|functions\\.exec|shell_command|run_terminal_command|search_replace|write",
+        "matcher": "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|apply_patch|functions\\.exec|shell_command|run_terminal_command|search_replace|write",
         "hooks": [
           {
             "type": "command",

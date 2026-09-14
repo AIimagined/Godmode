@@ -847,20 +847,31 @@ def degraded_reason(
         archive, host, registration=registration, hook_script=hook_script, now=now,
     ) != LEVEL_DEGRADED:
         return None
-    proof = last_proof(archive, host)
-    if proof is None:
-        return None
-    if _superseded_since(archive, proof["sequence"], host):
-        for record in reversed(archive.select(kind="action", limit=500)):
-            if record["sequence"] <= proof["sequence"]:
-                break
-            if record["subject"] == SUBJECT_HOOK_DEGRADED:
-                return str(record["data"].get("reason") or "hook-health-degraded")
-            if record["subject"] == SUBJECT_UNINSTALLED:
-                return "hook-uninstalled"
-            if record["subject"] == SUBJECT_PROBE_FAILED:
-                return "probe-failed"
-        return "superseded"
+    try:
+        proof = last_proof(archive, host)
+        if proof is None:
+            return None
+        if _superseded_since(archive, proof["sequence"], host):
+            for record in reversed(archive.select(kind="action", limit=500)):
+                if record["sequence"] <= proof["sequence"]:
+                    break
+                if record["subject"] == SUBJECT_HOOK_DEGRADED:
+                    return str(record["data"].get("reason") or "hook-health-degraded")
+                if record["subject"] == SUBJECT_UNINSTALLED:
+                    return "hook-uninstalled"
+                if record["subject"] == SUBJECT_PROBE_FAILED:
+                    return "probe-failed"
+            return "superseded"
+    except ArchiveError:
+        # G-4(b): `interception_state` above already read this same archive
+        # once and caught its OWN `ArchiveError` from a tamper-evident chain
+        # (tail-truncated or any other verify() verdict), grading DEGRADED
+        # by that doctrine alone. This function reads the archive again to
+        # name WHY - and the identical read can raise the identical error a
+        # second time. Every other DEGRADED cause below gets a name; a
+        # tamper verdict must too, never an uncaught crash where the grade
+        # itself stayed graceful.
+        return "chain-tampered"
     data = proof.get("data", {})
     # Fix round 1, C1(b): checked first, matching `interception_state`'s
     # own priority - a tampered-looking expiry is a distinct, more specific

@@ -200,6 +200,24 @@ class TruncationDegradesTheProofReaders(unittest.TestCase):
                 interception_state(archive, "claude", registration="partial"),
                 LEVEL_DEGRADED)
 
+    def test_degraded_reason_names_a_truncated_chain_instead_of_raising(self) -> None:
+        # G-4(b): `interception_state` catches its own read's `ArchiveError`
+        # and grades this DEGRADED (the test above); `degraded_reason`
+        # answers WHY and used to read the same tamper-evident archive a
+        # SECOND time unguarded, letting the identical `ArchiveError`
+        # escape uncaught instead of naming the cause - the one grade
+        # `degraded_reason` could never explain.
+        from godmode_runtime.godmode_hookproof import degraded_reason
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            _grow(archive, 3)
+            _newest_record(archive).unlink()
+            archive.head.unlink(missing_ok=True)
+            archive._events_cache_key = None
+            self.assertEqual(
+                degraded_reason(archive, "claude", registration="partial"),
+                "chain-tampered")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2358,7 +2358,23 @@ def main(argv: list[str] | None = None) -> int:
     capture_payload = args.capture_payload or bool(os.environ.get(CAPTURE_PAYLOAD_ENV))
     submitted, malformed_payload = _input()
     claude_session = _is_claude_session(submitted)
-    project = args.project or str(submitted.get("cwd") or ".")
+    # G-4(a): a payload that failed to parse is `{}` (see `_input`), so it
+    # never carries a session id either - there is no host-supplied fact
+    # left to resolve a project FROM. Falling back to `str(submitted.get(
+    # "cwd") or ".")` in that case does not read "no project": it reads
+    # "this process's own working directory," and a host launches this
+    # hook from inside the very project it is calling about. Noise alone
+    # (a BOM byte, a truncated pipe) would then resolve that real
+    # project's archive and record a degradation into it, flipping its
+    # enforcement grade for a fact that says nothing about that project's
+    # hook health. An explicit `--project` (a host naming the project
+    # itself, argv, unforgeable by the payload) is unaffected - only the
+    # cwd-inferred fallback is refused here.
+    no_project_evidence = (
+        malformed_payload and not str(submitted.get("session_id") or "").strip()
+        and not args.project
+    )
+    project = None if no_project_evidence else (args.project or str(submitted.get("cwd") or "."))
 
     # A tool that cannot change anything gets no gate and no cost. Resolving the
     # repository identity costs several git calls, which is worth paying before a
@@ -2386,6 +2402,21 @@ def main(argv: list[str] | None = None) -> int:
             _gated = False
         if not _gated:
             return 0
+    if project is None:
+        # G-4(a): no project could be honestly resolved (see above) - no
+        # anchor is resolved, no archive is opened, and nothing is
+        # recorded. A protected pre-action call still fails closed exactly
+        # as the full classify path below would have for a malformed
+        # payload's empty operation - it simply never touches an archive
+        # to get there. Every other event is silently a no-op, the same
+        # non-event as a hook run by hand with nothing on stdin.
+        if args.event == "pre-action":
+            reason = "no operation described in a malformed payload"
+            body, _code = render_decision(current_host(), "", "deny", reason)
+            print(json.dumps(body, ensure_ascii=False))
+            print(f"godmode: {reason}", file=sys.stderr)
+            return 2
+        return 0
     try:
         anchor = resolve_anchor(project)
         archive = Chronicle(anchor)

@@ -143,6 +143,17 @@ class SharedHooksFileTests(unittest.TestCase):
                      "run_terminal_command", "search_replace", "write"):
             self.assertIn(tool, names, tool)
 
+    def test_the_pretooluse_matcher_includes_multiedit(self) -> None:
+        # G-4(c): Claude's own `MultiEdit` tool call was ungated - the
+        # PostToolUse quality matcher already names it (field content), but
+        # PreToolUse (the gate itself) did not, so a MultiEdit mutation
+        # never reached the classifier at all.
+        with _built_project() as project:
+            manifest = self._shared(project)
+        matcher = [b["matcher"] for b in manifest["hooks"]["PreToolUse"] if "matcher" in b][0]
+        names = {n.replace("\\.", ".") for n in matcher.split("|")}
+        self.assertIn("MultiEdit", names)
+
     def test_session_end_fits_the_tightest_reading_host(self) -> None:
         # The 3s bound served Codex's documented budget - and Codex ignores
         # plugin-bundled hooks entirely (host bug, 2026-08-29), so the
