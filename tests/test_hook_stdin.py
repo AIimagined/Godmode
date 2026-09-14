@@ -10,6 +10,7 @@ Obligation 9863.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,11 @@ HOOKS = PLUGIN_ROOT / "hooks"
 if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 from _host_env import HOST_MARKERS  # noqa: E402
+
+_spec = importlib.util.spec_from_file_location("godmode_stdin", HOOKS / "godmode_stdin.py")
+godmode_stdin = importlib.util.module_from_spec(_spec)
+assert _spec.loader is not None
+_spec.loader.exec_module(godmode_stdin)
 
 HOLD_OPEN_SECONDS = 20
 
@@ -81,6 +87,67 @@ class FirstJsonTests(unittest.TestCase):
                  "tool_input": {"file_path": str(target)}, "cwd": temporary},
                 Path(temporary))
         self.assertEqual(proc.returncode, 0)
+
+
+class ParseFirstJsonBomMalformedTests(unittest.TestCase):
+    """Fix round 1: `parse_first_json` must distinguish "nothing meaningful
+    was ever sent" (truly empty/whitespace-only stdin - not malformed, the
+    pre-existing contract) from "something was sent and none of it is a
+    JSON value" (a bare BOM, or a BOM plus only whitespace - malformed,
+    exactly as `json.loads` treated it before this module's decode existed:
+    `"﻿".strip()` is truthy in Python, a BOM is content, not
+    whitespace, to `str.strip()`). `_LSTRIP_PREFIX` treats a BOM as
+    whitespace for `read_first_json`'s OWN "is the object complete yet"
+    question, which is a different question from "was this empty" - the
+    bug this fixes conflated the two and silently turned a bare BOM into
+    `({}, False)`, indistinguishable from a TTY.
+    """
+
+    def test_bare_bom_is_malformed(self) -> None:
+        value, malformed = godmode_stdin.parse_first_json(b"\xef\xbb\xbf")
+        self.assertEqual(value, {})
+        self.assertTrue(malformed)
+
+    def test_bom_followed_by_crlf_is_malformed(self) -> None:
+        value, malformed = godmode_stdin.parse_first_json(b"\xef\xbb\xbf\r\n")
+        self.assertEqual(value, {})
+        self.assertTrue(malformed)
+
+    def test_bom_followed_by_only_spaces_is_malformed(self) -> None:
+        value, malformed = godmode_stdin.parse_first_json(b"\xef\xbb\xbf   ")
+        self.assertEqual(value, {})
+        self.assertTrue(malformed)
+
+    def test_truly_empty_stdin_is_not_malformed(self) -> None:
+        value, malformed = godmode_stdin.parse_first_json(b"")
+        self.assertEqual(value, {})
+        self.assertFalse(malformed)
+
+    def test_whitespace_only_with_no_bom_is_not_malformed(self) -> None:
+        """Green control, not a new claim: this shape has always meant
+        "nothing sent" (pre-b7cfe61 `_input()` used the identical
+        `str.strip()` emptiness test), and the fix must not widen
+        `malformed` to cover it - only a BOM (or other `_LSTRIP_PREFIX`
+        content) with nothing behind it is new territory."""
+        value, malformed = godmode_stdin.parse_first_json(b"   \r\n  ")
+        self.assertEqual(value, {})
+        self.assertFalse(malformed)
+
+    def test_bom_prefixed_valid_object_still_parses_clean(self) -> None:
+        """Regression guard for the round-0 fix this round corrects: a BOM
+        prefix in front of a REAL JSON object must still parse successfully,
+        never malformed."""
+        raw = b"\xef\xbb\xbf" + json.dumps({"a": 1}).encode("utf-8")
+        value, malformed = godmode_stdin.parse_first_json(raw)
+        self.assertEqual(value, {"a": 1})
+        self.assertFalse(malformed)
+
+    def test_bom_prefixed_object_with_trailing_data_still_parses_the_first_object(self) -> None:
+        raw = (b"\xef\xbb\xbf" + json.dumps({"a": 1}).encode("utf-8")
+               + b"\nnot json at all")
+        value, malformed = godmode_stdin.parse_first_json(raw)
+        self.assertEqual(value, {"a": 1})
+        self.assertFalse(malformed)
 
 
 if __name__ == "__main__":

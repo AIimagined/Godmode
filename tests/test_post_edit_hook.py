@@ -182,6 +182,38 @@ class UntrustedOutputTests(unittest.TestCase):
             self.assertIn("untrusted DATA", first)
             self.assertNotIn("untrusted DATA", second)
 
+    def _run_fetch_raw(self, project, state, raw: bytes) -> str:
+        import os as _os
+        env = dict(_os.environ)
+        env["GODMODE_STATE_HOME"] = str(state)
+        done = subprocess.run(
+            [sys.executable, str(HOOK)], input=raw,
+            capture_output=True, timeout=60, cwd=str(project), env=env)
+        return (done.stdout or b"").decode("utf-8", "replace").strip()
+
+    def test_a_bom_prefixed_payload_still_parses(self) -> None:
+        """Fix round 1 (G-8): before switching this hook's own decode to
+        `godmode_stdin.parse_first_json`, a leading BOM made `json.loads`
+        raise, caught by a bare `except ValueError: return 0` - the hook
+        silently no-op'd on a payload shape the reader already accepted,
+        rather than acting on it."""
+        impact = ImpactBriefTests()
+        with impact._archive_project() as (project, state, _archive):
+            payload = {"hook_event_name": "PostToolUse", "tool_name": "WebFetch",
+                       "tool_input": {}, "cwd": str(project), "session_id": "S1"}
+            raw = b"\xef\xbb\xbf" + json.dumps(payload).encode("utf-8")
+            out = self._run_fetch_raw(project, state, raw)
+            self.assertIn("untrusted DATA", out)
+
+    def test_a_payload_with_trailing_data_still_parses(self) -> None:
+        impact = ImpactBriefTests()
+        with impact._archive_project() as (project, state, _archive):
+            payload = {"hook_event_name": "PostToolUse", "tool_name": "WebFetch",
+                       "tool_input": {}, "cwd": str(project), "session_id": "S2"}
+            raw = json.dumps(payload).encode("utf-8") + b"\nnot json at all"
+            out = self._run_fetch_raw(project, state, raw)
+            self.assertIn("untrusted DATA", out)
+
     def test_registered_for_fetch_class(self) -> None:
         manifest = json.loads((PLUGIN_ROOT / "hooks" / "hooks.json")
                               .read_text(encoding="utf-8"))

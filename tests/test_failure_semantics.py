@@ -723,6 +723,54 @@ class ModeTableTests(unittest.TestCase):
             self.assertEqual(
                 archive.select(kind="action", subject=SUBJECT_HOOK_DEGRADED, limit=10), [])
 
+    def test_row4_bare_bom_pre_action_fails_closed_with_no_archive_or_meter_write(
+        self,
+    ) -> None:
+        # Fix round 1: a raw payload that is non-empty but strips to
+        # nothing after the BOM (bare UTF-8 BOM, no JSON behind it at all)
+        # must be `malformed=True`, exactly like any other unparsable
+        # payload - `godmode_stdin.parse_first_json`'s round-0 form instead
+        # decoded it to an empty string and returned `({}, False)`,
+        # indistinguishable from a TTY, so this exact case (reproduced live
+        # against the round-0 fix before writing this test) slipped past
+        # G-4(a)'s no-project-evidence guard: `pre-action` resolved a
+        # project from cwd and reached `meter_tool_call` - a real write to
+        # this governed project's own `godmode-meter.json` - before ever
+        # reaching the empty-operation check. No `--project` flag: relies
+        # entirely on `cwd`, the same shape a real host invocation uses.
+        from godmode_runtime.godmode_guardrails import METER_FILENAME
+        with isolated_project() as (project, state, _anchor, archive):
+            archive.initialize()
+            done = subprocess.run(
+                [sys.executable, str(HOOK), "pre-action"],
+                input=b"\xef\xbb\xbf", capture_output=True, timeout=60,
+                cwd=str(project),
+                env={**os.environ, "GODMODE_STATE_HOME": str(state), "GODMODE_HOST": "claude"},
+            )
+            self.assertEqual(done.returncode, 2, done.stderr)
+            self.assertIn(b"no operation described", done.stderr)
+            self.assertEqual(
+                archive.select(kind="action", subject=SUBJECT_HOOK_DEGRADED, limit=10), [])
+            self.assertFalse((archive.root / METER_FILENAME).exists())
+
+    def test_row4_bom_plus_crlf_pre_action_fails_closed_with_no_archive_or_meter_write(
+        self,
+    ) -> None:
+        from godmode_runtime.godmode_guardrails import METER_FILENAME
+        with isolated_project() as (project, state, _anchor, archive):
+            archive.initialize()
+            done = subprocess.run(
+                [sys.executable, str(HOOK), "pre-action"],
+                input=b"\xef\xbb\xbf\r\n", capture_output=True, timeout=60,
+                cwd=str(project),
+                env={**os.environ, "GODMODE_STATE_HOME": str(state), "GODMODE_HOST": "claude"},
+            )
+            self.assertEqual(done.returncode, 2, done.stderr)
+            self.assertIn(b"no operation described", done.stderr)
+            self.assertEqual(
+                archive.select(kind="action", subject=SUBJECT_HOOK_DEGRADED, limit=10), [])
+            self.assertFalse((archive.root / METER_FILENAME).exists())
+
     def test_row4_pre_action_without_project_still_fails_closed_on_a_malformed_payload(
         self,
     ) -> None:

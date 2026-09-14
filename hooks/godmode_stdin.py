@@ -91,13 +91,33 @@ def parse_first_json(raw: bytes) -> tuple[dict[str, Any], bool]:
     `malformed` is True only for input that is genuinely not a JSON object:
     unparsable, or a JSON value that parsed but was not an object (a bare
     list or string). Empty or whitespace-only input is not a failure - a
-    TTY or genuinely empty stdin - and returns `({}, False)`.
+    TTY or genuinely empty stdin - and returns `({}, False)`; that "truly
+    empty" test is the exact one `_input()` used before this function
+    existed (`str.strip()` on the fully decoded text, which treats a BOM
+    character as content, not whitespace - `"﻿".strip()` is truthy) so
+    a bare BOM, or a BOM plus nothing else meaningful, is never mistaken
+    for empty stdin. Fix round 1: `_LSTRIP_PREFIX` treats a BOM as
+    whitespace for the READER's own "is the object complete yet" check,
+    which is a different question from "was anything real sent at all" -
+    conflating the two here made a bare BOM (or BOM+CRLF) decode to an
+    empty string and return `({}, False)`, silently indistinguishable from
+    a TTY, so G-4(a)'s no-project-evidence guard (a payload that fails to
+    parse and carries no session id must not resolve a project from cwd)
+    never fired for its own textbook example - a governed project's
+    archive still opened and metered a bare-BOM pre-action call.
     """
-    if not raw or not raw.strip():
+    if not raw:
         return {}, False
-    text = raw.decode("utf-8", "replace").lstrip(_LSTRIP_PREFIX)
+    full_text = raw.decode("utf-8", "replace")
+    if not full_text.strip():
+        return {}, False
+    text = full_text.lstrip(_LSTRIP_PREFIX)
     if not text:
-        return {}, False
+        # Non-empty, and not mere whitespace by the check above either - a
+        # BOM (or other `_LSTRIP_PREFIX` content) with no JSON value behind
+        # it. Not a JSON object, no different from any other unparsable
+        # payload.
+        return {}, True
     try:
         value, _end = json.JSONDecoder().raw_decode(text)
     except ValueError:

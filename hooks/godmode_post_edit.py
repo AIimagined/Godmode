@@ -129,9 +129,15 @@ def main() -> int:
                 except (ValueError, OSError):  # godmode: swallow-ok: best-effort read: the failure is the non-event here
                     pass
         # Obligation 9863: first complete JSON object, never EOF.
+        # G-8 fix round 1: the same decode `godmode_session_hook.py` and
+        # `godmode_gate_fast.py` use on these exact bytes - a leading BOM,
+        # CRLF, or anything after the first object (trailing data, a second
+        # concatenated object) is tolerated here exactly as it is there,
+        # instead of a plain `json.loads` silently no-op'ing this hook on a
+        # payload shape the reader already accepted.
         sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from godmode_stdin import read_first_json
-        payload = json.loads(read_first_json().decode("utf-8", "replace") or "{}")
+        from godmode_stdin import parse_first_json, read_first_json
+        payload, _malformed = parse_first_json(read_first_json())
     except ValueError:
         return 0
     if not isinstance(payload, dict):
