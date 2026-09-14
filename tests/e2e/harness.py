@@ -150,7 +150,19 @@ class E2ERepo:
 def e2e_repo(*, with_remote: bool = False, seed: bool = True):
     """Yield an `E2ERepo`: a real git work tree, isolated godmode state, and
     (when `with_remote`) a real bare remote already tracking `main`."""
-    with tempfile.TemporaryDirectory() as raw:
+    # D-7: `ignore_cleanup_errors=True` (stdlib since 3.10; this project's
+    # own floor is 3.11) - a deep operator-chosen `TEMP` plus the archive's
+    # own fixed-width event filename (`godmode_chronicle.py`'s `_syscall_path`
+    # docstring) can leave a record file past Windows' 260-character
+    # MAX_PATH; `_syscall_path` lets production code write and read it
+    # (the extended-length `\\?\` prefix, applied only at that syscall
+    # boundary), but plain, unprefixed `shutil.rmtree` - what this
+    # context manager's own `__exit__` calls - still cannot list or
+    # unlink it afterward. Best-effort cleanup leaves that one file
+    # behind in the scratch tree rather than failing every scenario that
+    # ever wrote one; nothing here still depends on the directory being
+    # gone.
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
         base = Path(raw)
         project = base / "project"
         state = base / "state"
@@ -165,12 +177,26 @@ def e2e_repo(*, with_remote: bool = False, seed: bool = True):
             pushed = git("push", "-q", "-u", "origin", "main", cwd=project, env=repo.env())
             assert pushed.returncode == 0, pushed.stderr
             repo.remote = remote
+        # D-7: this scope must cover the whole yield, not just the
+        # archive's own construction - `CapabilityBroker._policy()` (and
+        # anything else that reads `GODMODE_STATE_HOME` fresh from
+        # `os.environ` rather than from an already-resolved object) is
+        # called throughout a test body, long after `archive.initialize`
+        # returns. Restoring the REAL value here left every such
+        # in-process call reading the operator's own real
+        # `os.environ.get("GODMODE_STATE_HOME")` (or, absent that, falling
+        # back to `Path.home()` - `godmode_sentinel.py`'s
+        # `operator_policy_path`) for the rest of the test, silently
+        # substituting real machine state for this repo's own isolated one
+        # (field note: `TimeoutSimulationScenarioTests` had to re-patch
+        # this by hand to see its own probe record; every other in-process
+        # caller in this file had the same gap and no such workaround).
         with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(state)}, clear=False):
             anchor = resolve_anchor(project)
             archive = Chronicle(anchor)
             archive.initialize()
-        repo.archive = archive
-        yield repo
+            repo.archive = archive
+            yield repo
 
 
 def reopen_archive(repo: E2ERepo) -> Chronicle:

@@ -25,8 +25,27 @@ def known_flaky() -> set[str]:
 def failing_ids(output: str) -> list[str]:
     found = []
     for match in re.finditer(r"^(?:FAIL|ERROR): (\S+) \(([\w.]+)\)", output, re.M):
-        found.append(f"{match.group(2)}")
+        found.append(_canonical(match.group(2)))
     return found
+
+
+def _canonical(test_id: str) -> str:
+    """Normalize a unittest id to the dotted, repo-root-resolvable form.
+
+    ``python -m unittest tests.test_x`` reports a failure as
+    ``tests.test_x.Class.method``; ``python -m unittest discover -s
+    tests`` reports the identical test as ``test_x.Class.method`` (no
+    ``tests.`` package prefix, because discovery's start dir becomes
+    the top level). ``KNOWN-FLAKY.txt`` always stores the
+    ``tests.``-prefixed form, and a retry re-invokes ``python -m
+    unittest <id>`` from the repo root, where only the prefixed form
+    imports. Without this, a registered flake discovered via
+    ``discover -s tests`` is reported as an unregistered failure, and
+    a retry of the bare id fails with ``ModuleNotFoundError``.
+    """
+    if test_id.startswith("tests.") or test_id.startswith("unittest.loader."):
+        return test_id
+    return f"tests.{test_id}"
 
 
 def main() -> int:

@@ -70,26 +70,73 @@ def _record_hash(record: dict[str, Any]) -> str:
     return hashlib.sha256(_canonical_json(unsigned)).hexdigest()
 
 
+_WIN_LONG_PATH_PREFIX = "\\\\?\\"
+_WIN_LONG_PATH_THRESHOLD = 230  # headroom below MAX_PATH (260) for the OS's own overhead
+
+
+def _syscall_path(path: Path | str) -> str:
+    """The string an OS-level call should actually receive for `path`.
+
+    D-7 (a live field walk, Windows): Windows' legacy file APIs refuse any
+    path past 260 characters unless the machine-wide "enable long paths"
+    policy is on - off by default, and outside this process's authority
+    to flip. An operator's own `GODMODE_STATE_HOME`/`TEMP` can be short
+    enough for the archive root to resolve and still leave no room for an
+    event file's own fixed-width name (`godmode-events/<12-digit
+    seq>-<32 hex>.godmode.json`, ~73 characters past the root) -
+    `_atomic_json`'s own comment already documents the identical failure
+    from an earlier walk; that fix shortened the TEMPORARY name but left
+    the final destination (and every read of it) exactly as long as
+    before. The `\\?\\` extended-length prefix bypasses the limit for an
+    already-absolute path, applied ONLY at this syscall boundary, never
+    through `Path.resolve()` (which normalizes the prefix away) and never
+    stored back onto any `Path` this module returns - callers keep
+    passing ordinary `Path` objects; only the raw string reaching `os.*`
+    changes.
+    """
+    text = str(path)
+    if os.name != "nt" or text.startswith(_WIN_LONG_PATH_PREFIX) or text.startswith("\\\\"):
+        return text
+    if len(text) < _WIN_LONG_PATH_THRESHOLD:
+        return text
+    return _WIN_LONG_PATH_PREFIX + text
+
+
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     # Ninth field report 2026-09-05 (Codex sandbox: PermissionError outside
     # the workspace) and a field walk the same day (Windows: the temporary
     # name built from the 60-character record name pushed a deep state
     # home past MAX_PATH, FileNotFoundError): both escaped as tracebacks.
     # The temporary name is short, and any OS refusal becomes an
-    # ArchiveError that names the directory and the remedy.
+    # ArchiveError that names the directory and the remedy. That walk
+    # shortened the temporary name; it did not make the FINAL destination
+    # (this function's own `path` argument) any shorter, so the plain call
+    # below can still hit the same wall - only now on `os.replace`'s
+    # destination rather than `mkstemp`'s. The syscall-safe retry (never
+    # tried first, so every normal-length call behaves exactly as before)
+    # covers exactly that gap.
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         descriptor, temporary = tempfile.mkstemp(
             prefix=".w", suffix=".tmp", dir=str(path.parent)
         )
-    except OSError as exc:
-        raise ArchiveError(
-            f"cannot write the archive under {path.parent} ({exc.strerror or exc}); "
-            "the state location is not writable from here - point "
-            "GODMODE_STATE_HOME at a writable directory (a short path on "
-            "Windows), or initialise inside a git checkout so the archive "
-            "lives under its .git directory"
-        ) from exc
+    except OSError:
+        long_parent = _syscall_path(path.parent)
+        try:
+            if long_parent == str(path.parent):
+                raise
+            os.makedirs(long_parent, exist_ok=True)
+            descriptor, temporary = tempfile.mkstemp(
+                prefix=".w", suffix=".tmp", dir=long_parent
+            )
+        except OSError as exc:
+            raise ArchiveError(
+                f"cannot write the archive under {path.parent} ({exc.strerror or exc}); "
+                "the state location is not writable from here - point "
+                "GODMODE_STATE_HOME at a writable directory (a short path on "
+                "Windows), or initialise inside a git checkout so the archive "
+                "lives under its .git directory"
+            ) from exc
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(payload, handle, sort_keys=True, ensure_ascii=False, indent=2)
@@ -100,7 +147,13 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
             os.chmod(temporary, 0o600)
         except OSError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
             pass
-        os.replace(temporary, path)
+        try:
+            os.replace(temporary, path)
+        except OSError:
+            long_path = _syscall_path(path)
+            if long_path == str(path):
+                raise
+            os.replace(temporary, long_path)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
@@ -322,8 +375,21 @@ class Chronicle:
 
     @staticmethod
     def _read_json(path: Path) -> dict[str, Any]:
+        # Plain `Path.read_text` tried first, unchanged, so every
+        # normal-length record reads exactly as before (including for
+        # anything instrumenting that exact call); the syscall-safe retry
+        # only engages once that has already failed AND a longer form
+        # would actually be different (D-7).
         try:
-            value = json.loads(path.read_text(encoding="utf-8"))
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                long_path = _syscall_path(path)
+                if long_path == str(path):
+                    raise
+                with open(long_path, "r", encoding="utf-8") as handle:
+                    text = handle.read()
+            value = json.loads(text)
         except (OSError, json.JSONDecodeError) as exc:
             raise ArchiveError(f"Unreadable Godmode record: {path.name}") from exc
         if not isinstance(value, dict):
@@ -507,7 +573,13 @@ class Chronicle:
             try:
                 stat = path.stat()
             except OSError:
-                return None
+                long_path = _syscall_path(path)
+                if long_path == str(path):
+                    return None
+                try:
+                    stat = os.stat(long_path)
+                except OSError:
+                    return None
             parts.append(f"{path.name}:{stat.st_mtime_ns}:{stat.st_size}")
         return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 
