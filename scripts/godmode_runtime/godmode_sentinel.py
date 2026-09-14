@@ -147,17 +147,24 @@ _GIT_RESTORE_HEAD = re.compile(r"(?i)^\s*git\s+restore\b")
 _RESTORE_STAGED_FLAG = re.compile(r"(?i)(?<![\w-])(?:--staged|-S)(?![\w-])")
 _RESTORE_WORKTREE_FLAG = re.compile(r"(?i)(?<![\w-])(?:--worktree|-W)(?![\w-])")
 
-# G-1: `claude plugin eval` runs and grades a suite locally; nothing leaves
-# the machine unless it is told to publish the resulting report. The generic
-# `release-or-external-write` pattern below matches the bare word `publish`
-# anywhere on the line - including inside `--no-publish` - so a run that
-# explicitly refuses to publish was asked about as though it published.
-# `claude plugin eval init` (writes local eval scaffolding, interactive) is
-# the same family: local unless `--publish-report` is also given. Matched
-# here, before the generic pattern, so only the flag that actually sends a
-# report anywhere makes this protected.
+# G-1 (fix round 1, controller ruling - supersedes the plan text's initial
+# reading): `claude plugin eval` publishes its report to claude.ai by
+# DEFAULT when the account supports it (`claude plugin eval --help`,
+# v2.1.270) - `--publish-report` only forces that default on, and
+# `--no-publish` is the one flag that turns it off. So a BARE run (no
+# publish flag at all) still sends the report and stays protected; only a
+# run naming `--no-publish` (and not also `--publish-report`, which wins
+# back to protected) is local. `claude plugin eval init` (writes eval
+# scaffolding locally, interactive) never publishes anything regardless of
+# these flags and stays unprotected unconditionally. Matched here, before
+# the generic `release-or-external-write` pattern below, both because that
+# pattern's bare-word `\bpublish\b` match fires on the substring inside
+# `--no-publish` (a hyphen is a non-word boundary) and because a bare run
+# carries no "publish"-shaped word at all for that pattern to catch.
 _CLAUDE_PLUGIN_EVAL_HEAD = re.compile(r"(?i)^\s*claude\s+plugin\s+eval\b")
+_CLAUDE_PLUGIN_EVAL_INIT = re.compile(r"(?i)^\s*claude\s+plugin\s+eval\s+init\b")
 _PUBLISH_REPORT_FLAG = re.compile(r"(?i)(?<![\w-])--publish-report(?![\w-])")
+_NO_PUBLISH_FLAG = re.compile(r"(?i)(?<![\w-])--no-publish(?![\w-])")
 
 # `git -C <path> log` is a log. Every git rule here reads the subcommand at a
 # fixed position, so a global option in front of it meant no rule matched and
@@ -3730,16 +3737,27 @@ def _categorize(normalized: str, project_root: Path | None = None,
         if staged and not worktree:
             return ("local-compute-or-state", False,
                     ["unstages a path; the working tree is untouched"])
-    # G-1: a local eval run/grade with no `--publish-report` sends nothing
-    # anywhere. Checked before `_ACTION_PATTERNS`'s `release-or-external-
-    # write` entry, whose bare-word `publish` match would otherwise fire on
-    # `--no-publish`.
+    # G-1 (fix round 1 ruling): `init` never publishes; a bare run publishes
+    # by DEFAULT (the account's setting, when it supports publishing) and
+    # stays protected; `--no-publish` turns that default off UNLESS
+    # `--publish-report` is also present, which forces it back on. Checked
+    # before `_ACTION_PATTERNS`'s `release-or-external-write` entry both
+    # because a bare run carries no "publish"-shaped word for that pattern
+    # to catch, and because its bare-word `publish` match would otherwise
+    # fire on the substring inside `--no-publish`.
     if write_target is None and _CLAUDE_PLUGIN_EVAL_HEAD.match(executable):
+        if _CLAUDE_PLUGIN_EVAL_INIT.match(executable):
+            return ("local-compute-or-state", False,
+                    ["writes local eval scaffolding; nothing is published"])
         if _PUBLISH_REPORT_FLAG.search(executable):
             return ("release-or-external-write", True,
                     ["a published eval report", "other users or consumers"])
-        return ("local-compute-or-state", False,
-                ["a local eval run; no report is published"])
+        if _NO_PUBLISH_FLAG.search(executable):
+            return ("local-compute-or-state", False,
+                    ["a local eval run; no report is published"])
+        return ("release-or-external-write", True,
+                ["a published eval report (the account's default); "
+                 "other users or consumers"])
     # A help banner describes the operation instead of performing it, so the
     # named mutations are skipped - but only those. The redirect check below
     # still applies, because `curl --help > ~/.bashrc` prints help and writes

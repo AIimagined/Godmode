@@ -255,28 +255,45 @@ class AgentTrustBoundaryTests(GateCase):
 
 
 class ClaudePluginEvalTests(GateCase):
-    """G-1: `claude plugin eval` is a local test run, not a release, unless
-    it is explicitly told to publish its report. The generic
-    `release-or-external-write` pattern matches the bare word `publish`
-    anywhere on the line - including inside `--no-publish` - so a run that
-    explicitly refuses to publish was asked about as though it published.
-    Only `--publish-report` sends anything anywhere; that form stays
-    protected."""
+    """G-1 (fix round 1, controller ruling): `claude plugin eval` publishes
+    its report to claude.ai by DEFAULT when the account supports it
+    (`claude plugin eval --help`, v2.1.270) - `--publish-report` only
+    forces that default on, and `--no-publish` is the one flag that turns
+    it off (unless `--publish-report` is also given, which wins back to
+    protected). A bare run therefore stays protected; only a run naming
+    `--no-publish` alone is local. `claude plugin eval init` never
+    publishes and stays unprotected regardless."""
 
-    def test_a_local_run_is_not_protected(self) -> None:
+    def test_a_bare_run_defaults_to_publishing_and_stays_protected(self) -> None:
+        """No publish flag at all still auto-publishes - the polarity this
+        fix round corrected (the initial reading had this backwards)."""
+        self.refused("claude plugin eval some-case --runs 1 --ablation none",
+                     "release-or-external-write")
+
+    def test_no_publish_alone_is_not_protected(self) -> None:
         self.allowed("claude plugin eval . --no-publish --runs 1")
 
-    def test_a_bare_run_with_no_publish_flag_at_all_is_not_protected(self) -> None:
-        self.allowed("claude plugin eval some-case --runs 1 --ablation none")
-
-    def test_init_writes_local_eval_files_and_is_not_protected(self) -> None:
-        """`claude plugin eval init` is interactive and writes eval files
-        locally - the same family as a run with no `--publish-report`."""
-        self.allowed("claude plugin eval init")
+    def test_no_publish_with_publish_report_stays_protected(self) -> None:
+        """`--publish-report` forces publishing back on even alongside
+        `--no-publish`."""
+        self.refused("claude plugin eval . --no-publish --publish-report",
+                     "release-or-external-write")
 
     def test_publish_report_stays_protected(self) -> None:
         self.refused("claude plugin eval . --publish-report",
                      "release-or-external-write")
+
+    def test_init_writes_local_eval_files_and_is_not_protected(self) -> None:
+        """`claude plugin eval init` is interactive and writes eval files
+        locally, and never publishes anything - unprotected regardless of
+        any publish flag."""
+        self.allowed("claude plugin eval init")
+        self.allowed("claude plugin eval init --publish-report")
+
+    def test_a_chained_command_is_still_judged_by_its_worst_segment(self) -> None:
+        """A local eval run beside a real history-mutating push: the worst
+        segment still decides, exactly as any other compound command does."""
+        self.refused("claude plugin eval . --no-publish && git push origin main")
 
 
 class PowerShellAssignmentTests(GateCase):
