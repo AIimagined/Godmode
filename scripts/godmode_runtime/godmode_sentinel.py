@@ -136,6 +136,29 @@ _GIT_LOCAL_CHANGE = re.compile(r"(?i)^\s*git\s+(?:add|commit)(?![-\w])(?!.*\s--a
 # as `-b` here, since neither leaves the machine or discards committed work.
 _GIT_BRANCH_CREATE = re.compile(r"(?i)^\s*git\s+checkout\s+-[bB]\b")
 
+# G-1: `git restore --staged <path>` moves a path from the index back to
+# HEAD - the exact inverse of `git add`, already unprotected two branches
+# above. Nothing in the working tree is touched unless `--worktree`/`-W`
+# also appears, which is the destructive form `worktree-discard` (in
+# `_ACTION_PATTERNS` below) still exists to catch; matched here, before that
+# pattern ever runs, so the unstage-only form never reaches it. Anchored to
+# the head the same way `_GIT_LOCAL_CHANGE`/`_GIT_BRANCH_CREATE` are.
+_GIT_RESTORE_HEAD = re.compile(r"(?i)^\s*git\s+restore\b")
+_RESTORE_STAGED_FLAG = re.compile(r"(?i)(?<![\w-])(?:--staged|-S)(?![\w-])")
+_RESTORE_WORKTREE_FLAG = re.compile(r"(?i)(?<![\w-])(?:--worktree|-W)(?![\w-])")
+
+# G-1: `claude plugin eval` runs and grades a suite locally; nothing leaves
+# the machine unless it is told to publish the resulting report. The generic
+# `release-or-external-write` pattern below matches the bare word `publish`
+# anywhere on the line - including inside `--no-publish` - so a run that
+# explicitly refuses to publish was asked about as though it published.
+# `claude plugin eval init` (writes local eval scaffolding, interactive) is
+# the same family: local unless `--publish-report` is also given. Matched
+# here, before the generic pattern, so only the flag that actually sends a
+# report anywhere makes this protected.
+_CLAUDE_PLUGIN_EVAL_HEAD = re.compile(r"(?i)^\s*claude\s+plugin\s+eval\b")
+_PUBLISH_REPORT_FLAG = re.compile(r"(?i)(?<![\w-])--publish-report(?![\w-])")
+
 # `git -C <path> log` is a log. Every git rule here reads the subcommand at a
 # fixed position, so a global option in front of it meant no rule matched and
 # the read fell through to unclassified-mutation. Stripping the options and
@@ -3697,6 +3720,26 @@ def _categorize(normalized: str, project_root: Path | None = None,
         # either category is meant to give.
         return ("git-branch-create", False,
                 ["a new local branch; nothing leaves the machine"])
+    # G-1: `--staged` alone unstages; the working tree is untouched. Checked
+    # before `_ACTION_PATTERNS`'s `worktree-discard` entry (which still
+    # matches bare `git restore` and `--staged --worktree` alike) so the
+    # non-destructive form never reaches it.
+    if write_target is None and _GIT_RESTORE_HEAD.match(executable):
+        staged = bool(_RESTORE_STAGED_FLAG.search(executable))
+        worktree = bool(_RESTORE_WORKTREE_FLAG.search(executable))
+        if staged and not worktree:
+            return ("local-compute-or-state", False,
+                    ["unstages a path; the working tree is untouched"])
+    # G-1: a local eval run/grade with no `--publish-report` sends nothing
+    # anywhere. Checked before `_ACTION_PATTERNS`'s `release-or-external-
+    # write` entry, whose bare-word `publish` match would otherwise fire on
+    # `--no-publish`.
+    if write_target is None and _CLAUDE_PLUGIN_EVAL_HEAD.match(executable):
+        if _PUBLISH_REPORT_FLAG.search(executable):
+            return ("release-or-external-write", True,
+                    ["a published eval report", "other users or consumers"])
+        return ("local-compute-or-state", False,
+                ["a local eval run; no report is published"])
     # A help banner describes the operation instead of performing it, so the
     # named mutations are skipped - but only those. The redirect check below
     # still applies, because `curl --help > ~/.bashrc` prints help and writes

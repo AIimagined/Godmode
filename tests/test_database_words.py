@@ -106,8 +106,18 @@ class WorktreeDiscardTests(Case):
         self.refused("git restore out/", "worktree-discard")
         self.refused("git restore .", "worktree-discard")
 
-    def test_git_restore_staged_is_protected(self) -> None:
-        self.refused("git restore --staged src/app.py", "worktree-discard")
+    def test_git_restore_staged_alone_is_not_destructive(self) -> None:
+        """G-1: `--staged` (no `--worktree`/`-W`) only moves a path from the
+        index back to HEAD - the working tree is untouched, the exact
+        inverse of `git add`. Not worth stopping."""
+        self.allowed("git restore --staged src/app.py")
+        self.allowed("git restore -S src/app.py")
+
+    def test_git_restore_staged_and_worktree_is_still_protected(self) -> None:
+        """`--staged` combined with `--worktree`/`-W` is the destructive
+        form again - it discards the working-tree copy too."""
+        self.refused("git restore --staged --worktree src/app.py", "worktree-discard")
+        self.refused("git restore -S -W src/app.py", "worktree-discard")
 
     def test_the_impact_names_the_work_at_risk(self) -> None:
         impact = " ".join(self.verdict("git restore .")["impact"])

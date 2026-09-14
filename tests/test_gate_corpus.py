@@ -254,6 +254,31 @@ class AgentTrustBoundaryTests(GateCase):
         self.allowed("claude plugin install some-plugin@some-plugin 2>&1 | tail -20")
 
 
+class ClaudePluginEvalTests(GateCase):
+    """G-1: `claude plugin eval` is a local test run, not a release, unless
+    it is explicitly told to publish its report. The generic
+    `release-or-external-write` pattern matches the bare word `publish`
+    anywhere on the line - including inside `--no-publish` - so a run that
+    explicitly refuses to publish was asked about as though it published.
+    Only `--publish-report` sends anything anywhere; that form stays
+    protected."""
+
+    def test_a_local_run_is_not_protected(self) -> None:
+        self.allowed("claude plugin eval . --no-publish --runs 1")
+
+    def test_a_bare_run_with_no_publish_flag_at_all_is_not_protected(self) -> None:
+        self.allowed("claude plugin eval some-case --runs 1 --ablation none")
+
+    def test_init_writes_local_eval_files_and_is_not_protected(self) -> None:
+        """`claude plugin eval init` is interactive and writes eval files
+        locally - the same family as a run with no `--publish-report`."""
+        self.allowed("claude plugin eval init")
+
+    def test_publish_report_stays_protected(self) -> None:
+        self.refused("claude plugin eval . --publish-report",
+                     "release-or-external-write")
+
+
 class PowerShellAssignmentTests(GateCase):
     """Every PowerShell script that opened by naming a path was an unknown
     mutation from its first line."""
