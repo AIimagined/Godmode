@@ -33,7 +33,6 @@ from typing import Any
 LAW_FILENAME = "GODMODE-CODE-OF-LAW.md"
 SKILL_DIRNAME = "godmode-code-of-law"
 LAW_CAP = 24
-GUARD_CHARS = 200
 WHY_CHARS = 160
 
 _HEADER = f"""# GODMODE CODE OF LAW
@@ -48,11 +47,30 @@ the law.
 """
 
 
+def _flatten(text: str) -> str:
+    """Collapse internal whitespace/newlines to single spaces, unbounded.
+
+    Guard text is never cut short (D-6): a guard is the whole rule a
+    session is meant to follow, and a truncated guard silently reads as a
+    smaller rule - which is a wrong one, not a shorter one. This only
+    normalizes layout so a multi-line guard still renders as one line.
+    """
+    return " ".join(str(text).split())
+
+
 def _ellipsize(text: str, limit: int) -> str:
-    flattened = " ".join(str(text).split())
+    """Bound summarized text (Why/provenance only - never Guard) at a word
+    boundary. A hard slice at `limit` can land inside a word; this backs up
+    to the last space inside the limit so the cut is never mid-word, and
+    marks it with "…". Text that already fits is returned complete."""
+    flattened = _flatten(text)
     if len(flattened) <= limit:
         return flattened
-    return flattened[: limit - 1].rstrip() + "…"
+    truncated = flattened[:limit]
+    boundary = truncated.rfind(" ")
+    if boundary > 0:
+        truncated = truncated[:boundary]
+    return truncated.rstrip() + "…"
 
 
 def _guarded_lessons(archive: Any) -> list[dict[str, Any]]:
@@ -105,7 +123,7 @@ def top_laws(archive: Any, k: int) -> list[dict[str, Any]]:
     rather than silently carried."""
     delivered = _delivered_seqs(archive)
     return [
-        {"subject": lesson["subject"], "guard": _ellipsize(lesson["guard"], GUARD_CHARS),
+        {"subject": lesson["subject"], "guard": _flatten(lesson["guard"]),
          "seq": lesson["sequence"], "dormant": lesson["sequence"] not in delivered}
         for lesson in _guarded_lessons(archive)[: max(0, k)]
     ]
@@ -115,7 +133,7 @@ def _render(laws: list[dict[str, Any]], dropped: int, cap: int) -> str:
     lines = [_HEADER]
     for number, lesson in enumerate(laws, 1):
         lines.append(f"## Law {number} - {lesson['subject']}  [ADVISORY]")
-        lines.append(f"Guard: {_ellipsize(lesson['guard'], GUARD_CHARS)}")
+        lines.append(f"Guard: {_flatten(lesson['guard'])}")
         lines.append(f"Why: {_ellipsize(lesson['why'], WHY_CHARS)}")
         lines.append(
             f"Provenance: seq:{lesson['sequence']}, recorded {lesson['recorded_at']}")
@@ -663,7 +681,7 @@ def fresh_laws(archive: Any, project: Path | str) -> list[dict[str, Any]]:
         }
     return [
         {"subject": lesson["subject"],
-         "guard": _ellipsize(lesson["guard"], GUARD_CHARS),
+         "guard": _flatten(lesson["guard"]),
          "seq": lesson["sequence"],
          "marker": "fresh-uncompiled"}
         for lesson in _guarded_lessons(archive)
