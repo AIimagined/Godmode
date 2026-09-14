@@ -12,7 +12,8 @@ from pathlib import Path
 import sys
 from typing import Any
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS = PLUGIN_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 # The launcher starts hooks with `-I` (obligation 9866), which drops the
 # script's own directory from sys.path; the shared stdin reader lives there.
@@ -46,7 +47,7 @@ from godmode_runtime.godmode_hostevent import (  # noqa: E402
     unrecognized_tool_preview)
 from godmode_runtime.godmode_sentinel import (  # noqa: E402
     GATE_MODE_OBSERVE, classify_action, evidence_pipe_advisory,
-    find_secret_shapes, local_authorization_policy)
+    find_secret_shapes, local_authorization_policy, stage_hint)
 
 # CX-2 payload-capture probe: counts-only capture of an unrecognized host
 # shape (event/tool names, sorted input field names, request-id/cwd hashes -
@@ -3601,8 +3602,8 @@ def main(argv: list[str] | None = None) -> int:
                     f"{json.dumps(_ellipsize(operation, 200))}` - it needs the password "
                     "from `godmode authorize setup`, is spent once, and expires. "
                     "In a hosted session, type it with a leading '!' to run it "
-                    "from the prompt without leaving the conversation.\n"
-                    "! godmode authorize stage --from-last-refusal"
+                    "from the prompt without leaving the conversation. "
+                    f"{stage_hint(PLUGIN_ROOT)}"
                 ) + governance_note
             else:
                 # CX-2: an unrecognized tool (or any other no-operation-text
@@ -3644,8 +3645,7 @@ def main(argv: list[str] | None = None) -> int:
                     f"refused: {preview['category']} ({preview.get('tier', 'R?')}) - the host is in "
                     f"{permission_mode} mode, where an ask is answered by the host's classifier, not by "
                     "you; a protected call needs a staged capability from the password holder. "
-                    "Stage this exact command: `godmode authorize stage --from-last-refusal` "
-                    "(type it with a leading '!' in the prompt)."
+                    f"{stage_hint(PLUGIN_ROOT)}"
                 ) + governance_note
             preview["reason"] = deny_reason if effectively_denied else ask_reason
             if not effectively_denied and not observe:

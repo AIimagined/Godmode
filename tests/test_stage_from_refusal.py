@@ -16,6 +16,7 @@ back is written by that same process.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -32,7 +33,8 @@ if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 
 from godmode_runtime.godmode_errors import ArchiveError, AuthorizationError  # noqa: E402
-from godmode_runtime.godmode_sentinel import CapabilityBroker, stage_from_refusal  # noqa: E402
+from godmode_runtime.godmode_sentinel import (  # noqa: E402
+    CapabilityBroker, stage_from_refusal, stage_hint)
 from test_godmode_runtime import isolated_project  # noqa: E402
 
 PASSWORD = "correct horse battery staple"
@@ -170,13 +172,55 @@ class EchoedBeforePasswordIsConsumed(unittest.TestCase):
 
 
 class RefusalReasonNamesTheRemedy(unittest.TestCase):
-    """Case 6: the refusal reason carries the literal `!` remedy line."""
+    """Case 6 (Task 6, G-2): the refusal reason carries a RUNNABLE `!` remedy
+    line - the running plugin's own absolute `bin/godmode` path, not the
+    bare `godmode` name a shell without it on PATH answers with `command
+    not found` (field report, 2026-09-13)."""
 
     def test_the_refusal_reason_contains_the_literal_stage_line(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
             _decision, reason = _decide(project, FORCE_PUSH)
-        self.assertIn("! godmode authorize stage --from-last-refusal", reason)
+        launcher = (PLUGIN_ROOT / "bin" / "godmode").as_posix()
+        self.assertIn(f'! "{launcher}" authorize stage --from-last-refusal', reason)
+
+    def test_on_windows_the_reason_also_carries_the_powershell_call_operator_form(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _decision, reason = _decide(project, FORCE_PUSH)
+        launcher = PLUGIN_ROOT / "bin" / "godmode.cmd"
+        if os.name == "nt":
+            self.assertIn(f'& "{launcher}" authorize stage --from-last-refusal', reason)
+        else:
+            # The ambiguity resolution: on non-Windows only the POSIX form
+            # is shown - PowerShell is not the shell a non-Windows operator
+            # is typing into.
+            self.assertNotIn("PowerShell", reason)
+
+
+class StageHintHelperTests(unittest.TestCase):
+    """The helper every refusal site routes through - exercised directly so
+    a failure here points straight at the one function, not at a hook
+    subprocess three layers away."""
+
+    def test_the_hint_names_launchers_that_actually_exist_on_disk(self) -> None:
+        hint = stage_hint(PLUGIN_ROOT)
+        posix_launcher = PLUGIN_ROOT / "bin" / "godmode"
+        self.assertTrue(posix_launcher.exists(), posix_launcher)
+        self.assertIn(f'! "{posix_launcher.as_posix()}" authorize stage --from-last-refusal', hint)
+
+    def test_the_hint_never_names_a_bare_unqualified_godmode(self) -> None:
+        hint = stage_hint(PLUGIN_ROOT)
+        self.assertNotIn("! godmode ", hint)
+
+    def test_the_windows_form_uses_the_call_operator_and_the_posix_form_uses_bang(self) -> None:
+        hint = stage_hint(PLUGIN_ROOT)
+        cmd_launcher = PLUGIN_ROOT / "bin" / "godmode.cmd"
+        if os.name == "nt":
+            self.assertTrue(cmd_launcher.exists(), cmd_launcher)
+            self.assertIn(f'& "{cmd_launcher}" authorize stage --from-last-refusal', hint)
+        else:
+            self.assertNotIn("&", hint)
 
 
 class TamperedRefusalIsCaughtByTheExistingMonitor(unittest.TestCase):

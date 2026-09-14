@@ -5353,6 +5353,45 @@ def local_authorization_policy(archive: Any) -> dict[str, Any]:
     return CapabilityBroker(archive)._policy()  # noqa: SLF001
 
 
+def stage_hint(plugin_root: Path | str) -> str:
+    """The one runnable staging line every refusal that names `--from-last-
+    refusal` prints, routed through here so the two call sites (the R5
+    outright refusal and the auto-mode ask-fold, both in
+    `godmode_session_hook.py`) can never drift apart.
+
+    Field report, 2026-09-13 (G-2): the refusal named `godmode authorize
+    stage --from-last-refusal` and told the operator to type it "with a
+    leading '!'". Neither half resolves where the refusal is actually
+    read - `godmode` is bare, and unqualified names are not on PATH by
+    default (`godmode: command not found`, observed in the Claude `!`
+    prompt over Git Bash); and `!` alone, typed at a plain PowerShell
+    prompt, is a parser error there, not a shorthand for anything.
+
+    `plugin_root` is the RUNNING plugin's own root - resolved by the
+    caller from its own `__file__` (the installed copy actually executing,
+    e.g. a plugin cache directory), never the operator's working-tree repo
+    - so the path printed always matches wherever this call is running
+    from. The POSIX form (`bin/godmode`, run with a leading `!` from the
+    Claude prompt or any POSIX shell) is always shown; the PowerShell/cmd
+    form (`bin\\godmode.cmd`, run with the call operator `&` - a bare `!`
+    is not valid PowerShell syntax) is added only on Windows, since a
+    non-Windows operator has no PowerShell prompt to run it from.
+    """
+    root = Path(plugin_root).resolve()
+    posix_launcher = root / "bin" / "godmode"
+    hint = (
+        f'Stage it: ! "{posix_launcher.as_posix()}" authorize stage '
+        "--from-last-refusal (Claude prompt / bash)"
+    )
+    if os.name == "nt":
+        cmd_launcher = root / "bin" / "godmode.cmd"
+        hint += (
+            f' or & "{cmd_launcher}" authorize stage --from-last-refusal '
+            "(PowerShell)"
+        )
+    return hint
+
+
 def stage_from_refusal(archive: Any, nth: int = 1, with_digest: bool = False) -> Any:
     """The operation named by the nth-most-recent STAGEABLE refusal on record.
 

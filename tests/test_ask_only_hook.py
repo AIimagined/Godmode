@@ -64,6 +64,28 @@ def _decide(project: Path, tool: str, tool_input: dict, permission_mode: str | N
     return str(specific.get("permissionDecision", "allow"))
 
 
+def _decide_reason(project: Path, tool: str, tool_input: dict,
+                    permission_mode: str) -> tuple[str, str]:
+    """Same call as `_decide`, but returning the reason text too - needed
+    only by the Task 6 (G-2) test below, which pins the auto-mode refusal's
+    own wording rather than just its decision."""
+    payload = {"hook_event_name": "PreToolUse", "tool_name": tool,
+               "tool_input": tool_input, "cwd": str(project),
+               "permission_mode": permission_mode}
+    done = subprocess.run(
+        [sys.executable, str(HOOK), "pre-action", "--project", str(project)],
+        input=json.dumps(payload), capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=180, cwd=str(project),
+        env={**os.environ, "GODMODE_STATE_HOME": os.environ["GODMODE_STATE_HOME"]},
+    )
+    body = (done.stdout or "").strip()
+    if not body:
+        return "allow", ""
+    specific = json.loads(body).get("hookSpecificOutput") or {}
+    return (str(specific.get("permissionDecision", "allow")),
+            str(specific.get("permissionDecisionReason", "")))
+
+
 class NoHumanAskModeTests(unittest.TestCase):
     """2026-09-10: a hook's ask in auto mode is answered by the host, not a
     person; three releases pushed with no password. A would-ask folds to
@@ -88,6 +110,23 @@ class NoHumanAskModeTests(unittest.TestCase):
                      if r["kind"] == "action" and r["subject"] == "gate-asked"]
             self.assertTrue(asked)
             self.assertIn(asked[-1]["data"].get("permission_mode"), ("acceptEdits", "unknown", "default", "plan"))
+
+    def test_the_auto_mode_refusal_names_a_command_that_actually_resolves(self) -> None:
+        # Task 6 (G-2): the observed refusal named `godmode authorize stage
+        # --from-last-refusal` and told the operator to type it "with a
+        # leading '!'" - neither works where it's read (bare `godmode` is
+        # not on PATH; a bare `!` is a PowerShell parser error). The rest
+        # of the sentence - "the host is in <mode> mode..." - is unchanged.
+        with _project() as (root, _archive):
+            decision, reason = _decide_reason(
+                root, "Bash", {"command": "git push origin main"}, "auto")
+        self.assertEqual(decision, "deny", reason)
+        self.assertIn("the host is in auto mode", reason)
+        launcher = (PLUGIN_ROOT / "bin" / "godmode").as_posix()
+        self.assertIn(f'! "{launcher}" authorize stage --from-last-refusal', reason)
+        cmd_launcher = PLUGIN_ROOT / "bin" / "godmode.cmd"
+        if os.name == "nt":
+            self.assertIn(f'& "{cmd_launcher}" authorize stage --from-last-refusal', reason)
 
 
 class AskOnlyHookTests(unittest.TestCase):
