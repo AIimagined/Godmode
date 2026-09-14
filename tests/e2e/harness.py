@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -47,7 +48,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 from unittest import mock
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -319,12 +320,19 @@ class HookResult:
 
 def run_hook(payload: dict[str, Any], repo: E2ERepo, *, host: str | None = None,
              event: str = "pre-action", extra_env: dict[str, str] | None = None,
-             fast: bool = False, timeout: int = 60) -> HookResult:
+             fast: bool = False, timeout: int = 60,
+             script_override: Path | None = None) -> HookResult:
     """Spawn the real hook (or fast gate) exactly as a host would, and parse
     whatever it printed. Never raises on unparsable stdout - a malformed
     response is itself a scenario this harness has to be able to observe,
-    not something it hides behind an exception."""
-    script = FAST_GATE if fast else HOOK
+    not something it hides behind an exception.
+
+    `script_override` swaps in a different script for the same argv shape
+    - `stub_full_hook` below uses it to run a real subprocess against a
+    fast gate copy wired to a STUB full hook, so "did this escalate"
+    becomes a fact on disk rather than something only latency could tell
+    apart (D-3)."""
+    script = script_override or (FAST_GATE if fast else HOOK)
     args = [sys.executable, str(script)]
     if not fast:
         args += [event, "--project", str(repo.project)]
@@ -346,6 +354,37 @@ def run_hook(payload: dict[str, Any], repo: E2ERepo, *, host: str | None = None,
             envelope = {}
     return HookResult(completed.returncode, completed.stdout, completed.stderr,
                       envelope, elapsed)
+
+
+@contextmanager
+def stub_full_hook() -> Iterator[tuple[Path, Path]]:
+    """Yields `(fast_gate_copy, marker)`: a standalone copy of the fast
+    gate (itself, `godmode_stdin.py`, `gate_table.json` - everything it
+    imports, nothing it doesn't) wired to a STUB `godmode_session_hook.py`
+    that does nothing but touch `marker` and exit 0.
+
+    D-3: from outside a real subprocess, a silent fast-allow and a silent
+    escalate-then-allow print the exact same nothing - the only thing that
+    told them apart before this helper existed was how long the call took,
+    which is exactly the flaky-under-load shape this module exists to
+    remove. Run `fast_gate_copy` exactly as `run_hook(..., script_override=
+    fast_gate_copy)` does; afterward, `marker.exists()` is `True` if and
+    only if the real full hook would have run - a fact on disk, not a
+    guess from the clock.
+    """
+    hooks_dir = PLUGIN_ROOT / "hooks"
+    with tempfile.TemporaryDirectory(prefix="godmode-stub-hook-") as raw:
+        root = Path(raw)
+        for name in ("godmode_gate_fast.py", "godmode_stdin.py", "gate_table.json"):
+            shutil.copy2(hooks_dir / name, root / name)
+        marker = root / "full-hook-ran.marker"
+        (root / "godmode_session_hook.py").write_text(
+            "import pathlib, sys\n"
+            f"pathlib.Path({str(marker)!r}).write_text('ran', encoding='utf-8')\n"
+            "sys.exit(0)\n",
+            encoding="utf-8",
+        )
+        yield root / "godmode_gate_fast.py", marker
 
 
 # ---------------------------------------------------------------------------

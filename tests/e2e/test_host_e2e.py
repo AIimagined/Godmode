@@ -71,16 +71,19 @@ def _approved_fence(archive: Chronicle, editable: str) -> None:
 
 class ReadOnlyFastPathTests(unittest.TestCase):
     """The fast gate (`hooks/godmode_gate_fast.py`) never spawns the full
-    hook for a vetted read-only head - proven here by TIMING, since the
-    fast path and the escalate-then-allow path both end up printing nothing
-    and exiting 0 from the outside; only latency tells them apart, which is
-    also exactly what the plan's own perf contract wants measured.
+    hook for a vetted read-only head. From outside a real subprocess the
+    fast path and the escalate-then-allow path both print exactly the same
+    nothing and exit 0 - `h.stub_full_hook` (D-3) tells them apart with a
+    marker file the STUB full hook alone can create, not with a clock: the
+    wall-clock version of this pair flaked under load (2.47s not less than
+    2.0s) even though the fast path is never wrong about whether it ran.
     """
 
-    def test_a_read_only_command_takes_the_fast_path_and_records_latency(self) -> None:
-        with h.e2e_repo() as repo:
+    def test_a_read_only_command_takes_the_fast_path_and_never_reaches_the_full_hook(self) -> None:
+        with h.e2e_repo() as repo, h.stub_full_hook() as (fast_gate_copy, marker):
             payload = h.claude_shell("git status", str(repo.project))
-            result = h.run_hook(payload, repo, host="claude", fast=True)
+            result = h.run_hook(payload, repo, host="claude", fast=True,
+                                script_override=fast_gate_copy)
             # M1 (review, Minor): `git status` genuinely has no filesystem/git
             # footprint to check either way - a read never changes state, so
             # there is nothing independent for plane 4 to inspect. Unlike
@@ -92,29 +95,24 @@ class ReadOnlyFastPathTests(unittest.TestCase):
             # evidence, not silence" promise does not apply, and it is
             # documented here rather than left to look like every other
             # scenario's real check.
-            report = h.four_plane_check(
+            h.four_plane_check(
                 "read-only-fast-path", "claude", result, expect="allow",
                 on_allow=lambda: None,
                 verify_side_effect=lambda decision: decision == "allow",
             )
             self.assertEqual(result.returncode, 0)
             self.assertEqual(result.envelope, {})
-            self.assertLess(report.latency_seconds, 5.0, "one warm subprocess call")
+            self.assertFalse(marker.exists(), "a vetted read spawned the full hook")
 
-    def test_the_fast_path_is_materially_faster_than_a_full_escalation(self) -> None:
-        with h.e2e_repo() as repo:
-            fast_samples = h.timed(
-                lambda: h.run_hook(h.claude_shell("git status", str(repo.project)),
-                                   repo, host="claude", fast=True),
-                repeats=5,
+    def test_a_protected_mutation_escalates_to_the_full_hook(self) -> None:
+        with h.e2e_repo() as repo, h.stub_full_hook() as (fast_gate_copy, marker):
+            result = h.run_hook(
+                h.claude_shell("git push --force origin main", str(repo.project)),
+                repo, host="claude", fast=True, script_override=fast_gate_copy,
             )
-            escalate_samples = h.timed(
-                lambda: h.run_hook(h.claude_shell("git push --force origin main", str(repo.project)),
-                                   repo, host="claude", fast=True),
-                repeats=5,
-            )
-            self.assertLess(h.median(fast_samples), h.median(escalate_samples),
-                            "a table lookup must beat a full classify+archive round trip")
+            self.assertTrue(marker.exists(),
+                            "a table lookup must never itself refuse a protected "
+                            "mutation - only the full hook it escalates to may")
 
 
 # ---------------------------------------------------------------------------

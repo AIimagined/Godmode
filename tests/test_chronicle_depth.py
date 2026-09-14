@@ -14,7 +14,6 @@ import os
 from pathlib import Path
 import sys
 import tempfile
-import time
 import unittest
 from unittest import mock
 
@@ -136,27 +135,46 @@ class HeadCacheTests(unittest.TestCase):
             self.assertTrue(archive.verify()["valid"])
 
     def test_append_cost_does_not_grow_with_history(self) -> None:
-        # Generous ceiling: 200 appends took 22.65s under the old O(history)
-        # reverify-per-write on this class of machine; the head cache keeps the
-        # steady-state cost flat at a few milliseconds. The assertion scales the
-        # MEDIAN per-append cost, because a wall-clock total on shared hardware
-        # measures antivirus and disk-queue spikes, not the algorithm -- the
-        # median still fails for O(history) appends, whose typical cost grows
-        # with every record, but tolerates a few unlucky flushes.
+        # D-3: this used to project the MEDIAN of 200 timed appends to a
+        # 10s ceiling - a wall-clock proxy for "the typical cost stays flat
+        # instead of growing with every record" (22.65s for 200 appends
+        # under the old O(history) reverify-per-write). The read-count
+        # sibling test above already proves O(1) reads at N=200; what it
+        # does not show is FLATNESS - that append #1 costs the same as
+        # append #200. Asserted here directly, on the same read budget,
+        # comparing an early append's count against a late one's: equal
+        # (and small) means flat, growing would mean O(history) again.
         with isolated_project() as (_project, _state, _anchor, archive):
             archive.initialize()
-            timings: list[float] = []
-            for index in range(200):
-                started = time.monotonic()
-                archive.append("action", f"bench-{index}", {"value": index}, evidence=[])
-                timings.append(time.monotonic() - started)
-            timings.sort()
-            median = timings[len(timings) // 2]
-            self.assertLess(
-                median * 200, 10.0,
-                f"typical append cost projects to {median * 200:.2f}s per 200 records",
+            # One unmeasured append first: the head cache does not exist
+            # until something writes it, so the very first call on a fresh
+            # archive takes the slow (empty-history) path regardless of
+            # algorithm - comparing warm cost to warm cost is the point,
+            # not comparing cold-start to warm.
+            archive.append("action", "warm-up", {"value": -1}, evidence=[])
+            original = Chronicle._read_json
+            reads_by_index: dict[int, int] = {}
+
+            def counting(path):
+                counting.current.append(path.name)
+                return original(path)
+            counting.current = []
+
+            with mock.patch.object(Chronicle, "_read_json", staticmethod(counting)):
+                for index in range(200):
+                    counting.current = []
+                    archive.append("action", f"bench-{index}", {"value": index}, evidence=[])
+                    if index in (0, 199):
+                        reads_by_index[index] = len(
+                            [n for n in counting.current if n.endswith(".godmode.json")])
+            self.assertEqual(
+                reads_by_index[0], reads_by_index[199],
+                f"a warm append read {reads_by_index[0]} record files at history "
+                f"length 2 but {reads_by_index[199]} at history length 201 - cost is "
+                "growing with history again",
             )
-            self.assertEqual(archive.verify()["records"], 200)
+            self.assertLessEqual(reads_by_index[199], 2)
+            self.assertEqual(archive.verify()["records"], 201)
 
 
 class DedupeTests(unittest.TestCase):

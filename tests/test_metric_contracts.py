@@ -27,7 +27,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
-import time
 import unittest
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -140,17 +139,35 @@ class GradingTimeValueCapTests(unittest.TestCase):
     time scan misses."""
 
     def test_a_5000_char_value_is_handled_well_under_a_second(self) -> None:
+        # D-3: this used to time the call (< 1.0s) as a proxy for "the
+        # value cap held" - the cap's actual job is refusing BEFORE the
+        # regex engine ever sees the value, not merely finishing quickly
+        # (a slow-but-eventually-terminating match would still pass a
+        # loose timing bar under load). A spy on the module's `re.match`
+        # asserts that state directly: the over-cap value's anchor pattern
+        # must never appear among the patterns actually matched.
+        from unittest import mock
+
+        from godmode_runtime import godmode_attest
+
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
             session = open_session(archive, "metrics")
             register_metric_contract(archive, session, "val_bpb", "^val_bpb:")
-            start = time.monotonic()
-            out = record_claim(
-                archive, project, session, "val_bpb improved to 3.21", "verified",
-                cites=["line:val_bpb:" + ("9" * 5000)],
-            )
-            elapsed = time.monotonic() - start
-        self.assertLess(elapsed, 1.0, f"took {elapsed}s - the value cap did not hold")
+            real_match = godmode_attest.re.match
+            seen_patterns: list[str] = []
+
+            def spy(pattern, string, *args, **kwargs):
+                seen_patterns.append(pattern)
+                return real_match(pattern, string, *args, **kwargs)
+
+            with mock.patch.object(godmode_attest.re, "match", spy):
+                out = record_claim(
+                    archive, project, session, "val_bpb improved to 3.21", "verified",
+                    cites=["line:val_bpb:" + ("9" * 5000)],
+                )
+        self.assertNotIn("^val_bpb:", seen_patterns,
+                         "the over-cap value reached the regex engine")
         self.assertEqual(out["data"]["grade"], "hypothesis")
 
     def test_an_over_cap_value_citation_does_not_resolve(self) -> None:

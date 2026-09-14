@@ -106,9 +106,16 @@ class FreshnessCatchesADroppedFloorEntry(unittest.TestCase):
     assertion holds or not."""
 
     def test_a_dropped_floor_entry_breaks_freshness(self) -> None:
-        original = TABLE.read_text(encoding="utf-8")
+        # D-3/review: restored via `read_bytes`/`write_bytes`, not
+        # `read_text`/`write_text` - the latter pair round-trips through
+        # universal-newline translation, so on Windows a checked-in
+        # LF-only file came back CRLF even though `original` (a str) was
+        # byte-for-byte "the same" as far as `write_text` could tell,
+        # leaving a CRLF-only working-tree diff behind after a green test
+        # run. Raw bytes carry no newline convention to translate.
+        original = TABLE.read_bytes()
         try:
-            table = json.loads(original)
+            table = json.loads(original.decode("utf-8"))
             removed = table["floor"]["claude-code"].pop()
             self.assertTrue(removed)  # sanity: something was actually removed
             TABLE.write_text(json.dumps(table, indent=2) + "\n", encoding="utf-8")
@@ -126,7 +133,12 @@ class FreshnessCatchesADroppedFloorEntry(unittest.TestCase):
                 self.assertEqual(json.loads(regenerated.stdout),
                                   json.loads(TABLE.read_text(encoding="utf-8")))
         finally:
-            TABLE.write_text(original, encoding="utf-8")
+            TABLE.write_bytes(original)
+        # The restore must be byte-identical, not merely equal once
+        # re-parsed as JSON or re-decoded as text - either of those
+        # normalizes away exactly the CRLF-vs-LF difference this pins.
+        self.assertEqual(TABLE.read_bytes(), original,
+                         "restoring the table left the working tree bytes changed")
 
 
 if __name__ == "__main__":

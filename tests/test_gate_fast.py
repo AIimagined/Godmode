@@ -22,7 +22,6 @@ import json
 import re
 import subprocess
 import sys
-import time
 import unittest
 from pathlib import Path
 from typing import Any
@@ -254,21 +253,39 @@ class UngovernedProject(unittest.TestCase):
             self.assertFalse(fast.ungoverned_project(root), ".git file (worktree)")
 
     def test_the_gate_stays_silent_and_skips_the_full_hook_on_an_ungoverned_project(self) -> None:
-        import os, tempfile
-        with tempfile.TemporaryDirectory() as temporary:
+        # D-3: "skips the full hook" used to be inferred from elapsed time
+        # (< 2.0s) - flaky under load (a field gate saw 2.47s on an
+        # otherwise-correct run). The state that bound stood in for is
+        # asserted directly instead: `FULL_HOOK` is swapped for a STUB
+        # that only touches a marker file, run through a throwaway copy of
+        # the fast gate script (the only two files it imports:
+        # `godmode_stdin.py`, plus its own `gate_table.json`); the marker's
+        # absence afterward IS "the full hook never ran", not a proxy for it.
+        import os, shutil, tempfile
+        with tempfile.TemporaryDirectory() as temporary, \
+             tempfile.TemporaryDirectory(prefix="godmode-stub-hook-") as stub_dir:
             root = Path(temporary)
             self._git_dir(root)
+            stub = Path(stub_dir)
+            for name in ("godmode_gate_fast.py", "godmode_stdin.py", "gate_table.json"):
+                shutil.copy2(HOOKS_DIR / name, stub / name)
+            marker = stub / "full-hook-ran.marker"
+            (stub / "godmode_session_hook.py").write_text(
+                "import pathlib, sys\n"
+                f"pathlib.Path({str(marker)!r}).write_text('ran', encoding='utf-8')\n"
+                "sys.exit(0)\n",
+                encoding="utf-8",
+            )
             body = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
                                "tool_input": {"command": "rm -rf build"},
                                "cwd": str(root)})
-            started = time.perf_counter()
-            done = subprocess.run([sys.executable, str(FAST_GATE)], input=body.encode(),
-                                  capture_output=True, cwd=str(root), timeout=60,
-                                  env={**os.environ, "GODMODE_STATE_HOME": str(root / "state")})
-            elapsed = time.perf_counter() - started
-        self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertEqual(done.stdout.strip(), b"", done.stdout[:300])
-        self.assertLess(elapsed, 2.0)
+            done = subprocess.run(
+                [sys.executable, str(stub / "godmode_gate_fast.py")], input=body.encode(),
+                capture_output=True, cwd=str(root), timeout=60,
+                env={**os.environ, "GODMODE_STATE_HOME": str(root / "state")})
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertEqual(done.stdout.strip(), b"", done.stdout[:300])
+            self.assertFalse(marker.exists(), "the full hook was spawned")
 
 
 class AntigravityPayloadShape(unittest.TestCase):
@@ -546,12 +563,18 @@ class Adversarial(unittest.TestCase):
         self.assertIn(b"permissionDecision", result.stdout)
 
 
-class Latency(unittest.TestCase):
-    def test_thousand_verdicts_under_budget(self) -> None:
-        start = time.perf_counter()
-        for _ in range(1000):
-            fast.fast_verdict(payload("git status"), TABLE)
-        self.assertLess(time.perf_counter() - start, 1.0)
+class RepeatedVerdicts(unittest.TestCase):
+    """D-3: this used to bound 1000 calls to under a second - a throughput
+    claim, not a correctness one, and the wrong kind of assertion to make
+    on a clock (`benchmarks/gate_latency.py` is where that claim now lives,
+    as printed percentiles with nothing to flake). What is left worth
+    asserting here: the verdict itself never drifts across repeated calls
+    - no call mutates `TABLE` or otherwise leaves state behind that would
+    change what the next call decides."""
+
+    def test_a_thousand_repeats_all_agree(self) -> None:
+        verdicts = {fast.fast_verdict(payload("git status"), TABLE) for _ in range(1000)}
+        self.assertEqual(verdicts, {"allow"})
 
 
 class EndToEndSmoke(unittest.TestCase):

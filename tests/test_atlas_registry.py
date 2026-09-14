@@ -229,7 +229,16 @@ class BuildCeilingTests(unittest.TestCase):
     ceiling has no honest answer on a repo it cannot finish."""
 
     def test_documentation_scan_cost_is_per_document_not_per_module(self) -> None:
-        import time
+        # D-3: this used to time the scan (< 10.0s) as a proxy for "one
+        # regex pass per document, not one per document per module" - the
+        # 141-second regression this guards. The mechanism itself is
+        # asserted directly instead: `_WORD.finditer` is called at most
+        # once per markdown document; a per-module-per-document scan would
+        # call it (or the per-stem `re.search` fallback) up to 400x as
+        # often, module count included, without the count changing at all.
+        from unittest import mock
+        from godmode_runtime import godmode_atlas
+
         with tempfile.TemporaryDirectory() as raw:
             project = Path(raw)
             for index in range(400):
@@ -240,14 +249,25 @@ class BuildCeilingTests(unittest.TestCase):
                 (project / f"doc_{index:03d}.md").write_text(
                     f"# Notes\n{prose}\nSee module_{index:03d} and module_399.\n",
                     encoding="utf-8")
-            started = time.monotonic()
-            atlas = build(project)
-            elapsed = time.monotonic() - started
+            real_word = godmode_atlas._WORD
+            finditer_calls: list[int] = []
+
+            class _CountingWord:
+                def finditer(self, text: str):
+                    finditer_calls.append(1)
+                    return real_word.finditer(text)
+
+                def fullmatch(self, text: str):
+                    return real_word.fullmatch(text)
+
+            with mock.patch.object(godmode_atlas, "_WORD", _CountingWord()):
+                atlas = build(project)
             docs = [e for e in atlas.edges if e.relation == DOCUMENTS]
             self.assertTrue(any(e.source == "doc_007.md" and "module_007.py" in e.target
                                 and e.line == 3 for e in docs), docs[:5])
             self.assertEqual(sum(1 for e in docs if "module_399.py" in e.target), 200)
-            self.assertLess(elapsed, 10.0, f"documentation scan took {elapsed:.1f}s")
+            # 200 documents, never 200 * 400 module-stem searches.
+            self.assertEqual(len(finditer_calls), 200, finditer_calls)
 
     def test_time_budget_leaves_a_partial_map_with_a_stated_gap(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
