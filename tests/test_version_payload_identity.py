@@ -20,6 +20,7 @@ tag are not drift - only a payload commit paired with an unmoved version is.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -106,6 +107,20 @@ class LatestTagTests(unittest.TestCase):
             repo.write_version("0.1.0")
             repo.commit("first")
             self.assertIsNone(V.latest_tag(repo.root))
+
+    def test_double_digit_patch_beats_single_digit_by_value_not_by_string(self) -> None:
+        """`"v0.3.9" > "v0.3.10"` as strings (`"9" > "1"`), which is exactly
+        the bug a naive `max()` over tag names would reproduce. This repo's
+        real tag history runs v0.3.0..v0.3.26, so this is not a hypothetical
+        shape."""
+        with FixtureRepository() as repo:
+            repo.write_version("0.3.9")
+            repo.commit("ninth")
+            repo.tag("v0.3.9")
+            repo.write_version("0.3.10")
+            repo.commit("tenth")
+            repo.tag("v0.3.10")
+            self.assertEqual(V.latest_tag(repo.root), "v0.3.10")
 
 
 class IdentityCheckTests(unittest.TestCase):
@@ -211,6 +226,50 @@ class IdentityCheckTests(unittest.TestCase):
         # of a silently reinterpreted check.
         self.assertEqual(report["verdict"], "identity-drift", report)
         self.assertEqual(len(report["payload_commits"]), 2)
+
+
+class RealRepoPrefixCoverageTests(unittest.TestCase):
+    """Every tracked host-manifest directory this repository actually ships
+    must be a `PAYLOAD_PREFIXES` entry, found the same way `.antigravity-plugin/`
+    was missed: it existed on disk and was tracked, but nobody had added it
+    to the hand-written list. Read-only - `git ls-files` only, never `check()`
+    or `latest_tag()` against this repo's real HEAD, which would read as
+    `identity-drift` mid-sprint by design (see the module docstring) and is
+    not what this test is proving."""
+
+    _PLUGIN_DIR = re.compile(r"^(\.[A-Za-z0-9_-]+-plugin)/")
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        result = subprocess.run(
+            ["git", "-C", str(PLUGIN_ROOT), "ls-files"],
+            capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        cls.tracked = [line for line in result.stdout.splitlines() if line]
+
+    def test_every_tracked_top_level_plugin_directory_is_covered(self) -> None:
+        found = sorted({
+            match.group(1) + "/"
+            for path in self.tracked
+            if (match := self._PLUGIN_DIR.match(path))
+        })
+        self.assertTrue(found, "no *-plugin/ directories found; the pattern "
+                                "or the fixture repo state may have changed")
+        for directory in found:
+            self.assertIn(directory, V.PAYLOAD_PREFIXES,
+                          f"{directory} is tracked and shipped but missing "
+                          f"from PAYLOAD_PREFIXES")
+
+    def test_every_top_level_manifest_file_is_covered(self) -> None:
+        top_level_files = {path for path in self.tracked if "/" not in path}
+        for manifest in ("plugin.json", "capabilities.json"):
+            self.assertIn(manifest, top_level_files,
+                          f"{manifest} is no longer tracked at the repo root; "
+                          f"update this test's expectation deliberately")
+            self.assertIn(manifest, V.PAYLOAD_PREFIXES,
+                          f"{manifest} is a tracked top-level manifest file "
+                          f"missing from PAYLOAD_PREFIXES")
 
 
 class MainCLITests(unittest.TestCase):

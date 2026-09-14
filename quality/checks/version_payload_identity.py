@@ -59,6 +59,7 @@ PAYLOAD_PREFIXES: tuple[str, ...] = (
     ".grok-plugin/",
     ".cursor-plugin/",
     ".gemini-plugin/",
+    ".antigravity-plugin/",
     "packaging/hosts.json",
 )
 
