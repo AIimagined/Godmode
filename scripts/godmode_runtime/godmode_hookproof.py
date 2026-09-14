@@ -210,9 +210,25 @@ DEGRADE_REASON_MALFORMED_PAYLOAD = "malformed-payload"
 DEGRADE_REASON_IDENTITY_MISMATCH = "identity-mismatch"
 DEGRADE_REASON_TIMEOUT = "timeout"
 DEGRADE_REASON_UNEXPECTED_EXIT = "unexpected-exit"
+# G-6: these three name real call sites in `hooks/godmode_session_hook.py`
+# (pre-compact/session-end intent capture, the inline-scan record path, the
+# ask-only record path) that already existed before this reason enum was
+# closed off - `record_hook_degradation` raised `ValueError` on every one
+# of them, turning "record that the hook degraded" into a second, worse
+# failure. `tests/test_hook_degradation_reasons.py` statically scans
+# `hooks/` and `scripts/` for every literal reason passed to
+# `record_hook_degradation` and pins each one as a member here, so a
+# future call site with a new literal reopens this gap loudly instead of
+# silently.
+DEGRADE_REASON_INTERRUPTED_INTENT_CAPTURE_FAILED = "interrupted-intent-capture-failed"
+DEGRADE_REASON_INLINE_SCAN_RECORD_FAILED = "inline-scan-record-failed"
+DEGRADE_REASON_ASK_ONLY_RECORD_FAILED = "ask-only-record-failed"
 DEGRADE_REASONS = frozenset({
     DEGRADE_REASON_MALFORMED_PAYLOAD, DEGRADE_REASON_IDENTITY_MISMATCH,
     DEGRADE_REASON_TIMEOUT, DEGRADE_REASON_UNEXPECTED_EXIT,
+    DEGRADE_REASON_INTERRUPTED_INTENT_CAPTURE_FAILED,
+    DEGRADE_REASON_INLINE_SCAN_RECORD_FAILED,
+    DEGRADE_REASON_ASK_ONLY_RECORD_FAILED,
 })
 
 # CX-5's five-level scale. Ordered worst-to-best for readability only - no
