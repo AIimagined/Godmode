@@ -1682,8 +1682,15 @@ def session_digest(runtime: Runtime, session: str | None, transcript: str | None
             parked = len((json.loads(echo.read_text(encoding="utf-8")) or {}).get("sentences") or [])
     except Exception:  # noqa: BLE001  # godmode: swallow-ok: a parked file that cannot be read counts as none parked
         parked = 0
-    refusals = [r for r in archive.select(kind="refusal", limit=500)
-                if (r.get("data") or {}).get("session") in (None, session) or True]
+    # `select()` caps at 500 records regardless of the limit passed in
+    # (`min(limit, 500)`), so a session with more refusals than that would
+    # silently lose the rest; `read_events()` is the chronicle's only
+    # unbounded read, and it has already parsed every record for chain
+    # verification, so filtering it here loads no payload the cap-500 path
+    # would not also have loaded.
+    refusals = [r for r in archive.read_events()
+                if r.get("kind") == "refusal"
+                and (r.get("data") or {}).get("session") == session]
     gate = {"would-deny": sum(1 for r in refusals if (r.get("data") or {}).get("observed") and (r.get("data") or {}).get("would_have") == "deny"),
             "would-ask": sum(1 for r in refusals if (r.get("data") or {}).get("observed") and (r.get("data") or {}).get("would_have") == "ask"),
             "denied": sum(1 for r in refusals if not (r.get("data") or {}).get("observed"))}
