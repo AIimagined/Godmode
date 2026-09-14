@@ -20,3 +20,18 @@ its own reproduction on the same line, or a claim record must carry its
 text; `tests/test_claim_scan.py` runs the same scan with an empty archive,
 so the prose has to cover itself. `godmode examples --check` reports
 `reproduced`, so every worked example still returns what it says it does.
+
+Immediately before cutting a tag: `python quality/checks/version_payload_identity.py`
+must print `verdict=ok`. It fails when `plugin.json` still declares the
+version the latest reachable `v*` tag names while a commit after that tag
+touched shipped payload (`skills/`, `hooks/`, `scripts/`, `bin/`,
+`adapters/`, or a manifest) - the case where the tag and the manifest agree
+with each other while neither agrees with what actually shipped afterward.
+This is deliberately not run by `python -m unittest discover` or by CI: a
+sprint branch commits payload continuously while carrying the last released
+version number until the release-prep bump lands (see the version-bump step
+above), so it reads `identity-drift` for most of a sprint by design and
+would fail every ordinary commit if wired into the suite. Run it by hand,
+here, once the version bump for this release is committed and before the
+tag is created; `verdict=ok` (or `no-tags` on a project with none yet) is
+the only passing state at that point.
