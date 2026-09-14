@@ -831,37 +831,60 @@ def interception_state(
     return LEVEL_HARD
 
 
+def _supersession_cause(archive: Chronicle, since_sequence: int) -> str:
+    """The specific superseding record's own reason, or the generic
+    `"superseded"` fallback when supersession is proven (`_superseded_since`)
+    but no naming record turns up in the scanned window. Split out of
+    `degraded_reason` so that function can call it once as ONE entry in a
+    list of causes, rather than returning it directly."""
+    for record in reversed(archive.select(kind="action", limit=500)):
+        if record["sequence"] <= since_sequence:
+            break
+        if record["subject"] == SUBJECT_HOOK_DEGRADED:
+            return str(record["data"].get("reason") or "hook-health-degraded")
+        if record["subject"] == SUBJECT_UNINSTALLED:
+            return "hook-uninstalled"
+        if record["subject"] == SUBJECT_PROBE_FAILED:
+            return "probe-failed"
+    return "superseded"
+
+
 def degraded_reason(
     archive: Chronicle, host: str | None, *,
     registration: str | None = None, hook_script: Path | None = None,
     now: datetime | None = None,
 ) -> str | None:
-    """The specific reason `interception_state` graded this host `DEGRADED`, or `None`.
+    """The specific reason(s) `interception_state` graded this host
+    `DEGRADED`, or `None`.
 
     For `hooks status`/the session brief's persistent warning line - a
     grade alone ("DEGRADED") tells an operator something broke; this names
-    which check caught it, so the warning line can say more than "trust me."
+    which check(s) caught it, so the warning line can say more than "trust
+    me."
+
+    Fix round 1 (G-4(b) follow-up): a proof can be DEGRADED for more than
+    one demonstrated reason at once - superseded AND expired AND
+    version-drifted, all from the SAME record (the field case this closes:
+    a proof expired 2026-09-12 from hook 0.3.25 that was ALSO superseded
+    used to report only the supersession, hiding the other two). Every
+    cause the proof itself demonstrates is named now, comma-joined in a
+    fixed order (supersession, then the expiry family, then version-drift,
+    then hash-drift). A SINGLE cause is still returned bare, with no comma
+    - every existing caller/test comparing an exact one-cause string is
+    unaffected.
     """
     now = now or datetime.now(timezone.utc)
     if interception_state(
         archive, host, registration=registration, hook_script=hook_script, now=now,
     ) != LEVEL_DEGRADED:
         return None
+    causes: list[str] = []
     try:
         proof = last_proof(archive, host)
         if proof is None:
             return None
         if _superseded_since(archive, proof["sequence"], host):
-            for record in reversed(archive.select(kind="action", limit=500)):
-                if record["sequence"] <= proof["sequence"]:
-                    break
-                if record["subject"] == SUBJECT_HOOK_DEGRADED:
-                    return str(record["data"].get("reason") or "hook-health-degraded")
-                if record["subject"] == SUBJECT_UNINSTALLED:
-                    return "hook-uninstalled"
-                if record["subject"] == SUBJECT_PROBE_FAILED:
-                    return "probe-failed"
-            return "superseded"
+            causes.append(_supersession_cause(archive, proof["sequence"]))
     except ArchiveError:
         # G-4(b): `interception_state` above already read this same archive
         # once and caught its OWN `ArchiveError` from a tamper-evident chain
@@ -873,18 +896,27 @@ def degraded_reason(
         # itself stayed graceful.
         return "chain-tampered"
     data = proof.get("data", {})
-    # Fix round 1, C1(b): checked first, matching `interception_state`'s
-    # own priority - a tampered-looking expiry is a distinct, more specific
-    # fact than "it happened to also be past."
-    if _expiry_out_of_bounds(proof):
-        return "expiry-out-of-bounds"
-    if _expiry_passed(data.get("expiry"), now):
-        return "expired"
-    if _version_drifted(data):
-        return "version-drift"
-    if _hash_drifted(data, hook_script):
-        return "hash-drift"
-    return "unknown"
+    # Gated on `_fully_enriched`: a SUPERSEDED proof is not otherwise
+    # guaranteed to carry the five HARD-eligible fields these checks read
+    # (a bare pre-CX-5 record with no `expiry` field at all would otherwise
+    # read `_expiry_passed`'s "unresolvable -> treated as expired" as a
+    # false extra cause). The non-superseded path only ever reaches here
+    # once `interception_state` has already proven enrichment on its own,
+    # so this guard changes nothing there.
+    if _fully_enriched(data):
+        # Fix round 1, C1(b): checked first within this pair, matching
+        # `interception_state`'s own priority - a tampered-looking expiry
+        # is a distinct, more specific fact than "it happened to also be
+        # past," so only one of the two names the expiry side.
+        if _expiry_out_of_bounds(proof):
+            causes.append("expiry-out-of-bounds")
+        elif _expiry_passed(data.get("expiry"), now):
+            causes.append("expired")
+        if _version_drifted(data):
+            causes.append("version-drift")
+        if _hash_drifted(data, hook_script):
+            causes.append("hash-drift")
+    return ",".join(causes) if causes else "unknown"
 
 
 def hook_manifest_status(package_root: Path | None = None) -> dict[str, Any]:

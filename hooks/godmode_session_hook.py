@@ -235,8 +235,9 @@ def _session_obligations(anchor: Any, archive: Chronicle, transcript_path: str |
         # CX-5 mode table: hook registered-but-untrusted/disabled must carry
         # a VISIBLE warning line in the session brief, persistently, until a
         # probe passes - never a silent downgrade an operator has to go
-        # looking for. `degraded_reason` names the specific check that
-        # tripped (superseded/expired/version-drift/hash-drift), so the
+        # looking for. `degraded_reason` names the specific check(s) that
+        # tripped (superseded/expired/version-drift/hash-drift, comma-
+        # joined when more than one demonstrably holds at once), so the
         # line says more than "trust me."
         reason = degraded_reason(archive, host)
         obligations["enforcement"]["degraded_reason"] = reason

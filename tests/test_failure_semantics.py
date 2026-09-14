@@ -200,6 +200,68 @@ class FiveLevelScaleTests(unittest.TestCase):
             self.assertEqual(
                 degraded_reason(archive, "claude", registration="none"), "hash-drift")
 
+    def test_a_proof_expired_and_version_drifted_names_both_causes(self) -> None:
+        # Fix round 1 (G-4(b) follow-up): a single proof can demonstrate
+        # more than one DEGRADED cause at once - `degraded_reason` must
+        # name every one it can prove, not just the first it happens to
+        # check. Real, matching `trusted_hook_hash` isolates this to the
+        # two deliberate defects (expiry, hook_version), same technique as
+        # the version-drift-only test above.
+        from datetime import datetime, timedelta, timezone as _tz
+        from godmode_runtime.godmode_hookproof import _hash_file
+        real_hash = _hash_file(PLUGIN_ROOT / "hooks" / "godmode_session_hook.py")
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            archive.append(
+                "action", SUBJECT_PROOF,
+                {
+                    "host": "claude", "tool": "Bash", "request_id": "n1", "proof": True,
+                    "hook_version": "0.0.1-not-the-running-version",
+                    "trusted_hook_hash": real_hash,
+                    "nonce_hash": hashlib.sha256(b"n1").hexdigest(),
+                    "observed_decision": "deny",
+                    "expiry": (datetime.now(_tz.utc) - timedelta(hours=1)).isoformat(),
+                },
+                evidence=[],
+            )
+            self.assertEqual(
+                interception_state(archive, "claude", registration="none"), "DEGRADED")
+            self.assertEqual(
+                degraded_reason(archive, "claude", registration="none"),
+                "expired,version-drift")
+
+    def test_a_superseded_expired_and_drifted_proof_names_every_cause(self) -> None:
+        # Fix round 1 (G-4(b) follow-up): the exact field case this closes
+        # - a proof expired 2026-09-12 from hook 0.3.25 that was ALSO
+        # superseded reported only the supersession, hiding the expiry and
+        # the version drift. Every demonstrated cause must appear, in the
+        # fixed order (supersession, then expiry, then version-drift, then
+        # hash-drift).
+        from datetime import datetime, timedelta, timezone as _tz
+        from godmode_runtime.godmode_hookproof import _hash_file
+        real_hash = _hash_file(PLUGIN_ROOT / "hooks" / "godmode_session_hook.py")
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            proof = archive.append(
+                "action", SUBJECT_PROOF,
+                {
+                    "host": "claude", "tool": "Bash", "request_id": "n1", "proof": True,
+                    "hook_version": "0.0.1-not-the-running-version",
+                    "trusted_hook_hash": real_hash,
+                    "nonce_hash": hashlib.sha256(b"n1").hexdigest(),
+                    "observed_decision": "deny",
+                    "expiry": (datetime.now(_tz.utc) - timedelta(hours=1)).isoformat(),
+                },
+                evidence=[],
+            )
+            self.assertGreater(proof["sequence"], 0)
+            record_hook_degradation(archive, "claude", DEGRADE_REASON_MALFORMED_PAYLOAD)
+            self.assertEqual(
+                interception_state(archive, "claude", registration="none"), "DEGRADED")
+            self.assertEqual(
+                degraded_reason(archive, "claude", registration="none"),
+                f"{DEGRADE_REASON_MALFORMED_PAYLOAD},expired,version-drift")
+
     def test_a_pre_cx5_minimal_record_caps_at_partial_never_hard(self) -> None:
         # Backward compatibility, stated honestly: the OLD CX-1 shape - no
         # expiry, no hash, nothing CX-5 can verify freshness/identity from -
@@ -335,13 +397,21 @@ class ExpiryCeilingTests(unittest.TestCase):
         # KIND_INVARIANTS call entirely, to simulate exactly that "already
         # on disk" scenario without asserting the append-time refusal a
         # second time.
+        from godmode_runtime.godmode_hookproof import _hash_file
+        # Fix round 1 (G-4(b) follow-up): a real, matching `trusted_hook_hash`
+        # isolates this to the ONE deliberate defect (the out-of-bounds
+        # expiry) - `degraded_reason` now also names hash-drift when a
+        # record genuinely demonstrates it, and a placeholder `"a" * 64`
+        # hash would (correctly) add that as a second cause, which is not
+        # what this specific test is pinning.
+        real_hash = _hash_file(PLUGIN_ROOT / "hooks" / "godmode_session_hook.py")
         with isolated_project() as (_project, _state, _anchor, archive):
             archive.initialize()
             forged_data = {
                 "host": "claude", "tool": "Bash", "request_id": "slipped-in",
                 "proof": True,
                 "hook_version": RUNTIME_VERSION,
-                "trusted_hook_hash": "a" * 64,
+                "trusted_hook_hash": real_hash,
                 "nonce_hash": "b" * 64,
                 "observed_decision": "deny",
                 "expiry": "9999-12-31T23:59:59+00:00",
