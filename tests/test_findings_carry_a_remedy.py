@@ -27,6 +27,7 @@ for extra in (SCRIPTS, CHECKS):
 from godmode_runtime.godmode_attribution import attributed_constraints  # noqa: E402
 from godmode_runtime.godmode_docslint import lint_text  # noqa: E402
 from godmode_runtime.godmode_egress import untrusted_directives  # noqa: E402
+from godmode_runtime.godmode_tamper import tamper_findings  # noqa: E402
 
 import no_external_source_names as N  # noqa: E402
 
@@ -48,6 +49,28 @@ def _attribution_findings() -> list[dict]:
         "sample.py", "# per RFC 7231 the timeout must be 30 seconds\n")
 
 
+def _oracle_tamper_findings() -> list[dict]:
+    # One fixture per rule: a weakened test beside its code, a dropped CI job,
+    # a checker whose exit is forced to success.
+    diff = (
+        "diff --git a/app/billing.py b/app/billing.py\n--- a/app/billing.py\n+++ b/app/billing.py\n"
+        "@@ -1 +1 @@\n-RATE = 1\n+RATE = 2\n"
+        "diff --git a/tests/test_billing.py b/tests/test_billing.py\n"
+        "--- a/tests/test_billing.py\n+++ b/tests/test_billing.py\n"
+        "@@ -1,3 +1,2 @@\n from app.billing import RATE\n def test_rate():\n-    assert RATE == 1\n"
+        "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n"
+        "--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n"
+        "@@ -4,2 +3,0 @@\n-  lint:\n-    runs-on: ubuntu-latest\n"
+        "diff --git a/quality/checks/c.py b/quality/checks/c.py\n"
+        "--- a/quality/checks/c.py\n+++ b/quality/checks/c.py\n"
+        "@@ -1 +1 @@\n-sys.exit(main())\n+sys.exit(0)\n"
+    )
+    old = {".github/workflows/ci.yml": "on: push\njobs:\n  unit:\n  lint:\n    runs-on: ubuntu-latest\n"}
+    new = {".github/workflows/ci.yml": "on: push\njobs:\n  unit:\n",
+           "tests/test_billing.py": "from app.billing import RATE\ndef test_rate():\n"}
+    return tamper_findings(diff, old, new)
+
+
 class EveryFindingSurfaceCarriesARemedy(unittest.TestCase):
     #: (name, producer, remedy field). Explicit and short on purpose - see the
     #: module docstring on why this is not auto-discovered.
@@ -55,6 +78,7 @@ class EveryFindingSurfaceCarriesARemedy(unittest.TestCase):
         ("documentation linter", _docslint_findings, "remedy"),
         ("instruction scanner", _egress_findings, "remedy"),
         ("attributed constraints", _attribution_findings, "remedy"),
+        ("oracle-tamper rules", _oracle_tamper_findings, "remedy"),
     )
 
     def test_each_surface_produces_at_least_one_finding_for_its_fixture(self) -> None:

@@ -119,9 +119,18 @@ def _harness_node_dropped(ctx: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _test_weakened_with_source_edit(ctx: dict[str, Any]) -> list[dict[str, Any]]:
     """Oracle contract (Slice A, shape 1): the oracle and the patch moved in
-    one diff. Observe-first: advisory until the strict profile enforces."""
-    return [_finding("oracle-tamper", f["path"], f["detail"], blocking=False)
-            for f in ctx.get("oracle", []) if f["shape"] in ("test-weakened-with-source-edit", "new-test-never-red")]
+    one diff. Observe-first: advisory until the strict profile enforces.
+
+    Also carries the three change-set rules from `godmode_tamper` (test
+    weakened with its code, CI node dropped, checker neutered), each with a
+    rule id, file:line, evidence excerpt and remedy - advisory, never blocking."""
+    findings = [_finding("oracle-tamper", f["path"], f["detail"], blocking=False)
+                for f in ctx.get("oracle", []) if f["shape"] in ("test-weakened-with-source-edit", "new-test-never-red")]
+    for rule in ctx.get("tamper", []):
+        finding = _finding("oracle-tamper", rule["path"], rule["detail"], blocking=False)
+        finding.update({key: rule[key] for key in ("rule", "line", "location", "evidence", "remedy")})
+        findings.append(finding)
+    return findings
 
 
 def _skip_quarantine(ctx: dict[str, Any]) -> list[dict[str, Any]]:
@@ -485,6 +494,11 @@ def analyze(archive: Chronicle, project: Path, base: str = "HEAD") -> dict[str, 
         ctx["oracle"] = oracle_tamper_findings(project, base, red_observed=seen_red)
     except Exception:  # noqa: BLE001  # godmode: swallow-ok: the oracle pass is one monitor among nine; the others still answer
         ctx["oracle"] = []
+    try:
+        from .godmode_tamper import change_set_findings
+        ctx["tamper"] = change_set_findings(project, base)
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: the change-set rules are advisory; the other monitors still answer
+        ctx["tamper"] = []
 
     findings: list[dict[str, Any]] = []
     for monitor in MONITORS.values():
