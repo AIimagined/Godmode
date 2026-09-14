@@ -29,7 +29,8 @@ from godmode_runtime.godmode_anchor import current_host, resolve_anchor  # noqa:
 from godmode_runtime.godmode_constants import READ_ONLY_TOOLS  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_runtime.godmode_errors import GodmodeError  # noqa: E402
-from godmode_runtime.godmode_attest import attested_rule_ids, latest_session  # noqa: E402
+from godmode_runtime.godmode_attest import (  # noqa: E402
+    attested_rule_ids, latest_session, resolve_host_session)
 from godmode_runtime.godmode_guardrails import check_ceilings  # noqa: E402
 from godmode_runtime.godmode_release_gate import tag_push_refusal  # noqa: E402
 from godmode_runtime.godmode_guardrails import meter_tool_call, watchdog  # noqa: E402
@@ -2206,8 +2207,37 @@ def _decision_for(preview: dict[str, Any]) -> str:
     return "deny" if preview.get("tier") in _REFUSE_OUTRIGHT else "ask"
 
 
+def record_refusal(archive: Chronicle, submitted: dict[str, Any], subject: str,
+                    data: dict[str, Any], evidence: list[str] | None = None) -> dict[str, Any]:
+    """Append a `refusal` record tagged with THIS host session's own
+    chronicle key (G-7 fix round 2).
+
+    Every enforcement and observe-mode refusal write goes through this one
+    function, so the tag is resolved exactly once, the same way, wherever
+    a refusal is born - `resolve_host_session` reuses this host session's
+    existing key if one was already opened, or opens the first one. A
+    session id the host never sent (`submitted` carries none), or a
+    resolution that raises, leaves the record untagged rather than
+    unrecorded - `session_digest`'s sequence-range fallback still covers
+    an untagged refusal, so a session tag is a strict improvement, never
+    a new way to lose the record. The archive write itself is NOT
+    swallowed here: callers already wrap this in their own best-effort
+    try/except, matching the discipline the plain `archive.append` calls
+    this replaces already followed.
+    """
+    host_session_id = str(submitted.get("session_id") or "") or None
+    session_tag = None
+    if host_session_id:
+        try:
+            session_tag = resolve_host_session(archive, host_session_id)
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: a session tag that fails to resolve leaves the refusal untagged, not unrecorded - the sequence-range fallback still covers it
+            session_tag = None
+    return archive.append("refusal", subject, {**data, "session": session_tag},
+                           evidence=evidence or [])
+
+
 def _apply_observe_mode(archive: Chronicle, tool: str, operation: str,
-                        preview: dict[str, Any]) -> dict[str, Any]:
+                        preview: dict[str, Any], submitted: dict[str, Any]) -> dict[str, Any]:
     """U-E7: convert a would-have-blocked decision into an advisory.
 
     Called exactly once per call, and only when the local policy's
@@ -2271,8 +2301,8 @@ def _apply_observe_mode(archive: Chronicle, tool: str, operation: str,
     # "once, not twice" discipline the enforcement-mode write above applies.
     if not preview.get("_chronicled_miss"):
         try:
-            archive.append(
-                "refusal",
+            record_refusal(
+                archive, submitted,
                 str(preview.get("category", "refusal"))[:200] or "refusal",
                 {
                     "operation": recorded_operation,
@@ -2286,7 +2316,6 @@ def _apply_observe_mode(archive: Chronicle, tool: str, operation: str,
                     # advisory's own cap below.
                     "reason": recorded_reason,
                 },
-                evidence=[],
             )
         except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
             pass
@@ -3664,8 +3693,8 @@ def main(argv: list[str] | None = None) -> int:
                 # is redundant bookkeeping, not a second fact.
                 if not observe and not preview.get("_chronicled_miss"):
                     try:
-                        archive.append(
-                            "refusal",
+                        record_refusal(
+                            archive, submitted,
                             str(preview["category"])[:200] or "refusal",
                             {
                                 "operation": operation[:500],
@@ -3679,7 +3708,6 @@ def main(argv: list[str] | None = None) -> int:
                                 "tier": str(preview.get("tier", "R?")),
                                 "category": preview["category"],
                             },
-                            evidence=[],
                         )
                     except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                         pass
@@ -3807,7 +3835,7 @@ def main(argv: list[str] | None = None) -> int:
         # path was already silent and untouched, and every escalation lands
         # here, where this already applies.
         if observe and not preview.get("allow", True):
-            preview = _apply_observe_mode(archive, tool, operation, preview)
+            preview = _apply_observe_mode(archive, tool, operation, preview, submitted)
 
         # Sprint 9: what the host said about its OWN boundary, recorded
         # beside what godmode decided. Every adapter already lifted this

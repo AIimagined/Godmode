@@ -100,11 +100,41 @@ def agent_fingerprint() -> dict[str, Any]:
     return writer_fingerprint()
 
 
-def open_session(archive: Chronicle, label: str) -> str:
-    record = archive.append(
-        "session", label, {"state": "open", "agent": agent_fingerprint()}, evidence=[]
-    )
+def open_session(archive: Chronicle, label: str, host_session_id: str | None = None) -> str:
+    data: dict[str, Any] = {"state": "open", "agent": agent_fingerprint()}
+    if host_session_id:
+        # G-7 fix round 2: stamps this chronicle session with the HOST's own
+        # session id (Claude's `session_id`, or any host's equivalent) so
+        # `resolve_host_session` below can find it again later in the same
+        # host session without opening a second one.
+        data["host_session_id"] = host_session_id
+    record = archive.append("session", label, data, evidence=[])
     return f"S-{record['record_hash'][:12]}"
+
+
+def resolve_host_session(archive: Chronicle, host_session_id: str) -> str:
+    """This host session's chronicle `S-<hash>` key, created once and
+    reused for the rest of that host session - never a fresh key per call.
+
+    G-7 fix round 2: a refusal record needs to be tagged, at write time,
+    with the same session key `session_digest` reports - but `open_session`
+    creates a NEW `session`-kind record (and a new key) every time it is
+    called, so calling it directly at every refusal would mint a fresh
+    session on every single denied command. This instead looks for a
+    `session`-kind record already tagged with this exact `host_session_id`
+    and reuses its key; only the FIRST refusal in a given host session ever
+    opens one.
+
+    Two Claude Code sessions open against the same repo therefore resolve
+    to two distinct keys - each one's own refusals tag with its own key,
+    never the other's - which a purely sequence-range scoping (matching
+    the LATEST `session`-kind record in the archive, whichever host wrote
+    it last) cannot tell apart.
+    """
+    for record in reversed(archive.read_events()):
+        if record["kind"] == "session" and record["data"].get("host_session_id") == host_session_id:
+            return f"S-{record['record_hash'][:12]}"
+    return open_session(archive, "host-session", host_session_id=host_session_id)
 
 
 def opening_handshake(archive: Chronicle, anchor: Any, project: Path, transcript_path: str | Path | None = None) ->  dict[str, Any]:

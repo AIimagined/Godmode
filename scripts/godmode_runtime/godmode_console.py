@@ -1686,18 +1686,27 @@ def session_digest(runtime: Runtime, session: str | None, transcript: str | None
     # `godmode_session_hook.py` writes it mid-tool-call with no notion of
     # the chronicle's own `S-<hash>` session key - so an exact-match filter
     # on `data["session"]` matched zero refusals in every real archive and
-    # counted 0 forever. `godmode_contribution._session_records` already
-    # solves this same problem for other untagged record kinds
-    # (checkpoints, incidents): session membership is a SEQUENCE RANGE,
-    # everything from the `session`-kind record whose derived `S-<hash>`
-    # key equals `session` (the boundary the rest of the archive already
-    # uses to mark where "this session" started) onward. Mirrored here for
-    # refusals specifically. `select()` also caps at 500 records regardless
-    # of the limit passed in (`min(limit, 500)`), so a session with more
+    # counted 0 forever. `select()` also caps at 500 records regardless of
+    # the limit passed in (`min(limit, 500)`), so a session with more
     # refusals than that would silently lose the rest; `read_events()` is
     # the chronicle's only unbounded read, and it has already parsed every
     # record for chain verification, so filtering it here loads no payload
     # the cap-500 path would not also have loaded.
+    #
+    # Fix round 2: `record_refusal` (`godmode_session_hook.py`) now tags a
+    # NEW refusal with this host session's own `S-<hash>` key at write
+    # time (`resolve_host_session`), so a tagged record is counted by
+    # EXACT match - never by position. A record with no tag (every
+    # refusal written before this shipped) falls back to the same
+    # sequence-range convention `godmode_contribution._session_records`
+    # already uses for other untagged record kinds (checkpoints,
+    # incidents): everything from the `session`-kind record whose derived
+    # `S-<hash>` key equals `session` onward, up to (not including) the
+    # NEXT `session`-kind record if one exists. The exact-tag path is what
+    # keeps two sessions open at once on the same repo from stealing each
+    # other's refusals - a sequence range alone cannot tell apart a
+    # refusal A appends after B opens from one B itself appended, since
+    # both simply have a "later" sequence number than B's own boundary.
     all_records = archive.read_events()
     session_start = 0
     session_end = None  # exclusive upper bound; None means "to the end"
@@ -1718,10 +1727,15 @@ def session_digest(runtime: Runtime, session: str | None, transcript: str | None
             # never triggers and `session_end` stays None.
             session_end = record["sequence"]
             break
-    refusals = [r for r in all_records
-                if r["kind"] == "refusal" and r["sequence"] >= session_start
-                and (session_end is None or r["sequence"] < session_end)
-                and (r.get("data") or {}).get("session") in (None, session)]
+
+    def _belongs(record: dict[str, Any]) -> bool:
+        tag = (record.get("data") or {}).get("session")
+        if tag is not None:
+            return tag == session
+        return (record["sequence"] >= session_start
+                and (session_end is None or record["sequence"] < session_end))
+
+    refusals = [r for r in all_records if r["kind"] == "refusal" and _belongs(r)]
     gate = {"would-deny": sum(1 for r in refusals if (r.get("data") or {}).get("observed") and (r.get("data") or {}).get("would_have") == "deny"),
             "would-ask": sum(1 for r in refusals if (r.get("data") or {}).get("observed") and (r.get("data") or {}).get("would_have") == "ask"),
             "denied": sum(1 for r in refusals if not (r.get("data") or {}).get("observed"))}
