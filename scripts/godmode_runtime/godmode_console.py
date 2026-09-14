@@ -809,14 +809,7 @@ def cmd_charter(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 def cmd_session_open(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
-    # G-7 fix round 3: recorded on the boundary record ONLY when the host
-    # actually provides one - a later refusal in the same host session
-    # (`resolve_host_session`) then finds this record read-only instead of
-    # having no tagged boundary to match, which used to leave it no
-    # choice but to mint a second one (and silently reassign
-    # `latest_session()` to it - see `resolve_host_session`'s docstring).
-    session = open_session(runtime.archive, args.label,
-                           host_session_id=getattr(args, "host_session_id", None))
+    session = open_session(runtime.archive, args.label)
     handshake = opening_handshake(
         runtime.archive, runtime.anchor, Path(runtime.anchor.project_root), transcript_path=getattr(args, "transcript", None)
     )
@@ -1700,28 +1693,18 @@ def session_digest(runtime: Runtime, session: str | None, transcript: str | None
     # record for chain verification, so filtering it here loads no payload
     # the cap-500 path would not also have loaded.
     #
-    # Fix round 2: `record_refusal` (`godmode_session_hook.py`) now tags a
-    # NEW refusal with this host session's own `S-<hash>` key at write
-    # time (`resolve_host_session`), so a tagged record is counted by
-    # EXACT match - never by position. A record with no tag (every
-    # refusal written before this shipped) falls back to the same
-    # sequence-range convention `godmode_contribution._session_records`
-    # already uses for other untagged record kinds (checkpoints,
-    # incidents): everything from the `session`-kind record whose derived
-    # `S-<hash>` key equals `session` onward, up to (not including) the
-    # NEXT `session`-kind record if one exists. The exact-tag path is what
-    # keeps two sessions open at once on the same repo from stealing each
-    # other's refusals - a sequence range alone cannot tell apart a
-    # refusal A appends after B opens from one B itself appended, since
-    # both simply have a "later" sequence number than B's own boundary.
-    #
-    # Fix round 3: `resolve_host_session` never mints a `session`-kind
-    # record any more (see its docstring) - an untagged host session's
-    # refusal now tags with a plain `host:<id>` string instead, which
-    # matches nothing here (`session` is always an `S-<hash>` key or
-    # `None`) and falls through neither branch, so it counts toward
-    # nothing rather than risk folding into the wrong session. This
-    # function's own logic is otherwise unchanged by round 3.
+    # Fix rounds 2-3 (session-tagged refusals, `record_refusal` +
+    # `resolve_host_session`) were withdrawn in round 4: no hook ever opens
+    # a session with a host session id (only the CLI's `session open
+    # --host-session-id` and tests did), so in a live host every refusal
+    # would resolve to a `host:<id>` tag, never match this function's
+    # `S-<hash>` session key, and fall out of the sequence-range fallback
+    # below - the live per-session count would read 0 after release. Back
+    # to round 1's rule only: membership is decided purely by sequence
+    # position, which is exact for sessions that do not overlap in time
+    # (see the Limits note in this fix's changelog fragment for the case
+    # that remains open - two sessions genuinely concurrent on one
+    # checkout).
     all_records = archive.read_events()
     session_start = 0
     session_end = None  # exclusive upper bound; None means "to the end"
@@ -1744,9 +1727,6 @@ def session_digest(runtime: Runtime, session: str | None, transcript: str | None
             break
 
     def _belongs(record: dict[str, Any]) -> bool:
-        tag = (record.get("data") or {}).get("session")
-        if tag is not None:
-            return tag == session
         return (record["sequence"] >= session_start
                 and (session_end is None or record["sequence"] < session_end))
 
@@ -5248,10 +5228,6 @@ def _build_parser() -> argparse.ArgumentParser:
     session_open.add_argument("--label", default="session")
     session_open.add_argument("--transcript", default=None,
                               help="This session's host transcript; reads in it count toward the required sources")
-    session_open.add_argument("--host-session-id", default=None,
-                              help="This host's own session id (e.g. Claude's session_id) - tags the "
-                                   "boundary record so a refusal later in the same host session "
-                                   "resolves to it without minting a duplicate (G-7)")
     session_open.set_defaults(handler=cmd_session_open)
     session_close = session_sub.add_parser("close")
     session_close.add_argument("--session")

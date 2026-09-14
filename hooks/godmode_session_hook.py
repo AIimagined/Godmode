@@ -30,7 +30,7 @@ from godmode_runtime.godmode_constants import READ_ONLY_TOOLS  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_runtime.godmode_errors import GodmodeError  # noqa: E402
 from godmode_runtime.godmode_attest import (  # noqa: E402
-    attested_rule_ids, latest_session, resolve_host_session)
+    attested_rule_ids, latest_session)
 from godmode_runtime.godmode_guardrails import check_ceilings  # noqa: E402
 from godmode_runtime.godmode_release_gate import tag_push_refusal  # noqa: E402
 from godmode_runtime.godmode_guardrails import meter_tool_call, watchdog  # noqa: E402
@@ -2209,31 +2209,28 @@ def _decision_for(preview: dict[str, Any]) -> str:
 
 def record_refusal(archive: Chronicle, submitted: dict[str, Any], subject: str,
                     data: dict[str, Any], evidence: list[str] | None = None) -> dict[str, Any]:
-    """Append a `refusal` record tagged with THIS host session's own
-    chronicle key (G-7 fix round 2).
+    """Append a `refusal` record. Every enforcement and observe-mode
+    refusal write goes through this one function.
 
-    Every enforcement and observe-mode refusal write goes through this one
-    function, so the tag is resolved exactly once, the same way, wherever
-    a refusal is born - `resolve_host_session` reuses this host session's
-    existing key if one was already opened, or opens the first one. A
-    session id the host never sent (`submitted` carries none), or a
-    resolution that raises, leaves the record untagged rather than
-    unrecorded - `session_digest`'s sequence-range fallback still covers
-    an untagged refusal, so a session tag is a strict improvement, never
-    a new way to lose the record. The archive write itself is NOT
-    swallowed here: callers already wrap this in their own best-effort
-    try/except, matching the discipline the plain `archive.append` calls
-    this replaces already followed.
+    `submitted` is accepted (both write sites already have it in hand) but
+    is no longer used to tag the record with a session. G-7 fix round 2
+    added exactly that - resolving `submitted["session_id"]` to a
+    chronicle session key via `resolve_host_session` and stamping it into
+    `data["session"]` - and round 4 withdrew it: no hook ever opens a
+    chronicle session with a host session id (only the CLI's `session
+    open --host-session-id` and tests did), so on a live host every
+    refusal would resolve to a `host:<id>` tag that can never equal a
+    session's `S-<hash>` key - `session_digest`'s per-session count would
+    read 0 after release, on every real deployment, not just a rare edge
+    case. `session_digest` scopes "this session" purely by sequence
+    position instead (the round 1 rule, unaffected by this change) - a
+    refusal record therefore carries no `session` field at all, same as
+    before round 2 ever shipped. The archive write itself is NOT swallowed
+    here: callers wrap this in their own best-effort try/except, matching
+    the discipline the plain `archive.append` calls this replaced already
+    followed.
     """
-    host_session_id = str(submitted.get("session_id") or "") or None
-    session_tag = None
-    if host_session_id:
-        try:
-            session_tag = resolve_host_session(archive, host_session_id)
-        except Exception:  # noqa: BLE001  # godmode: swallow-ok: a session tag that fails to resolve leaves the refusal untagged, not unrecorded - the sequence-range fallback still covers it
-            session_tag = None
-    return archive.append("refusal", subject, {**data, "session": session_tag},
-                           evidence=evidence or [])
+    return archive.append("refusal", subject, data, evidence=evidence or [])
 
 
 def _apply_observe_mode(archive: Chronicle, tool: str, operation: str,
