@@ -1682,15 +1682,46 @@ def session_digest(runtime: Runtime, session: str | None, transcript: str | None
             parked = len((json.loads(echo.read_text(encoding="utf-8")) or {}).get("sentences") or [])
     except Exception:  # noqa: BLE001  # godmode: swallow-ok: a parked file that cannot be read counts as none parked
         parked = 0
-    # `select()` caps at 500 records regardless of the limit passed in
-    # (`min(limit, 500)`), so a session with more refusals than that would
-    # silently lose the rest; `read_events()` is the chronicle's only
-    # unbounded read, and it has already parsed every record for chain
-    # verification, so filtering it here loads no payload the cap-500 path
-    # would not also have loaded.
-    refusals = [r for r in archive.read_events()
-                if r.get("kind") == "refusal"
-                and (r.get("data") or {}).get("session") == session]
+    # Fix round 1: a `refusal` record carries no `session` field at all -
+    # `godmode_session_hook.py` writes it mid-tool-call with no notion of
+    # the chronicle's own `S-<hash>` session key - so an exact-match filter
+    # on `data["session"]` matched zero refusals in every real archive and
+    # counted 0 forever. `godmode_contribution._session_records` already
+    # solves this same problem for other untagged record kinds
+    # (checkpoints, incidents): session membership is a SEQUENCE RANGE,
+    # everything from the `session`-kind record whose derived `S-<hash>`
+    # key equals `session` (the boundary the rest of the archive already
+    # uses to mark where "this session" started) onward. Mirrored here for
+    # refusals specifically. `select()` also caps at 500 records regardless
+    # of the limit passed in (`min(limit, 500)`), so a session with more
+    # refusals than that would silently lose the rest; `read_events()` is
+    # the chronicle's only unbounded read, and it has already parsed every
+    # record for chain verification, so filtering it here loads no payload
+    # the cap-500 path would not also have loaded.
+    all_records = archive.read_events()
+    session_start = 0
+    session_end = None  # exclusive upper bound; None means "to the end"
+    if session is not None:
+        found_start = False
+        for record in all_records:
+            if record["kind"] != "session":
+                continue
+            if not found_start:
+                if f"S-{record['record_hash'][:12]}" == session:
+                    session_start = record["sequence"]
+                    found_start = True
+                continue
+            # The next session-kind record after the match bounds this
+            # session from a LATER one also present in the archive - needed
+            # for an explicit, non-latest `session` argument; the latest
+            # session (the common case) has no later boundary, so this
+            # never triggers and `session_end` stays None.
+            session_end = record["sequence"]
+            break
+    refusals = [r for r in all_records
+                if r["kind"] == "refusal" and r["sequence"] >= session_start
+                and (session_end is None or r["sequence"] < session_end)
+                and (r.get("data") or {}).get("session") in (None, session)]
     gate = {"would-deny": sum(1 for r in refusals if (r.get("data") or {}).get("observed") and (r.get("data") or {}).get("would_have") == "deny"),
             "would-ask": sum(1 for r in refusals if (r.get("data") or {}).get("observed") and (r.get("data") or {}).get("would_have") == "ask"),
             "denied": sum(1 for r in refusals if not (r.get("data") or {}).get("observed"))}
