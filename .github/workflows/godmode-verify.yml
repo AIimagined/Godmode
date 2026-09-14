@@ -8,6 +8,11 @@ name: Godmode verification
 on:
   workflow_dispatch:
 
+# Least privilege at the top: read the checkout, nothing else. No job below
+# pushes, comments, releases, or otherwise writes back to GitHub, so no job
+# widens this - the checkout on every job below runs with `contents: read`
+# and additionally sets `persist-credentials: false`, so the (already
+# read-only) token is not even left on disk once the checkout step returns.
 permissions:
   contents: read
 
@@ -16,6 +21,7 @@ jobs:
     # Windows and macOS legs close S1-14: the primary development platform and
     # the third OS are tested, not assumed.
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -24,7 +30,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Full history: the ranking gate's freshness instrument reads git
           # commit time, and a shallow checkout is a different instrument
@@ -32,9 +38,12 @@ jobs:
           # would honestly skip itself (ranking-mode-differs) instead of
           # verifying anything.
           fetch-depth: 0
+          # The job token is only used to read this checkout; it has nothing
+          # to push, so it is not left on disk for a later step to find.
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -104,9 +113,12 @@ jobs:
   # to needing `python`, this job goes red before any field machine does.
   stock-host:
     runs-on: macos-latest
+    timeout-minutes: 15
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Poison bare `python` (the stock-macOS shape)
         run: |
@@ -144,9 +156,12 @@ jobs:
   # arriving only as an environment variable, the way Grok passes it.
   stock-host-windows:
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Run every shared hook command through PowerShell
         shell: pwsh
@@ -184,9 +199,10 @@ jobs:
   # zero network use, not evidence of a blind detector.
   netgate:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Full history: the ranking gate's freshness instrument reads git
           # commit time, and a shallow checkout is a different instrument
@@ -194,9 +210,10 @@ jobs:
           # would honestly skip itself (ranking-mode-differs) instead of
           # verifying anything.
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.13"
 
@@ -222,9 +239,10 @@ jobs:
   #   3. Upgrade or pin the affected tool, then re-run this job to confirm.
   vuln-scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Full history: the ranking gate's freshness instrument reads git
           # commit time, and a shallow checkout is a different instrument
@@ -232,9 +250,10 @@ jobs:
           # would honestly skip itself (ranking-mode-differs) instead of
           # verifying anything.
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.13"
 
@@ -263,9 +282,10 @@ jobs:
   # The published action, exercised the way a consumer repository would use it.
   action:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Full history: the ranking gate's freshness instrument reads git
           # commit time, and a shallow checkout is a different instrument
@@ -273,11 +293,12 @@ jobs:
           # would honestly skip itself (ranking-mode-differs) instead of
           # verifying anything.
           fetch-depth: 0
+          persist-credentials: false
 
       # The action resolves python3 on its own, but pinning the version here
       # exercises the path a consumer repository is most likely to use.
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.13"
 
@@ -287,3 +308,24 @@ jobs:
           # On push, HEAD~1 keeps the gates real; plain HEAD would diff an empty
           # set and pass vacuously on every push.
           base: ${{ github.event_name == 'pull_request' && format('origin/{0}...', github.base_ref) || 'HEAD~1' }}
+
+  # Aggregate job: the six jobs above run in parallel and any one of them can
+  # fail, get cancelled, or be skipped without the others noticing. This job
+  # depends on every one of them, always runs (`if: always()`, so it evaluates
+  # even when an upstream job failed instead of also being skipped), and is
+  # the single job to require in branch protection - "green" on this job means
+  # every job above actually ran and actually succeeded, never "some subset
+  # quietly didn't".
+  required:
+    name: All required jobs passed
+    if: always()
+    needs: [verify, stock-host, stock-host-windows, netgate, vuln-scan, action]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail if any required job did not succeed
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}
+        run: |
+          echo "One or more required jobs did not succeed (failure, cancelled, or skipped):"
+          echo '${{ toJSON(needs) }}'
+          exit 1
