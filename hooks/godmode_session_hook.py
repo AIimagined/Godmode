@@ -102,17 +102,13 @@ def _input() -> tuple[dict[str, Any], bool]:
                 pass
     # Obligation 9863: resolve on the first complete JSON object, never on
     # EOF - a Windows host's pipe close can lag past the hook timeout.
-    from godmode_stdin import read_first_json
-    raw = read_first_json().decode("utf-8", "replace")
-    if not raw.strip():
-        return {}, False
-    try:
-        value = json.loads(raw)
-    except json.JSONDecodeError:
-        return {}, True
-    if not isinstance(value, dict):
-        return {}, True
-    return value, False
+    # G-8: `parse_first_json` is the same decode `godmode_gate_fast.py`
+    # uses on these exact bytes - a leading BOM, CRLF, or anything after
+    # the first object (trailing data, a second concatenated object) is
+    # tolerated by both stages the same way, never re-rejected here after
+    # the reader already resolved on it.
+    from godmode_stdin import parse_first_json, read_first_json
+    return parse_first_json(read_first_json())
 
 
 def _bounded_list(value: Any, limit: int = 20) -> list[str]:

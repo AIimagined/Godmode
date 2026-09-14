@@ -441,13 +441,18 @@ def _load_table() -> dict[str, Any] | None:
 
 
 def _parse_payload(raw: bytes) -> dict[str, Any]:
-    if not raw.strip():
-        return {}
-    try:
-        value = json.loads(raw.decode("utf-8"))
-    except Exception:  # noqa: BLE001 - unparsable input escalates to the full hook, which
-        return {}       # has its own tolerant `_input()` and will handle it the same way
-    return value if isinstance(value, dict) else {}
+    # G-8: the same decode the full hook's `_input()` now uses on these
+    # exact bytes (`godmode_stdin.parse_first_json`) - a leading BOM, CRLF,
+    # or anything after the first JSON object (trailing data, a second
+    # concatenated object) is tolerated here exactly as it is there, so a
+    # shape this module can decide about (a read-only command) never
+    # escalates purely because of how it was decoded. Unparsable input
+    # still falls through to `{}`, which `fast_verdict` always escalates on
+    # - the full hook's own tolerant parse gets the final say either way.
+    sys.path.insert(0, str(HOOKS_DIR))
+    from godmode_stdin import parse_first_json
+    value, _malformed = parse_first_json(raw)
+    return value
 
 
 def ungoverned_project(start: Path) -> bool:

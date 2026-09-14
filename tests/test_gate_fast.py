@@ -637,3 +637,78 @@ class S12BWidening(unittest.TestCase):
         # sort -o writes a file regardless of where stdout goes.
         self.assertEqual(self._fast("sort -o /etc/hosts f 2>/dev/null"),
                          "escalate")
+
+
+class PayloadGrammarParity(unittest.TestCase):
+    """G-8: one payload grammar. `hooks/godmode_stdin.read_first_json`
+    already tolerates a UTF-8 BOM prefix, CRLF line endings, a trailing
+    newline, trailing non-JSON data after the first object, and two
+    concatenated JSON objects - it resolves on the FIRST complete object
+    and never waits for or requires EOF. Both stages read through that
+    same reader, but each then re-decodes the bytes it returns on its own:
+    the full hook used to do that with a plain `json.loads`, which raises
+    on a leading BOM (`Unexpected UTF-8 BOM`) and on anything after the
+    first object (`Extra data`) - so a payload the reader itself already
+    tolerated still refused with 'Operation description cannot be empty'.
+    These are real subprocess invocations of both scripts, exactly as a
+    host would run them, for a read-only command (must silently allow on
+    both) and a protected one (must deny on both)."""
+
+    _READ_ONLY = payload("git status")
+    _DENY = payload("git push --force origin main")
+
+    @staticmethod
+    def _shapes(base: dict[str, Any]) -> dict[str, bytes]:
+        plain = json.dumps(base).encode("utf-8")
+        return {
+            "bom": b"\xef\xbb\xbf" + plain,
+            "crlf": json.dumps(base, indent=2).encode("utf-8").replace(b"\n", b"\r\n"),
+            "trailing_newline": plain + b"\n",
+            "trailing_data": plain + b"\nthis is not json at all",
+            "two_concatenated_objects": plain + plain,
+        }
+
+    def _direct(self, raw: bytes) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.run(
+            [sys.executable, str(HOOKS_DIR / "godmode_session_hook.py"), "pre-action"],
+            input=raw, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            cwd=PLUGIN_ROOT, timeout=30,
+        )
+
+    def _fast(self, raw: bytes) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.run(
+            [sys.executable, str(FAST_GATE)],
+            input=raw, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            cwd=PLUGIN_ROOT, timeout=30,
+        )
+
+    def test_read_only_command_allows_on_both_stages_for_every_shape(self) -> None:
+        for shape, raw in self._shapes(self._READ_ONLY).items():
+            with self.subTest(shape=shape):
+                direct = self._direct(raw)
+                fast_result = self._fast(raw)
+                self.assertEqual(direct.returncode, 0, (shape, direct.stderr))
+                self.assertEqual(direct.stdout, b"", (shape, direct.stderr))
+                self.assertEqual(fast_result.returncode, 0, (shape, fast_result.stderr))
+                self.assertEqual(fast_result.stdout, b"", (shape, fast_result.stderr))
+
+    def test_forced_push_denies_on_both_stages_for_every_shape(self) -> None:
+        # A malformed payload also denies pre-action (fail-closed, Task 2),
+        # but with exit 2 and a generic "no operation described in a
+        # malformed payload" reason - that would make this test pass
+        # trivially without the parser fix actually working. Pinning the
+        # real classifier's exit code (0) and its command-specific reason
+        # text ("irreversible", the same wording `classify_action` gives
+        # this exact command bare) proves the command was actually parsed
+        # and classified, not merely refused as unreadable.
+        baseline = self._direct(json.dumps(self._DENY).encode("utf-8"))
+        self.assertEqual(baseline.returncode, 0, baseline.stderr)
+        self.assertIn(b"irreversible", baseline.stdout)
+        for shape, raw in self._shapes(self._DENY).items():
+            with self.subTest(shape=shape):
+                direct = self._direct(raw)
+                fast_result = self._fast(raw)
+                self.assertEqual(direct.returncode, 0, (shape, direct.stderr))
+                self.assertEqual(direct.stdout, baseline.stdout, (shape, direct.stderr))
+                self.assertEqual(fast_result.returncode, 0, (shape, fast_result.stderr))
+                self.assertEqual(fast_result.stdout, baseline.stdout, (shape, fast_result.stderr))
