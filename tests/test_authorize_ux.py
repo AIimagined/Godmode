@@ -103,8 +103,13 @@ class HostedEscapeHintTests(unittest.TestCase):
         # empty reason while every local probe denied with a full one
         # (2026-08-31), and the discarded body was the missing instrument.
         context = f"stdout={result.stdout[:400]!r} stderr={result.stderr[:200]!r}"
-        self.assertIn("leading '!'", reason, context)
-        self.assertIn("authorize stage", reason, context)
+        # Final review finding 5: the sentence naming "a leading '!'" led
+        # with the unresolvable bare `godmode authorize stage --operation`
+        # form and was dropped; the bang prefix survives in `stage_hint`'s
+        # own runnable POSIX form (`! "<launcher path>" authorize stage
+        # --from-last-refusal`), which this now asserts directly.
+        self.assertIn('! "', reason, context)
+        self.assertIn("authorize stage --from-last-refusal", reason, context)
 
 
 class EllipsizeTests(unittest.TestCase):

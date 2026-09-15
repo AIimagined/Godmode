@@ -3592,18 +3592,25 @@ def main(argv: list[str] | None = None) -> int:
                 + ". Approve to run it." + governance_note
             )
             if operation:
+                # Final review finding 5: this used to LEAD with `godmode
+                # authorize stage --operation <op>` and tell the operator to
+                # type it "with a leading '!'" before ever reaching the
+                # resolvable hint appended at the end - the same
+                # unresolvable G-2 shape Task 6 fixed for the auto-mode
+                # ask-fold refusal below (bare `godmode` is not on PATH by
+                # default, and a bare `!` at a plain PowerShell prompt is a
+                # parser error). Routed through `stage_hint` exclusively
+                # now, the same both-forms output as the ask-fold: it reads
+                # the refusal this call itself just recorded, so it needs
+                # no operation text inlined here at all.
                 deny_reason = (
                     f"refused: this is irreversible ({preview['category']}, "
                     f"{preview.get('tier', 'R?')})"
                     + (f" - touches {impact}" if impact else "")
                     + ". Run it yourself, rephrase it as something narrower, or "
-                    "stage a capability for this exact command: `godmode "
-                    "authorize stage --operation "
-                    f"{json.dumps(_ellipsize(operation, 200))}` - it needs the password "
-                    "from `godmode authorize setup`, is spent once, and expires. "
-                    "In a hosted session, type it with a leading '!' to run it "
-                    "from the prompt without leaving the conversation. "
-                    f"{stage_hint(PLUGIN_ROOT)}"
+                    "stage a capability for this exact command - it needs the "
+                    "password from `godmode authorize setup`, is spent once, "
+                    f"and expires. {stage_hint(PLUGIN_ROOT)}"
                 ) + governance_note
             else:
                 # CX-2: an unrecognized tool (or any other no-operation-text

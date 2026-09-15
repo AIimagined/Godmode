@@ -358,12 +358,19 @@ class RefusalMessageTests(unittest.TestCase):
     def test_the_refusal_names_the_remedy_the_hook_actually_honours(self) -> None:
         """Twenty lines above the message, a staged capability is consumed and
         the call proceeds. The message was written before that shipped and
-        still said no in-session approval existed - denying its own remedy."""
+        still said no in-session approval existed - denying its own remedy.
+
+        Final review finding 5: it used to inline the literal command into
+        a bare `godmode authorize stage --operation "<cmd>"` (unresolvable -
+        `godmode` unqualified is not on PATH by default) before the
+        resolvable `--from-last-refusal` hint. `--from-last-refusal` reads
+        the command back from the refusal record this same call just wrote,
+        so the operator no longer has to retype it - the reason names the
+        runnable remedy instead of the command text."""
         _decision, reason = _decide(
             "Bash", {"command": "git push --force origin main"})
-        self.assertIn("authorize stage", reason)
-        self.assertIn("git push --force origin main", reason,
-                      "the operator has to retype the command exactly")
+        self.assertIn("authorize stage --from-last-refusal", reason)
+        self.assertNotIn("authorize stage --operation", reason)
 
     def test_the_refusal_does_not_recommend_removing_the_guard(self) -> None:
         """Offering that as a remedy is the likeliest advice to be taken and

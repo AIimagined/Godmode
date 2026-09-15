@@ -198,6 +198,35 @@ class RefusalReasonNamesTheRemedy(unittest.TestCase):
             self.assertNotIn("PowerShell", reason)
 
 
+class R5RefusalLeadsWithTheResolvableHint(unittest.TestCase):
+    """Final review finding 5: the R5 outright refusal already appended
+    `stage_hint(PLUGIN_ROOT)` at the end of its message, but it still LED
+    with the unresolvable `godmode authorize stage --operation <op>` (bare
+    `godmode`, not on PATH) and told the operator to type it "with a
+    leading '!'" - the exact G-2 shape Task 6 fixed for the ask-fold
+    refusal. The R5 message now routes through the same helper only,
+    dropping the bare form entirely."""
+
+    def test_the_refusal_does_not_name_a_bare_unqualified_stage_operation(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _decision, reason = _decide(project, FORCE_PUSH)
+        self.assertNotIn("godmode authorize stage --operation", reason)
+
+    def test_the_refusal_does_not_repeat_the_unresolvable_leading_bang_sentence(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _decision, reason = _decide(project, FORCE_PUSH)
+        self.assertNotIn("with a leading '!'", reason)
+
+    def test_the_refusal_still_carries_the_runnable_launcher_form(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            _decision, reason = _decide(project, FORCE_PUSH)
+        launcher = (PLUGIN_ROOT / "bin" / "godmode").as_posix()
+        self.assertIn(f'! "{launcher}" authorize stage --from-last-refusal', reason)
+
+
 class StageHintHelperTests(unittest.TestCase):
     """The helper every refusal site routes through - exercised directly so
     a failure here points straight at the one function, not at a hook

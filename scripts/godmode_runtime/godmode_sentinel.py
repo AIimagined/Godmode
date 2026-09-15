@@ -162,7 +162,16 @@ _RESTORE_WORKTREE_FLAG = re.compile(r"(?i)(?<![\w-])(?:--worktree|-W)(?![\w-])")
 # `--no-publish` (a hyphen is a non-word boundary) and because a bare run
 # carries no "publish"-shaped word at all for that pattern to catch.
 _CLAUDE_PLUGIN_EVAL_HEAD = re.compile(r"(?i)^\s*claude\s+plugin\s+eval\b")
-_CLAUDE_PLUGIN_EVAL_INIT = re.compile(r"(?i)^\s*claude\s+plugin\s+eval\s+init\b")
+# Final review finding 1: `init\b` matched `init/…`, `init.d/…` and
+# `init-foo` too - `\b` only requires a word/non-word transition, and `/`,
+# `.` and `-` are all non-word characters, so a bare (default-publishing)
+# run named against a path that merely starts with `init` was misread as
+# the local, never-publishing `init` subcommand and let through
+# unprotected. Anchored to whitespace-or-end instead, so only the real
+# subcommand (`init`, `init --bare x`) takes this branch; anything else -
+# `init/prompt.md`, `init.d/case`, `init-foo` - falls through to the
+# bare-run default, which stays protected.
+_CLAUDE_PLUGIN_EVAL_INIT = re.compile(r"(?i)^\s*claude\s+plugin\s+eval\s+init(?=\s|$)")
 _PUBLISH_REPORT_FLAG = re.compile(r"(?i)(?<![\w-])--publish-report(?![\w-])")
 _NO_PUBLISH_FLAG = re.compile(r"(?i)(?<![\w-])--no-publish(?![\w-])")
 

@@ -234,8 +234,13 @@ class GrokAskFoldsToDenyTests(unittest.TestCase):
             f"empty stdout; exit={done.returncode} stderr={done.stderr[:300]!r}")
         body = json.loads(done.stdout)
         # On Claude this exact command asks; on Grok (no ask) it must deny.
+        # Final review finding 5: the staged-capability remedy now routes
+        # through `stage_hint`'s resolvable `--from-last-refusal` form
+        # instead of the unresolvable bare `godmode authorize stage
+        # --operation <op>` (`godmode` unqualified is not on PATH).
         self.assertEqual(body["decision"], "deny")
-        self.assertIn("godmode authorize stage --operation", body["reason"])
+        self.assertIn("authorize stage --from-last-refusal", body["reason"])
+        self.assertNotIn("authorize stage --operation", body["reason"])
 
 
 class ClaudeRegressionLockTests(unittest.TestCase):

@@ -289,6 +289,21 @@ class ClaudePluginEvalTests(GateCase):
         any publish flag."""
         self.allowed("claude plugin eval init")
         self.allowed("claude plugin eval init --publish-report")
+        self.allowed("claude plugin eval init --bare x")
+
+    def test_init_prefixed_paths_are_not_the_init_subcommand(self) -> None:
+        """Final review finding 1: `init\\b` matched `init/…`, `init.d/…`
+        and `init-foo` too, so a bare (default-publishing) run named against
+        a path that merely starts with `init` was misread as the local
+        `init` subcommand and let through unprotected. `init` is anchored to
+        whitespace-or-end so only the real subcommand takes this branch;
+        anything else falls through to the bare-run default (protected)."""
+        self.refused("claude plugin eval init/prompt.md",
+                     "release-or-external-write")
+        self.refused("claude plugin eval init.d/case --publish-report",
+                     "release-or-external-write")
+        self.refused("claude plugin eval init-foo",
+                     "release-or-external-write")
 
     def test_a_chained_command_is_still_judged_by_its_worst_segment(self) -> None:
         """A local eval run beside a real history-mutating push: the worst
