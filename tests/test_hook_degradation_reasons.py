@@ -125,14 +125,9 @@ class TestThreeReasonsRecordWithoutRaising(unittest.TestCase):
         # `ValueError` for an unknown reason. `archive=None` still fails
         # (there is no chronicle to append to) but that failure must never
         # be the reason-validation `ValueError` this task closes.
-        try:
+        # A ValueError here escapes assertRaises and errors the test.
+        with self.assertRaises(AttributeError):  # None has no .append
             record_hook_degradation(None, "claude", "ask-only-record-failed")
-        except ValueError:
-            self.fail(
-                "record_hook_degradation raised ValueError for a reason "
-                "that must now be recordable")
-        except AttributeError:
-            pass  # expected: None has no .append - a different, known failure
 
 
 if __name__ == "__main__":

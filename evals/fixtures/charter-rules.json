@@ -12,6 +12,12 @@
       "trigger": "before_completion",
       "verify": "second_probe_cited"
     },
+    "R-0fffec89a5": {
+      "enforcement": "ADVISORY",
+      "text_hash": "8731fb0a9dfde33e",
+      "trigger": "always",
+      "verify": "none"
+    },
     "R-2259c5b00c": {
       "enforcement": "HARD",
       "text_hash": "a6d2ad57a9c431e3",
@@ -100,10 +106,10 @@
   "schema": "godmode-charter-snapshot-v1",
   "summary": {
     "enforcement": {
-      "ADVISORY": 9,
+      "ADVISORY": 10,
       "HARD": 7,
       "SOFT": 0
     },
-    "rules": 16
+    "rules": 17
   }
 }
