@@ -25,6 +25,7 @@ for entry in (SCRIPTS, PLUGIN_ROOT, TESTS):
 
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
+from godmode_runtime.godmode_projectmode import set_project_mode  # noqa: E402
 from godmode_runtime.godmode_lens import (  # noqa: E402
     BRIEF_SECTION_CAPS,
     SESSION_BRIEF_TOKENS,
@@ -152,7 +153,12 @@ class TheStopBlockIsThreeZones(unittest.TestCase):
             project.mkdir()
             state = base / "state"
             with scrubbed_environment(GODMODE_STATE_HOME=str(state)):
-                Chronicle(resolve_anchor(project)).initialize()
+                archive = Chronicle(resolve_anchor(project))
+                archive.initialize()
+                # This asserts the DONE BAR's own enforcement (decision:
+                # block); R1's advise mode is a separate module's concern
+                # (test_mode_switch.py).
+                set_project_mode(archive, "strict")
             transcript = project / "transcript.jsonl"
             transcript.write_text("\n".join([
                 json.dumps({"type": "user", "message": {"content": "do it"}}),

@@ -2444,13 +2444,29 @@ def _dirty_diff_ask(archive: Any, project: Path, operation: str) -> dict[str, An
                        "name the files, or amend the plan with `godmode planmode start --editable`")}
 
 
-def _echo_contexts(parked: dict[str, Any]) -> list[str]:
-    """The claim echo's parked items rendered as model context."""
+def _echo_contexts(parked: dict[str, Any], archive: Chronicle | None = None,
+                   session_id: str | None = None) -> list[str]:
+    """The claim echo's parked items rendered as model context.
+
+    R1: in advise mode, the claim-shaped-statement nudge and the open-
+    obligation reminder each surface at most once per session - `archive`
+    is how this looks up the mode and records what it has already shown;
+    omitting it (or strict mode) is today's behaviour, every time.
+    """
     contexts: list[str] = []
     sentences = [str(s)[:200] for s in (parked.get("sentences") or [])][:3]
     touched = [str(s)[:120] for s in (parked.get("obligations") or [])][:2]
     notices = [str(s)[:400] for s in (parked.get("notices") or [])][:3]
-    if sentences:
+
+    def _once(kind: str) -> bool:
+        if archive is None:
+            return True
+        from godmode_runtime.godmode_projectmode import advise_seen, project_mode
+        if project_mode(archive) != "advise":
+            return True
+        return advise_seen(archive, session_id, kind)
+
+    if sentences and _once("claim-shaped-nudge"):
         listed = "; ".join(f"'{s}'" for s in sentences)
         contexts.append(
             "godmode: your previous reply made "
@@ -2458,7 +2474,7 @@ def _echo_contexts(parked: dict[str, Any]) -> list[str]:
             f"with no record: {listed}. Record each with "
             "`godmode claim --cite <evidence>` (it grades "
             "honestly) or soften the wording this turn.")
-    if touched:
+    if touched and _once("obligation-reminder"):
         contexts.append(
             "godmode: open obligation(s) the previous turn "
             "touched: " + ", ".join(touched)
@@ -2502,7 +2518,7 @@ def _take_parked_context(archive: Chronicle, anchor: Any, submitted: dict[str, A
                 # finding 3: closed asks rode 3-5 more prompts).
                 payload["obligations"] = _still_open_obligation_lines(
                     archive, list(payload.get("obligations") or []))
-                pieces.extend(_echo_contexts(payload))
+                pieces.extend(_echo_contexts(payload, archive, current))
     except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
         pass
     try:
@@ -3083,6 +3099,47 @@ def _two_reversals_verdict(archive: Any, project_root: Path, target: str) -> dic
             "category": _TWO_REVERSALS_CATEGORY}
 
 
+def _advise_block_kind(reason: str) -> str | None:
+    """The gate name a Stop block's own `render_three_zone` rule line
+    carries, e.g. "THE DONE BAR" out of "godmode gate, deliberate block,
+    not a crash - THE DONE BAR: this reply says...". None when the reason
+    does not carry that marker at all."""
+    marker = "deliberate block, not a crash - "
+    index = reason.find(marker)
+    if index == -1:
+        return None
+    return reason[index + len(marker):].split(":", 1)[0].strip()
+
+
+def _emit_advise_stop(archive: Chronicle, submitted: dict[str, Any], captured: str) -> None:
+    """R1's one interception point for the Stop path: `captured` is
+    whatever the Stop branch would have printed to stdout under strict
+    mode. Stop can never prevent a harmful action - every Stop block is
+    quality-class - so a block/continue decision here becomes advice,
+    shown at most once per session per gate kind; anything else (a plain
+    systemMessage, or nothing at all) reaches the host exactly as printed.
+    """
+    text = captured.strip()
+    if not text:
+        return
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        sys.stdout.write(captured)
+        return
+    if not isinstance(payload, dict) or payload.get("decision") not in ("block", "continue"):
+        sys.stdout.write(captured)
+        return
+    from godmode_runtime.godmode_projectmode import advise_seen
+    reason = str(payload.get("reason") or "")
+    kind = _advise_block_kind(reason) or "GODMODE"
+    session_id = str(submitted.get("session_id") or "") or None
+    if not advise_seen(archive, session_id, kind):
+        return
+    first_line = reason.splitlines()[0] if reason else "a quality-class Stop was advised, not enforced"
+    print(json.dumps({"systemMessage": f"godmode (advice): {first_line}"}, ensure_ascii=False))
+
+
 def main(argv: list[str] | None = None) -> int:
     # C-3/NS-10i: one process, one degraded line at most - reset on every
     # call so an in-process test harness driving several events in a row
@@ -3523,437 +3580,449 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.event in ("stop", "subagent-stop"):
-            # Obligation 9867: a subagent's Stop runs the same claim scan and
-            # parks the same echo, but never blocks - a subagent's reply is
-            # not the one the operator is about to trust, and its transcript
-            # arrives under its own key.
-            subagent = args.event == "subagent-stop"
-            # Cursor's stop payload: {conversation_id, status, loop_count,
-            # transcript_path}; a loop_count above zero is its re-fire, the
-            # same moment Claude marks with stop_hook_active.
-            cursor_stop = current_host() == "cursor" or (
-                str(submitted.get("hook_event_name") or "") == "stop"
-                and "conversation_id" in submitted)
-            if cursor_stop and int(submitted.get("loop_count") or 0) > 0:
-                submitted["stop_hook_active"] = True
-            if subagent and not submitted.get("transcript_path"):
-                agent_transcript = (submitted.get("agent_transcript_path")
-                                    or submitted.get("agentTranscriptPath"))
-                if agent_transcript:
-                    submitted["transcript_path"] = agent_transcript
-            # S4 (obligation 4102): the claim gate at the message boundary.
-            # Seven field reports in one day ended with "claim still
-            # unused" - the verbs wait to be invoked and never are, so the
-            # check moves to the moment of claiming. Advisory ONLY: a
-            # systemMessage naming the unsupported claim-shaped sentence
-            # and the one command that records it. Never a block, never a
-            # nonzero exit, and silent when the reply carries no claim, when
-            # every claim has a record, or when the host is re-firing the
-            # hook (stop_hook_active) - a Stop hook that loops is worse
-            # than no gate at all. The reply text is read in memory from
-            # the host's own transcript and never stored (the 4018 privacy
-            # decision governs here too).
-            if submitted.get("stop_hook_active") or submitted.get("stopHookActive"):
-                # Field report 2026-09-03: "a softened rewording would have
-                # passed the same gate." Detectable at exactly this moment:
-                # the re-fire after a block, with no claim recorded since.
-                # Advisory, never a second block, once per block marker.
-                try:  # godmode: swallow-ok: Advisory, never a second block, once per block marker
-                    marker = archive.root / "godmode-done-block.json"
-                    if marker.exists():
-                        parked = json.loads(
-                            marker.read_text(encoding="utf-8"))
-                        marker.unlink(missing_ok=True)
-                        seq_then = int(parked.get("sequence", 0))
-                        claimed_since = any(
-                            r.get("sequence", 0) > seq_then
-                            for r in archive.select(kind="claim", limit=20))
-                        if not claimed_since:
-                            print(json.dumps({"systemMessage": (
-                                "godmode: the done-bar was passed by "
-                                "rewording - the work this session still "
-                                "has no claim on record; softer words do "
-                                "not create evidence")}))
-                            return 0
-                except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
-                    pass
-                return 0
-            # NS-10d, after the re-fire check above (Claude's own
-            # `stop_hook_active`/`stopHookActive`, and cursor's synthetic
-            # one set from `loop_count` above) has already returned for a
-            # re-fire - only a first pass over one Stop reaches here, so a
-            # re-fire records nothing (review S1). Still ahead of the
-            # empty-reply-text return just below: a quiet stop with no
-            # claim-shaped reply still carries a real host usage figure.
-            _record_usage_observed(archive, submitted, args.event)
-            reply_text = _final_reply_text(submitted)
-            if not reply_text:
-                return 0
-            # C-9: builder done-bar checks (scope-still-open,
-            # open-operator-asks) accept a recorded escalation for a few
-            # turns; reviewer checks (uncited-claim, unattested-hard-rule,
-            # reworded-done) never read this at all - `live_escalations`
-            # itself drops them before it ever scans a record. A
-            # subagent's hand-back never reads or ticks this: its scope is
-            # its own dispatch prompt, the same bypass `_scope_block_reason`
-            # already has.
-            #
-            # Reads and the write are split (fix round 1, S4): a read that
-            # cannot answer leaves both checks live (fail toward the
-            # existing gates, never toward a silent skip) and degrades
-            # with a record, the same convention 4e3b205 set for every
-            # other ancillary write on this path; a write failure degrades
-            # the same way without discarding whatever the read already
-            # found.
-            scope_escalation = None
-            asks_escalation = None
-            if not subagent:
-                try:
-                    from godmode_runtime.godmode_donebar import live_escalations
-                    live = live_escalations(
-                        archive, ("scope-still-open", "open-operator-asks"))
-                    scope_escalation = live.get("scope-still-open")
-                    asks_escalation = live.get("open-operator-asks")
-                except Exception:  # noqa: BLE001  # godmode: swallow-ok: C-3/NS-10i - an unreadable escalation never blocks or unblocks a guess
-                    scope_escalation = None
-                    asks_escalation = None
-                    _report_ancillary_failure(archive)
-                else:
-                    # N2: ticked only while something is actually live -
-                    # nothing to count otherwise, and an unconditional
-                    # tick would leave one record behind on every ordinary
-                    # Stop, forever.
-                    if scope_escalation or asks_escalation:
-                        try:
-                            from godmode_runtime.godmode_donebar import note_turn
-                            note_turn(archive, latest_session(archive))
-                        except Exception:  # noqa: BLE001  # godmode: swallow-ok: C-3/NS-10i - a turn tick that cannot be written costs the operator nothing this turn
-                            _report_ancillary_failure(archive)
-            # S19 item 2: quiet posture drops the ADVISORY class wholesale
-            # - claim advisories, nags, nudges, echo parking. The block
-            # gates below never read this flag: enforcement is not an
-            # advisory, and quiet must never mean unguarded.
-            quiet = _nag_posture(archive) == "quiet"
-            # This turn's tool output: a sentence restating it is a readout,
-            # not a claim (field report 2026-09-04 - the done-bar blocked a
-            # status report built entirely from godmode's own output).
-            observed = _turn_tool_output(submitted)
-            unsupported = [] if quiet else _unrecorded_claims(
-                archive, reply_text, observed)
-            # Field reports 23-25 (2026-09-09): the ask pool spanned every
-            # session the project ever had (86 open asks, up to 30 days
-            # old) and a bag-of-words match against a 90-word reply nagged
-            # on 34 of 42 real replies; only this session's own asks are a
-            # turn-boundary matter (0 of 42). Older asks stay reviewable
-            # at handover (`checkpoint --review`, session close).
-            touched = _open_obligations_touched(
-                archive, reply_text,
-                session_id=str(submitted.get("session_id") or "") or None)
-            # S3 (fix round 1): open-operator-asks escalated means SKIPPED
-            # - not deferred one turn. Read before `_nag_once` runs: while
-            # the escalation stands, this turn's touched obligations never
-            # spend the once-per-session nag budget (`_nag_once` writes
-            # `godmode-nagged.json`) and never ride the parked echo into
-            # the next prompt boundary under the "unfinished promises"
-            # name - both of those used to still fire even after the
-            # notice itself was replaced, so the check was only ever
-            # deferred by one turn and then permanently silenced once the
-            # nag budget it never should have spent was gone.
-            asks_escalation_applies = bool(asks_escalation and touched)
-            if asks_escalation_applies:
-                # A1 (final review): this also silences any `standing
-                # duty:` entries already in `touched`, not only the nag -
-                # the quiet-posture filter below that would otherwise let
-                # a standing duty survive never runs on an emptied list.
-                # Deliberate: a recorded builder reason outranks a quiet
-                # posture's own definition-of-done carve-out.
-                touched = []
-            else:
-                # Obligation 10117: each touched obligation is named once per
-                # session. The runtime no longer closes asks by word overlap:
-                # replayed on the reporter's session, that closure would have
-                # "served" an ask on 41 of 42 replies.
-                try:
-                    # `latest_session` is the module-level import: a local
-                    # import here shadowed it for the whole function and every
-                    # pre-action call crashed (caught by chunk 1, 2026-09-09).
-                    stop_session = latest_session(archive) or ""
-                    touched = _nag_once(archive, stop_session, touched)
-                except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
-                    pass
-            if quiet:
-                # Standing duties survive quiet: an operator-mandated
-                # per-task obligation is definition-of-done, not advisory
-                # (the recorded field pair died exactly this way: trimmed from the longest turns).
-                touched = [t for t in touched if t.startswith("standing duty:")]
-            # NS-10h: idle asks/obligations - decided against the reply's
-            # own full vocabulary, never the two-item-capped `touched`
-            # above (fix round 1, S1-2) - each named once, then quiet for a
-            # cooldown. Quiet posture drops this advisory too (S19 item 2).
-            resurfaced: list[str] = []
-            if not quiet:
-                try:
-                    cooldown_session = latest_session(archive) or ""
-                    now_turn, cooldown_state = _advance_cooldown_turn(
-                        archive, cooldown_session)
-                    resurfaced = _idle_resurface_lines(
-                        archive, str(submitted.get("session_id") or "") or None,
-                        reply_text, now_turn, cooldown_state)
-                    # One save for the whole Stop pass (turn advance and
-                    # touch-turn updates together) - fix round 1 nit: two
-                    # independent read-then-writes let a failed first save
-                    # survive under a stale second one.
-                    _save_cooldown_state(archive, cooldown_state)
-                except Exception:  # noqa: BLE001  # godmode: swallow-ok: C-3/NS-10i - an unreadable idle-ask surface names nothing rather than raising
-                    resurfaced = []
-                    _report_ancillary_failure(archive)
-            # The investigation nudge: the timeline the temporal claim check
-            # already reads also carries the fix-loop shape - one command
-            # red three times with mutations between the failures. That
-            # shape is the diagnosis skill's own trigger, compiled into the
-            # hook instead of left to willpower (six consecutive red CI
-            # rounds, 2026-08-31, proved willpower is not a control).
-            # Counts and points only; the timeline stores digests, so the
-            # command text never appears (the 4018 privacy decision).
-            nudge = None if quiet else _investigation_nudge(archive, submitted)
-            stall_block: str | None = None
-            # One stdout object or nothing: the host parses hook stdout as a
-            # single JSON value, and two valid objects concatenated read as
-            # "looks like JSON but is not valid JSON" - the whole delivery
-            # is then dropped (field-observed 2026-08-31, the turn a reply
-            # both touched an obligation and made a claim). Notices
-            # accumulate; the print happens once.
-            notices: list[str] = []
-            if nudge:
-                notices.append(nudge)
-            # Obligation 10116: a failed tool run this turn names the RCA
-            # verbs once per session, read from the turn's tool output.
-            try:
-                from godmode_runtime.godmode_attest import latest_session as _ls
-                from godmode_runtime.godmode_precheck import failure_nudge
-                failed_line = failure_nudge(archive, observed, _ls(archive) or "",
-                                            project=Path(anchor.project_root))
-                if failed_line:
-                    notices.append(failed_line)
-            except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
-                pass
-            if not quiet:
-                notices.extend(_marginal_return_nudges(
-                    archive, submitted, _session_key(submitted)))
-                notices.extend(_tripwire_nudges(
-                    archive, _session_key(submitted), Path(anchor.project_root)))
-                if not subagent:
-                    notices.extend(_external_verdict_nudge(
-                        submitted, reply_text, Path(anchor.project_root)))
-                    try:
-                        notices.extend(_design_read_nudge(submitted, reply_text, Path(anchor.project_root)))
-                    except Exception:  # noqa: BLE001  # godmode: swallow-ok: unreadable design documents nudge nothing
+            def _stop_body() -> int:
+                # Obligation 9867: a subagent's Stop runs the same claim scan and
+                # parks the same echo, but never blocks - a subagent's reply is
+                # not the one the operator is about to trust, and its transcript
+                # arrives under its own key.
+                subagent = args.event == "subagent-stop"
+                # Cursor's stop payload: {conversation_id, status, loop_count,
+                # transcript_path}; a loop_count above zero is its re-fire, the
+                # same moment Claude marks with stop_hook_active.
+                cursor_stop = current_host() == "cursor" or (
+                    str(submitted.get("hook_event_name") or "") == "stop"
+                    and "conversation_id" in submitted)
+                if cursor_stop and int(submitted.get("loop_count") or 0) > 0:
+                    submitted["stop_hook_active"] = True
+                if subagent and not submitted.get("transcript_path"):
+                    agent_transcript = (submitted.get("agent_transcript_path")
+                                        or submitted.get("agentTranscriptPath"))
+                    if agent_transcript:
+                        submitted["transcript_path"] = agent_transcript
+                # S4 (obligation 4102): the claim gate at the message boundary.
+                # Seven field reports in one day ended with "claim still
+                # unused" - the verbs wait to be invoked and never are, so the
+                # check moves to the moment of claiming. Advisory ONLY: a
+                # systemMessage naming the unsupported claim-shaped sentence
+                # and the one command that records it. Never a block, never a
+                # nonzero exit, and silent when the reply carries no claim, when
+                # every claim has a record, or when the host is re-firing the
+                # hook (stop_hook_active) - a Stop hook that loops is worse
+                # than no gate at all. The reply text is read in memory from
+                # the host's own transcript and never stored (the 4018 privacy
+                # decision governs here too).
+                if submitted.get("stop_hook_active") or submitted.get("stopHookActive"):
+                    # Field report 2026-09-03: "a softened rewording would have
+                    # passed the same gate." Detectable at exactly this moment:
+                    # the re-fire after a block, with no claim recorded since.
+                    # Advisory, never a second block, once per block marker.
+                    try:  # godmode: swallow-ok: Advisory, never a second block, once per block marker
+                        marker = archive.root / "godmode-done-block.json"
+                        if marker.exists():
+                            parked = json.loads(
+                                marker.read_text(encoding="utf-8"))
+                            marker.unlink(missing_ok=True)
+                            seq_then = int(parked.get("sequence", 0))
+                            claimed_since = any(
+                                r.get("sequence", 0) > seq_then
+                                for r in archive.select(kind="claim", limit=20))
+                            if not claimed_since:
+                                print(json.dumps({"systemMessage": (
+                                    "godmode: the done-bar was passed by "
+                                    "rewording - the work this session still "
+                                    "has no claim on record; softer words do "
+                                    "not create evidence")}))
+                                return 0
+                    except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                         pass
-                    iteration_notes, stall_block = _iteration_notices(
-                        archive, Path(anchor.project_root), submitted)
-                    notices.extend(iteration_notes)
-                    turn_note = _turn_diff_nudge(archive, Path(anchor.project_root), submitted)
-                    if turn_note:
-                        notices.append(turn_note)
-                    swallow_note = _swallowed_script_nudge(
-                        submitted.get("transcript_path") or submitted.get("transcriptPath"))
-                    if swallow_note:
-                        notices.append(swallow_note)
-            if asks_escalation_applies:
-                # S3: open-operator-asks skipped, not deferred - the
-                # reason a builder recorded rides instead of the nag,
-                # every turn the escalation stays unexpired (it costs no
-                # part of the once-per-session nag budget to say this).
-                notices.append(
-                    "godmode: open-operator-asks escalated for this "
-                    f"session - {asks_escalation}")
-            elif touched:
-                notices.append(
-                    "godmode: this reply relates to unfinished "
-                    "promises on record: " + ", ".join(touched)
-                    + ". Act on them, or close each with the command its "
-                    "line shows - otherwise they keep coming back.")
-            if resurfaced:
-                # The cooldown for each of these lines was already burned
-                # (record_resurfaced, above) - insert at the front so the
-                # notices[:2] clip below cannot drop a line whose silence
-                # is already paid for.
-                notices.insert(0,
-                    "godmode: idle and worth another look - "
-                    + "; ".join(resurfaced))
-            if unsupported:
-                shown = "; ".join(
-                    f"'{_ascii_echo(s)[:160]}'" for s in unsupported[:2])
-                if len(unsupported) > 2:
-                    shown += f" (+{len(unsupported) - 2} more)"
-                notices.append(
-                    f"godmode: {len(unsupported)} claim-shaped sentence(s) in this "
-                    f"reply have nothing backing them on record: {shown}. "
-                    "Either save each as a claim with its proof (`godmode "
-                    "claim \"<text>\" --cite <evidence>`) or use softer "
-                    "wording. Recording is honest: weak proof gets a weak "
-                    "grade automatically.")
-            if touched or unsupported:
-                # S8 (obligation 4538, self-census 2026-08-29): the
-                # systemMessage reaches the OPERATOR; the model that made
-                # the claim never sees it, so nothing changes next turn
-                # (fifteen sessions of "claim unused" measured exactly
-                # this). The flagged sentences - the model's OWN output,
-                # bounded - are parked beside the archive, outside it, and
-                # deleted the moment the next prompt boundary delivers
-                # them back.
-                try:
-                    echo = archive.root / "godmode-claim-echo.json"
-                    parked = {}
-                    if echo.exists():
-                        parked = json.loads(echo.read_text(encoding="utf-8"))
-                    if touched:
-                        parked["obligations"] = touched
-                    if unsupported:
-                        parked["sentences"] = [
-                            _ascii_echo(s)[:200] for s in unsupported[:3]]
-                    parked["session"] = _session_key(submitted)
-                    echo.write_text(json.dumps(parked, ensure_ascii=False),
-                                    encoding="utf-8")
-                except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
-                    pass
-            # The completion gate: a DONE-shaped sentence among the
-            # unrecorded claims is the one case advisory is too late for -
-            # the turn is ending and the operator is about to trust it.
-            # Blocked ONCE with the recording commands as the corrective
-            # reason; the host re-fires with stop_hook_active set and that
-            # path returned clean above, so the bound costs nothing. Every
-            # other notice stays advisory in the same single object.
-            done_shaped = _unrecorded_done_claims(archive, reply_text, observed)
-            # Scope gate (2026-09-10): "everything is complete" with this
-            # session's asks, plan steps or criteria still open on the
-            # record is the "one more item, next release" pattern. Blocked
-            # once with the list; the re-fire passes like the done-bar.
-            # I-9: a subagent's own reply carries no `session_id` this hook
-            # ever sees, so `open_scope`'s session filter (skipped when
-            # `session_id` is falsy) let EVERY session's open asks through -
-            # confirmed by hand: a subagent whose transcript said nothing
-            # but "Checkpoint complete." was blocked with `decision: block`
-            # over an ask the PARENT session, not it, had made. A subagent's
-            # scope is its own dispatch prompt; the parent's open asks are
-            # context for it, never a gate on it.
-            scope_reason = None if subagent else _scope_block_reason(
-                archive, reply_text, str(submitted.get("session_id") or "") or None)
-            if scope_reason and scope_escalation:
-                # scope-still-open skipped: the block never fires while
-                # the escalation stands; its reason rides as a notice
-                # instead.
-                notices.append(
-                    "godmode: scope-still-open escalated for this "
-                    f"session - {scope_escalation}")
-                scope_reason = None
-            if scope_reason and not done_shaped:
-                block_body = {
-                    "decision": "continue" if current_host() == "antigravity" else "block",
-                    "reason": scope_reason,
-                    "systemMessage": "\n".join(notices) if notices else
-                        "godmode: completion blocked once pending the open scope; the re-fire passes.",
-                }
-                print(json.dumps(block_body, ensure_ascii=False))
-                return 0
-            if stall_block and not done_shaped:
-                from godmode_runtime.godmode_lens import render_three_zone
-                print(json.dumps({
-                    "decision": "continue" if current_host() == "antigravity" else "block",
-                    "reason": render_three_zone(
-                        "godmode gate, deliberate block, not a crash - STALL: rounds "
-                        "keep ending with nothing changed, attested or decided.",
-                        stall_block[len('godmode: '):],
-                        ["An operator-stated record clears it; continuing does not."]),
-                    "systemMessage": "\n".join(notices) if notices else stall_block,
-                }, ensure_ascii=False))
-                return 0
-            # Deterministic grade at the bar (obligations 10118, 10245): a
-            # run-shaped done sentence recorded on an asserted grade is
-            # named once too, with the executed check as the remedy.
-            settleable = _settleable_done_claims(archive, reply_text, observed)
-            done_shaped = done_shaped + [s for s in settleable if s not in done_shaped]
-            if done_shaped:
-                # Marker for the re-fire: if no claim lands between this
-                # block and the re-fire, the gate was passed by rewording
-                # and the re-fire says so (advisory, never a second block).
-                try:
-                    last = 0
-                    for r in archive.select(limit=1):
-                        last = int(r.get("sequence", 0))
-                    (archive.root / "godmode-done-block.json").write_text(
-                        json.dumps({"sequence": last}), encoding="utf-8")
-                except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
-                    pass
-                shown = "; ".join(
-                    f"'{_ascii_echo(s)[:120]}'" for s in done_shaped[:2])
-                # Field report 2026-09-03: "3 statements" with two quoted
-                # read as a counting bug; the truncation names itself.
-                if len(done_shaped) > 2:
-                    shown += f" (+{len(done_shaped) - 2} more)"
-                # Tenth field report 2026-09-05: Antigravity's Stop contract
-                # keeps the agent working on {"decision": "continue"}; the
-                # Claude/Grok spelling is "block". Same reason either way.
-                from godmode_runtime.godmode_lens import render_three_zone
-                block_body = {
-                    "decision": "continue" if current_host() == "antigravity" else "block",
-                    "reason": render_three_zone(
-                        f"godmode gate, deliberate block, not a crash - THE DONE BAR: this reply says work is "
-                        f"done, but {len(done_shaped)} of those statements "
-                        f"have no evidence on record, or only an asserted grade "
-                        f"an executed check would settle.",
-                        f"Unbacked: {shown}.",
-                        ["Record each with the check that proves it: `godmode claim "
-                         "\"<text>\" --grade verified --cite \"cmd:<check>\" "
-                         "--verify` runs the check and attests it.",
-                         "Or `godmode claim \"<text>\" --cite <evidence>` records an "
-                         "observed grade.",
-                         "Or soften the wording. Then finish. This check blocks only once."]),
-                    "systemMessage": "\n".join(notices) if notices else
-                        "godmode: completion blocked once pending a record; "
-                        "the re-fire passes.",
-                }
-                if subagent:
-                    # Advisory only: the reason the main stop would block on
-                    # becomes the note, and the parked echo carries it to
-                    # the next prompt boundary.
-                    print(json.dumps({"systemMessage": block_body["reason"]},
-                                     ensure_ascii=False))
-                elif cursor_stop:
-                    # Cursor's stop contract (obligation 9869): a
-                    # `followup_message` keeps the agent working, bounded by
-                    # the manifest's loop_limit; Claude's decision key means
-                    # nothing there.
-                    print(json.dumps({"followup_message": block_body["reason"]},
-                                     ensure_ascii=False))
+                    return 0
+                # NS-10d, after the re-fire check above (Claude's own
+                # `stop_hook_active`/`stopHookActive`, and cursor's synthetic
+                # one set from `loop_count` above) has already returned for a
+                # re-fire - only a first pass over one Stop reaches here, so a
+                # re-fire records nothing (review S1). Still ahead of the
+                # empty-reply-text return just below: a quiet stop with no
+                # claim-shaped reply still carries a real host usage figure.
+                _record_usage_observed(archive, submitted, args.event)
+                reply_text = _final_reply_text(submitted)
+                if not reply_text:
+                    return 0
+                # C-9: builder done-bar checks (scope-still-open,
+                # open-operator-asks) accept a recorded escalation for a few
+                # turns; reviewer checks (uncited-claim, unattested-hard-rule,
+                # reworded-done) never read this at all - `live_escalations`
+                # itself drops them before it ever scans a record. A
+                # subagent's hand-back never reads or ticks this: its scope is
+                # its own dispatch prompt, the same bypass `_scope_block_reason`
+                # already has.
+                #
+                # Reads and the write are split (fix round 1, S4): a read that
+                # cannot answer leaves both checks live (fail toward the
+                # existing gates, never toward a silent skip) and degrades
+                # with a record, the same convention 4e3b205 set for every
+                # other ancillary write on this path; a write failure degrades
+                # the same way without discarding whatever the read already
+                # found.
+                scope_escalation = None
+                asks_escalation = None
+                if not subagent:
+                    try:
+                        from godmode_runtime.godmode_donebar import live_escalations
+                        live = live_escalations(
+                            archive, ("scope-still-open", "open-operator-asks"))
+                        scope_escalation = live.get("scope-still-open")
+                        asks_escalation = live.get("open-operator-asks")
+                    except Exception:  # noqa: BLE001  # godmode: swallow-ok: C-3/NS-10i - an unreadable escalation never blocks or unblocks a guess
+                        scope_escalation = None
+                        asks_escalation = None
+                        _report_ancillary_failure(archive)
+                    else:
+                        # N2: ticked only while something is actually live -
+                        # nothing to count otherwise, and an unconditional
+                        # tick would leave one record behind on every ordinary
+                        # Stop, forever.
+                        if scope_escalation or asks_escalation:
+                            try:
+                                from godmode_runtime.godmode_donebar import note_turn
+                                note_turn(archive, latest_session(archive))
+                            except Exception:  # noqa: BLE001  # godmode: swallow-ok: C-3/NS-10i - a turn tick that cannot be written costs the operator nothing this turn
+                                _report_ancillary_failure(archive)
+                # S19 item 2: quiet posture drops the ADVISORY class wholesale
+                # - claim advisories, nags, nudges, echo parking. The block
+                # gates below never read this flag: enforcement is not an
+                # advisory, and quiet must never mean unguarded.
+                quiet = _nag_posture(archive) == "quiet"
+                # This turn's tool output: a sentence restating it is a readout,
+                # not a claim (field report 2026-09-04 - the done-bar blocked a
+                # status report built entirely from godmode's own output).
+                observed = _turn_tool_output(submitted)
+                unsupported = [] if quiet else _unrecorded_claims(
+                    archive, reply_text, observed)
+                # Field reports 23-25 (2026-09-09): the ask pool spanned every
+                # session the project ever had (86 open asks, up to 30 days
+                # old) and a bag-of-words match against a 90-word reply nagged
+                # on 34 of 42 real replies; only this session's own asks are a
+                # turn-boundary matter (0 of 42). Older asks stay reviewable
+                # at handover (`checkpoint --review`, session close).
+                touched = _open_obligations_touched(
+                    archive, reply_text,
+                    session_id=str(submitted.get("session_id") or "") or None)
+                # S3 (fix round 1): open-operator-asks escalated means SKIPPED
+                # - not deferred one turn. Read before `_nag_once` runs: while
+                # the escalation stands, this turn's touched obligations never
+                # spend the once-per-session nag budget (`_nag_once` writes
+                # `godmode-nagged.json`) and never ride the parked echo into
+                # the next prompt boundary under the "unfinished promises"
+                # name - both of those used to still fire even after the
+                # notice itself was replaced, so the check was only ever
+                # deferred by one turn and then permanently silenced once the
+                # nag budget it never should have spent was gone.
+                asks_escalation_applies = bool(asks_escalation and touched)
+                if asks_escalation_applies:
+                    # A1 (final review): this also silences any `standing
+                    # duty:` entries already in `touched`, not only the nag -
+                    # the quiet-posture filter below that would otherwise let
+                    # a standing duty survive never runs on an emptied list.
+                    # Deliberate: a recorded builder reason outranks a quiet
+                    # posture's own definition-of-done carve-out.
+                    touched = []
                 else:
-                    print(json.dumps(block_body, ensure_ascii=False))
-                return 0
-            if notices:
-                # At most two notices per stop (S15 item 6): skimmed is
-                # dismissed, and every wire's receipt already guarantees
-                # its own turn will come.
-                shown_notices = notices[:2]
-                if len(notices) > 2:
-                    shown_notices.append(
-                        f"({len(notices) - 2} more in `godmode doctor`)")
-                print(json.dumps({"systemMessage": "\n".join(shown_notices)}))
-                # Obligation 9860: a Stop systemMessage reaches the operator
-                # only. Parked beside the claim echo, the notices reach the
-                # model at the next prompt boundary (or, on Grok, on the
-                # first allowed tool call).
+                    # Obligation 10117: each touched obligation is named once per
+                    # session. The runtime no longer closes asks by word overlap:
+                    # replayed on the reporter's session, that closure would have
+                    # "served" an ask on 41 of 42 replies.
+                    try:
+                        # `latest_session` is the module-level import: a local
+                        # import here shadowed it for the whole function and every
+                        # pre-action call crashed (caught by chunk 1, 2026-09-09).
+                        stop_session = latest_session(archive) or ""
+                        touched = _nag_once(archive, stop_session, touched)
+                    except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
+                        pass
+                if quiet:
+                    # Standing duties survive quiet: an operator-mandated
+                    # per-task obligation is definition-of-done, not advisory
+                    # (the recorded field pair died exactly this way: trimmed from the longest turns).
+                    touched = [t for t in touched if t.startswith("standing duty:")]
+                # NS-10h: idle asks/obligations - decided against the reply's
+                # own full vocabulary, never the two-item-capped `touched`
+                # above (fix round 1, S1-2) - each named once, then quiet for a
+                # cooldown. Quiet posture drops this advisory too (S19 item 2).
+                resurfaced: list[str] = []
+                if not quiet:
+                    try:
+                        cooldown_session = latest_session(archive) or ""
+                        now_turn, cooldown_state = _advance_cooldown_turn(
+                            archive, cooldown_session)
+                        resurfaced = _idle_resurface_lines(
+                            archive, str(submitted.get("session_id") or "") or None,
+                            reply_text, now_turn, cooldown_state)
+                        # One save for the whole Stop pass (turn advance and
+                        # touch-turn updates together) - fix round 1 nit: two
+                        # independent read-then-writes let a failed first save
+                        # survive under a stale second one.
+                        _save_cooldown_state(archive, cooldown_state)
+                    except Exception:  # noqa: BLE001  # godmode: swallow-ok: C-3/NS-10i - an unreadable idle-ask surface names nothing rather than raising
+                        resurfaced = []
+                        _report_ancillary_failure(archive)
+                # The investigation nudge: the timeline the temporal claim check
+                # already reads also carries the fix-loop shape - one command
+                # red three times with mutations between the failures. That
+                # shape is the diagnosis skill's own trigger, compiled into the
+                # hook instead of left to willpower (six consecutive red CI
+                # rounds, 2026-08-31, proved willpower is not a control).
+                # Counts and points only; the timeline stores digests, so the
+                # command text never appears (the 4018 privacy decision).
+                nudge = None if quiet else _investigation_nudge(archive, submitted)
+                stall_block: str | None = None
+                # One stdout object or nothing: the host parses hook stdout as a
+                # single JSON value, and two valid objects concatenated read as
+                # "looks like JSON but is not valid JSON" - the whole delivery
+                # is then dropped (field-observed 2026-08-31, the turn a reply
+                # both touched an obligation and made a claim). Notices
+                # accumulate; the print happens once.
+                notices: list[str] = []
+                if nudge:
+                    notices.append(nudge)
+                # Obligation 10116: a failed tool run this turn names the RCA
+                # verbs once per session, read from the turn's tool output.
                 try:
-                    echo = archive.root / "godmode-claim-echo.json"
-                    parked = {}
-                    if echo.exists():
-                        parked = json.loads(echo.read_text(encoding="utf-8"))
-                    parked["notices"] = [_ascii_echo(n)[:400] for n in shown_notices]
-                    parked["session"] = _session_key(submitted)
-                    echo.write_text(json.dumps(parked, ensure_ascii=False),
-                                    encoding="utf-8")
+                    from godmode_runtime.godmode_attest import latest_session as _ls
+                    from godmode_runtime.godmode_precheck import failure_nudge
+                    failed_line = failure_nudge(archive, observed, _ls(archive) or "",
+                                                project=Path(anchor.project_root))
+                    if failed_line:
+                        notices.append(failed_line)
                 except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                     pass
-            return 0
+                if not quiet:
+                    notices.extend(_marginal_return_nudges(
+                        archive, submitted, _session_key(submitted)))
+                    notices.extend(_tripwire_nudges(
+                        archive, _session_key(submitted), Path(anchor.project_root)))
+                    if not subagent:
+                        notices.extend(_external_verdict_nudge(
+                            submitted, reply_text, Path(anchor.project_root)))
+                        try:
+                            notices.extend(_design_read_nudge(submitted, reply_text, Path(anchor.project_root)))
+                        except Exception:  # noqa: BLE001  # godmode: swallow-ok: unreadable design documents nudge nothing
+                            pass
+                        iteration_notes, stall_block = _iteration_notices(
+                            archive, Path(anchor.project_root), submitted)
+                        notices.extend(iteration_notes)
+                        turn_note = _turn_diff_nudge(archive, Path(anchor.project_root), submitted)
+                        if turn_note:
+                            notices.append(turn_note)
+                        swallow_note = _swallowed_script_nudge(
+                            submitted.get("transcript_path") or submitted.get("transcriptPath"))
+                        if swallow_note:
+                            notices.append(swallow_note)
+                if asks_escalation_applies:
+                    # S3: open-operator-asks skipped, not deferred - the
+                    # reason a builder recorded rides instead of the nag,
+                    # every turn the escalation stays unexpired (it costs no
+                    # part of the once-per-session nag budget to say this).
+                    notices.append(
+                        "godmode: open-operator-asks escalated for this "
+                        f"session - {asks_escalation}")
+                elif touched:
+                    notices.append(
+                        "godmode: this reply relates to unfinished "
+                        "promises on record: " + ", ".join(touched)
+                        + ". Act on them, or close each with the command its "
+                        "line shows - otherwise they keep coming back.")
+                if resurfaced:
+                    # The cooldown for each of these lines was already burned
+                    # (record_resurfaced, above) - insert at the front so the
+                    # notices[:2] clip below cannot drop a line whose silence
+                    # is already paid for.
+                    notices.insert(0,
+                        "godmode: idle and worth another look - "
+                        + "; ".join(resurfaced))
+                if unsupported:
+                    shown = "; ".join(
+                        f"'{_ascii_echo(s)[:160]}'" for s in unsupported[:2])
+                    if len(unsupported) > 2:
+                        shown += f" (+{len(unsupported) - 2} more)"
+                    notices.append(
+                        f"godmode: {len(unsupported)} claim-shaped sentence(s) in this "
+                        f"reply have nothing backing them on record: {shown}. "
+                        "Either save each as a claim with its proof (`godmode "
+                        "claim \"<text>\" --cite <evidence>`) or use softer "
+                        "wording. Recording is honest: weak proof gets a weak "
+                        "grade automatically.")
+                if touched or unsupported:
+                    # S8 (obligation 4538, self-census 2026-08-29): the
+                    # systemMessage reaches the OPERATOR; the model that made
+                    # the claim never sees it, so nothing changes next turn
+                    # (fifteen sessions of "claim unused" measured exactly
+                    # this). The flagged sentences - the model's OWN output,
+                    # bounded - are parked beside the archive, outside it, and
+                    # deleted the moment the next prompt boundary delivers
+                    # them back.
+                    try:
+                        echo = archive.root / "godmode-claim-echo.json"
+                        parked = {}
+                        if echo.exists():
+                            parked = json.loads(echo.read_text(encoding="utf-8"))
+                        if touched:
+                            parked["obligations"] = touched
+                        if unsupported:
+                            parked["sentences"] = [
+                                _ascii_echo(s)[:200] for s in unsupported[:3]]
+                        parked["session"] = _session_key(submitted)
+                        echo.write_text(json.dumps(parked, ensure_ascii=False),
+                                        encoding="utf-8")
+                    except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
+                        pass
+                # The completion gate: a DONE-shaped sentence among the
+                # unrecorded claims is the one case advisory is too late for -
+                # the turn is ending and the operator is about to trust it.
+                # Blocked ONCE with the recording commands as the corrective
+                # reason; the host re-fires with stop_hook_active set and that
+                # path returned clean above, so the bound costs nothing. Every
+                # other notice stays advisory in the same single object.
+                done_shaped = _unrecorded_done_claims(archive, reply_text, observed)
+                # Scope gate (2026-09-10): "everything is complete" with this
+                # session's asks, plan steps or criteria still open on the
+                # record is the "one more item, next release" pattern. Blocked
+                # once with the list; the re-fire passes like the done-bar.
+                # I-9: a subagent's own reply carries no `session_id` this hook
+                # ever sees, so `open_scope`'s session filter (skipped when
+                # `session_id` is falsy) let EVERY session's open asks through -
+                # confirmed by hand: a subagent whose transcript said nothing
+                # but "Checkpoint complete." was blocked with `decision: block`
+                # over an ask the PARENT session, not it, had made. A subagent's
+                # scope is its own dispatch prompt; the parent's open asks are
+                # context for it, never a gate on it.
+                scope_reason = None if subagent else _scope_block_reason(
+                    archive, reply_text, str(submitted.get("session_id") or "") or None)
+                if scope_reason and scope_escalation:
+                    # scope-still-open skipped: the block never fires while
+                    # the escalation stands; its reason rides as a notice
+                    # instead.
+                    notices.append(
+                        "godmode: scope-still-open escalated for this "
+                        f"session - {scope_escalation}")
+                    scope_reason = None
+                if scope_reason and not done_shaped:
+                    block_body = {
+                        "decision": "continue" if current_host() == "antigravity" else "block",
+                        "reason": scope_reason,
+                        "systemMessage": "\n".join(notices) if notices else
+                            "godmode: completion blocked once pending the open scope; the re-fire passes.",
+                    }
+                    print(json.dumps(block_body, ensure_ascii=False))
+                    return 0
+                if stall_block and not done_shaped:
+                    from godmode_runtime.godmode_lens import render_three_zone
+                    print(json.dumps({
+                        "decision": "continue" if current_host() == "antigravity" else "block",
+                        "reason": render_three_zone(
+                            "godmode gate, deliberate block, not a crash - STALL: rounds "
+                            "keep ending with nothing changed, attested or decided.",
+                            stall_block[len('godmode: '):],
+                            ["An operator-stated record clears it; continuing does not."]),
+                        "systemMessage": "\n".join(notices) if notices else stall_block,
+                    }, ensure_ascii=False))
+                    return 0
+                # Deterministic grade at the bar (obligations 10118, 10245): a
+                # run-shaped done sentence recorded on an asserted grade is
+                # named once too, with the executed check as the remedy.
+                settleable = _settleable_done_claims(archive, reply_text, observed)
+                done_shaped = done_shaped + [s for s in settleable if s not in done_shaped]
+                if done_shaped:
+                    # Marker for the re-fire: if no claim lands between this
+                    # block and the re-fire, the gate was passed by rewording
+                    # and the re-fire says so (advisory, never a second block).
+                    try:
+                        last = 0
+                        for r in archive.select(limit=1):
+                            last = int(r.get("sequence", 0))
+                        (archive.root / "godmode-done-block.json").write_text(
+                            json.dumps({"sequence": last}), encoding="utf-8")
+                    except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
+                        pass
+                    shown = "; ".join(
+                        f"'{_ascii_echo(s)[:120]}'" for s in done_shaped[:2])
+                    # Field report 2026-09-03: "3 statements" with two quoted
+                    # read as a counting bug; the truncation names itself.
+                    if len(done_shaped) > 2:
+                        shown += f" (+{len(done_shaped) - 2} more)"
+                    # Tenth field report 2026-09-05: Antigravity's Stop contract
+                    # keeps the agent working on {"decision": "continue"}; the
+                    # Claude/Grok spelling is "block". Same reason either way.
+                    from godmode_runtime.godmode_lens import render_three_zone
+                    block_body = {
+                        "decision": "continue" if current_host() == "antigravity" else "block",
+                        "reason": render_three_zone(
+                            f"godmode gate, deliberate block, not a crash - THE DONE BAR: this reply says work is "
+                            f"done, but {len(done_shaped)} of those statements "
+                            f"have no evidence on record, or only an asserted grade "
+                            f"an executed check would settle.",
+                            f"Unbacked: {shown}.",
+                            ["Record each with the check that proves it: `godmode claim "
+                             "\"<text>\" --grade verified --cite \"cmd:<check>\" "
+                             "--verify` runs the check and attests it.",
+                             "Or `godmode claim \"<text>\" --cite <evidence>` records an "
+                             "observed grade.",
+                             "Or soften the wording. Then finish. This check blocks only once."]),
+                        "systemMessage": "\n".join(notices) if notices else
+                            "godmode: completion blocked once pending a record; "
+                            "the re-fire passes.",
+                    }
+                    if subagent:
+                        # Advisory only: the reason the main stop would block on
+                        # becomes the note, and the parked echo carries it to
+                        # the next prompt boundary.
+                        print(json.dumps({"systemMessage": block_body["reason"]},
+                                         ensure_ascii=False))
+                    elif cursor_stop:
+                        # Cursor's stop contract (obligation 9869): a
+                        # `followup_message` keeps the agent working, bounded by
+                        # the manifest's loop_limit; Claude's decision key means
+                        # nothing there.
+                        print(json.dumps({"followup_message": block_body["reason"]},
+                                         ensure_ascii=False))
+                    else:
+                        print(json.dumps(block_body, ensure_ascii=False))
+                    return 0
+                if notices:
+                    # At most two notices per stop (S15 item 6): skimmed is
+                    # dismissed, and every wire's receipt already guarantees
+                    # its own turn will come.
+                    shown_notices = notices[:2]
+                    if len(notices) > 2:
+                        shown_notices.append(
+                            f"({len(notices) - 2} more in `godmode doctor`)")
+                    print(json.dumps({"systemMessage": "\n".join(shown_notices)}))
+                    # Obligation 9860: a Stop systemMessage reaches the operator
+                    # only. Parked beside the claim echo, the notices reach the
+                    # model at the next prompt boundary (or, on Grok, on the
+                    # first allowed tool call).
+                    try:
+                        echo = archive.root / "godmode-claim-echo.json"
+                        parked = {}
+                        if echo.exists():
+                            parked = json.loads(echo.read_text(encoding="utf-8"))
+                        parked["notices"] = [_ascii_echo(n)[:400] for n in shown_notices]
+                        parked["session"] = _session_key(submitted)
+                        echo.write_text(json.dumps(parked, ensure_ascii=False),
+                                        encoding="utf-8")
+                    except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
+                        pass
+                return 0
+
+            from godmode_runtime.godmode_projectmode import project_mode
+            if project_mode(archive) == "strict":
+                return _stop_body()
+            import contextlib
+            import io
+            _stop_buffer = io.StringIO()
+            with contextlib.redirect_stdout(_stop_buffer):
+                _stop_exit = _stop_body()
+            _emit_advise_stop(archive, submitted, _stop_buffer.getvalue())
+            return _stop_exit
 
         if args.event == "user-prompt":
             # Recorded here because it cannot be recovered anywhere else. The
@@ -3996,7 +4065,7 @@ def main(argv: list[str] | None = None) -> int:
                     # on a host that states identity) still dies unread.
                     if current is not None and parked.get("session") != current:
                         parked = {}
-                    contexts.extend(_echo_contexts(parked))
+                    contexts.extend(_echo_contexts(parked, archive, current))
             except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
             # S8 addendum: the parked continuity brief, for hosts that

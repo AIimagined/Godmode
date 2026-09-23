@@ -1,0 +1,1 @@
+- Godmode now advises on quality by default: the completion, stall and claim checks report once per session and never block. `godmode config mode strict` restores blocking. Checks on pushes, tags and releases are the same in both modes.

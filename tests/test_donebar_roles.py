@@ -292,6 +292,12 @@ class StopHookEscalationTests(unittest.TestCase):
         subprocess.run([sys.executable, "-B", str(GODMODE_CLI), "--project",
                         str(self.project), "init"], cwd=self.project, check=True,
                        capture_output=True, text=True, env=env)
+        # R1's advise mode is a separate module's concern
+        # (test_mode_switch.py); this class asserts the scope gate's own
+        # enforcement, so it is pinned strict.
+        subprocess.run([sys.executable, "-B", str(GODMODE_CLI), "--project",
+                        str(self.project), "config", "mode", "strict"],
+                       cwd=self.project, check=True, capture_output=True, text=True, env=env)
         run_hook("session-start",
                  {"hook_event_name": "SessionStart", "cwd": str(self.project)},
                  self.project)

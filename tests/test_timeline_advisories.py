@@ -37,6 +37,7 @@ for entry in (SCRIPTS, PLUGIN_ROOT):
 
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
+from godmode_runtime.godmode_projectmode import set_project_mode  # noqa: E402
 
 HOOK = PLUGIN_ROOT / "hooks" / "godmode_session_hook.py"
 
@@ -181,7 +182,11 @@ if __name__ == "__main__":
 class NagPostureTests(unittest.TestCase):
     def test_quiet_posture_silences_advisories_but_not_the_gate(self) -> None:
         import json as _json
-        with _project() as (project, state, _archive):
+        with _project() as (project, state, archive):
+            # The completion gate's own enforcement is under test past this
+            # point; R1's advise mode is a separate module's concern
+            # (test_mode_switch.py).
+            set_project_mode(archive, "strict")
             (project / ".godmode-authorization-policy.json").write_text(
                 _json.dumps({"nag_posture": "quiet"}), encoding="utf-8")
             lines: list[str] = []

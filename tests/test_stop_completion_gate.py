@@ -32,6 +32,7 @@ for entry in (SCRIPTS, PLUGIN_ROOT):
 
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
+from godmode_runtime.godmode_projectmode import set_project_mode  # noqa: E402
 
 HOOK = HOOKS / "godmode_session_hook.py"
 
@@ -51,6 +52,12 @@ def _project():
                              clear=False):
             archive = Chronicle(resolve_anchor(root))
             archive.initialize()
+            # This module is about the completion gate ENFORCING - R1's
+            # advise mode would turn its blocks into once-per-session
+            # advice instead, which is a separate module's concern
+            # (test_mode_switch.py); pin strict so every test here still
+            # exercises the enforcement it names.
+            set_project_mode(archive, "strict")
             yield root, state, archive
 
 

@@ -834,6 +834,19 @@ def cmd_config_check(args: argparse.Namespace, runtime: Runtime) -> CommandResul
     )
 
 
+def cmd_config_mode(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """R1: print this project's mode with no `value`, or set it. `advise`
+    (the default; a missing or unreadable mode file reads as `advise`)
+    leaves every quality-class Stop gate advisory; `strict` is today's
+    exact behaviour, unchanged. The harm gates (tag/release/push checks on
+    the pre-action path) never read this - they enforce in either mode."""
+    from .godmode_projectmode import project_mode, set_project_mode
+    if args.value is None:
+        return CommandResult({"mode": project_mode(runtime.archive)})
+    set_project_mode(runtime.archive, args.value)
+    return CommandResult({"mode": args.value})
+
+
 OPERATOR_FILENAME = ".godmode-operator.json"
 _OPERATOR_FIELDS = {
     "persona": str, "hard_gates": list, "communication": str, "decision_authority": str,
@@ -7254,6 +7267,15 @@ def _build_parser() -> argparse.ArgumentParser:
     config = sub.add_parser("config", help="Validate every .godmode-*.json config file")
     config_sub = config.add_subparsers(dest="config_command", required=True)
     config_sub.add_parser("check").set_defaults(handler=cmd_config_check)
+    config_mode = config_sub.add_parser(
+        "mode",
+        help="Print this project's mode, or set it (R1: enforce harm, advise "
+             "on quality). `advise` (default) leaves every quality-class Stop "
+             "gate advisory; `strict` is today's exact behaviour, unchanged. "
+             "The harm gates (tag/release/push checks) never read this.")
+    config_mode.add_argument("value", nargs="?", choices=("advise", "strict"), default=None,
+                             help="Omit to print the current mode")
+    config_mode.set_defaults(handler=cmd_config_mode)
     charter.set_defaults(handler=cmd_charter)
 
     session = sub.add_parser("session", help="Open or close an attested session")
