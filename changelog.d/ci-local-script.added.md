@@ -1,0 +1,1 @@
+- `scripts/dev/ci_local.py` runs the workflow's gate list and the affected tests on HEAD in a disposable worktree, and `scripts/dev/pre-push` runs it before every push.

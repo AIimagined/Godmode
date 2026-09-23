@@ -1,0 +1,5 @@
+#!/bin/sh
+# Runs CI's gate list and the affected tests on HEAD in a disposable worktree;
+# a red result refuses the push. Installed with: cp scripts/dev/pre-push .git/hooks/pre-push
+cd "$(git rev-parse --show-toplevel)" || exit 1
+exec python scripts/dev/ci_local.py
