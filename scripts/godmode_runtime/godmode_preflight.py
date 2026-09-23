@@ -321,6 +321,12 @@ def _head_sha(repo: Path) -> str:
     return done.stdout.decode("utf-8", errors="replace").strip() if done.returncode == 0 else ""
 
 
+def _head_tree(repo: Path) -> str:
+    """The tree HEAD points at: a message-only rewrite keeps it, any file change moves it."""
+    done = _git(repo, "rev-parse", "HEAD^{tree}")
+    return done.stdout.decode("utf-8", errors="replace").strip() if done.returncode == 0 else ""
+
+
 def _registered_worktrees(repo: Path) -> set[Path]:
     """Every worktree path `git worktree list` knows about for `repo`,
     resolved. A candidate's `head` matching one of these is registered
@@ -469,12 +475,16 @@ def preflight_gate(archive: Any, project: Path, operation: str) -> str | None:
     if archive is None or not PUSH_SHAPED.match(str(operation or "")):
         return None
     head = _head_sha(Path(project))
+    tree = _head_tree(Path(project))
     newest = None
     for record in archive.select(kind="attestation", limit=1000):
         if str(record.get("subject", "")) == "preflight":
             newest = record
     data = (newest or {}).get("data") or {}
-    if newest is not None and data.get("status") == "ran" and str(data.get("head", "")) == head:
+    # R2: the verdict is keyed on the tree, so a reworded or squashed commit with
+    # the same files reuses it. Records written before the tree was kept match on HEAD.
+    same = (str(data.get("tree", "")) == tree) if data.get("tree") else (str(data.get("head", "")) == head)
+    if newest is not None and data.get("status") == "ran" and same:
         return None
     seen = (f"newest preflight is {data.get('status')} at {str(data.get('head', ''))[:7]}" if newest
             else "no preflight attestation on record")
@@ -987,7 +997,7 @@ def push_preflight(project: Path | str,
                 "status": status,
                 "judgment": [str(j.get("check")) for j in judgment][:8],
                 "session": session or "",
-                "head": _head_sha(repo), "validated": validated,
+                "head": _head_sha(repo), "tree": _head_tree(repo), "validated": validated,
                 "shards": shards_total, "shards_ran": list(ran_shards),
                 "findings": len(mechanical) + len(judgment), "gates": len(workflow_gate_commands(repo)),
                 "classes": _classes_tally(mechanical + judgment),

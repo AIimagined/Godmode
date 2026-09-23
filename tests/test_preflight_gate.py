@@ -72,6 +72,24 @@ class StageGateTests(unittest.TestCase):
             archive.append("attestation", "preflight", {"status": "ran", "head": head, "session": "s"}, evidence=[])
             self.assertIsNone(preflight_gate(archive, project, "git push origin main"))
 
+    def test_a_reworded_commit_reuses_the_verdict_and_a_file_change_does_not(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            git = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+            subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+            (project / "a.txt").write_text("a", encoding="utf-8")
+            subprocess.run(["git", "add", "a.txt"], cwd=project, check=True)
+            subprocess.run(git + ["commit", "-q", "-m", "x"], cwd=project, check=True)
+            tree = subprocess.run(["git", "rev-parse", "HEAD^{tree}"], cwd=project,
+                                  capture_output=True, text=True).stdout.strip()
+            archive.append("attestation", "preflight",
+                           {"status": "ran", "head": "0" * 40, "tree": tree, "session": "s"}, evidence=[])
+            subprocess.run(git + ["commit", "-q", "--amend", "-m", "reworded"], cwd=project, check=True)
+            self.assertIsNone(preflight_gate(archive, project, "git push origin main"))
+            (project / "a.txt").write_text("b", encoding="utf-8")
+            subprocess.run(git + ["commit", "-q", "-am", "y"], cwd=project, check=True)
+            self.assertIsNotNone(preflight_gate(archive, project, "git push origin main"))
+
 
 class RemoteRefTests(unittest.TestCase):
     def test_origin_branch_stands_in_for_a_missing_upstream(self) -> None:

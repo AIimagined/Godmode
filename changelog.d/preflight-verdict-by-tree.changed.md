@@ -1,0 +1,1 @@
+- A push stages over a green preflight whose file tree matches HEAD, so rewording or squashing a commit keeps its verdict; any file change still requires a new run.
