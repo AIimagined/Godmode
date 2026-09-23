@@ -1,1 +1,0 @@
-- `selftest` fails on any CLI verb that no test, no public doc, or no skill names, so a verb cannot ship untested or unfindable.

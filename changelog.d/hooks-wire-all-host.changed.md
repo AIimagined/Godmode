@@ -1,1 +1,0 @@
-- `hooks wire --all --host <name>` now refuses (exit 1) instead of silently wiring every host and ignoring the `--host` scope - any script already passing both flags together needs to drop one.

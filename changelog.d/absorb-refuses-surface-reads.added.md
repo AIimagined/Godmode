@@ -1,1 +1,0 @@
-- `remember --kind decision --subject absorb:<item>` validates both verdicts and refuses an adopt or extend verdict that cites no source file, so a surface read can park or skip an item but never fund code.

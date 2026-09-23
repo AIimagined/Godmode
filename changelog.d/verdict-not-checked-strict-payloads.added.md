@@ -1,1 +1,0 @@
-- `verdict record` carries `checked`, `not_checked` and per-criterion evidence, a PASS is refused while anything is not checked, the witness may not be the checker, and `--payload` files for `verdict record` and `claim` decode strictly (duplicate keys, unknown fields and trailing data are refused); hook input stays tolerant.

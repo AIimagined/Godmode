@@ -1,1 +1,0 @@
-- Every path Godmode resolves from a record, a manifest or a host payload is contained to the project or the state home after symlink resolution; an escape is refused or skipped, never followed.

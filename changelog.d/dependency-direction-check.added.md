@@ -1,1 +1,0 @@
-- `atlas --direction` (also a `selftest` control and a CI gate) fails when a hook imports a runtime module outside the declared surface, when the fast gate imports any runtime module, or when the runtime imports a hook.

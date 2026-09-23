@@ -1,1 +1,0 @@
-- The eval harness can withhold lessons and laws so a score measures the skill; the baseline is recorded both ways.

@@ -1,1 +1,0 @@
-- `bin/godmode.cmd` now probes `py -3` before `python` and `python3`, and calls every shimmed interpreter (a pyenv-win shim or a venv activation-style `.bat`/`.cmd` wrapper needs `call` to return control), matching the fix already proven in `hooks/run-hook.cmd`.

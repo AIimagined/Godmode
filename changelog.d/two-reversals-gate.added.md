@@ -1,1 +1,0 @@
-- After two red retests of one check, a third edit to the same file is refused until an incident names the hypothesis and its falsifier.

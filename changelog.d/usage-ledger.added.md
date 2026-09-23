@@ -1,1 +1,0 @@
-- When a host sends a `usage` block on Stop/SessionEnd, it is recorded per event, `status remaining --digest` shows the session's spend from it, and `ceilings` counts tokens from it for the current session.

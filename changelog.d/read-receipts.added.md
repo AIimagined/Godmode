@@ -1,1 +1,0 @@
-- `godmode read` records what was opened (path, lines, digest); absorb decisions cite receipts and a README-only reading is refused as surface-only; `parity --sources` shows files opened per source.

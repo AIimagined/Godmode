@@ -1,1 +1,0 @@
-- CI now initializes the archive and opens a session before running the skills' behaviour probes, which a fresh checkout never had; the dispatch run had only been green because the unit tests initialized the repository as a side effect.

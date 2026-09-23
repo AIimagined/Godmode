@@ -1,1 +1,0 @@
-- `grid` runs a meta-gate suite with a guaranteed-deny fixture for every protected class, and a test proves that removing one classifier rule turns the suite red.

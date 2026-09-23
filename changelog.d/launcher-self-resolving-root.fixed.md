@@ -1,1 +1,0 @@
-- The Windows hook launcher derives the plugin root from its own location and tries `py -3` before `python` and `python3`, and passes gate exit codes through unchanged.

@@ -1,1 +1,0 @@
-- The flaky-test retry runner records every isolated rerun, `trends` ranks flakes by frequency, and the preflight reports a flake retried three or more times that carries no lesson.

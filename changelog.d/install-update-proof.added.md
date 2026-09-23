@@ -1,1 +1,0 @@
-- A test per host proves that installing a new version over an old one leaves exactly the new payload.

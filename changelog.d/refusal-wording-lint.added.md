@@ -1,1 +1,0 @@
-- `selftest` lints assembled gate refusal and Stop-boundary messages in the session hook, the fast gate, the host renderer, and the staging hint against a bad/fixed wording table (bare tier codes, double negatives, remedies that name no command, internal record vocabulary, overlong sentences), and those messages now pass it.

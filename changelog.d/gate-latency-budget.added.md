@@ -1,1 +1,0 @@
-- `benchmarks/gate_latency.py --check` compares the PreToolUse fast-gate and escalation p95 against a committed baseline and fails on a regression of twenty percent or more; `--write-baseline` records the baseline and the hook timeouts it recommends.

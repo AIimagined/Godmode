@@ -1,1 +1,0 @@
-- The stop hook, status, preflight and history read open asks through one reader with one window, so a closed ask never reappears on one surface while another shows it closed.

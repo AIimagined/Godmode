@@ -1,1 +1,0 @@
-- The archive's five memory layers are covered by an eight-test contract: recall across sessions, contradiction flagging, staleness, promotion after three successes, load, the scheduled forget pass, continuity and project isolation.

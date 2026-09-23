@@ -1,1 +1,0 @@
-- Archive appends are serialized by an operating-system advisory lock that is released when the writer exits, so a crashed writer no longer blocks the next append until an age-out; the previous exclusive-create path remains as a fallback where no locking module exists.

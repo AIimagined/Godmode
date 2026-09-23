@@ -1,1 +1,0 @@
-- Every skill carries a PURPOSE file citing the records that motivated it, and the skill linter requires one.

@@ -1,1 +1,0 @@
-- The publication name check now also scans test files for names it must not publish. Forge-URL fixtures in tests/ are still not reported, since testing forge-URL detection needs them.

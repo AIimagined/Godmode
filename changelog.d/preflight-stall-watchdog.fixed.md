@@ -1,1 +1,0 @@
-- A stalled test no longer costs a release check its full hour. Each shard runs under a per-test watchdog that re-arms at every test boundary. A test or class fixture that runs past ten minutes has every thread's stack dumped, and the check reports the stuck frames by name instead of a bare timeout.

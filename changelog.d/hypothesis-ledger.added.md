@@ -1,1 +1,0 @@
-- Competing hypotheses are records with a kill experiment; a fix may cite only a hypothesis whose kill ran and did not fire.

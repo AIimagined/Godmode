@@ -1,1 +1,0 @@
-- A 5-Whys record must validate its chain backwards, name immediate, preventive and detection countermeasures, and cannot end at a person or "human error".

@@ -1,1 +1,0 @@
-- An agent can no longer lift an operator's law with `remember --kind lesson --status superseded`: for a lesson, `superseded` is a close the single-writer guard refuses below the creator's trust, and `law compile` treats any lift written below the standing law's trust as pending rather than as a retirement.

@@ -1,1 +1,0 @@
-- Publishing a release (a tag push or a GitHub Release write) needs a staged capability in every permission mode; a green CI run is required first but no longer stands in for the operator's approval. Chained commands are checked command by command.

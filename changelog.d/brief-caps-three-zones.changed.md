@@ -1,1 +1,0 @@
-- The session brief caps each section, names what it trimmed, and, like every gate message, leads with the rule, then the detail, then a checklist.

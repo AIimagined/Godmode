@@ -1,1 +1,0 @@
-- Every skill or law proposal records its diff, scores and outcome; a previously rejected diff is refused, and a change ships only on strict improvement.

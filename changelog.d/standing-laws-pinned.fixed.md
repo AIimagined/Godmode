@@ -1,1 +1,0 @@
-- A lesson recorded with `--standing` keeps that flag and is always delivered in the session brief, ahead of the newest guarded lessons, instead of falling off once newer lessons arrive.

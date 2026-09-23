@@ -1,1 +1,0 @@
-- The prepublication citation check also covers documents under tests/, which ship to every reader like any other tracked file.

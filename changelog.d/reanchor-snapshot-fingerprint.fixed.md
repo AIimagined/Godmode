@@ -1,1 +1,0 @@
-- `reanchor` commit snapshots and remaps write again: the fingerprint kept the commit subject line under a key the archive now reads as a semantic decision, so every snapshot before a history rewrite was refused; snapshots taken before this change still remap.

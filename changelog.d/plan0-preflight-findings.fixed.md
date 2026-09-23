@@ -1,1 +1,0 @@
-- `selftest`'s verb-coverage control reads the verb list from the generated command reference instead of the live parser (no import cycle), and the concurrency scenario's documented lock shape is versioned so the registry can tell drift from intent.

@@ -1,1 +1,0 @@
-- Host capabilities are a closed enum; the host support matrix is generated from it and from each row's reference and replicating test, and can no longer drift.

@@ -1,1 +1,0 @@
-- Release notes carry the gate's measured p95 line, and the notes check refuses notes without it.

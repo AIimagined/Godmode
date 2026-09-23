@@ -1,1 +1,0 @@
-- The prepublication deny-name check reads its name list from `deny-names.txt` in the Godmode state home when `GODMODE_DENY_NAMES` is unset, so the class is measured without a per-shell variable.

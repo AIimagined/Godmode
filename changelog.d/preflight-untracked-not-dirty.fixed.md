@@ -1,1 +1,0 @@
-- The release preflight no longer refuses a tree whose only changes are untracked files. It never validated those files, so stray scratch output only blocked runs; the report still names them as not validated.

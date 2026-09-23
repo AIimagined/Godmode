@@ -1,1 +1,0 @@
-- A hypothesis or incident whose falsifier was never run ages into a preflight finding after two days; `verify --falsifiers` runs the due ones and attests them.

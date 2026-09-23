@@ -1,1 +1,0 @@
-- An ask or obligation idle for several turns is re-surfaced once and then left quiet for a cooldown instead of being re-listed every turn.

@@ -1,1 +1,0 @@
-- The fast gate defers its subprocess import to the escalate branch, so the allow path imports nothing beyond the standard library it already used.

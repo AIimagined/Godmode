@@ -1,1 +1,0 @@
-- The oracle-tamper checks no longer link a test through a name that appears only in a comment, no longer read a changed exact count as a reduced bound, and no longer hide a neutered checker line because a different line of the same workflow dropped a test.

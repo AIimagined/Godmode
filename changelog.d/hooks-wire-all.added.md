@@ -1,1 +1,0 @@
-- `hooks wire --all --dry-run` previews every host's wiring with the same code that applies it, merges only the Godmode-owned block of a shared config, and `hooks status` shows in-sync, drifted or absent per host.

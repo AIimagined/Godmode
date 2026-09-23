@@ -78,7 +78,7 @@ def agent_id() -> str:
 
 
 PRODUCT = "Godmode"
-RUNTIME_VERSION = "0.3.28"
+RUNTIME_VERSION = "0.3.29"
 SCHEMA_VERSION = 1
 ARCHIVE_DIRNAME = "godmode-state"
 MAX_HASH_BYTES = 5 * 1024 * 1024

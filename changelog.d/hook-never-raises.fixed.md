@@ -1,1 +1,0 @@
-- Every hook event degrades to exit 0 with a recorded reason when its bookkeeping fails; the PreToolUse deny path stays fail-closed, and a test per event proves it.

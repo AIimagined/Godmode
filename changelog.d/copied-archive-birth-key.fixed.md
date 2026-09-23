@@ -1,1 +1,0 @@
-- A checkout copied together with its `.git` (a moved clone, a test harness copy) keeps reading its own archive: the project key the archive was created under counts as its own identity, so records past the read index no longer fail verification as a project identity mismatch.

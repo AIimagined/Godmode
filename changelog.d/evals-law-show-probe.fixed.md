@@ -1,1 +1,0 @@
-- `godmode evals` no longer fails the code-of-law behaviour assertion on a project that has no laws yet: the `law show` probe now checks that the verb reports its laws list rather than requiring a guard to already exist in the archive.

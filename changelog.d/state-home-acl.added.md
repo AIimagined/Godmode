@@ -1,1 +1,0 @@
-- The state home and anchor cache are created owner-only, and doctor warns when group, world, Everyone or Users can read or write the state home (mode bits on POSIX, the DACL on Windows).

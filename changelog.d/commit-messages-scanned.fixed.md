@@ -1,1 +1,0 @@
-- The publication checks now read commit messages. A push publishes every message in its range, and until now no check read one. The name check and the prepublication check scan each unpushed message for private paths, names it must not publish, and outside forge links. A `--message-file` mode serves a local commit-msg hook.

@@ -1,1 +1,0 @@
-- `doctor` flags a shipped hook missing from a host manifest and a manifest entry pointing at a missing file.

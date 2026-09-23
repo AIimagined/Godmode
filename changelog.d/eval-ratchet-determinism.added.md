@@ -1,1 +1,0 @@
-- `evals --ratchet` fails on any skill whose routing score drops below the committed baseline (`evals/baseline.json`, which only rises), and `evals --determinism` runs the offline harness twice and names any case whose route differs; both run in CI.

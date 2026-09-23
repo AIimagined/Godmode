@@ -1,1 +1,0 @@
-- The gate applies a stricter policy row when no operator is present: lower ask threshold, no `--without-preflight`, faster capability expiry.

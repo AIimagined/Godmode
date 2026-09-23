@@ -1,1 +1,0 @@
-- The pre-tool gate now refuses a call when its full check has not answered within 25 seconds, instead of leaving the host to run the tool after a hook timeout; every shipped host manifest gives the gate 30 seconds.

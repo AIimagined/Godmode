@@ -4,6 +4,25 @@ All notable changes to Godmode will be documented in this file.
 
 The format follows Keep a Changelog principles, and releases use semantic versioning.
 
+## [0.3.29] - 2026-09-24
+
+### Added
+
+- Godmode now advises on quality by default: the completion, stall and claim checks report once per session and never block. `godmode config mode strict` restores blocking. Checks on pushes, tags and releases are the same in both modes.
+- `scripts/dev/affected_tests.py` runs only the test modules affected by the current change, plus a small smoke set, for a fast loop during development.
+- `scripts/dev/ci_local.py` runs the workflow's gate list and the affected tests on HEAD in a disposable worktree, and `scripts/dev/pre-push` runs it before every push.
+
+### Changed
+
+- A plain push to a branch the verify workflow runs on stages without a local preflight, since CI checks it; pushes to main, tags, forced pushes and chained commands still need one.
+- A push stages over a green preflight whose file tree matches HEAD, so rewording or squashing a commit keeps its verdict; any file change still requires a new run.
+- Publishing a release (a tag push or a GitHub Release write) needs a staged capability in every permission mode; a green CI run is required first but no longer stands in for the operator's approval. Chained commands are checked command by command.
+- The second-look review skill states its review defaults: advisory, diff-only, Important versus nit, at most five nits, and Important findings only after the first pass.
+
+### Fixed
+
+- The pre-tool gate now refuses a call when its full check has not answered within 25 seconds, instead of leaving the host to run the tool after a hook timeout; every shipped host manifest gives the gate 30 seconds.
+
 ## [0.3.28] - 2026-09-18
 
 ### Added

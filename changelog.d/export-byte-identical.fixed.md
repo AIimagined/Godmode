@@ -1,1 +1,0 @@
-- `export` writes records in canonical order with a seal line, so two exports of the same archive are byte-identical regardless of directory listing order.

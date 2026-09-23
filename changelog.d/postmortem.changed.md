@@ -1,1 +1,0 @@
-- The investigation skill runs the postmortem flow: validated 5-Whys, competing hypotheses, reproduce-first and the RCA checklist.

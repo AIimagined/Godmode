@@ -1,1 +1,0 @@
-- `law amend` no longer makes an operator's law vanish when an agent rewords it: an amendment written without operator trust is recorded as pending, the last authorised guard stays in force, and `law compile`, `law show` and the compiled file mark the pending sequence; the operator amends in place with `law amend --as-operator`.

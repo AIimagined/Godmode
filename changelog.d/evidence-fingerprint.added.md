@@ -1,1 +1,0 @@
-- Claims record a working-tree fingerprint and verdicts record their witness's hash at cite time, `claim --stale` reports a claim whose tree or a verdict whose witness changed since, and a citation of a record sequence that does not exist is refused.

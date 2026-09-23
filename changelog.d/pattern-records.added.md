@@ -1,1 +1,0 @@
-- Recurring failure modes are pattern records that accumulate occurrences instead of duplicating.
