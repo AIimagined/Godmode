@@ -91,6 +91,23 @@ class StageGateTests(unittest.TestCase):
             self.assertIsNotNone(preflight_gate(archive, project, "git push origin main"))
 
 
+class CiVerifiedBranchTests(unittest.TestCase):
+    def test_a_plain_push_to_a_branch_ci_runs_on_needs_no_local_preflight(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            (project / ".github" / "workflows").mkdir(parents=True)
+            (project / ".github" / "workflows" / "godmode-verify.yml").write_text(
+                'on:\n  push:\n    branches: [main, "sprint/**"]\n', encoding="utf-8")
+            subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+            subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty",
+                            "-m", "x"], cwd=project, check=True)
+            self.assertIsNone(preflight_gate(archive, project, "git push origin sprint/v1"))
+            self.assertIsNone(preflight_gate(archive, project, "git push origin HEAD:sprint/v1"))
+            for held in ("git push origin main", "git push origin HEAD:main", "git push --force origin sprint/v1",
+                         "git push origin sprint/v1;echo x", "git push origin :sprint/v1", "git push origin v1"):
+                self.assertIsNotNone(preflight_gate(archive, project, held), held)
+
+
 class RemoteRefTests(unittest.TestCase):
     def test_origin_branch_stands_in_for_a_missing_upstream(self) -> None:
         from godmode_runtime.godmode_preflight import _remote_ref

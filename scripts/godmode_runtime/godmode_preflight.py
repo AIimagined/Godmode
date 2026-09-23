@@ -22,6 +22,7 @@ not a state anyone can push.
 
 from __future__ import annotations
 
+import fnmatch
 import os
 import re
 import shutil
@@ -468,11 +469,46 @@ def sweep_stale_scratch(repo: Path, keep: Path | None = None,
     return removed, unswept, skipped
 
 
+def _ci_push_branches(repo: Path) -> list[str]:
+    """The `on: push: branches:` globs of the committed verify workflow, main excluded."""
+    path = repo / ".github" / "workflows" / "godmode-verify.yml"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    found = re.search(r"^  push:\s*\n\s+branches:\s*\[([^\]]*)\]", text, re.M)
+    names = [n.strip().strip("'\"") for n in found.group(1).split(",")] if found else []
+    return [n for n in names if n and n not in ("main", "master")]
+
+
+def ci_verified_branch_push(repo: Path, operation: str) -> bool:
+    """A plain push to a work branch CI runs on: CI is its check, so no local
+    preflight is required before staging it. main, tags, forced pushes, deletes
+    and chained commands keep the preflight."""
+    if re.search(r"[;&|<>`$()\n]", operation):
+        return False
+    tokens = operation.split()
+    if tokens[:2] != ["git", "push"] or len(tokens) < 4:
+        return False
+    if any(t.startswith("-") for t in tokens[2:]):
+        return False
+    globs = _ci_push_branches(repo)
+    for spec in tokens[3:]:
+        if spec.startswith("+") or spec.startswith(":"):
+            return False
+        dest = spec.split(":")[-1].removeprefix("refs/heads/")
+        if dest.startswith("refs/") or not any(fnmatch.fnmatchcase(dest, g) for g in globs):
+            return False
+    return True
+
+
 def preflight_gate(archive: Any, project: Path, operation: str) -> str | None:
     """The reason a push-shaped operation may not be staged: no green
     preflight attestation at the current HEAD. None when one exists or
     the operation is not push-shaped."""
     if archive is None or not PUSH_SHAPED.match(str(operation or "")):
+        return None
+    if ci_verified_branch_push(Path(project), str(operation)):
         return None
     head = _head_sha(Path(project))
     tree = _head_tree(Path(project))

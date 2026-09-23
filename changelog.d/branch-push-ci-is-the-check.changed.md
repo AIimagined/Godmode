@@ -1,0 +1,1 @@
+- A plain push to a branch the verify workflow runs on stages without a local preflight, since CI checks it; pushes to main, tags, forced pushes and chained commands still need one.
