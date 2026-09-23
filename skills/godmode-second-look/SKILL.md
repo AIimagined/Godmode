@@ -21,6 +21,14 @@ A prior pass being accepted is not proof it survives a second, independent look.
 - To re-run the exact same suite the first pass already ran and call agreement a second look; this skill needs an independent angle (fresh evidence, a different checker, a wider blast radius), not a repeat.
 - As a way to stall a decision indefinitely; a second look ends in a recorded disposition, held or reopened.
 
+## Review defaults
+
+- **Advisory.** Findings inform the decision; they never gate a merge by themselves.
+- **Diff-only.** Review what changed. A problem that predates the change is labelled pre-existing and left out of the fix.
+- **Important or nit.** Important means it would break behaviour a user relies on. Drop a finding you cannot confirm against the code.
+- **Five nits at most**, listed, not fixed. After the first pass, raise Important findings only.
+- **No "add a test" findings** unless the project asks for them.
+
 ## Deterministic Execution Flow
 
 1. **Locate the pass under review.** Read the original record in full rather than trusting its subject line:

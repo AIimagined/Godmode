@@ -1,0 +1,1 @@
+- The second-look review skill states its review defaults: advisory, diff-only, Important versus nit, at most five nits, and Important findings only after the first pass.
