@@ -130,7 +130,8 @@ def main(argv: list[str] | None = None) -> int:
 
     modules = select(changed_files(args.base), module_map())
     if args.list:
-        print("\n".join(modules))
+        # Bytes, so a Windows console does not turn the newlines into CRLF for `$(...)`.
+        sys.stdout.buffer.write(("\n".join(modules) + "\n").encode())
         return 0
     print(f"running {len(modules)} module(s):\n  " + "\n  ".join(modules))
     done = subprocess.run([sys.executable, "-m", "unittest", *modules], cwd=REPO_ROOT)
