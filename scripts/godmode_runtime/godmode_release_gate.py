@@ -16,6 +16,7 @@ cannot be is skipped.
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import subprocess
 from typing import Any
 
@@ -32,8 +33,27 @@ def _git(project: Path, *args: str) -> str | None:
     return done.stdout.strip() if done.returncode == 0 else None
 
 
+_SEGMENT = re.compile(r"\|\||&&|[;|\n]")
+_GH_RELEASE = re.compile(r"^gh\s+release\s+(?:create|upload|edit|delete)\b")
+
+
+def segments(operation: str) -> list[str]:
+    """Each command of a chained line: `make; git push origin v1` is a tag push too."""
+    return [part.strip() for part in _SEGMENT.split(operation) if part.strip()]
+
+
+def is_release(operation: str, project: Path) -> bool:
+    """A tag push or a GitHub Release write anywhere in the line."""
+    return any(_GH_RELEASE.match(part) for part in segments(operation)) or bool(
+        tag_targets(operation, project))
+
+
 def tag_targets(operation: str, project: Path) -> list[tuple[str, str]]:
     """(tag, commit sha) for every tag the push would publish; [] otherwise."""
+    return [target for part in segments(operation) for target in _segment_tag_targets(part, project)]
+
+
+def _segment_tag_targets(operation: str, project: Path) -> list[tuple[str, str]]:
     tokens = operation.split()
     if len(tokens) < 2 or tokens[0] != "git" or tokens[1] != "push":
         return []

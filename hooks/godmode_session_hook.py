@@ -169,7 +169,7 @@ from godmode_runtime.godmode_paths import contain  # noqa: E402
 from godmode_runtime.godmode_attest import (  # noqa: E402
     attested_rule_ids, latest_session)
 from godmode_runtime.godmode_guardrails import check_ceilings  # noqa: E402
-from godmode_runtime.godmode_release_gate import tag_push_refusal  # noqa: E402
+from godmode_runtime.godmode_release_gate import is_release, tag_push_refusal  # noqa: E402
 from godmode_runtime.godmode_guardrails import meter_tool_call, watchdog  # noqa: E402
 from godmode_runtime.godmode_hookproof import (  # noqa: E402
     DEGRADE_REASON_ANCILLARY, DEGRADE_REASON_MALFORMED_PAYLOAD, DEGRADE_REASONS,
@@ -4570,6 +4570,12 @@ def main(argv: list[str] | None = None) -> int:
                     pass
         else:
             preview["allow"] = False
+            if is_release(operation, Path(anchor.project_root)):
+                # CI green proves the build, not the operator's consent to
+                # publish (2026-09-24: a tag and a Release went out on one
+                # keystroke). A release moves by a staged capability - the
+                # password - in every mode, never by an ask.
+                preview["decision_override"] = "deny"
             # Name a remedy the reader can actually perform - and name the one
             # that exists. This message was written when the broker really was
             # unreachable from a host tool call, and it was never revisited

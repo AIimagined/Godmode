@@ -125,6 +125,16 @@ class TagPushCiGateTests(unittest.TestCase):
         self._attest_ci(self.sha)
         self.assertEqual(_decide(self.project, TAG_PUSH)["decision"], "allow")
 
+    def test_a_chained_tag_push_is_still_a_tag_push(self) -> None:
+        self.assertIsNotNone(tag_push_refusal(
+            f"make dist; {TAG_PUSH} 2>&1 | tail -1", self.project, self.archive))
+
+    def test_ci_green_alone_does_not_publish_a_release_it_needs_the_password(self) -> None:
+        self._attest_ci(self.sha)
+        for command in (TAG_PUSH, "gh release create v1.0.0 --notes x", "true; gh release create v1.0.0"):
+            self.assertEqual(_decide(self.project, command)["decision"], "deny", command)
+        self.assertEqual(_decide(self.project, "gh release view v1.0.0")["decision"], "allow")
+
 
 if __name__ == "__main__":
     unittest.main()
