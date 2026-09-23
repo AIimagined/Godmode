@@ -29,6 +29,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .godmode_chronicle import latest_by_subject as _latest_by_subject
+
 # Three handovers, not two. Two is a task still in progress; the signal is
 # persistence across a third, by which point nothing about it has moved.
 CARRIED_THRESHOLD = 3
@@ -141,11 +143,16 @@ def review_obligations(records: list[dict[str, Any]]) -> dict[str, Any]:
     # never saw, because it read only checkpoint next-lists). Latest record
     # per subject is the state, same as everywhere else; only open ones
     # enter, so a closure is honoured before clustering ever sees the text.
-    latest_by_subject: dict[str, dict[str, Any]] = {}
-    for record in records:
-        if record.get("kind") == "obligation":
-            latest_by_subject[str(record.get("subject", ""))] = record
-    for subject, record in latest_by_subject.items():
+    #
+    # Fix round 1 (B2): routed through `latest_by_subject` (chronicle) -
+    # this fed `checkpoint --review`, precisely NS-10e's own use case
+    # ("obligations a later handover made moot"), through a plain
+    # last-in-order fold that never honoured a `supersedes` edge; an
+    # obligation superseded under a NEW subject still surfaced here as an
+    # open, un-clustered duty under its OLD one.
+    obligation_records = [r for r in records if r.get("kind") == "obligation"]
+    latest_obligations = _latest_by_subject(obligation_records)
+    for subject, record in latest_obligations.items():
         data = record.get("data") or {}
         if str(data.get("status", "open")).lower() in {
                 "closed", "done", "retired", "superseded"}:

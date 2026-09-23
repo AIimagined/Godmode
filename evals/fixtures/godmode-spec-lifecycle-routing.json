@@ -1,0 +1,22 @@
+{
+  "routes": {
+    "near_negative": {
+      "Create a new skill after a repeated capability gap has been proven at least twice": "godmode-skill-forge",
+      "Review this pull request's code changes for bugs": "godmode",
+      "Write a one-off design note with nobody asked to sign off on it": "godmode-changelog",
+      "Write the design doc": "godmode-governance"
+    },
+    "positive": {
+      "Reconcile two divergent drafts of the same plan and check whether the contract is approved before any mutation happens": "godmode-spec-lifecycle",
+      "Write the spec, get the plan approved by an independent check, and bind the implementation back to it as one resumable linked record": "godmode-spec-lifecycle"
+    }
+  },
+  "schema": "godmode-routing-snapshot-v1",
+  "skill": "godmode-spec-lifecycle",
+  "summary": {
+    "near_negatives_rejected": 4,
+    "near_negatives_total": 4,
+    "positives_routed_correctly": 2,
+    "positives_total": 2
+  }
+}

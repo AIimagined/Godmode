@@ -79,35 +79,53 @@ def _version_at(project: Path, ref: str) -> str | None:
     return str(loaded.get("version", "(absent)")) if isinstance(loaded, dict) else "(unreadable)"
 
 
-def version_surfaces(project: Path) -> list[dict[str, str]]:
-    surfaces: list[dict[str, str]] = []
+def version_surfaces(project: Path) -> list[dict[str, Any]]:
+    """Every surface that carries a version, each with a `"path"`: the
+    repo-relative file it was read from, or `None` for the two surfaces that
+    are not a file in the tree at all (a git tag's name; a tagged tree read
+    via `git show`, which is HEAD's history, not a working-tree path). A
+    consumer that needs "which staged file backs this surface" reads `path`
+    directly instead of hand-maintaining a second surface-name-to-path
+    registry - exactly the silent-drift class this function exists to catch,
+    turned on itself.
+    """
+    surfaces: list[dict[str, Any]] = []
 
-    constants = project / "scripts" / "godmode_runtime" / "godmode_constants.py"
+    constants_path = "scripts/godmode_runtime/godmode_constants.py"
+    constants = project / constants_path
     if constants.is_file():
         match = re.search(r'RUNTIME_VERSION\s*=\s*"([^"]+)"', constants.read_text(encoding="utf-8"))
         if match:
-            surfaces.append({"surface": "godmode_constants.RUNTIME_VERSION", "version": match.group(1)})
+            surfaces.append({"surface": "godmode_constants.RUNTIME_VERSION",
+                             "version": match.group(1), "path": constants_path})
 
-    package = project / "scripts" / "godmode_runtime" / "__init__.py"
+    package_path = "scripts/godmode_runtime/__init__.py"
+    package = project / package_path
     if package.is_file():
         match = re.search(r'__version__\s*=\s*"([^"]+)"', package.read_text(encoding="utf-8"))
         if match:
-            surfaces.append({"surface": "godmode_runtime.__version__", "version": match.group(1)})
+            surfaces.append({"surface": "godmode_runtime.__version__",
+                             "version": match.group(1), "path": package_path})
 
-    hosts = project / "packaging" / "hosts.json"
+    hosts_path = "packaging/hosts.json"
+    hosts = project / hosts_path
     if hosts.is_file():
         try:
             version = json.loads(hosts.read_text(encoding="utf-8"))["identity"]["version"]
-            surfaces.append({"surface": "packaging/hosts.json identity.version", "version": version})
+            surfaces.append({"surface": "packaging/hosts.json identity.version",
+                             "version": version, "path": hosts_path})
         except (json.JSONDecodeError, KeyError):
-            surfaces.append({"surface": "packaging/hosts.json identity.version", "version": "(unreadable)"})
+            surfaces.append({"surface": "packaging/hosts.json identity.version",
+                             "version": "(unreadable)", "path": hosts_path})
 
-    changelog = project / "CHANGELOG.md"
+    changelog_path = "CHANGELOG.md"
+    changelog = project / changelog_path
     if changelog.is_file():
         match = re.search(r"^## \[(?!Unreleased)([^\]]+)\]", changelog.read_text(encoding="utf-8"),
                           flags=re.MULTILINE)
         if match:
-            surfaces.append({"surface": "CHANGELOG.md latest release", "version": match.group(1)})
+            surfaces.append({"surface": "CHANGELOG.md latest release",
+                             "version": match.group(1), "path": changelog_path})
 
     # The portable manifest is a version surface like any other. Adding one
     # without registering it here is precisely the silent drift this command
@@ -119,13 +137,13 @@ def version_surfaces(project: Path) -> list[dict[str, str]]:
             try:
                 loaded = json.loads(path.read_text(encoding="utf-8"))
                 version = loaded.get("version", "(absent)") if isinstance(loaded, dict) else "(unreadable)"
-                surfaces.append({"surface": manifest, "version": version})
+                surfaces.append({"surface": manifest, "version": version, "path": manifest})
             except json.JSONDecodeError:
-                surfaces.append({"surface": manifest, "version": "(unreadable)"})
+                surfaces.append({"surface": manifest, "version": "(unreadable)", "path": manifest})
 
     tag = run_git(project, "describe", "--tags", "--abbrev=0")
     if tag:
-        surfaces.append({"surface": "latest git tag", "version": tag.lstrip("v")})
+        surfaces.append({"surface": "latest git tag", "version": tag.lstrip("v"), "path": None})
         # What the tagged tree says about itself, which is not the same
         # question as what the tag is called.
         #
@@ -136,9 +154,9 @@ def version_surfaces(project: Path) -> list[dict[str, str]]:
         # see that, because the name was never wrong.
         tagged = _version_at(project, tag)
         if tagged is not None:
-            surfaces.append({"surface": f"plugin.json at tag {tag}", "version": tagged})
+            surfaces.append({"surface": f"plugin.json at tag {tag}", "version": tagged, "path": None})
 
-    deduped: list[dict[str, str]] = []
+    deduped: list[dict[str, Any]] = []
     for surface in surfaces:
         if surface not in deduped:
             deduped.append(surface)
@@ -169,6 +187,56 @@ def _release_staged(surfaces: list[dict[str, str]]) -> bool:
     return source is not None and tagged is not None and source > tagged
 
 
+_VERSION_REMEDY = (
+    "Update the version in packaging/hosts.json, godmode_constants.RUNTIME_VERSION and "
+    "godmode_runtime.__version__ together, then regenerate the manifests with "
+    "`godmode bindings --write`; add the CHANGELOG release heading and move the tag "
+    "only as the release steps say.")
+_MANIFEST_TEXT_REMEDY = (
+    "Put the change in packaging/hosts.json (identity) and regenerate with "
+    "`godmode bindings --write`; a generated manifest edited by hand drifts from "
+    "its source and is overwritten by the next write.")
+
+
+def _manifest_text_findings(project: Path) -> list[dict[str, Any]]:
+    """S-7: identity text (the description and its qualifier) is written in
+    one place, `packaging/hosts.json`, and every identity manifest - the
+    root portable one included - is generated from it. A manifest whose
+    generated fields differ from that source is a finding here, so the
+    version check reports the text drift the same way it reports a version.
+    """
+    source_path = project / "packaging" / "hosts.json"
+    if not source_path.is_file():
+        return []
+    try:
+        declared = json.loads(source_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        declared = None
+    # A file that only carries a version (no `hosts` section) generates no
+    # manifest, so there is no text for it to drift from.
+    if isinstance(declared, dict) and not isinstance(declared.get("hosts"), dict):
+        return []
+    from .godmode_bindings import check as bindings_check
+
+    try:
+        report = bindings_check(project)
+    except Exception as exc:  # noqa: BLE001  # godmode: swallow-ok: stated as a finding, never silently skipped
+        return [{"check": "manifest-text-drift", "surface": "packaging/hosts.json",
+                 "detail": f"the binding source could not be read: {exc}",
+                 "remedy": _MANIFEST_TEXT_REMEDY}]
+    findings: list[dict[str, Any]] = []
+    for entry in report["hosts"]:
+        if entry.get("kind") not in (None, "portable") or entry["state"] == "current":
+            continue
+        findings.append({
+            "check": "manifest-text-drift", "surface": entry["path"],
+            "detail": (f"{entry['path']} is {entry['state']} against packaging/hosts.json"
+                       + (f" ({', '.join(entry.get('differing_fields', []))})"
+                          if entry.get("differing_fields") else "")),
+            "remedy": _MANIFEST_TEXT_REMEDY})
+    return findings
+
+
 def reconcile_versions(project: Path) -> dict[str, Any]:
     surfaces = version_surfaces(project)
     if not surfaces:
@@ -179,7 +247,25 @@ def reconcile_versions(project: Path) -> dict[str, Any]:
         verdict = "staged"
     else:
         verdict = "agreed" if not drifted else "version-drift"
+    findings: list[dict[str, Any]] = []
+    if verdict == "version-drift":
+        # The majority is named as the reference only to say which surfaces
+        # stand apart; it is not a claim about which version is right.
+        counts: dict[str, int] = {}
+        for surface in surfaces:
+            counts[surface["version"]] = counts.get(surface["version"], 0) + 1
+        majority = max(sorted(counts), key=lambda v: counts[v])
+        findings.extend(
+            {"check": "version-drift", "surface": s["surface"],
+             "detail": f"{s['surface']} says {s['version']}; {counts[majority]} surface(s) say {majority}",
+             "remedy": _VERSION_REMEDY}
+            for s in surfaces if s["version"] != majority)
+    text_findings = _manifest_text_findings(project)
+    findings.extend(text_findings)
+    if text_findings and verdict in ("agreed", "staged"):
+        verdict = "manifest-drift"
     return {
+        "findings": findings,
         "surfaces": surfaces,
         "distinct_versions": sorted(values),
         "drift": drifted if verdict == "version-drift" else [],

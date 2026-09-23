@@ -207,7 +207,7 @@ in it.
   before capping, reports the true count and a `truncated` flag when it
   applies, and a `truncated` scan can never report as a clean sweep — the
   default cap also moves from 400 to 2048, roughly double this repository's
-  own current file count, for headroom before the gap reopens.
+  own current file count, for margin before the gap reopens.
 - **Two independent freshness-ranking instruments, each now stable within its
   own mode.** Context ranking's freshness tie-break read raw filesystem
   timestamps, which neither a git checkout nor a non-git copy preserves in a

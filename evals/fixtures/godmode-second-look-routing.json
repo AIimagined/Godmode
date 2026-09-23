@@ -1,0 +1,24 @@
+{
+  "routes": {
+    "near_negative": {
+      "Investigate a performance regression that has never come up before.": "godmode-investigation",
+      "Review this PR.": "godmode-spec-lifecycle",
+      "Run the test suite once and record its result.": "godmode-evidence",
+      "Write documentation explaining how a brand-new configuration flag works.": "godmode-continuity"
+    },
+    "positive": {
+      "Give this already-merged change an independent recheck before its accepted verdict is trusted.": "godmode-second-look",
+      "Independently recheck a diff or session that another pass already marked accepted, before trusting that pass.": "godmode-second-look",
+      "Re-review a change that was approved earlier, sorting any new finding into a gap, bug, verification-miss, or scope-drift.": "godmode-second-look",
+      "Someone else's verdict on this fix looks too quick; recheck it independently before relying on it.": "godmode-second-look"
+    }
+  },
+  "schema": "godmode-routing-snapshot-v1",
+  "skill": "godmode-second-look",
+  "summary": {
+    "near_negatives_rejected": 4,
+    "near_negatives_total": 4,
+    "positives_routed_correctly": 4,
+    "positives_total": 4
+  }
+}

@@ -1,0 +1,1 @@
+- The dispatch workflow gains a generated job per host manifest that installs the plugin that host's way and fires one hook.

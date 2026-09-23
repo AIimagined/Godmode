@@ -34,8 +34,11 @@ if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
+from godmode_runtime import godmode_chronicle as chronicle_module  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
+from godmode_runtime.godmode_errors import ArchiveError  # noqa: E402
 from godmode_runtime.godmode_reanchor import (  # noqa: E402
+    COMMIT_SUBJECT_FIELD,
     commit_fingerprint,
     remap_commit_citations,
     snapshot_commit_citations,
@@ -159,6 +162,26 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(report["snapshotted"], 1)
             self.assertEqual(report["unreachable"], [])
 
+    def test_a_snapshot_is_a_fingerprint_not_a_semantic_decision(self) -> None:
+        """The snapshot stores the commit's subject LINE. Under the archive's
+        own key it reads as `data["subject"]`, which opts a `decision` into
+        the semantic shape (subject, value, evidence - NS-11c) and gets the
+        write refused, so every snapshot failed. The field is named for what
+        it is, and the record carries no semantic `subject` at all."""
+        with git_project() as (project, archive):
+            head = _commit(project, "api.py", "one\n")
+            archive.append("claim", "shipped", {"text": "shipped"},
+                           evidence=[f"commit:{head}"])
+            snapshot_commit_citations(archive, project)
+            _rewrite_history(project)
+            remap_commit_citations(archive, project)
+            written = [r for r in archive.read_events(verify=False)
+                       if r.get("kind") == "decision"]
+        self.assertEqual(len(written), 2)  # one snapshot, one remap
+        for record in written:
+            self.assertNotIn("subject", record["data"], record["subject"])
+            self.assertEqual(record["data"][COMMIT_SUBJECT_FIELD], "touch api.py")
+
     def test_a_commit_already_gone_cannot_be_snapshotted(self) -> None:
         with git_project() as (project, archive):
             _commit(project, "api.py", "one\n")
@@ -195,6 +218,68 @@ class RemapTests(unittest.TestCase):
             report = remap_commit_citations(archive, project)
             self.assertEqual(report["remapped"], [])
             self.assertEqual(len(report["unresolved"]), 1)
+
+    def test_a_legacy_snapshot_still_remaps(self) -> None:
+        """A snapshot written by 0.3.25 to 0.3.27 has data exactly
+        `{"tree", "subject", "author_date"}`: the subject line under the
+        homonym key, no value, no evidence. Today's archive refuses that
+        shape on append (NS-11c), so the fixture is written with the
+        decision invariant patched out - which is the only way to hold what
+        an old archive holds. The matcher must find it AND the remap record
+        must be writable: spreading the legacy dict into the new record
+        used to trip the same invariant and abort the whole remap."""
+        with git_project() as (project, archive):
+            old = _commit(project, "api.py", "one\n")
+            archive.append("claim", "shipped", {"text": "shipped"},
+                           evidence=[f"commit:{old}"])
+            fingerprint = commit_fingerprint(project, old)
+            legacy = {"tree": fingerprint["tree"],
+                      "subject": fingerprint[COMMIT_SUBJECT_FIELD],
+                      "author_date": fingerprint["author_date"]}
+            with mock.patch.dict(chronicle_module.KIND_INVARIANTS,
+                                 {"decision": lambda data: None}):
+                archive.append("decision", f"anchor:commit:{old}", legacy,
+                               evidence=[f"commit:{old}"])
+            new = _rewrite_history(project)
+            report = remap_commit_citations(archive, project)
+            written = [r for r in archive.read_events(verify=False)
+                       if str(r.get("subject", "")).startswith("anchor:remap:")]
+        self.assertEqual([m["new"] for m in report["remapped"]], [new])
+        self.assertEqual(report["unresolved"], [])
+        self.assertEqual(len(written), 1)
+        self.assertNotIn("subject", written[0]["data"])
+        self.assertEqual(written[0]["data"][COMMIT_SUBJECT_FIELD], "touch api.py")
+
+    def test_one_refused_remap_record_does_not_abort_the_others(self) -> None:
+        # Two citations, two snapshots, one rewrite. The remap record for
+        # the first sha is refused by the archive; the second must still be
+        # remapped and the first reported as unresolved with the reason.
+        with git_project() as (project, archive):
+            first = _commit(project, "api.py", "one\n")
+            archive.append("claim", "shipped-one", {"text": "one"},
+                           evidence=[f"commit:{first}"])
+            second = _commit(project, "web.py", "two\n")
+            archive.append("claim", "shipped-two", {"text": "two"},
+                           evidence=[f"commit:{second}"])
+            snapshot_commit_citations(archive, project)
+            _rewrite_history(project)
+            real_append = archive.append
+
+            def refusing_append(kind, subject, data, **kwargs):
+                if subject == f"anchor:remap:{first}":
+                    raise ArchiveError("refused for the test")
+                return real_append(kind, subject, data, **kwargs)
+
+            # The amend orphans only the tip; `first` is treated as
+            # orphaned too by answering "unreachable" for every sha, so
+            # both go through the fingerprint match and the remap write.
+            with mock.patch.object(archive, "append", side_effect=refusing_append), \
+                    mock.patch("godmode_runtime.godmode_reanchor._reachable_commit",
+                               return_value=False):
+                report = remap_commit_citations(archive, project)
+        self.assertEqual([m["old"] for m in report["remapped"]], [second])
+        self.assertEqual([u["old"] for u in report["unresolved"]], [first])
+        self.assertIn("refused for the test", report["unresolved"][0]["reason"])
 
     def test_remapping_is_recorded_so_it_survives_the_session(self) -> None:
         with git_project() as (project, archive):

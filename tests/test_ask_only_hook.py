@@ -21,10 +21,32 @@ SCRIPTS = PLUGIN_ROOT / "scripts"
 HOOK = PLUGIN_ROOT / "hooks" / "godmode_session_hook.py"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
+if str(Path(__file__).parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).parent))
 
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_runtime.godmode_sentinel import POLICY_FILENAME  # noqa: E402
+from _host_env import scrubbed_environment  # noqa: E402
+
+_HOST_ENV = None
+
+
+def setUpModule() -> None:
+    """Fix round 1 (NS-10k, task-14-review.md B1): `_decide`/`_decide_reason`
+    spread `os.environ` into the hook subprocess, and a CI runner's own `CI`
+    silently flips `test_r4_still_asks_whatever_the_list_says` (and every
+    other bare-mode assertion in this module) onto the unattended row - the
+    exact defect that read green locally and red only in Actions. Every
+    test here now runs from a scrubbed, pinned-attended environment."""
+    global _HOST_ENV
+    _HOST_ENV = scrubbed_environment()
+    _HOST_ENV.start()
+
+
+def tearDownModule() -> None:
+    if _HOST_ENV is not None:
+        _HOST_ENV.stop()
 
 
 @contextmanager

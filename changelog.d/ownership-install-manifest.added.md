@@ -1,0 +1,1 @@
+- `godmode ownership --check` shows which gate rule owns each path or command and fails when the decision table is stale against the classifier; the installer records every path it creates and `hooks status` reads that manifest.

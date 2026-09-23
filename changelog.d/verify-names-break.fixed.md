@@ -1,0 +1,1 @@
+- `context-status`, `doctor` and the archive's chain check report the first broken record's sequence, file and line instead of a bare failure, and a missing archive verifies as an intact empty one.

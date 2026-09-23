@@ -1,6 +1,6 @@
 ---
 name: godmode-code-of-law
-description: Use at the start of every session and before every new task - read GODMODE-CODE-OF-LAW.md at the project root when it exists (the project's generated Code of Law; `godmode law compile` writes it), and follow its guards before acting.
+description: Use at the start of every session and before every new task - read GODMODE-CODE-OF-LAW.md at the project root when it exists (the project's generated Code of Law; `godmode law compile` writes it), and follow its guards before acting. Not for writing new laws; do not use when GODMODE-CODE-OF-LAW.md is absent.
 ---
 
 # The project's Code of Law

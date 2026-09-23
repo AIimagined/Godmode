@@ -21,6 +21,7 @@ from typing import Any
 
 from .godmode_anchor import run_git
 from .godmode_chronicle import Chronicle
+from .godmode_constants import USAGE_OBSERVED_SUBJECT
 from .godmode_errors import ArchiveError
 from .godmode_stop import OperatorStop
 
@@ -228,6 +229,158 @@ def tool_operation(tool: str, tool_input: dict[str, Any] | None) -> str | None:
     if tool in ("Read", "Glob", "Grep"):
         return f"read {tool.lower()} {payload.get('file_path') or payload.get('pattern') or ''}".strip()
     return None
+
+
+_USAGE_STOP_EVENTS = frozenset({"stop", "subagent-stop"})
+
+
+def usage_records_preferring_stop(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """NS-10d (review round 2, N4): `_record_usage_observed` can write a
+    record from BOTH the Stop and the SessionEnd branch for one session -
+    summing both would double the session's reported spend if a host sends
+    usage at both boundaries. Decided rule: Stop-family records
+    (`event` in `stop`/`subagent-stop`) are authoritative and used whenever
+    any exist in the window; SessionEnd's own record is used only when a
+    session never produced a Stop one (no Stop hook installed, or the
+    session ended before Stop fired) - so that session still gets a total
+    instead of losing SessionEnd's report to a rule that assumed a Stop
+    always exists.
+    """
+    stop_records = [r for r in records if (r.get("data") or {}).get("event") in _USAGE_STOP_EVENTS]
+    return stop_records if stop_records else records
+
+
+def usage_record_total(data: dict[str, Any]) -> int:
+    """The token figure one `usage-observed` record contributes: its own
+    `total_tokens` when present, or - for a record written before this
+    field existed (review round 2, N5: every record `eab0679` shipped) -
+    derived from the split fields at READ time, so a pre-fix record still
+    contributes its real figure instead of reading as 0 and silently
+    dropping out of every total."""
+    raw = data.get("total_tokens")
+    if raw is not None:
+        try:
+            return int(raw)
+        except (TypeError, ValueError):  # godmode: swallow-ok: a non-numeric host total falls back to the split fields, stated by the derived total
+            pass
+    total = 0
+    for key in ("input_tokens", "output_tokens", "cache_read_tokens"):
+        try:
+            total += int(data.get(key) or 0)
+        except (TypeError, ValueError):  # godmode: swallow-ok: a non-numeric split field counts as nothing, the same rule usage_from_payload applies at write time
+            pass
+    return total
+
+
+def usage_ledger_totals(
+    archive: Chronicle, *, start: int | None = None, end: int | None = None
+) -> dict[str, Any]:
+    """NS-10d: the host's own reported token totals - the same figure
+    `check_ceilings`'s caller compares against a `tokens` ceiling, and the
+    same one the digest's spend line renders. Godmode measures nothing
+    here; these are the host's own numbers, taken as declared, read back
+    exactly as `hooks/godmode_session_hook.py`'s `_record_usage_observed`
+    wrote them (falling back to `usage_record_total`'s derivation for a
+    pre-fix record with no `total_tokens` field - N5).
+
+    Fix round 2 (review S4/N1): windowed to the CURRENT session boundary
+    via `godmode_hookproof._session_anchor_sequence` - the max of the
+    newest `kind="session"` record (an explicit `session open`) and the
+    newest `hook-session-anchor` action record (written automatically on
+    every real hook session-start; CX-1's own freshness anchor). Round 1's
+    fix keyed this on `latest_session(archive)`
+    (`kind="session"` only), which is `None` on every archive a hook alone
+    ever produces - no hook writes a `kind="session"` record - so the
+    "session-scoped" branch was unreachable in practice and the ceiling
+    silently read the archive's lifetime total instead (the original S4
+    defect, reproduced through the real hook in round 2's review). The
+    per-run ceiling and the digest's session line must never read the
+    `lifetime` figure below; it is exposed only for information.
+
+    `start`/`end` (final review S6, Task 7/12 D2): an explicit sequence
+    window, for the one caller that can be asked about a session OTHER
+    than the current one - `godmode_console.session_digest --session
+    <older>`. `start=None` (every other caller: `check_ceilings`'s hook
+    path at `hooks/godmode_session_hook.py:1948`, and `session_digest`
+    itself when no `--session` was given) falls back to
+    `_session_anchor_sequence(archive)` exactly as before - "the newest
+    anchor" is the right answer there, because there is no OTHER session
+    being asked about. `end=None` means "to the end of the archive",
+    unchanged either way. Neither `kind="session"` nor
+    `hook-session-anchor` ever written (no session-start hook installed,
+    and `session open` never run) makes `_session_anchor_sequence` return
+    0 - nothing to be stale relative to - so an un-narrowed `scoped` here
+    silently reads identically to `lifetime` below: every usage record the
+    archive has ever seen, not a defect, just the honest answer when there
+    is no session boundary to window by at all (Task 12 D3).
+
+    Also applies `usage_records_preferring_stop` (N4) within each window -
+    `scoped` as one window, `lifetime` as however many sessions the WHOLE
+    archive has ever anchored (Task 12 D1: grouped by session boundary,
+    each session's own Stop/SessionEnd preference decided independently
+    and the per-session totals then added together, rather than the
+    single archive-wide preference the un-grouped fix used to apply -
+    which meant one session anywhere in the archive writing a Stop record
+    discarded every OTHER, SessionEnd-only session's figures from
+    `lifetime` entirely, not merely de-duplicated its own).
+    """
+    from .godmode_hookproof import SUBJECT_ANCHOR, _session_anchor_sequence
+    if start is None:
+        start = _session_anchor_sequence(archive)
+    events = archive.read_events()
+    scoped_records: list[dict[str, Any]] = []
+    lifetime_records: list[dict[str, Any]] = []
+    boundaries: list[int] = []
+    for record in events:
+        if record.get("kind") == "session" or (
+                record.get("kind") == "action" and record.get("subject") == SUBJECT_ANCHOR):
+            boundaries.append(int(record.get("sequence", 0)))
+        if record.get("kind") != "action" or record.get("subject") != USAGE_OBSERVED_SUBJECT:
+            continue
+        sequence = int(record.get("sequence", 0))
+        lifetime_records.append(record)
+        if sequence >= start and (end is None or sequence < end):
+            scoped_records.append(record)
+    boundaries.sort()
+
+    def _sum(records: list[dict[str, Any]]) -> dict[str, Any]:
+        totals = {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "total_tokens": 0}
+        kept = usage_records_preferring_stop(records)
+        for record in kept:
+            data = record.get("data") or {}
+            for key in ("input_tokens", "output_tokens", "cache_read_tokens"):
+                try:
+                    totals[key] += int(data.get(key) or 0)
+                except (TypeError, ValueError):  # godmode: swallow-ok: a non-numeric usage field counts as nothing, stated
+                    pass
+            totals["total_tokens"] += usage_record_total(data)
+        totals["records"] = len(kept)
+        return totals
+
+    def _sum_by_session(records: list[dict[str, Any]]) -> dict[str, Any]:
+        # Task 12 D1: bucket by which session boundary each record falls
+        # after (bisect's own "how many boundaries are <= this sequence" -
+        # the same membership `godmode_console.session_digest`'s own
+        # `_belongs()` computes), then prefer Stop over SessionEnd WITHIN
+        # each bucket before adding the buckets together - never across
+        # them, which is what let one session's Stop record silently
+        # erase every other session's SessionEnd-only total.
+        import bisect
+        buckets: dict[int, list[dict[str, Any]]] = {}
+        for record in records:
+            bucket = bisect.bisect_right(boundaries, int(record.get("sequence", 0)))
+            buckets.setdefault(bucket, []).append(record)
+        totals = {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
+                  "total_tokens": 0, "records": 0}
+        for bucket_records in buckets.values():
+            bucket_totals = _sum(bucket_records)
+            for key in totals:
+                totals[key] += bucket_totals[key]
+        return totals
+
+    result = _sum(scoped_records)
+    result["lifetime"] = _sum_by_session(lifetime_records)
+    return result
 
 
 def check_ceilings(project: Path, spent: dict[str, int]) -> dict[str, Any]:

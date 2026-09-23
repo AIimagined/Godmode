@@ -1,6 +1,5 @@
 """C1 round 2 (independent security review, 2026-08-17): the seven bypass
-classes the review's own `.superpowers/sdd/2026-08-16-cx/task-secA-review.md`
-lists verbatim, each reproduced here as a test - every command below is
+classes the review lists verbatim, each reproduced here as a test - every command below is
 copied from that file, not paraphrased.
 
 Round 1 anchored every check to the interpreter being the literal FIRST

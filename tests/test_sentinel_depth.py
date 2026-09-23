@@ -23,6 +23,8 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = PLUGIN_ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
+if str(Path(__file__).parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).parent))
 
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
@@ -31,6 +33,27 @@ from godmode_runtime.godmode_sentinel import (  # noqa: E402
     CapabilityBroker,
     classify_action,
 )
+from _host_env import scrubbed_environment  # noqa: E402
+
+_HOST_ENV = None
+
+
+def setUpModule() -> None:
+    """Fix round 1 (NS-10k, task-14-review.md B1): `CapabilityBroker.issue`
+    reads `godmode_sentinel.attended()`, which reads `CI` straight from
+    `os.environ` - a CI runner's own `CI=true` silently halved every TTL
+    this module mints (`test_policy_ttl_clamps_to_60_and_900`,
+    `test_without_a_policy_the_default_ttl_stays_current`) with no local
+    reproduction, since a developer's shell never carries `CI`. Every test
+    here now runs from a scrubbed, pinned-attended environment."""
+    global _HOST_ENV
+    _HOST_ENV = scrubbed_environment()
+    _HOST_ENV.start()
+
+
+def tearDownModule() -> None:
+    if _HOST_ENV is not None:
+        _HOST_ENV.stop()
 
 
 PASSWORD = "correct-horse-local-only"  # godmode: allow-secret

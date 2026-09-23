@@ -1,0 +1,1 @@
+- `atlas graph rebuild|query|verify` derive a typed, time-valid evidence graph from the archive; `atlas closure` refuses to decide against an unverified graph.

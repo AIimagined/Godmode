@@ -12,6 +12,7 @@ Two mechanisms, both deliberately dumb so they cannot be reasoned around:
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import os
 from pathlib import Path
 import posixpath
@@ -19,8 +20,17 @@ import sys
 import re
 from typing import Any
 
-from .godmode_chronicle import Chronicle
+from .godmode_chronicle import Chronicle, latest_by_subject
+from .godmode_constants import UNTRUSTED_SCAN_CAP_BYTES
 from .godmode_errors import ArchiveError
+from .godmode_fingerprint import (
+    UNKNOWN_DIGEST,
+    existing_sequences,
+    require_seq_cite,
+    seq_cite_resolves,
+    tree_fingerprint,
+)
+from .godmode_sentinel import shell_segments
 from .godmode_session_log import command_digest
 
 STATUSES = ("ran", "empty", "skipped", "blocked")
@@ -100,9 +110,39 @@ def agent_fingerprint() -> dict[str, Any]:
     return writer_fingerprint()
 
 
-def open_session(archive: Chronicle, label: str) -> str:
-    data: dict[str, Any] = {"state": "open", "agent": agent_fingerprint()}
-    record = archive.append("session", label, data, evidence=[])
+def open_session(archive: Chronicle, label: str, role: str = "agent",
+                  operator_verified: bool = False) -> str:
+    # NS-8k, fix round 1 (F0/F1): `role` is chronicled here so a later
+    # `checker` claim (`GODMODE_SESSION` env var naming this record) is
+    # attributable to a real `session open --role checker` call in THIS
+    # archive, never a bare self-declaration - see
+    # `Chronicle._chronicled_session_role`.
+    #
+    # Fix round 2 (B1): attributable is not enough by itself - a `checker`
+    # role must be OPERATOR-GRANTED. `operator_verified` is resolved by the
+    # caller (`godmode_console.cmd_session_open`, through the same
+    # `--as-operator` password/interactive path every other operator write
+    # uses) BEFORE this is ever called. When true and the role is
+    # `checker`, `role_granted_by: "operator"` is stamped into the data
+    # AND the record itself is written with operator trust
+    # (`as_operator=True, operator_verified=True` straight through to
+    # `Chronicle.append`, so `writer == "operator"` on the record) - a
+    # caller cannot forge the grant by simply passing `role_granted_by` or
+    # `writer` in, because `Chronicle.append` never accepts a caller-
+    # supplied `writer` at all: it is always `derive_writer`'s own output.
+    # (The record hash is a plain unkeyed digest of the payload, not a
+    # boundary - a process with write access to the archive directory could
+    # hand-edit a sealed record and recompute it; the real boundary is this
+    # CLI path never taking `writer` as an argument.) A `checker` session
+    # opened without verification carries neither, so
+    # `_chronicled_session_role` never honours it.
+    data: dict[str, Any] = {"state": "open", "agent": agent_fingerprint(), "role": role}
+    if role == "checker" and operator_verified:
+        data["role_granted_by"] = "operator"
+    record = archive.append(
+        "session", label, data, evidence=[],
+        as_operator=operator_verified, operator_verified=operator_verified,
+    )
     return f"S-{record['record_hash'][:12]}"
 
 
@@ -286,6 +326,8 @@ def record_step(
     rule_ids: list[str] | None = None,
     reason: str = "",
     project: Path | None = None,
+    extra: dict[str, Any] | None = None,
+    blob_paths: list[str] | None = None,
 ) -> dict[str, Any]:
     if status not in STATUSES:
         raise ArchiveError(f"Unknown attestation status '{status}'; expected one of {', '.join(STATUSES)}")
@@ -307,23 +349,67 @@ def record_step(
     # cannot prove. Absent (a stated gap) when there is no project or no
     # git; never a crash.
     if project is not None:
-        try:
-            import subprocess
+        # Review Q7: this used to hand-roll its own `subprocess.run` pair
+        # (a 30s timeout, a bare `except Exception`) - a second, coarser
+        # working-tree read living beside `godmode_fingerprint.run_git`'s
+        # (5s timeout, `GIT_OPTIONAL_LOCKS`/`GIT_TERMINAL_PROMPT` hardening).
+        # One git reader now backs both; the shape this attestation stores
+        # (`head[:12]`, `dirty` count) is unchanged, since
+        # `godmode_precheck.py` and this module's own `executed_predicates`
+        # read it back by that exact shape.
+        #
+        # N3 (review): `run_git` itself only swallows `FileNotFoundError`
+        # and `subprocess.TimeoutExpired` - it lets a `PermissionError` or
+        # other launch-time `OSError` propagate. This boundary's own
+        # contract ("never a crash") predates `run_git` and is wider than
+        # that: wrapped here too, so a git that exists but cannot be
+        # launched degrades this attestation's `worktree` field to absent,
+        # the same as a missing project or a missing git binary, never an
+        # exception out of `record_step`.
+        from .godmode_anchor import run_git
 
-            head = subprocess.run(
-                ["git", "rev-parse", "HEAD"], cwd=project,
-                capture_output=True, text=True, timeout=30)
-            porcelain = subprocess.run(
-                ["git", "status", "--porcelain=v1"], cwd=project,
-                capture_output=True, text=True, timeout=30)
-            if head.returncode == 0 and porcelain.returncode == 0:
-                data["worktree"] = {
-                    "head": head.stdout.strip()[:12],
-                    "dirty": len([l for l in porcelain.stdout.splitlines()
-                                  if l.strip()]),
-                }
-        except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
-            pass
+        try:
+            head = run_git(project, "rev-parse", "HEAD")
+            porcelain = run_git(project, "status", "--porcelain=v1")
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: this boundary never raises into the host
+            head = porcelain = None
+        if head is not None and porcelain is not None:
+            data["worktree"] = {
+                "head": head[:12],
+                "dirty": len([l for l in porcelain.splitlines() if l.strip()]),
+            }
+            # `blob_paths` (I-6 fix round 2, D5): per-path proof that
+            # survives a dirty tree, where `head[:12]`/`dirty` alone cannot
+            # - the normal edit-then-retest-then-commit flow always has
+            # uncommitted changes at retest time, so a reader that only
+            # trusted a clean `dirty == 0` tree (round 1) could never use
+            # this attestation for the file actually being retested.
+            # `git hash-object` reads the file AS IT SITS RIGHT NOW
+            # (working tree, staged or not) without needing it committed -
+            # exactly the content this check ran against - and a path that
+            # fails to hash (missing, unreadable) is simply absent from
+            # `blobs`, never a crash or a fabricated entry.
+            if blob_paths:
+                blobs: dict[str, str] = {}
+                for rel in blob_paths:
+                    try:
+                        digest = run_git(project, "hash-object", "--", rel)
+                    except Exception:  # noqa: BLE001  # godmode: swallow-ok: this boundary never raises into the host
+                        digest = None
+                    if digest:
+                        blobs[rel] = digest
+                if blobs:
+                    data["worktree"]["blobs"] = blobs
+    if extra:
+        # Structural fields a specific caller needs on its OWN attestation
+        # (S1: `run_check`'s retest caller wants the exact module list
+        # rather than a reader having to re-parse a citation string that
+        # `run_check` truncates) - merged last so a caller cannot
+        # accidentally overwrite `status`/`result`/`worktree` by naming a
+        # colliding key; `dict.update` here would let it, so this is
+        # deliberately `{**data, **extra}`'s inverse (data's own keys win).
+        for key, value in extra.items():
+            data.setdefault(key, value)
     return archive.append("attestation", step, data, evidence=evidence or [])
 
 
@@ -405,6 +491,11 @@ def resolve_executable(command: list[str]) -> list[str]:
     return [found, *command[1:]] if found else list(command)
 
 
+# The `runner` field `run_check` writes on its own attestations. An
+# attestation written from someone's words (`godmode attest`) never carries it.
+RUNNER_STAMP = "run_check"
+
+
 def run_check(
     archive: Chronicle,
     session: str,
@@ -414,8 +505,25 @@ def run_check(
     rule_ids: list[str] | None = None,
     timeout: int = 900,
     offline: bool = False,
+    modules: list[str] | None = None,
+    blob_paths: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run a declared check and attest its exit code, rather than its report.
+
+    `modules` (I-6 fix round 1, S1): a caller that knows this check maps to
+    named units - `cmd_retest`'s one pinning-test module per runner today -
+    passes them here to be stored structurally as `data["modules"]` on the
+    attestation, not only inside the one `cmd:` evidence string. That string
+    is truncated at 160 characters below; a reader (`godmode_retest.
+    cited_modules`) that only had the string to search would silently miss
+    any module past the cut. `None` (every other caller) leaves the
+    attestation exactly as before.
+
+    `blob_paths` (I-6 fix round 2, D5): forwarded to `record_step` verbatim
+    - the source files `modules` pin, hashed via `git hash-object` at the
+    moment this check ran, so `godmode_closure._unattested_but_unchanged`
+    can trust an attestation against its EXACT content even on the dirty
+    tree the normal edit-then-retest flow always has.
 
     `offline` (obligation 9792, seventeenth and eighteenth field reports: a
     negative test believed free made a paid call inside a check-shaped
@@ -499,6 +607,13 @@ def run_check(
         reason=("" if passed else
                 (f"check dialled out {len(connections)} time(s) under --offline"
                  if connections else f"check failed with exit {code}")),
+        # `runner` stamps the attestation as written by this runner, with the
+        # exit code it observed - `godmode attest` cannot set either, so a
+        # reader that must trust an exit code (NS-13e's red-then-green pair)
+        # can tell a run from a report of one.
+        extra={"runner": RUNNER_STAMP, "exit_code": code,
+               **({"modules": modules} if modules else {})},
+        blob_paths=blob_paths,
     )
     outcome: dict[str, Any] = {
         "check": name,
@@ -801,8 +916,96 @@ def _position_support(project: Path, citation: str, claim: str) -> str | None:
 _CLAIM_NUMBERS = re.compile(r"\d[\d,]*(?:\.\d+)?")
 
 
+def _untrusted_digests(archive: Chronicle) -> set[str]:
+    """Every digest the NS-8f PostToolUse scan has flagged as instruction-
+    shaped content, from `action` / `untrusted-content-seen` records
+    (`hooks/godmode_post_edit.py`). A `tool:<digest>` citation resolves
+    against this set, and `record_claim` caps a claim citing (or citing a
+    `file:` whose bytes hash to) one of these at `observed`.
+
+    UNBOUNDED (`archive.read_events()`, not `archive.select(...)`) - final
+    review S3: `Chronicle.select` clamps its `limit` to the last 500
+    records regardless of what is asked for, and whether content was ever
+    flagged as untrusted is a referential question about the WHOLE
+    archive, not a recency window. Windowed at 500 this failed OPEN (the
+    worse direction than Task 6's N1, which failed closed): a claim citing
+    a digest flagged more than 500 `untrusted-content-seen` records ago
+    would read as never flagged and escape the `observed` cap entirely.
+    Same reasoning as `godmode_fingerprint.existing_sequences`.
+    """
+    return {
+        digest
+        for record in archive.read_events()
+        if record["kind"] == "action" and record["subject"] == "untrusted-content-seen"
+        if (digest := (record.get("data") or {}).get("digest"))
+    }
+
+
+# Final review S2: the single source of truth for this cap, shared with
+# `hooks/godmode_post_edit.py`'s own `_TOOL_RESULT_SCAN_CAP` (which cannot
+# import this module - or any of `godmode_runtime` - at module level; see
+# that module's own docstring) - `tests/test_untrusted_marker.py` pins both
+# module-level literals equal to `UNTRUSTED_SCAN_CAP_BYTES` so a drift on
+# either side fails the test. The hook's digest is over the first
+# this-many CHARACTERS of the decoded result, not its raw bytes, so a
+# file-citation match has to reproduce that same truncation to compare
+# like with like (Task 7 review, S2).
+_UNTRUSTED_SCAN_CAP = UNTRUSTED_SCAN_CAP_BYTES
+
+
+def _citation_is_untrusted(project: Path, digests: set[str], citation: str) -> bool:
+    """Does this citation point at content the NS-8f scan flagged?
+
+    `digests` is the caller's own `_untrusted_digests(archive)` result,
+    computed once per `record_claim` call rather than once per citation
+    (Task 7 review, C3 - a claim with N citations used to run N archive
+    scans here, plus one more per `tool:` citation inside
+    `_citation_resolves`).
+
+    A `tool:<digest>` citation matches directly. A `file:` citation
+    matches when either digest of the CURRENT file content is flagged:
+    the whole-file digest (a small file, or a large one truncated the
+    same way the scan truncated the tool result it came from), or the
+    digest of just its first `_UNTRUSTED_SCAN_CAP` characters (a file
+    holding MORE than the scan ever saw - the hook's own digest never
+    covered past its cap, so only the capped digest can match a file
+    like that). Checking only the whole-file digest let a claim launder
+    flagged content past the cap by citing the file it was saved to
+    (Task 7 review, S2: a 70 KB flagged fetch saved verbatim and cited as
+    `file:` recorded `verified`, `untrusted: False`).
+    """
+    if not digests:
+        return False
+    if citation.startswith("tool:"):
+        return citation[len("tool:"):] in digests
+    match = _FILE_CITE.match(citation)
+    if match:
+        target = project / match.group("path")
+        try:
+            data = target.read_bytes()
+        except OSError:
+            return False
+        if hashlib.sha256(data).hexdigest()[:16] in digests:
+            return True
+        capped_text = data.decode("utf-8", "replace")[:_UNTRUSTED_SCAN_CAP]
+        capped_digest = hashlib.sha256(
+            capped_text.encode("utf-8", "replace")).hexdigest()[:16]
+        return capped_digest in digests
+    return False
+
+
 def _citation_resolves(project: Path, archive: Chronicle, citation: str,
-                       session: str | None = None) -> bool:
+                       session: str | None = None,
+                       untrusted_digests: set[str] | None = None,
+                       # Final review N5: named `existing` (matching
+                       # `seq_cite_resolves`'s own parameter), never
+                       # `existing_sequences` - that name shadows the
+                       # module-level `existing_sequences` imported from
+                       # `godmode_fingerprint` above, and a future call to
+                       # that function from inside this one would silently
+                       # resolve to this parameter instead and fail with
+                       # "NoneType is not callable" whenever it was `None`.
+                       existing: set[int] | None = None) -> bool:
     if citation.startswith("cmd:"):
         # A command citation resolves when some attestation records having run it.
         # Anyone can write the words; only a run leaves the record.
@@ -842,8 +1045,22 @@ def _citation_resolves(project: Path, archive: Chronicle, citation: str,
         # existence in the chain is enough here; the differential's own
         # record is what vouches for the comparison, this only vouches the
         # state being compared exists.
-        sequence = int(match.group("sequence"))
-        return any(record["sequence"] == sequence for record in archive.select(limit=2000))
+        #
+        # R2 (review): routed through the same `seq_cite_resolves`
+        # `record_claim`'s hard referential check uses (head-cache
+        # short-circuit for an out-of-range sequence, unbounded
+        # `read_events()` scan otherwise) - this branch used to bound
+        # itself with `archive.select(limit=2000)`, which `Chronicle.select`
+        # clamps to the newest 500 records regardless of the limit passed,
+        # so a real, older `seq:` cite could pass the hard check above and
+        # still be reported "does not resolve" here, downgrading a claim
+        # over a citation that was never false.
+        #
+        # R3 (review): `existing`, when the caller already has it (a claim
+        # with more than one `seq:` cite), skips the scan entirely here
+        # too - the same set backs both the hard check and this softer one
+        # for the same call.
+        return seq_cite_resolves(archive, int(match.group("sequence")), existing=existing)
     match = _DIFF_CITE.match(citation)
     if match:
         # U-E3: a differential resolves only when its own record exists AND
@@ -885,6 +1102,10 @@ def _citation_resolves(project: Path, archive: Chronicle, citation: str,
             return re.match(anchor, f"{match.group('name')}:{value}") is not None
         except re.error:
             return False
+    if citation.startswith("hyp:"):
+        # NS-13f: a hypothesis resolves only once its kill experiment ran
+        # and did not fire - an untested cause supports nothing yet.
+        return survived(archive, citation)
     if citation.startswith("criterion:"):
         # U-T2: resolves when a criterion record exists under that exact
         # subject - the citation string and the subject are the same text,
@@ -893,6 +1114,26 @@ def _citation_resolves(project: Path, archive: Chronicle, citation: str,
             record["subject"] == citation
             for record in archive.select(kind="criterion", limit=500)
         )
+    if citation.startswith("tool:"):
+        # NS-8f: resolves when the digest names a tool result the
+        # PostToolUse scan actually flagged (`hooks/godmode_post_edit.py`'s
+        # `untrusted-content-seen` record) - existence only, the same as
+        # every other digest-shaped citation above. Whether a claim resting
+        # on it may say more than "observed" is `record_claim`'s cap below,
+        # not a resolution question.
+        #
+        # Fix round 2 (Task 7 re-review, C3 residue): `record_claim`
+        # already computed this exact set once, above, to decide the cap -
+        # passed in as `untrusted_digests` so an N-`tool:`-citation claim
+        # does not run a second `archive.select` per citation on top of
+        # that. Every OTHER caller of `_citation_resolves` (the
+        # differential's own `a_ref`/`b_ref` recursion, `resolve_claim`'s
+        # citation check) has no such set in hand, so the default `None`
+        # falls back to computing it fresh here - correct, just not free,
+        # for those.
+        digests = (untrusted_digests if untrusted_digests is not None
+                   else _untrusted_digests(archive))
+        return citation[len("tool:"):] in digests
     match = _FILE_CITE.match(citation)
     if match:
         target = project / match.group("path")
@@ -1330,7 +1571,7 @@ def dissent_check(archive: Chronicle, window: int = 25, sample_floor: int = 8) -
     )
 
 
-# E4 R4 / E6 tdd, superpowers-class: a completion claim citing a test command
+# E4 R4 / E6 tdd class: a completion claim citing a test command
 # is admissible only when the SAME command is observed failing before the
 # fix-edit and passing after - the temporal shape, not just the citation.
 # One reason text for every way the shape can be missing (green-only,
@@ -1765,6 +2006,17 @@ def _guard_pin_reason(project: Path, archive: Chronicle, text: str,
     return guard_pin_reason(project, archive, text, citations)
 
 
+def _pin_is_advisory_only(pin_reason: str) -> bool:
+    """True when `pin_reason` is the `PIN_ADVISORY_PREFIX`-marked,
+    informational-only shape `guard_pin_reason` returns for a lesson that
+    shares vocabulary but no cited stem - the two modules check the same
+    constant so a rewording of the prefix in one cannot silently desync
+    from the check in the other."""
+    from .godmode_sources import PIN_ADVISORY_PREFIX
+
+    return pin_reason.startswith(PIN_ADVISORY_PREFIX)
+
+
 def evidence_versions(project: Path, citations: list[str]) -> dict[str, dict[str, str]]:
     """The version of every file-shaped citation at record time (obligation
     10248, grounded claims): a sha256 of the file, or of the cited line
@@ -1808,6 +2060,15 @@ def stale_claims(archive: Chronicle, project: Path, limit: int = 500) -> list[di
     # three resolved claims stayed on the stale list through a whole gate).
     resolved = {int((r.get("data") or {}).get("resolves"))
                 for r in records if (r.get("data") or {}).get("resolves") is not None}
+    # R1 (review): the same "settled, not stale" fact above, bridged to a
+    # verdict by claim TEXT - a verdict carries no sequence link to the
+    # claim record it backs, only the same descriptive text a claim's own
+    # `text` field holds, so a resolved claim's text is the only handle a
+    # verdict can be matched against below.
+    resolved_texts = {
+        str((r.get("data") or {}).get("text") or r.get("subject") or "")
+        for r in records if int(r.get("sequence", 0) or 0) in resolved
+    }
     for record in records:
         data = record.get("data") or {}
         text = str(data.get("text") or record.get("subject") or "")
@@ -1817,10 +2078,23 @@ def stale_claims(archive: Chronicle, project: Path, limit: int = 500) -> list[di
             continue
         latest[text] = record
     stale: list[dict[str, Any]] = []
+    # Q1: computed at most once for the whole call, and only when a claim
+    # actually needs it (a claim with no `file:` citation, or one whose
+    # per-citation hash already caught the movement, never triggers the
+    # four `git` subprocesses tree_fingerprint spends) - the digest cannot
+    # change between iterations of the loop below, so calling it inside
+    # the loop was pure per-claim waste on top of being wrong.
+    current_fingerprint: str | None = None
     for text, record in latest.items():
         data = record.get("data") or {}
         recorded = data.get("evidence_versions") or {}
         current = evidence_versions(Path(project), list(recorded))
+        # S3: the tree-wide fingerprint below is the FALLBACK signal for
+        # movement no per-citation hash caught - once this record already
+        # produced a `changed`/`vanished` entry, the tree check is
+        # redundant for it and would otherwise double the same claim into
+        # `stale` twice.
+        citation_flagged = False
         for citation, version in recorded.items():
             now = current.get(citation)
             if now is None:
@@ -1829,12 +2103,87 @@ def stale_claims(archive: Chronicle, project: Path, limit: int = 500) -> list[di
                 reason = "changed"
             else:
                 continue
+            citation_flagged = True
             stale.append({
                 "sequence": record.get("sequence"),
                 "text": text[:120],
                 "citation": citation,
                 "reason": reason,
                 "grade": data.get("grade"),
+            })
+        # NS-8b: the tree as a whole moved since this claim was cited, not
+        # merely the one file a per-citation hash above already caught -
+        # a rename, a sibling file, or an index change with no per-file
+        # citation of its own. Restricted to claims citing at least one
+        # `file:` - a claim resting solely on `cmd:` citations is meant to
+        # be re-run, not compared byte-for-byte against a frozen tree, so a
+        # tree-wide fingerprint mismatch there is the point, not staleness.
+        recorded_fingerprint = data.get("tree_fingerprint")
+        citations_list = [str(c) for c in (record.get("evidence") or [])]
+        if (not citation_flagged and recorded_fingerprint
+                and recorded_fingerprint != UNKNOWN_DIGEST
+                and any(c.startswith("file:") for c in citations_list)):
+            if current_fingerprint is None:
+                current_fingerprint = tree_fingerprint(Path(project))["digest"]
+            # S5/S6: a fingerprint that could not be read just now (a
+            # transient git failure, not a real "clean" or "changed" tree)
+            # is never compared - it would either forge a false match or a
+            # false, unfixable mismatch against a real digest.
+            if current_fingerprint != UNKNOWN_DIGEST and current_fingerprint != recorded_fingerprint:
+                stale.append({
+                    "sequence": record.get("sequence"),
+                    "text": text[:120],
+                    # Q6: never `None` - both live consumers interpolate
+                    # this into a rendered line and would print the word
+                    # "None" beside the reason.
+                    "citation": "",
+                    "reason": "tree-changed",
+                    "grade": data.get("grade"),
+                })
+    # S4: a verdict's own `file:` witness moving since it was recorded -
+    # the same "the evidence moved" fact above, extended to the witness a
+    # verdict's checkers ran against rather than a claim's citations.
+    # Mirrors the claim pass above: fold to the newest verdict per subject
+    # first, so an older verdict a later re-check superseded is not
+    # reported forever on every SessionStart and every preflight gate.
+    #
+    # N2 (review): keyed on `(claim, witness ref)`, not on `claim` alone -
+    # two verdicts about the same claim text but different witnesses must
+    # not fold together (that would drop the older witness's own staleness
+    # entirely), and every verdict whose `claim` is empty or absent keys on
+    # its own sequence instead, so distinct claim-less verdicts never
+    # collapse into one shared `""` bucket.
+    latest_verdicts: dict[Any, dict[str, Any]] = {}
+    for record in archive.select(kind="verdict", limit=limit):
+        data = record.get("data") or {}
+        claim_text = str(data.get("claim") or "")
+        witness_ref = (data.get("witness") or {}).get("ref")
+        key: Any = (claim_text, witness_ref) if claim_text else record.get("sequence")
+        existing = latest_verdicts.get(key)
+        if existing is None or int(record.get("sequence", 0) or 0) > int(existing.get("sequence", 0) or 0):
+            latest_verdicts[key] = record
+    for record in latest_verdicts.values():
+        data = record.get("data") or {}
+        claim_text = str(data.get("claim") or "")
+        # R1 (review): the claim this verdict backs was later resolved
+        # (held, failed, superseded) - its witness moving afterward is
+        # history, not staleness, same reasoning as the claim pass's own
+        # `resolved`/`resolved_texts` skip above.
+        if claim_text and claim_text in resolved_texts:
+            continue
+        witness = data.get("witness") or {}
+        recorded_version = data.get("witness_version") or {}
+        if witness.get("kind") != "file" or not witness.get("ref") or not recorded_version:
+            continue
+        citation = f"file:{witness['ref']}"
+        current = evidence_versions(Path(project), [citation]).get(citation)
+        if current is None or current.get("hash") != recorded_version.get("hash"):
+            stale.append({
+                "sequence": record.get("sequence"),
+                "text": claim_text[:120],
+                "citation": citation,
+                "reason": "witness-changed",
+                "grade": data.get("disposition"),
             })
     return stale
 
@@ -1843,6 +2192,12 @@ def stale_claims(archive: Chronicle, project: Path, limit: int = 500) -> list[di
 # describes (field report 27, 2026-09-10: "final suite exit 0" was graded
 # verified because the cited grep over a log exited 0). A filter's exit
 # code is the filter's verdict, not the run's.
+#
+# The table has a second duty, via `_reports_state`: a filter that ends a
+# cited pipeline is also the stage whose exit code the shell reports, and
+# reshaping state is not a verdict about it, so every head here except the
+# search family caps a claim at observed. Adding a head here therefore
+# tightens both paths at once - see `_reports_state`.
 _FILTER_HEADS = frozenset({
     "grep", "rg", "egrep", "fgrep", "ag", "echo", "printf", "cat", "head", "tail", "wc",
     "sort", "uniq", "cut", "tr", "awk", "sed", "ls", "find", "test", "[", "true", "false",
@@ -1851,23 +2206,54 @@ _FILTER_HEADS = frozenset({
 })
 
 
+def _pipeline_tail(command: str) -> str:
+    """The last non-empty pipeline stage of a command line - the stage whose
+    exit code the shell reports, so that is the stage a classifier judges.
+
+    Splits the same quote-aware way the privacy boundary already splits a
+    compound command (`shell_segments`, imported from `godmode_sentinel` -
+    no import cycle, `godmode_sentinel` only reaches back to
+    `godmode_constants`/`godmode_errors`), so a `|`/`;`/`&&`/`||` inside a
+    quoted argument does not fool this classifier the way a naive
+    whitespace-and-string split did: `echo "a|b"` is one segment, not two.
+
+    A command that is nothing but trailing separators (`git status;`,
+    `git status &&`) has no segments at all - falling back to the whole,
+    stripped text keeps it capped at whatever its own head would have
+    graded, rather than defaulting an empty stage to "falsifiable" the way
+    matching nothing in `_NON_VERDICT_HEADS` otherwise would."""
+    try:
+        segments = shell_segments(command)
+    except Exception:  # noqa: BLE001 - a parse quirk must fail closed, not promote to verified
+        segments = []
+    return segments[-1] if segments else command.strip()
+
+
+def _head_and_rest(stage: str) -> tuple[str, list[str]]:
+    """The stage's normalised head token (`\\` -> `/`, basename, lowercased,
+    `.exe` stripped) and its remaining tokens, after a leading `VAR=value`
+    environment prefix is dropped. Shared by `filter_head` and
+    `_exit_bearing` so the two agree on what counts as "the command" - they
+    used to carry two copies of this rule that had already drifted (one
+    guarded a leading `[` against the `VAR=` strip, the other did not)."""
+    tokens = stage.split()
+    while tokens and "=" in tokens[0] and not tokens[0].startswith(("-", "/", ".", "[")):
+        tokens = tokens[1:]  # VAR=value prefix
+    if not tokens:
+        return "", []
+    head = tokens[0].replace("\\", "/").split("/")[-1].lower()
+    if head.endswith(".exe"):
+        head = head[:-4]
+    return head, tokens[1:]
+
+
 def filter_head(citation: str) -> str | None:
     """The filter that decides the cited command's exit code, or None when
     the command's last stage is a run. `cd x; ...` and `A && B` prefixes are
     dropped; the last pipeline stage is the one whose exit code the shell
     reports, so that is the stage judged."""
     command = str(citation)[len("cmd:"):] if str(citation).startswith("cmd:") else str(citation)
-    for separator in (";", "&&", "||"):
-        command = command.split(separator)[-1]
-    stage = command.split("|")[-1].strip()
-    tokens = stage.split()
-    while tokens and "=" in tokens[0] and not tokens[0].startswith(("-", "/", ".")):
-        tokens = tokens[1:]  # VAR=value prefix
-    if not tokens:
-        return None
-    head = tokens[0].replace("\\", "/").split("/")[-1].lower()
-    if head.endswith(".exe"):
-        head = head[:-4]
+    head, _rest = _head_and_rest(_pipeline_tail(command))
     return head if head in _FILTER_HEADS else None
 
 
@@ -1878,7 +2264,174 @@ def filter_head(citation: str) -> str | None:
 _NON_VERDICT_HEADS = re.compile(
     r"(?i)^\s*(?:git\s+(?:status|log|diff|show|rev-parse|branch|remote|ls-files|describe)\b|"
     r"(?:ls|dir|cat|type|echo|printf|head|tail|wc|date|pwd|env|printenv|find|tree|stat|which|where|whoami|"
-    r"uname|hostname|id|history|true)\b)")
+    # `cd`/`pushd`/`popd`/`export`/`source`/`set` read or change shell state
+    # (the working directory, an environment variable, a shell option) and
+    # do so unconditionally on success; a failure means the target did not
+    # exist, which the command line's own following stages already act on,
+    # not something a claim's citation should get credit for as a verdict.
+    # Added round 3 (re-review 2, 3.2): once the negative path started
+    # judging the pipeline tail, `ls -la && cd x` graded falsifiable on the
+    # `cd x` tail with nothing downstream to cap it.
+    r"uname|hostname|id|history|true|cd|pushd|popd|export|source|set)\b)")
+
+
+# I-5 (design doc Sprint 7): the commands below carry a real verdict in
+# their exit code even though a bare head match would otherwise miss them
+# or (worse) `_NON_VERDICT_HEADS` would wrongly cap them at observed.
+# `falsifiable()` consults these before the head regex, on the last
+# pipeline stage (via `_head_and_rest`/`_pipeline_tail`), so
+# `git status --porcelain | grep -q .` is graded on the `grep -q` tail, not
+# the `git status` head.
+#
+# `_EXIT_BEARING_FORMS` is the literal table: head -> the flags that make
+# that head's exit code a verdict (`diff -q`/`--brief`, `cmp -s`, quiet
+# `grep`/`egrep`/`fgrep`/`rg`). A clustered short flag (`-rq`, `-qr`, `-iq`)
+# counts as `-q` for the grep family - the same semantics spelled as two
+# tokens already verified, and refusing the clustered spelling was exactly
+# the friction I-5 exists to remove. A trivial pattern (`grep -q .`,
+# `grep -q ""`) is left falsifiable on purpose: its exit code still depends
+# on the data (an empty input exits 1), a text-level classifier cannot
+# distinguish a trivially-satisfied pattern from a meaningful one, and a
+# wrapper script (`cmd:python -c "raise SystemExit(0)"`) could always
+# launder a verdict anyway - narrowing this case buys no real soundness.
+# The same reasoning covers plain `grep foo` with no `-q`/`--quiet` at all
+# (round 3, re-review 2, note 3.2): `grep` is not in `_NON_VERDICT_HEADS`,
+# so it is falsifiable by that regex's default, and rightly so - its exit
+# code depends on whether `foo` matched, which is data, with or without the
+# quiet flag; `-q` only silences the output, it does not create the
+# verdict. A run-shaped claim ("the suite passes") citing a bare `grep`
+# over a log still cannot compose past `observed` regardless - that is
+# `filter_head`'s rule, untouched here, and a different question from
+# whether the predicate itself can be falsified.
+#
+# Accepted residual, not a hole: `_EXPANSION_TOKEN` (below) matches a `$`
+# that is inside single quotes too, which the shell does not expand -
+# `test '$X' = '$X'` grades falsifiable though it is constant. Distinguishing
+# an expansion the shell will actually perform from one merely spelled with
+# `$` needs a real shell parser; this classifier does not carry one. It
+# needs a deliberately-constructed citation to hit, the same class as the
+# wrapper-script laundering already accepted above, not a form anyone
+# writes by accident.
+#
+# `git diff`/`git merge-base` need their subcommand read first, so they are
+# their own table, `_GIT_EXIT_BEARING_SUBCOMMANDS` (subcommand -> the flags
+# that make it a verdict).
+#
+# `test`/`[` need a real predicate, not just any argument, and not just any
+# operator: `test 1` and `[ x ]` are constant-true and cannot fail for any
+# state, so they stay reports-state. Two families of operator, and they
+# earn the grade differently:
+#   - `_FILE_TEST_OPERATORS` (`-e -f -d -s -r -w -x -h -L -p -S`) read the
+#     filesystem, so a literal operand is enough - the filesystem is the
+#     state being tested (`test -f x`, `[ -f x ]` do fail on the claim's
+#     negation).
+#   - `_COMPARISON_OPERATORS` (`-z -n = != -eq -ne -lt -le -gt -ge`) read
+#     only their operands. Over literals they are constant regardless of
+#     which operator is used (`test -n x`, `[ 1 -eq 1 ]` cannot fail on
+#     anything), so they only earn the grade when at least one operand
+#     carries a run-time expansion (`$VAR`, `$(...)`, a backtick, or a
+#     `%VAR%` for a Windows form) - the exit code then depends on what that
+#     expansion resolves to, which is state.
+_EXIT_BEARING_FORMS: dict[str, frozenset[str]] = {
+    "diff": frozenset({"-q", "--brief"}),
+    "cmp": frozenset({"-s", "--quiet", "--silent"}),
+    "grep": frozenset({"-q", "--quiet"}),
+    "egrep": frozenset({"-q", "--quiet"}),
+    "fgrep": frozenset({"-q", "--quiet"}),
+    "rg": frozenset({"-q", "--quiet"}),
+}
+_CLUSTERED_SHORT_FLAG_HEADS = frozenset({"grep", "egrep", "fgrep", "rg"})
+_CLUSTERED_Q_FLAG = re.compile(r"^-[A-Za-z]*q[A-Za-z]*$")
+_GIT_EXIT_BEARING_SUBCOMMANDS: dict[str, frozenset[str]] = {
+    "diff": frozenset({"--quiet", "--exit-code"}),
+    "merge-base": frozenset({"--is-ancestor"}),
+}
+_FILE_TEST_OPERATORS = frozenset({"-e", "-f", "-d", "-s", "-r", "-w", "-x", "-h", "-L", "-p", "-S"})
+_COMPARISON_OPERATORS = frozenset({"-z", "-n", "=", "!=", "-eq", "-ne", "-lt", "-le", "-gt", "-ge"})
+_EXPANSION_TOKEN = re.compile(r"\$|`|%[^%\s]+%")
+
+
+def _has_expansion(tokens: list[str]) -> bool:
+    return any(_EXPANSION_TOKEN.search(token) for token in tokens)
+
+
+def _has_predicate_operator(tokens: list[str]) -> bool:
+    if any(token in _FILE_TEST_OPERATORS for token in tokens):
+        return True
+    if any(token in _COMPARISON_OPERATORS for token in tokens):
+        return _has_expansion(tokens)
+    return False
+
+
+def _exit_bearing(stage: str) -> bool:
+    """Whether `stage` (already the last pipeline stage) is one of the
+    exit-bearing forms documented above. Token-based, not a single regex,
+    so a flag has to be its own argument or a clustered short flag - a
+    bare number or name is never mistaken for one."""
+    head, rest = _head_and_rest(stage)
+    if not head:
+        return False
+    if head == "[":
+        return bool(rest) and rest[-1] == "]" and _has_predicate_operator(rest[:-1])
+    if head == "test":
+        return _has_predicate_operator(rest)
+    if head in _EXIT_BEARING_FORMS:
+        flags = _EXIT_BEARING_FORMS[head]
+        if any(token in flags for token in rest):
+            return True
+        return head in _CLUSTERED_SHORT_FLAG_HEADS and any(
+            _CLUSTERED_Q_FLAG.match(token) for token in rest)
+    if head == "git" and rest:
+        wanted = _GIT_EXIT_BEARING_SUBCOMMANDS.get(rest[0])
+        return bool(wanted) and any(token in wanted for token in rest[1:])
+    return False
+
+
+_PREDICATE_HEADS = frozenset({"test", "["})
+
+# The one part of `_FILTER_HEADS` that keeps its verdict when it is the
+# pipeline tail: a search's exit code answers "did the pattern match",
+# which is data, with or without `-q` (round 3's ruling for bare
+# `grep foo`; `grep -c foo` exits 1 on zero matches exactly as `grep -q`
+# does). Everything else in that table reshapes or prints its input and
+# succeeds unconditionally on well-formed input.
+_SEARCH_HEADS = frozenset({"grep", "egrep", "fgrep", "rg", "ag", "findstr", "select-string"})
+
+
+def _reports_state(stage: str) -> bool:
+    """Whether `stage` only reads, prints or reshapes state, so its exit
+    code cannot fail for a claim's negation.
+
+    Both head tables this module already carries are consulted here -
+    `_FILTER_HEADS` and `_NON_VERDICT_HEADS` - deliberately, rather than a
+    third list naming the overlap, because the two drifted once and the
+    drift was the bug: after the negative path started judging the pipeline
+    tail, a tail in `_FILTER_HEADS` that `_NON_VERDICT_HEADS` did not happen
+    to name (`| sort`, `| uniq`, `| cut -c4-`, `| jq .version`,
+    `| awk '{print $1}'`, `| sed -n 1,20p`, `| tr -d ' '`, `| less`,
+    `| Write-Output`) graded falsifiable, while `| wc -l`, `| head` and
+    `| tail` capped - two behaviours for the same kind of tail, separated by
+    nothing but which list a head had landed in. Deriving the check from the
+    union means a head added to either table is honoured by both.
+
+    The exemptions are the tails whose exit code really is a verdict: an
+    exit-bearing form (`_exit_bearing` - `diff -q`, `cmp -s`, a quiet grep,
+    `git diff --quiet`, `git merge-base --is-ancestor`) and the search
+    family (`_SEARCH_HEADS`). `test`/`[` never reach this helper; they are
+    settled by `falsifiable()`'s predicate branch above it.
+
+    A head in neither table is still presumed to carry a verdict, so a
+    deliberately-built wrapper tail (`git status && :`, `&& touch f`) grades
+    falsifiable. That is the accepted residual, unchanged here: it takes a
+    hand-written citation to reach, and a wrapper script
+    (`cmd:python -c "raise SystemExit(0)"`) could launder a verdict anyway.
+    """
+    head, _rest = _head_and_rest(stage)
+    if head in _SEARCH_HEADS or _exit_bearing(stage):
+        return False
+    if head in _FILTER_HEADS:
+        return True
+    return bool(_NON_VERDICT_HEADS.match(stage))
 
 
 def falsifiable(command: str) -> bool:
@@ -1886,7 +2439,28 @@ def falsifiable(command: str) -> bool:
     text = str(command)
     if text.startswith("cmd:"):
         text = text[4:]
-    return not _NON_VERDICT_HEADS.match(text.strip())
+    text = text.strip()
+    tail = _pipeline_tail(text)
+    if _exit_bearing(tail):
+        return True
+    # `test`/`[` are not in `_NON_VERDICT_HEADS` (nothing there names a
+    # bracket), so a `test`/`[` tail that failed the predicate-operator
+    # check above must be caught here explicitly - otherwise `test 1` and
+    # `[ x ]` fall through to the regex's default of "falsifiable", which
+    # is exactly the laundering hole this rule exists to close.
+    head, _rest = _head_and_rest(tail)
+    if head in _PREDICATE_HEADS:
+        return False
+    # The positive branch above already judges `tail`, not `text` - the
+    # stage whose exit code the shell reports is the stage a classifier
+    # judges (`_pipeline_tail`'s own docstring). The negative branch used to
+    # judge `text` instead, so a non-verdict command behind any prefix the
+    # regex does not name (`cd . && git status`) fell through to the
+    # default of "falsifiable". Judging `tail` here too closes that, and
+    # `_reports_state` judges it against both head tables at once so a
+    # transformer tail (`git status --porcelain | sort`) caps the same way
+    # `| wc -l` always did.
+    return not _reports_state(tail)
 
 
 _PATH_IN_TEXT = re.compile(r"(?<![\w/])((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,6})\b")
@@ -2010,8 +2584,15 @@ def record_claim(
     refuted_by: str | None = None,
     transcript_path: str | Path | None = None,
     depends_on: list[int] | None = None,
+    fixes: int | None = None,
 ) -> dict[str, Any]:
     """Persist a claim, downgrading it when its citations do not resolve.
+
+    `fixes` (NS-13e) names the incident the claim fixes. The claim verifies
+    only as a red-then-green pair: the incident holds the red run of its
+    reproduction command, and this claim cites that same command with a
+    green run in this session after the incident. Anything less caps the
+    grade at observed with the reason named.
 
     Not a warning. A claim the evidence does not support is stored as a hypothesis,
     because a claim asserted at full confidence is what a later session will trust.
@@ -2055,6 +2636,51 @@ def record_claim(
             f"{', '.join(BLAST_RADIUS_KINDS)}"
         )
     citations = cites or []
+    # NS-13e: a fix claim names a real incident or nothing - a dangling
+    # --fixes is a mistake in the claim itself, refused before grading.
+    fix_incident = _fix_incident(archive, fixes) if fixes is not None else None
+    # NS-13f: a fix may rest on a hypothesis only when that hypothesis's
+    # kill experiment ran and did not fire. Refused, not downgraded: the
+    # citation itself claims a test that never happened.
+    if fixes is not None or looks_like_fix_claim(text)[0]:
+        for _citation in citations:
+            refusal = fix_citation_refusal(archive, str(_citation))
+            if refusal:
+                raise ArchiveError(f"fix claim refused: {refusal}")
+    # NS-8f fix round 1 (S3/C3): computed once, here, above every early
+    # return - not at the tail after the ladder - so `untrusted` is on
+    # EVERY record this call can write, including the four early-return
+    # `hypothesis` dicts below (`blast_radius` already follows this same
+    # "always present" convention; `untrusted` did not, which made the
+    # schema comment on the final append below false for those four
+    # shapes). Also settles C3: one `_untrusted_digests(archive)` scan of
+    # the event log per `record_claim` call, not one per citation.
+    _untrusted_digests_now = _untrusted_digests(archive)
+    untrusted = any(
+        _citation_is_untrusted(project, _untrusted_digests_now, c) for c in citations
+    )
+    # NS-8b: a seq:<n> citation is a referential claim about the archive's
+    # own history, not a claim about project state - "the record this rests
+    # on never existed" is a mistake in the citation itself, not a fact to
+    # grade softer. Checked before any other discipline so a fabricated
+    # seq: never reaches the downgrade ladder below.
+    #
+    # R3 (review): a claim citing MORE THAN ONE `seq:` used to scan
+    # `archive.read_events()` once per such citation here, then again per
+    # `seq:` citation inside `unresolved` below (`_citation_resolves`'s own
+    # `seq:` branch) - up to 2N full-archive reads for an N-`seq:`-citation
+    # claim. `existing_seqs` is computed once, only when it can save a
+    # second scan, and threaded through both passes below.
+    _seq_citations_now = [str(c) for c in citations if str(c).startswith("seq:")]
+    existing_seqs = (
+        existing_sequences(archive) if len(_seq_citations_now) > 1 else None
+    )
+    for _citation in citations:
+        require_seq_cite(archive, str(_citation), existing=existing_seqs)
+    # NS-8b: the working tree's shape at cite time, stamped on every claim
+    # this call produces (including the downgrades below) so a later sweep
+    # can tell the ground moved even when no single cited file's hash did.
+    fingerprint_digest = tree_fingerprint(project)["digest"]
     # The fix-loop wire, checked before every other discipline and for any
     # claim that stakes something - a verified grade or a declared
     # confidence: two recorded reversals on this subject mean the third try
@@ -2068,7 +2694,19 @@ def record_claim(
                  "session": session, "downgraded": True, "unresolved": [],
                  "unsupported": [], "operator_asserted": [],
                  "blast_radius": blast_radius, "confidence": confidence,
-                 "advisories": [], "reason": loop_reason},
+                 "untrusted": untrusted,
+                 "advisories": [], "reason": loop_reason,
+                 "tree_fingerprint": fingerprint_digest,
+                 # S2 (review): without this, `stale_claims`' own filter
+                 # (`not data.get("evidence_versions")`) skips this record
+                 # before the tree check above it can ever read the stamp -
+                 # a downgraded claim is precisely one worth re-checking.
+                 # N4 (review): matches the main append below - a downgraded
+                 # claim's SUBJECT files (paths the claim text names, not
+                 # just what it cited) get the same per-citation staleness
+                 # coverage an accepted claim gets, not a narrower one.
+                 "evidence_versions": evidence_versions(
+                     project, list(citations) + [f"file:{p}" for p in subject_files(project, text)])},
                 evidence=citations,
             )
     # Detected as well as declared: the check protected whoever remembered to
@@ -2088,7 +2726,14 @@ def record_claim(
                 {"text": text, "grade": "hypothesis", "claimed_grade": grade,
                  "session": session, "downgraded": True, "unresolved": [],
                  "operator_asserted": [], "blast_radius": blast_radius, "confidence": confidence,
-                 "reason": differential_reason},
+                 "untrusted": untrusted,
+                 "reason": differential_reason, "tree_fingerprint": fingerprint_digest,
+                 # N4 (review): matches the main append below - a downgraded
+                 # claim's SUBJECT files (paths the claim text names, not
+                 # just what it cited) get the same per-citation staleness
+                 # coverage an accepted claim gets, not a narrower one.
+                 "evidence_versions": evidence_versions(
+                     project, list(citations) + [f"file:{p}" for p in subject_files(project, text)])},
                 evidence=citations,
             )
     # U-T3: a claimed number that contradicts the value on its own cited
@@ -2103,7 +2748,14 @@ def record_claim(
                 {"text": text, "grade": "hypothesis", "claimed_grade": grade,
                  "session": session, "downgraded": True, "unresolved": [],
                  "operator_asserted": [], "blast_radius": blast_radius, "confidence": confidence,
-                 "reason": metric_reason},
+                 "untrusted": untrusted,
+                 "reason": metric_reason, "tree_fingerprint": fingerprint_digest,
+                 # N4 (review): matches the main append below - a downgraded
+                 # claim's SUBJECT files (paths the claim text names, not
+                 # just what it cited) get the same per-citation staleness
+                 # coverage an accepted claim gets, not a narrower one.
+                 "evidence_versions": evidence_versions(
+                     project, list(citations) + [f"file:{p}" for p in subject_files(project, text)])},
                 evidence=citations,
             )
     if external and grade == "verified":
@@ -2113,14 +2765,31 @@ def record_claim(
                 "claim", text[:120],
                 {"text": text, "grade": "hypothesis", "claimed_grade": grade, "session": session,
                  "downgraded": True, "unresolved": [], "blast_radius": blast_radius, "confidence": confidence,
+                 "untrusted": untrusted,
                  "reason": "external claim without a primary source read this session; "
-                           "cite doc:<path> or url:<address> from a source actually opened"},
+                           "cite doc:<path> or url:<address> from a source actually opened",
+                 "tree_fingerprint": fingerprint_digest,
+                 # N4 (review): matches the main append below - a downgraded
+                 # claim's SUBJECT files (paths the claim text names, not
+                 # just what it cited) get the same per-citation staleness
+                 # coverage an accepted claim gets, not a narrower one.
+                 "evidence_versions": evidence_versions(
+                     project, list(citations) + [f"file:{p}" for p in subject_files(project, text)])},
                 evidence=citations,
             )
             return record
     unresolved = [
         citation for citation in citations
-        if not _citation_resolves(project, archive, citation, session)
+        # Fix round 2 (Task 7 re-review, C3 residue): pass the digest set
+        # `record_claim` already computed above, so a `tool:` citation's
+        # resolution check does not repeat the `archive.select` scan.
+        # R3 (review): `existing_seqs`, computed above only when more than
+        # one `seq:` citation is present, does the same for this call's
+        # `seq:` citations - the hard `require_seq_cite` pass above and
+        # this softer `_citation_resolves` pass share the one scan.
+        if not _citation_resolves(project, archive, citation, session,
+                                  untrusted_digests=_untrusted_digests_now,
+                                  existing=existing_seqs)
     ]
     # A citation can resolve and still point at the wrong place. Existence and
     # support are separate claims, so they are checked separately.
@@ -2135,6 +2804,7 @@ def record_claim(
     cmd_citations = [c for c in citations if str(c).startswith("cmd:")]
     effective = grade
     reason = ""
+    pin_reason = ""
     absence = is_absence_claim(text)
     window_note = absence_window_advisory(text, citations) if absence else None
     if grade == "verified":
@@ -2230,11 +2900,16 @@ def record_claim(
                 "only running it verifies - add cmd:<the command that ran it> "
                 "beside the file citation",
             )
-        elif absence and (pin_reason := _guard_pin_reason(project, archive, text, citations)):
+        elif (absence
+              and (pin_reason := _guard_pin_reason(project, archive, text, citations))
+              and not _pin_is_advisory_only(pin_reason)):
             # Obligation 4166 (field report 2026-08-28): a state-is-a-gap
             # claim about a line an uncited test pins, or a symptom the
             # lessons ledger already holds, is answered by that pin's
             # provenance - not published as a gap, not fixed in place.
+            # H5: an `advisory:`-prefixed pin_reason shares vocabulary with
+            # a lesson but not a cited path/command stem - it is surfaced
+            # as an advisory below, never a downgrade.
             effective, reason = "hypothesis", pin_reason
         elif unsupported:
             effective, reason = "hypothesis", "cited location does not support the claim"
@@ -2248,6 +2923,8 @@ def record_claim(
     # mutating R3+ commands (git branch -D) are not counted as mutations.
     # Wire to classify_action tiers when a task owns the sentinel.
     advisories: list[str] = []
+    if pin_reason and _pin_is_advisory_only(pin_reason):
+        advisories.append(pin_reason)
     if window_note:
         advisories.append(window_note)
     # Field report 2026-09-02: an observed-grade claim citing a command that
@@ -2443,6 +3120,30 @@ def record_claim(
         else:
             composed["settleable_by"] = (
                 "claim --verify --cite \"cmd:<the command that proves it>\"")
+    # NS-8f: whatever grade the ladder above landed on, a claim resting on
+    # content the PostToolUse scan flagged as instruction-shaped cannot
+    # outrank the self-report tier - `untrusted` (computed once, above,
+    # before the first early return) caps `effective` at `observed`.
+    # Applied last, after every other adjustment (including the
+    # composition step above that can raise `observed` back to
+    # `verified`), so nothing downstream of this check can re-elevate
+    # past the cap.
+    if untrusted and _GRADE_RANK.get(effective, 0) > _GRADE_RANK["observed"]:
+        if not reason:
+            reason = "citation rests on content the untrusted-content scan flagged; capped at observed"
+        effective = "observed"
+    if fix_incident is not None:
+        # NS-13e, applied after composition for the same reason as the cap
+        # above: nothing downstream may re-elevate an unpaired fix.
+        composed["fixes"] = int(fixes)
+        pair_reason = _fix_pair_reason(archive, session, fix_incident, citations)
+        if pair_reason and _GRADE_RANK.get(effective, 0) > _GRADE_RANK["observed"]:
+            effective, reason = "observed", pair_reason
+        elif pair_reason and not reason:
+            # Already below verified (a red --verify run caps before this
+            # call): still say why the pair is not complete.
+            reason = pair_reason
+        composed["fix_pair"] = "unpaired" if pair_reason else "red-then-green"
     record = archive.append(
         "claim",
         text[:120],
@@ -2456,6 +3157,10 @@ def record_claim(
             # record time, so `stale_claims` can tell when it moved.
             "evidence_versions": evidence_versions(
                 project, list(citations) + [f"file:{p}" for p in subject_files(project, text)]),
+            # NS-8b: the working-tree fingerprint at cite time (see module
+            # docstring in `godmode_fingerprint`) - `stale_claims` compares
+            # it against the tree as it is now.
+            "tree_fingerprint": fingerprint_digest,
             "unresolved": unresolved,
             "unsupported": unsupported,
             "downgraded": effective != grade,
@@ -2467,6 +3172,11 @@ def record_claim(
             # this schema version".
             "blast_radius": blast_radius, "confidence": confidence,
             "refuted_by": refuted_by,
+            # NS-8f: stored even when False, same reasoning as
+            # `blast_radius` above - a reader never has to guess whether
+            # an absent key means "checked, found trustworthy" or "this
+            # schema version never checked at all".
+            "untrusted": untrusted,
             # Named rather than implied: a later reader can see which part of
             # the support was machine-checked and which was taken on the
             # author's word, instead of reading one uniform "verified".
@@ -2478,6 +3188,54 @@ def record_claim(
         evidence=citations,
     )
     return record
+
+
+def _fix_incident(archive: Chronicle, fixes: int) -> dict[str, Any]:
+    """The incident `claim --fixes <seq>` names, or a refusal naming the miss."""
+    for record in archive.read_events():
+        if int(record.get("sequence", 0) or 0) == int(fixes):
+            if record.get("kind") != "incident":
+                raise ArchiveError(
+                    f"--fixes {fixes} names a {record.get('kind')!r} record, not an incident; "
+                    "`godmode history --kind incident` lists the incidents")
+            return record
+    raise ArchiveError(f"--fixes {fixes} names no record on this archive; "
+                       "`godmode history --kind incident` lists the incidents")
+
+
+def _fix_pair_reason(archive: Chronicle, session: str, incident: dict[str, Any],
+                     citations: list[str]) -> str | None:
+    """Why a fix claim is not a red-then-green pair, or None when it is."""
+    repro = (incident.get("data") or {}).get("repro") or {}
+    sequence = int(incident["sequence"])
+    citation = str(repro.get("citation") or "")
+    if repro.get("state") != "red" or not citation:
+        return (f"incident seq:{sequence} holds no red reproduction run (repro state: "
+                f"{repro.get('state') or 'none'}); a fix verifies only against a reproduction "
+                "seen failing - record the incident with --repro \"<the failing command>\"")
+    if citation not in citations:
+        return (f"the claim does not cite the incident's reproduction command ({citation}); "
+                "cite that command and re-run with --verify so it runs green now")
+    # Only a green the runner itself wrote counts: an attestation carrying
+    # the citation from someone's own words (`godmode attest --status ran`)
+    # is a report of a run, and one report must not defeat the pair. Bounded
+    # by sequence, not by a record window, so a busy session cannot push the
+    # genuine run out of view.
+    green = any(
+        record.get("kind") == "attestation"
+        and int(record.get("sequence", 0) or 0) > sequence
+        and citation in (record.get("evidence") or [])
+        and (record.get("data") or {}).get("runner") == RUNNER_STAMP
+        and (record.get("data") or {}).get("exit_code") == 0
+        and (record.get("data") or {}).get("status") == "ran"
+        and (record.get("data") or {}).get("session") == session
+        for record in archive.read_events()
+    )
+    if not green:
+        return (f"the reproduction command ({citation}) has no runner-attested green run in "
+                f"this session since incident seq:{sequence}; re-run the claim with --verify "
+                "so the runner executes it now")
+    return None
 
 
 # `superseded`: the claim HELD at its time and was later improved upon -
@@ -2976,12 +3734,28 @@ def regressed_steps(archive: Chronicle, session: str) -> list[dict[str, Any]]:
 
 def obligations_digest(archive: Chronicle) -> dict[str, int]:
     """open / attested / waived over the latest record per obligation
-    subject (SWE-EVO partial-vs-resolved: never a fake 100%)."""
-    latest: dict[str, str] = {}
-    for record in archive.select(kind="obligation", limit=500):
-        latest[str(record.get("subject", ""))] = str((record.get("data") or {}).get("status", "open")).lower()
+    subject (SWE-EVO partial-vs-resolved: never a fake 100%).
+
+    Fix round 1 (B2): routed through `latest_by_subject` - this fed
+    `status --digest` (`cmd_status`) and the session closure verdict
+    through a plain per-subject fold that never honoured a NS-10e
+    `supersedes` edge, so `godmode status` and `godmode status --digest`
+    disagreed about the same archive ON THAT AXIS: `remaining()` drops a
+    superseded obligation, this counted it `open` regardless.
+
+    The agreement is supersession-deep and no deeper. `remaining()` also
+    folds with `_prefer_latest_unless_contradicted` (godmode_status.py),
+    which keeps an operator's record over a later agent one; this fold
+    takes the plain newest per subject. So an operator `open` at seq 1 and
+    an agent `closed` at seq 2, with no supersession anywhere, still read
+    differently here and there. That trust axis is pre-existing and
+    deliberately left alone: routing it would mean moving the combine rule
+    down out of `godmode_status`.
+    """
+    latest = latest_by_subject(archive.select(kind="obligation", limit=500))
     digest = {"open": 0, "attested": 0, "waived": 0}
-    for status in latest.values():
+    for record in latest.values():
+        status = str((record.get("data") or {}).get("status", "open")).lower()
         if status in ("closed", "done", "attested", "retired", "complete", "completed"):
             digest["attested"] += 1
         elif status in ("waived", "blocked", "parked", "deferred", "declined"):
@@ -3038,7 +3812,12 @@ def false_green_rate(archive: Chronicle) -> dict[str, Any]:
     2026-09-10)."""
     grades: dict[int, str] = {}
     downgraded = 0
-    for record in archive.select(kind="claim", limit=1000):
+    # S-5: every claim on record. `select(kind="claim", limit=1000)` was
+    # clamped to the newest 500 by `select` itself, so a resolution of an
+    # older verified claim found no grade to count against and the rate
+    # read clean over claims it never saw.
+    claims = [record for record in archive.read_events() if record["kind"] == "claim"]
+    for record in claims:
         data = record.get("data") or {}
         if data.get("resolves") is not None:
             continue
@@ -3046,7 +3825,7 @@ def false_green_rate(archive: Chronicle) -> dict[str, Any]:
         if data.get("downgraded"):
             downgraded += 1
     held = failed = 0
-    for record in archive.select(kind="claim", limit=1000):
+    for record in claims:
         data = record.get("data") or {}
         target = data.get("resolves")
         if target is None or grades.get(int(target)) != "verified":
@@ -3254,7 +4033,12 @@ def lesson_pipeline(archive: Chronicle) -> dict[str, Any]:
                 e[len("file:"):] for e in record.get("evidence", []) if e.startswith("file:"))
     lessons = []
     unresolved = 0
-    for record in archive.select(kind="lesson", limit=500):
+    # NS-10e: fold to the latest, non-superseded record per subject first
+    # - a lesson restated (or explicitly superseded) does not get its own,
+    # separately-tracked promote-or-retire verdict alongside its
+    # successor's.
+    current_lessons = latest_by_subject(archive.select(kind="lesson", limit=500))
+    for record in sorted(current_lessons.values(), key=lambda r: int(r.get("sequence", 0) or 0)):
         if record["data"].get("status") == "retired":
             continue
         cited = {e[len("file:"):] for e in record.get("evidence", []) if e.startswith("file:")}
@@ -3584,3 +4368,80 @@ def evidence_from_elsewhere(
                             "reading it as evidence about this environment",
                 })
     return found
+
+
+# The hypothesis citation check: a fix may cite `hyp:<seq>` only when that
+# hypothesis survived a runner-stamped kill. Lives here, beside the runner
+# it trusts; godmode_hypothesis re-imports these names.
+HYP_CITE = re.compile(r"^hyp:(?P<sequence>\d+)$")
+
+
+def _originals(records: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    return {int(r["sequence"]): r for r in records
+            if r.get("kind") == "hypothesis" and (r.get("data") or {}).get("of") is None}
+
+
+def _history(records: list[dict[str, Any]], sequence: int) -> list[dict[str, Any]]:
+    """Every kill result for hypothesis `sequence`, oldest first."""
+    return [r for r in records
+            if r.get("kind") == "hypothesis" and (r.get("data") or {}).get("of") == int(sequence)]
+
+
+def _kill_run_refusal(records: list[dict[str, Any]], citation: str, original: dict[str, Any],
+                      kills: dict[str, Any]) -> str | None:
+    """Why the kill result's own run does not stand, or None when it does.
+
+    The result must name the runner's attestation for THIS hypothesis's kill
+    command, written after the hypothesis, green, and stamped by the runner -
+    `godmode attest` can type the subject and the words, never the stamp.
+    """
+    sequence = int(original["sequence"])
+    check_seq = kills.get("check_seq")
+    expected_citation = "cmd:" + " ".join(
+        split_command(str((original.get("data") or {}).get("kills", {}).get("command", ""))))[:160]
+    attestation = next((r for r in records if int(r.get("sequence", 0) or 0) == check_seq), None)
+    data = (attestation or {}).get("data") or {}
+    if (attestation is None
+            or attestation.get("kind") != "attestation"
+            or attestation.get("subject") != f"check:kill-hyp-{sequence}"
+            or int(attestation.get("sequence", 0) or 0) <= sequence
+            or kills.get("citation") != expected_citation
+            or expected_citation not in (attestation.get("evidence") or [])
+            or data.get("runner") != RUNNER_STAMP
+            or data.get("status") != "ran"
+            or data.get("exit_code") != 0):
+        return (f"{citation}'s kill result names no runner attestation of its own kill "
+                f"command - `godmode hypothesis kill {sequence}` runs it and records one")
+    return None
+
+
+def fix_citation_refusal(archive: Chronicle, citation: str) -> str | None:
+    """Why a fix may not cite `hyp:<seq>`, or None when it may.
+
+    A fix rests on a hypothesis only when that hypothesis's kill experiment
+    ran through the runner and did not fire - and it was never killed.
+    """
+    match = HYP_CITE.match(str(citation))
+    if not match:
+        return None
+    sequence = int(match.group("sequence"))
+    records = archive.read_events()
+    original = _originals(records).get(sequence)
+    if original is None:
+        return f"{citation} names no hypothesis on this archive"
+    history = _history(records, sequence)
+    if any((r.get("data") or {}).get("status") == "killed" for r in history):
+        return f"{citation} was killed by its own experiment; a fix cannot rest on it"
+    latest = history[-1] if history else original
+    kills = (latest.get("data") or {}).get("kills") or {}
+    if not kills.get("ran"):
+        return (f"{citation}'s kill experiment has not run - `godmode hypothesis kill "
+                f"{sequence}` runs it; a fix may rest only on a hypothesis that survived it")
+    if kills.get("fired"):
+        return f"{citation} was killed by its own experiment; a fix cannot rest on it"
+    return _kill_run_refusal(records, citation, original, kills)
+
+
+def survived(archive: Chronicle, citation: str) -> bool:
+    """Whether `hyp:<seq>` resolves: the hypothesis exists and survived its kill."""
+    return HYP_CITE.match(str(citation)) is not None and fix_citation_refusal(archive, citation) is None

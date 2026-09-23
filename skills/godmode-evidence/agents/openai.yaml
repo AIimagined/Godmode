@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godmode Evidence"
+  short_description: "Shape claims so their citations grade the first time."
+  default_prompt: "Use $godmode-evidence to reflect this claim against the record, repair any stale or loose citation, cite an exit-bearing command through --verify, give any hypothesis its --refuted-by falsifier, and resolve settled claims once with fresh evidence."

@@ -10,6 +10,7 @@ follows the fragment-and-category tools the field settled on.
 """
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,10 @@ from .godmode_changelog import _existing_section, _parse_entries
 from .godmode_docslint import _narration_findings
 
 NOTES_DIR = Path("docs") / "releases"
+# Mirrors `benchmarks/gate_latency.py`'s `MIN_SAMPLES` - read directly
+# rather than imported (that module is a standalone script, not a package
+# on this module's path; see `_benchmark_baseline`'s own docstring).
+_MIN_SAMPLES = 21
 _CATEGORY_ORDER = ("added", "changed", "fixed", "removed", "deprecated", "security")
 _TEST_REF = re.compile(r"tests?[./](test_[A-Za-z0-9_]+)(?:\.py)?")
 _FIRST_WORDS = re.compile(r"[A-Za-z0-9`_-]+")
@@ -35,6 +40,56 @@ def changelog_entries(project: Path, version: str) -> dict[str, list[str]]:
     return _parse_entries(section)
 
 
+def _benchmark_baseline(project: Path, version: str) -> dict | None:
+    """G-9: the committed `benchmarks/gate_latency_baseline.json` under
+    `project`, when it names this exact `version` as the runtime it was
+    measured against and carries a usable `p95_ms` for both `fast_allow`
+    and `escalate`. `None` otherwise (file absent, unparsable, a baseline
+    for a different version, a phase missing, or `n` missing/below
+    `_MIN_SAMPLES`) - the same "no baseline, no requirement" shape
+    `godmode_host_manifests.hook_timeouts` already uses for a fresh
+    checkout, read directly rather than imported from
+    `benchmarks/gate_latency.py` (not a package on this module's path).
+    Requiring `n` here (mirroring `gate_latency.MIN_SAMPLES`) is what
+    keeps `_benchmark_line` from ever printing `n=?` - a baseline missing
+    its own sample count is treated as no baseline at all, not a line with
+    a fabricated or unknown count in it."""
+    path = Path(project) / "benchmarks" / "gate_latency_baseline.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):  # godmode: swallow-ok: no committed baseline means no requirement
+        return None
+    if not isinstance(data, dict) or str(data.get("runtime_version")) != version:
+        return None
+    phases = data.get("phases")
+    if not isinstance(phases, dict):
+        return None
+    fast = phases.get("fast_allow")
+    escalate = phases.get("escalate")
+    if not isinstance(fast, dict) or not isinstance(escalate, dict):
+        return None
+    if "p95_ms" not in fast or "p95_ms" not in escalate:
+        return None
+    n = data.get("n")
+    if not isinstance(n, int) or isinstance(n, bool) or n < _MIN_SAMPLES:
+        return None
+    return data
+
+
+def _benchmark_line(baseline: dict) -> str:
+    """The exact wording `benchmarks/gate_latency.py --notes-line` prints
+    from the same baseline shape - kept identical here so a pasted
+    `--notes-line` line and this function's expectation always match.
+    `baseline["n"]` is always present and valid by the time this runs -
+    `_benchmark_baseline` is the only caller and already refused anything
+    without one."""
+    phases = baseline["phases"]
+    n = baseline["n"]
+    fast = float(phases["fast_allow"]["p95_ms"])
+    escalate = float(phases["escalate"]["p95_ms"])
+    return f"Gate latency (p95, n={n}): fast_allow {fast:.0f} ms, escalate {escalate:.0f} ms"
+
+
 def _verifying_lines(entries: dict[str, list[str]]) -> list[str]:
     modules: list[str] = []
     for bullets in entries.values():
@@ -48,7 +103,8 @@ def _verifying_lines(entries: dict[str, list[str]]) -> list[str]:
     return lines
 
 
-def render_notes(version: str, entries: dict[str, list[str]], title: str = "Godmode") -> str:
+def render_notes(version: str, entries: dict[str, list[str]], title: str = "Godmode",
+                  benchmark_line: str | None = None) -> str:
     out = [f"# {title} v{version}", ""]
     for category in _CATEGORY_ORDER:
         bullets = entries.get(category) or []
@@ -57,6 +113,11 @@ def render_notes(version: str, entries: dict[str, list[str]], title: str = "Godm
         out.append(f"## {category.capitalize()}")
         out.append("")
         out.extend(bullets)
+        out.append("")
+    if benchmark_line:
+        out.append("## Benchmarks")
+        out.append("")
+        out.append(f"- {benchmark_line}")
         out.append("")
     out.append("## Verifying")
     out.append("")
@@ -76,7 +137,9 @@ def build_notes(project: Path, version: str, force: bool = False) -> dict[str, A
         return {"version": version, "written": False, "path": str(target.relative_to(project)),
                 "refused": "the note already exists; pass --force to regenerate it from the changelog"}
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(render_notes(version, entries), encoding="utf-8")
+    baseline = _benchmark_baseline(project, version)
+    benchmark_line = _benchmark_line(baseline) if baseline is not None else None
+    target.write_text(render_notes(version, entries, benchmark_line=benchmark_line), encoding="utf-8")
     return {"version": version, "written": True, "path": str(target.relative_to(project)),
             "sections": {k: len(v) for k, v in entries.items()}}
 
@@ -111,6 +174,13 @@ def check_notes(project: Path, version: str) -> dict[str, Any]:
         body = re.split(r"^## ", rest[3:], maxsplit=1, flags=re.M)[0]
         if not re.sub(r"^[^\n]*\n", "", body, count=1).strip():
             findings.append({"check": "empty-section", "severity": "high", "why": f"`{title}` carries no content"})
+    baseline = _benchmark_baseline(Path(project), version)
+    if baseline is not None:
+        expected = _benchmark_line(baseline)
+        if expected not in text:
+            findings.append({"check": "benchmark-line-missing", "severity": "high",
+                             "why": f"a gate-latency baseline exists for v{version} but the note carries no "
+                                    f"`{expected}` line (run `python benchmarks/gate_latency.py --notes-line`)"})
     for finding in _narration_findings(relative, text):
         findings.append({"check": finding["check"], "severity": finding["severity"],
                          "line": finding["line"], "why": finding["why"]})

@@ -474,15 +474,22 @@ def _self_pin_findings(relative: str, text: str, current: str) -> list[dict[str,
     return findings
 
 
-def _figure_findings(relative: str, text: str, project: Path) -> list[dict[str, Any]]:
-    """Numeric claims the runtime can check, compared against the real count."""
-    if _HISTORICAL.search(relative):
-        return []
+def _actual_counts(project: Path) -> dict[str, int]:
     actual: dict[str, int] = {}
     for name, counter in COUNTABLES.items():
         value = counter(project)
         if isinstance(value, int):
             actual[name] = value
+    return actual
+
+
+def _figure_findings(relative: str, text: str, project: Path,
+                     actual: dict[str, int] | None = None) -> list[dict[str, Any]]:
+    """Numeric claims the runtime can check, compared against the real count."""
+    if _HISTORICAL.search(relative):
+        return []
+    if actual is None:
+        actual = _actual_counts(project)
     if not actual:
         return []
 
@@ -742,6 +749,7 @@ def lint_docs(project: Path) -> dict[str, Any]:
     scanned = 0
     living_documents: list[tuple[str, str]] = []
     prose_advisories: list[dict[str, Any]] = []
+    counts: dict[str, int] | None = None
     for path in candidates:
         relative = relatives[path]
         if relative in ignored:
@@ -756,7 +764,9 @@ def lint_docs(project: Path) -> dict[str, Any]:
         if contracts:
             findings.extend(_contract_findings(relative, text, contracts))
             findings.extend(_narration_findings(relative, text, config.get("narration_from")))
-        findings.extend(_figure_findings(relative, text, project))
+        if counts is None:
+            counts = _actual_counts(project)
+        findings.extend(_figure_findings(relative, text, project, counts))
         findings.extend(_self_pin_findings(relative, text, RUNTIME_VERSION))
         prose_advisories.extend(_stale_open_marker_findings(relative, text))
     prose_advisories.extend(_title_collision_findings(living_documents))

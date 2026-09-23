@@ -1,4 +1,4 @@
-"""Authorize UX: TTL headroom, real help lines, hosted-session escape hint.
+"""Authorize UX: TTL margin, real help lines, hosted-session escape hint.
 
 Password touches only R5 (irreversible) operations - day-to-day friction is
 zero. The three real rough edges: 180s expired under an agent's ordinary

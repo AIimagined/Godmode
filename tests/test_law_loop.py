@@ -26,9 +26,11 @@ from unittest import mock
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = PLUGIN_ROOT / "scripts"
-for entry in (SCRIPTS,):
+for entry in (SCRIPTS, Path(__file__).parent):
     if str(entry) not in sys.path:
         sys.path.insert(0, str(entry))
+
+from _law_fixtures import operator_lesson  # noqa: E402
 
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_attest import open_session, record_claim  # noqa: E402
@@ -94,9 +96,9 @@ class CorrectionDetectorTests(unittest.TestCase):
 class DeliveryReceiptTests(unittest.TestCase):
     def test_delivery_writes_a_counts_only_action(self) -> None:
         with _project() as (_root, archive):
-            archive.append("lesson", "probe-reach",
-                           {"status": "active", "value": "v",
-                            "generalized_guard": "read the counters"}, evidence=[])
+            # NS-2 fix round 1 (B1): a delivery receipt counts laws that
+            # were actually delivered, so the fixture has to be one.
+            operator_lesson(archive, "probe-reach", "read the counters", value="v")
             laws = top_laws(archive, 3)
             record = record_delivery(archive, laws, session="S-1")
             self.assertEqual(record["data"]["delivered"], 1)

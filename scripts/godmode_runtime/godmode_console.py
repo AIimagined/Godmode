@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import hashlib
 import os
 import shlex
 from datetime import datetime, timezone
@@ -11,13 +12,16 @@ import json
 from pathlib import Path
 import re
 import sys
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
-from .godmode_anchor import ProjectAnchor, current_host, resolve_anchor
-from .godmode_chronicle import Chronicle
+from .godmode_anchor import (
+    ProjectAnchor, current_host, is_linked_worktree, primary_checkout_root, resolve_anchor,
+)
+from .godmode_chronicle import Chronicle, record_trust, record_writer, superseded_sequences
+from .godmode_chronicle import _sequence_of as sequence_of
 from .godmode_hookproof import (
-    FAIL_OPEN_HOSTS, degraded_reason, hook_manifest_status, interception_state,
-    last_latency_check, last_proof, run_probe,
+    FAIL_OPEN_HOSTS, codex_runtime_premise, degraded_reason, hook_manifest_status,
+    interception_state, last_latency_check, last_proof, run_probe,
 )
 from .godmode_githooks import (
     HOOK_NAMES as GIT_HOOK_NAMES,
@@ -27,7 +31,8 @@ from .godmode_githooks import (
     git_hooks_uninstall,
     run_git_verify,
 )
-from .godmode_constants import DEFAULT_CONTEXT_BUDGET, EVENT_KINDS, RUNTIME_VERSION
+from .godmode_constants import (DEFAULT_CONTEXT_BUDGET, EVENT_KINDS,
+                                FORGET_PASS_SUBJECT, RUNTIME_VERSION)
 from .godmode_attest import (
     split_command,
     unsupported_shell_grammar,
@@ -52,7 +57,7 @@ from .godmode_assess import assess as assess_project
 from .godmode_assess import assurance_case
 from .godmode_assess import selftest as run_selftest
 from .godmode_atlas import build as build_atlas
-from .godmode_atlas import load_index, save_index, slice_file
+from .godmode_atlas import direction_findings, load_index, save_index, slice_file
 from .godmode_attest import (
     GRADES, RESOLUTION_OUTCOMES, STATUSES, plant_and_observe, recurrences,
     reflect, run_check,
@@ -64,15 +69,28 @@ from .godmode_bindings import registration_report as hooks_registration_report
 from .godmode_bindings import _PACKAGE_ROOT
 from .godmode_bindings import sbom as build_sbom
 from .godmode_bindings import write as bindings_write
+from .godmode_bonds import (
+    MAX_PROPOSALS_PER_SPRINT as BONDS_MAX_PROPOSALS_PER_SPRINT,
+    bond_test as bonds_bond_test,
+    propose as bonds_propose,
+    ratify as bonds_ratify,
+)
+from .godmode_skillimpact import evaluate_forged_skill, validate_pattern_seqs
+from .godmode_ownership import check as ownership_check
+from .godmode_installmanifest import recorded_paths as installed_paths
 from .godmode_charter import ADVISORY, TRIGGERS, applicable_rules, bootstrap_rules, compile_charter, traits_of
 from .godmode_drift import capabilities as host_capabilities
 from .godmode_changelog import check_fragments, merge_fragments
 from .godmode_integrity import analyze as analyze_integrity
 from .godmode_evals import (
+    WITHHOLD_MEMORY_ENV,
     adversarial_grid,
     charter_snapshot,
     check_snapshots,
+    cross_model_matrix,
+    determinism as eval_determinism,
     ranking_snapshot,
+    ratchet as eval_ratchet,
     run_behavior_assertions,
     run_routing_evals,
 )
@@ -113,6 +131,9 @@ _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 from .godmode_trust import scan_agent_configuration
 from .godmode_obligations import review_obligations
 from .godmode_atlas import speculative_seams, unfollowed_dependents
+from . import godmode_graph
+from . import godmode_looprecords
+from .godmode_retest import retest_module_names
 from .godmode_precheck import declare_paired_artifact, precheck as run_precheck
 from .godmode_fence import (
     BOUNDARY_CONFIG, audit_changes, completion_audit, declared_design, propose_design,
@@ -144,7 +165,10 @@ from .godmode_recurrence import mine_recurring_asks, render as render_recurrence
 # one handler), same pattern as the U-E10 recurring-ask block above.
 from .godmode_upstream import record_upstream_diff
 from .godmode_stages import advance as stage_advance
-from .godmode_stages import skip_stage, sop_attest, sop_status, stage_gate
+from .godmode_stages import (
+    SOPS, ensure_sop_record, named_sop_attest, named_sop_status, skip_stage, sop_attest,
+    sop_status, stage_gate,
+)
 from .godmode_index import IndexStale
 from .godmode_index import fresh as index_fresh
 from .godmode_index import query as index_query
@@ -221,6 +245,11 @@ from .godmode_rollback import mark_green, rollback_plan
 from .godmode_forecast import forecast as forecast_operation, replay as replay_policy
 # Sprint 8 - evidence-derived governance. Proposes; never installs.
 from .godmode_governance import governance_report, promote as promote_candidate
+# C-9 - reviewer vs builder roles for the done-bar's own checks. A
+# different "governance" than the review surface above: this one is a
+# fixed table, not derived from the archive.
+from .godmode_donebar import checks_table as donebar_checks_table
+from .godmode_donebar import escalate as escalate_donebar_check
 # Sprint 9 - the host's own approval recorded beside godmode's decision.
 from .godmode_hostapproval import approval_divergence, host_approvals
 from .godmode_forge import SkillProposal, forge_skill, validate_skill
@@ -236,8 +265,10 @@ from .godmode_lens import (
     observe_git,
 )
 from .godmode_lens import why as context_why
+from .godmode_preview import render_preview
 from .godmode_sentinel import (
     CapabilityBroker,
+    attended,
     classify_action,
     degradations as sentinel_degradations,
     find_secret_shapes,
@@ -270,6 +301,18 @@ def subject_text(value: str) -> str:
             "Put the detail in --value or --evidence, and keep the subject a label."
         )
     return trimmed
+
+
+def _positive_int(value: str) -> int:
+    """Fix round 1, Q3: `atlas graph query --depth 0` (or negative) used to
+    be silently promoted to depth 1 by `_bfs`'s own `max(1, depth)` - a
+    caller asking to exclude neighbours entirely got them anyway. Refused
+    at the parser instead, before `godmode_graph.query`'s own `ValueError`
+    guard would otherwise have to surface as a bare traceback."""
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError(f"must be a positive integer; got {value!r}")
+    return parsed
 
 
 def _brief_line(payload: Any) -> str:
@@ -420,7 +463,64 @@ def _event_view(record: dict[str, Any]) -> dict[str, Any]:
         "data": data,
         "evidence": record.get("evidence", []),
         "record_hash": record["record_hash"],
+        # F5, fix round 1: so an operator can SEE that `--as-operator`
+        # actually landed as `operator` (or a declared session landed as
+        # `checker`) rather than silently falling back to `agent`.
+        "writer": record_writer(record),
+        "trust": record_trust(record),
     }
+
+
+def _confirm_operator_interactively() -> bool:
+    """The y/N fallback for an operator who has not run `authorize setup`.
+
+    Called only from here, before `_append`/`Chronicle.append` is ever
+    entered - never from inside the write lock (fix round 1, F0:
+    `derive_writer` must never prompt, since a prompt below `append()` can
+    block while holding it)."""
+    try:
+        interactive = sys.stdin.isatty()
+    except (AttributeError, ValueError):
+        interactive = False
+    if not interactive:
+        return False
+    try:
+        reply = input(
+            "Confirm this write as operator (outranks agent/checker/hook "
+            "records for this subject) [y/N]: "
+        ).strip().lower()
+    except (EOFError, OSError):  # godmode: swallow-ok: an unreadable prompt is not a "yes"
+        return False
+    return reply in ("y", "yes")
+
+
+def _resolve_operator_verified(runtime: Runtime, args: argparse.Namespace) -> bool:
+    """`--as-operator` is a claim; this is the ONE place it becomes a
+    credential (fix round 1, F0) - reusing the existing password broker
+    rather than adding a second check.
+
+    Prefers the password path (`CapabilityBroker.confirm_operator`, the
+    same scrypt-plus-`hmac.compare_digest` check `authorize stage`/`grant`
+    already use) whenever `authorize setup` has been run; otherwise falls
+    back to the interactive y/N confirmation, exactly as the pre-fix
+    `Chronicle._operator_confirmed` did - just driven from here instead of
+    from inside the write lock.
+    """
+    if not getattr(args, "as_operator", False):
+        return False
+    _require_archive(runtime)
+    from .godmode_sentinel import _require_tty
+
+    broker = CapabilityBroker(runtime.archive)
+    if broker.configured():
+        password = read_password_stdin() if getattr(args, "password_stdin", False) else None
+        if password is None:
+            _require_tty()
+            import getpass
+
+            password = getpass.getpass("Godmode authorization password: ")
+        return broker.confirm_operator(password)
+    return _confirm_operator_interactively()
 
 
 def _append(
@@ -429,10 +529,17 @@ def _append(
     subject: str,
     data: dict[str, Any],
     evidence: list[str] | None = None,
+    *,
+    role: str | None = None,
+    as_operator: bool = False,
+    operator_verified: bool | None = None,
 ) -> dict[str, Any]:
     _require_archive(runtime)
     return _event_view(
-        runtime.archive.append(kind, subject, data, evidence=evidence or [])
+        runtime.archive.append(
+            kind, subject, data, evidence=evidence or [],
+            role=role, as_operator=as_operator, operator_verified=operator_verified,
+        )
     )
 
 
@@ -600,7 +707,15 @@ def cmd_roles(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 def cmd_brief(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # The artefact every host adapter requests at session open. Identical project
     # state plus an identical task must yield an identical brief on every model.
-    brief = build_brief(Path(runtime.anchor.project_root), args.task, args.token_budget)
+    #
+    # NS-12c: a brief requested from inside a memory-withheld eval run is built
+    # without this project's lessons and compiled law, and says so in
+    # `withheld_roles`. The mode arrives in the environment because the subject
+    # here is a subprocess the harness spawned, not a caller that could pass an
+    # argument; outside such a run the variable is simply absent.
+    withhold_memory = os.environ.get(WITHHOLD_MEMORY_ENV) == "1"
+    brief = build_brief(Path(runtime.anchor.project_root), args.task, args.token_budget,
+                        withhold_memory=withhold_memory)
     brief["project"] = {
         "branch": runtime.anchor.branch,
         "head": runtime.anchor.head,
@@ -809,7 +924,30 @@ def cmd_charter(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 def cmd_session_open(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
-    session = open_session(runtime.archive, args.label)
+    role = getattr(args, "role", None) or "agent"
+    # B1 (rereview round 1): `checker` must be OPERATOR-GRANTED, never a
+    # bare self-declaration - verified through the exact same path as
+    # every other `--as-operator` write (`_resolve_operator_verified`:
+    # `authorize setup`'s password via `--password-stdin`/an interactive
+    # prompt through `CapabilityBroker.confirm_operator`, or the y/N
+    # fallback when no password is configured). Nothing short of that
+    # verification lets `--role checker` through.
+    operator_verified = _resolve_operator_verified(runtime, args)
+    if role == "checker" and not operator_verified:
+        raise ArchiveError(
+            "`session open --role checker` requires operator verification: "
+            "re-run with --as-operator (and --password-stdin, or answer the "
+            "interactive prompt). A checker role is something the human "
+            "operator grants; a session cannot declare it for itself."
+        )
+    session = open_session(
+        runtime.archive, args.label, role=role, operator_verified=operator_verified)
+    # B1: this process's OWN session id, so a later write in the SAME
+    # process can prove which session it belongs to
+    # (`Chronicle._chronicled_session_role` matches by this id, never by
+    # merely being the archive's latest `session` record - a concurrent
+    # process's checker session must not be inheritable by accident).
+    os.environ["GODMODE_SESSION"] = session
     handshake = opening_handshake(
         runtime.archive, runtime.anchor, Path(runtime.anchor.project_root), transcript_path=getattr(args, "transcript", None)
     )
@@ -824,6 +962,7 @@ def cmd_session_open(args: argparse.Namespace, runtime: Runtime) -> CommandResul
     return CommandResult({
         "reach": reach,
         "session": session,
+        "role": role,
         "branch": handshake.get("branch"),
         "dirty": handshake.get("dirty_files", {}).get("count"),
         "detail": handshake.get("required_sources", {}).get("statement"),
@@ -852,6 +991,36 @@ def cmd_attest(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 def cmd_verify(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
+    if getattr(args, "falsifiers", False):
+        # I-3: every hypothesis/incident falsifier aged past the threshold
+        # with nothing run behind it - `--dry-run` lists them, otherwise
+        # each due command runs through the same runner and attestation
+        # `--command` uses, one at a time, so each gets its own record.
+        from .godmode_falsifiers import due_falsifiers
+
+        due = due_falsifiers(runtime.archive)
+        if getattr(args, "dry_run", False):
+            return CommandResult({"due": due, "count": len(due)},
+                                 exit_code=1 if due else 0)
+        project = Path(runtime.anchor.project_root)
+        session = _session(runtime, args.session)
+        ran = []
+        for row in due:
+            ran.append(run_check(
+                runtime.archive, session, project,
+                f"falsifier:{row['kind']}-{row['sequence']}",
+                split_command(row["refuted_by"]),
+                timeout=getattr(args, "timeout", 900),
+                offline=bool(getattr(args, "offline", False)),
+            ))
+        return CommandResult(
+            {"ran": ran, "count": len(ran)},
+            exit_code=0 if all(r["passed"] for r in ran) else 1,
+        )
+    if not args.command:
+        raise ArchiveError(
+            "verify needs --command \"<the check to run>\", or --falsifiers "
+            "to run the due falsifiers instead")
     outcome = run_check(
         runtime.archive, _session(runtime, args.session), Path(runtime.anchor.project_root),
         args.name, split_command(args.command), rule_ids=args.rule,
@@ -903,7 +1072,123 @@ def _load_timeline(transcript_path: str | None) -> dict[str, Any] | None:
         return None
 
 
+def _read_payload(path_str: str, allowed_keys: frozenset[str]) -> dict[str, Any]:
+    """Read and strict-decode a `--payload` file.
+
+    Review Q1/finding 4: every failure here - a missing/unreadable file, a
+    read that is not valid text - becomes an `ArchiveError`, which
+    `_dispatch` maps to the CLI's normal exit-2 error vocabulary. Before
+    this helper existed, `Path(...).read_text()` was unguarded and a
+    typo'd path surfaced as a raw traceback at exit 1 - the same exit code
+    as a refused/downgraded record, indistinguishable to a caller reading
+    only the exit status.
+
+    Re-review round-1 residual: a non-UTF-8 file (a `>`/`Out-File` redirect
+    on Windows PowerShell 5.1 writes UTF-16LE by default) raised
+    `UnicodeDecodeError` - a `ValueError` subclass, not an `OSError` - so it
+    slipped past the guard above and still tracebacked at exit 1. Both are
+    now caught the same way: "the file could not be read as the payload it
+    claims to be" is one failure class, not two. `UnicodeDecodeError` has no
+    `strerror` attribute at all (unlike `OSError`) - reading it unguarded
+    would itself raise `AttributeError`, so the fallback uses `getattr`.
+    """
+    from .godmode_strictjson import strict_loads
+
+    path = Path(path_str)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        detail = getattr(exc, "strerror", None) or str(exc)
+        raise ArchiveError(f"--payload {path_str}: {detail}") from exc
+    return strict_loads(text, allowed_keys)
+
+
+# Review finding 4: `strict_loads` refuses an unknown *key*; these refuse a
+# wrong-shaped *value* for a key it already accepted - a payload's
+# `"checked": "exit code"` used to be silently laundered through a bare
+# `list(...)` into four one-character entries instead of being refused.
+def _payload_str(payload: dict[str, Any], key: str) -> str:
+    value = payload[key]
+    if not isinstance(value, str):
+        raise ArchiveError(f"payload field {key!r} must be a string")
+    return value
+
+
+def _payload_list_str(payload: dict[str, Any], key: str) -> list[str]:
+    value = payload[key]
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ArchiveError(f"payload field {key!r} must be a list of strings")
+    return value
+
+
+def _payload_list_int(payload: dict[str, Any], key: str) -> list[int]:
+    value = payload[key]
+    if not isinstance(value, list) or not all(
+        isinstance(item, int) and not isinstance(item, bool) for item in value
+    ):
+        raise ArchiveError(f"payload field {key!r} must be a list of integers")
+    return value
+
+
+def _payload_dict_str_str(payload: dict[str, Any], key: str) -> dict[str, str]:
+    value = payload[key]
+    if not isinstance(value, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in value.items()
+    ):
+        raise ArchiveError(f"payload field {key!r} must be an object of string to string")
+    return value
+
+
+def _payload_bool(payload: dict[str, Any], key: str) -> bool:
+    value = payload[key]
+    if not isinstance(value, bool):
+        raise ArchiveError(f"payload field {key!r} must be a boolean")
+    return value
+
+
+def _payload_int(payload: dict[str, Any], key: str) -> int:
+    value = payload[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ArchiveError(f"payload field {key!r} must be an integer")
+    return value
+
+
+def _payload_number(payload: dict[str, Any], key: str) -> float:
+    value = payload[key]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ArchiveError(f"payload field {key!r} must be a number")
+    return float(value)
+
+
+def _payload_checker(payload: dict[str, Any], key: str) -> list[str]:
+    """`checker` accepts one command (string) or a panel (list of strings) -
+    `record_verdict`'s own `checker_cmd: str | list[str]` shape."""
+    value = payload[key]
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list) and value and all(isinstance(item, str) for item in value):
+        return list(value)
+    raise ArchiveError(f"payload field {key!r} must be a string or a non-empty list of strings")
+
+
+_CLAIM_PAYLOAD_KEYS = frozenset({"text", "grade", "cites", "confidence", "external", "depends_on"})
+
+
 def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if getattr(args, "payload", None):
+        payload = _read_payload(args.payload, _CLAIM_PAYLOAD_KEYS)
+        if "text" in payload:
+            args.text_flag = _payload_str(payload, "text")
+        if "grade" in payload:
+            args.grade = _payload_str(payload, "grade")
+        if "cites" in payload:
+            args.cite = _payload_list_str(payload, "cites")
+        if "confidence" in payload:
+            args.confidence = _payload_number(payload, "confidence")
+        if "external" in payload:
+            args.external = _payload_bool(payload, "external")
+        if "depends_on" in payload:
+            args.depends_on = _payload_list_int(payload, "depends_on")
     args.text = _one_text(args, "text", "text_flag", "claim text")
     if getattr(args, "stale", False):
         # Grounded claims (obligation 10248): every claim whose recorded
@@ -1028,6 +1313,7 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         confidence=getattr(args, "confidence", None),
         refuted_by=getattr(args, "refuted_by", None),
         depends_on=getattr(args, "depends_on", None) or None,
+        fixes=getattr(args, "fixes", None),
     )
     data = record["data"]
     if check_results:
@@ -1205,8 +1491,85 @@ def cmd_differential_record(args: argparse.Namespace, runtime: Runtime) -> Comma
     )
 
 
+_VERDICT_PAYLOAD_KEYS = frozenset({
+    "claim", "value", "witness", "checker", "checked", "not_checked",
+    "criteria", "run_state", "acquitted_by", "timeout", "tool_error_ack",
+})
+
+
+def _parse_name_value_pairs(entries: list[str], *, flag: str) -> dict[str, str]:
+    """`--criterion name=evidence`, repeatable - same `name=value` shape as `--ceilings`.
+
+    Review finding 5: a repeated name used to overwrite the earlier value
+    silently, and an empty name (`--criterion =evidence`) was accepted -
+    the exact "silent duplicate-key" failure `strict_loads` refuses one
+    screen away, permitted here on the flag path. Both are refused now.
+    """
+    parsed: dict[str, str] = {}
+    for entry in entries:
+        if "=" not in entry:
+            raise ArchiveError(f"{flag} must be name=evidence; got {entry!r}")
+        name, evidence = entry.split("=", 1)
+        if not name:
+            raise ArchiveError(f"{flag} name cannot be empty; got {entry!r}")
+        if name in parsed:
+            raise ArchiveError(f"{flag} named {name!r} twice; pass it once")
+        parsed[name] = evidence
+    return parsed
+
+
 def cmd_verdict_record(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
+    criteria: dict[str, str] | None = None
+    if getattr(args, "payload", None):
+        payload = _read_payload(args.payload, _VERDICT_PAYLOAD_KEYS)
+        if "criteria" in payload and getattr(args, "criterion", None):
+            # Review finding 6: this used to discard --criterion without a
+            # word whenever --payload also carried 'criteria'. Refuse the
+            # ambiguous combination instead of picking a silent winner.
+            raise ArchiveError(
+                "--payload supplies 'criteria' and --criterion was also "
+                "given on the command line; pass criteria one way - drop "
+                "--criterion, or drop 'criteria' from the payload"
+            )
+        if "claim" in payload:
+            args.claim = _payload_str(payload, "claim")
+        if "value" in payload:
+            args.value = _payload_str(payload, "value")
+        if "witness" in payload:
+            args.witness = _payload_str(payload, "witness")
+        if "checker" in payload:
+            args.checker = _payload_checker(payload, "checker")
+        if "checked" in payload:
+            args.checked = _payload_list_str(payload, "checked")
+        if "not_checked" in payload:
+            args.not_checked = _payload_list_str(payload, "not_checked")
+        if "criteria" in payload:
+            criteria = _payload_dict_str_str(payload, "criteria")
+        if "run_state" in payload:
+            args.run_state = _payload_str(payload, "run_state")
+        if "acquitted_by" in payload:
+            args.acquitted_by = _payload_str(payload, "acquitted_by")
+        if "timeout" in payload:
+            args.timeout = _payload_int(payload, "timeout")
+        if "tool_error_ack" in payload:
+            args.tool_error_ack = _payload_str(payload, "tool_error_ack")
+    if criteria is None:
+        criteria = _parse_name_value_pairs(getattr(args, "criterion", []) or [],
+                                           flag="--criterion")
+    # Review finding 3: name exactly the flags that are missing, not all
+    # four unconditionally - argparse used to give this precision
+    # (`required=True`) before --payload needed it made optional.
+    missing = [flag for flag, value in (
+        ("--claim", args.claim), ("--value", args.value),
+        ("--witness", args.witness), ("--checker", args.checker),
+    ) if not value]
+    if missing:
+        return CommandResult(
+            {"refused": f"verdict record needs {', '.join(missing)} "
+                        "(or --payload supplying all four)"},
+            exit_code=1,
+        )
     record = record_verdict(
         runtime.archive,
         Path(runtime.anchor.project_root),
@@ -1214,6 +1577,9 @@ def cmd_verdict_record(args: argparse.Namespace, runtime: Runtime) -> CommandRes
         args.value,
         args.witness,
         args.checker,
+        checked=getattr(args, "checked", []) or [],
+        not_checked=getattr(args, "not_checked", []) or [],
+        criteria=criteria,
         run_state=args.run_state,
         acquitted_by=args.acquitted_by,
         timeout=args.timeout,
@@ -1224,6 +1590,8 @@ def cmd_verdict_record(args: argparse.Namespace, runtime: Runtime) -> CommandRes
         {"sequence": record["sequence"], "claim": data["claim"],
          "disposition": data["disposition"], "run_state": data["run_state"],
          "acquitted_by": data["acquitted_by"],
+         "checked": data.get("checked", []), "not_checked": data.get("not_checked", []),
+         "criteria": data.get("criteria", {}),
          "tool_error_findings": data.get("tool_error_findings", [])},
         exit_code=0 if data["disposition"] == "confirmed" else 1,
     )
@@ -1356,6 +1724,45 @@ def cmd_governance_promote(args: argparse.Namespace,
         {"promoted": args.candidate, "rule": record["data"]["rule"],
          "sequence": record["sequence"]},
         exit_code=0,
+    )
+
+
+def cmd_governance_checks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    # No archive needed: the check -> role table is fixed, not derived
+    # from this project's own record (unlike the candidates `show` reads).
+    return CommandResult({"checks": donebar_checks_table()}, exit_code=0)
+
+
+def cmd_governance_escalate(args: argparse.Namespace,
+                            runtime: Runtime) -> CommandResult:
+    """A builder's recorded reason for skipping one done-bar check for a
+    few turns. Exits 2, not 1, on refusal: a reviewer check or an unknown
+    name is not a conflict to report, it is the command itself failing."""
+    _require_archive(runtime)
+    try:
+        record = escalate_donebar_check(
+            runtime.archive, args.check, reason=args.reason)
+    except ArchiveError as error:
+        return CommandResult({"refused": str(error)}, exit_code=2)
+    data = record["data"]
+    return CommandResult(
+        {"escalated": args.check, "reason": data["reason"],
+         "session": data["session"], "expires_turns": data["expires_turns"],
+         "sequence": record["sequence"]},
+        exit_code=0,
+    )
+
+
+def cmd_governance_bare(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """`governance` with no subcommand: `--checks` needs none, so it is
+    served here rather than forcing a subcommand just to reach it."""
+    if getattr(args, "checks", False):
+        return cmd_governance_checks(args, runtime)
+    return CommandResult(
+        {"error": "GodmodeError",
+         "message": "run `governance show`, `governance promote`, "
+                    "`governance escalate`, or `governance --checks`"},
+        exit_code=2,
     )
 
 
@@ -1590,8 +1997,23 @@ def cmd_method(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         record = json.loads(Path(args.check_record).read_text(encoding="utf-8"))
         record.setdefault("spines", list(configured_spines(runtime.anchor.project_root)))
         verdict = method_complete(args.check_method, record)
-        # An RCA cannot be published with its method incomplete.
+        # NS-13g: an RCA carrying the ritual's checklist (inline, or a label
+        # naming archived `rca:<label>:<step>` items) is incomplete when it
+        # skipped a step, and the step is named.
         extras: dict[str, Any] = {}
+        rca = record.get("rca")
+        # Present at all means read: an empty inline checklist is six
+        # incomplete steps, not "no checklist".
+        if "rca" in record and rca is not None:
+            from .godmode_checklist import archived_rca, rca_gaps
+            steps = (archived_rca(runtime.archive, str(rca)) if isinstance(rca, str)
+                     else rca if isinstance(rca, dict) else {})
+            rca_missing = rca_gaps(steps, contract_complete=verdict["complete"])
+            extras["rca_checklist"] = {"steps": sorted(steps), "gaps": rca_missing}
+            if rca_missing:
+                verdict = {**verdict, "complete": False,
+                           "gaps": list(verdict["gaps"]) + rca_missing}
+        # An RCA cannot be published with its method incomplete.
         if args.check_method == "pareto" and record.get("clusters"):
             extras["pareto"] = pareto_order(record["clusters"])
         if args.check_method == "fmea" and record.get("modes"):
@@ -1739,6 +2161,48 @@ def session_digest(runtime: Runtime, session: str | None, transcript: str | None
         grades[str((c.get("data") or {}).get("grade"))] = grades.get(str((c.get("data") or {}).get("grade")), 0) + 1
     obligations = obligations_digest(archive)
     spend = measured_spend(transcript)
+    # NS-10d: a host-reported usage total takes priority over the
+    # transcript-measured figure above. Fix round 2 (review S4/N1/N4): this
+    # now calls the SAME `usage_ledger_totals` `check_ceilings`'s caller
+    # uses, rather than a separate ad-hoc sum here - round 1 windowed this
+    # by `_belongs()`'s sequence range keyed on `session` (`kind="session"`
+    # only, `None` on every hook-only archive, degenerating to "the whole
+    # archive" exactly like the ceiling's own round-1 bug), and summed both
+    # Stop and SessionEnd records with no de-dup. `usage_ledger_totals`
+    # windows by the hook's own session-anchor boundary and prefers Stop
+    # over SessionEnd, so the digest and the ceiling never disagree about
+    # what "this session" spent. Gated on the total itself being nonzero,
+    # not merely on a record existing (S3): a zero-valued usage record must
+    # not erase a real transcript-measured figure with
+    # `source: host, tokens: 0`.
+    #
+    # Final review S6 (Task 7/12 D2): every OTHER field in this digest
+    # (`refusals`, `gate`, `grades`) is windowed by THIS call's own
+    # `session_start`/`session_end` - the boundary an explicit, older
+    # `--session` argument resolves to, above - but `usage_ledger_totals`
+    # used to ignore that entirely and window by the newest hook-session
+    # anchor regardless, so a digest for an older session reported the
+    # CURRENT session's host spend under `"source": "host"`. Passed through
+    # only when `session` was actually given; `None` (the common case: no
+    # `--session`, or the caller wants the latest one) keeps the previous
+    # "newest anchor" behaviour exactly, via `usage_ledger_totals`'s own
+    # `start=None` default.
+    from .godmode_guardrails import usage_ledger_totals
+    usage_totals = usage_ledger_totals(
+        archive,
+        start=session_start if session is not None else None,
+        end=session_end if session is not None else None,
+    )
+    host_tokens = usage_totals["total_tokens"]
+    if host_tokens:
+        spend_view = {
+            "tokens": host_tokens, "source": "host", "messages": 0,
+            "records": usage_totals["records"],
+            "input_tokens": usage_totals["input_tokens"], "output_tokens": usage_totals["output_tokens"],
+            "cache_read_tokens": usage_totals["cache_read_tokens"],
+        }
+    else:
+        spend_view = {"tokens": spend["tokens"], "source": spend["source"], "messages": spend["messages"]}
     next_action = None
     if episodes["loop_detected"]:
         e = episodes["loop_detected"][0]
@@ -1756,7 +2220,7 @@ def session_digest(runtime: Runtime, session: str | None, transcript: str | None
         "claims": {"recorded": len(in_session), "by_grade": grades, "parked": parked},
         "obligations": obligations,
         "gate": gate,
-        "spend": {"tokens": spend["tokens"], "source": spend["source"], "messages": spend["messages"]},
+        "spend": spend_view,
         "host": {"name": current_host(), "grade": interception_state(archive, current_host()) if archive.initialized() else "UNAVAILABLE"},
         "calibration": calibration_digest(archive),
         "next_action": next_action or "nothing open on the record",
@@ -1825,10 +2289,17 @@ def cmd_retest(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         if argv and argv[0] == "python":
             argv[0] = sys.executable
         outcome = run_check(runtime.archive, session, project, f"retest:{entry['runner']}", argv,
-                            timeout=args.timeout)
+                            timeout=args.timeout, modules=entry.get("modules"),
+                            blob_paths=entry.get("pinned_sources"))
         outcomes.append({"runner": entry["runner"], "passed": outcome["passed"], "citation": outcome.get("citation")})
     plan["outcomes"] = outcomes
     failed = [o for o in outcomes if not o["passed"]]
+    if not failed:
+        # I-6 fix round 2 (D2): the moment this project's own tests just ran
+        # green is exactly the moment a saved atlas index is trustworthy to
+        # write - best-effort, never affects this command's own exit code.
+        from .godmode_closure import refresh_atlas_index
+        refresh_atlas_index(project)
     return CommandResult(plan, exit_code=1 if failed else 0)
 
 
@@ -1891,10 +2362,21 @@ def cmd_law_amend(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     from .godmode_law import amend_law
 
-    return CommandResult({"amended": amend_law(
-        runtime.archive, args.law, args.guard)["sequence"],
-        "note": "newest record per subject is the law; run `law compile` to "
-                "regenerate the file"})
+    record = amend_law(
+        runtime.archive, args.law, args.guard,
+        as_operator=getattr(args, "as_operator", False),
+        operator_verified=_resolve_operator_verified(runtime, args),
+    )
+    if record["pending"]:
+        note = ("amendment recorded but PENDING: written without operator "
+                "trust, so the law's last authorised guard stays in force "
+                "until a second actor approves this one or the operator "
+                "re-issues it with --as-operator; run `law compile` to see "
+                "the [AMENDMENT PENDING] marker")
+    else:
+        note = "this record is the law; run `law compile` to regenerate the file"
+    return CommandResult({"amended": record["sequence"],
+                          "pending": record["pending"], "note": note})
 
 
 def cmd_law_candidates(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -2306,6 +2788,36 @@ def cmd_hygiene(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult(report, exit_code=0)
 
 
+def cmd_forget(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """NS-11e + NS-11g (0.3.28 Plan 5 Task 7): expire episodic records past
+    TTL into a rotated cold segment, report supersession chains, and flag
+    same-subject value contradictions among active records. `--dry-run`
+    performs every read a real pass would but writes nothing (proved by a
+    digest over the record files, the cold segments and the cold registry).
+
+    Fix round 1 (review A, B5): `--now` is accepted on a PREVIEW only. A
+    fabricated clock in the far future makes every episodic record eligible
+    at once, so `godmode forget --now 2999-01-01` was a one-call lever that
+    emptied the hot tier of every `action`, `refusal` and `attestation` -
+    unauthenticated, from any agent, with no gate row behind it. A write
+    pass now always uses the real time; the preview is where a fabricated
+    one belongs, because a preview writes nothing.
+    """
+    from .godmode_forget import forget
+    _require_archive(runtime)
+    now = getattr(args, "now", None)
+    dry_run = bool(getattr(args, "dry_run", False))
+    if now is not None and not dry_run:
+        raise ArchiveError(
+            "`--now` fabricates the clock every TTL is measured against, so it is "
+            "accepted only on a preview: run `godmode forget --dry-run --now "
+            f"{now}` to see what that time would expire, or drop `--now` to run "
+            "the real pass against the real clock"
+        )
+    report = forget(runtime.archive, now=now, dry_run=dry_run)
+    return CommandResult(report)
+
+
 def cmd_oracle(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     from .godmode_heldback import held_checks, hold_check, run_held_checks
     _require_archive(runtime)
@@ -2339,6 +2851,40 @@ def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     """
     host = getattr(args, "host", None) or current_host()
     if args.hooks_command == "status":
+        if getattr(args, "write", False) and not getattr(args, "matrix", False):
+            # Fix round 1, nit 5: `--write` outside `--matrix` used to be
+            # silently accepted and ignored (the non-matrix branch below
+            # never reads it) - an operator asking to write got a read-only
+            # report with no signal anything was skipped.
+            return CommandResult(
+                {"error": "--write only applies with --matrix; "
+                          "hooks status --write alone has nothing to write"},
+                exit_code=2)
+        if getattr(args, "matrix", False):
+            # R-4 + R-0 guard: `docs/HOST-FEATURE-REACH.md` generated from
+            # `godmode_reach`'s own tables and `godmode_host_manifests.
+            # HOST_CAPABILITIES` - never hand-typed. The R-0 guard
+            # (`MatrixGuardError`) refuses before touching the file if a
+            # hook host cites neither a reference nor a replicating test.
+            from .godmode_reach import MatrixGuardError, generate_matrix_document
+
+            doc_path = Path(__file__).resolve().parents[2] / "docs" / "HOST-FEATURE-REACH.md"
+            current_text = doc_path.read_text(encoding="utf-8") if doc_path.exists() else ""
+            try:
+                generated = generate_matrix_document(current_text)
+            except MatrixGuardError as exc:
+                return CommandResult(
+                    {"matrix": "refused", "path": str(doc_path), "reason": str(exc)},
+                    exit_code=2)
+            changed = generated != current_text
+            if getattr(args, "write", False):
+                if changed:
+                    doc_path.write_text(generated, encoding="utf-8", newline="\n")
+                return CommandResult(
+                    {"matrix": "written" if changed else "current", "path": str(doc_path)})
+            return CommandResult(
+                {"matrix": "drifted" if changed else "current", "path": str(doc_path)},
+                exit_code=1 if changed else 0)
         if getattr(args, "git", False):
             _require_archive(runtime)
             return CommandResult(
@@ -2365,8 +2911,34 @@ def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             "reach": __import__(
                 "godmode_runtime.godmode_reach", fromlist=["reach_table"]
             ).reach_table().get(host, {}),
+            # R-3a: the named fallback tier (hook/shim/mcp/none) instead of
+            # leaving a host with no hook dispatch to read as
+            # "unverifiable" - `validate_tiers()` is what fails a row
+            # missing one.
+            "tier": __import__(
+                "godmode_runtime.godmode_reach", fromlist=["host_tier"]
+            ).host_tier(host),
+            # R-5: absent/in-sync/drifted per host, from the exact same
+            # rendering and comparisons `hooks wire --all` uses - status
+            # can never claim a state wiring itself would disagree with.
+            "wire_state": __import__(
+                "godmode_runtime.godmode_wire", fromlist=["wire_status"]
+            ).wire_status(Path(runtime.anchor.project_root)),
         }
         payload.update(_hooks_health_fields(runtime.archive, host, level))
+        if host == "codex":
+            # N-13: the installed-runtime premise, read fresh (never cached
+            # or guessed) so `hooks status` never claims a premise this
+            # machine did not just check.
+            payload["premise"] = codex_runtime_premise()
+        # C-6: read what the installer/`bindings --write`/`hooks wire`
+        # actually recorded (`<project>/.godmode/godmode/install-manifest.
+        # json`) instead of guessing from a glob - and flag any recorded
+        # path that no longer exists on disk.
+        recorded = installed_paths(runtime.anchor.project_root, "godmode")
+        missing = [p for p in recorded
+                   if not (Path(runtime.anchor.project_root) / p).exists()]
+        payload["install_manifest"] = {"recorded": recorded, "missing": missing}
         return CommandResult(payload)
     if args.hooks_command == "time":
         return CommandResult(time_hook(Path(runtime.anchor.project_root), args.event,
@@ -2390,9 +2962,72 @@ def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         from .godmode_host_manifests import (
             write_antigravity_project_hooks, write_codex_project_hooks,
             write_opencode_project_shim)
+        from . import godmode_wire
 
         plugin_root = Path(__file__).resolve().parents[2]
-        wire_host = getattr(args, "host", None) or "codex"
+        wire_host_arg = getattr(args, "host", None)
+        wire_host = wire_host_arg or "codex"
+        wire_all = getattr(args, "all", False)
+        dry_run = getattr(args, "dry_run", False)
+        if wire_all and wire_host_arg:
+            # N6: `--all` used to silently win over an explicit `--host`,
+            # so an operator who meant to scope to one host got every host
+            # wired instead with no indication their flag was ignored.
+            return CommandResult(
+                {"error": "hooks wire --all wires every known host; pass either "
+                          "--all or --host, not both"},
+                exit_code=1,
+            )
+        if wire_all or dry_run:
+            # R-5: one function, two modes - `--all` and `--dry-run` both
+            # go through `godmode_wire.wire()`, the same code an apply
+            # uses, so a preview can never diverge from what applying it
+            # actually does.
+            hosts = list(godmode_wire.WIRE_HOSTS) if wire_all else [wire_host]
+            unknown = [h for h in hosts if h not in godmode_wire.WIRE_HOSTS]
+            if unknown:
+                # N7: an unknown host (e.g. `--dry-run --host grok`) used to
+                # reach `_plan_host` and raise `GodmodeError`; give the same
+                # friendly message the non-dry-run fallback below does.
+                return CommandResult(
+                    {"error": "hooks wire knows codex (project hooks fallback), "
+                              "opencode (Bun shim install), antigravity "
+                              "(.agents/hooks.json merge), copilot "
+                              "(.github/hooks/godmode.json + copilot-instructions.md "
+                              "merge), and kiro (.kiro/hooks.json merge) today"},
+                    exit_code=1,
+                )
+            if "codex" in hosts and is_linked_worktree(runtime.anchor):
+                # N-13: refuse before any write, for the whole batch - a
+                # linked worktree wiring its own `.codex/hooks.json` would
+                # drift from the primary checkout the operator actually
+                # trusts commands in, so nothing else in the batch writes
+                # either.
+                primary = primary_checkout_root(runtime.anchor)
+                return CommandResult(
+                    {"refused": "hooks wire --host codex refuses from a linked "
+                                "worktree; run it from the primary checkout",
+                     "host": "codex",
+                     "primary_checkout": str(primary) if primary else None},
+                    exit_code=2,
+                )
+            report = godmode_wire.wire(
+                Path(runtime.anchor.project_root), hosts,
+                dry_run=dry_run, force=getattr(args, "force", False))
+            return CommandResult(
+                report, exit_code=0 if report["summary"] == "safe to apply" else 1)
+        if wire_host == "codex" and is_linked_worktree(runtime.anchor):
+            # N-13: refuse before any write - a linked worktree wiring its
+            # own `.codex/hooks.json` would drift from the primary checkout
+            # the operator actually trusts commands in.
+            primary = primary_checkout_root(runtime.anchor)
+            return CommandResult(
+                {"refused": "hooks wire --host codex refuses from a linked "
+                            "worktree; run it from the primary checkout",
+                 "host": "codex",
+                 "primary_checkout": str(primary) if primary else None},
+                exit_code=2,
+            )
         if wire_host == "codex":
             return CommandResult(write_codex_project_hooks(
                 plugin_root, Path(runtime.anchor.project_root),
@@ -2405,10 +3040,25 @@ def cmd_hooks(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             return CommandResult(write_antigravity_project_hooks(
                 plugin_root, Path(runtime.anchor.project_root),
                 force=getattr(args, "force", False)))
+        if wire_host in godmode_wire.WIRE_HOSTS:
+            # NS-6 (Task 6): Copilot and Kiro have no legacy dedicated
+            # writer function - `hooks wire --host copilot|kiro` routes
+            # straight through `godmode_wire.wire()`, the same code `--all`
+            # and `--dry-run` already use, rather than growing a fourth
+            # `write_*_project_*` function this task's own plan never asks
+            # for. Any future `WIRE_HOSTS` addition with no dedicated
+            # branch above falls through here the same way.
+            report = godmode_wire.wire(
+                Path(runtime.anchor.project_root), [wire_host],
+                dry_run=False, force=getattr(args, "force", False))
+            return CommandResult(
+                report, exit_code=0 if report["summary"] == "safe to apply" else 1)
         return CommandResult(
             {"error": "hooks wire knows codex (project hooks fallback), "
-                      "opencode (Bun shim install), and antigravity "
-                      "(.agents/hooks.json merge) today"},
+                      "opencode (Bun shim install), antigravity "
+                      "(.agents/hooks.json merge), copilot "
+                      "(.github/hooks/godmode.json + copilot-instructions.md "
+                      "merge), and kiro (.kiro/hooks.json merge) today"},
             exit_code=1)
     if args.hooks_command == "install":
         if getattr(args, "git", False):
@@ -2541,6 +3191,16 @@ def cmd_bindings(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult(report, exit_code=1 if report["drifted"] else 0)
 
 
+def cmd_ownership(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """C-6: which gate rule owns each path, and whether the decision table
+    the fast gate reads is still fresh against the sentinel that generated
+    it - the 0.3.27 miss. Exit 1 on a stale table; the walk itself never
+    fails the exit code (an unowned path is reported, not refused)."""
+    project = Path(runtime.anchor.project_root)
+    report = ownership_check(project, diff_only=getattr(args, "diff_only", False))
+    return CommandResult(report, exit_code=0 if report["table_fresh"] else 1)
+
+
 def cmd_sbom(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     project = Path(runtime.anchor.project_root)
     if args.gate:
@@ -2629,12 +3289,49 @@ def _working_tree_changes(project: Path) -> list[str]:
 
 
 def cmd_atlas(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    if getattr(args, "direction", False):
+        # A static check, not a build: it reads source files directly, so it
+        # never pays for (or waits on) an atlas build, and it needs no
+        # subcommand - `atlas --direction` alone is a complete gate.
+        project_root = Path(runtime.anchor.project_root)
+        if not (project_root / "hooks").is_dir() or not (project_root / "scripts" / "godmode_runtime").is_dir():
+            # No hooks/ and scripts/godmode_runtime/ trees to compare means
+            # the check has nothing to say - reported as inapplicable, not
+            # as a clean scan that never actually looked at anything.
+            return CommandResult({
+                "applicable": False,
+                "message": "no hooks/ and scripts/godmode_runtime/ directories found; "
+                           "dependency-direction check does not apply here",
+            })
+        findings = direction_findings(project_root)
+        return CommandResult({"applicable": True, "findings": findings},
+                             exit_code=1 if findings else 0)
+    if args.atlas_command is None:
+        raise GodmodeError("atlas requires a subcommand (e.g. map, diagnose) or --direction")
     if args.atlas_command == "load":
         # Load must not rebuild: the whole point is answering from the saved map
         # while stating how much of it is still true.
         report = load_index(Path(runtime.anchor.project_root) / args.source,
                             Path(runtime.anchor.project_root))
         return CommandResult(report, exit_code=0 if report["confidence"] == 1.0 else 1)
+    if args.atlas_command == "graph":
+        # NS-3: a projection of the ARCHIVE's own records, never the symbol
+        # atlas `build_atlas` below produces - no project scan is needed
+        # (or wanted; `godmode_graph.rebuild` takes the archive alone), so
+        # this branch returns before the symbol atlas ever builds.
+        _require_archive(runtime)
+        return _atlas_graph(args, runtime)
+    if args.atlas_command == "loop":
+        # NS-1: loop records over the archive alone, same reasoning as
+        # "graph" above - no symbol atlas is needed.
+        _require_archive(runtime)
+        return _atlas_loop(args, runtime)
+    if args.atlas_command == "law":
+        # NS-4: falsification bonds over the ARCHIVE's own records, same
+        # shape as `graph` above - no symbol atlas is needed, so this
+        # branch also returns before `build_atlas` ever runs.
+        _require_archive(runtime)
+        return _atlas_law(args, runtime)
     atlas = build_atlas(Path(runtime.anchor.project_root),
                         budget_seconds=args.budget if args.budget > 0 else None)
     result = _atlas_query(args, runtime, atlas)
@@ -2644,6 +3341,161 @@ def cmd_atlas(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         # from a complete one.
         result.payload["gap"] = atlas.gap
     return result
+
+
+def _atlas_graph(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """`atlas graph rebuild|query|verify` - NS-3's typed, time-valid
+    evidence graph, a projection of the archive's own records
+    (`godmode_graph.py`), never a second store."""
+    graph_command = getattr(args, "graph_command", None)
+    if graph_command is None:
+        raise GodmodeError("atlas graph requires a subcommand (rebuild, query, verify)")
+    if graph_command == "rebuild":
+        built = godmode_graph.rebuild(runtime.archive)
+        godmode_graph.save_snapshot(built, runtime.archive)
+        return CommandResult({
+            "nodes": len(built["nodes"]), "edges": len(built["edges"]), "hash": built["hash"],
+        })
+    if graph_command == "verify":
+        outcome = godmode_graph.verify(runtime.archive)
+        return CommandResult(outcome, exit_code=0 if outcome["verified"] else 1)
+    if graph_command == "query":
+        # Scale rule (design NS-3): BFS bounded by depth over a CACHED
+        # snapshot; full recompute only happens on `rebuild`, never per
+        # query - so this loads the last snapshot rather than rebuilding.
+        snapshot = godmode_graph.load_snapshot(runtime.archive)
+        if snapshot is None:
+            return CommandResult({
+                "refused": True,
+                "reason": "no graph snapshot found; run atlas graph rebuild",
+            }, exit_code=1)
+        return _atlas_graph_query(args, runtime, snapshot)
+    raise GodmodeError(f"Unknown atlas graph subcommand: {graph_command}")
+
+
+def _atlas_graph_query(args: argparse.Namespace, runtime: Runtime, snapshot: dict[str, Any]) -> CommandResult:
+    """`atlas graph query <node>` over the loaded `snapshot`.
+
+    Fix round 1, S1: `must_retest` alone can never answer "what must this
+    change retest" for a FILE, because `rebuild` only ever mints
+    `module:`/`attestation:` nodes (no `file:` node kind exists in the
+    graph itself - see `godmode_graph.py`'s own divergence note). This
+    bridges a `file:<path>` node (or a bare node id that resolves as a
+    real project-relative path when it names nothing in the snapshot) to
+    its `module:` node ids through `godmode_retest.retest_module_names` -
+    the SAME file->module bridge `godmode_closure` and `godmode_reversals`
+    use, imported here rather than reimplemented - and unions their
+    `must_retest` sets. A node id that resolves to neither a snapshot node
+    NOR a bridged module reports `"unknown_node": true`, so an empty
+    result is never mistaken for "nothing depends on it".
+    """
+    node = args.node
+    nodes = snapshot.get("nodes") or {}
+    path = node[len("file:"):] if node.startswith("file:") else None
+    if path is None and node not in nodes:
+        # A bare id that names nothing in the snapshot may still be a
+        # project-relative path the caller did not bother to prefix.
+        candidate = (Path(runtime.anchor.project_root) / node)
+        if candidate.is_file():
+            path = node
+    bridged_module_ids: list[str] = []
+    if path is not None:
+        modules = retest_module_names(Path(runtime.anchor.project_root), [path])
+        bridged_module_ids = sorted(f"module:{module}" for module in modules)
+    direct_hit = node in nodes
+    bridge_hits = [module_id for module_id in bridged_module_ids if module_id in nodes]
+    if not direct_hit and not bridge_hits:
+        return CommandResult({
+            "node": node, "depth": args.depth, "impact": [], "must_retest": [],
+            "unknown_node": True,
+            "refused": True, "reason": f"unknown node: {node}",
+        }, exit_code=1)
+    impact: dict[str, int] = {}
+    must_retest: dict[str, int] = {}
+
+    def _merge(target: dict[str, int], entries: list[dict[str, Any]]) -> None:
+        for entry in entries:
+            distance = int(entry["distance"])
+            existing = target.get(entry["node"])
+            if existing is None or distance < existing:
+                target[entry["node"]] = distance
+
+    if direct_hit:
+        direct = godmode_graph.query(snapshot, node, depth=args.depth)
+        _merge(impact, direct["impact"])
+        _merge(must_retest, direct["must_retest"])
+    for module_id in bridge_hits:
+        bridged = godmode_graph.query(snapshot, module_id, depth=args.depth)
+        _merge(must_retest, bridged["must_retest"])
+    return CommandResult({
+        "node": node, "depth": args.depth,
+        "impact": [{"node": n, "distance": d} for n, d in sorted(impact.items(), key=lambda kv: (kv[1], kv[0]))],
+        "must_retest": [{"node": n, "distance": d}
+                        for n, d in sorted(must_retest.items(), key=lambda kv: (kv[1], kv[0]))],
+    })
+
+
+def _atlas_loop(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """`atlas loop advance|resume` - NS-1's loop records
+    (`godmode_looprecords.py`): a chained failure signature per attempt,
+    refused (exit 2, `loop_halt` recorded) the third time it repeats, and
+    reopened only by `resume` evidence from a different actor than the
+    one who hit the halt. Budgets - an operator's own stop flag, then
+    steps, tokens, wall time - are checked before the signature test ever
+    runs; each exhaustion is its own named halt reason.
+    """
+    loop_command = getattr(args, "loop_command", None)
+    if loop_command is None:
+        raise GodmodeError("atlas loop requires a subcommand (advance, resume)")
+    project_root = Path(runtime.anchor.project_root)
+    if loop_command == "advance":
+        result = godmode_looprecords.advance(
+            runtime.archive, project_root, task=args.task,
+            failing_test_ids=args.failing, diff_from_git=args.diff_from_git,
+        )
+        return CommandResult(result, exit_code=2 if result["halted"] else 0)
+    if loop_command == "resume":
+        result = godmode_looprecords.resume(
+            runtime.archive, task=args.task, evidence_cite=args.evidence)
+        return CommandResult(result, exit_code=0 if result["resumed"] else 2)
+    raise GodmodeError(f"Unknown atlas loop subcommand: {loop_command}")
+def _atlas_law(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """`atlas law propose|bond-test|ratify` - NS-4's falsification bonds.
+
+    Kept as its own console hunk, separate from `remember --kind lesson`
+    and `godmode_law.py`'s enforce predicates (a different Plan 5 task owns
+    those): every write here goes through `godmode_bonds`, which is the
+    only place that knows the proposal cap, the bond-session matching, and
+    the proposer/checker separateness check.
+    """
+    law_command = getattr(args, "atlas_law_command", None)
+    if law_command is None:
+        raise GodmodeError("atlas law requires a subcommand (propose, bond-test, ratify)")
+    if law_command == "propose":
+        outcome = bonds_propose(
+            runtime.archive, args.target, args.diff, list(args.cite or []),
+            project=Path(runtime.anchor.project_root),
+        )
+        return CommandResult(outcome)
+    if law_command == "bond-test":
+        outcome = bonds_bond_test(
+            runtime.archive, Path(runtime.anchor.project_root),
+            args.name, split_command(args.command), args.file,
+            replace=args.replace, with_text=args.with_text, append=args.append,
+            rule_ids=args.rule,
+        )
+        # A bond that never went red proves nothing - the same "exit
+        # non-zero on an unproven guard" contract `cmd_plant` already uses.
+        return CommandResult(outcome, exit_code=0 if outcome["failed_as_expected"] else 1)
+    if law_command == "ratify":
+        outcome = bonds_ratify(
+            runtime.archive, args.proposal_seq,
+            project=Path(runtime.anchor.project_root),
+            diff_path=getattr(args, "diff", None),
+            patterns=list(getattr(args, "pattern", None) or []),
+        )
+        return CommandResult(outcome)
+    raise GodmodeError(f"Unknown atlas law subcommand: {law_command}")
 
 
 def _atlas_query(args: argparse.Namespace, runtime: Runtime, atlas: Any) -> CommandResult:
@@ -2670,6 +3522,20 @@ def _atlas_query(args: argparse.Namespace, runtime: Runtime, atlas: Any) -> Comm
             evidence=None if args.include_inferred else "extracted",
             relations=set(args.relations) if args.relations else None))
     if args.atlas_command == "closure":
+        # NS-3: a closure decision is a claim about impact, and an
+        # unverified (or stale) evidence graph makes that claim on
+        # evidence that may no longer match the archive. Only gated when
+        # an archive actually exists - a project with none has never had
+        # a graph to verify, and closure's atlas-only behaviour there is
+        # unchanged.
+        if runtime.archive.initialized():
+            verification = godmode_graph.verify(runtime.archive)
+            if not verification["verified"]:
+                return CommandResult({
+                    "refused": True,
+                    "reason": "graph unverified: run atlas graph rebuild",
+                    "verify": verification,
+                }, exit_code=1)
         # Changed files come from the caller or from the working tree. Reading
         # the tree by default is what makes this runnable at the moment it
         # matters - nobody thinks to list what they just edited, which is the
@@ -2751,18 +3617,28 @@ def cmd_resume(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # Grok field report 2026-09-10: `resume --brief` printed `records=3`.
     # The scalars a model can work from ride the top of the payload.
     try:
-        from .godmode_lens import ledger_block
+        from .godmode_lens import ledger_block, precedence_block, catch_up_block
         ledger = ledger_block(runtime.archive)
         from .godmode_anchor import run_git
         dirty = len([l for l in (run_git(Path(runtime.anchor.project_root), "status", "--porcelain") or "").splitlines() if l.strip()])
         checkpoints = [r for r in runtime.archive.select(kind="checkpoint", limit=50)]
         next_steps = ((checkpoints[-1].get("data") or {}).get("next") or []) if checkpoints else []
+        # NS-8m: declared state (named directly by a plan/checkpoint record)
+        # lists before inferred state (computed by scanning the archive), and
+        # a disagreement between the two is named rather than silently
+        # resolved. `precedence_block` reuses the same `dirty` count computed
+        # here so the scalar and the precedence row agree.
+        precedence = precedence_block(runtime.archive, dirty=dirty)
+        catch_up = catch_up_block(runtime.archive)
         brief = {
             "goal": ledger.get("goal"),
-            "dirty": dirty,
-            "open_obligations": ledger.get("open_obligations"),
             "current_step": ledger.get("current_step"),
             "next": (next_steps[0] if next_steps else None),
+            "dirty": dirty,
+            "open_obligations": ledger.get("open_obligations"),
+            "precedence": precedence["precedence"],
+            "conflicts": precedence["conflicts"],
+            "catch_up": catch_up["catch_up"],
             **brief,
         }
     except Exception:  # noqa: BLE001  # godmode: swallow-ok: the brief still prints when the scalars cannot be derived
@@ -2838,10 +3714,130 @@ def cmd_inventory_diff(args: argparse.Namespace, runtime: Runtime) -> CommandRes
     )
 
 
+def _supersession_chains(
+    records: list[dict[str, Any]],
+    *,
+    universe: list[dict[str, Any]] | None = None,
+    focus_subject: str | None = None,
+) -> list[str]:
+    """NS-10e: every supersession lineage touching `records`, oldest to
+    newest, rendered as `"seq -> seq -> seq"` - the explicit chain
+    `history --subject` shows in place of a flat list a reader could
+    otherwise only read as "the newest one silently overwrote the rest".
+
+    Fix round 1 (B3): the walk itself resolves both ends of a `supersedes`
+    citation from `universe` (the archive, or an archive-wide same-kind
+    slice `cmd_history` passes in) rather than `records` alone - the
+    review's own headline case (chronicle.py's docstring: "a lesson
+    restated under a new subject") has its successor OUTSIDE a
+    `--subject` selection by definition, so restricting the walk to
+    `records` made the cross-subject case, the one NS-10e exists for,
+    render no chain at all. A chain is still rendered only when at least
+    one of its own sequences is a record `records` (the caller's actual
+    selection) returned - `universe` only resolves the dangling end, it
+    never pulls in an unrelated lineage nothing in the selection touches.
+
+    `focus_subject` (usually the `--subject` the caller queried) marks
+    which subject needs no annotation: a step whose own subject differs
+    from it is rendered `"seq (subject)"` rather than bare `seq`, so the
+    cross-subject hop is visible in the line itself instead of silently
+    implied. `None` (no `--subject` given) annotates nothing, matching
+    the pre-fix, subject-blind rendering.
+    """
+    universe = records if universe is None else universe
+    # Round 1 nit: the same guarded coercion `godmode_chronicle` uses, not a
+    # bare `int()`. B3 widened this walk's input from one subject's slice to
+    # the whole archive, so one malformed `sequence` anywhere would otherwise
+    # raise out of every `history --subject`, not just its own subject's.
+    by_sequence = {sequence_of(r): r for r in universe if "sequence" in r}
+    returned_sequences = {sequence_of(r) for r in records if "sequence" in r}
+    successor: dict[int, int] = {}
+    has_predecessor: set[int] = set()
+    for record in universe:
+        target = (record.get("data") or {}).get("supersedes")
+        if target is None:
+            continue
+        try:
+            target = int(target)
+        except (TypeError, ValueError):
+            continue
+        if target not in by_sequence:
+            # Asymmetry worth naming: `superseded_sequences` excludes an
+            # unresolvable target UNCONDITIONALLY, while a chain whose
+            # target is outside this universe simply renders nothing. A
+            # record the readers already treat as retired can therefore
+            # show no chain under a narrowed `history --kind K --subject X`
+            # - reachable only via a cross-kind or forged edge.
+            continue
+        sequence = sequence_of(record)
+        successor[target] = sequence
+        has_predecessor.add(sequence)
+    chains: list[str] = []
+    for root in sorted(seq for seq in successor if seq not in has_predecessor):
+        path = [root]
+        seen = {root}
+        current = root
+        while current in successor and successor[current] not in seen:
+            current = successor[current]
+            path.append(current)
+            seen.add(current)
+        if not (returned_sequences & seen):
+            continue
+        labels: list[str] = []
+        for seq in path:
+            record = by_sequence.get(seq)
+            subject = str(record.get("subject", "")) if record else ""
+            if focus_subject is not None and subject and subject != focus_subject:
+                labels.append(f"{seq} ({subject})")
+            else:
+                labels.append(str(seq))
+        chains.append(" → ".join(labels))
+    return chains
+
+
 def cmd_history(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
+    seq = getattr(args, "seq", None)
+    if seq is not None:
+        # Fix round 1 (review B, N6): `--seq` names ONE record, so a filter
+        # alongside it can only narrow a set of one - it was silently
+        # ignored, which reads as "no such record" for a filter that simply
+        # never ran. Refused by name instead.
+        conflicting = [name for name in ("kind", "subject")
+                       if getattr(args, name, None) is not None]
+        if conflicting:
+            raise ArchiveError(
+                "`history --seq` names one record by sequence, so "
+                + ", ".join(f"--{name}" for name in conflicting)
+                + " cannot narrow it - drop the filter, or drop --seq and filter the "
+                  "whole history"
+            )
+        # NS-11g (0.3.28 Plan 5 Task 7): the one lookup that reaches the
+        # cold tier - `Chronicle.find_by_sequence` checks the hot events
+        # directory first, then any `events-cold-<n>.jsonl` segment a
+        # `godmode forget` pass has rotated the record into. Fix round 1
+        # (review A, B4): it re-hashes what it finds and refuses a record
+        # that no longer matches, so `--seq` can never serve a forged cold
+        # record as genuine.
+        record = runtime.archive.find_by_sequence(seq)
+        if record is None:
+            raise ArchiveError(f"No record with sequence {seq}")
+        return CommandResult({"records": [_event_view(record)]})
     records = runtime.archive.select(kind=args.kind, subject=args.subject, limit=args.limit)
-    return CommandResult({"records": [_event_view(record) for record in records]})
+    payload: dict[str, Any] = {"records": [_event_view(record) for record in records]}
+    if args.subject is not None:
+        # NS-10e: a chain, never an overwrite - only meaningful once a
+        # single --subject's own history is in view. Fix round 1 (B3): the
+        # dangling end of a cross-subject edge is resolved from the full,
+        # same-kind archive (`read_events()` is cached), not just this
+        # `--subject` selection - see `_supersession_chains`'s docstring.
+        universe = runtime.archive.read_events()
+        if args.kind is not None:
+            universe = [r for r in universe if r.get("kind") == args.kind]
+        chains = _supersession_chains(records, universe=universe, focus_subject=args.subject)
+        if chains:
+            payload["chain"] = chains
+    return CommandResult(payload)
 
 
 def _latest_plan(runtime: Runtime) -> dict[str, Any] | None:
@@ -2885,7 +3881,11 @@ def cmd_plan(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             data["status"] = "closed"
         data["steps"] = steps
         pending = sum(1 for s in steps if s.get("status") != "done")
-        record = _append(runtime, "plan", str(latest.get("subject", "plan")), data, args.evidence)
+        record = _append(
+            runtime, "plan", str(latest.get("subject", "plan")), data, args.evidence,
+            as_operator=getattr(args, "as_operator", False),
+            operator_verified=_resolve_operator_verified(runtime, args),
+        )
         return CommandResult({"record": record, "finished": finished, "pending": pending,
                               "closed": data.get("status") == "closed"})
     args.title = _one_text(args, "title_positional", "title", "plan title")
@@ -2903,6 +3903,8 @@ def cmd_plan(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             "obligations": args.obligation,
         },
         args.evidence,
+        as_operator=getattr(args, "as_operator", False),
+        operator_verified=_resolve_operator_verified(runtime, args),
     )
     return CommandResult({"record": record})
 
@@ -2959,6 +3961,27 @@ def cmd_checkpoint(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         raise ArchiveError("checkpoint requires --summary and --status (or --review)")
     if args.status in {"complete", "fixed"} and not args.evidence:
         raise ArchiveError("Completion requires at least one --evidence reference")
+    # C-8: a checkpoint's --evidence is what a later `verify()` read of the
+    # archive treats as backing this handoff, so a `file:`/`seq:`/`cmd:`
+    # reference that never resolves is refused here rather than sealed onto
+    # the record - the same referential checks `record_claim` already uses
+    # (Plan 6's `require_seq_cite`, and `_citation_resolves` for the other
+    # two prefixes), reused rather than re-derived.
+    from .godmode_fingerprint import require_seq_cite
+    from .godmode_attest import _citation_resolves
+    project = Path(runtime.anchor.project_root)
+    # Best-effort, not required: a `cmd:` reference narrows to a run from
+    # THIS session when one is open, same as every other citation check,
+    # but a checkpoint with no session open (or a `file:`/`seq:` only
+    # reference) must not be refused over that alone.
+    session = latest_session(runtime.archive)
+    for ref in args.evidence or []:
+        ref = str(ref)
+        if ref.startswith("seq:"):
+            require_seq_cite(runtime.archive, ref)
+        elif ref.startswith(("file:", "cmd:")):
+            if not _citation_resolves(project, runtime.archive, ref, session):
+                raise ArchiveError(f"checkpoint evidence {ref} does not resolve")
     # Field report 2026-09-02: a handoff summary is naturally longer than
     # the archive's 200-char subject slot, and the refusal took three tries
     # to decode. The subject is a label - derived from the opening words
@@ -3085,15 +4108,28 @@ def cmd_checklist_update(args: argparse.Namespace, runtime: Runtime) -> CommandR
     return CommandResult(payload)
 
 
+def cmd_checklist_template(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """NS-13g: the RCA ritual as checklist rows; `method --check-record` reads them
+    back when the RCA record names the label (`"rca": "<label>"`)."""
+    from .godmode_checklist import template_items
+    return CommandResult({
+        "template": args.template, "label": args.label,
+        "items": template_items(args.template, args.label),
+        "read_by": (f'method --check-method <m> --check-record <file> with "rca": "{args.label}" '
+                    "in the record - a skipped step reads incomplete:<step>"),
+    })
+
+
 from .godmode_requests import CLOSED_STATUSES as _CLOSED_REQUEST_STATUSES  # noqa: E402
 
 
 def _require_request_closure_target(runtime: Runtime, subject: str) -> None:
     from .godmode_requests import digest as request_text_digest
-    from .godmode_requests import open_stated_requests
+    from .godmode_requests import open_stated_requests, read_request_window
     if not runtime.archive.initialized():
         return
-    opened = open_stated_requests(runtime.archive.select(kind="request", limit=600))
+    _requests, _ = read_request_window(runtime.archive)
+    opened = open_stated_requests(_requests)
     wanted = subject.strip()
     for record in opened:
         identifier = str((record.get("data") or {}).get("digest", ""))
@@ -3108,6 +4144,68 @@ def _require_request_closure_target(runtime: Runtime, subject: str) -> None:
     raise ArchiveError(
         f"no open ask matches '{wanted[:80]}' - a closure must name the ask's id. Open: {listed}. "
         "Close one with `godmode remember --kind request --subject \"ask:<hex>\" --status closed`")
+
+
+# NS-10e kinds that already carry their own evolution/accumulation
+# mechanism (`record_pattern`'s occurrence merge, `record_incident`'s
+# one-shot report) - `cmd_remember` returns from their own branches before
+# the generic `data` dict below is ever built, so a `--supersedes` on
+# either would silently do nothing rather than refuse. Named once so the
+# refusal and the flag's own help text can never drift apart.
+_SUPERSEDES_UNSUPPORTED_KINDS = frozenset({"incident", "pattern"})
+
+
+def _validate_supersedes(runtime: Runtime, kind: str, supersedes: int, writer: str) -> None:
+    """NS-10e: `--supersedes <seq>` must name a record that actually
+    exists, is the SAME kind as the one being written, is not already
+    itself superseded, and (fix round 1, B1) is not more trusted than the
+    writer about to supersede it - none of which a single record's own
+    `data` can answer (see `godmode_invariants._register_invariants`'s own
+    note on why the register's sibling check needs archive history), so
+    this runs here, against the archive, before the write - never inside
+    `KIND_INVARIANTS`.
+
+    `writer` is resolved by the CALLER (`cmd_remember`, via `Chronicle.
+    resolve_writer`) the exact same way the append below it will resolve
+    its own - this function never re-derives it, so the two can never
+    read the same write as two different writers (the bug this fix
+    closes: supersession sat upstream of Task 5's trust rule and let an
+    `agent` write erase an `operator` record that NS-8k's own status-flip
+    refusal would never have let it touch).
+    """
+    _require_archive(runtime)
+    all_records = runtime.archive.read_events()
+    target = next(
+        (r for r in all_records if int(r.get("sequence", 0) or 0) == supersedes), None)
+    if target is None:
+        raise ArchiveError(
+            f"--supersedes {supersedes} names no record on this archive; "
+            "`godmode history --limit 50` to find the sequence you meant")
+    if target.get("kind") != kind:
+        raise ArchiveError(
+            f"--supersedes {supersedes} is a {target.get('kind')!r} record; "
+            f"a --kind {kind} record can only supersede another {kind!r} "
+            f"record - write it as --kind {target.get('kind')}, or name a "
+            f"{kind!r} sequence instead")
+    if supersedes in superseded_sequences(all_records):
+        raise ArchiveError(
+            f"--supersedes {supersedes} is already superseded by a later "
+            f"record; `godmode history --kind {kind} --subject "
+            f"\"{target.get('subject', '')}\"` to find the current one and "
+            "supersede that instead")
+    target_writer = record_writer(target)
+    target_trust = record_trust(target)
+    writer_trust = record_trust({"writer": writer})
+    if target_trust > writer_trust:
+        raise ArchiveError(
+            f"--supersedes {supersedes} is a {target_writer!r} record "
+            f"(trust {target_trust}); this write would land as {writer!r} "
+            f"(trust {writer_trust}), which does not outrank it - "
+            "supersession is stronger than a status flip and NS-8k already "
+            "refuses a lower-trust status change against a higher-trust "
+            "record, so this refuses too. Retry with --as-operator (and "
+            f"its verification) to write as {target_writer!r} or higher, "
+            f"or have a {target_writer!r}-or-higher writer make the change")
 
 
 def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -3138,18 +4236,223 @@ def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             "remember needs either the whole record as one quoted string "
             "(godmode remember --kind lesson \"<what happened and what to "
             "do>\") or --subject plus --value")
+    _absorb_verdicts: tuple[str | None, str | None] | None = None
+    if args.kind == "decision" and str(args.subject or "").startswith("absorb:"):
+        # H6: an absorb decision that says adopt or extend funds code, so it
+        # must cite a source file that was actually opened - never a README,
+        # a doc, or a release note. A surface read may still park, skip,
+        # diverge, or say unread.
+        from .godmode_absorb import parse_verdicts, validate_absorb
+        gaps = validate_absorb(str(args.value or ""), list(args.evidence or []), runtime.archive)
+        if gaps:
+            raise ArchiveError(
+                "absorb decision refused: " + ", ".join(gaps)
+                + " - adopt/extend must cite a source file opened (file:<path>, or "
+                  "receipt:<source>:<path> from `godmode read`) that is not README, "
+                  "docs or notes; a README-only read may say unread, skip or diverge")
+        # Fix round 1: a validated write is lifted into the record's data so
+        # `godmode_parity.upstream_verdicts` sees a CLI-recorded decision the
+        # same way it sees one written by direct archive access.
+        _absorb_verdicts = parse_verdicts(str(args.value or ""))
+    supersedes = getattr(args, "supersedes", None)
+    if supersedes is not None and args.kind in _SUPERSEDES_UNSUPPORTED_KINDS:
+        raise ArchiveError(
+            f"--supersedes is not supported for --kind {args.kind}; pattern "
+            "records accumulate occurrences on their own subject "
+            "(`--occurrence seq:<n>`), and incidents are one-shot reports - "
+            "supersede a decision, invariant, lesson, obligation, "
+            "assumption or request instead")
+    if args.kind != "lesson":
+        # NS-10j fix round 1 (M1): the same treatment `--enforce` gets
+        # further down, for the same stated reason - a silent drop is a
+        # worse failure than a loud one. The four structured flags were
+        # read INSIDE the `--kind lesson` branch, so `remember --kind
+        # incident --root-cause "..."` built a record with the root cause
+        # simply never stored and the operator who typed it never learned
+        # otherwise. Checked HERE, above the per-kind branches, because
+        # `incident` and `pattern` return before that branch is reached.
+        # Every stray flag is named, so the refusal says which one.
+        stray_structured = [
+            flag for flag, dest in (
+                ("--root-cause", "root_cause"), ("--correction", "correction"),
+                ("--reflection", "reflection"), ("--falsifier", "falsifier"))
+            if getattr(args, dest, None)
+        ]
+        if stray_structured:
+            raise ArchiveError(
+                f"{', '.join(stray_structured)} only applies to `--kind "
+                f"lesson` (got --kind {args.kind!r}): these are NS-10j's "
+                "structured lesson fields and there is no lesson here to "
+                "carry them - an incident's own falsifier is `--refuted-by`, "
+                "a different field with different semantics")
+    if args.kind != "incident" and (getattr(args, "repro", None)
+                                    or getattr(args, "no_repro", None) is not None):
+        raise ArchiveError(
+            f"--repro/--no-repro only apply to --kind incident (got --kind {args.kind!r}); "
+            "a reproduction belongs to the failure it reproduces")
     if args.kind == "incident":
-        from .godmode_mistakes import record_incident
+        from .godmode_mistakes import record_incident, repro_command, run_repro, validate_incident
+        # NS-13e: reproduce first. The incident carries the command that
+        # shows the failure, and the runner records its exit code now - or
+        # the record says why there is none.
+        repro_cmd = (str(getattr(args, "repro", None) or "").strip()
+                     or repro_command(args.evidence))
+        no_repro = getattr(args, "no_repro", None)
+        if not repro_cmd and no_repro is None:
+            raise ArchiveError(
+                "an incident needs its reproduction command: --repro \"<the command "
+                "that fails>\" (or --evidence \"repro:<command>\"); it runs now and its "
+                "exit code is recorded. With no reproduction yet, say why: "
+                "--no-repro \"<reason>\" (recorded as underspecified-ask)")
+        if repro_cmd and no_repro is not None:
+            raise ArchiveError("--repro and --no-repro are exclusive: an incident has a "
+                               "reproduction command or a reason it has none")
+        _require_archive(runtime)
+        # Validate before running: a record that will be refused must not
+        # execute its command or leave an orphan check behind.
+        validate_incident(getattr(args, "failure_class", None),
+                          getattr(args, "turning_point", False), args.evidence)
+        repro = (run_repro(runtime.archive, _session(runtime, getattr(args, "session", None)),
+                           Path(runtime.anchor.project_root), repro_cmd)
+                 if repro_cmd else None)
         record = record_incident(
             runtime.archive, args.subject, args.value,
             failure_class=getattr(args, "failure_class", None),
             turning_point=getattr(args, "turning_point", False),
             cites=args.evidence,
             predicts=getattr(args, "predicts", None),
+            refuted_by=getattr(args, "refuted_by", None),
+            hypothesis=getattr(args, "hypothesis", None),
+            repro=repro,
+            no_repro=no_repro,
+        )
+        payload: dict[str, Any] = {"record": _event_view(record)}
+        if repro is not None:
+            payload["repro"] = {k: repro[k] for k in ("command", "exit_code", "state")}
+        return CommandResult(payload)
+    if args.kind == "pattern":
+        from .godmode_mistakes import record_pattern
+        pattern_class = getattr(args, "pattern_class", None)
+        if not pattern_class:
+            raise ArchiveError(
+                "remember --kind pattern needs --class naming the failure "
+                "class this recurring failure belongs to")
+        occurrence_seq: int | None = None
+        raw_occurrence = getattr(args, "occurrence", None)
+        if raw_occurrence:
+            text = str(raw_occurrence)
+            if not text.startswith("seq:"):
+                raise ArchiveError(
+                    "--occurrence needs the form seq:<n>, naming the record "
+                    "that shows this instance of the pattern")
+            try:
+                occurrence_seq = int(text.split(":", 1)[1])
+            except ValueError as exc:
+                raise ArchiveError(
+                    f"--occurrence 'seq:<n>' is not a number: {text!r}"
+                ) from exc
+        record = record_pattern(
+            runtime.archive, args.subject, args.value, pattern_class,
+            occurrence=occurrence_seq, cites=args.evidence,
         )
         return CommandResult({"record": _event_view(record)})
-    status = args.status or ("open" if args.kind == "request" else "active")
+    status = args.status or ("open" if args.kind in ("request", "review") else "active")
     data: dict[str, Any] = {"value": args.value, "status": status}
+    if args.kind == "review":
+        # NS-11e fix round 1 (review B, B4): a flagged contradiction is closed
+        # the way an ask is - by subject and status - and the finding's own
+        # `kind`/`sequences` are carried forward from the record being closed
+        # rather than retyped. The invariant requires them, and a hand-typed
+        # set that differs by one sequence is a closure the next pass does not
+        # recognise, so the contradiction re-opens forever. A `review` is
+        # written by `godmode forget`, never minted here.
+        #
+        # Fix round 2 (R2-B5): WHICH review this closes is answerable, because
+        # one subject can carry several open reviews at once - `open_reviews`
+        # keys on (subject, exact sequence set), and a later pass that finds a
+        # third disagreeing record files a SECOND review with a wider set.
+        # Carrying the newest one forward unconditionally made every older
+        # open review unclosable by any CLI path and left it in `hygiene`,
+        # `status.remaining()` and the brief forever. `--review seq:<n>` names
+        # one; with none named, the single open review on the subject is the
+        # unambiguous answer, and two or more refuse rather than guess.
+        from .godmode_chronicle import open_reviews as _open_reviews
+        records = runtime.archive.read_events()
+        prior = None
+        named_review = getattr(args, "review", None)
+        if named_review:
+            text = str(named_review).strip()
+            if not text.startswith("seq:"):
+                raise ArchiveError(
+                    "--review needs the form seq:<n>, naming the review record "
+                    "this closes - `godmode history --kind review` lists them")
+            try:
+                named_sequence = int(text.split(":", 1)[1])
+            except ValueError as exc:
+                raise ArchiveError(
+                    f"--review 'seq:<n>' is not a number: {text!r}") from exc
+            for record in records:
+                if (record.get("kind") == "review"
+                        and int(record.get("sequence") or 0) == named_sequence):
+                    prior = record
+                    break
+            if prior is None:
+                raise ArchiveError(
+                    f"No review record at seq:{named_sequence} - "
+                    "`godmode history --kind review` lists the flagged contradictions")
+            if str(prior.get("subject") or "") != args.subject:
+                raise ArchiveError(
+                    f"seq:{named_sequence} is a review on subject "
+                    f"{str(prior.get('subject') or '')!r}, not {args.subject!r} - "
+                    "--subject must name the subject the review was filed against")
+        else:
+            still_open = [entry for entry in _open_reviews(records)
+                          if entry["subject"] == args.subject]
+            if len(still_open) > 1:
+                listing = "; ".join(
+                    f"seq:{entry['sequence']} flags {entry['sequences']}"
+                    for entry in still_open)
+                raise ArchiveError(
+                    f"{len(still_open)} reviews are open on subject {args.subject!r} "
+                    "and they flag different records - name the one this closes "
+                    f"with `--review seq:<n>`: {listing}")
+            if still_open:
+                target = still_open[0]["sequence"]
+                prior = next((record for record in records
+                              if int(record.get("sequence") or 0) == target), None)
+            else:
+                for record in reversed(records):
+                    if record.get("kind") == "review" and record.get("subject") == args.subject:
+                        prior = record
+                        break
+        if prior is None:
+            raise ArchiveError(
+                f"No review record on subject {args.subject!r} to update - "
+                "`godmode history --kind review` lists the flagged contradictions, "
+                "and `godmode forget` is what writes one")
+        prior_data = prior.get("data") or {}
+        data["kind"] = str(prior_data.get("kind") or "")
+        data["sequences"] = [int(s) for s in (prior_data.get("sequences") or [])
+                             if isinstance(s, int) and not isinstance(s, bool)]
+        data["reason"] = str(prior_data.get("reason") or "")
+    # Resolved once, here, and reused at the `_append` call below - B1 fix
+    # round 1 needs this write's own trust rank BEFORE the write, to gate
+    # `--supersedes`; calling `_resolve_operator_verified` a second time at
+    # `_append` would re-prompt for (or re-check) the operator password for
+    # the exact same write.
+    operator_verified = _resolve_operator_verified(runtime, args)
+    if supersedes is not None:
+        writer = runtime.archive.resolve_writer(
+            as_operator=getattr(args, "as_operator", False),
+            operator_verified=operator_verified)
+        _validate_supersedes(runtime, args.kind, supersedes, writer)
+        data["supersedes"] = supersedes
+    if _absorb_verdicts is not None:
+        imp, beh = _absorb_verdicts
+        if imp is not None:
+            data["import_verdict"] = imp
+        if beh is not None:
+            data["behaviour_verdict"] = beh
     if args.kind == "assumption":
         # The same contract `--turning-point` holds for an incident: both are
         # causal claims, and a causal claim with no citation is an assertion
@@ -3159,10 +4462,71 @@ def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         validate_load_bearing(load_bearing, args.evidence)
         if load_bearing:
             data["load_bearing"] = True
-    if args.kind == "obligation" and getattr(args, "standing", False):
+    if args.kind in ("obligation", "lesson") and getattr(args, "standing", False):
         data["standing"] = True
+    if args.kind == "obligation" and getattr(args, "blocked_by", None):
+        # NS-8n: an obligation names what blocks it. The existence,
+        # self-dependency and cycle checks are the same ones sprint items
+        # get (`godmode_status._check_dependencies`), keyed here by
+        # obligation subject rather than item id.
+        from .godmode_status import _check_dependencies
+        blocked_by = [str(b) for b in args.blocked_by if str(b).strip()]
+        existing_ids: dict[str, list[str]] = {}
+        # `select(kind="obligation", limit=500)` hard-caps at 500 and keeps
+        # only the newest that many - past that cap, an older obligation a
+        # new one names as its blocker reads as phantom (existence check
+        # fails a real blocker), and a cycle running back through it is
+        # silently admitted. `read_events()` filtered here is uncapped, so
+        # every obligation the archive holds is checked, not just the
+        # newest 500.
+        for record in runtime.archive.read_events():
+            if record.get("kind") != "obligation":
+                continue
+            existing_ids[str(record["subject"])] = list(
+                (record.get("data") or {}).get("blocked_by") or [])
+        _check_dependencies(existing_ids, args.subject, blocked_by)
+        data["blocked_by"] = blocked_by
     if args.kind == "lesson":
         data["generalized_guard"] = args.guard
+        # NS-10j (0.3.28 Plan 5 Task 2): opt into the structured schema only
+        # when at least one of the four new fields is given - a plain
+        # `--guard`-only lesson (enforce predicates, standing guards) is the
+        # pre-existing advisory shape and stays untouched by this rule.
+        structured_fields = {
+            "root_cause": getattr(args, "root_cause", None),
+            "correction": getattr(args, "correction", None),
+            "reflection": getattr(args, "reflection", None),
+            "refuted_by": getattr(args, "falsifier", None),
+        }
+        if any(value for value in structured_fields.values()):
+            for key, value in structured_fields.items():
+                if value:
+                    data[key] = value
+            from .godmode_lessons import normalize_lesson_write
+            normalize_lesson_write(data)
+    elif getattr(args, "enforce", None):
+        # I-1 fix round 1 (nit 5): a silent drop is a worse failure than a
+        # loud one - `--enforce` on a non-lesson kind used to build the
+        # record with the flag simply never read, so an operator who
+        # believed a guard would execute never learned otherwise. Refused
+        # the way `--enforce` with no `--guard` is refused, just below.
+        # NS-10j's four structured flags get the same treatment, checked
+        # above the per-kind branches (`stray_structured`).
+        raise ArchiveError(
+            f"--enforce only applies to `--kind lesson` (got --kind "
+            f"{args.kind!r}): it attaches a guard to that lesson's own "
+            "write, and there is no lesson here for it to attach to")
+    if args.kind == "lesson" and getattr(args, "enforce", None):
+        # I-1: an enforce predicate with no guard would refuse a matching
+        # write and have nothing to tell it to do instead - the guard IS
+        # the remedy the refusal carries.
+        if not str(args.guard or "").strip():
+            raise ArchiveError(
+                "--enforce needs --guard: a refused write is told to do "
+                "the guard instead, so an enforce predicate with no guard "
+                "text has no remedy to give it")
+        from .godmode_law import parse_enforce_spec
+        data["enforce"] = parse_enforce_spec(args.enforce)
     if args.kind == "assumption":
         # U-S4 assumption gate (`godmode_attest.assumption_gate`) matches
         # records to the session they were stated in; the generic path
@@ -3203,7 +4567,11 @@ def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
                 # that replaces it.
                 data["intent_preserved"] = str(args.intent_preserved)
     payload: dict[str, Any] = {
-        "record": _append(runtime, args.kind, args.subject, data, args.evidence)
+        "record": _append(
+            runtime, args.kind, args.subject, data, args.evidence,
+            as_operator=getattr(args, "as_operator", False),
+            operator_verified=operator_verified,
+        )
     }
     # Sibling advisory (field report, 2026-09-01): an obligation recorded
     # over an open one with the same vocabulary is usually the same duty
@@ -3301,6 +4669,126 @@ def _launcher_mode_issues(package_root: Path, posix: bool | None = None) -> list
     return issues
 
 
+# NS-10g: every shipped hook entry point wired into every generated host
+# manifest. The vocabulary of entry points is never hand-written here - it is
+# read straight off `godmode_host_manifests`'s own constants
+# (`SESSION_HOOK`/`GATE_FAST_HOOK`/`POST_EDIT_HOOK`), the same three every
+# builder in that module already calls `_shell_entry` with.
+#
+# `godmode_bindings.check()`/`registration_report()` already diff a shipped
+# manifest against what the generator would produce "right now" - but that
+# comparison is structurally blind to this exact bug class for a
+# merge-into-shared host (Codex, Grok): `_render_hook_artifact` builds their
+# `expected` value by reading the SAME on-disk `hooks/hooks.json` the
+# comparison then checks, patching only the PreToolUse matcher
+# (`merge_host_tools_into_shared`). Delete an event key from that file by
+# hand and it vanishes from both sides of that diff in the same edit -
+# `current` stays true. This reads the actual shipped file for every host
+# instead, against each host's own `allowed_events` (never re-typed here),
+# so an event a host declares but ships no hook for is caught regardless of
+# which side of a generator diff it would have hidden on.
+def _hook_event_blocks(manifest: dict, host: str) -> dict:
+    """The event -> block-list mapping a shipped manifest actually carries.
+
+    Every host but Antigravity nests it under a top-level `hooks` key
+    (`build_cursor_manifest`, `build_gemini_fragment`, and the shared
+    `hooks/hooks.json` Codex/Grok merge into all agree). Antigravity nests
+    one level deeper, under `godmode` (`build_antigravity_fragment`'s own
+    shape) - `enabled` sits beside the events there as a flag, never an
+    event itself, excluded the same way `antigravity_emitted_events`
+    already excludes it.
+    """
+    if host == "antigravity":
+        godmode = manifest.get("godmode")
+        return {k: v for k, v in godmode.items() if k != "enabled"} if isinstance(godmode, dict) else {}
+    hooks = manifest.get("hooks")
+    return hooks if isinstance(hooks, dict) else {}
+
+
+def _collect_command_strings(value: object, out: list[str]) -> None:
+    """Every string under a `command`/`commandWindows` key, anywhere inside
+    `value` - recursive because a block nests its `hooks` entries inside
+    matcher groups, themselves items of an event's own list."""
+    if isinstance(value, dict):
+        for key, sub in value.items():
+            if key in ("command", "commandWindows") and isinstance(sub, str):
+                out.append(sub)
+            else:
+                _collect_command_strings(sub, out)
+    elif isinstance(value, list):
+        for item in value:
+            _collect_command_strings(item, out)
+
+
+_HOOK_FILENAME_RE = re.compile(r"[\w.-]+\.py")
+
+
+def _wired_hook_issues(package_root: Path) -> list[dict]:
+    """NS-10g acceptance: a hook shipped but absent from a host manifest
+    that declares its event is `orphan`; a manifest command naming a hook
+    file that does not exist under `hooks/` is `dangling`. Both `warning`
+    severity - advisory, since a gap here degrades one host's coverage,
+    never this process's own integrity - and both name the host and the
+    event so the fix is one `godmode bindings --write` (an accidental
+    removal) or one restored file (a renamed/deleted script) away.
+    """
+    from . import godmode_host_manifests as host_manifests
+    from .godmode_bindings import _hook_manifest_specs, _load
+
+    issues: list[dict] = []
+    try:
+        source = _load(package_root)
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: no binding source means nothing to cross-check
+        return issues
+    entry_points = (
+        Path(host_manifests.SESSION_HOOK).name,
+        Path(host_manifests.GATE_FAST_HOOK).name,
+        Path(host_manifests.POST_EDIT_HOOK).name,
+    )
+    hooks_dir = package_root / "hooks"
+    for host, spec in sorted(_hook_manifest_specs(source).items()):
+        target = package_root / spec["path"]
+        if not target.is_file():
+            continue
+        try:
+            manifest = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(manifest, dict):
+            continue
+        blocks = _hook_event_blocks(manifest, host)
+        allowed_events = host_manifests.HOOK_ARTIFACTS.get(host, {}).get("allowed_events") or ()
+        for event in sorted(allowed_events):
+            commands: list[str] = []
+            _collect_command_strings(blocks.get(event), commands)
+            if not any(name in cmd for name in entry_points for cmd in commands):
+                issues.append({
+                    "code": "hook-orphan",
+                    "severity": "warning",
+                    "detail": (
+                        f"{host}'s {spec['path']} declares {event} but no shipped hook "
+                        "command answers it; run `godmode bindings --write` to restore "
+                        "it, or add the entry back by hand."
+                    ),
+                })
+        for event, event_blocks in blocks.items():
+            commands = []
+            _collect_command_strings(event_blocks, commands)
+            named = {match for cmd in commands for match in _HOOK_FILENAME_RE.findall(cmd)}
+            for name in sorted(named):
+                if not (hooks_dir / name).is_file():
+                    issues.append({
+                        "code": "hook-dangling",
+                        "severity": "warning",
+                        "detail": (
+                            f"{host}'s {spec['path']} names {name} under {event}, which "
+                            f"does not exist at hooks/{name}; restore the file or "
+                            "regenerate the manifest with `godmode bindings --write`."
+                        ),
+                    })
+    return issues
+
+
 def _doctor_host(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     """`doctor --host <name>`: the wiring a field machine can check itself.
 
@@ -3377,7 +4865,9 @@ def _doctor_host(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # project-level hook command names must exist, or the hook is dead
     # wiring and the host fails open in silence.
     project_files = {"codex": ".codex/hooks.json", "antigravity": ".agents/hooks.json",
-                     "cursor": ".cursor/hooks.json"}
+                     "cursor": ".cursor/hooks.json",
+                     "copilot": ".github/hooks/godmode.json",
+                     "kiro": ".kiro/hooks.json"}
     project_hooks: dict[str, Any] | None = None
     relative = project_files.get(host)
     if relative:
@@ -3443,6 +4933,32 @@ def _doctor_host(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     }, exit_code=0)
 
 
+def _secret_scan_targets(root: Path) -> Iterator[tuple[str, Any]]:
+    """Every JSON value under `root` a secret-shape scan should examine:
+    each `*.json` file whole, and each line of a `*.jsonl` cold segment
+    (NS-11g, 0.3.28 Plan 5 Task 7) as its own record - a secret rotated
+    into a cold segment by `godmode forget` must stay exactly as findable
+    here as it was while hot, one file-glob was never the security
+    boundary."""
+    for path in root.rglob("*.json"):
+        try:
+            yield path.name, json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+    for path in root.rglob("*.jsonl"):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                yield f"{path.name}:{line_number}", json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+
 def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     if getattr(args, "host", None):
         return _doctor_host(args, runtime)
@@ -3473,17 +4989,85 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             },
             exit_code=1,
         )
-    records = runtime.archive.read_events()
-    verification = runtime.archive.verify(records)
+    # verify=False: doctor's own forced full walk just below is the
+    # verification. A default read_events() call verifies internally too
+    # (accelerated, `use_checkpoint` defaulting True there) and RAISES on
+    # any break it finds - which would stop doctor before it ever reached
+    # the walk that is supposed to be the recovery path. Reading unverified
+    # here and verifying explicitly next keeps doctor reachable no matter
+    # what an accelerated read would have found.
+    records = runtime.archive.read_events(verify=False)
+    # I-1 fix round 3 (B1 deployment note): fold and persist the enforce
+    # sidecar (`godmode-enforce.index.json`) from doctor's own unlocked
+    # full walk, before any write ever needs to pay that walk while
+    # holding `write_lock()`. On an archive that has never had this
+    # sidecar, that walk measured ~13s on 18,964 records - held inside a
+    # lock whose acquire deadline is 20s, stalling every concurrent writer
+    # (hooks included) for the window. Running `godmode doctor` once after
+    # upgrading removes the window entirely. Best-effort: this is a cache
+    # warm, never a health finding, and doctor's own health answer must
+    # not depend on it succeeding.
+    try:
+        runtime.archive.seed_enforce_index()
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: sidecar warm is an optimization, never a doctor finding
+        pass
+    # C-8 fix round 1: `doctor` is the one command this codebase schedules
+    # to do a genuinely FULL walk (never accelerated by a registered
+    # checkpoint) - `use_checkpoint=False` forces it, so tampering before
+    # any checkpoint still surfaces here, and any checkpoint that now
+    # verifies gets added to the registry for other reads to trust.
+    verification = runtime.archive.verify(records, use_checkpoint=False)
     current = collect_inventory(runtime.anchor.project_root) if args.deep else None
     issues = detect_context_issues(runtime.anchor, records, current)
+    if not verification.get("ok", True):
+        # N1 fix (re-review): the forced full walk above is the one
+        # compensating control for the accelerated read's pre-boundary
+        # blind spot (S2) - a walk that finds a broken chain and is then
+        # never consulted for health defeats that control entirely. The
+        # walk's own message names the exact record; surface it verbatim.
+        issues.append({
+            "code": "archive-chain-broken",
+            "severity": "error",
+            "detail": verification.get("message", "chain verification failed"),
+        })
+    # NS-11g (0.3.28 Plan 5 Task 7): `doctor`'s own forced full walk above
+    # is hot-only - it trusts the cold registry's recorded hash at each
+    # rotation boundary (see `verify()`'s gap-bridging comment) rather than
+    # re-reading cold bytes on this call too, or `godmode forget` would
+    # cost a full history re-hash every time it merely checks whether
+    # anything is due. `verify_cold()` is the thorough cross-tier check
+    # this schedules instead - only when a cold tier actually exists, so a
+    # project untouched by `godmode forget` pays nothing extra here.
+    if runtime.archive.cold_segment_paths():
+        cold_verification = runtime.archive.verify_cold()
+        if not cold_verification.get("ok", True):
+            issues.append({
+                "code": "cold-segment-broken",
+                "severity": "error",
+                "detail": cold_verification.get("message", "cold segment verification failed"),
+            })
+    # Fix round 2 (N11): both verifiers walk only the segments the registry
+    # NAMES, so an `events-cold-*.jsonl` on disk that no entry claims is
+    # invisible to both and to `cold_segment_paths()`. Not a chain break -
+    # nothing reads it - but an unowned file holding real records in the
+    # archive directory is precisely the thing `doctor` exists to say out
+    # loud rather than leave for someone to find.
+    owned = {path.name for path in runtime.archive.cold_segment_paths()}
+    unowned = sorted(path.name for path in runtime.archive.root.glob("events-cold-*.jsonl")
+                     if path.name not in owned)
+    if unowned:
+        issues.append({
+            "code": "cold-segment-unowned",
+            "severity": "warning",
+            "detail": (f"Cold segment file(s) {', '.join(unowned[:5])} are in the archive "
+                       "but no entry in godmode-cold-registry.json claims them - nothing "
+                       "reads or verifies them. Left over from an interrupted rotation, "
+                       "or a registry that was replaced; move them aside once "
+                       "`godmode verify` and `godmode doctor` are both clean."),
+        })
     secret_locations: list[str] = []
-    for path in runtime.archive.root.rglob("*.json"):
-        try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        secret_locations.extend(f"{path.name}:{item}" for item in find_secret_shapes(value))
+    for label, value in _secret_scan_targets(runtime.archive.root):
+        secret_locations.extend(f"{label}:{item}" for item in find_secret_shapes(value))
     if secret_locations:
         issues.append(
             {
@@ -3508,6 +5092,12 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     dissent = dissent_check(runtime.archive)
     if dissent:
         issues.append({"code": "no-dissent", "severity": "warning", "detail": dissent})
+    # NS-10g: every shipped hook wired into every generated host manifest -
+    # cheap and structural, so it runs every time, not only under --deep.
+    try:
+        issues.extend(_wired_hook_issues(_PACKAGE_ROOT))
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: a wiring check that cannot run is not itself a finding
+        pass
     if args.deep:
         # S6 (obligation 4436): name every cached runtime that is not this
         # one - stale installs share the archive and race its chain. Behind
@@ -3544,6 +5134,15 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         from .godmode_repo_privacy import host_permission_findings
         issues.extend(host_permission_findings(Path(project)))
     except Exception:  # noqa: BLE001  # godmode: swallow-ok: a host settings file that cannot be read is not a finding
+        pass
+    try:
+        from .godmode_acl import state_home_acl
+        acl = state_home_acl(runtime.archive.root)
+        if acl["verdict"] == "permissive":
+            issues.append({"code": "state-home-acl", "severity": "warning", "detail": acl["detail"]})
+        elif acl["verdict"] == "unmeasured":
+            issues.append({"code": "state-home-acl", "severity": "info", "detail": acl["detail"]})
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: the ACL check reports, never blocks doctor
         pass
     healthy = not any(issue["severity"] == "error" for issue in issues)
     return CommandResult(
@@ -3677,6 +5276,8 @@ def cmd_precheck(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
                                 archive=runtime.archive,
                                 dirty=bool(getattr(args, "dirty", False)),
                                 suite_shards=int(getattr(args, "suite_shards", 1) or 1),
+                                shard_index=(None if getattr(args, "shard_index", None) is None
+                                             else int(args.shard_index)),
                                 session=_session(runtime, getattr(args, "session", None)))
         return CommandResult(report, exit_code=1 if report["verdict"] == "findings" else 0)
     if not args.about:
@@ -3760,13 +5361,9 @@ def cmd_privacy(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     findings: list[str] = []
     scanned = 0
-    for path in runtime.archive.root.rglob("*.json"):
+    for label, value in _secret_scan_targets(runtime.archive.root):
         scanned += 1
-        try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        findings.extend(f"{path.name}:{item}" for item in find_secret_shapes(value))
+        findings.extend(f"{label}:{item}" for item in find_secret_shapes(value))
     return CommandResult(
         {
             "private": not findings,
@@ -3788,6 +5385,7 @@ def cmd_guard(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     preview = classify_action(args.operation)
     preview["operation"] = args.operation
     preview["executes_operation"] = False
+    preview["brief"] = render_preview(preview)
     if not preview["protected"]:
         preview["authorized"] = True
         preview["capability_required"] = False
@@ -3962,6 +5560,16 @@ def cmd_authorize_stage(args: argparse.Namespace, runtime: Runtime) -> CommandRe
     on the wrong command.
     """
     _require_archive(runtime)
+    if getattr(args, "without_preflight", None) and not attended():
+        # NS-10k: accepting a push over a red preflight is the operator's own
+        # judgement call, spent on their say-so - the unattended row has
+        # nobody to make that call, so the flag itself is refused rather
+        # than silently honored on nobody's authority.
+        raise ArchiveError(
+            "refusing: --without-preflight is not available in the unattended tier "
+            "(no operator is presumed present to accept that risk). Run this from "
+            "an attended session, or set GODMODE_ATTENDED=1 if one truly is one."
+        )
     staged_digest = None
     if args.from_last_refusal:
         operation, staged_digest = stage_from_refusal(runtime.archive, nth=args.nth, with_digest=True)
@@ -4046,15 +5654,39 @@ def cmd_branches(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         from .godmode_lens import release_worktree
 
         return CommandResult(release_worktree(runtime.archive, runtime.anchor))
+    from .godmode_branchrole import branch_role, loosens
+
+    role = getattr(args, "role", None)
+    if role and not args.record:
+        raise ArchiveError("--role is declared on a record; pass --record with it")
     observation = observe_git(runtime.anchor)
+    operator_verified = False
     if args.record:
+        if role:
+            if not runtime.anchor.branch:
+                raise ArchiveError("--role needs a checked-out branch to declare it for")
+            # Review B2: declaring a spike switches the plan-first gate and
+            # the missing-test finding off, so it is the operator's call,
+            # never the agent's. Tightening needs no one's permission.
+            if loosens(runtime.anchor.branch, role):
+                operator_verified = _resolve_operator_verified(runtime, args)
+                if not operator_verified:
+                    raise ArchiveError(
+                        f"declaring {runtime.anchor.branch} throwaway switches off its "
+                        "plan and test gates; only the operator can: re-run with "
+                        "--as-operator at a terminal")
+            # NS-13h: the role is stored on the git-topology record itself;
+            # the newest declaration for a branch wins.
+            observation = {**observation, "branch": runtime.anchor.branch, "role": role}
         runtime.archive.append(
             "branch",
             "git-topology",
             observation,
             evidence=[runtime.anchor.head] if runtime.anchor.head else [],
+            as_operator=operator_verified, operator_verified=operator_verified or None,
         )
-    return CommandResult({"recorded": args.record, **observation})
+    return CommandResult({"recorded": args.record, **observation,
+                          "role": branch_role(runtime.archive, runtime.anchor.branch)})
 
 
 def cmd_version(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -4075,7 +5707,11 @@ def cmd_version(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         return CommandResult({"version": RUNTIME_VERSION,
                               "note": "recording a version fact needs --name and --value"})
     return CommandResult(
-        {"record": _append(runtime, "version", args.name, {"value": args.value, "status": args.status}, args.evidence)}
+        {"record": _append(
+            runtime, "version", args.name, {"value": args.value, "status": args.status}, args.evidence,
+            as_operator=getattr(args, "as_operator", False),
+            operator_verified=_resolve_operator_verified(runtime, args),
+        )}
     )
 
 
@@ -4162,9 +5798,12 @@ def cmd_observe(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         "would_have": would_have_summary(runtime.archive),
     }
     if getattr(args, "report", False):
+        # S-3: the whole archive, not `select`'s newest 500 refusals - an
+        # observed decision behind 500 real refusals would read as absent.
         observed = [
-            record for record in runtime.archive.select(kind="refusal", limit=500)
-            if (record.get("data") or {}).get("observed") is True
+            record for record in runtime.archive.read_events()
+            if record["kind"] == "refusal"
+            and (record.get("data") or {}).get("observed") is True
         ]
         decisions = []
         for record in observed[-max(1, args.last):]:
@@ -4185,12 +5824,53 @@ def cmd_observe(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 
 def cmd_recurring(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
-    """U-E10: recurring-ask mining. Proposals only; JSON with --json, prose otherwise."""
+    """U-E10: recurring-ask mining. Proposals only; JSON with --json, prose otherwise.
+
+    NS-11e (0.3.28 Plan 5 Task 7): also carries `forget_due` - when the last
+    `godmode forget` pass ran and what it did - so the recurring surface is
+    where an overdue forgetting pass is noticed, the same way a recurring ask
+    is.
+
+    Fix round 1 (review A, B8): this READS the pass's own record
+    (`action` / `forget-pass`, written by every real pass) instead of running
+    a `forget --dry-run` on every invocation. The dry run cost a full
+    verified archive read plus two digest sweeps - measured at roughly
+    20-35 s on this project's own archive, for a report nobody asked to have
+    recomputed. `godmode forget --dry-run` is still the way to see what is
+    due right now; this surface answers when a pass last ran.
+    """
     _require_archive(runtime)
     report = mine_recurring_asks(runtime.archive, threshold=args.threshold)
+    passes = runtime.archive.select(kind="action", subject=FORGET_PASS_SUBJECT, limit=1)
+    if passes:
+        data = passes[-1].get("data") or {}
+        report["forget_due"] = {
+            "last_pass": str(data.get("ran_at") or passes[-1].get("recorded_at") or ""),
+            "last_pass_seq": int(passes[-1].get("sequence", 0) or 0),
+            "expired": int(data.get("expired", 0) or 0),
+            "contradictions": int(data.get("contradictions", 0) or 0),
+            "detail": "run `godmode forget --dry-run` for what is due now",
+        }
+    else:
+        report["forget_due"] = {
+            "last_pass": None,
+            "detail": "no `godmode forget` pass is on record - run "
+                      "`godmode forget --dry-run` to see what a first pass would do",
+        }
     if getattr(args, "json", False):
         return CommandResult(report)
-    return CommandResult({"report": render_recurrence(report)})
+    rendered = render_recurrence(report)
+    due = report["forget_due"]
+    if due["last_pass"]:
+        rendered += (
+            f"\nLast `godmode forget` pass: {due['last_pass']} "
+            f"(seq {due['last_pass_seq']}; {due['expired']} expired, "
+            f"{due['contradictions']} contradiction(s)). "
+            "`godmode forget --dry-run` reports what is due now.\n"
+        )
+    else:
+        rendered += f"\n{due['detail']}.\n"
+    return CommandResult({"report": rendered})
 
 
 def upstream_skill_hits(tree: Path, keyword: str, limit: int = 40) -> list[dict[str, Any]]:
@@ -4285,11 +5965,43 @@ def cmd_stage(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 def cmd_sop(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     session = _session(runtime, args.session)
+    name = getattr(args, "name", None)
+    if name:
+        # NS-13c + I-8: a named SOP's standing record is written at first use,
+        # so the procedure a session followed is on record beside its steps.
+        standing = ensure_sop_record(runtime.archive, name)
+        if args.attest:
+            record = named_sop_attest(runtime.archive, session, name, args.attest,
+                                      result=args.result or "", evidence=args.evidence)
+            return CommandResult({"record": _event_view(record),
+                                  "standing_record": standing["sequence"]})
+        return CommandResult({**named_sop_status(runtime.archive, session, name),
+                              "standing_record": standing["sequence"]})
     if args.attest:
         record = sop_attest(runtime.archive, session, args.attest,
                             result=args.result or "", evidence=args.evidence)
         return CommandResult({"record": _event_view(record)})
     return CommandResult(sop_status(runtime.archive, session))
+
+
+def cmd_hypothesis(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """NS-13f: competing hypotheses, each with a kill experiment."""
+    from .godmode_hypothesis import add_hypothesis, hypothesis_status, kill_hypothesis
+
+    _require_archive(runtime)
+    if args.hypothesis_command == "add":
+        record = add_hypothesis(runtime.archive, args.cause, args.kills,
+                                confirms=args.confirms, next_experiment=args.next_experiment,
+                                subject=args.subject)
+        return CommandResult({"record": _event_view(record),
+                              "cite_as": f"hyp:{record['sequence']}",
+                              "next": f"godmode hypothesis kill {record['sequence']}"})
+    if args.hypothesis_command == "kill":
+        outcome = kill_hypothesis(runtime.archive, _session(runtime, args.session),
+                                  Path(runtime.anchor.project_root), args.sequence,
+                                  timeout=args.timeout)
+        return CommandResult(outcome)
+    return CommandResult(hypothesis_status(runtime.archive))
 
 
 def cmd_index(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -4300,6 +6012,9 @@ def cmd_index(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     if args.index_command == "status":
         state = index_fresh(runtime.archive, project)
         return CommandResult(state, exit_code=0 if state["fresh"] else 1)
+    if args.index_command == "patterns":
+        from .godmode_mistakes import list_patterns
+        return CommandResult({"patterns": list_patterns(runtime.archive)})
     try:
         return CommandResult(index_query(
             runtime.archive, project, args.task, limit=args.limit,
@@ -4445,7 +6160,7 @@ _WHEN_RULES = (
      "run it as `godmode verify <name> -- <command>` so the outcome is "
      "attested, not evaporated"),
     ("the same command fails twice with edits between", "remember",
-     "open an incident (`--kind incident`) - the third try without one is "
+     "open an incident (`--kind incident --repro \"<failing command>\"`) - the third try without one is "
      "a fix loop"),
     ("an incident closes", "remember",
      "distill the lesson (`--kind lesson --guard <rule>`) so the next "
@@ -4649,49 +6364,174 @@ def cmd_report(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult(report, exit_code=exit_code)
 
 
+_TIME_VOLATILE_ISSUE_CODES = frozenset({"stale-baseline", "stale-lock"})
+
+
+def _freeze_time_derived_issue(issue: dict[str, Any]) -> dict[str, Any]:
+    """Replace a wall-clock-derived issue `detail` with a stable one.
+
+    `detect_context_issues` computes `stale-baseline`'s detail from elapsed
+    hours since a recorded timestamp, and `stale-lock`'s from elapsed
+    minutes a sidecar file's mtime has aged - both against the real clock at
+    call time, with no way for `export()` to freeze that clock without
+    changing `build_context_brief`'s signature for its other callers. Left
+    alone, the same unchanged archive exported hours apart would embed a
+    different number and fail byte-identity. `code`, `severity`, and (for
+    `stale-baseline`) `confidence` are derived from record counts, not the
+    clock, and are kept as-is; only the elapsed-time text is replaced.
+    """
+    code = issue.get("code")
+    if code not in _TIME_VOLATILE_ISSUE_CODES:
+        return issue
+    frozen = dict(issue)
+    if code == "stale-baseline":
+        frozen["detail"] = (
+            f"Inventory baseline is stale; confidence {issue.get('confidence')}."
+        )
+    else:
+        frozen["detail"] = "A write lock has been held past the staleness threshold."
+    return frozen
+
+
+def export(
+    anchor: ProjectAnchor,
+    archive: Chronicle,
+    destination: Path,
+    *,
+    token_budget: int = DEFAULT_CONTEXT_BUDGET,
+) -> dict[str, Any]:
+    """Write the sanitized context brief to `destination` (N-9: export half).
+
+    Two calls over an unchanged archive write byte-identical files WITHIN A
+    STABLE WINDOW (final review N8): `stale-baseline`/`stale-lock` issue
+    TEXT is frozen to a stable equivalent below, but issue PRESENCE is
+    still live state - `(moment - captured).total_seconds() > 86_400` for
+    the former, `archive.lock_is_held()` for the latter - so two exports
+    straddling that 24h boundary, or one taken while a writer holds the
+    lock, can still differ in which issues appear at all, not merely in
+    their wording. The brief
+    itself is exactly what `build_context_brief` produces; three things are
+    canonicalised here, all inside this function so `build_context_brief`'s
+    contract for its other callers (e.g. `godmode report --context`) is
+    untouched. First, any timestamp stamped at build time (`generated_at`)
+    names when THIS export ran, not a fact recorded in the archive, so it
+    cannot appear in a file that is supposed to be byte-identical between
+    runs - it is returned to the caller instead, alongside `exported_at`,
+    and neither reaches the file. Second, `stale-baseline`/`stale-lock`
+    issue text embeds elapsed time against the real clock (see
+    `_freeze_time_derived_issue`); that text is replaced with a stable
+    equivalent, and `estimated_tokens` is recomputed against the frozen
+    payload so its value does not silently vary with the digit count of the
+    text it replaced. Third, the file is serialised with sorted keys and a
+    fixed separator so dict-ordering accidents (dict literal order differs
+    across code paths, e.g. the degraded-brief branch) cannot vary the bytes
+    even when the content is the same. A `seal` field is then added,
+    covering the canonical bytes of every other field in the payload (not
+    "everything before it" - `sort_keys=True` places `seal` wherever it
+    alphabetically sorts, not last), so a change anywhere else in the file
+    surfaces as a single mismatched field rather than a silent diff.
+    """
+    destination = Path(destination)
+    brief = build_context_brief(anchor, archive, token_budget=token_budget)
+    generated_at = brief.pop("generated_at", None)
+    exported_at = datetime.now(timezone.utc).isoformat()
+    brief["raw_archive_included"] = False
+    if "issues" in brief:
+        brief["issues"] = [_freeze_time_derived_issue(issue) for issue in brief["issues"]]
+    if "estimated_tokens" in brief:
+        brief["estimated_tokens"] = max(
+            1, len(json.dumps(brief, ensure_ascii=False)) // 4
+        )
+    sealed_body = json.dumps(
+        brief, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    )
+    seal = hashlib.sha256(sealed_body.encode("utf-8")).hexdigest()
+    brief["seal"] = seal
+    text = json.dumps(
+        brief, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    ) + "\n"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.godmode.tmp")
+    temporary.write_text(text, encoding="utf-8")
+    temporary.replace(destination)
+    return {
+        "exported": True,
+        "output": str(destination),
+        "raw_archive_included": False,
+        "exported_at": exported_at,
+        "generated_at": generated_at,
+        "seal": seal,
+    }
+
+
 def cmd_export(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     output = Path(args.output).expanduser().resolve(strict=False)
     if output.exists() and not args.overwrite:
         raise ArchiveError("Export target exists; pass --overwrite to replace it")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    payload = build_context_brief(runtime.anchor, runtime.archive, token_budget=args.token_budget)
-    payload["exported_at"] = datetime.now(timezone.utc).isoformat()
-    payload["raw_archive_included"] = False
-    text = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
-    temporary = output.with_name(f".{output.name}.godmode.tmp")
-    temporary.write_text(text, encoding="utf-8")
-    temporary.replace(output)
-    return CommandResult(
-        {"exported": True, "output": str(output), "raw_archive_included": False}
-    )
+    result = export(runtime.anchor, runtime.archive, output, token_budget=args.token_budget)
+    return CommandResult(result)
 
 
 def cmd_evals(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     project = Path(runtime.anchor.project_root)
+    # NS-12c: with the lessons-and-law layer withheld, what is scored is the
+    # skill rather than everything this project has already been corrected
+    # about. The mode reaches every runner below explicitly - nothing here
+    # reads it back out of the environment.
+    withhold_memory = bool(getattr(args, "withhold_memory", False))
     if args.write_snapshots:
+        if withhold_memory:
+            # The committed fixtures are with-memory artefacts. Freezing a
+            # withheld run over them would quietly redefine what the snapshot
+            # means, and every later with-memory run would read as drift.
+            raise ArchiveError(
+                "--write-snapshots records the with-memory fixtures; it cannot "
+                "accept a --withhold-memory run. Drop --withhold-memory, or "
+                "record that mode with --write-baseline --withhold-memory.")
         return CommandResult({
             "routing": check_snapshots(project, write=True),
             "charter": charter_snapshot(project, write=True),
             "ranking": ranking_snapshot(project, write=True),
             "verdict": "snapshots-written",
         })
-    routing = run_routing_evals(project)
-    snapshots = check_snapshots(project)
-    assertions = run_behavior_assertions(project)
+    if getattr(args, "write_baseline", False):
+        report = eval_ratchet(project, write=True, withhold_memory=withhold_memory)
+        return CommandResult(report, exit_code=0 if report["verdict"] == "clean" else 1)
+    if getattr(args, "ratchet", False):
+        report = eval_ratchet(project, withhold_memory=withhold_memory)
+        return CommandResult(report, exit_code=0 if report["verdict"] == "clean" else 1)
+    if getattr(args, "determinism", False):
+        report = eval_determinism(project)
+        return CommandResult(report, exit_code=0 if report["verdict"] == "deterministic" else 1)
+    routing = run_routing_evals(project, withhold_memory=withhold_memory)
+    # The routing fixtures froze routes taken WITH memory; a withheld run is a
+    # different measurement, so it is reported as its own mode instead of
+    # being diffed against them (the same rule the ranking snapshot applies to
+    # a differing scorer or freshness instrument).
+    snapshots = check_snapshots(project) if not withhold_memory else {
+        "fixtures": str(project / "evals" / "fixtures"),
+        "withhold_memory": True, "diffs": [],
+        "verdict": "snapshot-mode-withheld",
+    }
+    assertions = run_behavior_assertions(project, withhold_memory=withhold_memory)
     charter = charter_snapshot(project)
-    ranking = ranking_snapshot(project)
+    ranking = ranking_snapshot(project, withhold_memory=withhold_memory)
+    # NS-12f: one row per skill per declared model. A dict, so `--brief`
+    # (scalars only) leaves the headline untouched.
+    models = cross_model_matrix(project, withhold_memory=withhold_memory)
     payload = {**routing, "snapshots": snapshots, "assertions": assertions,
-               "charter": charter, "ranking": ranking}
+               "charter": charter, "ranking": ranking, "models": models}
     # A mode-differing ranking comparison is out of contract, not a failure:
     # the snapshot and this environment hold different instruments, and
     # neither is wrong about the other.
     gates = {
         "routing": routing["verdict"] == "routing-sound",
-        "snapshots": snapshots["verdict"] == "behaviour-stable",
+        "snapshots": snapshots["verdict"] in ("behaviour-stable", "snapshot-mode-withheld"),
         "assertions": assertions["verdict"] == "assertions-held",
         "charter": charter["verdict"] == "charter-stable",
-        "ranking": ranking["verdict"] in ("ranking-stable", "ranking-mode-differs"),
+        "ranking": ranking["verdict"] in (
+            "ranking-stable", "ranking-mode-differs", "ranking-mode-withheld"),
     }
     failing = sorted(name for name, held in gates.items() if not held)
     # The headline names what failed. The old spread left routing's own
@@ -4724,8 +6564,42 @@ def cmd_absorb(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult(result, exit_code=0 if result["absorbed"] else 1)
 
 
+_LINE_RANGE = re.compile(r"^(\d+)-(\d+)$")
+
+
+def _parse_line_range(raw: str | None) -> tuple[int, int] | None:
+    if raw is None:
+        return None
+    match = _LINE_RANGE.match(raw.strip())
+    if not match:
+        raise ArchiveError(f"--lines must be 'a-b' (e.g. 12-40), not {raw!r}")
+    return int(match.group(1)), int(match.group(2))
+
+
+def cmd_read(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """I-2: record what was actually opened - a receipt an absorb decision
+    can later cite instead of, or alongside, a `file:` evidence line."""
+    _require_archive(runtime)
+    from .godmode_receipts import record_receipt
+    lines = _parse_line_range(getattr(args, "lines", None))
+    record = record_receipt(
+        runtime.archive, runtime.anchor.project_root, args.source, args.path,
+        lines=lines, root=getattr(args, "root", None),
+    )
+    return CommandResult({"record": _event_view(record)})
+
+
 def cmd_parity(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
+    if getattr(args, "sources", False):
+        # I-2: per-source files-opened and a surface-only flag, read straight
+        # off recorded receipts - no --reference needed for this view.
+        from .godmode_receipts import sources_report
+        return CommandResult(sources_report(runtime.archive))
+    if not args.reference:
+        raise ArchiveError(
+            "parity needs --reference (an explicit local reference to compare "
+            "against), or --sources to report read receipts instead")
     if getattr(args, "matrix", False):
         result = parity_matrix(
             runtime.anchor.project_root, args.reference,
@@ -4779,7 +6653,9 @@ def cmd_skill_retire(args: argparse.Namespace, runtime: Runtime) -> CommandResul
     payload["lifecycle_reason"] = args.reason
     evals.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     _append(runtime, "decision", f"skill-retired:{args.name}",
-            {"value": args.reason, "status": "deprecated"}, [f"file:skills/{args.name}"])
+            {"value": args.reason, "status": "deprecated"}, [f"file:skills/{args.name}"],
+            as_operator=getattr(args, "as_operator", False),
+            operator_verified=_resolve_operator_verified(runtime, args))
     return CommandResult({"skill": args.name, "lifecycle": "deprecated", "reason": args.reason})
 
 
@@ -4813,6 +6689,25 @@ def cmd_lessons(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
                 kind="lesson", limit=max(1, args.limit))
         ]
         return CommandResult({"lessons": rows})
+    if command == "promote":
+        from .godmode_errors import ArchiveError
+        from .godmode_lessons import promote as lessons_promote
+
+        try:
+            outcome = lessons_promote(
+                runtime.archive, args.lesson_seq, list(args.cite or []), args.rerun_hash)
+        except ArchiveError as error:
+            return CommandResult({"refused": str(error)}, exit_code=1)
+        return CommandResult(outcome)
+    if command == "approve":
+        from .godmode_errors import ArchiveError
+        from .godmode_lessons import approve as lessons_approve
+
+        try:
+            outcome = lessons_approve(runtime.archive, args.promotion_seq, args.rerun_hash)
+        except ArchiveError as error:
+            return CommandResult({"refused": str(error)}, exit_code=1)
+        return CommandResult(outcome)
     from .godmode_attest import lesson_pipeline
 
     report = lesson_pipeline(runtime.archive)
@@ -4891,8 +6786,79 @@ def cmd_skill_lint(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     return CommandResult(report, exit_code=0 if report["passed"] else 1)
 
 
+_SUCCESS_EVIDENCE_CITE = re.compile(r"^seq:\d+$")
+
+
 def cmd_skill_forge(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
+    # NS-11d: the procedural layer's promotion bar names its evidence, not
+    # just its count - `SkillProposal.repeated_uses` (below) already refuses
+    # under three; this is the second half, refused here rather than in the
+    # dataclass because `SkillProposal` is also built directly (with no
+    # archive in reach) by `tests/test_forge_fixtures.py` and
+    # `tests/test_godmode_runtime.py`.
+    success_evidence = [str(item) for item in (args.success_evidence or [])]
+    if len(success_evidence) < 3:
+        raise ArchiveError(
+            "skill forge needs --success-evidence seq:<n> at least three "
+            "times (NS-11d): a method becomes a skill candidate only after "
+            "three recorded successes of one task type, each cited by the "
+            f"archive record that proves it; got {len(success_evidence)}"
+        )
+    malformed = [item for item in success_evidence if not _SUCCESS_EVIDENCE_CITE.match(item)]
+    if malformed:
+        raise ArchiveError(
+            "--success-evidence entries must be 'seq:<n>' citations naming "
+            "the record that proves that success; malformed: "
+            + ", ".join(malformed)
+        )
+    # B3: a shape check is not a resolution check. `seq:1 seq:1 seq:1` and
+    # `seq:999999` are both well-formed, and both used to create the skill -
+    # so the flag counted citations without ever asking whether any of them
+    # named a record, which is the bare count NS-11d exists to refuse
+    # wearing three copies of the same prefix. Two rules, both decidable
+    # from what is in reach here (the archive, required at the top of this
+    # function - which is why the check lives in the CLI and not in
+    # `SkillProposal`):
+    #
+    #   1. THREE DISTINCT sequences. One success cited three times is one
+    #      success.
+    #   2. Each one RESOLVES. A sequence nothing was ever appended at is
+    #      not evidence of anything.
+    #
+    # What is deliberately NOT checked, and is not claimed anywhere in the
+    # shipped text either: that the cited records are successes *of this
+    # skill's task type*. No record shape in this archive carries a task
+    # type a proposal could be matched against - a `decision`, an `action`
+    # and an `attestation` are all equally "a record" here - so relatedness
+    # would be a guess dressed as a guard. Named in `SKILL.md` as an
+    # operator's judgement rather than pretended to in code.
+    # Distinctness is over the SEQUENCES, not the strings: `seq:1` and
+    # `seq:01` are two spellings of one record.
+    cited = [int(item.split(":", 1)[1]) for item in success_evidence]
+    if len(set(cited)) < 3:
+        raise ArchiveError(
+            "--success-evidence needs three DISTINCT records (NS-11d): one "
+            "success cited three times is one success; got "
+            f"{len(set(cited))} distinct of {len(cited)}"
+        )
+    from .godmode_fingerprint import existing_sequences
+    existing = existing_sequences(runtime.archive)
+    dangling = [item for item, sequence in zip(success_evidence, cited)
+                if sequence not in existing]
+    if dangling:
+        raise ArchiveError(
+            "--success-evidence must cite records that exist (NS-11d): "
+            "`godmode history` lists them. No record at: "
+            + ", ".join(sorted(set(dangling)))
+        )
+    # NS-12a (Task 9, fix round 2 R3): `--pattern` is `type=int, action=
+    # "append"`, so `0` and `-1` are accepted by argparse and refused only
+    # by the record's own invariant - which runs AFTER `forge_skill` has
+    # written the skill to disk and `evaluate_forged_skill` has decided its
+    # outcome. Checked here, before anything is created, so a documented
+    # flag value cannot buy a forged skill with no record of the attempt.
+    pattern_seqs = validate_pattern_seqs(list(getattr(args, "pattern", None) or []))
     proposal = SkillProposal(
         name=args.name,
         purpose=args.purpose,
@@ -4914,6 +6880,27 @@ def cmd_skill_forge(args: argparse.Namespace, runtime: Runtime) -> CommandResult
         else:
             destination = str(project_root / "skills")
     created = forge_skill(destination, proposal)
+    # NS-12a + NS-12d (Task 9): a forged skill is scored against the eval
+    # harness before it is kept - `evaluate_forged_skill` removes it and
+    # raises when the skill does not strictly improve (score 0.0, the
+    # fixed "before" for something that did not exist a moment ago) over
+    # the best any earlier accepted skill_impact recorded for this same
+    # target name. `eval_project` is `destination`'s own parent because
+    # `forge_skill` always writes into a directory literally named
+    # `skills` (the project root's own, or `.grok/skills` on Grok - CX-3),
+    # and `godmode_evals.load_suites` always reads `<project>/skills/*`.
+    eval_project = Path(destination).expanduser().resolve(strict=False).parent
+    impact = evaluate_forged_skill(
+        runtime.archive, eval_project, created, patterns=pattern_seqs,
+    )
+    if impact["outcome"] != "accepted":
+        raise ArchiveError(
+            f"Forged skill {args.name!r} scored {impact['score_after']} "
+            f"(no strict improvement over "
+            f"{impact['best_recorded'] if impact['best_recorded'] is not None else impact['score_before']}); "
+            f"removed, recorded rejected at seq:{impact['sequence']} "
+            "(skill_impact)."
+        )
     runtime.archive.append(
         "decision",
         f"skill-created:{args.name}",
@@ -4922,14 +6909,43 @@ def cmd_skill_forge(args: argparse.Namespace, runtime: Runtime) -> CommandResult
             "skill": args.name,
             "destination_digest": __import__("hashlib").sha256(str(created).encode()).hexdigest(),
             "repeated_uses": args.repeated_uses,
+            "success_evidence": success_evidence,
         },
-        evidence=[],
+        evidence=success_evidence,
     )
-    return CommandResult({"created": True, "path": str(created), "validation": validate_skill(created)})
+    return CommandResult({
+        "created": True, "path": str(created), "validation": validate_skill(created),
+        "skill_impact": impact,
+    })
 
 
 def _evidence(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--evidence", action="append", default=[], help="Evidence reference or digest; repeatable")
+
+
+def _operator_flags(parser: argparse.ArgumentParser) -> None:
+    """NS-8k, fix round 1 (F0): the CLI surface `derive_writer`'s
+    `operator` value needed. Shared by every verb that writes a record the
+    single-writer guard or the status trust order can act on (`remember`,
+    `plan --close`, `version`, `skill retire`, and `session open`, the fifth
+    and the odd one out: the others claim `operator` trust for the record
+    they are writing, while `session open --role checker` uses the same
+    verification to GATE a grant stamped into a different, later record)."""
+    parser.add_argument(
+        "--as-operator", dest="as_operator", action="store_true",
+        help="Claim this write as the human operator - outranks agent/checker/"
+             "hook records for this subject (NS-8k) and is exempt from the "
+             "single-writer close guard (NS-11h). A claim alone is not a "
+             "credential: when `authorize setup` has configured a password, "
+             "it is verified via --password-stdin or an interactive prompt - "
+             "and refused outright (no silent downgrade to agent) if neither "
+             "is available, e.g. a non-interactive process with no "
+             "--password-stdin. With no password configured at all, an "
+             "interactive y/N confirmation is used instead.")
+    parser.add_argument(
+        "--password-stdin", dest="password_stdin", action="store_true",
+        help="Read the operator authorization password from stdin instead of "
+             "an interactive prompt; only consulted with --as-operator")
 
 
 def _one_text(args: argparse.Namespace, positional: str, flag: str, label: str) -> str | None:
@@ -5170,6 +7186,24 @@ def _build_parser() -> argparse.ArgumentParser:
         "list", help="B4-7: the recorded lessons, newest last, bounded")
     lessons_list.add_argument("--limit", type=int, default=20)
     lessons_list.set_defaults(handler=cmd_lessons)
+    lessons_promote = lessons_sub.add_parser(
+        "promote",
+        help="NS-2 + NS-10j: cite a structured lesson for graduation, with an "
+             "independent re-run hash; refused naming any missing structured field")
+    lessons_promote.add_argument("lesson_seq", type=int, help="The lesson record's own sequence number")
+    lessons_promote.add_argument("--cite", "--evidence", dest="cite", action="append", default=[],
+                                 help="Evidence citation; repeatable, at least one required")
+    lessons_promote.add_argument("--rerun-hash", dest="rerun_hash", required=True,
+                                 help="sha256 hex digest of this held-out re-run's own evidence")
+    lessons_promote.set_defaults(handler=cmd_lessons)
+    lessons_approve = lessons_sub.add_parser(
+        "approve",
+        help="NS-2: approve a promotion with an independent re-run - refused when the "
+             "approver is the promoter, or the rerun hash repeats the promotion's own")
+    lessons_approve.add_argument("promotion_seq", type=int, help="The lesson_promotion's own sequence number")
+    lessons_approve.add_argument("--rerun-hash", dest="rerun_hash", required=True,
+                                 help="sha256 hex digest of THIS checker's own independent re-run")
+    lessons_approve.set_defaults(handler=cmd_lessons)
 
     experiment = sub.add_parser(
         "experiment",
@@ -5228,6 +7262,19 @@ def _build_parser() -> argparse.ArgumentParser:
     session_open.add_argument("--label", default="session")
     session_open.add_argument("--transcript", default=None,
                               help="This session's host transcript; reads in it count toward the required sources")
+    session_open.add_argument(
+        "--role", choices=["agent", "checker"], default="agent",
+        help="Declares this session's role (NS-8k). `checker` is OPERATOR-"
+             "GRANTED, not self-declared: it requires --as-operator "
+             "verification (see below) and is refused otherwise. Chronicled "
+             "on the session record itself (with `role_granted_by: "
+             "operator` and `writer: operator` when granted) and exported "
+             "as GODMODE_SESSION for this process; a later write only reads "
+             "as `checker` when it names THIS process's own session id and "
+             "that record carries the operator grant (see "
+             "`Chronicle._chronicled_session_role`) - naming a DIFFERENT "
+             "session's id, verified or not, mints nothing here.")
+    _operator_flags(session_open)
     session_open.set_defaults(handler=cmd_session_open)
     session_close = session_sub.add_parser("close")
     session_close.add_argument("--session")
@@ -5246,12 +7293,16 @@ def _build_parser() -> argparse.ArgumentParser:
     attest.set_defaults(handler=cmd_attest)
 
     verify = sub.add_parser("verify", help="Run a declared check and attest its exit code")
-    verify.add_argument("name")
+    # Optional: `--falsifiers` names none of its own checks (each due one
+    # gets `falsifier:<kind>-<seq>`), so the positional is unused in that mode.
+    verify.add_argument("name", nargs="?", default=None)
     verify.add_argument("--rule", action="append", default=[], help="Rule id this check satisfies; repeatable")
     verify.add_argument("--session")
     # Not argparse.REMAINDER: a REMAINDER positional swallows the options that
     # follow the first positional, so --rule would land inside the command.
-    verify.add_argument("--command", required=True, help="Command to run, as one quoted string")
+    # Not `required=True`: `--falsifiers` runs commands it reads off the
+    # archive, not one typed here - `cmd_verify` refuses the bare call.
+    verify.add_argument("--command", default=None, help="Command to run, as one quoted string")
     # A full-suite attestation is a legitimate half-hour command; the fixed
     # 900s default killed honest runs (self-observed 2026-09-02, twice).
     verify.add_argument("--timeout", type=int, default=900,
@@ -5261,6 +7312,14 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Run under the netgate socket audit with every proxy "
                              "variable pointed at a closed local port; any "
                              "connection seen blocks the attestation")
+    verify.add_argument("--falsifiers", action="store_true",
+                        help="I-3: run every due falsifier instead - a hypothesis "
+                             "claim's or an incident's `refuted_by` command aged "
+                             "past two days with no attestation behind it; each "
+                             "runs and attests on its own")
+    verify.add_argument("--dry-run", dest="dry_run", action="store_true",
+                        help="With --falsifiers: list the due falsifiers instead "
+                             "of running them")
     verify.set_defaults(handler=cmd_verify)
 
     plant = sub.add_parser("plant", help="Prove a guard fails by planting a violation")
@@ -5344,6 +7403,10 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="Close the claim at SEQ with --outcome and evidence; a claim resolves at most once")
     claim.add_argument("--outcome", choices=list(RESOLUTION_OUTCOMES), default=None,
                        help="With --resolve: held (the claim survived the check) or failed")
+    claim.add_argument("--fixes", type=int, default=None, metavar="SEQ",
+                       help="The incident this claim fixes: it verifies only when the incident "
+                            "holds a red reproduction run and the same repro command is cited "
+                            "and green now (with --verify); otherwise it caps at observed")
     claim.add_argument("--depends-on", dest="depends_on", type=int, action="append", default=[],
                        metavar="SEQ", help="A claim this one rests on; the weaker grade is inherited")
     claim.add_argument("--cite", "--evidence", dest="cite", action="append", default=[],
@@ -5369,6 +7432,11 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="PARTIAL-P2: opt in to the scaled evidence bar - a 'verified' grade "
                             "then needs >=2 INDEPENDENT --cite witnesses (distinct citation "
                             "kinds or distinct resolved artifacts), not just >=1 that resolves")
+    claim.add_argument(
+        "--payload", default=None,
+        help="Path to a strict JSON file supplying text/grade/cites/confidence/external/"
+             "depends_on instead of the flags above; duplicate keys, unknown fields and "
+             "trailing data are refused")
     claim.add_argument("--session")
     claim.set_defaults(handler=cmd_claim)
 
@@ -5469,13 +7537,29 @@ def _build_parser() -> argparse.ArgumentParser:
         "record",
         help="Run the checker panel and store confirmed/refuted/contested/witness-malformed",
     )
-    verdict_record.add_argument("--claim", required=True)
-    verdict_record.add_argument("--value", required=True, help="The claimed value the checker verifies")
-    verdict_record.add_argument("--witness", required=True, help="file:<path> or seq:<n>")
-    verdict_record.add_argument("--checker", required=True, action="append",
+    # --claim/--value/--witness/--checker are not argparse-required: --payload
+    # can supply all four instead (strict payload, see below); cmd_verdict_record
+    # refuses with a named remedy when neither route filled them in.
+    verdict_record.add_argument("--claim", default=None)
+    verdict_record.add_argument("--value", default=None, help="The claimed value the checker verifies")
+    verdict_record.add_argument("--witness", default=None, help="file:<path> or seq:<n>")
+    verdict_record.add_argument("--checker", action="append", default=[],
                                 help="Checker command, as one quoted string; runs against the witness "
                                      "alone. Repeatable - each --checker is one independent panel "
                                      "member; N checkers fold to one disposition (U-E4).")
+    verdict_record.add_argument("--checked", action="append", default=[],
+                                help="One thing the panel actually checked; repeatable")
+    verdict_record.add_argument("--not-checked", dest="not_checked", action="append", default=[],
+                                help="One thing the panel did NOT check; repeatable - a 'confirmed' "
+                                     "disposition is refused while this is non-empty (N-11)")
+    verdict_record.add_argument("--criterion", action="append", default=[],
+                                help="name=evidence, repeatable - a 'confirmed' disposition is refused "
+                                     "if any named criterion's evidence is empty (N-11)")
+    verdict_record.add_argument(
+        "--payload", default=None,
+        help="Path to a strict JSON file supplying claim/value/witness/checker/checked/"
+             "not_checked/criteria/run_state/acquitted_by/timeout/tool_error_ack instead "
+             "of the flags above; duplicate keys, unknown fields and trailing data are refused")
     verdict_record.add_argument("--run-state", choices=list(("terminated", "truncated")), default="terminated")
     verdict_record.add_argument("--acquitted-by", choices=list(("independent", "self")), default="independent")
     verdict_record.add_argument("--timeout", type=int, default=300)
@@ -5532,8 +7616,15 @@ def _build_parser() -> argparse.ArgumentParser:
     governance = sub.add_parser(
         "governance",
         help="Rules this project's own record argues for; proposals only")
+    # C-9: `--checks` needs no subcommand, so the subcommand itself is
+    # optional now - `governance` with neither prints the short usage note
+    # `cmd_governance_bare` returns instead of argparse's own error.
+    governance.add_argument(
+        "--checks", action="store_true",
+        help="Print the done-bar check -> role table (reviewer/builder)")
+    governance.set_defaults(handler=cmd_governance_bare)
     governance_sub = governance.add_subparsers(
-        dest="governance_command", required=True)
+        dest="governance_command", required=False)
     governance_show = governance_sub.add_parser(
         "show", help="The current review surface, with provenance per candidate")
     governance_show.set_defaults(handler=cmd_governance_show)
@@ -5543,6 +7634,14 @@ def _build_parser() -> argparse.ArgumentParser:
     governance_promote.add_argument("--reason", required=True,
                                     help="Who reviewed it, and why")
     governance_promote.set_defaults(handler=cmd_governance_promote)
+    governance_escalate = governance_sub.add_parser(
+        "escalate",
+        help="Record a builder's reason for skipping one done-bar check")
+    governance_escalate.add_argument("check")
+    governance_escalate.add_argument(
+        "--reason", required=True,
+        help="Why this check does not apply here, for a few turns")
+    governance_escalate.set_defaults(handler=cmd_governance_escalate)
 
     # Sprint 9 - what each host approved, beside what godmode decided.
     approvals = sub.add_parser(
@@ -5823,6 +7922,14 @@ def _build_parser() -> argparse.ArgumentParser:
     bindings = sub.add_parser("bindings", help="Generate host manifests from one source")
     bindings.add_argument("--write", action="store_true", help="Regenerate instead of only checking")
     bindings.set_defaults(handler=cmd_bindings)
+    ownership = sub.add_parser(
+        "ownership",
+        help="Show which gate rule owns each path or command, and refuse a stale decision table",
+    )
+    ownership.add_argument("--check", action="store_true", help="Walk the repo and report ownership")
+    ownership.add_argument("--diff-only", action="store_true",
+                            help="Scope the walk to working-tree changes only")
+    ownership.set_defaults(handler=cmd_ownership)
     scenarios = sub.add_parser("scenarios", help="Stage known failures and check a control notices")
     scenarios.add_argument("--only", help="Run a single scenario by name")
     scenarios.set_defaults(handler=cmd_scenarios)
@@ -5884,6 +7991,23 @@ def _build_parser() -> argparse.ArgumentParser:
                                 help="Newest active records considered per kind (default 80)")
     hygiene_parser.set_defaults(handler=cmd_hygiene)
 
+    forget_parser = sub.add_parser(
+        "forget",
+        help="Expire old episodes into a cold, still-chained segment (action and "
+             "refusal after 30 days, attestation after 90; a record cited by a live "
+             "claim, a checkpoint, a law guard or a pin never expires); report "
+             "supersession chains; flag same-subject value contradictions",
+    )
+    forget_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Report what a real pass would do and record nothing (the disposable "
+             "read caches a plain read refreshes are still refreshed)")
+    forget_parser.add_argument(
+        "--now", default=None,
+        help="ISO-8601 timestamp to measure every TTL against; accepted with "
+             "--dry-run only, so a fabricated clock can never expire anything")
+    forget_parser.set_defaults(handler=cmd_forget)
+
     oracle_parser = sub.add_parser(
         "oracle", help="Held-back checks the operator designates; the done bar runs them, the agent never picks them")
     oracle_sub = oracle_parser.add_subparsers(dest="oracle_command", required=True)
@@ -5908,7 +8032,12 @@ def _build_parser() -> argparse.ArgumentParser:
     atlas.add_argument("--budget", type=float, default=120.0,
                        help="Seconds the build may spend before it stops and states the gap "
                             "(default 120; 0 means no ceiling)")
-    atlas_sub = atlas.add_subparsers(dest="atlas_command", required=True)
+    atlas.add_argument("--direction", action="store_true",
+                       help="Check dependency direction: hooks import the runtime only through "
+                            "the declared surface, and the runtime never imports hooks; "
+                            "exits 1 on any finding. Standalone - no subcommand needed.")
+    atlas.set_defaults(handler=cmd_atlas)
+    atlas_sub = atlas.add_subparsers(dest="atlas_command", required=False)
     atlas_sub.add_parser("map").set_defaults(handler=cmd_atlas)
     atlas_affected = atlas_sub.add_parser("affected")
     atlas_affected.add_argument("symbol")
@@ -5944,6 +8073,89 @@ def _build_parser() -> argparse.ArgumentParser:
     atlas_dupes.set_defaults(handler=cmd_atlas)
     atlas_sub.add_parser("orphans").set_defaults(handler=cmd_atlas)
     atlas_sub.add_parser("diagnose").set_defaults(handler=cmd_atlas)
+    atlas_graph = atlas_sub.add_parser(
+        "graph", help="NS-3: a typed, time-valid evidence graph derived from the archive's own records")
+    atlas_graph.set_defaults(handler=cmd_atlas)
+    atlas_graph_sub = atlas_graph.add_subparsers(dest="graph_command", required=False)
+    atlas_graph_sub.add_parser(
+        "rebuild", help="Derive the graph fresh from the archive and save its snapshot"
+    ).set_defaults(handler=cmd_atlas)
+    atlas_graph_query = atlas_graph_sub.add_parser(
+        "query", help="BFS impact and required retests over the last saved snapshot")
+    atlas_graph_query.add_argument(
+        "node", help="Node id (e.g. obligation:<subject>, module:<dotted.name>) or file:<path>")
+    atlas_graph_query.add_argument("--depth", type=_positive_int, default=3)
+    atlas_graph_query.set_defaults(handler=cmd_atlas)
+    atlas_graph_sub.add_parser(
+        "verify", help="Rebuild fresh and fail (exit 1) when the hash disagrees with the last snapshot"
+    ).set_defaults(handler=cmd_atlas)
+    atlas_loop = atlas_sub.add_parser(
+        "loop", help="NS-1: loop records - a chained failure signature per retry attempt")
+    atlas_loop.set_defaults(handler=cmd_atlas)
+    atlas_loop_sub = atlas_loop.add_subparsers(dest="loop_command", required=False)
+    atlas_loop_advance = atlas_loop_sub.add_parser(
+        "advance",
+        help="Record one retry attempt's failure signature; refused (exit 2) "
+             "the third time it repeats, or when a declared budget is exhausted")
+    atlas_loop_advance.add_argument("--task", required=True, help="The task this attempt belongs to")
+    atlas_loop_advance.add_argument(
+        "--failing", nargs="+", default=[], metavar="ID",
+        help="Failing test ids this attempt produced; part of the failure signature")
+    atlas_loop_advance.add_argument(
+        "--diff-from-git", action="store_true", dest="diff_from_git",
+        help="Derive the diff shape (files touched, hunk count) from the working "
+             "tree's own unstaged diff instead of an empty one")
+    atlas_loop_advance.set_defaults(handler=cmd_atlas)
+    atlas_loop_resume = atlas_loop_sub.add_parser(
+        "resume",
+        help="Reopen a halted task; refused unless the cited evidence was "
+             "written by a different actor than the one who halted it")
+    atlas_loop_resume.add_argument("--task", required=True, help="The halted task to reopen")
+    atlas_loop_resume.add_argument(
+        "--evidence", required=True, metavar="CITE",
+        help="seq:<n> citation of a record written by a different actor than "
+             "whoever wrote the halt")
+    atlas_loop_resume.set_defaults(handler=cmd_atlas)
+
+    atlas_law = atlas_sub.add_parser(
+        "law", help="NS-4: falsification bonds gate ratification - the checker must prove it can fail")
+    atlas_law.set_defaults(handler=cmd_atlas)
+    # `dest="atlas_law_command"`, distinct from the unrelated top-level
+    # `law` verb's own `law_command` dest just below - two separate
+    # subparser trees, never confused in one parsed Namespace.
+    atlas_law_sub = atlas_law.add_subparsers(dest="atlas_law_command", required=False)
+    atlas_law_propose = atlas_law_sub.add_parser(
+        "propose",
+        help=f"Propose a law/guard/skill change (capped at {BONDS_MAX_PROPOSALS_PER_SPRINT} open at a time)")
+    atlas_law_propose.add_argument("--target", required=True, help="Path the proposal changes")
+    atlas_law_propose.add_argument("--diff", required=True, help="Path to the diff file this proposal applies")
+    atlas_law_propose.add_argument("--cite", "--evidence", dest="cite", action="append", default=[],
+                                   help="Evidence citation; repeatable, at least one required")
+    atlas_law_propose.set_defaults(handler=cmd_atlas)
+    atlas_law_bond_test = atlas_law_sub.add_parser(
+        "bond-test",
+        help="Prove THIS checker session can fail, by planting a synthetic bad case (same shape as `plant`)")
+    atlas_law_bond_test.add_argument("name")
+    atlas_law_bond_test.add_argument("--command", required=True, help="Checker command, as one quoted string")
+    atlas_law_bond_test.add_argument("--file", required=True, help="File to break, relative to the project")
+    atlas_law_bond_test.add_argument("--replace", help="Text to replace in that file")
+    atlas_law_bond_test.add_argument("--with", dest="with_text", default="", help="Replacement text")
+    atlas_law_bond_test.add_argument("--append", help="Line to append instead of replacing")
+    atlas_law_bond_test.add_argument("--rule", action="append", default=[])
+    atlas_law_bond_test.set_defaults(handler=cmd_atlas)
+    atlas_law_ratify = atlas_law_sub.add_parser(
+        "ratify", help="Accept a proposal - refused without a fresh, passing bond in this checker session")
+    atlas_law_ratify.add_argument("proposal_seq", type=int, help="The improvement_proposal's own sequence number")
+    atlas_law_ratify.add_argument(
+        "--diff", default=None,
+        help="Required when the proposal targets a skills/<name>/... path (NS-12d): "
+             "the SAME diff file --diff hashed at propose time; applied and scored "
+             "before the verdict is written, and restored on anything short of a "
+             "strict score improvement")
+    atlas_law_ratify.add_argument(
+        "--pattern", dest="pattern", action="append", type=int, default=[],
+        help="A pattern record's own sequence this skill_impact cites; repeatable")
+    atlas_law_ratify.set_defaults(handler=cmd_atlas)
 
     sliced = sub.add_parser("slice", help="Read a bounded window that declares its own edges")
     sliced.add_argument("path")
@@ -5985,6 +8197,17 @@ def _build_parser() -> argparse.ArgumentParser:
     hooks_status.add_argument(
         "--git", action="store_true",
         help="CX-4: report the git-hook backstop's own state instead of host hook wiring")
+    hooks_status.add_argument(
+        "--matrix", action="store_true",
+        help="R-4: regenerate docs/HOST-FEATURE-REACH.md's tables from "
+             "godmode_reach and HOST_CAPABILITIES instead of reporting one "
+             "host's wiring; refuses (exit 2) if a hook host cites no "
+             "reference and no replicating test (R-0 guard)")
+    hooks_status.add_argument(
+        "--write", action="store_true",
+        help="Only valid with --matrix: write the regenerated doc instead "
+             "of only reporting whether it has drifted (exit 1 if so); "
+             "refused (exit 2) without --matrix")
     hooks_status.set_defaults(handler=cmd_hooks)
     hooks_probe = hooks_sub.add_parser(
         "probe",
@@ -6010,9 +8233,20 @@ def _build_parser() -> argparse.ArgumentParser:
              "0.150.1 ignores plugin-bundled hooks but loads project config; "
              "the operator reviews and Trusts each command in codex afterwards")
     hooks_wire.add_argument(
-        "--host", help="codex (default: project hooks fallback) or opencode (Bun shim)")
+        "--host", help="codex (default: project hooks fallback), opencode (Bun shim), "
+                       "antigravity, copilot, or kiro")
     hooks_wire.add_argument(
-        "--force", action="store_true", help="Overwrite a differing existing file")
+        "--force", action="store_true",
+        help="Overwrite a differing (CONFLICT) existing file; cannot force past one "
+             "that is malformed or an unrecognized shape (INVALID) - fix or remove it")
+    hooks_wire.add_argument(
+        "--all", action="store_true",
+        help="R-5: wire every known host (codex, antigravity, opencode, copilot, kiro) "
+             "through the one code path [CREATE]/[UPDATE]/[OK]/[CONFLICT]/[INVALID] lines "
+             "report, dry-run or not")
+    hooks_wire.add_argument(
+        "--dry-run", dest="dry_run", action="store_true",
+        help="Preview wiring with the exact code path an apply would use; writes nothing")
     hooks_wire.set_defaults(handler=cmd_hooks)
     hooks_install = hooks_sub.add_parser(
         "install",
@@ -6080,7 +8314,8 @@ def _build_parser() -> argparse.ArgumentParser:
                                    dest="limit_lines")
     context_structure.set_defaults(handler=cmd_context_structure)
     context_why_parser = context_sub.add_parser(
-        "why", help="Show recorded decisions, fixes, dependencies, and invariants about a path or topic"
+        "why", help="Show recorded decisions, fixes, dependencies, invariants, and "
+                    "recent episodes about a path or topic"
     )
     context_why_parser.add_argument("--about", type=subject_text, default=None)
     context_why_parser.set_defaults(handler=cmd_context_why)
@@ -6093,6 +8328,9 @@ def _build_parser() -> argparse.ArgumentParser:
     history.add_argument("--kind", choices=sorted(EVENT_KINDS))
     history.add_argument("--subject")
     history.add_argument("--limit", type=int, default=50)
+    history.add_argument("--seq", type=int, default=None,
+                         help="Read one record by sequence number, hot or cold "
+                              "(NS-11g: reaches a godmode-forget-rotated cold segment)")
     history.set_defaults(handler=cmd_history)
 
     plan = sub.add_parser("plan", help="Record a private execution contract")
@@ -6105,6 +8343,7 @@ def _build_parser() -> argparse.ArgumentParser:
                       help="Finish a step of the latest plan, by number or by a unique substring; repeatable")
     plan.add_argument("--close", action="store_true",
                       help="Finish every step of the latest plan and close it")
+    _operator_flags(plan)
     _evidence(plan)
     plan.set_defaults(handler=cmd_plan)
 
@@ -6148,6 +8387,12 @@ def _build_parser() -> argparse.ArgumentParser:
     checklist_update.add_argument("--note")
     _evidence(checklist_update)
     checklist_update.set_defaults(handler=cmd_checklist_update)
+    checklist_template = checklist_sub.add_parser(
+        "template", help="Print a checklist template's items as paste-ready update rows")
+    checklist_template.add_argument("template", choices=["rca"])
+    checklist_template.add_argument("--for", dest="label", default="incident",
+                                    help="The label the items are filed under: <template>:<label>:<step>")
+    checklist_template.set_defaults(handler=cmd_checklist_template)
 
     remember = sub.add_parser(
         "remember",
@@ -6166,8 +8411,13 @@ def _build_parser() -> argparse.ArgumentParser:
         # U-S4 - "assumption" added for the assumption gate
         # (`godmode_attest.assumption_gate`); the record kind itself lives
         # in EVENT_KINDS (godmode_constants.py).
+        # NS-11e fix round 1 (review B, B4): "review" - the contradiction
+        # `godmode forget` files. It is never MINTED here (the pass writes
+        # it, and `cmd_remember` refuses a subject with no review on
+        # record); this is the closure path, so `--status acknowledged` /
+        # `dismissed` has a verb to go through.
         choices=["decision", "invariant", "lesson", "obligation", "assumption", "request",
-                 "incident"],
+                 "incident", "pattern", "review"],
         required=True)
     remember.add_argument("--failure-class", dest="failure_class", default=None,
                           help="incident only: one of the closed failure classes "
@@ -6190,25 +8440,121 @@ def _build_parser() -> argparse.ArgumentParser:
     remember.add_argument("--subject", default=None, type=subject_text)
     remember.add_argument("--value", default=None)
     remember.add_argument("--status", default=None,
-                          help="Default: active, or open for a request")
+                          help="Default: active, or open for a request or a review; a "
+                               "review closes with acknowledged or dismissed")
     remember.add_argument("--guard")
+    # NS-10j (0.3.28 Plan 5 Task 2): a lesson's structured schema. All four
+    # optional; giving at least one opts the write into the schema check
+    # (`godmode_lessons.normalize_lesson_write`) - a plain `--guard`-only
+    # lesson (the pre-existing advisory shape: enforce predicates, standing
+    # guards) is untouched. `--falsifier`, not `--refuted-by`: that flag
+    # already means something else for `--kind incident`.
+    remember.add_argument("--root-cause", dest="root_cause", default=None,
+                          help="Lessons (NS-10j): why the failure happened")
+    remember.add_argument("--correction", dest="correction", default=None,
+                          help="Lessons (NS-10j): what was actually done to fix it")
+    remember.add_argument("--reflection", dest="reflection", default=None,
+                          help="Lessons (NS-10j): what generalizes beyond this one instance")
+    remember.add_argument("--falsifier", dest="falsifier", default=None,
+                          help="Lessons (NS-10j): what observation would show the guard "
+                               "is wrong (stored as this lesson's own 'refuted_by' - "
+                               "distinct from --refuted-by, which is --kind incident's "
+                               "own field)")
+    remember.add_argument("--blocked-by", dest="blocked_by", action="append", default=[],
+                          help="Obligations only: the id of another obligation blocking "
+                               "this one (repeatable); `status remaining` lists this "
+                               "obligation under its blocker; a blocker that does not "
+                               "exist, or one that would close a cycle, is refused")
     remember.add_argument("--standing", action="store_true",
-                          help="Obligations only: a per-task duty with no "
-                               "subject to match - surfaces at every stop, "
-                               "survives quiet posture (definition-of-done, "
-                               "not advisory)")
+                          help="Obligations: a per-task duty with no subject "
+                               "to match - surfaces at every stop, survives "
+                               "quiet posture (definition-of-done, not "
+                               "advisory). Lessons: the guard is pinned into "
+                               "the brief ahead of the newest guards, and "
+                               "never drops off as newer lessons arrive")
+    remember.add_argument(
+        "--enforce", default=None,
+        help="Lessons only, requires --guard: "
+             "'kind=<record kind>;predicate=<field op value>' - a later "
+             "write of that kind whose data matches the predicate ('field "
+             "== literal', 'field contains literal', or 'field matches "
+             "<regex>', read over the incoming record's data) is refused "
+             "with this lesson's guard as the remedy; a malformed spec is "
+             "refused now, at remember time. Kind may not be 'refusal', "
+             "'action', or 'checkpoint' (the gate's own audit trail, "
+             "exempt from enforcement - see below). Literals cap at 256 "
+             "characters. A 'matches' regex may carry at most ONE "
+             "quantifier ('+', '*', '?', '{n}', '{n,}', '{n,m}') anywhere "
+             "in the pattern, bound to a single atom or character class, "
+             "never a group, and no alternation ('|') inside a group - a "
+             "second quantifier, a grouped one or a grouped alternation is "
+             "refused at remember time, with a remedy naming 'contains'. "
+             "A scanned field over 4096 characters is truncated for "
+             "'contains'/'==', but a 'matches' rule REFUSES the write "
+             "outright when its field is that long, fail-closed, rather "
+             "than risk a truncated regex inventing a match. A write made "
+             "by a hook (a session's own hook process, never a role a "
+             "caller can declare) is always exempt from every enforce "
+             "rule")
     remember.add_argument("--predicts", default=None,
                           help="Incident only: a check the hypothesis requires to come out a particular way")
+    remember.add_argument("--refuted-by", dest="refuted_by", default=None,
+                          help="Incident only: the one command or observation that "
+                               "would refute this hypothesis; an unrun one ages into "
+                               "a preflight finding after two days (see `verify "
+                               "--falsifiers`)")
+    remember.add_argument("--repro", default=None,
+                          help="Incident: the command that reproduces the failure. It runs "
+                               "now (argv, no shell) and its exit code is recorded; a fix "
+                               "claim (`claim --fixes <seq>`) verifies only when it is green "
+                               "later. Same as --evidence \"repro:<command>\"")
+    remember.add_argument("--no-repro", dest="no_repro", default=None,
+                          help="Incident: why there is no reproduction command yet; the "
+                               "incident is then classed underspecified-ask")
+    remember.add_argument("--hypothesis", default=None,
+                          help="Incident only: the explanation itself, in your own "
+                               "words - what --refuted-by is a falsifier for. The "
+                               "two-reversals gate (a third edit after two red "
+                               "retests of one check) only lifts once an incident "
+                               "names both")
     remember.add_argument("--intent-preserved", dest="intent_preserved", choices=["kept", "replaced"],
                           default=None, help="On a reopen: the agent's decision was kept and reworded, or replaced")
+    remember.add_argument("--class", dest="pattern_class", default=None,
+                          help="Pattern only: one of the closed failure classes "
+                               "(off-list refused with the list rendered) - the "
+                               "same vocabulary a preflight finding's own class "
+                               "is drawn from")
+    remember.add_argument("--occurrence", dest="occurrence", default=None,
+                          help="Pattern only: seq:<n> naming the record that "
+                               "shows one instance of this recurring failure; "
+                               "a second occurrence on the same --subject "
+                               "appends to the existing pattern instead of "
+                               "creating a duplicate")
+    remember.add_argument("--review", dest="review", default=None,
+                          help="Review only: seq:<n> naming the review record this "
+                               "one closes. One subject can carry several open "
+                               "reviews at once (a later pass finds a third "
+                               "disagreeing record and flags a wider set), so with "
+                               "two or more open the close refuses and lists them "
+                               "rather than guessing; with exactly one open, this "
+                               "is optional")
     remember.add_argument("--source", choices=["stated", "inferred"], default="stated",
                           help="Requests only: whether the operator stated this ask "
                                "or the agent inferred it on their behalf")
+    remember.add_argument("--supersedes", type=int, default=None, metavar="SEQ",
+                          help="NS-10e: this record replaces the record at sequence "
+                               "SEQ - same --kind, not already itself superseded. "
+                               "`history --subject <s>` then renders the chain "
+                               "(seq -> seq) instead of a flat, ambiguous overwrite; "
+                               "every latest-per-subject reader stops treating SEQ "
+                               "as current. Not for --kind incident or pattern, "
+                               "which already have their own evolution mechanism")
     # U-S4 - assumption records only; every other kind is session-agnostic
     # and leaves this unused. Falls back to the latest open session, same as
     # `claim`/`criterion`/`gate`.
     remember.add_argument("--session",
                           help="Assumption records only: defaults to the latest open session")
+    _operator_flags(remember)
     _evidence(remember)
     remember.set_defaults(handler=cmd_remember)
 
@@ -6288,6 +8634,11 @@ def _build_parser() -> argparse.ArgumentParser:
                                  help="With --preflight: run a `discover` suite as N sequential "
                                       "shards (one process over the whole suite is killed for "
                                       "memory on small machines)")
+    precheck_parser.add_argument("--shard-index", dest="shard_index", type=int, default=None,
+                                 help="With --preflight --suite-shards N: run only this "
+                                      "shard (0 to N-1) and attest it as one leg, not as "
+                                      "the suite - the shape a CI matrix runs in parallel; "
+                                      "an index outside the range is refused, never clamped")
     precheck_parser.add_argument("--designate-suite", metavar="CMD",
                                  help="Record the suite durably: every later "
                                       "--preflight runs it without being asked - "
@@ -6333,7 +8684,11 @@ def _build_parser() -> argparse.ArgumentParser:
              "lessons into GODMODE-CODE-OF-LAW.md + wrapper skill)")
     law_sub = law.add_subparsers(dest="law_command", required=True)
     law_compile = law_sub.add_parser(
-        "compile", help="Fold every guarded lesson into the bounded law file")
+        "compile",
+        help="Fold every guarded lesson into the bounded law file (on a "
+             "pre-gate archive's first run this also appends one migration "
+             "record grandfathering the laws recorded before the authority "
+             "gate; it is the only write this verb makes)")
     law_compile.set_defaults(handler=cmd_law_compile)
     law_show = law_sub.add_parser("show", help="The top laws, as the brief carries them")
     law_show.add_argument("--top", type=int, default=5)
@@ -6348,6 +8703,7 @@ def _build_parser() -> argparse.ArgumentParser:
                       "(newest record per subject wins)")
     law_amend.add_argument("--law", type=int, required=True)
     law_amend.add_argument("--guard", required=True)
+    _operator_flags(law_amend)
     law_amend.set_defaults(handler=cmd_law_amend)
     law_candidates_parser = law_sub.add_parser(
         "candidates",
@@ -6355,9 +8711,18 @@ def _build_parser() -> argparse.ArgumentParser:
     law_candidates_parser.set_defaults(handler=cmd_law_candidates)
     law_hygiene = law_sub.add_parser(
         "hygiene",
-        help="Maintenance scan: laws with no recorded origin, contradictory "
-             "pairs, and guards a recorded check now enforces mechanically - "
-             "names candidates, never retires")
+        # Fix round 1 (nit 1): the help said "scan" while the verb had
+        # started writing. It bounds the live candidate set, which appends
+        # one `lesson_candidate` shelf note when that set is over cap, so
+        # the help says so rather than leaving an operator to find out
+        # from the archive.
+        help="Maintenance pass: laws with no recorded origin, contradictory "
+             "pairs, guards a recorded check now enforces mechanically, and "
+             "candidate clusters past the promotion bar with no promotion - "
+             "names candidates, never retires. Also bounds the live "
+             "candidate set, appending one shelf note when it is over cap "
+             "(reported under shelved_candidates); that note is the only "
+             "write this verb makes, and it deletes nothing")
     law_hygiene.set_defaults(handler=cmd_law_hygiene)
     law_promote = law_sub.add_parser(
         "promote",
@@ -6611,6 +8976,11 @@ def _build_parser() -> argparse.ArgumentParser:
     branches.add_argument("--claim", action="store_true",
                           help="Declare this agent active here; exits 1 if another agent already is")
     branches.add_argument("--release", action="store_true", help="Release this agent's claim")
+    branches.add_argument("--role", choices=("maintained", "throwaway"),
+                          help="With --record: declare this branch's role (maintained branches "
+                               "need a plan for multi-file changes and a test with a code change; "
+                               "declaring a branch throwaway needs --as-operator)")
+    _operator_flags(branches)
     branches.set_defaults(handler=cmd_branches)
 
     version = sub.add_parser("version", help="Record a version fact, or reconcile every surface")
@@ -6619,6 +8989,7 @@ def _build_parser() -> argparse.ArgumentParser:
     version.add_argument("--name", default="")
     version.add_argument("--value", default="")
     version.add_argument("--status", default="observed")
+    _operator_flags(version)
     _evidence(version)
     version.set_defaults(handler=cmd_version)
 
@@ -6705,8 +9076,11 @@ def _build_parser() -> argparse.ArgumentParser:
     recurring_parser = sub.add_parser(
         "recurring",
         help="U-E10: mine the request ledger for asks repeated across sessions - "
-             "SOFT charter-rule proposals only, nothing auto-written",
+             "SOFT charter-rule proposals only, nothing auto-written; also reports "
+             "`forget_due`, when the last `godmode forget` pass ran and what it did",
     )
+    # NS-11e (review B, N8): `forget_due` is part of what this verb reports,
+    # so the help says so rather than leaving a new key undocumented.
     recurring_parser.add_argument(
         "--threshold", type=int, default=RECURRENCE_DEFAULT_THRESHOLD,
         help="Distinct sessions a normalized ask must recur in to be reported "
@@ -6761,12 +9135,37 @@ def _build_parser() -> argparse.ArgumentParser:
     stage.add_argument("--session")
     stage.set_defaults(handler=cmd_stage)
 
-    sop = sub.add_parser("sop", help="T0-T14 troubleshooting SOP status and attestation")
-    sop.add_argument("--attest", metavar="Tn")
+    sop = sub.add_parser("sop", help="Troubleshooting (T0-T14), PDCA, OODA and research SOP "
+                                     "status and attestation")
+    sop.add_argument("--name", choices=sorted(SOPS),
+                     help="A named SOP; omitted, the T0-T14 troubleshooting SOP")
+    sop.add_argument("--attest", metavar="STEP",
+                     help="The step to attest: Tn for troubleshooting, else the named SOP's step id")
     sop.add_argument("--result", default="")
     sop.add_argument("--session")
     _evidence(sop)
     sop.set_defaults(handler=cmd_sop)
+
+    hypothesis = sub.add_parser(
+        "hypothesis", help="Competing hypotheses, each with a kill experiment a fix must survive")
+    hypothesis_sub = hypothesis.add_subparsers(dest="hypothesis_command", required=True)
+    hypothesis_add = hypothesis_sub.add_parser("add", help="Record an open hypothesis")
+    hypothesis_add.add_argument("--cause", required=True, help="The mechanism it proposes")
+    hypothesis_add.add_argument("--kills", required=True, metavar="CMD",
+                                help="The check the hypothesis predicts will pass; a non-zero "
+                                     "exit fires the kill (argv, no shell)")
+    hypothesis_add.add_argument("--confirms", action="append", default=[], metavar="CITE",
+                                help="Evidence for it; repeatable")
+    hypothesis_add.add_argument("--next", dest="next_experiment", default=None,
+                                help="The next experiment that would discriminate it")
+    hypothesis_add.add_argument("--subject", default=None)
+    hypothesis_kill = hypothesis_sub.add_parser(
+        "kill", help="Run the kill experiment and record whether it ran and fired")
+    hypothesis_kill.add_argument("sequence", type=int)
+    hypothesis_kill.add_argument("--timeout", type=int, default=900)
+    hypothesis_kill.add_argument("--session")
+    hypothesis_sub.add_parser("status", help="Every hypothesis at its current state")
+    hypothesis.set_defaults(handler=cmd_hypothesis)
 
     index_parser = sub.add_parser("index", help="Derived SQLite index over corpus, charter, and archive")
     index_sub = index_parser.add_subparsers(dest="index_command", required=True)
@@ -6777,6 +9176,12 @@ def _build_parser() -> argparse.ArgumentParser:
     index_q.add_argument("--limit", type=int, default=10)
     index_q.add_argument("--allow-stale", action="store_true")
     index_q.set_defaults(handler=cmd_index)
+    index_sub.add_parser(
+        "patterns",
+        help="One row per pattern subject, folded to its latest record "
+             "(occurrences, workaround, class) - `history --kind pattern` "
+             "is the unfolded evolution log",
+    ).set_defaults(handler=cmd_index)
 
     sprint = sub.add_parser("sprint", help="Record private sprint state")
     sprint.add_argument("--name", required=True)
@@ -6828,11 +9233,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("explain-context", help="Explain included and excluded continuity data").set_defaults(handler=cmd_context_why)
     parity = sub.add_parser("parity", help="Compare neutral structure with an explicit local reference")
-    parity.add_argument("--reference", required=True)
+    parity.add_argument("--reference", default=None,
+                        help="Required unless --sources is given")
     parity.add_argument("--matrix", action="store_true",
                         help="Full eleven-dimension decision matrix instead of category gaps")
     parity.add_argument("--archive", action="store_true",
                         help="Apply the recorded-invariant adoption floor (E-14) to the matrix")
+    # I-2: per-source files-opened and a surface-only flag, off recorded read
+    # receipts - stands alone, no --reference comparison involved.
+    parity.add_argument("--sources", action="store_true",
+                        help="Report files-opened and surface-only per source from read receipts")
     parity.set_defaults(handler=cmd_parity)
 
     netgate = sub.add_parser("netgate", help="Prove the CLI surfaces make zero network connections")
@@ -6841,6 +9251,17 @@ def _build_parser() -> argparse.ArgumentParser:
     evals = sub.add_parser("evals", help="Execute the authored skill evals: routing accuracy plus snapshot diff")
     evals.add_argument("--write-snapshots", action="store_true",
                        help="Accept current routing outcomes as the new baseline fixtures")
+    evals_mode = evals.add_mutually_exclusive_group()
+    evals_mode.add_argument("--ratchet", action="store_true",
+                       help="Compare per-skill routing scores against the committed baseline; fail on any regression")
+    evals_mode.add_argument("--write-baseline", action="store_true",
+                       help="Raise the committed routing-score baseline to the current scores (refused on any regression)")
+    evals_mode.add_argument("--determinism", action="store_true",
+                       help="Run the offline routing harness twice and name any case whose route differs")
+    evals.add_argument("--withhold-memory", action="store_true",
+                       help="Score with this project's lessons and compiled law withheld from the subject brief, "
+                            "so the number measures the skill rather than the memory; the baseline keeps a "
+                            "separate block per mode and the two are never compared")
     evals.set_defaults(handler=cmd_evals)
 
     grid = sub.add_parser("grid", help="Attack every enforcement control; report each cell's observed result")
@@ -6850,6 +9271,18 @@ def _build_parser() -> argparse.ArgumentParser:
     absorb.add_argument("--path", required=True)
     absorb.set_defaults(handler=cmd_absorb)
 
+    read_cmd = sub.add_parser(
+        "read", help="Record a read receipt: what was opened, and a digest of the slice")
+    read_cmd.add_argument("--source", required=True,
+                          help="Operator-chosen name for the source read (e.g. a vendor or component name)")
+    read_cmd.add_argument("--path", required=True,
+                          help="Path opened, relative to the project or to --root")
+    read_cmd.add_argument("--root", default=None,
+                          help="Directory the source lives in; required to read a path outside the project")
+    read_cmd.add_argument("--lines", default=None,
+                          help="Line range actually read, as 'a-b' (1-based, inclusive)")
+    read_cmd.set_defaults(handler=cmd_read)
+
     skill = sub.add_parser("skill", help="Validate or forge a project skill")
     skill_sub = skill.add_subparsers(dest="skill_command", required=True)
     skill_sub.add_parser(
@@ -6858,6 +9291,7 @@ def _build_parser() -> argparse.ArgumentParser:
     skill_retire = skill_sub.add_parser("retire", help="Deprecate a skill with a recorded reason")
     skill_retire.add_argument("--name", required=True)
     skill_retire.add_argument("--reason", required=True)
+    _operator_flags(skill_retire)
     skill_retire.set_defaults(handler=cmd_skill_retire)
     skill_validate = skill_sub.add_parser("validate")
     skill_validate.add_argument("--path", required=True)
@@ -6881,9 +9315,20 @@ def _build_parser() -> argparse.ArgumentParser:
     skill_forge.add_argument("--purpose", required=True)
     skill_forge.add_argument("--gap-evidence", required=True)
     skill_forge.add_argument("--repeated-uses", type=int, required=True)
+    skill_forge.add_argument(
+        "--success-evidence", action="append", default=[],
+        help="NS-11d: cite a real archive record proving one recorded success "
+             "of the task type this skill covers (`seq:<n>`, from `godmode "
+             "history`); at least three, and refused unless they are three "
+             "DISTINCT sequences that each name a record that exists. That "
+             "the records are successes of this task type is your judgement "
+             "- no record shape here carries a task type to check it against")
     skill_forge.add_argument("--positive", action="append", default=[])
     skill_forge.add_argument("--negative", action="append", default=[])
     skill_forge.add_argument("--assertion", action="append", default=[])
+    skill_forge.add_argument(
+        "--pattern", dest="pattern", action="append", type=int, default=[],
+        help="A pattern record's own sequence this skill_impact cites; repeatable")
     skill_forge.set_defaults(handler=cmd_skill_forge)
     return parser
 

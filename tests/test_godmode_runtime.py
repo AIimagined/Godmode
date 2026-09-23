@@ -209,8 +209,14 @@ class ChronicleTests(unittest.TestCase):
             payload = json.loads(first.read_text(encoding="utf-8"))
             payload["data"]["value"] = "altered"
             first.write_text(json.dumps(payload), encoding="utf-8")
-            with self.assertRaises(ArchiveError):
-                archive.verify()
+            # N-9: verify() names the break instead of raising - the first
+            # broken record's sequence, file and line.
+            broken = archive.verify()
+            self.assertFalse(broken["valid"])
+            self.assertFalse(broken["ok"])
+            self.assertEqual(broken["first_broken_sequence"], payload["sequence"])
+            self.assertEqual(broken["first_broken_path"], first.name)
+            self.assertIsInstance(broken["first_broken_line"], int)
 
     def test_secret_shaped_material_is_rejected_before_persistence(self) -> None:
         with isolated_project() as (_project, _state, _anchor, archive):
@@ -325,8 +331,8 @@ class ForgeTests(unittest.TestCase):
         values = {
             "name": "release-observer",
             "purpose": "Summarize release evidence: without mutating repository state",
-            "gap_evidence": "Two release reviews lacked one repeatable evidence summary and verification boundary.",
-            "repeated_uses": 2,
+            "gap_evidence": "Three release reviews lacked one repeatable evidence summary and verification boundary.",
+            "repeated_uses": 3,
             "positive_triggers": (
                 "a release review needs a bounded evidence summary",
                 "a version handoff needs fresh verification",
@@ -462,7 +468,10 @@ class CliAndPrivacyTests(unittest.TestCase):
             run("actions")
             run("skill", "validate", "--path", str(PLUGIN_ROOT / "skills" / "godmode"))
 
-            forged = base / "forged"
+            # The strict-improvement gate scores a forged skill through the
+            # project's own corpus, which globs skills/*/godmode-evals.json; a
+            # destination outside skills/ is unscorable (0.0) and never improves.
+            forged = project / "skills"
             wrapper = SCRIPTS / "godmode_skill_forge.py"
             wrapped = subprocess.run(
                 [
@@ -480,7 +489,16 @@ class CliAndPrivacyTests(unittest.TestCase):
                     "--gap-evidence",
                     "Two separate handoffs lacked the same compact verified local context summary.",
                     "--repeated-uses",
-                    "2",
+                    "3",
+                    # NS-11d: a method becomes a skill candidate only after three
+                    # recorded successes, each cited by an existing, distinct record;
+                    # the plan, build and checkpoint records written above are 1..3.
+                    "--success-evidence",
+                    "seq:1",
+                    "--success-evidence",
+                    "seq:2",
+                    "--success-evidence",
+                    "seq:3",
                     "--positive",
                     "a handoff needs a verified local summary",
                     "--positive",
@@ -866,8 +884,35 @@ class ArchiveAdoptionTests(unittest.TestCase):
             payload = json.loads(first.read_text(encoding="utf-8"))
             payload["data"]["value"] = "altered"
             first.write_text(json.dumps(payload), encoding="utf-8")
+            # N-9: verify() names the break instead of raising.
+            broken = moved.verify()
+            self.assertFalse(broken["valid"])
+            self.assertFalse(broken["ok"])
+            self.assertEqual(broken["first_broken_path"], first.name)
+
+    def test_adopting_a_pre_tampered_source_is_refused(self) -> None:
+        # Fix round 1, finding 1: adopt() must not report success (exit 0,
+        # "adopted": N) for a stranded source that was already broken before
+        # it was ever copied in - verify() reports rather than raises now,
+        # so adopt() has to check that report itself, mirroring reanchor().
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            archive.append("decision", "storage", {"value": "local"}, evidence=[])
+            subprocess.run(["git", "init", "-q", str(project)], check=True,
+                           capture_output=True, timeout=30)
+            moved = Chronicle(resolve_anchor(project))
+            stranded = moved.orphaned()
+            self.assertIsNotNone(stranded)
+            source = Path(stranded["source"])
+
+            tampered = sorted((source / "godmode-events").glob("*.json"))[0]
+            payload = json.loads(tampered.read_text(encoding="utf-8"))
+            payload["data"]["value"] = "altered"
+            tampered.write_text(json.dumps(payload), encoding="utf-8")
+
+            moved.initialize()
             with self.assertRaises(ArchiveError):
-                moved.verify()
+                moved.adopt(source)
 
 
 class EgressTests(unittest.TestCase):
@@ -1524,10 +1569,13 @@ class IntegrityTests(unittest.TestCase):
             report = self._analyze(project, archive)
             self.assertNotIn("skip-quarantine", [f["monitor"] for f in report["findings"]])
 
-    def test_all_thirteen_monitors_are_present(self) -> None:
+    def test_all_fourteen_monitors_are_present(self) -> None:
         from godmode_runtime.godmode_integrity import MONITORS
 
-        self.assertEqual(len(MONITORS), 13, sorted(MONITORS))  # thirteen since 0.3.25: oracle shapes, false-green shapes, project ratchet
+        # thirteen since 0.3.25; fourteen since 0.3.28 added edit-without-test
+        # (branch roles: a maintained branch's code edit with no test edit).
+        self.assertEqual(len(MONITORS), 14, sorted(MONITORS))
+        self.assertIn("edit-without-test", MONITORS)
 
 
 class ChangelogTests(unittest.TestCase):

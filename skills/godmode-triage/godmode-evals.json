@@ -1,0 +1,45 @@
+{
+  "schema": "godmode-skill-eval-v1",
+  "skill": "godmode-triage",
+  "routing": {
+    "positive": [
+      "Sixty open operator asks nag at every stop; promote the rule-shaped ones to invariants, map the work asks to plan tasks, and close the noise by ask id",
+      "Obligations and falsifiers have aged unread for days and asks keep repeating; park the leftovers with a reason and prove the open-asks queue moved"
+    ],
+    "near_negative": [
+      "Prune duplicate lessons and preview archive expiry at session close",
+      "Write a spec and get the plan approved for a new feature",
+      "Re-explain the answer the operator did not follow"
+    ]
+  },
+  "behavior_assertions": [
+    {
+      "assert": "Asks are read by kind with a bounded window.",
+      "check": {
+        "command": "python scripts/godmode.py history --help",
+        "expect_exit": 0,
+        "expect_contains": "--kind"
+      }
+    },
+    {
+      "assert": "The open-work digest is available read-only.",
+      "check": {
+        "command": "python scripts/godmode.py status remaining --help",
+        "expect_exit": 0,
+        "expect_contains": "--digest"
+      }
+    },
+    {
+      "assert": "The skill's own bundle validates structurally.",
+      "check": {
+        "command": "python scripts/godmode.py --project . skill validate --path skills/godmode-triage",
+        "expect_exit": 0,
+        "expect_contains": "\"valid\": true"
+      }
+    },
+    "A closure that names no open ask is refused with the open list - proven in tests/test_godmode_triage.py on a bare temp project.",
+    "A rule-shaped ask is closed only after its invariant is recorded, citing that invariant's seq."
+  ],
+  "baseline_required": true,
+  "claims_require_evidence": true
+}

@@ -27,10 +27,56 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 
 # 3600, not 1800: this repo's own designated suite runs ~27 minutes on the
 # reference machine, and a kill must never be mistaken for a failure.
 SUITE_TIMEOUT_SECONDS = 3600
+
+# The longest one test (or one class fixture) may run before it is taken for a
+# hang. 2026-09-23: a shard stalled in its first minutes, sat at zero CPU, and
+# the only verdict an hour later was "killed after 3600s" with no test named.
+# The runner below re-arms Python's fault handler at every test boundary, so a
+# stall dumps every thread's stack and exits after this long instead.
+TEST_STALL_SECONDS = 600
+
+# argv: <stall seconds> <module> ... ; re-arms on each start and stop, so class
+# and module fixtures between tests are covered as well as the tests.
+_WATCHDOG_RUNNER = (
+    "import faulthandler, sys, unittest\n"
+    "limit = float(sys.argv[1])\n"
+    "class Result(unittest.TextTestResult):\n"
+    "    def startTest(self, test):\n"
+    "        faulthandler.dump_traceback_later(limit, exit=True)\n"
+    "        super().startTest(test)\n"
+    "    def stopTest(self, test):\n"
+    "        super().stopTest(test)\n"
+    "        faulthandler.dump_traceback_later(limit, exit=True)\n"
+    "faulthandler.dump_traceback_later(limit, exit=True)\n"
+    "unittest.main(module=None, argv=['unittest', *sys.argv[2:]],\n"
+    "              testRunner=unittest.TextTestRunner(resultclass=Result))\n"
+)
+
+
+def watchdog_command(modules: list[str], stall_seconds: float = TEST_STALL_SECONDS) -> list[str]:
+    """The shard command: unittest over `modules`, under the per-test watchdog."""
+    import sys as _sys
+    return [_sys.executable, "-c", _WATCHDOG_RUNNER, str(stall_seconds), *modules]
+
+
+def stall_summary(stderr_text: str) -> str | None:
+    """The stuck frames from a watchdog dump, innermost last; None when no
+    stall fired. faulthandler writes `Timeout (h:mm:ss)!` then the stacks."""
+    if "Timeout (" not in stderr_text:
+        return None
+    dump = stderr_text[stderr_text.rindex("Timeout ("):]
+    frames = [line.strip() for line in dump.splitlines() if line.strip().startswith("File ")]
+    tests = [f for f in frames if "tests" in f and ("/test_" in f.replace("\\", "/"))]
+    return " <- ".join((tests or frames)[:4])
+# 30 minutes: long enough that a concurrent run's half-built worktree is
+# never mistaken for an abandoned one, short enough that a genuinely dead
+# scratch dir does not sit beside the repo for a whole day.
+STALE_SCRATCH_SECONDS = 30 * 60
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +104,97 @@ def swallow_ratchet_finding(project: Path | str) -> dict[str, str] | None:
                    "or mark a deliberate one `# godmode: swallow-ok: <reason>`; "
                    "the ceiling only ever falls"),
     }
+
+
+def malformed_findings(findings: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """A finding whose `class` field is present-and-blank, or names
+    something outside `FAILURE_CLASSES`, is itself a mechanical finding
+    (N-12): a class that does not name a real class looks classified and
+    is not - worse than carrying none. A finding with no `class` key at
+    all is untouched; `class` stays optional."""
+    from .godmode_mistakes import FAILURE_CLASSES
+
+    malformed: list[dict[str, str]] = []
+    for finding in findings:
+        if "class" not in finding:
+            continue
+        value = finding.get("class")
+        if value and value in FAILURE_CLASSES:
+            continue
+        malformed.append({
+            "check": "malformed-finding",
+            "detail": (f"{finding.get('check')} carries class {value!r}; "
+                       f"allowed: {', '.join(FAILURE_CLASSES)}"),
+        })
+    return malformed
+
+
+def pattern_workaround_findings(findings: list[dict[str, Any]], archive: Any) -> None:
+    """NS-12e: a finding whose `class` names a recorded pattern's `subject`
+    gets that pattern's workaround folded into its detail, in place.
+
+    The vocabulary a preflight finding's `class` is drawn from
+    (`FAILURE_CLASSES`) is the same one `godmode_mistakes.record_pattern`
+    validates a pattern's own `class` against - but the MATCH here is
+    against a pattern's `subject`, not its `class` field: a pattern
+    recorded under `--subject "malformed-invocation"` is naming the whole
+    bucket, and a later preflight finding of that class does not
+    rediscover the workaround from scratch. Silent on no match, an
+    unreadable archive, or a pattern with no workaround recorded - this is
+    an enrichment, never a new failure mode of its own.
+    """
+    from .godmode_mistakes import list_patterns
+
+    try:
+        workarounds = {
+            row["subject"]: row["workaround"]
+            for row in list_patterns(archive) if row.get("workaround")
+        }
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable pattern index leaves findings exactly as the caller built them
+        return
+    for finding in findings:
+        cls = finding.get("class")
+        workaround = workarounds.get(cls) if cls else None
+        if not workaround:
+            continue
+        detail = str(finding.get("detail", ""))
+        if workaround in detail:
+            continue
+        finding["detail"] = f"{detail} - known workaround (pattern '{cls}'): {workaround}"
+
+
+def flake_findings(archive: Any) -> list[dict[str, str]]:
+    """NS-8o: a registered flake retried three or more times with no lesson
+    naming it is a judgment finding - the registry entry must then either
+    gain a lesson cite or be removed. `retries < 3` or a matching lesson is
+    silent: a lesson-or-leave rule, not a quota on retries themselves."""
+    from .godmode_trends import flakes
+
+    findings: list[dict[str, str]] = []
+    for row in flakes(archive):
+        if row["retries"] >= 3 and not row["has_lesson"]:
+            findings.append({
+                "check": "flake-without-lesson",
+                "class": "environment-failure",
+                "detail": (f"{row['test_id']} retried {row['retries']} time(s) isolated with no "
+                           "lesson naming it - add a lesson cite to the registry entry, or "
+                           "remove the entry"),
+            })
+    return findings
+
+
+def _classes_tally(findings: list[dict[str, Any]]) -> dict[str, int]:
+    """A count per class over the given findings - only entries whose
+    `class` names a real `FAILURE_CLASSES` member; a malformed class is
+    already reported as its own finding, not tallied here."""
+    from .godmode_mistakes import FAILURE_CLASSES
+
+    tally: dict[str, int] = {}
+    for finding in findings:
+        value = finding.get("class")
+        if value in FAILURE_CLASSES:
+            tally[value] = tally.get(value, 0) + 1
+    return tally
 
 
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
@@ -184,6 +321,147 @@ def _head_sha(repo: Path) -> str:
     return done.stdout.decode("utf-8", errors="replace").strip() if done.returncode == 0 else ""
 
 
+def _registered_worktrees(repo: Path) -> set[Path]:
+    """Every worktree path `git worktree list` knows about for `repo`,
+    resolved. A candidate's `head` matching one of these is registered
+    to THIS repo - the strongest ownership signal there is."""
+    listing = _git(repo, "worktree", "list", "--porcelain")
+    if listing.returncode != 0:
+        return set()
+    out: set[Path] = set()
+    for line in listing.stdout.decode("utf-8", errors="replace").splitlines():
+        if line.startswith("worktree "):
+            try:
+                out.add(Path(line[len("worktree "):]).resolve())
+            except OSError:
+                continue
+    return out
+
+
+def _gitdir_target(pointer: Path) -> Path | None:
+    """The path a worktree's `.git` gitdir-pointer file names, resolved.
+    None when `pointer` is not such a file."""
+    try:
+        text = pointer.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    match = re.match(r"gitdir:\s*(.+?)\s*$", text.strip())
+    if not match:
+        return None
+    target = Path(match.group(1))
+    if not target.is_absolute():
+        target = pointer.parent / target
+    try:
+        return target.resolve()
+    except OSError:
+        return None
+
+
+def _owns_scratch_candidate(repo: Path, candidate: Path, registered: set[Path]) -> bool:
+    """True when `candidate` is THIS repo's own preflight scratch, never
+    a sibling repository's or a concurrent run's the sweep cannot
+    identify.
+
+    `candidate/head/.git` absent entirely means there is no ownership
+    signal either way (an unregistered leftover, e.g. a `mkdtemp` that
+    never reached `git worktree add`) - the caller decides ownership by
+    age in that case, not this function. Otherwise ownership requires
+    `head` to be a worktree registered to `repo` (`git worktree list`),
+    or a gitdir pointer whose target resolves inside `repo`'s own
+    `git rev-parse --git-common-dir` - a sibling repo's worktree has a
+    `.git` pointer too, but it resolves into that OTHER repo's git dir.
+    """
+    head = candidate / "head"
+    try:
+        head_resolved = head.resolve()
+    except OSError:
+        head_resolved = head
+    if head_resolved in registered:
+        return True
+    pointer = head / ".git"
+    target = _gitdir_target(pointer)
+    if target is None:
+        return False
+    common = _git(repo, "rev-parse", "--git-common-dir")
+    if common.returncode != 0:
+        return False
+    common_dir = (repo / common.stdout.decode("utf-8", errors="replace").strip()).resolve()
+    try:
+        target.relative_to(common_dir)
+        return True
+    except ValueError:
+        return False
+
+
+def _candidate_mtime(candidate: Path) -> float | None:
+    """The newest mtime of `candidate` or its `head` subdirectory - the
+    signal liveness reads. None only when neither can be stat'd."""
+    newest = None
+    for probe in (candidate, candidate / "head"):
+        try:
+            mtime = probe.stat().st_mtime
+        except OSError:
+            continue
+        if newest is None or mtime > newest:
+            newest = mtime
+    return newest
+
+
+def sweep_stale_scratch(repo: Path, keep: Path | None = None,
+                        ) -> tuple[list[Path], list[Path], list[Path]]:
+    """Remove every `.godmode-preflight-*` sibling of `repo` that this
+    repo OWNS and that is NOT LIVE. `keep` is always skipped.
+
+    Ownership: see `_owns_scratch_candidate`; a candidate with no
+    `head/.git` at all has no ownership signal, so it counts as ours only
+    once it also reads as old below - age is what a genuinely abandoned
+    leftover has and a concurrent run's half-built scratch does not.
+
+    Liveness: a candidate whose newest mtime (`_candidate_mtime`) is
+    younger than `STALE_SCRATCH_SECONDS` is skipped outright, even one
+    this repo owns - a concurrent run of the SAME repo is never swept
+    out from under itself.
+
+    A registered worktree under a swept dir is removed through git so
+    the worktree list stays consistent; an unregistered leftover is
+    deleted directly. Returns `(removed, unswept, skipped)`: `skipped` is
+    every foreign or live candidate left untouched on purpose; a
+    candidate is only ever reported removed once it is confirmed gone
+    from disk - a plain file, or a locked or read-only directory
+    `rmtree(ignore_errors=True)` could not touch, lands in `unswept`
+    instead, the same way `cleanup` states an unconfirmed removal rather
+    than assuming it.
+    """
+    removed: list[Path] = []
+    unswept: list[Path] = []
+    skipped: list[Path] = []
+    parent = repo.resolve().parent
+    registered = _registered_worktrees(repo)
+    now = time.time()
+    for candidate in sorted(parent.glob(".godmode-preflight-*")):
+        if keep is not None and candidate.resolve() == keep.resolve():
+            continue
+        mtime = _candidate_mtime(candidate)
+        if mtime is not None and (now - mtime) < STALE_SCRATCH_SECONDS:
+            skipped.append(candidate)
+            continue
+        has_ownership_signal = (candidate / "head" / ".git").exists()
+        owned = True if not has_ownership_signal else _owns_scratch_candidate(repo, candidate, registered)
+        if not owned:
+            skipped.append(candidate)
+            continue
+        head = candidate / "head"
+        if head.exists():
+            _git(repo, "worktree", "remove", "--force", str(head))
+        shutil.rmtree(candidate, ignore_errors=True)
+        if candidate.exists():
+            unswept.append(candidate)
+        else:
+            removed.append(candidate)
+    _git(repo, "worktree", "prune")
+    return removed, unswept, skipped
+
+
 def preflight_gate(archive: Any, project: Path, operation: str) -> str | None:
     """The reason a push-shaped operation may not be staged: no green
     preflight attestation at the current HEAD. None when one exists or
@@ -209,8 +487,21 @@ def push_preflight(project: Path | str,
                    archive: Any = None,
                    dirty: bool = False,
                    suite_shards: int = 1,
+                   shard_index: int | None = None,
                    session: str | None = None) -> dict[str, Any]:
     repo = Path(project)
+    # A shard index is a usage error before it is anything else, so it is
+    # refused before a worktree exists to clean up. Out of range is named,
+    # never clamped: a CI leg asking for shard 4 of 4 has a broken matrix,
+    # and silently running shard 3 twice would report a green that skipped
+    # a quarter of the suite.
+    shards_total = max(1, int(suite_shards or 1))
+    if shard_index is not None and not 0 <= int(shard_index) < shards_total:
+        raise ArchiveError(
+            f"preflight refuses shard index {shard_index}: with --suite-shards "
+            f"{shards_total} the only indices are 0 to {shards_total - 1} - "
+            "every shard must run for the suite to have run"
+        )
     status = _git(repo, "status", "--porcelain=v1")
     if status.returncode != 0:
         raise ArchiveError("preflight needs a git repository")
@@ -221,7 +512,16 @@ def push_preflight(project: Path | str,
     # instead of HEAD; the report names which one it validated.
     validated = "HEAD"
     ref = "HEAD"
-    if status.stdout.strip():
+    # Only TRACKED changes make a tree dirty here. The disposable worktree is
+    # built from HEAD or a stash snapshot, and untracked files are in neither,
+    # so an untracked-only tree validates exactly what a clean one does;
+    # refusing it blocked every run behind stray scratch files while
+    # protecting nothing. Untracked files are still named in `skipped` below.
+    tracked_changes = [
+        line for line in status.stdout.decode("utf-8", errors="replace").splitlines()
+        if line.strip() and not line.startswith("??")
+    ]
+    if tracked_changes:
         if not dirty:
             raise ArchiveError(
                 "preflight refuses a dirty tree: it validates a committed state, "
@@ -240,6 +540,9 @@ def push_preflight(project: Path | str,
     mechanical: list[dict[str, Any]] = []
     judgment: list[dict[str, Any]] = []
     skipped: list[str] = []
+    # Which shards this process actually ran, so a report never implies the
+    # whole suite when one leg of a fan-out is what happened.
+    ran_shards: list[int] = []
     if status.stdout.strip() and any(line.startswith("??") for line in
                                      status.stdout.decode("utf-8", errors="replace").splitlines()):
         skipped.append("untracked files are not in the snapshot: `git add -N` "
@@ -263,6 +566,10 @@ def push_preflight(project: Path | str,
             "worktree: repo parent unwritable, fell back to the system "
             "temp dir - scratch-allowance-sensitive suite assertions may "
             "read soft there")
+    # An aborted earlier run leaves its scratch worktree beside the repo;
+    # its own `cleanup: confirmed` only ever checked the dir it made, never
+    # its siblings. Sweep them before this run so the report can cite them.
+    swept, unswept, skipped_scratch = sweep_stale_scratch(repo, keep=scratch)
     worktree = scratch / "head"
     added = _git(repo, "worktree", "add", "--detach", str(worktree), ref)
     if added.returncode != 0:
@@ -311,6 +618,7 @@ def push_preflight(project: Path | str,
         # at this gate read them.
         ratchet = swallow_ratchet_finding(worktree)
         if ratchet is not None:
+            ratchet.setdefault("class", "blocked-by-guard")
             mechanical.append(ratchet)
         # THE RATCHET RULE, applied to this gate's own miss: three releases
         # went red in CI on stale pins because "run the full suite first"
@@ -331,28 +639,52 @@ def push_preflight(project: Path | str,
                             suite = shlex.split(str(stored))
             except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
+        # One argument carrying the whole command is the shape a designation
+        # is stored in (above), and the shape a YAML `run:` line can pass
+        # without argparse reading `-m` as an option of its own. Split it the
+        # same way, so `--suite "python -m unittest discover"` and
+        # `--designate-suite "python -m unittest discover"` mean one thing.
+        if suite and len(suite) == 1 and " " in suite[0]:
+            import shlex
+            suite = shlex.split(suite[0])
         suite_designated = bool(suite)
-        if suite and suite_shards > 1 and "discover" in " ".join(suite):
+        if suite and (shards_total > 1 or shard_index is not None) and "discover" in " ".join(suite):
             # One process over 3,400 tests is killed for memory on the
             # reference machine; N sequential shards finish. Each shard's
             # verdict names its own tests.
             import sys as _sys
-            for index, modules in enumerate(shard_modules(worktree / "tests", suite_shards)):
+            for index, modules in enumerate(shard_modules(worktree / "tests", shards_total)):
+                # One index means one leg of a fan-out: the caller (a CI
+                # matrix) runs the others in parallel, and the aggregate of
+                # the legs is the suite. The deal is deterministic for a
+                # given tree, so index 2 of 4 is the same modules wherever
+                # it runs.
+                if shard_index is not None and index != int(shard_index):
+                    continue
                 if not modules:
                     continue
+                ran_shards.append(index)
                 try:
-                    shard = subprocess.run([_sys.executable, "-m", "unittest", *modules], cwd=worktree,
+                    shard = subprocess.run(watchdog_command(modules), cwd=worktree,
                                            capture_output=True, check=False, timeout=SUITE_TIMEOUT_SECONDS,
                                            env=aliased_temp_environment())
                 except subprocess.TimeoutExpired:
-                    judgment.append({"check": "suite", "detail": f"shard {index} killed after "
-                                                                  f"{SUITE_TIMEOUT_SECONDS}s without a verdict"})
+                    judgment.append({"check": "suite", "class": "environment-failure",
+                                     "detail": f"shard {index} killed after "
+                                               f"{SUITE_TIMEOUT_SECONDS}s without a verdict"})
                     break
                 if shard.returncode != 0:
                     # Every shard runs: one gate round names every red test
                     # instead of the first shard's, so the next round is
                     # the green one rather than the next discovery.
                     tail = (shard.stderr or shard.stdout or b"")[-40000:].decode("utf-8", errors="replace")
+                    stalled = stall_summary(tail)
+                    if stalled:
+                        judgment.append({"check": "suite", "class": "environment-failure",
+                                         "detail": f"suite shard {index} stalled: one test ran past "
+                                                   f"{TEST_STALL_SECONDS}s and the watchdog stopped "
+                                                   f"it; stuck at {stalled}"})
+                        continue
                     lines = [ln for ln in tail.splitlines() if ln.startswith(("FAIL", "ERROR", "Ran "))][-12:]
                     judgment.append({"check": "suite",
                                      "detail": f"suite shard {index} exited {shard.returncode}"
@@ -385,6 +717,7 @@ def push_preflight(project: Path | str,
                 completed = sum(len(m) for m in re.findall(r"[.FEsx]{5,}", text))
                 judgment.append({
                     "check": "suite",
+                    "class": "environment-failure",
                     "detail": f"designated suite killed after "
                               f"{SUITE_TIMEOUT_SECONDS}s without a verdict - "
                               "a hang or a slow machine, and a person decides "
@@ -527,15 +860,16 @@ def push_preflight(project: Path | str,
     # operator's own words.
     if archive is not None:
         try:
-            # Closure honouring lives in one place (open_stated_requests):
-            # this gate's own latest-per-digest rebuild was blind to a
-            # closure written from the command line, so the exact command
-            # the finding prescribed closed nothing it could see
-            # (field-caught at the 0.3.17 gate, 2026-09-04).
-            from .godmode_requests import open_stated_requests
+            # Closure honouring lives in one place (open_stated_requests),
+            # read through the one shared window (Task 2, 0.3.28): this
+            # gate used to ask for its own, shorter tail of request
+            # records than the other readers did, so a busy session could
+            # already have this ask fall out of the gate's view while it
+            # stayed open everywhere else.
+            from .godmode_requests import open_stated_requests, read_request_window
             open_asks = []
-            for record in open_stated_requests(
-                    archive.select(kind="request", limit=200)):
+            _requests, _window_overflow = read_request_window(archive)
+            for record in open_stated_requests(_requests):
                 data = record.get("data") or {}
                 keywords = [str(w) for w in (data.get("keywords") or [])]
                 open_asks.append(" ".join(keywords[:6]) or
@@ -543,11 +877,13 @@ def push_preflight(project: Path | str,
             if open_asks:
                 judgment.append({
                     "check": "open-operator-asks",
+                    "class": "underspecified-ask",
                     "detail": (f"{len(open_asks)} stated operator ask(s) "
                                "still open at the gate - a cut over an "
                                "operator-named set is the goal-misread "
                                "class; close each, or park it explicitly: "
                                + "; ".join(f"'{a}'" for a in open_asks[:3])),
+                    "window_overflow": _window_overflow,
                 })
         except Exception:  # noqa: BLE001
             skipped.append("open-asks scan: unavailable")
@@ -559,6 +895,7 @@ def push_preflight(project: Path | str,
             from .godmode_reach import reach_finding
             finding = reach_finding(archive)
             if finding is not None:
+                finding.setdefault("class", "capability-gap")
                 judgment.append(finding)
         except Exception:  # noqa: BLE001  # godmode: swallow-ok: a scan that cannot run is named in skipped, never a gate crash
             skipped.append("host-reach scan: unavailable")
@@ -568,10 +905,16 @@ def push_preflight(project: Path | str,
             from .godmode_attest import stale_claims
             stale = stale_claims(archive, Path(project))
             if stale:
-                named = "; ".join(f"seq {s['sequence']} ({s['citation']} {s['reason']})"
-                                  for s in stale[:3])
+                # Q6 (review): a `tree-changed` entry's `citation` is empty
+                # (no single citation is at fault, the whole tree moved) -
+                # rendered bare, never with the stray leading space an
+                # unconditional `f"{citation} {reason}"` left behind.
+                named = "; ".join(
+                    f"seq {s['sequence']} ({(s['citation'] + ' ') if s['citation'] else ''}{s['reason']})"
+                    for s in stale[:3])
                 judgment.append({
                     "check": "stale-claims",
+                    "class": "invented-information",
                     "detail": (f"{len(stale)} claim(s) cite evidence that changed or "
                                f"vanished since they were recorded: {named}. "
                                "`godmode claim --stale` lists them; re-record or "
@@ -579,7 +922,43 @@ def push_preflight(project: Path | str,
                 })
         except Exception:  # noqa: BLE001  # godmode: swallow-ok: a scan that cannot run is named in skipped, never a gate crash
             skipped.append("stale-claims scan: unavailable")
-    verdict = "findings" if mechanical or judgment else "clean"
+        # NS-8o: a registered flake retried three or more times with no
+        # lesson naming it - the lesson-or-leave rule for the registry.
+        try:
+            judgment.extend(flake_findings(archive))
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: a scan that cannot run is named in skipped, never a gate crash
+            skipped.append("flake-ranking scan: unavailable")
+        # I-3: a hypothesis claim's or an incident's falsifier aged past
+        # two days with nothing run behind it - the theory stands on
+        # exactly as much today as the day it was written.
+        try:
+            from .godmode_falsifiers import falsifier_stale_findings
+            judgment.extend(falsifier_stale_findings(archive))
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: a scan that cannot run is named in skipped, never a gate crash
+            skipped.append("falsifier-aging scan: unavailable")
+        # NS-12e: a finding's class matched against a recorded pattern's
+        # subject - the workaround named the last time this class fired,
+        # so a recurring failure is not rediscovered from scratch.
+        try:
+            pattern_workaround_findings(mechanical + judgment, archive)
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: a scan that cannot run is named in skipped, never a gate crash
+            skipped.append("pattern-workaround scan: unavailable")
+    # N-12: a class that does not name a real class (blank, or outside
+    # FAILURE_CLASSES) is itself a mechanical finding - checked over both
+    # buckets before the fold below, so a malformed class in a judgment
+    # finding still turns the verdict.
+    mechanical.extend(malformed_findings(mechanical + judgment))
+    # An advisory-severity judgment finding (host-reach: a hook host whose
+    # path is replicated from a code-level read and pinned by a test, not
+    # yet confirmed live) is reported, not failing - it is skipped from the
+    # failing set. A finding with no declared severity, or one that is
+    # itself "blocking", still turns the verdict.
+    failing_judgment = []
+    for f in judgment:
+        if f.get("severity") == "advisory":
+            continue
+        failing_judgment.append(f)
+    verdict = "findings" if mechanical or failing_judgment else "clean"
     suite_skipped = any(str(item).startswith("suite:") for item in skipped)
     if suite_skipped and verdict == "clean":
         verdict = "incomplete"
@@ -589,6 +968,13 @@ def push_preflight(project: Path | str,
         try:
             suite_red = any(j.get("check") == "suite" for j in judgment)
             if suite_skipped:
+                status = "incomplete"
+            elif shard_index is not None and len(ran_shards) < shards_total:
+                # One leg of a fan-out is not the suite. `authorize stage`
+                # reads `ran` and nothing else, so a single shard attests
+                # `incomplete`: the aggregate of the legs is the operator's
+                # to judge, and a quarter of the suite must never stage a
+                # push on its own.
                 status = "incomplete"
             elif mechanical or suite_red:
                 status = "failed"
@@ -602,7 +988,9 @@ def push_preflight(project: Path | str,
                 "judgment": [str(j.get("check")) for j in judgment][:8],
                 "session": session or "",
                 "head": _head_sha(repo), "validated": validated,
+                "shards": shards_total, "shards_ran": list(ran_shards),
                 "findings": len(mechanical) + len(judgment), "gates": len(workflow_gate_commands(repo)),
+                "classes": _classes_tally(mechanical + judgment),
             }, evidence=[])
         except Exception:  # noqa: BLE001  # godmode: swallow-ok: the report still prints; the gate simply finds no attestation
             pass
@@ -613,9 +1001,14 @@ def push_preflight(project: Path | str,
         "verdict": verdict,
         "suite_ran": not suite_skipped and not any(j.get("check") == "suite" for j in judgment),
         "validated": validated,
+        "shards": shards_total,
+        "shards_ran": ran_shards,
         # The effect of a control action is confirmed, never assumed: the
         # cleanup claim is checked against the filesystem, and an
         # unconfirmed removal is stated rather than silently believed.
         "cleanup": "confirmed" if not worktree.exists() else "unconfirmed",
+        "swept_stale_scratch": [p.name for p in swept],
+        "unswept_scratch": [p.name for p in unswept],
+        "skipped_scratch": [p.name for p in skipped_scratch],
         "feeds": "the password gate; preflight never bypasses it",
     }

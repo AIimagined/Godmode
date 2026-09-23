@@ -32,7 +32,7 @@ if str(SCRIPTS) not in sys.path:
 if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 
-from godmode_runtime.godmode_errors import ArchiveError, AuthorizationError  # noqa: E402
+from godmode_runtime.godmode_errors import AuthorizationError  # noqa: E402
 from godmode_runtime.godmode_sentinel import (  # noqa: E402
     CapabilityBroker, stage_from_refusal, stage_hint)
 from test_godmode_runtime import isolated_project  # noqa: E402
@@ -269,8 +269,11 @@ class TamperedRefusalIsCaughtByTheExistingMonitor(unittest.TestCase):
             payload["data"]["operation"] = "rm -rf /"
             refusal_path.write_text(json.dumps(payload), encoding="utf-8")
 
-            with self.assertRaises(ArchiveError):
-                archive.verify()
+            # N-9: verify() names the break instead of raising.
+            broken = archive.verify()
+            self.assertFalse(broken["valid"])
+            self.assertFalse(broken["ok"])
+            self.assertEqual(broken["first_broken_path"], refusal_path.name)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,1 @@
+- An empty or whitespace-only pre-tool payload is refused before it is counted against the project's tool-call budget.

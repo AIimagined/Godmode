@@ -71,6 +71,28 @@ def _break_evals(project: Path) -> Path:
     return target
 
 
+def _break_ratchet(project: Path) -> Path:
+    """Raise one skill's committed baseline score past what routing can score.
+
+    `evals --ratchet --brief` only ever tightens: a current score below the
+    committed floor is the regression it exists to catch. Routing evals score
+    at most 1.0, so inflating one skill's committed baseline above that forces
+    the current run to read as a regression against it, without touching the
+    skill's own routing cases (that mutation already belongs to `evals --brief`
+    above, and proves a different property - case coverage, not the ratchet).
+    """
+    target = project / "evals" / "baseline.json"
+    data = json.loads(target.read_text(encoding="utf-8"))
+    # Since the dual baseline (0.3.28) scores live per block; the first block
+    # is the default mode the ratchet compares against.
+    scores = data["blocks"][0]["scores"] if "blocks" in data else data["scores"]
+    skill = next(iter(sorted(scores)))
+    scores[skill]["score"] = 1.5
+    target.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n",
+                      encoding="utf-8")
+    return target
+
+
 def _break_dependency_policy(project: Path) -> Path:
     target = project / ".godmode-dependency-policy.json"
     licence = json.loads((project / ".claude-plugin" / "plugin.json")
@@ -113,6 +135,22 @@ def _break_atlas(project: Path) -> Path:
     return target
 
 
+def _break_atlas_direction(project: Path) -> Path:
+    """A hook that reaches the CLI layer at module level, on the hot path.
+
+    `atlas --direction` enforces a one-way boundary: a hook's module-level
+    imports may reach only `HOOK_IMPORT_SURFACE` in `godmode_atlas.py`, and
+    `godmode_console` (the CLI/dispatch layer) is never in that set - a hook
+    importing it at module level is the direction inverted, paid for on
+    every hot-path call rather than deferred into a function body.
+    """
+    target = project / "hooks" / "godmode_post_edit.py"
+    text = target.read_text(encoding="utf-8")
+    target.write_text(
+        "from godmode_runtime import godmode_console\n" + text, encoding="utf-8")
+    return target
+
+
 def _break_bindings(project: Path) -> Path:
     target = project / ".claude-plugin" / "plugin.json"
     target.write_text(json.dumps({"name": "godmode", "version": "0.0.0"}),
@@ -130,10 +168,15 @@ FALSIFICATIONS: dict[str, tuple[str, object]] = {
         ("each translated document tracks an English source", _break_locale),
     "evals --brief":
         ("every skill carries positive and near-negative routing cases", _break_evals),
+    "evals --ratchet --brief":
+        ("routing scores never fall below the committed baseline", _break_ratchet),
     "sbom --gate --brief":
         ("the dependency budget and licence policy hold", _break_dependency_policy),
     "bindings --brief":
         ("host manifests match the single source they are rendered from", _break_bindings),
+    "atlas --direction --brief":
+        ("hooks reach the runtime only through their declared import surface",
+         _break_atlas_direction),
     "trust":
         ("checked-in configuration neither executes nor disarms anything "
          "without saying so", _break_trust),
@@ -160,6 +203,13 @@ NO_PROOF_YET: dict[str, str] = {
             "a plain checkout has no archive and the fast gate answers an "
             "ungoverned checkout with a silent allow by design; init's own "
             "behaviour is pinned in test_godmode_runtime",
+    "evals --determinism --brief": "asserts the routing harness agrees with "
+        "itself across two runs made inside one command invocation, both "
+        "reading the same files from disk; a mutation applied before that "
+        "invocation starts changes what both runs read identically and "
+        "cannot make the second diverge from the first, so nondeterminism "
+        "is not expressible as a file mutation (same shape as "
+        "`--json checksums` above)",
 }
 
 

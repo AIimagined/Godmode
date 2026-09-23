@@ -51,6 +51,15 @@ _REASONED_CLOSURES = {"already-built": "already-built",
                       "refused": "refused",
                       "declined": "refused"}
 
+# One number, named once. Five call sites used to ask the archive for a
+# different tail of request records each - 200 at two of them, 600 at the
+# rest - so a busy session could show an ask as open on the surface that
+# looked back 600 records and already-forgotten on the one that looked
+# back 200. `read_request_window` is the one place every caller now reads
+# through; this is the size an archive is expected to stay under, not a
+# cutoff that discards what grows past it (see that function for why).
+REQUEST_WINDOW = 600
+
 
 def closure_reason(status: str) -> str | None:
     """Why a request closed, or `None` if it is still open.
@@ -316,6 +325,33 @@ def _closed_digests(records: list[dict[str, Any]]) -> dict[str, int]:
     return closed
 
 
+def read_request_window(archive: Any) -> tuple[list[dict[str, Any]], bool]:
+    """The one path every reader of open asks now pulls its records
+    through, in place of each one calling `archive.select(kind="request",
+    limit=N)` with its own N.
+
+    Naming a single N is not enough on its own: `archive.select()` keeps
+    only its most recent `limit` records
+    (`godmode_chronicle.Archive.select`), so a still-open ask - the one
+    record with no artefact anywhere else, see the module docstring above
+    - would age out the moment enough LATER, unrelated asks were recorded,
+    no matter how generous the chosen N. That is exactly the loss this
+    module exists to catch, recreated one call site over by the mechanism
+    meant to bound it.
+
+    So every request-kind record is read here, unbounded, straight off
+    `read_events()`. `REQUEST_WINDOW` still names the size an archive is
+    expected to stay under; the second value returned is True once the
+    count crosses it, so a caller can say "this archive is carrying a lot
+    of asks" and prompt the operator to close some - a signal, never a
+    silent cut. A request that closed long ago is the one thing that may
+    fairly fall out of a bounded reviewer's attention by design: it
+    already has its answer on the record. An open one never does.
+    """
+    records = [r for r in archive.read_events() if r.get("kind") == "request"]
+    return records, len(records) > REQUEST_WINDOW
+
+
 def open_stated_requests(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Latest open stated request per digest, subject-closures honoured.
 
@@ -328,10 +364,23 @@ def open_stated_requests(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     0.3.17 gate, 2026-09-04). `_closed_digests` already holds the fallback;
     this is the one place all readers get it from.
     """
+    # NS-10e: a request some other record has explicitly named as its
+    # successor (`remember --kind request --supersedes <seq>`) is never
+    # "latest" for its own digest, even one restated in different words
+    # under a fresh digest that this fold's key-by-digest grouping could
+    # not otherwise link back to it. `superseded_sequences` is the same
+    # exclusion `godmode_chronicle.latest_by_subject` applies - this
+    # fold's own digest/reopen/closure logic below is untouched, composed
+    # with rather than replaced by the edge.
+    from .godmode_chronicle import superseded_sequences
+
+    excluded = superseded_sequences(records)
     closed = _closed_digests(records)
     latest: dict[str, dict[str, Any]] = {}
     for record in records:
         if record.get("kind") != "request":
+            continue
+        if int(record.get("sequence", 0) or 0) in excluded:
             continue
         identifier = str((record.get("data") or {}).get("digest", ""))
         if identifier:
@@ -383,6 +432,13 @@ def review_requests(records: list[dict[str, Any]],
                     answered_text: str = "") -> dict[str, Any]:
     """Requests with no closure, interruptions first.
 
+    Findings are a projection over `open_stated_requests` - the same fold
+    the stop hook's nag, `godmode_iteration.open_scope` and the push
+    preflight already read through - rather than a second, independent
+    scan of what counts as still open. Two folds over the same records
+    used to disagree at the margins (a reopen, a subject-keyed closure): one
+    fold, read from four places, cannot.
+
     `answered_text` is whatever the session has since said. Where it is
     available a request whose distinctive words all appear in it is reported as
     likely answered rather than open - a weak test on purpose. A strong one
@@ -392,24 +448,16 @@ def review_requests(records: list[dict[str, Any]],
     closed = _closed_digests(records)
     haystack = answered_text.lower()
 
-    findings: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    # Kept as a simple tally of every record ever stated open, deliberately
+    # NOT deduplicated: it answers "how much has this archive carried",
+    # which the findings list (deduplicated, below) does not.
     total = 0
     for record in records:
         if record.get("kind") != "request":
             continue
         data = record.get("data") or {}
-        identifier = str(data.get("digest", ""))
         if str(data.get("status", "")).lower() != "open":
             continue
-        # A closure written by a person carries the subject they can see,
-        # never the full-text digest they cannot. The subject is truncated
-        # at SUBJECT_LIMIT while `digest` comes from the whole flattened
-        # prompt, so for any prompt longer than the limit the two could
-        # never match and the closure landed without closing anything -
-        # the same shape the digest-only matching had before the subject
-        # fallback was added, one truncation further along.
-        subject_key = digest(str(record.get("subject", "")).strip())
         # Applied on read as well as on write. A predicate used only at
         # write time would leave every envelope already in the archive in
         # the open count forever - which is the state that made this
@@ -417,9 +465,13 @@ def review_requests(records: list[dict[str, Any]],
         if not is_operator_ask(str(record.get("subject", ""))):
             continue
         total += 1
-        if identifier in closed or subject_key in closed or identifier in seen:
+
+    findings: list[dict[str, Any]] = []
+    for record in open_stated_requests(records):
+        if not is_operator_ask(str(record.get("subject", ""))):
             continue
-        seen.add(identifier)
+        data = record.get("data") or {}
+        identifier = str(data.get("digest", ""))
 
         keywords = [str(k) for k in (data.get("keywords") or [])]
         if haystack and keywords:
@@ -448,12 +500,17 @@ def review_requests(records: list[dict[str, Any]],
     # Interruptions first: they are the ones nothing else would surface.
     findings.sort(key=lambda f: (f["code"] != "request-interrupted-work",
                                  f["coverage"], f["sequence"]))
+    request_count = sum(1 for r in records if r.get("kind") == "request")
     return {
         "requests_seen": total,
         "closed": len(closed),
         "findings": findings,
         # Stated so an empty report cannot be read as "nothing was examined".
         "verdict": "no-open-requests" if not findings else "open-requests",
+        # True once this many request records exist - an "archive is
+        # carrying a lot of asks" signal, never a reason one goes missing
+        # from `findings` above (see `read_request_window`).
+        "window_overflow": request_count > REQUEST_WINDOW,
     }
 
 
@@ -499,9 +556,22 @@ def _self_check() -> None:
     assert len(review_requests(archive.read_events())["findings"]) == 1
 
     record_request(archive, "rewrite the author identity")
+    # A fresh ask, not the retyped one above: `review_requests` now folds
+    # over `open_stated_requests` (Task 2, 0.3.28), which keeps the LATEST
+    # record per subject - the retyped "release page" ask above no longer
+    # carries its first record's `interrupted_work` flag, by design, so
+    # sort-order is proven on an ask nothing has overwritten.
+    also_interrupted = record_request(archive, "look at the marketplace docs",
+                                      tools_in_flight=1)
     report = review_requests(archive.read_events())
     assert report["verdict"] == "open-requests", report
     assert report["findings"][0]["code"] == "request-interrupted-work", report
+    assert report["findings"][0]["digest"] == also_interrupted["data"]["digest"], report
+    # Closed immediately after, so it plays no further part below - this
+    # self-check's remaining assertions are the ones the sort-order check
+    # above must not disturb.
+    archive.append("request", "closed the marketplace ask",
+                   {"digest": also_interrupted["data"]["digest"], "status": "closed"}, [])
 
     answered = review_requests(archive.read_events(),
                                "I checked the release page and it is published")

@@ -71,6 +71,25 @@ def _oracle_tamper_findings() -> list[dict]:
     return tamper_findings(diff, old, new)
 
 
+def _version_findings() -> list[dict]:
+    # Two surfaces that disagree on the version, and a root manifest whose
+    # generated text was edited by hand.
+    import json
+    import tempfile
+
+    from godmode_runtime.godmode_reconcile import reconcile_versions
+
+    with tempfile.TemporaryDirectory() as name:
+        root = Path(name)
+        (root / "packaging").mkdir()
+        (root / "packaging" / "hosts.json").write_text(json.dumps({
+            "identity": {"name": "demo", "version": "1.2.3", "description": "source text"},
+            "hosts": {}}), encoding="utf-8")
+        (root / "plugin.json").write_text(json.dumps(
+            {"name": "demo", "version": "1.2.4", "description": "hand edit"}), encoding="utf-8")
+        return reconcile_versions(root)["findings"]
+
+
 class EveryFindingSurfaceCarriesARemedy(unittest.TestCase):
     #: (name, producer, remedy field). Explicit and short on purpose - see the
     #: module docstring on why this is not auto-discovered.
@@ -79,6 +98,7 @@ class EveryFindingSurfaceCarriesARemedy(unittest.TestCase):
         ("instruction scanner", _egress_findings, "remedy"),
         ("attributed constraints", _attribution_findings, "remedy"),
         ("oracle-tamper rules", _oracle_tamper_findings, "remedy"),
+        ("version reconcile", _version_findings, "remedy"),
     )
 
     def test_each_surface_produces_at_least_one_finding_for_its_fixture(self) -> None:

@@ -1,0 +1,21 @@
+{
+  "routes": {
+    "near_negative": {
+      "Diagnose why the retest went red after the last edit": "godmode-repair",
+      "Find who calls a module before planning an edit to it": "godmode-codegraph",
+      "Preview and authorize a force push to the shared branch": "godmode-governance"
+    },
+    "positive": {
+      "Before committing this staged multi-module edit, score its fan-out of unfollowed dependents and any hook-to-runtime boundary crossing": "godmode-impact-gate",
+      "Right before git commit, confirm the staged paths stay inside the plan's editable fence, no paired artifact is left behind, and record an escape hatch for the intended crossing": "godmode-impact-gate"
+    }
+  },
+  "schema": "godmode-routing-snapshot-v1",
+  "skill": "godmode-impact-gate",
+  "summary": {
+    "near_negatives_rejected": 3,
+    "near_negatives_total": 3,
+    "positives_routed_correctly": 2,
+    "positives_total": 2
+  }
+}

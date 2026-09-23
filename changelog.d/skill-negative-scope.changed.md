@@ -1,0 +1,1 @@
+- Every skill description names the cases it is not for, near-negative routing rows pin them, and `selftest` fails on a skill whose frontmatter lacks the clause, exceeds its budget or references a path that does not exist.

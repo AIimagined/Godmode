@@ -28,7 +28,7 @@ def _commands(blocks):
 
 class CursorEventsTests(unittest.TestCase):
     def test_cursor_declares_its_prompt_edit_compact_end_and_subagent_events(self) -> None:
-        manifest = hm.build_cursor_manifest()
+        manifest = hm.build_cursor_manifest(PLUGIN_ROOT)
         hooks = manifest["hooks"]
         expected = {
             "beforeSubmitPrompt": "godmode_session_hook.py user-prompt",

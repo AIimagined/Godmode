@@ -39,9 +39,12 @@ if str(PLUGIN_ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
 
 from tests._gate_mode_isolation import park_local_policy, restore_local_policy  # noqa: E402
+from tests._host_env import scrubbed_environment  # noqa: E402
 
 import shutil  # noqa: E402
 import tempfile  # noqa: E402
+
+_HOST_ENV = None
 
 
 def _fixture_project() -> Path:
@@ -78,6 +81,17 @@ def setUpModule() -> None:
     # observe-mode declaration turns every decision envelope into an
     # advisory systemMessage - see _gate_mode_isolation's docstring.
     park_local_policy()
+    # Fix round 1 (NS-10k, task-14-review.md B1): `_decide` inherits
+    # `os.environ` into the hook subprocess, and GitHub Actions sets
+    # `CI=true` for every step - the exact case that flips this module's
+    # own "attended asks" assertions onto the unattended row (R4 refused,
+    # not asked) with no local reproduction, since a developer's shell
+    # never carries `CI`. Every test in this module now runs from a
+    # scrubbed, pinned-attended environment instead of whatever the runner
+    # exported.
+    global _HOST_ENV
+    _HOST_ENV = scrubbed_environment()
+    _HOST_ENV.start()
     # And an initialized archive: on a fresh CI checkout no archive exists
     # and the hook rightly reports not-initialized instead of gating - the
     # empty-reason failures on every CI platform were this (instrumented
@@ -90,6 +104,8 @@ def setUpModule() -> None:
 
 def tearDownModule() -> None:
     restore_local_policy()
+    if _HOST_ENV is not None:
+        _HOST_ENV.stop()
     shutil.rmtree(PROJECT.parent, ignore_errors=True)
 
 # (label, tool, tool_input) drawn from what a working session actually issues.
@@ -190,9 +206,12 @@ def _decide(tool: str, tool_input: dict) -> tuple[str, str]:
         "cwd": str(PROJECT),
     }
     # Pinned host: these assertions describe the Claude dialect's decisions.
-    # A CI runner has no host env markers at all, and an unknown host's
-    # posture legitimately differs (field report, 2026-08-31) - inherit the
-    # environment and the test asserts whatever box it runs on.
+    # An unknown host's posture legitimately differs (field report,
+    # 2026-08-31) - inherit the environment (module-scrubbed by
+    # `setUpModule`, fix round 1 B1: not the runner's raw environment,
+    # which may carry `CI` and silently flip these onto the unattended
+    # row) and the test asserts the pinned-attended decision every one of
+    # these was written against.
     # No state-home isolation here: a git project's archive lives under
     # its git dir regardless of GODMODE_STATE_HOME, so the honest fix for
     # cross-test session state lives at the writer

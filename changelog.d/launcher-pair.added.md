@@ -1,0 +1,1 @@
+- Both hook launchers are generated from templates and diffed by a test; hosts without hook dispatch carry a named fallback tier instead of "unverifiable".

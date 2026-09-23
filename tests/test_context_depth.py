@@ -40,18 +40,27 @@ def isolated_project():
 
 
 class StalenessInputTests(unittest.TestCase):
-    def test_stale_lock_file_fires_stale_lock_issue(self) -> None:
+    def test_a_genuinely_held_and_old_lock_fires_stale_lock_issue(self) -> None:
+        # The kernel-held lock's sidecar persists after release, so age
+        # alone can no longer be the test (see `test_an_old_unheld_sidecar_
+        # stays_silent` below) - `lock_is_held()` must independently prove
+        # someone is actually holding it. Held via a second descriptor on
+        # the SAME lock file, in-process: `fcntl.flock`/`msvcrt.locking`
+        # both grant exclusivity per open-file-description/handle, not per
+        # process, so a probe from a different `os.open()` call genuinely
+        # contends even inside this one test process.
         with isolated_project() as (project, _state, anchor, archive):
             (project / "app.py").write_text("pass", encoding="utf-8")
             archive.initialize()
             archive.append("inventory", "baseline", make_snapshot(anchor), evidence=[])
             lock = archive.root / "godmode-write.lock"
-            lock.write_text("12345\n", encoding="utf-8")
-            eleven_minutes_ago = time.time() - 11 * 60
-            os.utime(lock, (eleven_minutes_ago, eleven_minutes_ago))
-            issues = detect_context_issues(
-                anchor, archive.read_events(), None, archive=archive
-            )
+            with archive.write_lock():
+                eleven_minutes_ago = time.time() - 11 * 60
+                os.utime(lock, (eleven_minutes_ago, eleven_minutes_ago))
+                self.assertTrue(archive.lock_is_held())
+                issues = detect_context_issues(
+                    anchor, archive.read_events(), None, archive=archive
+                )
             codes = {issue["code"] for issue in issues}
             self.assertIn("stale-lock", codes)
 
@@ -62,6 +71,28 @@ class StalenessInputTests(unittest.TestCase):
             archive.append("inventory", "baseline", make_snapshot(anchor), evidence=[])
             lock = archive.root / "godmode-write.lock"
             lock.write_text("12345\n", encoding="utf-8")
+            issues = detect_context_issues(
+                anchor, archive.read_events(), None, archive=archive
+            )
+            codes = {issue["code"] for issue in issues}
+            self.assertNotIn("stale-lock", codes)
+
+    def test_an_old_unheld_sidecar_stays_silent(self) -> None:
+        # This is the regression the kernel lock introduced and this fix
+        # closes: the sidecar is no longer deleted on release, so an
+        # archive idle for 11 minutes after a perfectly normal append
+        # leaves exactly this file behind, held by nobody.
+        with isolated_project() as (project, _state, anchor, archive):
+            (project / "app.py").write_text("pass", encoding="utf-8")
+            archive.initialize()
+            archive.append("inventory", "baseline", make_snapshot(anchor), evidence=[])
+            lock = archive.root / "godmode-write.lock"
+            with archive.write_lock():
+                pass
+            self.assertTrue(lock.exists())
+            self.assertFalse(archive.lock_is_held())
+            eleven_minutes_ago = time.time() - 11 * 60
+            os.utime(lock, (eleven_minutes_ago, eleven_minutes_ago))
             issues = detect_context_issues(
                 anchor, archive.read_events(), None, archive=archive
             )
@@ -173,6 +204,39 @@ class WhyTests(unittest.TestCase):
                     self.assertIn("sequence", item)
                     self.assertIn("recorded_at", item)
                     self.assertTrue(item["evidence"])
+
+    def test_episodes_lists_matching_action_refusal_incident_and_checkpoint_records(self) -> None:
+        # NS-11b: the last N episodes (what happened) matching the asked-about
+        # files/keywords, beside the existing semantic categories above.
+        with isolated_project() as (_project, _state, anchor, archive):
+            self._seed(archive)
+            archive.append(
+                "action", "app.py-lint-run", {"operation": "lint app.py", "gate": "allow"},
+                evidence=[],
+            )
+            archive.append(
+                "refusal", "app.py-write-denied", {"operation": "write app.py", "tier": "R5"},
+                evidence=[],
+            )
+            unrelated = archive.append(
+                "action", "other.py-lint-run", {"operation": "lint other.py"}, evidence=[],
+            )
+            answer = why(anchor, archive, "app.py")
+            episode_subjects = {item["subject"] for item in answer["episodes"]}
+            self.assertIn("app.py-lint-run", episode_subjects)
+            self.assertIn("app.py-write-denied", episode_subjects)
+            self.assertIn("io-race", episode_subjects)  # the seeded checkpoint
+            episode_sequences = {item["sequence"] for item in answer["episodes"]}
+            self.assertNotIn(unrelated["sequence"], episode_sequences)
+            for item in answer["episodes"]:
+                self.assertIn(item["kind"], {"action", "refusal", "incident", "checkpoint"})
+
+    def test_episodes_present_and_empty_when_nothing_matches(self) -> None:
+        with isolated_project() as (_project, _state, anchor, archive):
+            self._seed(archive)
+            answer = why(anchor, archive, "zzz-not-in-any-record")
+            self.assertIn("episodes", answer)
+            self.assertEqual(answer["episodes"], [])
 
     def test_unmatched_topic_returns_present_and_empty_categories(self) -> None:
         with isolated_project() as (_project, _state, anchor, archive):

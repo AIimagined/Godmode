@@ -35,6 +35,7 @@ from .godmode_chronicle import Chronicle
 from .godmode_constants import IGNORED_DIRECTORY_NAMES
 from .godmode_errors import ArchiveError
 from .godmode_loop import _git
+from .godmode_paths import contain
 from .godmode_plan import APPROVED
 from .godmode_sentinel import POLICY_FILENAME, _pinned_evaluator_hit, declared_gate_ratchet
 
@@ -121,16 +122,14 @@ def _relative(path: str, project_root: Path) -> str | None:
     The host hands over whatever the agent typed, which is usually absolute and
     on Windows usually backslashed. Judging the raw string would let one file
     pass or fail depending on how it was written, and would make `../` a way
-    through any fence.
+    through any fence. Delegates to `godmode_paths.contain` so a symlink out
+    of the project is refused the same way here as everywhere else a path is
+    resolved.
     """
-    candidate = Path(str(path).replace("\\", "/"))
-    root = Path(project_root).resolve()
-    absolute = candidate if candidate.is_absolute() else root / candidate
-    try:
-        relative = absolute.resolve().relative_to(root)
-    except ValueError:
+    resolved = contain(path, [project_root])
+    if resolved is None:
         return None
-    return relative.as_posix()
+    return resolved.relative_to(Path(project_root).resolve()).as_posix()
 
 
 @lru_cache(maxsize=256)
@@ -470,7 +469,9 @@ def record_deletion_precheck(
     the record carries what traversal actually found, not a promise that
     something was checked.
     """
-    relative = _relative(path, Path(project_root)) or str(path).replace("\\", "/")
+    relative = _relative(path, Path(project_root))
+    if relative is None:
+        raise ArchiveError(f"deletion pre-check path escapes the project: {path}")
     if not history_read.strip():
         raise ArchiveError(
             "a deletion pre-check needs a statement of what the file's git history showed"

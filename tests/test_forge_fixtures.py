@@ -29,8 +29,8 @@ def _proposal() -> SkillProposal:
     return SkillProposal(
         name="release-observer",
         purpose="Summarize release evidence: without mutating repository state",
-        gap_evidence="Two release reviews lacked one repeatable evidence summary.",
-        repeated_uses=2,
+        gap_evidence="Three release reviews lacked one repeatable evidence summary.",
+        repeated_uses=3,
         positive_triggers=(
             "a release review needs a bounded evidence summary",
             "a version handoff needs fresh verification",

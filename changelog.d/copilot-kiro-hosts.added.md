@@ -1,0 +1,1 @@
+- Copilot and Kiro hook manifests are generated, wired through the launcher and covered by the host matrix.

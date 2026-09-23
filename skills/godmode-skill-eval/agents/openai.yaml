@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godmode Skill Eval"
+  short_description: "Validate, lint, and score a drafted skill's routing and behavior before it ships."
+  default_prompt: "Use $godmode-skill-eval to validate this skill's structure, lint its bundle, score its routing rows against the committed baseline, and confirm the harness is deterministic before it is enabled by default."

@@ -1,0 +1,1 @@
+- One documented hook contract every host manifest is tested against; the same command gets the same decision from Bash and PowerShell.

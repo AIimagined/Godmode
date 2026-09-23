@@ -128,6 +128,12 @@ def archive(
         shutil.move(str(source), str(target))
         archived.append(entry)
 
+    # The files are gone from the project, so the record of them goes too:
+    # a manifest still naming them would make `hooks status` report each one
+    # missing, and an install of the next version would inherit this one's
+    # retired paths as if it had written them.
+    manifest_io.forget(root, plugin_name, archived + missing)
+
     return {
         "archived": archived,
         "missing": missing,

@@ -17,6 +17,7 @@ import subprocess
 from typing import Any
 
 from .godmode_chronicle import Chronicle
+from .godmode_constants import EDIT_RECORD_SUBJECT, RUN_INERT_SUBJECTS
 from .godmode_errors import ArchiveError
 
 REPEAT_THRESHOLD = 3
@@ -95,6 +96,22 @@ def _repeated_actions(
                 kind in ("action", "refusal") and subject in _MUTATION_SUBJECTS):
             last_mutation_seq = int(record.get("sequence", 0))
             continue
+        # Task 7 review (fix round 1, C1; fix round 2, N2): bookkeeping
+        # about a read (`untrusted-content-seen`, `flaky-retry`,
+        # `usage-observed` - `RUN_INERT_SUBJECTS`) is not a mutation, so it
+        # must never reach the branch above and reset `last_mutation_seq`
+        # - but it is also not a step this detector should count as a
+        # repeated ATTEMPT: three fetches of the same page that all scan
+        # as instruction-shaped are three identical bookkeeping records
+        # the agent never chose to repeat, not three tries at the same
+        # task. A plain skip, never a mutation reset. `edit-recorded`
+        # never reaches this line at all - it is caught by the mutation
+        # branch four lines above (it IS a mutation record; see
+        # `_MUTATION_SUBJECTS` below), so it is deliberately excluded from
+        # `RUN_INERT_SUBJECTS` and never named here as an example this
+        # skip handles (round 2 N2: round 1's comment claimed it was).
+        if kind == "action" and subject in RUN_INERT_SUBJECTS:
+            continue
         if kind != "action":
             continue
         data = {k: v for k, v in record["data"].items() if k not in ("at", "recorded_at")}
@@ -118,6 +135,14 @@ def _repeated_actions(
 _MUTATION_SUBJECTS = frozenset({
     "worktree-file-mutation", "scripted-source-edit", "local-repository-change",
     "filesystem-mutation", "edit", "write", "notebookedit", "apply_patch",
+    # Fix round 2 (Task 8 review, B1): it IS a mutation record - excluding
+    # it from `_repeated_actions`' own action-repetition tally (the
+    # `continue` two lines above this set's use) is a side effect of
+    # treating it as one, not a separate carve-out, and it gives this
+    # detector the per-edit reset its own comment already asks for: a real
+    # edit between two otherwise-identical command runs is new evidence,
+    # and before this fix nothing here ever saw that an edit happened.
+    EDIT_RECORD_SUBJECT,
 })
 
 

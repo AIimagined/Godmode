@@ -31,13 +31,26 @@ fails if they ever disagree about where a segment ends.
 
 from __future__ import annotations
 
+# Fix round 2 (C-5's honest A/B showed the derived-state cache bought
+# nothing measurable - reverted; the real cost centre this module can
+# actually move is process start and its own top-level imports, per
+# `python -X importtime` evidence: fast_allow p95 +20% mean / +23% median
+# over 5 trials, n=21, against 100-400ms of measurement noise). `subprocess` is
+# deferred into `main()`'s one use site (the escalate branch - the SILENT
+# ALLOW path, this module's whole reason to exist, never spawns anything)
+# - the same deferred-import discipline `godmode_anchor.py:109-112` states
+# for `secrets`/`hmac`. `typing.Any` is NOT imported at all: every reference
+# below is inside a type annotation, and `from __future__ import
+# annotations` above (PEP 563) stores every annotation as an unevaluated
+# string - the name `Any` never needs to exist at runtime for this module
+# to run correctly. No type checker is configured for this repository
+# (confirmed: no mypy/pyright config anywhere in it); if one ever is, the
+# import can come back guarded by `typing.TYPE_CHECKING`.
 import json
 import os
 import re
-import subprocess
 import sys
 from pathlib import Path
-from typing import Any
 
 HOOKS_DIR = Path(__file__).resolve().parent
 TABLE_PATH = HOOKS_DIR / "gate_table.json"
@@ -149,6 +162,64 @@ _SEPARATORS = re.compile(r"[ \t]*(?:\|\||&&|[;|\r\n]|(?<![<>])&)[ \t\r\n]*")
 # never matches, so ordinary text with a dollar sign is unaffected.
 _SUBSTITUTION_MARKERS = ("`", "$(", "<(", ">(")
 
+# G-5: this module splits and blanks with Bash's lexical rules. PowerShell
+# reads some text differently, and three of the differences can hide a
+# second command from a Bash-rules reading: a backslash is literal (so
+# `cat "a\"; git push --force` closes its string and pushes), a here-string
+# (`@'`/`@"`) holds quote characters literally, and a typographic quote
+# closes a string. A grouping `(...)` also runs a command in argument
+# position. A PowerShell command carrying any of these - or any non-ASCII
+# character - escalates, and the full hook parses it under PowerShell's own
+# rules (`godmode_parseview`). Deliberately not imported here: the fast
+# path's zero-import boundary. `tests/test_parse_view.py` keeps these tool
+# sets in step with `godmode_parseview.dialect_for_tool`.
+# `#` (review H1): a PowerShell comment, `#` or `<# #>`, holds quote
+# characters literally; any PowerShell command carrying one escalates.
+_PWSH_DIVERGENT = re.compile(r"""[(#]|@["']|\\(?=["';&|<>\r\n]|$)""")
+_POWERSHELL_TOOLS = frozenset({"PowerShell"})
+# Shell tools whose host does not say which shell runs them; on Windows
+# that may be PowerShell.
+_UNDECLARED_SHELL_TOOLS = frozenset({"shell_command", "run_terminal_command",
+                                     "run_command"})
+
+
+def _may_be_powershell(tool: str) -> bool:
+    return tool in _POWERSHELL_TOOLS or (
+        tool in _UNDECLARED_SHELL_TOOLS and sys.platform == "win32")
+
+
+# The characters after which a `#` starts a new word, and so a comment -
+# the sentinel's `_COMMENT_WORD_START`, copied (zero-import boundary).
+_COMMENT_WORD_START = frozenset(" \t<>()")
+
+
+def _blank_quotes(text: str) -> str:
+    """`text` with its quoted spans blanked character for character - the
+    sentinel's `_executable_text`, copied for the comment branch below.
+    `SegmentSplitEquivalence` compares the two on every corpus row."""
+    out: list[str] = []
+    quote: str | None = None
+    index = 0
+    length = len(text)
+    while index < length:
+        character = text[index]
+        if character == "\\" and quote != "'" and index + 1 < length:
+            out.append(" " if quote else character)
+            out.append(" " if quote else text[index + 1])
+            index += 2
+            continue
+        if quote:
+            if character == quote:
+                quote = None
+            out.append(" ")
+        elif character in "\"'":
+            quote = character
+            out.append(" ")
+        else:
+            out.append(character)
+        index += 1
+    return "".join(out)
+
 
 def _blanked_segments(command: str) -> list[str]:
     """Split `command` into shell segments, quotes already blanked.
@@ -175,6 +246,10 @@ def _blanked_segments(command: str) -> list[str]:
     # what `SegmentSplitEquivalence` checks.
     has_content = False
     quote: str | None = None
+    # The last raw character consumed into this segment, for the comment
+    # rule below (`current` holds blanked text, which cannot tell `"x"#y`,
+    # one word, from `x #y`, a comment).
+    last: str | None = None
     index = 0
     length = len(command)
     while index < length:
@@ -184,8 +259,25 @@ def _blanked_segments(command: str) -> list[str]:
             current.append(" " if blank else character)
             current.append(" " if blank else command[index + 1])
             has_content = True
+            # An escaped character is part of the word it sits in, so a
+            # `#` right after one does not start a comment.
+            last = "\\"
             index += 2
             continue
+        if quote is None and character == "#" and (last is None or last in _COMMENT_WORD_START):
+            # The sentinel's rule (`_walk_segments`): a word-start `#` is a
+            # comment to the end of the line; its quotes open nothing and its
+            # separators split nothing. Blanked the way `_executable_text`
+            # blanks the same text in the sentinel's segment.
+            end = index
+            while end < length and command[end] not in "\r\n":
+                end += 1
+            current.append(_blank_quotes(command[index:end]))
+            has_content = True
+            last = command[end - 1]
+            index = end
+            continue
+        last = character
         if quote:
             current.append(" ")
             has_content = True
@@ -205,6 +297,7 @@ def _blanked_segments(command: str) -> list[str]:
                 segments.append("".join(current).strip())
             current = []
             has_content = False
+            last = None
             index = match.end()
             continue
         if character not in " \t\r\n":
@@ -396,6 +489,17 @@ def fast_verdict(payload: dict[str, Any], table: dict[str, Any] | None) -> str:
         # are ever blanked.
         if any(marker in command for marker in _SUBSTITUTION_MARKERS):
             return "escalate"
+        # Review H1: a multi-line command escalates in every dialect. A line
+        # break is where comments, here-strings and continuations change
+        # how the rest of the text is read, and one-line reads - the whole
+        # reason this path exists - never carry one.
+        # Likewise any `#`: whether it opens a comment, and what a comment
+        # hides, is the full hook's question to answer.
+        if "\n" in command or "\r" in command or "#" in command:
+            return "escalate"
+        if _may_be_powershell(tool) and (not command.isascii()
+                                         or _PWSH_DIVERGENT.search(command)):
+            return "escalate"
 
         read_heads_raw = table.get("read_heads")
         if not isinstance(read_heads_raw, list):
@@ -456,29 +560,27 @@ def _parse_payload(raw: bytes) -> dict[str, Any]:
 
 
 def ungoverned_project(start: Path) -> bool:
-    """True only for the one shape this can decide with stats alone: a
-    plain git checkout (a `.git` DIRECTORY holding `HEAD`, found walking up
-    from `start`) whose metadata dir has no `godmode-state` under it. That
-    is exactly where `resolve_anchor` would put the archive for such a
-    checkout, so nothing was ever initialized there and there is nothing to
-    gate. A `.git` file (worktree), no `.git` at all, or any doubt escalates
-    - the full hook keeps every other answer. Field walk 2026-09-05: the
-    not-initialized notice cost 380-520 ms per mutating call, more than a
-    governed project pays, because it needed the whole runtime to say so.
+    """True only when no Godmode archive exists anywhere this project's
+    could live - the answer `godmode_initstate.project_state` gives with
+    stats alone, the same answer the full hook reaches after loading the
+    whole runtime. Nothing was ever initialized there and there is nothing
+    to gate. Field walk 2026-09-05: the not-initialized notice cost 380-520
+    ms per mutating call, more than a governed project pays, because it
+    needed the whole runtime to say so. Field report 2026-09-23: that walk
+    covered only a plain git checkout, so a directory that is not a
+    repository (or a linked worktree) still escalated every mutating call
+    into a second interpreter, and under machine load those calls ran past
+    the host's timeout. Any doubt - including a missing sibling module -
+    escalates, and the full hook keeps every other answer.
     """
+    if str(HOOKS_DIR) not in sys.path:
+        sys.path.insert(0, str(HOOKS_DIR))
     try:
-        current = Path(start).resolve()
-        for candidate in (current, *current.parents):
-            git = candidate / ".git"
-            if git.is_file():
-                return False
-            if git.is_dir():
-                if not (git / "HEAD").is_file():
-                    return False
-                return not (git / "godmode-state").exists()
-    except Exception:  # noqa: BLE001 - fail-safe boundary: doubt escalates
+        from godmode_initstate import ABSENT, project_state
+    except ImportError:
         return False
-    return False
+    state, _root = project_state(str(start))
+    return state == ABSENT
 
 
 def brief_pending(start: Path) -> bool:
@@ -523,7 +625,10 @@ def main() -> int:
             Path(cwd) if cwd else Path.cwd()):
         spoken_allow(payload)
         return 0
-    if payload and ungoverned_project(Path(cwd) if cwd else Path.cwd()):
+    # The full hook reads a non-string `cwd` as `str(cwd)`, not as the
+    # process directory, so only a string or absent `cwd` may take this exit.
+    if payload and (cwd or payload.get("cwd") in (None, "")) and ungoverned_project(
+            Path(cwd) if cwd else Path.cwd()):
         # Nothing was initialized for this checkout: no archive, no
         # policy, no pins. Silent allow, the same answer the full hook
         # gives after loading everything. A malformed payload (parsed to
@@ -535,6 +640,15 @@ def main() -> int:
     # invisible to the host on every path except the one it actually skips.
     # `-I -B` again (obligation 9866): interpreter flags do not inherit, and
     # an isolation that ends at the first escalation is none.
+    #
+    # Deferred here, not module scope (fix round 2): `subprocess`'s own
+    # import cost (~5.3ms measured, `python -X importtime`; the overall
+    # gain this bought fast_allow is p95 +20% mean / +23% median over 5
+    # trials, n=21, against 100-400ms of measurement noise) is paid only on
+    # the path that was always going to spawn a whole second interpreter
+    # anyway - never on the silent allow path, this module's entire reason
+    # to exist.
+    import subprocess
     result = subprocess.run(
         [sys.executable, "-I", "-B", str(FULL_HOOK), "pre-action"],
         input=raw,

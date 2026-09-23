@@ -44,11 +44,33 @@ from godmode_runtime.godmode_sentinel import (  # noqa: E402
 )
 from test_godmode_runtime import isolated_project  # noqa: E402
 from test_hook_end_to_end import GIT_ASK_NOW, MUST_DENY  # noqa: E402
+from _host_env import scrubbed_environment  # noqa: E402
 
 FORCE_PUSH = "git push --force origin main"
 ASK_TIER = "rm -rf build"
 
 SPEC = {"objective": "o", "outcome": "u", "acceptance": "a", "non_goals": "n"}
+
+_HOST_ENV = None
+
+
+def setUpModule() -> None:
+    # Fix round 2 (NS-10k, task-14-rereview.md B1): `_decide`/`_session_start`
+    # spawn the hook with no `env=`, so the subprocess inherits this runner's
+    # whole environment - `CI` included. A CI runner sets `CI=true` for every
+    # step, which flips `attended()` to the unattended row and turns this
+    # module's "still asks"/"would have asked" assertions into "deny" -
+    # exactly the failure `test_hook_end_to_end.py` was already scrubbed
+    # against. Every test here now runs from a scrubbed, pinned-attended
+    # environment instead of whatever the runner exported.
+    global _HOST_ENV
+    _HOST_ENV = scrubbed_environment()
+    _HOST_ENV.start()
+
+
+def tearDownModule() -> None:
+    if _HOST_ENV is not None:
+        _HOST_ENV.stop()
 
 
 def _approved_plan(archive, editable: str) -> None:

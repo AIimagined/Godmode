@@ -45,6 +45,146 @@ def _repo(tmp: Path) -> Path:
     return repo
 
 
+_FAILING = "import unittest\n\n\nclass T(unittest.TestCase):\n    def test_it(self):\n        self.fail('red')\n"
+_PASSING = "import unittest\n\n\nclass T(unittest.TestCase):\n    def test_it(self):\n        pass\n"
+
+
+def _sharded_repo(tmp: Path, failing: str) -> Path:
+    """A repo whose `tests/` holds four modules, one of them red."""
+    repo = _repo(tmp)
+    tests = repo / "tests"
+    tests.mkdir()
+    for name in ("a", "b", "c", "d"):
+        body = _FAILING if name == failing else _PASSING
+        (tests / f"test_{name}.py").write_text(body, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "tests")
+    return repo
+
+
+class StallWatchdogTests(unittest.TestCase):
+    """2026-09-23: a shard stalled at zero CPU and the only verdict an hour
+    later was a bare timeout. The watchdog stops a stalled test within its
+    limit and names where it stuck."""
+
+    def _run(self, body: str, stall: float) -> tuple[subprocess.CompletedProcess, float]:
+        import time
+        from godmode_runtime.godmode_preflight import watchdog_command
+        tmp = tempfile.mkdtemp()
+        Path(tmp, "test_probe_mod.py").write_text(body, encoding="utf-8")
+        started = time.monotonic()
+        done = subprocess.run(watchdog_command(["test_probe_mod"], stall_seconds=stall),
+                              cwd=tmp, capture_output=True, text=True, timeout=120)
+        return done, time.monotonic() - started
+
+    def test_a_stalled_test_is_stopped_and_named(self) -> None:
+        from godmode_runtime.godmode_preflight import stall_summary
+        done, took = self._run(
+            "import time, unittest\n"
+            "class T(unittest.TestCase):\n"
+            "    def test_hangs(self):\n"
+            "        time.sleep(60)\n", stall=2)
+        self.assertNotEqual(done.returncode, 0)
+        self.assertLess(took, 30)
+        summary = stall_summary(done.stderr)
+        self.assertIsNotNone(summary, done.stderr[-500:])
+        self.assertIn("test_probe_mod.py", summary)
+
+    def test_healthy_tests_pass_and_report_no_stall(self) -> None:
+        from godmode_runtime.godmode_preflight import stall_summary
+        done, _ = self._run(
+            "import time, unittest\n"
+            "class T(unittest.TestCase):\n"
+            "    def test_a(self):\n"
+            "        time.sleep(1.5)\n"
+            "    def test_b(self):\n"
+            "        time.sleep(1.5)\n", stall=2)
+        self.assertEqual(done.returncode, 0, done.stderr[-500:])
+        self.assertIsNone(stall_summary(done.stderr))
+
+
+class ShardIndexTests(unittest.TestCase):
+    """One shard is a leg of a fan-out, and says so.
+
+    A CI matrix runs the shards in parallel, so each process runs one index
+    and must run exactly the modules that index owns - the same modules
+    wherever it runs, or the shards do not add up to the suite. An index
+    outside the range is a broken matrix, not something to clamp, and a
+    single leg must never attest the green the staging gate reads.
+    """
+
+    def test_the_deal_is_deterministic_and_covers_every_module(self) -> None:
+        from godmode_runtime.godmode_preflight import shard_modules
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _sharded_repo(Path(tmp), failing="c")
+            deal = shard_modules(repo / "tests", 4)
+            self.assertEqual(deal, shard_modules(repo / "tests", 4))
+            flat = [name for shard in deal for name in shard]
+            self.assertEqual(sorted(flat), sorted(set(flat)), "a module is in two shards")
+            self.assertEqual(
+                sorted(flat),
+                ["tests.test_a", "tests.test_b", "tests.test_c", "tests.test_d"],
+            )
+
+    def test_an_out_of_range_shard_index_is_refused_by_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _sharded_repo(Path(tmp), failing="c")
+            for index in (4, -1):
+                with self.subTest(index=index):
+                    with self.assertRaises(ArchiveError) as caught:
+                        push_preflight(repo, suite=["python", "-m", "unittest", "discover"],
+                                       suite_shards=4, shard_index=index)
+                    message = str(caught.exception)
+                    self.assertIn(str(index), message)
+                    self.assertIn("0 to 3", message)
+
+    def test_a_shard_runs_only_the_modules_that_index_owns(self) -> None:
+        from godmode_runtime.godmode_preflight import shard_modules
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _sharded_repo(Path(tmp), failing="c")
+            deal = shard_modules(repo / "tests", 4)
+            red = next(i for i, names in enumerate(deal) if "tests.test_c" in names)
+            green = next(i for i in range(4) if i != red)
+
+            report = push_preflight(repo, suite=["python -m unittest discover"],
+                                    suite_shards=4, shard_index=red)
+            suite = [f for f in report["judgment"] if f["check"] == "suite"]
+            self.assertEqual(len(suite), 1, report["judgment"])
+            self.assertIn(f"shard {red}", suite[0]["detail"])
+            self.assertEqual(report["shards_ran"], [red])
+
+            report = push_preflight(repo, suite=["python -m unittest discover"],
+                                    suite_shards=4, shard_index=green)
+            self.assertEqual([f for f in report["judgment"] if f["check"] == "suite"], [])
+            self.assertEqual(report["shards_ran"], [green])
+
+    def test_one_green_shard_does_not_attest_the_suite_as_run(self) -> None:
+        # `authorize stage` reads `status == "ran"` and nothing else. A
+        # quarter of the suite must not be enough to stage a push.
+        from unittest import mock
+
+        from godmode_runtime.godmode_anchor import resolve_anchor
+        from godmode_runtime.godmode_chronicle import Chronicle
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _sharded_repo(Path(tmp), failing="c")
+            state = Path(tmp) / "state"
+            with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(state)}, clear=False):
+                archive = Chronicle(resolve_anchor(repo))
+                archive.initialize()
+                push_preflight(repo, suite=["python -m unittest discover"],
+                               archive=archive, suite_shards=4, shard_index=0)
+                attested = [r for r in archive.select(kind="attestation", limit=100)
+                            if str(r.get("subject", "")) == "preflight"]
+                self.assertTrue(attested, "no preflight attestation recorded")
+                data = attested[-1].get("data") or {}
+                self.assertEqual(data.get("status"), "incomplete")
+                self.assertEqual(data.get("shards"), 4)
+                self.assertEqual(data.get("shards_ran"), [0])
+
+
 class PreflightTests(unittest.TestCase):
     def test_a_dirty_tree_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -52,6 +192,17 @@ class PreflightTests(unittest.TestCase):
             (repo / "code.py").write_text("x = 2\n", encoding="utf-8")
             with self.assertRaises(ArchiveError):
                 push_preflight(repo)
+
+    def test_an_untracked_only_tree_is_not_refused_and_says_so(self) -> None:
+        # The disposable worktree is built from HEAD, which an untracked file
+        # is not part of, so refusing it protected nothing and blocked every
+        # run behind stray scratch output. The report still names the gap.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp))
+            (repo / "scratch.tmp.json").write_text("{}\n", encoding="utf-8")
+            report = push_preflight(repo)
+            self.assertTrue(any("untracked files are not in the snapshot" in s
+                                for s in report["skipped"]), report["skipped"])
 
     def test_missing_term_list_reports_itself_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -279,3 +430,47 @@ class OpenAsksGateTests(unittest.TestCase):
             report = push_preflight(proj, archive=archive)
             checks = [j.get("check") for j in report["judgment"]]
             self.assertNotIn("open-operator-asks", checks)
+
+
+class AdvisorySeverityGateTests(OpenAsksGateTests):
+    """An advisory-severity judgment finding rides a clean verdict; a
+    blocking or severity-less one turns it - the skip at the bottom of
+    `push_preflight` has never had a direct test of its own."""
+
+    def test_an_advisory_finding_leaves_the_verdict_clean_but_still_appears(self) -> None:
+        import sys as _sys
+        from unittest import mock
+
+        from godmode_runtime.godmode_preflight import push_preflight
+
+        finding = {"check": "host-reach", "severity": "advisory",
+                  "detail": "advisory: still reachable by replication test"}
+        with self._project() as (proj, archive):
+            archive.append("assumption", "the bed assumes nothing moves",
+                           {"detail": "test fixture"})
+            archive.append("criterion", "preflight-suite",
+                           {"command": f'"{_sys.executable}" -c "pass"'})
+            with mock.patch("godmode_runtime.godmode_reach.reach_finding", return_value=finding):
+                report = push_preflight(proj, archive=archive)
+            self.assertEqual(report["verdict"], "clean")
+            self.assertIn(finding, report["judgment"])
+
+    def test_a_blocking_or_severity_less_finding_turns_the_verdict(self) -> None:
+        from unittest import mock
+
+        from godmode_runtime.godmode_preflight import push_preflight
+
+        blocking = {"check": "host-reach", "severity": "blocking",
+                   "detail": "blocking: no replication test, no reference"}
+        with self._project() as (proj, archive):
+            with mock.patch("godmode_runtime.godmode_reach.reach_finding", return_value=blocking):
+                report = push_preflight(proj, archive=archive)
+            self.assertEqual(report["verdict"], "findings")
+            self.assertIn(blocking, report["judgment"])
+
+        severity_less = {"check": "host-reach", "detail": "no severity declared at all"}
+        with self._project() as (proj, archive):
+            with mock.patch("godmode_runtime.godmode_reach.reach_finding", return_value=severity_less):
+                report = push_preflight(proj, archive=archive)
+            self.assertEqual(report["verdict"], "findings")
+            self.assertIn(severity_less, report["judgment"])

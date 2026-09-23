@@ -1,0 +1,1 @@
+- The no-terminal password message and the irreversible-command refusal name the launcher by its real path instead of a placeholder or a bare `godmode` command.

@@ -1,22 +1,16 @@
 {
   "rules": {
-    "R-03a3e6bad4": {
-      "enforcement": "ADVISORY",
-      "text_hash": "91c0b12bea7bee89",
-      "trigger": "always",
-      "verify": "none"
-    },
-    "R-07e934ea14": {
-      "enforcement": "ADVISORY",
-      "text_hash": "81481306100d436f",
-      "trigger": "before_completion",
-      "verify": "second_probe_cited"
-    },
     "R-0fffec89a5": {
       "enforcement": "ADVISORY",
       "text_hash": "8731fb0a9dfde33e",
       "trigger": "always",
       "verify": "none"
+    },
+    "R-1b73eb11ad": {
+      "enforcement": "ADVISORY",
+      "text_hash": "c51492baf0bc64c2",
+      "trigger": "before_completion",
+      "verify": "second_probe_cited"
     },
     "R-2259c5b00c": {
       "enforcement": "HARD",
@@ -30,17 +24,53 @@
       "trigger": "before_mutation",
       "verify": "attestation_present"
     },
+    "R-34e9f9d1f9": {
+      "enforcement": "ADVISORY",
+      "text_hash": "f3a6890f2aaac56c",
+      "trigger": "always",
+      "verify": "none"
+    },
+    "R-473cf257ca": {
+      "enforcement": "ADVISORY",
+      "text_hash": "bb74edf3417db8d3",
+      "trigger": "always",
+      "verify": "none"
+    },
+    "R-4a822893ce": {
+      "enforcement": "ADVISORY",
+      "text_hash": "3e2cdc0324c558ad",
+      "trigger": "always",
+      "verify": "none"
+    },
+    "R-4bc7e312ad": {
+      "enforcement": "ADVISORY",
+      "text_hash": "ab33182039ebbf36",
+      "trigger": "always",
+      "verify": "none"
+    },
     "R-56305a9e8f": {
       "enforcement": "HARD",
       "text_hash": "9e9404b494b372e4",
       "trigger": "before_mutation",
       "verify": "attestation_present"
     },
+    "R-5690009708": {
+      "enforcement": "ADVISORY",
+      "text_hash": "14480234ae526672",
+      "trigger": "always",
+      "verify": "none"
+    },
     "R-5dec6166e2": {
       "enforcement": "HARD",
       "text_hash": "b0221d43a6d5fbb6",
       "trigger": "before_mutation",
       "verify": "attestation_present"
+    },
+    "R-6235dcb408": {
+      "enforcement": "HARD",
+      "text_hash": "894ad811872545ec",
+      "trigger": "before_completion",
+      "verify": "pair_complete"
     },
     "R-83998b8fa7": {
       "enforcement": "ADVISORY",
@@ -65,6 +95,18 @@
       "text_hash": "f7cdc01bac08f49d",
       "trigger": "always",
       "verify": "none"
+    },
+    "R-9fef30a983": {
+      "enforcement": "HARD",
+      "text_hash": "a29097836fbff6fd",
+      "trigger": "before_mutation",
+      "verify": "attestation_present"
+    },
+    "R-a280f5ace9": {
+      "enforcement": "HARD",
+      "text_hash": "0bd65d5de0e0ed78",
+      "trigger": "before_mutation",
+      "verify": "attestation_present"
     },
     "R-b9dbf85864": {
       "enforcement": "HARD",
@@ -96,6 +138,12 @@
       "trigger": "before_mutation",
       "verify": "attestation_present"
     },
+    "R-dcefe353b6": {
+      "enforcement": "ADVISORY",
+      "text_hash": "fb7339dda0fa633c",
+      "trigger": "always",
+      "verify": "none"
+    },
     "R-e19dfe0488": {
       "enforcement": "HARD",
       "text_hash": "9da1de908466b152",
@@ -106,10 +154,10 @@
   "schema": "godmode-charter-snapshot-v1",
   "summary": {
     "enforcement": {
-      "ADVISORY": 10,
-      "HARD": 7,
+      "ADVISORY": 15,
+      "HARD": 10,
       "SOFT": 0
     },
-    "rules": 17
+    "rules": 25
   }
 }

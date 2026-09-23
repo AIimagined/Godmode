@@ -11,39 +11,39 @@
       ],
       [
         "GODMODE-CODE-OF-LAW.md",
-        81
+        68
       ],
       [
         "GODMODE-CODE-OF-LAW.md",
-        61
+        63
       ],
       [
         "GODMODE-CODE-OF-LAW.md",
-        16
+        108
       ],
       [
         "GODMODE-CODE-OF-LAW.md",
-        71
+        43
       ],
       [
         "GODMODE-CODE-OF-LAW.md",
-        106
-      ],
-      [
-        "OPERATOR.md",
-        1
+        93
       ],
       [
         "GODMODE-CODE-OF-LAW.md",
-        101
+        18
       ],
       [
         "GODMODE-CODE-OF-LAW.md",
-        91
+        78
       ],
       [
-        "GODMODE.md",
-        1
+        "GODMODE-CODE-OF-LAW.md",
+        58
+      ],
+      [
+        "GODMODE-CODE-OF-LAW.md",
+        13
       ]
     ],
     "investigate a regression in context continuity after a branch switch": [
@@ -53,7 +53,7 @@
       ],
       [
         "GODMODE-CODE-OF-LAW.md",
-        16
+        113
       ],
       [
         "GODMODE.md",
@@ -64,8 +64,8 @@
         23
       ],
       [
-        "GODMODE-CODE-OF-LAW.md",
-        81
+        "docs/FIXED-REGISTRY.md",
+        1
       ],
       [
         "GODMODE.md",
@@ -73,15 +73,15 @@
       ],
       [
         "GODMODE-CODE-OF-LAW.md",
-        56
+        78
       ],
       [
-        "docs/FIXED-REGISTRY.md",
-        1
+        "GODMODE-CODE-OF-LAW.md",
+        88
       ],
       [
-        "GODMODE.md",
-        42
+        "GODMODE-CODE-OF-LAW.md",
+        63
       ]
     ],
     "prepare a release: changelog, version surfaces, and docs": [
@@ -90,8 +90,12 @@
         1
       ],
       [
-        "OPERATOR.md",
-        1
+        "GODMODE-CODE-OF-LAW.md",
+        23
+      ],
+      [
+        "GODMODE-CODE-OF-LAW.md",
+        63
       ],
       [
         "GODMODE.md",
@@ -99,15 +103,11 @@
       ],
       [
         "GODMODE-CODE-OF-LAW.md",
-        116
+        78
       ],
       [
         "GODMODE.md",
         1
-      ],
-      [
-        "GODMODE.md",
-        23
       ]
     ]
   }

@@ -67,15 +67,16 @@ by that same rule with no separate code path, the same way `refuted` and
 
 from __future__ import annotations
 
-import os
 import re
-import shlex
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from .godmode_chronicle import Chronicle
+from .godmode_constants import checker_commands_match as _commands_match
+from .godmode_constants import split_checker_command as _split_command
 from .godmode_errors import ArchiveError
+from .godmode_fingerprint import require_seq_cite
 from .godmode_sentinel import find_secret_shapes
 
 DISPOSITIONS = ("confirmed", "refuted", "witness-malformed", "contested")
@@ -93,33 +94,6 @@ _SUBJECT_CAP = 120
 # patterns agree.
 TOOL_ERROR_ACK = re.compile(r"^acknowledged-remediated$|^acknowledged-deferred: .+$")
 _TOOL_ERROR_EXCERPT_CAP = 160
-
-
-def _split_command(command: str) -> list[str]:
-    """Tokenize a checker command, safe for a bare or quoted Windows path.
-
-    Posix-mode shlex (the plain-`shlex.split(command)` default) treats
-    backslash as an escape character, which mangles a bare Windows path
-    (`C:\\Users\\...\\python.exe`) before the OS ever sees it. Non-posix mode
-    leaves backslashes alone, at the cost of leaving surrounding quote
-    characters attached to the token instead of consuming them - so a path
-    quoted to protect embedded spaces (`"C:\\Program Files\\...\\python.exe"`)
-    comes back as a single token that still carries its own quote marks and
-    fails to resolve as a file. Stripping one matching pair of outer quotes
-    off each token (the same thing posix mode would have consumed) covers
-    that case without reintroducing the backslash-eating problem posix mode
-    has on this platform. May raise ValueError on unbalanced quoting -
-    callers treat that as "could not parse", not a crash.
-    """
-    if os.name != "nt":
-        return shlex.split(command)
-    return [_strip_outer_quotes(token) for token in shlex.split(command, posix=False)]
-
-
-def _strip_outer_quotes(token: str) -> str:
-    if len(token) >= 2 and token[0] == token[-1] and token[0] in ("'", '"'):
-        return token[1:-1]
-    return token
 
 
 def _witness_readable(project: Path, archive: Chronicle, kind: str, value: str) -> bool:
@@ -293,6 +267,10 @@ def _append_verdict(
     acquitted_by: str,
     tool_error_findings: list[dict[str, str]] | None = None,
     tool_error_ack: str = "",
+    checked: list[str] | None = None,
+    not_checked: list[str] | None = None,
+    criteria: dict[str, str] | None = None,
+    witness_version: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     single = len(checks) == 1
     evidence: list[str] = []
@@ -311,6 +289,12 @@ def _append_verdict(
         "claim": claim,
         "claimed_value": claimed_value,
         "witness": {"kind": witness_kind, "ref": witness_value},
+        # NS-8b: a `file:` witness's own content hash at record time (the
+        # same shape `godmode_attest.evidence_versions` gives a claim's
+        # citation), stored even when unset (no witness, or a non-file
+        # witness) - `godmode_attest.stale_claims` compares it against the
+        # file as it is now and reports `witness-changed`.
+        "witness_version": witness_version or {},
         "checker": f"cmd:{checks[0]['checker']}" if single and checks[0].get("checker") else None,
         "checks": checks,
         "disposition": disposition,
@@ -325,6 +309,14 @@ def _append_verdict(
         # needing archive access itself - see that module's docstring.
         "tool_error_findings": tool_error_findings or [],
         "tool_error_ack": tool_error_ack or None,
+        # N-11: what the panel checked vs. what it did not, and named
+        # per-criterion evidence - stored even when empty, same reasoning
+        # as `tool_error_findings` above (a reader never has to guess
+        # whether an absent key means "nothing declared" or "not yet this
+        # schema version").
+        "checked": list(checked) if checked else [],
+        "not_checked": list(not_checked) if not_checked else [],
+        "criteria": dict(criteria) if criteria else {},
     }
     subject = (claim or "verdict")[:_SUBJECT_CAP]
     # The forbidden combinations are checked inside archive.append() itself
@@ -343,6 +335,9 @@ def record_verdict(
     witness_ref: str,
     checker_cmd: str | list[str],
     *,
+    checked: Sequence[str] = (),
+    not_checked: Sequence[str] = (),
+    criteria: dict[str, str] | None = None,
     run_state: str = "terminated",
     acquitted_by: str = "independent",
     timeout: int = 300,
@@ -377,6 +372,15 @@ def record_verdict(
     error severity cannot ship as a silent `confirmed`. `contested`/
     `refuted`/`witness-malformed` folds are never gated by this - only a
     `confirmed` claims the checker's output was clean enough to trust.
+
+    N-11: `checked`/`not_checked` name what the panel actually looked at and
+    what it did not, and `criteria` is a name-to-evidence map of what
+    "passing" meant. A `confirmed` fold is refused outright while
+    `not_checked` is non-empty or any `criteria` value is blank - a PASS may
+    not admit a gap it already knows about. All three are stored even when
+    empty/unset (same reasoning as `tool_error_findings` above) and the same
+    three rules are mirrored in `godmode_invariants._verdict_invariants` for
+    a raw `archive.append()` that bypasses this function entirely.
     """
     if run_state not in RUN_STATES:
         raise ArchiveError(
@@ -410,16 +414,45 @@ def record_verdict(
     else:
         witness_kind, witness_value = "unknown", witness_ref
 
+    # NS-8b: a `seq:` witness naming a record sequence nothing was ever
+    # appended at is a referential-integrity mistake in the citation
+    # itself, not a gradeable "could not judge" - refused outright, before
+    # `_witness_readable`'s softer existence check ever runs.
+    if witness_kind == "seq":
+        require_seq_cite(archive, f"seq:{witness_value}")
+
+    # N-11: a checker cannot also be its own witness - that is not "judged
+    # and found true", it is a command grading itself, which is exactly
+    # what the witness/checker split exists to prevent. Checked
+    # unconditionally, before any checker ever runs (not gated on the
+    # eventual fold): an unreadable witness of kind other than `file`/`seq`
+    # (e.g. a bare `cmd:` witness) still folds to `witness-malformed`, never
+    # `confirmed`, so gating this on "folded == confirmed" would silently
+    # let the self-referential case through unrefused.
+    for _cmd in checkers:
+        if _commands_match(_cmd, witness_value):
+            raise ArchiveError(
+                f"the witness cannot be the same command as a checker: {_cmd!r} "
+                "- a checker must recompute from data, not judge itself"
+            )
+
     # Local import: avoids a module-level cycle risk (`godmode_attest`
     # currently has no reason to import `godmode_verdict`, but a
     # module-level import here would be the first thread tying the two
     # together for good; a function-scoped import costs nothing extra since
     # `record_verdict` is not a hot loop).
-    from .godmode_attest import declared_error_patterns
+    from .godmode_attest import declared_error_patterns, evidence_versions
 
     declared = declared_error_patterns(archive)
 
     witness_ok = _witness_readable(project, archive, witness_kind, witness_value)
+    # NS-8b: a `file:` witness hashed the same way a claim's `file:`
+    # citation is (`evidence_versions`), stored so `stale_claims` can tell
+    # when the witness itself moved since the verdict was recorded.
+    witness_version: dict[str, str] = {}
+    if witness_kind == "file":
+        witness_citation = f"file:{witness_value}"
+        witness_version = evidence_versions(project, [witness_citation]).get(witness_citation) or {}
     checks: list[dict[str, Any]] = []
     tool_error_findings: list[dict[str, str]] = []
     for cmd in checkers:
@@ -438,6 +471,26 @@ def record_verdict(
         tool_error_findings.extend(_tool_error_findings(declared, cmd, output))
 
     folded = _fold_panel(checks)
+    # N-11: a PASS names what it did not check, and every criterion it
+    # names needs its own evidence - both checked only for the disposition
+    # that actually ships as trusted (`confirmed`); `contested`/`refuted`/
+    # `witness-malformed` already say plainly that nothing was cleanly
+    # confirmed, so gating this here (not unconditionally, unlike the
+    # witness/checker check above) costs nothing on those paths.
+    if folded == "confirmed":
+        if not_checked:
+            raise ArchiveError(
+                "a PASS may not carry not_checked items: "
+                + ", ".join(str(item) for item in not_checked)
+            )
+        if criteria:
+            missing = [name for name, evidence in criteria.items()
+                       if not str(evidence).strip()]
+            if missing:
+                raise ArchiveError(
+                    "a PASS criterion needs non-empty evidence: "
+                    + ", ".join(missing)
+                )
     if folded == "confirmed" and tool_error_findings and not tool_error_ack:
         tools = ", ".join(sorted({f["tool"] for f in tool_error_findings}))
         raise ArchiveError(
@@ -450,6 +503,8 @@ def record_verdict(
         archive, claim, claimed_value, witness_kind, witness_value, checks,
         folded, run_state, acquitted_by,
         tool_error_findings=tool_error_findings, tool_error_ack=tool_error_ack,
+        checked=list(checked), not_checked=list(not_checked), criteria=criteria,
+        witness_version=witness_version,
     )
 
 

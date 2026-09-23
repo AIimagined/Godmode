@@ -1,0 +1,1 @@
+- An incident carries its reproduction command and its red run; a fix claim verifies only against the same command green.

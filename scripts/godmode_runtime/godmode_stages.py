@@ -17,10 +17,12 @@ premature, because an RCA without those three is a guess wearing a conclusion.
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any, Callable
 
 from .godmode_attest import record_step
 from .godmode_chronicle import Chronicle
+from .godmode_constants import EDIT_RECORD_SUBJECT
 from .godmode_errors import ArchiveError
 from .godmode_plan import APPROVED, active_plan
 from .godmode_reconcile import reconcile_docs
@@ -317,3 +319,233 @@ def sop_status(archive: Chronicle, session: str) -> dict[str, Any]:
         "verdict": ("sop-complete" if not missing
                     else "premature-rca" if premature else "in-progress"),
     }
+
+
+# ---------------------------------------------------------------------------
+# NS-13c + I-8: named SOPs. PDCA, OODA and the research read order are loops
+# over verbs that already exist; naming them makes a phase attestable and
+# its cycle time measurable, so a stalled phase is a fact on record rather
+# than a feeling about the session.
+
+PDCA_STEPS: tuple[dict[str, Any], ...] = (
+    {"id": "plan", "text": "Specify the change and get the plan approved before editing.",
+     "verbs": ["planmode specify", "planmode approve"]},
+    {"id": "do", "text": "Make the edits the approved plan names, through the gates.",
+     "verbs": ["fence", "scope", "guard"]},
+    {"id": "check", "text": "Re-run the checks the change touches and grade the claim on the run.",
+     "verbs": ["verify", "retest", "claim --verify"]},
+    {"id": "act", "text": "Keep what held as a lesson, a ratchet or a law, so the next cycle starts higher.",
+     "verbs": ["lessons", "ratchet", "law"]},
+)
+
+OODA_STEPS: tuple[dict[str, Any], ...] = (
+    {"id": "observe", "text": "Read the brief and the context status before deciding anything.",
+     "verbs": ["brief", "context status"]},
+    {"id": "orient", "text": "Select the analysis method from the shape of the evidence.",
+     "verbs": ["method"]},
+    {"id": "decide", "text": "Preview the action the decision implies.",
+     "verbs": ["guard"]},
+    {"id": "act", "text": "Take the action through the gate that previewed it.",
+     "verbs": ["gate", "authorize"]},
+)
+
+RESEARCH_STEPS: tuple[dict[str, Any], ...] = (
+    {"id": "license", "text": "Read the source's license before anything else.",
+     "verbs": ["read --source <name> --path LICENSE"]},
+    {"id": "tree", "text": "Read the source tree to find where the claimed mechanism lives.",
+     "verbs": ["read --source <name> --path <dir>"]},
+    {"id": "files", "text": "Open the two or three files that implement the mechanism, by line range.",
+     "verbs": ["read --source <name> --path <file> --lines a-b"]},
+    {"id": "cite", "text": "Cite what was read as path#lines, never a README or a release note.",
+     "verbs": ["parity --sources", "claim --cite"]},
+    {"id": "verdicts", "text": "Record both verdicts: can it be reused, and do we already have it.",
+     "verbs": ["remember --kind decision --subject absorb:<name>"]},
+)
+
+SOPS: dict[str, tuple[dict[str, Any], ...]] = {
+    "troubleshoot": SOP_STEPS,
+    "pdca": PDCA_STEPS,
+    "ooda": OODA_STEPS,
+    "research": RESEARCH_STEPS,
+}
+
+# The minimum implementing files per research verdict grade (I-8): a verdict
+# that funds code (adopt, extend) rests on at least two files read by line
+# range; a park, skip or diverge may rest on less.
+RESEARCH_MIN_FILES: dict[str, int] = {"adopt": 2, "extend": 2}
+
+_LINE_RANGED = re.compile(r"#L?\d+(?:-L?\d+)?$")
+_FUNDING_VERDICT = re.compile(r"(?i)\b(adopt|extend)\b")
+
+
+def _sop_steps(name: str) -> tuple[dict[str, Any], ...]:
+    if name not in SOPS:
+        raise ArchiveError(f"Unknown SOP '{name}'; expected one of {', '.join(SOPS)}")
+    return SOPS[name]
+
+
+def ensure_sop_record(archive: Chronicle, name: str) -> dict[str, Any]:
+    """The standing-procedure record for `name`, written once at first use."""
+    steps = _sop_steps(name)
+    subject = f"sop:{name}"
+    for record in archive.read_events():
+        if record["kind"] == "decision" and record["subject"] == subject:
+            return {"sequence": record["sequence"], "written": False}
+    record = archive.append(
+        "decision", subject,
+        {"status": "active", "procedure": name,
+         "steps": [{"id": s["id"], "text": s["text"], "verbs": list(s.get("verbs") or [])}
+                   for s in steps]},
+        evidence=[],
+    )
+    return {"sequence": record["sequence"], "written": True}
+
+
+def _named_attestations(archive: Chronicle, session: str, name: str) -> dict[str, dict[str, Any]]:
+    prefix = f"sop:{name}:"
+    found: dict[str, dict[str, Any]] = {}
+    for record in archive.select(kind="attestation", limit=1000):
+        data = record["data"]
+        if data.get("session") != session or not record["subject"].startswith(prefix):
+            continue
+        if data.get("status") in ("ran", "empty"):
+            found[record["subject"][len(prefix):]] = record
+    return found
+
+
+def named_sop_attest(
+    archive: Chronicle,
+    session: str,
+    name: str,
+    step: str,
+    status: str = "ran",
+    result: str = "",
+    evidence: list[str] | None = None,
+    reason: str = "",
+) -> dict[str, Any]:
+    """Attest one step of a named SOP; `troubleshoot` keeps its T-ids."""
+    if name == "troubleshoot":
+        return sop_attest(archive, session, step, status, result, evidence, reason)
+    ids = [s["id"] for s in _sop_steps(name)]
+    if step not in ids:
+        raise ArchiveError(f"Unknown {name} step '{step}'; expected one of {', '.join(ids)}")
+    if name == "research" and step == "verdicts":
+        grade = _FUNDING_VERDICT.search(result or "")
+        if grade:
+            verdict = grade.group(1).lower()
+            needed = RESEARCH_MIN_FILES[verdict]
+            # Every `files` attestation this session counts, not only the
+            # latest: two reads cited one at a time are still two files.
+            ranged = sorted({
+                str(c)
+                for record in archive.select(kind="attestation", limit=1000)
+                if record["subject"] == "sop:research:files"
+                and record["data"].get("session") == session
+                and record["data"].get("status") in ("ran", "empty")
+                for c in record.get("evidence") or []
+                if _LINE_RANGED.search(str(c))})
+            if len(ranged) < needed:
+                raise ArchiveError(
+                    f"a research verdict of {verdict} needs at least {needed} implementing "
+                    f"files read by line range (path#lines) on the 'files' step; this session "
+                    f"attested {len(ranged)} - attest them with `sop --name research --attest "
+                    f"files --evidence file:<path>#L<a>-L<b>` first, or record a park, skip "
+                    f"or diverge verdict instead")
+    return record_step(archive, session, f"sop:{name}:{step}", status,
+                       result=result, evidence=evidence, reason=reason)
+
+
+def named_sop_status(archive: Chronicle, session: str, name: str) -> dict[str, Any]:
+    """Done, missing and next for a named SOP, in the SOP's own order."""
+    if name == "troubleshoot":
+        return {"sop": name, **sop_status(archive, session)}
+    steps = _sop_steps(name)
+    attested = _named_attestations(archive, session, name)
+    missing = [s["id"] for s in steps if s["id"] not in attested]
+    next_step = next((s for s in steps if s["id"] not in attested), None)
+    return {
+        "sop": name,
+        "session": session,
+        "attested": [{"id": s["id"], "sequence": attested[s["id"]]["sequence"]}
+                     for s in steps if s["id"] in attested],
+        "missing": missing,
+        "next": next_step["id"] if next_step else None,
+        "next_text": next_step["text"] if next_step else None,
+        "next_verbs": list(next_step.get("verbs") or []) if next_step else [],
+        "verdict": "sop-complete" if not missing else "in-progress",
+    }
+
+
+_PDCA_PHASES = tuple(step["id"] for step in PDCA_STEPS)
+
+
+def pdca_cycle(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Cycle time per PDCA phase: the count of records between one phase's
+    attestation and the next phase's - derived from sequences, never a clock.
+
+    Reads the latest cycle, which the newest `plan` attestation opens. A Do
+    followed by changes, with no Check attested and no check run since, is
+    reported `stalled: "check"` - fixes without retests.
+    """
+    attests = sorted(
+        (int(r["sequence"]), str(r["subject"]).split(":", 2)[2])
+        for r in records
+        if r.get("kind") == "attestation" and str(r.get("subject", "")).startswith("sop:pdca:")
+        and (r.get("data") or {}).get("status") in ("ran", "empty")
+    )
+    if not attests:
+        return {"phases": [], "stalled": None, "basis": "no PDCA phase attested"}
+    plans = [seq for seq, phase in attests if phase == "plan"]
+    start = plans[-1] if plans else attests[0][0]
+    phase_seq: dict[str, int] = {}
+    for seq, phase in attests:
+        if seq >= start and phase in _PDCA_PHASES and phase not in phase_seq:
+            phase_seq[phase] = seq
+    sequences = sorted(int(r.get("sequence", 0) or 0) for r in records)
+    tail = sequences[-1] if sequences else start
+
+    def between(low: int, high: int) -> int:
+        return sum(1 for seq in sequences if low < seq < high)
+
+    rows: list[dict[str, Any]] = []
+    for phase in _PDCA_PHASES:
+        if phase not in phase_seq:
+            rows.append({"phase": phase, "state": "not-started", "records": None})
+            continue
+        later = [seq for seq in phase_seq.values() if seq > phase_seq[phase]]
+        if later:
+            rows.append({"phase": phase, "state": "done", "sequence": phase_seq[phase],
+                         "records": between(phase_seq[phase], min(later))})
+        else:
+            rows.append({"phase": phase, "state": "open", "sequence": phase_seq[phase],
+                         "records": between(phase_seq[phase], tail + 1)})
+    stalled = None
+    if "do" in phase_seq and "check" not in phase_seq:
+        after = [r for r in records if int(r.get("sequence", 0) or 0) > phase_seq["do"]]
+        changes = sum(1 for r in after if r.get("kind") == "change"
+                      or (r.get("kind") == "action" and r.get("subject") == EDIT_RECORD_SUBJECT))
+        retests = sum(1 for r in after if r.get("kind") == "attestation"
+                      and str(r.get("subject", "")).startswith("check:")
+                      and (r.get("data") or {}).get("status") == "ran")
+        if changes and not retests:
+            stalled = "check"
+    return {"phases": rows, "stalled": stalled, "start": start,
+            "basis": f"PDCA attestations from seq:{start}"}
+
+
+def render_pdca(cycle: dict[str, Any]) -> str:
+    """One line: records per phase, open phases named, a stall said plainly."""
+    if not cycle.get("phases"):
+        return "pdca: no phase attested"
+    parts = []
+    for row in cycle["phases"]:
+        if row["state"] == "not-started":
+            parts.append(f"{row['phase']}=-")
+        elif row["state"] == "open":
+            parts.append(f"{row['phase']}=open({row['records']})")
+        else:
+            parts.append(f"{row['phase']}={row['records']}")
+    line = "pdca (records per phase): " + " ".join(parts)
+    if cycle.get("stalled"):
+        line += f" - stalled at {cycle['stalled']}: changes landed with no retest since"
+    return line

@@ -1,8 +1,10 @@
 {
   "routes": {
     "near_negative": {
-      "Answer a self-contained conceptual question with no repository state.": "godmode-repair",
-      "Create a standalone image that does not involve a coding project.": "godmode-skill-forge"
+      "Answer a self-contained conceptual question with no repository state.": "godmode-codegraph",
+      "Correct a one-line typo in a single file; no other decision is involved.": "godmode-changelog",
+      "Create a standalone image that does not involve a coding project.": "godmode-skill-forge",
+      "Fix a typo in a single file with no coordination or approval decision involved.": "godmode-changelog"
     },
     "positive": {
       "Resume a substantive repository task and reconstruct current reality before editing.": "godmode",
@@ -12,8 +14,8 @@
   "schema": "godmode-routing-snapshot-v1",
   "skill": "godmode",
   "summary": {
-    "near_negatives_rejected": 2,
-    "near_negatives_total": 2,
+    "near_negatives_rejected": 4,
+    "near_negatives_total": 4,
     "positives_routed_correctly": 2,
     "positives_total": 2
   }

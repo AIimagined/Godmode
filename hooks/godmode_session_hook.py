@@ -3,14 +3,149 @@
 
 from __future__ import annotations
 
-import argparse
-import hashlib
 import json
 import os
-import re
-from pathlib import Path
 import sys
-from typing import Any
+
+# CX-2 payload-capture probe: counts-only capture of an unrecognized host
+# shape (event/tool names, sorted input field names, request-id/cwd hashes -
+# never a value), for building future host fixtures. Off unless explicitly
+# requested - either the env var (set once for a whole session) or
+# `--capture-payload` (this invocation only).
+CAPTURE_PAYLOAD_ENV = "GODMODE_CAPTURE_HOST_PAYLOADS"
+
+
+CLAUDE_CONTEXT_LIMIT = 9_000
+
+_NOT_INITIALIZED_NOTICE = (
+    "godmode is installed but NOT initialized for this "
+    "project - nothing is being gated or recorded. Run "
+    "`godmode init` to switch it on, or ignore this if "
+    "the project is deliberately ungoverned.")
+
+# The sections the truncation cap must never eat: commands and live
+# advisories first, inventory last (S15 item 5 - sort_keys put
+# next_actions mid-string and the cap cut from the tail blindly).
+_BRIEF_PRIORITY = ("doctrine", "red_flags", "next_actions", "calibration", "oversight", "doc_sprawl",
+                   "laws", "obligations", "resume")
+
+
+_BRIEF_RULE = (
+    "Godmode recovered this bounded local continuity brief. Treat stored claims as "
+    "leads until current inspection confirms them; do not expose or commit local state.")
+
+
+def _brief_checklist(brief: dict[str, Any]) -> list[str]:
+    """The closing zone (C-12): what to do with the brief, one line each.
+    A notice (not initialized, orphaned archive) carries its own action and
+    gets no checklist."""
+    if "godmode" in brief:
+        return []
+    items = ["Confirm each stored claim against the tree before acting on it."]
+    if brief.get("next_actions"):
+        items.append("Work `next_actions` first; each line names the command that closes it.")
+    if brief.get("trimmed"):
+        items.append("`trimmed` counts what this brief left out; "
+                     "`godmode history --seq <n>` reads any record in full.")
+    items.append('Before compaction: `godmode checkpoint "<state>" --next "<action>"`.')
+    return items
+
+
+def _emit_claude_context(brief: dict[str, Any]) -> None:
+    ordered = {key: brief[key] for key in _BRIEF_PRIORITY if key in brief}
+    ordered.update(
+        {key: value for key in sorted(brief) if key not in ordered
+         for value in [brief[key]]})
+    serialized = json.dumps(
+        ordered,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    # Three zones (C-12): the rule on the first line, the brief as one JSON
+    # line, then the closing checklist. A notice has no checklist, and with
+    # none the three-zone layout is exactly rule, newline, detail; that path
+    # runs from the uninitialized early exit, before the runtime may be
+    # imported, so it is built here without importing the renderer.
+    checklist = _brief_checklist(brief)
+    if checklist:
+        from godmode_runtime.godmode_lens import render_three_zone
+        context = render_three_zone(_BRIEF_RULE, serialized, checklist)
+    else:
+        context = _BRIEF_RULE + "\n" + serialized
+    if len(context) > CLAUDE_CONTEXT_LIMIT:
+        context = context[: CLAUDE_CONTEXT_LIMIT - 24] + "\n[brief truncated locally]"
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "SessionStart",
+                    "additionalContext": context,
+                }
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
+
+# The stdin bytes the early exit below already read, handed to `_input()`
+# so the payload is read once.
+_PRELOADED_STDIN: bytes | None = None
+
+
+def _uninitialized_early_exit(argv: list[str]) -> tuple[int | None, bytes | None]:
+    """`(exit code, stdin bytes)`: an exit code when this project has no
+    Godmode state at all, else None and the full hook runs.
+
+    Field report 2026-09-23: in a project nobody ran `godmode init` in,
+    every event still imported the archive, the classifier and the anchor
+    (about 200 ms of imports, plus git calls) before finding nothing, and
+    under machine load Stop and SessionEnd ran past the host's timeouts.
+    The decision (`godmode_initstate.early_session_decision`) runs before
+    any of that is imported, on the standard library's os, sys and json and
+    two sibling modules that import nothing else. It answers only when the
+    answer is certain and otherwise leaves every decision to the full hook.
+    The one thing it still says is the not-initialized notice a Claude
+    session hears at its start (field report 2026-09-03), built from the
+    same text the full hook uses. The launcher normally enters through
+    `godmode_session_entry.py`, which asks the same question before this
+    file is even compiled; this copy serves every other way in. Never
+    raises."""
+    raw: bytes | None = None
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        from godmode_initstate import EXIT, NOTICE, early_session_decision
+        action, _submitted, raw, root = early_session_decision(argv)
+        if action == NOTICE:
+            reconfigure = getattr(sys.stdout, "reconfigure", None)
+            if reconfigure is not None:
+                reconfigure(encoding="utf-8", errors="replace")
+            _emit_claude_context({"godmode": "not-initialized", "project": root,
+                                  "notice": _NOT_INITIALIZED_NOTICE})
+            return 0, raw
+        if action == EXIT:
+            return 0, raw
+        return None, raw
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: any doubt leaves the answer to the full hook
+        return None, raw
+
+
+def _is_claude_session(submitted: dict[str, Any]) -> bool:
+    return submitted.get("hook_event_name") == "SessionStart"
+
+
+if __name__ == "__main__":
+    _early_code, _PRELOADED_STDIN = _uninitialized_early_exit(sys.argv[1:])
+    if _early_code is not None:
+        raise SystemExit(_early_code)
+
+import argparse  # noqa: E402
+import hashlib  # noqa: E402
+import re  # noqa: E402
+from pathlib import Path  # noqa: E402
+from typing import Any  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = PLUGIN_ROOT / "scripts"
@@ -30,15 +165,16 @@ from godmode_runtime.godmode_anchor import current_host, resolve_anchor  # noqa:
 from godmode_runtime.godmode_constants import READ_ONLY_TOOLS  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_runtime.godmode_errors import GodmodeError  # noqa: E402
+from godmode_runtime.godmode_paths import contain  # noqa: E402
 from godmode_runtime.godmode_attest import (  # noqa: E402
     attested_rule_ids, latest_session)
 from godmode_runtime.godmode_guardrails import check_ceilings  # noqa: E402
 from godmode_runtime.godmode_release_gate import tag_push_refusal  # noqa: E402
 from godmode_runtime.godmode_guardrails import meter_tool_call, watchdog  # noqa: E402
 from godmode_runtime.godmode_hookproof import (  # noqa: E402
-    DEGRADE_REASON_MALFORMED_PAYLOAD, PROBE_PREFIX, degraded_reason,
-    interception_state, record_hook_degradation, record_interception_proof,
-    record_session_anchor)
+    DEGRADE_REASON_ANCILLARY, DEGRADE_REASON_MALFORMED_PAYLOAD, DEGRADE_REASONS,
+    PROBE_PREFIX, degraded_reason, interception_state, record_hook_degradation,
+    record_interception_proof, record_session_anchor)
 from godmode_runtime.godmode_hostevent import (  # noqa: E402
     HOSTS_WITH_ASK, TOOL_KIND_MALFORMED, TOOL_KIND_READ, TOOL_KIND_UNRECOGNIZED,
     capture_payload_probe, field as host_field, is_pretool_event,
@@ -46,18 +182,9 @@ from godmode_runtime.godmode_hostevent import (  # noqa: E402
     record_malformed_apply_patch, record_unrecognized_tool, render_decision,
     unrecognized_tool_preview)
 from godmode_runtime.godmode_sentinel import (  # noqa: E402
-    GATE_MODE_OBSERVE, classify_action, evidence_pipe_advisory,
-    find_secret_shapes, local_authorization_policy, stage_hint)
-
-# CX-2 payload-capture probe: counts-only capture of an unrecognized host
-# shape (event/tool names, sorted input field names, request-id/cwd hashes -
-# never a value), for building future host fixtures. Off unless explicitly
-# requested - either the env var (set once for a whole session) or
-# `--capture-payload` (this invocation only).
-CAPTURE_PAYLOAD_ENV = "GODMODE_CAPTURE_HOST_PAYLOADS"
-
-
-CLAUDE_CONTEXT_LIMIT = 9_000
+    _NO_HUMAN_ASK_MODES, _TIER_BY_CATEGORY, GATE_MODE_OBSERVE, attended,
+    classify_action, evidence_pipe_advisory, find_secret_shapes,
+    local_authorization_policy, refuse_outright_tiers, stage_hint)
 
 # Tools that read and cannot write. Owned by `godmode_constants` so this
 # gate and the Claude adapter cannot disagree about which tools can mutate;
@@ -110,7 +237,9 @@ def _input() -> tuple[dict[str, Any], bool]:
     # tolerated by both stages the same way, never re-rejected here after
     # the reader already resolved on it.
     from godmode_stdin import parse_first_json, read_first_json
-    return parse_first_json(read_first_json())
+    global _PRELOADED_STDIN
+    raw, _PRELOADED_STDIN = _PRELOADED_STDIN, None
+    return parse_first_json(raw if raw is not None else read_first_json())
 
 
 def _bounded_list(value: Any, limit: int = 20) -> list[str]:
@@ -119,45 +248,61 @@ def _bounded_list(value: Any, limit: int = 20) -> list[str]:
     return [str(item)[:500] for item in value[:limit]]
 
 
-def _is_claude_session(submitted: dict[str, Any]) -> bool:
-    return submitted.get("hook_event_name") == "SessionStart"
+# C-3/NS-10i: ancillary hook work - a record write, a nudge, brief building -
+# is best-effort for every event; an internal failure in it degrades the
+# hook rather than crashing it. Reported at most once per hook invocation
+# (a single stderr line, however many separate ancillary steps failed
+# within that one run - `main` resets the flag on entry) and recorded on
+# the archive when it is writable. Never used for the gate decision
+# itself: a `pre-action` deny stays a deny regardless of whether its own
+# record write raises (see the call sites below, and `main`'s docstring
+# note near the deny path).
+_ancillary_degraded_reported = False
+
+# C-3/NS-10i fix round 2: the archive `main()` opened for THIS call, so the
+# outer guard below can record a degradation against the right project
+# without re-resolving an anchor inside an exception handler. Reset on every
+# `main()` entry; None whenever no project could be honestly resolved, in
+# which case the outer guard records nothing (same rule as `main`'s own
+# no-project branch: never create an archive as a side effect of a failure).
+_current_archive: Any = None
 
 
-# The sections the truncation cap must never eat: commands and live
-# advisories first, inventory last (S15 item 5 - sort_keys put
-# next_actions mid-string and the cap cut from the tail blindly).
-_BRIEF_PRIORITY = ("doctrine", "red_flags", "next_actions", "calibration", "oversight", "doc_sprawl",
-                   "laws", "obligations", "resume")
+def _print_degraded_once(reason: str = DEGRADE_REASON_ANCILLARY) -> None:
+    """The stderr half of a degradation report, at most once per `main()`
+    call. Its own try: a closed or broken stderr (`BrokenPipeError`, a
+    write on an already-closed stream) must not turn the reporter itself
+    into the crash this whole module exists to prevent."""
+    global _ancillary_degraded_reported
+    if _ancillary_degraded_reported:
+        return
+    _ancillary_degraded_reported = True
+    try:
+        print(f"godmode: degraded — {reason}", file=sys.stderr)
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: a broken stderr must not crash the reporter itself
+        pass
 
 
-def _emit_claude_context(brief: dict[str, Any]) -> None:
-    ordered = {key: brief[key] for key in _BRIEF_PRIORITY if key in brief}
-    ordered.update(
-        {key: value for key in sorted(brief) if key not in ordered
-         for value in [brief[key]]})
-    serialized = json.dumps(
-        ordered,
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    prefix = (
-        "Godmode recovered this bounded local continuity brief. Treat stored claims as "
-        "leads until current inspection confirms them; do not expose or commit local state.\n"
-    )
-    context = prefix + serialized
-    if len(context) > CLAUDE_CONTEXT_LIMIT:
-        context = context[: CLAUDE_CONTEXT_LIMIT - 24] + "\n[brief truncated locally]"
-    print(
-        json.dumps(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": "SessionStart",
-                    "additionalContext": context,
-                }
-            },
-            ensure_ascii=False,
-        )
-    )
+def _report_ancillary_failure(archive: Any, reason: str = DEGRADE_REASON_ANCILLARY) -> None:
+    """The full degradation report: the single stderr line, plus a
+    best-effort `hook-degraded` record. A caller that already owns its
+    own pinned literal reason (the G-6 call sites `record_hook_degradation`
+    directly, so `tests/test_hook_degradation_reasons.py`'s static scan
+    keeps seeing them) should call `_print_degraded_once` and its own
+    `record_hook_degradation(...)` instead of this wrapper - see the
+    `interrupted-intent-capture-failed`/`inline-scan-record-failed`/
+    `ask-only-record-failed` call sites."""
+    if reason not in DEGRADE_REASONS:
+        # A typo'd or unregistered reason must never turn a degrade report
+        # into a second failure (`record_hook_degradation` raises
+        # `ValueError` for anything outside `DEGRADE_REASONS`) - fall back
+        # to the umbrella reason rather than let that escape here.
+        reason = DEGRADE_REASON_ANCILLARY
+    _print_degraded_once(reason)
+    try:
+        record_hook_degradation(archive, current_host(), reason)
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: recording the degradation itself must not raise
+        pass
 
 
 def _session_obligations(anchor: Any, archive: Chronicle, transcript_path: str | None = None) -> dict[str, Any]:
@@ -355,7 +500,16 @@ def _session_obligations(anchor: Any, archive: Chronicle, transcript_path: str |
 # the tree — and a one-key confirmation is the wrong shape for those. That is
 # what `authorize stage` is for, and it still works: a staged capability is
 # consumed before this is reached.
-_REFUSE_OUTRIGHT = frozenset({"R5"})
+#
+# NS-10k: that floor is the ATTENDED row - `refuse_outright_tiers(True)`
+# (godmode_sentinel) is exactly `{"R5"}`. When no operator is presumed
+# present, `refuse_outright_tiers(False)` adds R4 to it - an ask nobody is
+# there to answer is not a question, it is a stall, and a session that
+# cannot stall gets a deny with a staged-capability remedy instead.
+# `_decision_for` reads `refuse_outright_tiers` directly for both rows (fix
+# round 1, N1) rather than keeping a hook-local `_REFUSE_OUTRIGHT` copy of
+# the attended one that `policy_row`'s own docstring already assumed could
+# never happen - and, until this fix, was wrong about.
 
 
 def _ellipsize(text: str, limit: int) -> str:
@@ -381,25 +535,48 @@ def _open_next_actions(records: list[dict[str, Any]]) -> list[str]:
     dying session would otherwise take with it. Empty when the latest
     checkpoint declared none (or none exists): finished is finished."""
     for record in reversed(records):
-        if record["kind"] == "checkpoint":
+        # `.get`, not `[...]`: this reads whatever the archive hands back,
+        # including a record a hand edit left without a `kind`, and a
+        # KeyError here would be a crash in the host over bookkeeping.
+        if (record or {}).get("kind") == "checkpoint":
             raw = (record.get("data") or {}).get("next") or []
             return [str(item) for item in raw if str(item).strip()] \
                 if isinstance(raw, list) else []
     return []
 
 
-def _capture_interrupted_intent(archive: Chronicle) -> None:
+def _capture_interrupted_intent(archive: Chronicle) -> bool:
     """B4-4: when a session ends (or compacts) with declared work in flight
     - open next-actions, an unconsumed staged capability, an active plan
     fence - record that fact as counts + subject hashes, so the next resume
     digest can surface it first. Content-free by construction and by
-    invariant: the record carries how MUCH was in flight, never what."""
+    invariant: the record carries how MUCH was in flight, never what.
+
+    Returns True when any of its three INPUTS could not be read, so the one
+    call site reports that through the same degradation path an append
+    failure takes - reported once per hook call either way, never twice.
+
+    C-3/NS-10i (fix round 2): every read here used to be unguarded while
+    only the broker lookup was wrapped, so a `read_events()` that raised on
+    a damaged or unreadable archive left this function on its way out of
+    `main()`. Guarded per input rather than around the whole body on
+    purpose: a fence that cannot be read is no reason to lose a staged
+    capability that can, and "one of the three is unknown" is a better
+    session-end record than none.
+    """
     import hashlib
     import time as _time
-    records = archive.read_events()
+    degraded = False
+    try:
+        records = archive.read_events()
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: C-3/NS-10i - an unreadable archive degrades the capture, never the close
+        records, degraded = [], True
     open_actions = _open_next_actions(records)
-    from godmode_runtime.godmode_fence import declared_fence
-    fence_active = declared_fence(archive) is not None
+    try:
+        from godmode_runtime.godmode_fence import declared_fence
+        fence_active = declared_fence(archive) is not None
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: C-3/NS-10i - same rule for the fence read
+        fence_active, degraded = False, True
     staged = 0
     try:
         broker = _broker(archive)
@@ -409,9 +586,9 @@ def _capture_interrupted_intent(archive: Chronicle) -> None:
                 1 for entry in broker._load().get("staged", [])  # noqa: SLF001
                 if int(entry.get("expires_at", 0)) >= now)
     except Exception:  # noqa: BLE001
-        staged = 0
+        staged, degraded = 0, True
     if not (open_actions or staged or fence_active):
-        return
+        return degraded
     archive.append(
         "action", "interrupted-intent",
         {
@@ -426,6 +603,7 @@ def _capture_interrupted_intent(archive: Chronicle) -> None:
         },
         evidence=[],
     )
+    return degraded
 
 
 # A checkpoint older than this is likelier to be behind the project's own
@@ -607,9 +785,9 @@ def _tripwire_nudges(archive: Any, session: str | None,
                 out.append(
                     f"godmode: {paid} check(s) this session were blocked for "
                     "dialling out under --offline, at the declared paid_iterations "
-                    f"ceiling of {ceiling} - the paid-lane runaway shape; stop "
+                    f"ceiling of {ceiling} - the paid-lane runaway shape. Stop "
                     "iterating on that lane until the reason it reaches out is "
-                    "named (`.godmode-ceilings.json` raises the ceiling on purpose)")
+                    "named (`.godmode-ceilings.json` raises the ceiling on purpose).")
                 archive.append("action", "tripwire-nudge",
                                {"session": session, "wire": "paid"})
         prior_counts = [c for s, c in actions.items() if s != session]
@@ -682,7 +860,9 @@ def _origin_slug(project: Path | None) -> str | None:
     if project is None:
         return None
     try:
-        from godmode_runtime.godmode_anchor import run_git
+        from godmode_runtime.godmode_anchor import git_marker_above, run_git
+        if not git_marker_above(Path(project).resolve()):
+            return None  # not a repository: no remote, and no git spawn on every Stop
         url = (run_git(project, "remote", "get-url", "origin") or "").strip()
     except Exception:  # noqa: BLE001  # godmode: swallow-ok: no remote means the project is not a slug anyone named
         return None
@@ -1129,9 +1309,10 @@ def _open_obligations_touched(archive: Any, reply_text: str,
         # rebuild was blind to command-line closures, so the paste-ready
         # closure it prescribed closed nothing it could see (field-caught
         # at the 0.3.17 gate, 2026-09-04).
-        from godmode_runtime.godmode_requests import open_stated_requests
-        for record in open_stated_requests(
-                archive.select(kind="request", limit=200)):
+        from godmode_runtime.godmode_requests import (
+            open_stated_requests, read_request_window)
+        _requests, _ = read_request_window(archive)
+        for record in open_stated_requests(_requests):
             data = record.get("data") or {}
             # Only asks stated in THIS host session ride the turn boundary;
             # an ask from another session has no live turn to attach to.
@@ -1621,9 +1802,9 @@ def _write_without_read_advisory(submitted: dict[str, Any], tool: str,
     says nothing; a session with no transcript cannot be judged."""
     if tool != "Write" or not targets:
         return None
-    target = Path(str(targets[0]))
-    if not target.is_absolute():
-        target = Path(project_root) / target
+    target = contain(targets[0], [project_root])
+    if target is None:
+        return None
     if not target.is_file():
         return None
     transcript = submitted.get("transcript_path") or submitted.get("transcriptPath")
@@ -1633,7 +1814,7 @@ def _write_without_read_advisory(submitted: dict[str, Any], tool: str,
         lines = Path(str(transcript)).read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return None
-    norm = str(target.resolve()).replace("\\", "/").lower()
+    norm = str(target).replace("\\", "/").lower()
     base = target.name.lower()
     for line in lines[-8000:]:
         if base not in line.lower():
@@ -1657,9 +1838,9 @@ def _write_without_read_advisory(submitted: dict[str, Any], tool: str,
                 return None
     from godmode_runtime.godmode_anchor import run_git
     try:
-        rel = str(target.resolve().relative_to(Path(project_root).resolve())).replace("\\", "/")
+        rel = str(target.relative_to(Path(project_root).resolve())).replace("\\", "/")
     except ValueError:
-        rel = target.name
+        return None
     if not (run_git(project_root, "ls-files", "--", rel) or "").strip():
         return None
     try:
@@ -1700,11 +1881,13 @@ _ASK_ID = re.compile(r"ask:[0-9a-f]{12}")
 
 def _still_open_obligation_lines(archive: Any, lines: list[str]) -> list[str]:
     """Parked obligation lines whose ask is still open on the record;
-    lines naming no ask id (obligations, standing duties) pass through."""
+    lines naming no ask id (obligations, standing duties, NS-10h's
+    resurfaced obligation lines) pass through unfiltered."""
     try:
-        from godmode_runtime.godmode_requests import open_stated_requests
-        open_ids = {str(r.get("subject", "")) for r in open_stated_requests(
-            archive.select(kind="request", limit=600))}
+        from godmode_runtime.godmode_requests import (
+            open_stated_requests, read_request_window)
+        _requests, _ = read_request_window(archive)
+        open_ids = {str(r.get("subject", "")) for r in open_stated_requests(_requests)}
     except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable archive keeps the parked lines rather than losing them
         return lines
     kept: list[str] = []
@@ -1714,6 +1897,272 @@ def _still_open_obligation_lines(archive: Any, lines: list[str]) -> list[str]:
             continue
         kept.append(line)
     return kept
+
+
+# NS-10h: an obligation or an operator ask this turn's reply did not touch,
+# idle long enough, is worth naming again once - then quiet for its own
+# cooldown (`godmode_cooldown.due_for_resurface`) instead of staying
+# invisible for the rest of the session (today's behaviour) or nagging
+# every remaining turn (the once-a-session `_nag_once` regime's own
+# complement, for the asks it never touches at all).
+#
+# `now_turn` is a state count, never the clock: one tick per real Stop
+# pass for this session. `donebar-turn` (`godmode_donebar.note_turn`)
+# cannot serve as that count - it is only ticked while a done-bar
+# escalation is live (N2 there), so an ordinary session with nothing
+# escalated would never advance it - so this keeps its own count instead
+# of inventing a second meaning for that one.
+_COOLDOWN_STATE_FILE = "godmode-cooldown-state.json"
+
+# Field report 2026-09-23: SessionEnd runs inside the host's short exit
+# budget, and the host cancels whatever is still running when it closes
+# ("SessionEnd hook ... failed: Hook cancelled" on every exit). Measuring
+# the transcript reads it twice, end to end; a real session's transcript
+# runs to megabytes. A small one is still measured at the end; a larger one
+# is parked in this sidecar (path and session only) and measured at the next
+# session start, which has a long budget and nobody waiting on an exit.
+_DEFERRED_MEASUREMENTS_FILE = "godmode-deferred-measurements.json"
+_MEASURE_AT_END_MAX_BYTES = 1 << 20
+_DEFERRED_MEASUREMENTS_CAP = 20
+
+
+def _measure_or_defer(archive: Any, transcript_path: Any, session: str | None) -> str:
+    """Measure the transcript now when it is small, missing or unnamed (a
+    missing one records its gap at once); otherwise park it for the next
+    session start. Returns "measured" or "deferred". May raise; the caller
+    guards it."""
+    path_text = str(transcript_path).strip() if transcript_path else ""
+    size = 0
+    if path_text:
+        try:
+            size = os.path.getsize(path_text)
+        except (OSError, ValueError):
+            size = 0
+    if size <= _MEASURE_AT_END_MAX_BYTES:
+        from godmode_runtime.godmode_session_log import record_measurement
+        record_measurement(archive, transcript_path, session=session)
+        return "measured"
+    sidecar = archive.root / _DEFERRED_MEASUREMENTS_FILE
+    try:
+        pending = json.loads(sidecar.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable sidecar starts a fresh list
+        pending = []
+    if not isinstance(pending, list):
+        pending = []
+    pending.append({"transcript_path": path_text, "session": session})
+    sidecar.write_text(json.dumps(pending[-_DEFERRED_MEASUREMENTS_CAP:]), encoding="utf-8")
+    return "deferred"
+
+
+def _flush_deferred_measurements(archive: Any) -> int:
+    """Measure every transcript a previous SessionEnd parked. The sidecar is
+    removed before the first measurement, so a failure part-way never
+    measures the same transcript twice. Returns how many were measured.
+    May raise; the caller guards it."""
+    sidecar = archive.root / _DEFERRED_MEASUREMENTS_FILE
+    if not sidecar.is_file():
+        return 0
+    try:
+        pending = json.loads(sidecar.read_text(encoding="utf-8"))
+    finally:
+        sidecar.unlink(missing_ok=True)
+    if not isinstance(pending, list):
+        return 0
+    from godmode_runtime.godmode_session_log import record_measurement
+    measured = 0
+    for entry in pending[-_DEFERRED_MEASUREMENTS_CAP:]:
+        if isinstance(entry, dict) and entry.get("transcript_path"):
+            record_measurement(archive, entry["transcript_path"],
+                               session=str(entry.get("session") or "") or None)
+            measured += 1
+    return measured
+# Fix round 1 (S1-1): the same two-line budget `_open_obligations_touched`
+# already applies to its own "touched" surface (`survivors[:2]`) - an idle
+# surface with no cap named 25 lines / wrote 25 cooldown records against
+# one project's 25 open obligations in a single Stop.
+_RESURFACE_CAP = 2
+
+
+def _cooldown_turn_state(archive: Any, session: str) -> dict[str, Any]:
+    """Per-session turn count and per-anchor last-touched turn, in a
+    disposable sidecar beside the archive - the same pattern `_nag_once`'s
+    `godmode-nagged.json` and `_record_turn_baseline`'s baseline file use.
+    A new session, or a file that will not parse, starts fresh at turn 0."""
+    marker = archive.root / _COOLDOWN_STATE_FILE
+    try:
+        state = json.loads(marker.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable state file starts a fresh count rather than raising
+        state = {}
+    if not isinstance(state, dict) or state.get("session") != session:
+        state = {"session": session, "turn": 0, "touched": {}}
+    if not isinstance(state.get("touched"), dict):
+        state["touched"] = {}
+    return state
+
+
+def _save_cooldown_state(archive: Any, state: dict[str, Any]) -> None:
+    try:
+        (archive.root / _COOLDOWN_STATE_FILE).write_text(
+            json.dumps(state), encoding="utf-8")
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: a turn count that cannot be saved costs only this advisory, never the stop path
+        pass
+
+
+def _advance_cooldown_turn(archive: Any, session: str) -> tuple[int, dict[str, Any]]:
+    """One real Stop pass for this session is one turn. Returns the new
+    turn AND the freshly loaded (not yet saved) state, so a caller that
+    also updates per-anchor touch turns this same Stop
+    (`_idle_resurface_lines`) folds both changes into the ONE save that
+    ends the turn - fix round 1 nit: two independent read-then-write
+    passes over the same sidecar let a failed first save survive under a
+    second, stale, write."""
+    state = _cooldown_turn_state(archive, session)
+    state["turn"] = int(state.get("turn", 0)) + 1
+    return state["turn"], state
+
+
+def _idle_resurface_lines(archive: Any, session_id: str | None,
+                          reply_text: str, now_turn: int,
+                          state: dict[str, Any]) -> list[str]:
+    """Open obligations and this session's open asks the reply did not
+    touch this turn, the most-recent two (the same budget
+    `_open_obligations_touched` uses) named once when idle long enough and
+    then held quiet for their own cooldown.
+
+    Fix round 1 (S1-1, S1-2, N-quality obligation scope, N-quality ask
+    rendering):
+
+    - "Touched" is decided here against the FULL reply vocabulary
+      (`_salient_words(reply_text)`), never against
+      `_open_obligations_touched`'s own two-item-capped return value - a
+      third obligation the reply plainly discusses still resets its idle
+      clock even though that surface has no room to name it this turn.
+    - Only the anchors an emitted line actually names spend a cooldown
+      record; a candidate crowded out by `_RESURFACE_CAP` keeps its idle
+      clock running (never marked touched) and competes again next Stop,
+      rather than losing five turns of speech it was never given.
+    - Obligation candidates stay project-wide, unlike the ask half: an
+      ordinary `godmode remember --kind obligation` stamps no `session`
+      field at all (only `assumption` records do), so filtering obligations
+      on `data.session == session_id` the way asks already are would
+      silently drop nearly every obligation ever recorded, including ones
+      written THIS session - the wrong direction for a record class whose
+      whole purpose (unlike a per-session ask) is to survive past the
+      session that wrote it. `_RESURFACE_CAP` is the safeguard instead,
+      exactly as it is for asks.
+    - A resurfaced ask renders the same keyword phrase
+      `_open_obligations_touched` renders (`" ".join(keywords[:7])`), not
+      the bare `ask:<hex>` anchor - the anchor still rides the closure
+      command's `--subject "ask:<hex>"`, exactly as that sibling surface
+      does (field report 2026-09-03: a hash is not actionable).
+
+    `state` is the sidecar `_advance_cooldown_turn` already loaded this
+    Stop (not yet saved); this function mutates its `touched` map in place
+    and the caller saves it once, after this returns.
+    """
+    from godmode_runtime.godmode_cooldown import due_for_resurface, record_resurfaced
+    from godmode_runtime.godmode_sources import _salient_words
+
+    reply_words = _salient_words(reply_text)
+    touched_map: dict[str, int] = state["touched"]
+    # (sequence, anchor, closure line, touched this turn)
+    candidates: list[tuple[int, str, str, bool]] = []
+    try:
+        latest: dict[str, dict[str, Any]] = {}
+        for record in archive.select(kind="obligation", limit=200):
+            latest[str(record.get("subject", ""))] = record
+        for subject, record in latest.items():
+            data = record.get("data") or {}
+            if str(data.get("status", "open")) in (
+                    "closed", "done", "retired", "blocked", "parked", "deferred"):
+                continue
+            if data.get("standing"):
+                continue
+            vocab = _salient_words(f"{subject} {data.get('value', '')}")
+            candidates.append((
+                int(record.get("sequence", 0)), subject,
+                f"{subject} - close with `godmode remember --kind obligation "
+                f"--subject \"{subject}\" --status closed` when done",
+                bool(reply_words) and len(reply_words & vocab) >= 3))
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable obligation set names no idle obligations rather than raising
+        pass
+    try:
+        from godmode_runtime.godmode_requests import (
+            open_stated_requests, read_request_window)
+        _requests, _ = read_request_window(archive)
+        for record in open_stated_requests(_requests):
+            data = record.get("data") or {}
+            if str(data.get("session") or "") != str(session_id or ""):
+                continue
+            subject = str(record.get("subject", ""))
+            if not subject:
+                continue
+            keywords = [str(w).lower() for w in (data.get("keywords") or [])]
+            vocab = set(keywords)
+            phrase = " ".join(keywords[:7])
+            candidates.append((
+                int(record.get("sequence", 0)), subject,
+                f"operator ask '{phrase}' - close with `godmode remember "
+                f"--kind request --subject \"{subject}\" --status closed` "
+                "once served",
+                bool(reply_words) and len(reply_words & vocab) >= 3))
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable request window names no idle asks rather than raising
+        pass
+
+    due: list[tuple[int, str, str, int]] = []
+    for sequence, anchor, closure, touched_now in candidates:
+        if touched_now:
+            touched_map[anchor] = now_turn
+            continue
+        if anchor not in touched_map:
+            # Never seen by this tracker before - seeded at the current
+            # turn rather than idle since a turn nobody counted.
+            touched_map[anchor] = now_turn
+            continue
+        last_touched = int(touched_map[anchor])
+        if not due_for_resurface(archive, anchor, now_turn, last_touched):
+            continue
+        due.append((sequence, anchor, closure, now_turn - last_touched))
+
+    # Most-recent first, same as `_open_obligations_touched`'s own
+    # `touched.sort(reverse=True)`; only the survivors spend a cooldown.
+    due.sort(key=lambda item: item[0], reverse=True)
+    lines: list[str] = []
+    for _sequence, anchor, closure, idle in due[:_RESURFACE_CAP]:
+        lines.append(f"resurfaced: {closure} ({idle} turns idle)")
+        try:
+            record_resurfaced(archive, anchor, now_turn)
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: C-3/NS-10i - a cooldown record that cannot be written costs this advisory, never the stop path
+            _report_ancillary_failure(archive)
+    return lines
+
+
+# I-9: a subagent's hand-back arrives through the same UserPromptSubmit
+# door an operator's own typed ask does, and the host gives it no separate
+# shape of its own beyond the envelope the relay itself writes. Observed
+# in the field: 34 request records minted from hand-back text in one
+# session, because the ask-capture path had no way to tell "a subagent
+# reporting in" from "a person asking for something". Matched on the
+# FIRST NON-BLANK LINE only, no `re.M` - the envelope is how the prompt
+# OPENS, never a shape found merely somewhere inside it. Fix round 1
+# (coordinator ruling, plan-mandated): the earlier "first three lines,
+# re.M" version classified `"handle this:\n<agent-message ...>"` - an
+# operator prompt that merely QUOTES a relay on its second line - as a
+# relay itself, and missed a real relay preceded by blank lines.
+_AGENT_RELAY = re.compile(
+    r"^\s*(<agent-message\b|\[Subagent hand-back\]|"
+    r"Another Claude session sent a message)")
+
+
+def _is_agent_relay(prompt: str) -> bool:
+    """Text a subagent handed back is data about work done, never an
+    operator ask - it must never mint a request record.
+
+    Judged on the prompt's first non-blank line alone: the envelope is how
+    the message OPENS, so an operator prompt that goes on to quote or
+    describe a hand-back further down stays an operator prompt."""
+    first_line = next((line for line in prompt.splitlines() if line.strip()), "")
+    return bool(_AGENT_RELAY.match(first_line))
 
 
 def _scope_block_reason(archive: Any, reply_text: str, session_id: str | None) -> str | None:
@@ -1734,10 +2183,14 @@ def _scope_block_reason(archive: Any, reply_text: str, session_id: str | None) -
     shown = "; ".join(_ascii_echo(i)[:160] for i in items[:4])
     if len(items) > 4:
         shown += f" (+{len(items) - 4} more)"
-    return (f"godmode gate, deliberate block, not a crash - SCOPE STILL OPEN: this reply says the work "
-            f"is complete, but {len(items)} item(s) this session declared are still open on the "
-            f"record: {shown}. Finish them, close each with the command its line shows, or say "
-            "plainly which are deferred and why. This check blocks only once.")
+    from godmode_runtime.godmode_lens import render_three_zone
+    return render_three_zone(
+        f"godmode gate, deliberate block, not a crash - SCOPE STILL OPEN: this reply says the work "
+        f"is complete, but {len(items)} item(s) this session declared are still open on the record.",
+        f"Open: {shown}.",
+        ["Finish them, or close each with the command its line shows.",
+         "Or say plainly which are deferred and why.",
+         "This check blocks only once."])
 
 
 def _repeat_failure_ask(submitted: dict[str, Any], operation: str) -> str | None:
@@ -1754,6 +2207,64 @@ def _repeat_failure_ask(submitted: dict[str, Any], operation: str) -> str | None
                 "edited since the last failure - a fourth run against an unchanged tree repeats the "
                 "result; approve only if something outside the tree changed")
     return None
+
+
+def _record_usage_observed(archive: Any, submitted: dict[str, Any], event_name: str) -> None:
+    """NS-10d: when the host's own Stop/SessionEnd payload carries a `usage`
+    block inline, record it once as bookkeeping (`ACTION_SUBJECTS`/
+    `BOOKKEEPING_SUBJECTS`), the same figure the digest's spend line and
+    `check_ceilings` both read back.
+
+    **Unverified shape (CX-5 posture, stated plainly).** No host contract in
+    this repository documents a `usage` field on any hook payload -
+    `usage_from_payload` (`godmode_hostevent.py`) is read-if-present, never
+    trusted to decide anything beyond what got recorded. A live session
+    reporting nothing under this key is the expected case, not a bug.
+
+    Fix round 1 (review S1): called AFTER the `stop_hook_active`/
+    `stopHookActive` re-fire check returns, not ahead of it - Claude's
+    documented Stop re-fire sends the SAME payload a second time, and
+    recording it twice would double the total this feeds into a per-session
+    ceiling and the digest ("per-session totals" becoming
+    per-session-times-re-fires). A re-fire therefore records nothing here;
+    the first pass already recorded the real figure. Still best-effort: a
+    write that fails here must not cost the operator the rest of the stop
+    path.
+    """
+    try:
+        from godmode_runtime.godmode_hostevent import usage_from_payload
+        usage = usage_from_payload(submitted)
+        if not usage:
+            return
+        input_tokens = int(usage.get("input_tokens") or 0)
+        output_tokens = int(usage.get("output_tokens") or 0)
+        cache_read_tokens = int(usage.get("cache_read_input_tokens") or 0)
+        # Fix round 1 (review S2): a block carrying ONLY `total_tokens` (no
+        # split fields) used to record `0/0/0` - the one number the host
+        # reported, silently dropped. The host's own total is kept when it
+        # sent one; derived from the split fields only when it did not.
+        raw_total = usage.get("total_tokens")
+        total_tokens = int(raw_total) if raw_total is not None else (
+            input_tokens + output_tokens + cache_read_tokens)
+        # A digest of the numbers, never a sequence: two calls reporting the
+        # same figures read the same operation text, whatever order they
+        # arrive in - `operation` is a descriptive label here (like
+        # `tool_operation`'s strings elsewhere), not a dedup key.
+        fingerprint = hashlib.sha256(json.dumps(
+            {"input_tokens": input_tokens, "output_tokens": output_tokens,
+             "cache_read_tokens": cache_read_tokens, "total_tokens": total_tokens},
+            sort_keys=True).encode("utf-8")).hexdigest()[:12]
+        archive.append("action", "usage-observed", {
+            "host": current_host(),
+            "event": event_name,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cache_read_tokens": cache_read_tokens,
+            "total_tokens": total_tokens,
+            "operation": f"usage:{event_name}:{fingerprint}",
+        }, evidence=[])
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: C-3/NS-10i - a usage record that cannot be written must not cost the operator the stop path
+        _report_ancillary_failure(archive)
 
 
 def _iteration_notices(archive: Any, project: Path, submitted: dict[str, Any]) -> tuple[list[str], str | None]:
@@ -1844,7 +2355,30 @@ def _iteration_notices(archive: Any, project: Path, submitted: dict[str, Any]) -
             except Exception:  # noqa: BLE001  # godmode: swallow-ok: the observe receipt is best-effort
                 pass
         spent = measured_spend(submitted.get("transcript_path") or submitted.get("transcriptPath"))
-        if spent["source"] == "measured":
+        # NS-10d: a host-reported usage total, when THIS SESSION has one,
+        # takes priority over the transcript-measured figure above - it is
+        # the host's own declared number, not read second-hand off a file
+        # it happens to also write. Fix round 2 (review S4/N1): round 1
+        # keyed this on `latest_session(archive)` - `kind="session"` only,
+        # `None` on every archive a hook alone ever writes, since no hook
+        # opens one - so the "session-scoped" branch was unreachable and
+        # the ceiling silently read the archive's LIFETIME host total.
+        # `usage_ledger_totals` now windows itself, internally, by the same
+        # hook-session-anchor boundary CX-1's freshness check already uses
+        # (`godmode_hookproof._session_anchor_sequence`), so there is
+        # nothing left to pass in here.
+        try:
+            from godmode_runtime.godmode_guardrails import usage_ledger_totals
+            usage_totals = usage_ledger_totals(archive)
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable ledger falls back to the transcript figure
+            usage_totals = {"total_tokens": 0}
+        host_tokens = usage_totals.get("total_tokens", 0)
+        if host_tokens:
+            verdict = check_ceilings(project, {"tokens": host_tokens, "source": "host"})
+            for hit in verdict.get("exceeded") or []:
+                notices.append(f"godmode: host-reported spend {hit.get('spent')} {hit.get('ceiling')} is over the "
+                               f"declared ceiling {hit.get('limit')} (from the host's own usage report)")
+        elif spent["source"] == "measured":
             verdict = check_ceilings(project, {"tokens": spent["tokens"], "source": "measured"})
             for hit in verdict.get("exceeded") or []:
                 notices.append(f"godmode: measured spend {hit.get('spent')} {hit.get('ceiling')} is over the "
@@ -2009,6 +2543,120 @@ def _session_counts(archive: Chronicle) -> dict[str, int]:
         kind = str(record.get("kind"))
         counts[kind] = counts.get(kind, 0) + 1
     return dict(sorted(counts.items()))
+
+
+# NS-11a: a PreCompact checkpoint written with no host-supplied summary must
+# not fall back to silence the way it did before this - a compaction is
+# exactly the moment the working-memory layer is about to overflow, and a
+# counts-only checkpoint (what `_session_counts` above gives session-end)
+# throws away the one thing worth keeping: WHAT was decided or found true,
+# not just how many records of each kind exist. Bounded per kind so a busy
+# session cannot inflate the checkpoint it is trying to protect; truncated
+# per value so a single decision cannot smuggle a paragraph through.
+_EXTRACTED_CHECKPOINT_LIMIT = 20
+# Both bounds are CHARACTER bounds, not byte bounds: a value of 300
+# astral-plane code points is 1,200 bytes on disk, four times an ASCII one
+# of the same length. Fine at 20 records per kind; named here so the next
+# reader does not mistake either number for a size budget (review nit).
+_EXTRACTED_VALUE_CHARS = 300
+_EXTRACTED_SUBJECT_CHARS = 200
+
+
+def _extracted_sequence(record: dict[str, Any]) -> int:
+    """This record's sequence as an int, or 0 for any record whose sequence
+    is missing or not an integer. `read_events(verify=False)` deliberately
+    skips the chain walk, so a damaged record reaches this fold instead of
+    being refused - and this fold runs inside the hook, where a raise is a
+    traceback in the host (B1)."""
+    sequence = record.get("sequence")
+    if isinstance(sequence, bool) or not isinstance(sequence, int):
+        return 0
+    return sequence
+
+
+def _extracted_value(value: Any) -> str | None:
+    """A bounded, machine-readable rendering of a decision's value. A string
+    is truncated as-is; anything else is JSON, not a Python `repr`, so a
+    dict-valued decision stays parseable by whatever reads the checkpoint
+    back (review nit)."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value
+    else:
+        try:
+            text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+        except (TypeError, ValueError):
+            text = str(value)
+    return text[:_EXTRACTED_VALUE_CHARS]
+
+
+def _extracted_checkpoint_facts(archive: Chronicle) -> dict[str, list[dict[str, Any]]]:
+    """Decisions and facts (invariants) recorded since the last checkpoint,
+    extracted as {sequence, subject, value} - never narrated, never the raw
+    prompt or tool text. Mirrors `_session_counts`'s own "since the last
+    checkpoint" window so the two stay comparable in one auto checkpoint."""
+    records = archive.read_events(verify=False)
+    since = 0
+    for record in records:
+        if record.get("kind") == "checkpoint":
+            since = _extracted_sequence(record)
+    decisions: list[dict[str, Any]] = []
+    facts: list[dict[str, Any]] = []
+    for record in records:
+        if _extracted_sequence(record) <= since:
+            continue
+        kind = record.get("kind")
+        bucket = decisions if kind == "decision" else facts if kind == "invariant" else None
+        if bucket is None:
+            continue
+        # B1: not `record.get("data") or {}` - that hands a list or a string
+        # straight through to `.get`, and an archive holding one damaged
+        # record then crashes the whole PreCompact call.
+        data = record.get("data")
+        data = data if isinstance(data, dict) else {}
+        bucket.append({
+            "sequence": record.get("sequence"),
+            "subject": str(record.get("subject", ""))[:_EXTRACTED_SUBJECT_CHARS],
+            "value": _extracted_value(data.get("value")),
+        })
+    # B2: the NEWEST twenty per kind, not the first twenty. A compaction is
+    # about to destroy the RECENT window; the oldest decisions of the
+    # session are the ones an earlier brief most likely already carried.
+    # `godmode_lens`'s sibling episode bound (`episodes[-EPISODE_LIMIT:]`)
+    # takes the same end, and the two halves of NS-11a/NS-11b now agree.
+    # `omitted` says so in the record, so a reader can tell 20 from 20-of-400.
+    omitted = {
+        "decisions": max(0, len(decisions) - _EXTRACTED_CHECKPOINT_LIMIT),
+        "facts": max(0, len(facts) - _EXTRACTED_CHECKPOINT_LIMIT),
+    }
+    return {
+        "decisions": decisions[-_EXTRACTED_CHECKPOINT_LIMIT:],
+        "facts": facts[-_EXTRACTED_CHECKPOINT_LIMIT:],
+        "omitted": omitted,
+    }
+
+
+def _extracted_cites(extracted: dict[str, Any]) -> list[str]:
+    """The extracted sequences as `seq:<n>` citation strings (M3).
+
+    `godmode_forget._collect_citations` reads a record's `evidence` list,
+    its `data["evidence"]` list, and its own TOP-LEVEL string values - it is
+    deliberately non-recursive. The extraction writes its pointers as ints
+    nested under `data["extracted"]["decisions"][i]["sequence"]`, which that
+    collector cannot see, so `protected_sequences` did not protect a single
+    one of them: the moment a semantic kind gains a TTL, or an operator
+    expunges, a checkpoint's own summarised facts rotate out from under it
+    with no refusal. Restating them where the collector already looks costs
+    one list and makes the protection earned rather than incidental."""
+    cites: list[str] = []
+    for entry in (*extracted.get("decisions", ()), *extracted.get("facts", ())):
+        sequence = entry.get("sequence") if isinstance(entry, dict) else None
+        if isinstance(sequence, int) and not isinstance(sequence, bool):
+            cite = f"seq:{sequence}"
+            if cite not in cites:
+                cites.append(cite)
+    return cites
 
 
 def _ledger_block(archive: Chronicle) -> dict[str, Any]:
@@ -2180,11 +2828,13 @@ _REMOVAL_SHAPED = frozenset({
 # Host permission modes in which a hook's "ask" never reaches a person
 # (Claude Code: the auto classifier answers, dontAsk denies silently,
 # bypassPermissions skips the prompt). `default`, `plan` and `acceptEdits`
-# still prompt for a shell command.
-_NO_HUMAN_ASK_MODES = frozenset({"auto", "dontAsk", "bypassPermissions"})
+# still prompt for a shell command. Owned by `godmode_sentinel` (imported
+# above as `_NO_HUMAN_ASK_MODES`) - fix round 1: `attended()` now reads the
+# same set as its own `permission_mode` signal, so this file keeps no
+# second copy that could drift from it.
 
 
-def _decision_for(preview: dict[str, Any]) -> str:
+def _decision_for(preview: dict[str, Any], attended_flag: bool = True) -> str:
     """`ask` or `deny`, from the tier the classifier already computed.
 
     A governance block carries no tier, and the first version of this returned
@@ -2192,6 +2842,13 @@ def _decision_for(preview: dict[str, Any]) -> str:
     both became one-key confirmations. Those are the two signals that say the
     session has stopped being trustworthy, and asking a session like that to
     approve itself is the whole failure they exist to interrupt.
+
+    `attended_flag` (NS-10k) defaults to True: every call site that does not
+    pass one - which is every call site that predates this tier - keeps the
+    exact floor `refuse_outright_tiers(True)` (R5 only) it always had. Only
+    the one call site that resolves the host's own session type and
+    permission mode threads a real value through, and only there does the
+    floor drop to include R4.
     """
     if preview.get("governance_block"):
         return "deny"
@@ -2205,7 +2862,8 @@ def _decision_for(preview: dict[str, Any]) -> str:
     # enforced where it was set (only ask/deny ever land here).
     if preview.get("decision_override") in ("ask", "deny"):
         return str(preview["decision_override"])
-    return "deny" if preview.get("tier") in _REFUSE_OUTRIGHT else "ask"
+    floor = refuse_outright_tiers(attended_flag)
+    return "deny" if preview.get("tier") in floor else "ask"
 
 
 def record_refusal(archive: Chronicle, submitted: dict[str, Any], subject: str,
@@ -2278,7 +2936,13 @@ def _apply_observe_mode(archive: Chronicle, tool: str, operation: str,
     replaces: a run that cannot be recorded must still be allowed to
     continue under a posture whose entire point is "never block".
     """
-    would_have = "ask" if _decision_for(preview) == "ask" else "deny"
+    # Fix round 1, N3: `preview["forced_decision"]` (set when the unattended
+    # row or the auto-mode fold already turned this call's ask into a deny)
+    # is read first, exactly like `render_decision` does - otherwise a call
+    # the stricter row denied outright was chronicled as `would-have-asked`,
+    # disagreeing with the decision that actually applied.
+    would_have = preview.get("forced_decision") or (
+        "ask" if _decision_for(preview) == "ask" else "deny")
     reason = str(preview.get("reason") or preview.get("category", "operation"))[:300]
     # B4-10: a secret-shaped operation used to VANISH from the trial's
     # record here - `Chronicle.append` refuses secret-shaped payloads
@@ -2315,8 +2979,8 @@ def _apply_observe_mode(archive: Chronicle, tool: str, operation: str,
                     "reason": recorded_reason,
                 },
             )
-        except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
-            pass
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: C-3/NS-10i - observe mode already let the call through; recording it is best-effort
+            _report_ancillary_failure(archive)
     preview["allow"] = True
     preview["observed"] = True
     preview["observe_advisory"] = (
@@ -2353,10 +3017,10 @@ def _frozen_region_verdict(project_root, target, submitted) -> dict:
     # test is what caught it. A packaging error should surface, not fail open.
     from godmode_runtime.godmode_mutableregions import edit_verdict
 
+    path = contain(target, [Path(project_root)])
+    if path is None:
+        return {"allowed": True, "detail": "", "remedy": ""}
     try:
-        path = Path(target)
-        if not path.is_absolute():
-            path = Path(project_root) / target
         text = path.read_text(encoding="utf-8", errors="replace")
     except (OSError, ValueError):  # godmode: swallow-ok: an unreadable target declares no region to protect
         return {"allowed": True, "detail": "", "remedy": ""}
@@ -2370,7 +3034,62 @@ def _frozen_region_verdict(project_root, target, submitted) -> dict:
     return edit_verdict(text, old_string)
 
 
+#: Registered in `godmode_sentinel._TIER_BY_CATEGORY` too (fix round 1,
+#: review of ac48f2d) - read from here at the call site rather than typed a
+#: second time, so the two can never quietly disagree.
+_TWO_REVERSALS_CATEGORY = "fix-loop-reversal"
+
+
+def _two_reversals_verdict(archive: Any, project_root: Path, target: str) -> dict[str, Any]:
+    """I-4 at the pre-tool boundary: has `target` been edited a third time
+    since two red retests of the same check, with no incident recorded
+    after the second that names both a hypothesis and its falsifier?
+
+    Answers in the same `{"allowed", "detail", "remedy"}` shape the fence and
+    frozen-region boundaries beside it use, plus `tier`/`category` (fix round
+    1: this gate's late position in the Edit/Write target loop means its
+    refusal never reaches the earlier, classify_action-driven chronicling
+    that writes a `refusal` archive record - verified by reading the code,
+    not assumed - so `tier`/`category` are returned here, from the one place
+    they are decided, for a caller or a test to check directly rather than
+    against a record this path never writes). Fails OPEN (`allowed: True`)
+    on anything that keeps this from resolving cleanly - an unreadable
+    archive, a target outside the project, or the detector itself raising -
+    the same posture every other advisory lookup on this path takes: a gate
+    that cannot prove a loop happened must never itself become the block.
+    """
+    from godmode_runtime.godmode_reversals import third_edit_without_incident
+
+    path = contain(target, [project_root])
+    if path is None:
+        return {"allowed": True, "detail": "", "remedy": ""}
+    try:
+        relative = path.relative_to(Path(project_root).resolve()).as_posix()
+    except ValueError:  # godmode: swallow-ok: not inside the project - nothing here to check
+        return {"allowed": True, "detail": "", "remedy": ""}
+    try:
+        finding = third_edit_without_incident(archive, relative)
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: this boundary never raises into the host
+        return {"allowed": True, "detail": "", "remedy": ""}
+    if finding is None:
+        return {"allowed": True, "detail": "", "remedy": ""}
+    detail = (
+        f"{finding['check']} ran red twice (seq {finding['red_runs'][0]} and "
+        f"{finding['red_runs'][1]}) and {relative} has been edited {finding['edits']} "
+        "time(s) since with no incident naming a hypothesis and its falsifier"
+    )
+    return {"allowed": False, "detail": detail, "remedy": finding["remedy"],
+            "tier": _TIER_BY_CATEGORY[_TWO_REVERSALS_CATEGORY],
+            "category": _TWO_REVERSALS_CATEGORY}
+
+
 def main(argv: list[str] | None = None) -> int:
+    # C-3/NS-10i: one process, one degraded line at most - reset on every
+    # call so an in-process test harness driving several events in a row
+    # (or a long-lived caller) never inherits a prior call's report.
+    global _ancillary_degraded_reported, _current_archive
+    _ancillary_degraded_reported = False
+    _current_archive = None
     parser = argparse.ArgumentParser(prog="godmode-session-hook")
     parser.add_argument("event", choices=["stop", "session-start", "pre-compact", "session-end",
                                           "pre-action", "user-prompt", "subagent-stop"])
@@ -2399,6 +3118,16 @@ def main(argv: list[str] | None = None) -> int:
         and not args.project
     )
     project = None if no_project_evidence else (args.project or str(submitted.get("cwd") or "."))
+    if args.event == "pre-action" and not submitted and not malformed_payload:
+        # S-2: empty or whitespace-only stdin describes no call. It fails
+        # closed like the empty operation it is, before a project is
+        # resolved - otherwise the call was metered against the project's
+        # budget (`godmode-meter.json`) on the way to the same deny.
+        reason = "no operation described: the pre-action payload was empty"
+        body, _code = render_decision(current_host(), "", "deny", reason)
+        print(json.dumps(body, ensure_ascii=False))
+        print(f"godmode: {reason}", file=sys.stderr)
+        return 2
 
     # A tool that cannot change anything gets no gate and no cost. Resolving the
     # repository identity costs several git calls, which is worth paying before a
@@ -2444,6 +3173,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         anchor = resolve_anchor(project)
         archive = Chronicle(anchor)
+        _current_archive = archive
         # A hook is a short-lived process that reads the archive many times
         # (measured 25 on one SessionStart) and appends a few records of its
         # own; pin the directory identity it scanned once so those reads do
@@ -2491,11 +3221,7 @@ def main(argv: list[str] | None = None) -> int:
                 _emit_claude_context({
                     "godmode": "not-initialized",
                     "project": resolved_root,
-                    "notice": (
-                        "godmode is installed but NOT initialized for this "
-                        "project - nothing is being gated or recorded. Run "
-                        "`godmode init` to switch it on, or ignore this if "
-                        "the project is deliberately ungoverned."),
+                    "notice": _NOT_INITIALIZED_NOTICE,
                 })
             else:
                 print(json.dumps({
@@ -2531,9 +3257,16 @@ def main(argv: list[str] | None = None) -> int:
             # of blocking the session itself over a recording failure.
             try:
                 record_session_anchor(archive, current_host())
-            except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: C-3/NS-10i - degrade, never crash the open
+                _report_ancillary_failure(archive)
+            # Transcripts a previous SessionEnd was too short on time to
+            # measure (see _measure_or_defer).
+            try:
+                _flush_deferred_measurements(archive)
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: a parked measurement that cannot be taken never costs the open
                 pass
-            from godmode_runtime.godmode_lens import build_context_brief
+            from godmode_runtime.godmode_lens import (
+                build_context_brief, cap_brief_sections, fit_brief)
             brief = build_context_brief(anchor, archive)
             brief["obligations"] = _session_obligations(anchor, archive, transcript_path=submitted.get("transcript_path") or submitted.get("transcriptPath"))
             try:
@@ -2563,7 +3296,13 @@ def main(argv: list[str] | None = None) -> int:
                 if stale:
                     brief["stale_claims"] = {
                         "count": len(stale),
-                        "first": [f"seq {s['sequence']}: '{s['text'][:60]}' ({s['citation']} {s['reason']})"
+                        # Q6 (review): an empty `citation` (a tree-wide
+                        # `tree-changed` entry names no single citation) must
+                        # not render as a stray leading space before the
+                        # reason - `"" + " "` was invisible only for a
+                        # human, not for the parenthesised text itself.
+                        "first": [f"seq {s['sequence']}: '{s['text'][:60]}' "
+                                  f"({(s['citation'] + ' ') if s['citation'] else ''}{s['reason']})"
                                   for s in stale[:3]],
                         "remedy": "godmode claim --stale",
                     }
@@ -2747,6 +3486,11 @@ def main(argv: list[str] | None = None) -> int:
             # session here and the parking below never ran live - the
             # reason obligation 8584 stayed unproven. Grok ignores this
             # stdout either way; the host decides the branch, not the key.
+            # C-12/N-5: every section held to its cap, then the oldest
+            # records dropped until the brief fits its session budget; both
+            # counted in `trimmed`, so the emission cap below stays a
+            # backstop that never fires mid-JSON.
+            fit_brief(cap_brief_sections(brief))
             if claude_session and current_host() != "grok":
                 _emit_claude_context(brief)
             else:
@@ -2834,9 +3578,57 @@ def main(argv: list[str] | None = None) -> int:
                 except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                     pass
                 return 0
+            # NS-10d, after the re-fire check above (Claude's own
+            # `stop_hook_active`/`stopHookActive`, and cursor's synthetic
+            # one set from `loop_count` above) has already returned for a
+            # re-fire - only a first pass over one Stop reaches here, so a
+            # re-fire records nothing (review S1). Still ahead of the
+            # empty-reply-text return just below: a quiet stop with no
+            # claim-shaped reply still carries a real host usage figure.
+            _record_usage_observed(archive, submitted, args.event)
             reply_text = _final_reply_text(submitted)
             if not reply_text:
                 return 0
+            # C-9: builder done-bar checks (scope-still-open,
+            # open-operator-asks) accept a recorded escalation for a few
+            # turns; reviewer checks (uncited-claim, unattested-hard-rule,
+            # reworded-done) never read this at all - `live_escalations`
+            # itself drops them before it ever scans a record. A
+            # subagent's hand-back never reads or ticks this: its scope is
+            # its own dispatch prompt, the same bypass `_scope_block_reason`
+            # already has.
+            #
+            # Reads and the write are split (fix round 1, S4): a read that
+            # cannot answer leaves both checks live (fail toward the
+            # existing gates, never toward a silent skip) and degrades
+            # with a record, the same convention 4e3b205 set for every
+            # other ancillary write on this path; a write failure degrades
+            # the same way without discarding whatever the read already
+            # found.
+            scope_escalation = None
+            asks_escalation = None
+            if not subagent:
+                try:
+                    from godmode_runtime.godmode_donebar import live_escalations
+                    live = live_escalations(
+                        archive, ("scope-still-open", "open-operator-asks"))
+                    scope_escalation = live.get("scope-still-open")
+                    asks_escalation = live.get("open-operator-asks")
+                except Exception:  # noqa: BLE001  # godmode: swallow-ok: C-3/NS-10i - an unreadable escalation never blocks or unblocks a guess
+                    scope_escalation = None
+                    asks_escalation = None
+                    _report_ancillary_failure(archive)
+                else:
+                    # N2: ticked only while something is actually live -
+                    # nothing to count otherwise, and an unconditional
+                    # tick would leave one record behind on every ordinary
+                    # Stop, forever.
+                    if scope_escalation or asks_escalation:
+                        try:
+                            from godmode_runtime.godmode_donebar import note_turn
+                            note_turn(archive, latest_session(archive))
+                        except Exception:  # noqa: BLE001  # godmode: swallow-ok: C-3/NS-10i - a turn tick that cannot be written costs the operator nothing this turn
+                            _report_ancillary_failure(archive)
             # S19 item 2: quiet posture drops the ADVISORY class wholesale
             # - claim advisories, nags, nudges, echo parking. The block
             # gates below never read this flag: enforcement is not an
@@ -2857,23 +3649,64 @@ def main(argv: list[str] | None = None) -> int:
             touched = _open_obligations_touched(
                 archive, reply_text,
                 session_id=str(submitted.get("session_id") or "") or None)
-            # Obligation 10117: each touched obligation is named once per
-            # session. The runtime no longer closes asks by word overlap:
-            # replayed on the reporter's session, that closure would have
-            # "served" an ask on 41 of 42 replies.
-            try:
-                # `latest_session` is the module-level import: a local
-                # import here shadowed it for the whole function and every
-                # pre-action call crashed (caught by chunk 1, 2026-09-09).
-                stop_session = latest_session(archive) or ""
-                touched = _nag_once(archive, stop_session, touched)
-            except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
-                pass
+            # S3 (fix round 1): open-operator-asks escalated means SKIPPED
+            # - not deferred one turn. Read before `_nag_once` runs: while
+            # the escalation stands, this turn's touched obligations never
+            # spend the once-per-session nag budget (`_nag_once` writes
+            # `godmode-nagged.json`) and never ride the parked echo into
+            # the next prompt boundary under the "unfinished promises"
+            # name - both of those used to still fire even after the
+            # notice itself was replaced, so the check was only ever
+            # deferred by one turn and then permanently silenced once the
+            # nag budget it never should have spent was gone.
+            asks_escalation_applies = bool(asks_escalation and touched)
+            if asks_escalation_applies:
+                # A1 (final review): this also silences any `standing
+                # duty:` entries already in `touched`, not only the nag -
+                # the quiet-posture filter below that would otherwise let
+                # a standing duty survive never runs on an emptied list.
+                # Deliberate: a recorded builder reason outranks a quiet
+                # posture's own definition-of-done carve-out.
+                touched = []
+            else:
+                # Obligation 10117: each touched obligation is named once per
+                # session. The runtime no longer closes asks by word overlap:
+                # replayed on the reporter's session, that closure would have
+                # "served" an ask on 41 of 42 replies.
+                try:
+                    # `latest_session` is the module-level import: a local
+                    # import here shadowed it for the whole function and every
+                    # pre-action call crashed (caught by chunk 1, 2026-09-09).
+                    stop_session = latest_session(archive) or ""
+                    touched = _nag_once(archive, stop_session, touched)
+                except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
+                    pass
             if quiet:
                 # Standing duties survive quiet: an operator-mandated
                 # per-task obligation is definition-of-done, not advisory
                 # (the recorded field pair died exactly this way: trimmed from the longest turns).
                 touched = [t for t in touched if t.startswith("standing duty:")]
+            # NS-10h: idle asks/obligations - decided against the reply's
+            # own full vocabulary, never the two-item-capped `touched`
+            # above (fix round 1, S1-2) - each named once, then quiet for a
+            # cooldown. Quiet posture drops this advisory too (S19 item 2).
+            resurfaced: list[str] = []
+            if not quiet:
+                try:
+                    cooldown_session = latest_session(archive) or ""
+                    now_turn, cooldown_state = _advance_cooldown_turn(
+                        archive, cooldown_session)
+                    resurfaced = _idle_resurface_lines(
+                        archive, str(submitted.get("session_id") or "") or None,
+                        reply_text, now_turn, cooldown_state)
+                    # One save for the whole Stop pass (turn advance and
+                    # touch-turn updates together) - fix round 1 nit: two
+                    # independent read-then-writes let a failed first save
+                    # survive under a stale second one.
+                    _save_cooldown_state(archive, cooldown_state)
+                except Exception:  # noqa: BLE001  # godmode: swallow-ok: C-3/NS-10i - an unreadable idle-ask surface names nothing rather than raising
+                    resurfaced = []
+                    _report_ancillary_failure(archive)
             # The investigation nudge: the timeline the temporal claim check
             # already reads also carries the fix-loop shape - one command
             # red three times with mutations between the failures. That
@@ -2926,12 +3759,28 @@ def main(argv: list[str] | None = None) -> int:
                         submitted.get("transcript_path") or submitted.get("transcriptPath"))
                     if swallow_note:
                         notices.append(swallow_note)
-            if touched:
+            if asks_escalation_applies:
+                # S3: open-operator-asks skipped, not deferred - the
+                # reason a builder recorded rides instead of the nag,
+                # every turn the escalation stays unexpired (it costs no
+                # part of the once-per-session nag budget to say this).
+                notices.append(
+                    "godmode: open-operator-asks escalated for this "
+                    f"session - {asks_escalation}")
+            elif touched:
                 notices.append(
                     "godmode: this reply relates to unfinished "
                     "promises on record: " + ", ".join(touched)
                     + ". Act on them, or close each with the command its "
                     "line shows - otherwise they keep coming back.")
+            if resurfaced:
+                # The cooldown for each of these lines was already burned
+                # (record_resurfaced, above) - insert at the front so the
+                # notices[:2] clip below cannot drop a line whose silence
+                # is already paid for.
+                notices.insert(0,
+                    "godmode: idle and worth another look - "
+                    + "; ".join(resurfaced))
             if unsupported:
                 shown = "; ".join(
                     f"'{_ascii_echo(s)[:160]}'" for s in unsupported[:2])
@@ -2980,8 +3829,24 @@ def main(argv: list[str] | None = None) -> int:
             # session's asks, plan steps or criteria still open on the
             # record is the "one more item, next release" pattern. Blocked
             # once with the list; the re-fire passes like the done-bar.
-            scope_reason = _scope_block_reason(
+            # I-9: a subagent's own reply carries no `session_id` this hook
+            # ever sees, so `open_scope`'s session filter (skipped when
+            # `session_id` is falsy) let EVERY session's open asks through -
+            # confirmed by hand: a subagent whose transcript said nothing
+            # but "Checkpoint complete." was blocked with `decision: block`
+            # over an ask the PARENT session, not it, had made. A subagent's
+            # scope is its own dispatch prompt; the parent's open asks are
+            # context for it, never a gate on it.
+            scope_reason = None if subagent else _scope_block_reason(
                 archive, reply_text, str(submitted.get("session_id") or "") or None)
+            if scope_reason and scope_escalation:
+                # scope-still-open skipped: the block never fires while
+                # the escalation stands; its reason rides as a notice
+                # instead.
+                notices.append(
+                    "godmode: scope-still-open escalated for this "
+                    f"session - {scope_escalation}")
+                scope_reason = None
             if scope_reason and not done_shaped:
                 block_body = {
                     "decision": "continue" if current_host() == "antigravity" else "block",
@@ -2992,10 +3857,14 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(block_body, ensure_ascii=False))
                 return 0
             if stall_block and not done_shaped:
+                from godmode_runtime.godmode_lens import render_three_zone
                 print(json.dumps({
                     "decision": "continue" if current_host() == "antigravity" else "block",
-                    "reason": (f"godmode gate, deliberate block, not a crash - STALL: {stall_block[len('godmode: '):]} "
-                               "An operator-stated record clears it; continuing does not."),
+                    "reason": render_three_zone(
+                        "godmode gate, deliberate block, not a crash - STALL: rounds "
+                        "keep ending with nothing changed, attested or decided.",
+                        stall_block[len('godmode: '):],
+                        ["An operator-stated record clears it; continuing does not."]),
                     "systemMessage": "\n".join(notices) if notices else stall_block,
                 }, ensure_ascii=False))
                 return 0
@@ -3025,19 +3894,21 @@ def main(argv: list[str] | None = None) -> int:
                 # Tenth field report 2026-09-05: Antigravity's Stop contract
                 # keeps the agent working on {"decision": "continue"}; the
                 # Claude/Grok spelling is "block". Same reason either way.
+                from godmode_runtime.godmode_lens import render_three_zone
                 block_body = {
                     "decision": "continue" if current_host() == "antigravity" else "block",
-                    "reason": (
+                    "reason": render_three_zone(
                         f"godmode gate, deliberate block, not a crash - THE DONE BAR: this reply says work is "
                         f"done, but {len(done_shaped)} of those statements "
                         f"have no evidence on record, or only an asserted grade "
-                        f"an executed check would settle: {shown}. Record each "
-                        "with the check that proves it: `godmode claim "
-                        "\"<text>\" --grade verified --cite \"cmd:<check>\" "
-                        "--verify` runs the check and attests it; `godmode "
-                        "claim \"<text>\" --cite <evidence>` records an "
-                        "observed grade; or soften the wording. Then finish. "
-                        "This check blocks only once."),
+                        f"an executed check would settle.",
+                        f"Unbacked: {shown}.",
+                        ["Record each with the check that proves it: `godmode claim "
+                         "\"<text>\" --grade verified --cite \"cmd:<check>\" "
+                         "--verify` runs the check and attests it.",
+                         "Or `godmode claim \"<text>\" --cite <evidence>` records an "
+                         "observed grade.",
+                         "Or soften the wording. Then finish. This check blocks only once."]),
                     "systemMessage": "\n".join(notices) if notices else
                         "godmode: completion blocked once pending a record; "
                         "the re-fire passes.",
@@ -3176,30 +4047,52 @@ def main(argv: list[str] | None = None) -> int:
                 }, ensure_ascii=False))
             _record_turn_baseline(archive, Path(anchor.project_root), submitted)
             try:
-                from godmode_runtime.godmode_requests import record_request
-                record_request(
-                    archive, prompt,
-                    session=str(submitted.get("session_id") or "") or None,
-                    tools_in_flight=int(submitted.get("tools_in_flight") or 0),
-                )
+                relay = _is_agent_relay(prompt)
+                if relay:
+                    # I-9: a hand-back is data about work done, not an ask -
+                    # recorded as the lightweight fact that it arrived, never
+                    # as a request the operator is now waited on to close.
+                    # The watchdog's repeat digest reads `data["operation"]`
+                    # first, falling back to `record["subject"]` when it is
+                    # absent - and every relay shares the one subject
+                    # "agent-relay-seen", so three DIFFERENT hand-backs in a
+                    # row digested identically and read as the same
+                    # operation attempted three times. A short prefix of the
+                    # prompt's own hash gives each relay a distinct
+                    # operation the digest actually reads, without
+                    # recording the prompt text itself.
+                    archive.append("action", "agent-relay-seen",
+                                   {"chars": len(prompt),
+                                    "operation": "agent-relay:"
+                                                 + hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12]})
+                else:
+                    from godmode_runtime.godmode_requests import record_request
+                    record_request(
+                        archive, prompt,
+                        session=str(submitted.get("session_id") or "") or None,
+                        tools_in_flight=int(submitted.get("tools_in_flight") or 0),
+                    )
                 # L2: the operator-correction detector rides the same guarded
                 # block - a correction-shaped prompt becomes a law candidate,
-                # keywords and digest only, never the sentence.
-                from godmode_runtime.godmode_law import (
-                    record_correction_candidate, record_instruction_candidate)
-                record_correction_candidate(
-                    archive, prompt,
-                    session=str(submitted.get("session_id") or "") or None)
-                # S6 (obligation 4435): the first telling of a standing rule
-                # lands in the archive without the agent volunteering it.
-                record_instruction_candidate(
-                    archive, prompt,
-                    session=str(submitted.get("session_id") or "") or None)
-            except Exception:  # noqa: BLE001  # godmode: swallow-ok: A prompt that cannot be stored - a secret-shaped paste the
-                # A prompt that cannot be stored - a secret-shaped paste the
-                # archive refuses, a locked store - must not stop the turn the
-                # operator is trying to have.
+                # keywords and digest only, never the sentence. Fix round 1
+                # (cheap item 2): a relay is agent-authored, not an operator
+                # correcting or instructing anything, so it must not become
+                # a law candidate either.
+                if not relay:
+                    from godmode_runtime.godmode_law import (
+                        record_correction_candidate, record_instruction_candidate)
+                    record_correction_candidate(
+                        archive, prompt,
+                        session=str(submitted.get("session_id") or "") or None)
+                    # S6 (obligation 4435): the first telling of a standing rule
+                    # lands in the archive without the agent volunteering it.
+                    record_instruction_candidate(
+                        archive, prompt,
+                        session=str(submitted.get("session_id") or "") or None)
+            except GodmodeError:  # noqa: BLE001  # godmode: swallow-ok: a secret-shaped-prompt refusal (PrivacyError) is a deliberate refusal, not a hook malfunction
                 pass
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: C-3/NS-10i - an unexpected write failure degrades, never stops the turn
+                _report_ancillary_failure(archive)
             return 0
 
         if args.event in {"pre-compact", "session-end"}:
@@ -3207,16 +4100,27 @@ def main(argv: list[str] | None = None) -> int:
             # this branch - the summary checkpoint below is optional and a
             # session dying without one is exactly the case this exists for.
             try:
-                _capture_interrupted_intent(archive)
-            except GodmodeError:
+                # Fix round 2: the capture now reports a READ it could not
+                # make the same way this site has always reported a write
+                # it could not make - by returning True rather than by
+                # recording its own second `hook-degraded` record, so one
+                # failed close still costs exactly one record however many
+                # of its inputs were unreadable.
+                capture_degraded = _capture_interrupted_intent(archive)
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: bookkeeping about bookkeeping must not cost the operator a close
+                capture_degraded = True
+            if capture_degraded:
                 # A capture that cannot be written is a hook-health fact,
                 # not nothing: recorded through the same degradation path
                 # every other boundary failure in this file uses, so it
                 # surfaces in `hooks status` instead of vanishing. The
-                # session still ends normally - this is bookkeeping about
-                # bookkeeping, and it may never cost the operator a close.
-                record_hook_degradation(
-                    archive, current_host(), "interrupted-intent-capture-failed")
+                # session still ends normally.
+                _print_degraded_once(DEGRADE_REASON_ANCILLARY)
+                try:
+                    record_hook_degradation(
+                        archive, current_host(), "interrupted-intent-capture-failed")
+                except Exception:  # noqa: BLE001  # godmode: swallow-ok: recording the degradation itself must not raise
+                    pass
             if args.event == "pre-compact":
                 # A compaction destroys the evidence that it happened. Without
                 # this the ledger cannot say a session compacted at all, and
@@ -3224,22 +4128,38 @@ def main(argv: list[str] | None = None) -> int:
                 # gap. Never raises: bookkeeping about bookkeeping must not
                 # cost the operator the compaction they asked for.
                 from godmode_runtime.godmode_session_log import record_compaction
-                record_compaction(
+                compaction_result = record_compaction(
                     archive,
                     session=str(submitted.get("session_id") or "") or None,
                     trigger=submitted.get("trigger"),
                 )
+                # C-3/NS-10i: `record_compaction` never raises by its own
+                # contract (a locked or refusing archive must not cost the
+                # operator the compaction) - it reports the failure back
+                # in its return value instead, which used to go unread.
+                if not compaction_result.get("recorded", True):
+                    _report_ancillary_failure(archive)
             if args.event == "session-end":
+                # NS-10d: SessionEnd is the other event `_record_usage_observed`
+                # checks for an inline `usage` block, under the same
+                # read-if-present (CX-5) posture as Stop - not a documented
+                # contract either. Recording both here and at Stop can
+                # double-report one session's tokens if a host sends usage
+                # at both boundaries; `usage_ledger_totals`'s read-time rule
+                # (review round 2, N4) is what prevents the double-count,
+                # not anything at write time here.
+                _record_usage_observed(archive, submitted, args.event)
                 # Best-effort, counts-only measurement of the host's own
                 # transcript. Never blocks the checkpoint below: a missing
                 # transcript, an unreadable one, or any other failure here
                 # must not cost the operator the checkpoint this branch
                 # exists to record.
+                # A transcript over _MEASURE_AT_END_MAX_BYTES is parked for
+                # the next session start instead (field report 2026-09-23).
                 try:
-                    from godmode_runtime.godmode_session_log import record_measurement
-                    record_measurement(
+                    _measure_or_defer(
                         archive, submitted.get("transcript_path"),
-                        session=str(submitted.get("session_id") or "") or None,
+                        str(submitted.get("session_id") or "") or None,
                     )
                 except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                     pass
@@ -3255,8 +4175,35 @@ def main(argv: list[str] | None = None) -> int:
                 # what stops the brief lying about when work last happened.
                 summary = "session-end (auto, counts only)"
                 auto = True
+            if (not summary and args.event == "pre-compact"
+                    and compaction_result.get("recorded", True)):
+                # NS-11a: unlike session-end, PreCompact had no fallback at
+                # all before this - an empty host summary meant this branch
+                # wrote nothing and the compaction's semantic layer (what was
+                # decided, what was found true) was gone with no record it
+                # was ever there. Gated on the compaction record above having
+                # actually landed: `tests/test_hook_never_raises.py` proves
+                # every event degrades with exactly ONE new record when
+                # every archive write fails, and `record_compaction`'s own
+                # write already claims that one slot for pre-compact - a
+                # second, independently-doomed write attempted here on top
+                # of it would double-report the same underlying failure.
+                # When the archive is healthy this fires every time, and
+                # when it is not, the early return two lines down still
+                # applies exactly as it did before this change.
+                summary = "pre-compact (auto, extracted)"
+                auto = True
             if not summary:
-                print(json.dumps({"godmode": "no-structured-checkpoint", "stored": False}))
+                # Review nit: the pre-compact gate above declines to write
+                # an auto checkpoint when the compaction record itself did
+                # not land, which is right (one degradation record per
+                # event, not two) but used to be indistinguishable from
+                # "this host sent no summary and nothing was expected".
+                # The payload now says which of the two happened.
+                declined = {"godmode": "no-structured-checkpoint", "stored": False}
+                if args.event == "pre-compact" and not compaction_result.get("recorded", True):
+                    declined["degraded"] = "compaction-record-not-written"
+                print(json.dumps(declined))
                 return 0
             data: dict[str, Any] = {
                 "status": "auto" if auto else str(submitted.get("status", "active"))[:40],
@@ -3268,14 +4215,54 @@ def main(argv: list[str] | None = None) -> int:
             if auto:
                 data["auto"] = True
                 data["counts"] = _session_counts(archive)
-            record = archive.append(
-                "checkpoint",
-                summary[:200],
-                data,
-                evidence=_bounded_list(submitted.get("evidence")),
-            )
-            payload = {"godmode": "checkpoint", "stored": True,
-                       "sequence": record["sequence"]}
+            evidence = _bounded_list(submitted.get("evidence"))
+            if args.event == "pre-compact":
+                # NS-11a: every PreCompact checkpoint carries the decisions
+                # and facts extracted since the last one - not only the
+                # auto-fallback path above, so a host-supplied summary does
+                # not itself cost the semantic layer either.
+                #
+                # B1: guarded, like the checkpoint write below it. This
+                # fold reads the archive, and `read_events(verify=False)`
+                # hands back records the chain walk would have refused - so
+                # a single damaged record on disk used to raise an
+                # `AttributeError` straight out of `main()` and into the
+                # host, for exactly one payload shape (PreCompact WITH a
+                # host summary, which is the shape that skips the auto
+                # fallback above). An extraction that cannot be built
+                # degrades to an empty, self-declaring block; the
+                # checkpoint itself still gets written, which is the whole
+                # point of NS-11a. No second failure record is written
+                # here: the `degraded` marker travels in the checkpoint
+                # that lands, so the degradation-count contract
+                # `tests/test_hook_never_raises.py` proves is untouched.
+                try:
+                    extracted = _extracted_checkpoint_facts(archive)
+                except Exception:  # noqa: BLE001
+                    extracted = {"decisions": [], "facts": [],
+                                 "omitted": {"decisions": 0, "facts": 0},
+                                 "degraded": True}
+                data["extracted"] = extracted
+                # M3: the same sequences, restated as `seq:` cites in the
+                # record's own evidence list, where `godmode_forget`'s
+                # citation collector can actually see them.
+                evidence = evidence + _extracted_cites(extracted)
+            # C-3/NS-10i: the checkpoint write itself is the one ancillary
+            # step in this branch that was never wrapped - a locked or
+            # refusing archive used to crash the whole SessionEnd call
+            # instead of degrading it.
+            try:
+                record = archive.append(
+                    "checkpoint",
+                    summary[:200],
+                    data,
+                    evidence=evidence,
+                )
+                payload = {"godmode": "checkpoint", "stored": True,
+                           "sequence": record["sequence"]}
+            except Exception:  # noqa: BLE001
+                _report_ancillary_failure(archive)
+                payload = {"godmode": "checkpoint", "stored": False}
             # What the gates did this run, at the moment the run ends. Silent
             # when nothing fired, and switched off by .godmode-report.json.
             session = latest_session(archive)
@@ -3343,8 +4330,9 @@ def main(argv: list[str] | None = None) -> int:
             except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
             reason = (
-                "refused: hook-interception-probe (R5) - this operation exists only "
-                "to prove the pre-tool boundary is reachable; it is always denied."
+                "refused: hook-interception-probe - R5 (irreversible, no staged "
+                "capability applies) - this operation exists only to prove the "
+                "pre-tool boundary is reachable; it is always denied."
             )
             if pretool:
                 body, _code = render_decision(event.host, event.event, "deny", reason)
@@ -3459,6 +4447,9 @@ def main(argv: list[str] | None = None) -> int:
                 # the table, so it is sound; the field's top complaint was
                 # the ask on every read-only payload (three reports).
                 inline_scan=policy.get("inline_interpreter", "scan") == "scan",
+                # G-5: the tool name selects the shell dialect the command
+                # is parsed under (PowerShell reads a backslash literally).
+                tool_name=tool or None,
             )
             # Iteration trap (2026-09-10): the fourth run of a command that
             # failed three times against an unchanged tree is asked about,
@@ -3531,8 +4522,12 @@ def main(argv: list[str] | None = None) -> int:
                         "gate": "allow",
                         "cleared_by": "inline_interpreter",
                     })
-                except GodmodeError:
-                    record_hook_degradation(archive, current_host(), "inline-scan-record-failed")
+                except Exception:  # noqa: BLE001  # godmode: swallow-ok: the allow above already stands; recording it is best-effort
+                    _print_degraded_once(DEGRADE_REASON_ANCILLARY)
+                    try:
+                        record_hook_degradation(archive, current_host(), "inline-scan-record-failed")
+                    except Exception:  # noqa: BLE001  # godmode: swallow-ok: recording the degradation itself must not raise
+                        pass
         elif (ci_gap := tag_push_refusal(operation, Path(anchor.project_root), archive)) is not None:
             # A tag push is a release and CI on the tagged commit is its
             # proof (0.3.20, 2026-09-08: the tag went public with the matrix
@@ -3567,8 +4562,12 @@ def main(argv: list[str] | None = None) -> int:
                     "gate": "allow",
                     "silenced_by": "ask_only",
                 })
-            except GodmodeError:
-                record_hook_degradation(archive, current_host(), "ask-only-record-failed")
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: the allow above already stands; recording it is best-effort
+                _print_degraded_once(DEGRADE_REASON_ANCILLARY)
+                try:
+                    record_hook_degradation(archive, current_host(), "ask-only-record-failed")
+                except Exception:  # noqa: BLE001  # godmode: swallow-ok: recording the degradation itself must not raise
+                    pass
         else:
             preview["allow"] = False
             # Name a remedy the reader can actually perform - and name the one
@@ -3605,12 +4604,13 @@ def main(argv: list[str] | None = None) -> int:
                 # no operation text inlined here at all.
                 deny_reason = (
                     f"refused: this is irreversible ({preview['category']}, "
-                    f"{preview.get('tier', 'R?')})"
+                    f"{preview.get('tier', 'R?')} - too high a risk tier for "
+                    "this to auto-approve)"
                     + (f" - touches {impact}" if impact else "")
                     + ". Run it yourself, rephrase it as something narrower, or "
                     "stage a capability for this exact command - it needs the "
-                    "password from `godmode authorize setup`, is spent once, "
-                    f"and expires. {stage_hint(PLUGIN_ROOT)}"
+                    "password set once with the launcher's `authorize setup`, "
+                    f"is spent once, and expires. {stage_hint(PLUGIN_ROOT)}"
                 ) + governance_note
             else:
                 # CX-2: an unrecognized tool (or any other no-operation-text
@@ -3618,7 +4618,8 @@ def main(argv: list[str] | None = None) -> int:
                 # a remedy that names an empty command would be worse than
                 # naming none.
                 deny_reason = (
-                    f"refused: {preview['category']} ({preview.get('tier', 'R?')})"
+                    f"refused: {preview['category']} ({preview.get('tier', 'R?')} "
+                    "- too high a risk tier for this to auto-approve)"
                     + (f" - touches {impact}" if impact else "")
                     + ". No operation text is available to stage a capability "
                     "for; run this yourself outside the agent, or extend the "
@@ -3642,18 +4643,70 @@ def main(argv: list[str] | None = None) -> int:
             # ask at all, and the record names the mode.
             permission_mode = str(host_field(submitted, "permission_mode") or "")
             no_human_ask = permission_mode in _NO_HUMAN_ASK_MODES
+            # NS-10k: the one call site that resolves whether an operator is
+            # presumed present and threads it into `_decision_for` - every
+            # other call site in this file passes none and keeps the R5-only
+            # floor exactly as before this tier existed. Fix round 1: also
+            # feeds `permission_mode` - `attended()`'s own `_NO_HUMAN_ASK_MODES`
+            # signal makes the unattended row reachable on the one host
+            # (Claude Code) where a background/CI run may never set `CI` or
+            # a `session_type` at all, but always states its own permission
+            # mode.
+            attended_flag = attended(host_field(submitted, "session_type"), permission_mode)
+            # Whether an ATTENDED session would have asked - independent of
+            # `permission_mode`'s effect on `attended_flag` above, so the
+            # auto-mode fold below still fires on its own original signal
+            # (the host's permission mode) rather than being pre-empted by
+            # the unattended row it now also feeds.
+            was_ask_when_attended = _decision_for(preview, True) == "ask"
             effectively_denied = (
-                _decision_for(preview) != "ask" or event.host not in HOSTS_WITH_ASK
+                _decision_for(preview, attended_flag) != "ask"
+                or event.host not in HOSTS_WITH_ASK
                 or no_human_ask
             )
-            if no_human_ask and _decision_for(preview) == "ask" and event.host in HOSTS_WITH_ASK:
+            if no_human_ask and was_ask_when_attended and event.host in HOSTS_WITH_ASK:
                 preview["forced_decision"] = "deny"
                 deny_reason = (
-                    f"refused: {preview['category']} ({preview.get('tier', 'R?')}) - the host is in "
-                    f"{permission_mode} mode, where an ask is answered by the host's classifier, not by "
-                    "you; a protected call needs a staged capability from the password holder. "
-                    f"{stage_hint(PLUGIN_ROOT)}"
+                    f"refused: {preview['category']} ({preview.get('tier', 'R?')} - too "
+                    "high a risk tier for this to auto-approve) - the host is in "
+                    f"{permission_mode} mode, where an ask is answered by the host's "
+                    "classifier, not by you. A protected call needs a staged capability "
+                    f"from the password holder. {stage_hint(PLUGIN_ROOT)}"
                 ) + governance_note
+            elif (
+                event.host in HOSTS_WITH_ASK and not no_human_ask
+                and was_ask_when_attended and _decision_for(preview, attended_flag) != "ask"
+            ):
+                # The unattended row's own escalation (R4 added to the
+                # refuse-outright floor): this call's decision changed from
+                # ask to deny SPECIFICALLY because no operator is presumed
+                # present - not because the host lacks an ask decision at
+                # all (`event.host in HOSTS_WITH_ASK`, unaffected by this
+                # branch either way) and not because its permission mode
+                # already folds asks to deny (`not no_human_ask` - that has
+                # its own accurate message above, and reaching this `elif`
+                # already proves it did not fire). Fix round 1, N4: appends
+                # to the deny reason already built above instead of
+                # replacing it, so neither the "no operation text to stage"
+                # variant nor a future host-contract-specific reason is
+                # ever silently discarded. Fix round 2, R4: this note no
+                # longer repeats the staging remedy when `operation` is
+                # truthy - the base `deny_reason` built above (the
+                # `if operation:` branch near the top of this function)
+                # already ends with "stage a capability for this exact
+                # command ... {stage_hint(...)}", so appending a second
+                # "A protected call needs a staged capability ... {stage_hint}"
+                # sentence here named the same command twice in one message.
+                # When `operation` is falsy the base message instead says no
+                # operation text is available to stage one for, and this
+                # note adds nothing more - naming a remedy there would
+                # contradict what the base message just said.
+                preview["forced_decision"] = "deny"
+                deny_reason = deny_reason + (
+                    " The unattended tier refuses outright rather than ask, since "
+                    "no operator is presumed present to answer - run this from an "
+                    "attended session, or set GODMODE_ATTENDED=1 if one truly is one."
+                )
             preview["reason"] = deny_reason if effectively_denied else ask_reason
             if not effectively_denied and not observe:
                 # Obligation 4026 (S4): an enforce-mode ask was invisible -
@@ -3670,10 +4723,8 @@ def main(argv: list[str] | None = None) -> int:
                          "permission_mode": permission_mode or "unknown"},
                         evidence=[],
                     )
-                except Exception as error:  # noqa: BLE001
-                    from godmode_runtime.godmode_sentinel import _degraded
-
-                    _degraded(f"recording a gate ask: {type(error).__name__}")
+                except Exception:  # noqa: BLE001  # godmode: swallow-ok: C-3/NS-10i - an ask that already happened is best-effort to record
+                    _report_ancillary_failure(archive)
             if effectively_denied:
                 # Recorded here, in the full escalation path only - the fast
                 # gate stays IO-free by contract, and this branch is where a
@@ -3713,8 +4764,8 @@ def main(argv: list[str] | None = None) -> int:
                                 "category": preview["category"],
                             },
                         )
-                    except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
-                        pass
+                    except Exception:  # noqa: BLE001  # godmode: swallow-ok: C-3/NS-10i - the decision above is already final; recording it is best-effort
+                        _report_ancillary_failure(archive)
                     # Obligation 4523: a LIVE shim block is the proof the
                     # grade was waiting for. The OpenCode shim marks its
                     # spawns (GODMODE_SHIM_BOUNDARY), and its documented
@@ -3805,6 +4856,60 @@ def main(argv: list[str] | None = None) -> int:
                     preview["reason"] = f"{frozen['detail']}. {frozen['remedy']}"
                     break
 
+                # I-4: two red retests of the same check already bracket this
+                # file's fix attempts - a third edit with no incident naming
+                # both a hypothesis and its falsifier is the loop doctrine
+                # already says to stop, enforced rather than advised.
+                reversal = _two_reversals_verdict(archive, Path(anchor.project_root), target)
+                if not reversal["allowed"]:
+                    preview["allow"] = False
+                    # Tighten-only, the same idiom the declared-tool-gate
+                    # below uses: never lower a tier another check already
+                    # set. Both values come back from `_two_reversals_verdict`
+                    # itself (which reads the registered vocabulary), not a
+                    # literal repeated at the call site (fix round 1, review
+                    # of ac48f2d).
+                    preview["tier"] = preview.get("tier") or reversal["tier"]
+                    preview["category"] = reversal["category"]
+                    preview["reason"] = f"{reversal['detail']}. {reversal['remedy']}"
+                    break
+
+            # NS-13d plan-first: the edit that would make an unplanned
+            # change span a second file needs an approved plan. Only an
+            # initialized project reaches this line (an uninitialized one
+            # returned at the top of this hook); a single-file change, a
+            # small edit, a throwaway branch and `plan_first: off` pass.
+            if preview.get("allow"):
+                from godmode_runtime.godmode_plan import plan_first_verdict
+                tool_input = submitted.get("tool_input", submitted.get("toolInput"))
+                if not isinstance(tool_input, dict):
+                    call = submitted.get("toolCall")
+                    tool_input = call.get("args") if isinstance(call, dict) else None
+                first = plan_first_verdict(
+                    archive, list(event.targets), project_root=Path(anchor.project_root),
+                    tool_input=tool_input if isinstance(tool_input, dict) else None,
+                    policy=policy, branch=anchor.branch)
+                if not first["allowed"]:
+                    preview["allow"] = False
+                    preview["tier"] = preview.get("tier") or first["tier"]
+                    preview["category"] = first["category"]
+                    preview["reason"] = f"{first['detail']}. {first['remedy']}"
+                elif first.get("exempt_files"):
+                    # Review H2: the small-edit exemption covers this edit
+                    # only; noted so the file is not enrolled in the change.
+                    # Without the note the file would be enrolled, so an
+                    # unwritable note stops the edit instead of passing it.
+                    try:
+                        from godmode_runtime.godmode_plan import record_small_edit_exemption
+                        record_small_edit_exemption(archive, first["exempt_files"])
+                    except Exception as exc:  # noqa: BLE001  # godmode: swallow-ok: handled by asking - the edit is stopped, not passed
+                        preview["allow"] = False
+                        preview["tier"] = preview.get("tier") or "R2"
+                        preview["category"] = "unplanned-multi-file-change"
+                        preview["reason"] = (
+                            "the plan-first small-edit exemption could not be recorded "
+                            f"({type(exc).__name__}); approve this edit or record a plan")
+
         # S16 (E56): declarative per-tool gates. The policy file may declare
         # `tool_gates: {"ToolName": "ask"|"deny"}` - approval demanded at the
         # tool's DECLARATION, composing with everything above. Tighten-only
@@ -3859,12 +4964,15 @@ def main(argv: list[str] | None = None) -> int:
                 record_host_approval(
                     archive, host=event.host, tool=tool, operation=operation,
                     approval_context=event.approval_context,
-                    godmode_decision=_decision_for(preview),
+                    # Fix round 1, N3: `forced_decision` first, same as
+                    # `render_decision` - a call the unattended row (or the
+                    # auto-mode fold) denied outright must not be chronicled
+                    # under the attended-default `ask`/`allow` this would
+                    # otherwise recompute.
+                    godmode_decision=preview.get("forced_decision") or _decision_for(preview),
                 )
-            except GodmodeError as error:
-                from godmode_runtime.godmode_sentinel import _degraded
-
-                _degraded(f"recording a host approval: {type(error).__name__}")
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: C-3/NS-10i - the decision above already stands; recording it is best-effort
+                _report_ancillary_failure(archive)
 
         if pretool:
             # Silence is the allow signal in this contract; only a refusal speaks,
@@ -4018,5 +5126,81 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
 
+def run(argv: list[str] | None = None) -> int:
+    """The process entry point: `main()` with an outer guard, so that NO
+    exception - not one this file anticipated, not one a module it imports
+    raises three layers down - ever reaches the host as a traceback.
+
+    C-3/NS-10i fix round 2. `main()` catches `GodmodeError` and nothing
+    else, and `raise SystemExit(main())` had no guard at all, so an
+    `OSError` out of any unguarded archive READ (the one the interrupted-
+    intent capture made is only the one that was found) left this process
+    with a stack trace in the host's console and an exit code the host
+    reads as "the hook is broken". The contract is the opposite: the hook
+    degrades, says so once, and gets out of the way.
+
+    Not silent. The degradation is reported exactly the way every inner
+    boundary failure in this file reports one - the single stderr line plus
+    a `hook-degraded` record - and only when no inner guard has already
+    reported this call (`_ancillary_degraded_reported`), so an event whose
+    bookkeeping failed and then crashed still leaves ONE record, which is
+    what the all-writes-fail suite measures.
+
+    Not fail-open for `pre-action`. Every other event exits 0, the hook's
+    ordinary "nothing to say" answer. A `pre-action` that could not be
+    evaluated denies with exit 2, matching `main`'s own `GodmodeError`
+    branch (M7): a crash in the evaluator is the last thing that should
+    silently permit the call it failed to judge. The event is read from
+    argv, which the payload cannot forge.
+
+    `SystemExit` and `KeyboardInterrupt` pass through untouched: the first
+    is argparse's own `--help`/usage exit and an explicit decision to stop,
+    the second is the operator's.
+    """
+    try:
+        return main(argv)
+    except SystemExit:
+        raise
+    except KeyboardInterrupt:
+        raise
+    except BaseException:  # noqa: BLE001  # godmode: swallow-ok: C-3/NS-10i - the whole point of this function is that nothing reaches the host
+        return _degraded_exit(argv)
+
+
+def _degraded_exit(argv: list[str] | None) -> int:
+    """Report `run`'s caught failure and answer the host. Every step is
+    itself guarded: a reporter that raises would be the crash this exists
+    to prevent."""
+    event = ""
+    try:
+        for token in (argv if argv is not None else sys.argv[1:]):
+            if not token.startswith("-"):
+                event = token
+                break
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: argv is the host's, and may be anything
+        event = ""
+    try:
+        if not _ancillary_degraded_reported:
+            _print_degraded_once(DEGRADE_REASON_ANCILLARY)
+            if _current_archive is not None:
+                record_hook_degradation(
+                    _current_archive, current_host(), DEGRADE_REASON_ANCILLARY)
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: recording the degradation itself must not raise
+        pass
+    if event != "pre-action":
+        return 0
+    try:
+        reason = (
+            "godmode error during pre-action evaluation; refusing rather "
+            "than allowing a call this hook could not evaluate"
+        )
+        body, _code = render_decision(current_host(), "", "deny", reason)
+        print(json.dumps(body, ensure_ascii=False))
+        print(f"godmode: {reason}", file=sys.stderr)
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: the deny still stands on the exit code below
+        pass
+    return 2
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run())

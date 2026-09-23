@@ -1,0 +1,1 @@
+- A checkpoint is an audited chain entry: verification walks only the records since the last checkpoint proven by a full walk; tampering before that checkpoint is caught at the next full walk. `godmode doctor` now exits 1 with an `archive-chain-broken` finding when its walk fails.

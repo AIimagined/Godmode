@@ -50,23 +50,29 @@ class LawDedupTests(unittest.TestCase):
         import sys as _sys
         from pathlib import Path as _Path
         _sys.path.insert(0, str(_Path(__file__).parent))
+        from _law_fixtures import operator_lesson
         from test_godmode_runtime import isolated_project
         from godmode_runtime.godmode_law import top_laws
 
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
-            archive.append("lesson", "one-subject",
-                           {"status": "active", "generalized_guard": "old guard"},
-                           evidence=[])
-            archive.append("lesson", "one-subject",
-                           {"status": "active", "generalized_guard": "new guard"},
-                           evidence=[])
+            # NS-2 fix round 1 (B1): this test is about WHICH record of a
+            # subject is the law (newest wins, and a retirement retires),
+            # not about admission - both writes take the operator
+            # carve-out so the dedup rule is the only thing under test.
+            operator_lesson(archive, "one-subject", "old guard")
+            operator_lesson(archive, "one-subject", "new guard")
             laws = top_laws(archive, 10)
             self.assertEqual(
                 [l["subject"] for l in laws].count("one-subject"), 1)
             self.assertIn("new guard", laws[0]["guard"])
+            # Task 5's single-writer close guard, met head-on: a law an
+            # operator opened is retired by an operator. An agent write
+            # here is refused outright, which is the rule working - the
+            # carve-out does not hand an agent a back door to lift a
+            # standing guard either.
             archive.append("lesson", "one-subject", {"status": "retired"},
-                           evidence=[])
+                           evidence=[], as_operator=True, operator_verified=True)
             self.assertEqual(top_laws(archive, 10), [])
 
 

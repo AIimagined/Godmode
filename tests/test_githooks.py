@@ -678,6 +678,44 @@ class PreCommitInspectionFailureTests(unittest.TestCase):
             self.assertEqual(payload["category"], "inspection-failed")
 
 
+class GateTableFreshnessCheckFailureTests(unittest.TestCase):
+    """`table_is_stale` can still fail (a corrupt or unreadable sentinel
+    file, for instance) even though `_generated_from()` now lives in the
+    runtime itself rather than importing `scripts/dev/build_decision_table`
+    lazily - a failure there must never surface as a bare traceback out of
+    the pre-commit hook. It blocks unconditionally, with no declared-policy
+    gate, the same as the I-6 closure check either side of it in
+    `_evaluate_pre_commit`."""
+
+    @staticmethod
+    def _stage_a_file(project: Path) -> None:
+        (project / "a.txt").write_text("x", encoding="utf-8")
+        _git("add", "a.txt", cwd=project)
+
+    def test_a_raising_freshness_check_blocks_even_without_declared_policy(self) -> None:
+        with isolated_git_project() as (project, archive):
+            self._stage_a_file(project)
+            # Policy NOT declared - the unconditional checks (version-drift,
+            # closure, gate-table freshness) have no capability escape.
+            with mock.patch("godmode_runtime.godmode_githooks.table_is_stale",
+                             side_effect=AssertionError("boom")):
+                report = evaluate_git_hook(archive, project, "pre-commit", "")
+        self.assertEqual(report["verdict"], "block")
+        self.assertEqual(report["category"], "gate-table-stale-check-failed")
+        self.assertIn("boom", report["reason"])
+
+    def test_it_is_chronicled_counts_only(self) -> None:
+        with isolated_git_project() as (project, archive):
+            self._stage_a_file(project)
+            with mock.patch("godmode_runtime.godmode_githooks.table_is_stale",
+                             side_effect=RuntimeError("boom")):
+                evaluate_git_hook(archive, project, "pre-commit", "")
+            records = archive.select(
+                kind="action", subject="git-hook-inspection-failed", limit=10)
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["data"]["host"], "git")
+
+
 class PreCommitPreRebasePostCheckoutTests(unittest.TestCase):
     def test_pre_commit_blocks_staging_a_pinned_evaluator(self) -> None:
         with isolated_git_project() as (project, archive):

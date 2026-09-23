@@ -1,0 +1,1 @@
+- Generated host manifests take their hook timeouts from the committed gate-latency baseline's recommended values when present, with the previous constants as defaults. A recommendation only raises a timeout above its default, never lowers it, until that hook path is measured directly.

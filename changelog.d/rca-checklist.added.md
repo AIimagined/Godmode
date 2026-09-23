@@ -1,0 +1,1 @@
+- The RCA ritual is a checklist template; a record that skips a step is incomplete.

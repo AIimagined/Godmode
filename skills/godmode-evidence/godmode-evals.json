@@ -1,0 +1,45 @@
+{
+  "schema": "godmode-skill-eval-v1",
+  "skill": "godmode-evidence",
+  "routing": {
+    "positive": [
+      "My claim keeps being downgraded to observed; reshape its citation around an exit-bearing command and record it through --verify",
+      "The Stop gate keeps blocking on unsupported sentences and a stale citation; repair the drifted evidence, give the hypothesis a falsifier, and resolve the settled claim"
+    ],
+    "near_negative": [
+      "Independently recheck a verdict another pass already accepted",
+      "Root-cause the crash in the nightly build",
+      "Merge the changelog fragments and build the release notes"
+    ]
+  },
+  "behavior_assertions": [
+    {
+      "assert": "A claim runs its cmd: citations through the attested checker in one command.",
+      "check": {
+        "command": "python scripts/godmode.py claim --help",
+        "expect_exit": 0,
+        "expect_contains": "--refuted-by"
+      }
+    },
+    {
+      "assert": "Aged falsifiers can be listed before they run.",
+      "check": {
+        "command": "python scripts/godmode.py verify --help",
+        "expect_exit": 0,
+        "expect_contains": "--falsifiers"
+      }
+    },
+    {
+      "assert": "The skill's own bundle validates structurally.",
+      "check": {
+        "command": "python scripts/godmode.py --project . skill validate --path skills/godmode-evidence",
+        "expect_exit": 0,
+        "expect_contains": "\"valid\": true"
+      }
+    },
+    "An exit-bearing cmd: citation verifies at the grade asked for, while a state-reporting one caps at observed - proven in tests/test_godmode_evidence.py on a bare temp project.",
+    "A claim resolves at most once."
+  ],
+  "baseline_required": true,
+  "claims_require_evidence": true
+}

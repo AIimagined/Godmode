@@ -14,7 +14,9 @@ from __future__ import annotations
 import json
 import os
 import sys
-from typing import Any
+
+# `typing` is not imported (about 6-10 ms): `Any` below appears only in an
+# annotation, which `from __future__ import annotations` never evaluates.
 
 CAP_BYTES = 2 * 1024 * 1024
 _CHUNK = 65536
@@ -27,10 +29,26 @@ _CHUNK = 65536
 _LSTRIP_PREFIX = "﻿ \t\r\n"
 
 
+# Bytes an earlier stage of the same process already read from stdin
+# (`godmode_session_entry.py` reads the payload to decide whether the full
+# hook runs at all); the next `read_first_json` call returns them once.
+_preloaded: bytes | None = None
+
+
+def preload(raw: bytes) -> None:
+    """Hand bytes already read from stdin to the next `read_first_json`."""
+    global _preloaded
+    _preloaded = raw
+
+
 def read_first_json(cap: int = CAP_BYTES) -> bytes:
     """The bytes of the first complete JSON object on stdin, or whatever
     arrived before EOF or the cap. A terminal stdin yields nothing: a hook
     run by hand must not sit waiting for a payload nobody is typing."""
+    global _preloaded
+    if _preloaded is not None:
+        raw, _preloaded = _preloaded, None
+        return raw
     try:
         if sys.stdin is None or sys.stdin.isatty():
             return b""

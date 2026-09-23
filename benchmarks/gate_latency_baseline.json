@@ -1,0 +1,18 @@
+{
+  "n": 21,
+  "phases": {
+    "escalate": {
+      "p95_ms": 624.3174000010185
+    },
+    "fast_allow": {
+      "p95_ms": 162.09750000052736
+    }
+  },
+  "recommended_timeouts": {
+    "pre_tool_use": 3,
+    "stop": 10,
+    "user_prompt": 10
+  },
+  "runtime_version": "0.3.28",
+  "schema": "godmode-gate-latency-baseline-v1"
+}

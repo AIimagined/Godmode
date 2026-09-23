@@ -1,0 +1,1 @@
+- The compiled law file keeps citation text out of the shared file: a law whose lesson subject cites a paper is titled from its guard, and its reason omits the cited text; the lesson itself keeps the citation in the local archive.

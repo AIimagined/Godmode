@@ -1,0 +1,1 @@
+- `resume` lists declared state before inferred state, names a conflict between the two with the declaration winning, and adds a per-day catch-up section when more than one day passed since the last checkpoint.

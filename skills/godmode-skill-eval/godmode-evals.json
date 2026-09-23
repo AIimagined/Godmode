@@ -1,0 +1,38 @@
+{
+  "schema": "godmode-skill-eval-v1",
+  "skill": "godmode-skill-eval",
+  "routing": {
+    "positive": [
+      "Score a drafted skill's authored routing rows against the committed baseline and validate its bundle before it ships",
+      "Confirm a skill's overlap scores still hold and that the ratchet shows no regression before it is enabled by default"
+    ],
+    "near_negative": [
+      "Create a new project skill after the same missing workflow was needed twice",
+      "Review this pull request's code changes for bugs",
+      "Pick a different testing framework for the whole project",
+      "Run the project's full automated test suite before merging"
+    ]
+  },
+  "behavior_assertions": [
+    {
+      "assert": "The routing ratchet reports clean against the committed baseline with no hand-edited fixture behind it.",
+      "check": {
+        "command": "python scripts/godmode.py evals --ratchet --brief",
+        "expect_exit": 0,
+        "expect_contains": "clean"
+      }
+    },
+    {
+      "assert": "The offline routing harness is deterministic across two runs of the files on disk.",
+      "check": {
+        "command": "python scripts/godmode.py evals --determinism --brief",
+        "expect_exit": 0,
+        "expect_contains": "deterministic"
+      }
+    },
+    "skill lint's bundle facet reports no orphaned or dead-linked file for a skill this repository ships.",
+    "Running evals --write-baseline immediately after a clean --ratchet raises the floor to exactly the state just proven clean, never a hopeful guess."
+  ],
+  "baseline_required": true,
+  "claims_require_evidence": true
+}

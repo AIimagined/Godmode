@@ -1,6 +1,6 @@
 """CX-5: failure semantics and truthful capability levels.
 
-Binds `docs/superpowers/plans/2026-08-16-codex-compat.md`'s Task CX-5, its
+Binds the Codex-compatibility plan's Task CX-5, its
 Global Constraints, and Plan amendments 1-4 (amendment 3 carries the
 five-level interception scale and receipt enrichment; amendment 2 carries
 the mode table and capability digest; amendment 4 carries the doctrine
@@ -1079,12 +1079,20 @@ class LatencySelfCheckTests(unittest.TestCase):
     def test_pretool_timeout_ms_reads_the_real_shipped_manifests(self) -> None:
         # Claude, Codex and Grok read the one shared file, whose PreToolUse
         # bound is the generous 8 s Grok's fail-open timeout needs
-        # (2026-08-28); Cursor and Gemini keep their own 3 s files.
+        # (2026-08-28); Gemini keeps its own 3 s file. Cursor's bound
+        # follows the measured latency baseline and only rises from its
+        # 3 s default, so the assertion reads the shipped file rather
+        # than re-typing a literal that the baseline is allowed to move.
         self.assertEqual(_pretool_timeout_ms("claude"), 8000)
         self.assertEqual(_pretool_timeout_ms("codex"), 8000)
         self.assertEqual(_pretool_timeout_ms("grok"), 8000)
         self.assertEqual(_pretool_timeout_ms("gemini"), 3000)
-        self.assertEqual(_pretool_timeout_ms("cursor"), 3000)
+        cursor_manifest = json.loads(
+            (PLUGIN_ROOT / ".cursor-plugin" / "hooks.json").read_text(encoding="utf-8")
+        )
+        cursor_pretool = cursor_manifest["hooks"]["preToolUse"][0]["hooks"][0]["timeout"]
+        self.assertGreaterEqual(cursor_pretool, 3)
+        self.assertEqual(_pretool_timeout_ms("cursor"), cursor_pretool * 1000)
         self.assertIsNone(_pretool_timeout_ms("no-such-host"))
 
     def test_run_probe_measures_and_persists_latency(self) -> None:
@@ -1142,6 +1150,62 @@ class LatencySelfCheckTests(unittest.TestCase):
             self.assertNotEqual(report["state"], "HARD")
             failures = archive.select(kind="action", subject="probe-failed", limit=5)
             self.assertEqual(failures[-1]["data"]["reason"], "unexpected-exit")
+
+    def test_an_empty_stdout_is_distinguished_from_a_timeout(self) -> None:
+        # NS-10f: exit 0 with nothing on stdout is a distinct failure mode
+        # from a subprocess that never returned at all - conflating the two
+        # under "not-denied" hid which one actually happened.
+        empty = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            with mock.patch(
+                "godmode_runtime.godmode_hookproof.subprocess.run", return_value=empty,
+            ):
+                report = run_probe(project, archive, "claude")
+            self.assertNotEqual(report["state"], "HARD")
+            failures = archive.select(kind="action", subject="probe-failed", limit=5)
+            self.assertEqual(failures[-1]["data"]["reason"], "empty")
+
+        import subprocess as subprocess_module
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            with mock.patch(
+                "godmode_runtime.godmode_hookproof.subprocess.run",
+                side_effect=subprocess_module.TimeoutExpired(cmd="x", timeout=20),
+            ):
+                report = run_probe(project, archive, "claude")
+            self.assertNotEqual(report["state"], "HARD")
+            failures = archive.select(kind="action", subject="probe-failed", limit=5)
+            self.assertEqual(failures[-1]["data"]["reason"], "timeout")
+
+    def test_a_probe_failed_records_reason_surfaces_through_degraded_reason(self) -> None:
+        # Fix round 1: `_supersession_cause` used to hardcode the literal
+        # "probe-failed" for every `SUBJECT_PROBE_FAILED` record, so
+        # `degraded_reason` - the exact field `hooks status` exposes via
+        # `_hooks_health_fields` - could never actually show `timeout` vs
+        # `empty`; every probe failure that superseded a proof read as the
+        # same generic string. This drives a real HARD proof, then a
+        # supersession by each specific failure reason, through
+        # `degraded_reason` itself and asserts the two differ.
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            self.assertEqual(run_probe(project, archive, "claude")["state"], "HARD")
+            with mock.patch(
+                "godmode_runtime.godmode_hookproof.subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd="x", timeout=20),
+            ):
+                run_probe(project, archive, "claude")
+            self.assertEqual(degraded_reason(archive, "claude"), "timeout")
+
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            self.assertEqual(run_probe(project, archive, "claude")["state"], "HARD")
+            empty = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            with mock.patch(
+                "godmode_runtime.godmode_hookproof.subprocess.run", return_value=empty,
+            ):
+                run_probe(project, archive, "claude")
+            self.assertEqual(degraded_reason(archive, "claude"), "empty")
 
 
 if __name__ == "__main__":

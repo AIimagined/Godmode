@@ -55,8 +55,25 @@ class SkillProposal:
             raise ForgeError("Purpose must contain 20-500 characters")
         if len(self.gap_evidence.strip()) < 30:
             raise ForgeError("A concrete capability-gap observation is required")
-        if self.repeated_uses < 2:
-            raise ForgeError("A new skill requires at least two observed reusable uses")
+        if self.repeated_uses < 3:
+            # NS-11d: the procedural layer's promotion bar - tightened from
+            # two to three, matching `godmode_law.PROMOTION_SESSIONS`'s own
+            # three-distinct-occurrence bar for a law candidate (read, not
+            # imported: this module stays independent of `godmode_law`, the
+            # same way `godmode_invariants.py` stays independent of every
+            # kind-owning module). The evidence-seq half of NS-11d (each of
+            # the three successes cited by an archive record, not merely
+            # asserted as a bare count) is enforced by the CLI at
+            # `godmode skill forge`'s `--success-evidence`, not here: this
+            # dataclass is also constructed directly by
+            # `tests/test_forge_fixtures.py` and
+            # `tests/test_godmode_runtime.py` with no archive in reach, so a
+            # citation-resolution check does not belong on a pure value
+            # object.
+            raise ForgeError(
+                "A new skill requires at least three recorded successes of "
+                "one task type (NS-11d, tightened from two)"
+            )
         if len(self.positive_triggers) < 2 or len(self.negative_triggers) < 2:
             raise ForgeError("Provide at least two positive and two near-negative triggers")
         if not self.assertions:
@@ -331,9 +348,12 @@ def lint_skill(skill_dir: str | Path) -> dict[str, Any]:
             continue
         relative = bundled.relative_to(root).as_posix()
         # Convention-loaded files are reachable by NAME, not by reference:
-        # the evals machinery reads godmode-evals.json and host adapters
-        # read agents/*.yaml without any prose link existing.
-        if (bundled.name == "godmode-evals.json"
+        # the evals machinery reads godmode-evals.json, host adapters read
+        # agents/*.yaml, and the skill lint requires PURPOSE.md by name
+        # (godmode_skillfront), all without any prose link existing. Until
+        # 0.3.28 PURPOSE.md was missing here, so a skill that did not also
+        # link it failed this facet for carrying the file the lint demands.
+        if (bundled.name in ("godmode-evals.json", "PURPOSE.md")
                 or relative.startswith("agents/")):
             continue
         if str(bundled.resolve()) not in referenced:

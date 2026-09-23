@@ -41,6 +41,48 @@ payload's `cwd`, never from the process directory, so the `cd` is invisible
 to the gate. Pinned live on Grok 1.0.13 / Windows against a dozen
 alternatives.
 
+## The launcher pair
+
+`hooks/run-hook.cmd` (the sh+cmd polyglot the command string above invokes)
+has a plain POSIX sibling, `hooks/run-hook.sh`, for a host manifest that
+wants a bare `.sh` entry instead of the polyglot. Both are generated from
+one shared template (`scripts/godmode_runtime/godmode_launchers.py`),
+never hand-edited, and carry identical root-resolution, `GODMODE_PYTHON`
+override, and interpreter-probe logic - `godmode bindings --write`
+regenerates both; `godmode bindings --check` diffs the tree against the
+generator and reports drift per file.
+
+The launcher starts one interpreter per hook, not two. The first call probes
+for a working Python and records its absolute path in the Godmode application
+home (`launcher-python-sh` for the sh half, `launcher-python-cmd` for the cmd
+half, under `GODMODE_STATE_HOME`, else `%LOCALAPPDATA%\Godmode` on Windows,
+else `$XDG_STATE_HOME/godmode` or `~/.local/state/godmode`). Later calls run
+that path with no probe. If the recorded interpreter is gone, the launcher
+probes again and rewrites the file. Deleting the file is always safe.
+`GODMODE_PYTHON` still outranks both. The probe order is `python3`, `python`,
+`py` on POSIX and `python`, `py -3`, `python3` on Windows. A candidate that
+resolves into `WindowsApps` (the Store alias, slow to activate) is tried only
+when nothing else answers, and is never recorded.
+
+Session events enter through `godmode_session_entry.py`. The launcher runs it
+in place of `godmode_session_hook.py`. It checks with file lookups alone
+(`godmode_initstate.py`) whether the project has any Godmode state. If there
+is none, it exits 0 and prints nothing. It does this before the session hook,
+about 5,000 lines, is compiled. Otherwise it runs the real hook in the same
+process with the payload it already read. The pre-tool gate makes the same
+check before it would start the full hook. In a project where Godmode was
+never initialized, every hook costs one interpreter start and a few file
+lookups.
+
+A host without hook dispatch at all still gets a named fallback instead of
+reading as merely "unverifiable": `godmode hooks status` reports a
+top-level `tier` alongside its per-feature `reach` table - one of `hook`
+(dispatches through the launcher pair above), `shim` (a language-runtime
+shim relays the decision), `mcp` (an on-demand MCP tool, no hook fires it),
+or `none` (no dispatch and no shim surface at all). `tier` is a sibling key
+next to `reach`, not nested inside it - `reach` stays host -> feature ->
+{status, reason}; the tier is one value per host, not per feature.
+
 ## The pre-tool gate
 
 `PreToolUse` is registered for mutating tools (`Bash`, `PowerShell`, `Write`,

@@ -99,6 +99,55 @@ def pinning_tests(project: Path, changed: list[str]) -> dict[str, list[str]]:
     return out
 
 
+def retest_module_names(project: Path, files: list[str]) -> set[str]:
+    """The dotted module name of every Python test that pins one of
+    `files` - the exact form `commands()` builds into a retest command
+    line (`t[:-3].replace("/", ".")`).
+
+    Fix round 1, S1: this lived as three independently-typed private
+    copies (`godmode_closure._retest_module_names`,
+    `godmode_reversals._retest_module_names`, and a fourth ad hoc regex
+    scan inside `godmode_graph._retested_by_edges`) - one home here, so
+    the file->module bridge cannot drift out of sync with itself again.
+    """
+    pinned = pinning_tests(project, files)
+    return {test[:-3].replace("/", ".") for test in pinned if test.endswith(".py")}
+
+
+def cited_modules(record: dict[str, Any]) -> set[str] | None:
+    """The module names a `check:retest:*` attestation actually covered, or
+    `None` when that cannot be determined honestly.
+
+    Fix round 1, S1/S2 (absorbed from `godmode_closure._cited_modules`,
+    now the one shared reader). Preferred source: `data["modules"]`,
+    written structurally by `godmode_attest.run_check` when its caller
+    supplies one - exact, untruncated. Fallback (an older record with no
+    `modules` key): the `cmd:` evidence string, whitespace-tokenised - a
+    caller matching against a KNOWN module-name set may safely intersect
+    against the raw tokens (flag and runner tokens never coincide with a
+    real dotted module name), but a caller MINTING node ids from these
+    tokens must still filter them to a module-shaped pattern, because a
+    flag or an interpreter path is not a module. If the citation is
+    exactly as long as `run_check`'s own 160-character cap, it may have
+    lost trailing modules entirely with no way to tell which - this
+    returns `None` rather than guess, and a caller must treat that as
+    "this record proves nothing", never as "the file is covered".
+    """
+    data = record.get("data") or {}
+    modules_field = data.get("modules")
+    if isinstance(modules_field, list) and modules_field:
+        return {str(module) for module in modules_field}
+    citation = next(
+        (str(item) for item in record.get("evidence") or [] if str(item).startswith("cmd:")),
+        None,
+    )
+    if citation is None:
+        return set()
+    if len(citation) - len("cmd:") >= 160:
+        return None
+    return set(citation.split())
+
+
 def commands(project: Path, pinned: dict[str, list[str]]) -> list[dict[str, Any]]:
     """One command per runner: unittest for Python tests, vitest or jest
     for JavaScript and TypeScript (whichever the project declares), a
@@ -109,7 +158,23 @@ def commands(project: Path, pinned: dict[str, list[str]]) -> list[dict[str, Any]
     out: list[dict[str, Any]] = []
     if py:
         modules = [t[:-3].replace("/", ".") for t in py]
-        out.append({"runner": "unittest", "files": py,
+        # `"modules"` (I-6 fix round 1, S1): the exact dotted names carried
+        # in `command` below, exposed structurally so a caller attesting
+        # this run (`cmd_retest`) can store them on the attestation
+        # (`run_check(..., modules=...)`) instead of a reader having to
+        # re-parse `command`, which `run_check`'s own citation truncates.
+        #
+        # `"pinned_sources"` (I-6 fix round 2, D5): every file these
+        # `modules` pin (the union of `pinned[t]` for each test `t` here),
+        # so `cmd_retest` can pass them to `run_check(..., blob_paths=...)`
+        # and hash each one's exact working-tree content at the moment
+        # this run actually happened - the proof
+        # `godmode_closure._unattested_but_unchanged` needs to trust this
+        # attestation for a file with no `edit-recorded` action, even on
+        # the dirty tree the normal edit-then-retest flow always has.
+        pinned_sources = sorted({source for test in py for source in pinned.get(test, [])})
+        out.append({"runner": "unittest", "files": py, "modules": modules,
+                    "pinned_sources": pinned_sources,
                     "command": "python -m unittest " + " ".join(modules)})
     if js:
         runner = "vitest"

@@ -1,9 +1,8 @@
 """CX-3: native host hook manifests.
 
-Every assertion here is bound to `docs/superpowers/plans/2026-08-16-codex-
-compat.md` (Task CX-3 + Global Constraints + Plan amendments 1-4) and
-`docs/superpowers/specs/2026-08-16-codex-compat-design.md` (CX-3 unit +
-Addenda 2, 4, 4a, 5, 6, 6a) - the same discipline `test_hostevent.py` (CX-2)
+Every assertion here is bound to the Codex-compatibility plan's Task CX-3
+(with its Global Constraints and plan amendments 1-4) and its design's CX-3
+unit (Addenda 2, 4, 4a, 5, 6, 6a) - the same discipline `test_hostevent.py` (CX-2)
 already applies: an emitted name that cannot be traced to a specific
 addendum is a defect in the module under test, not a gap in this file.
 
@@ -22,6 +21,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from contextlib import contextmanager
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -376,6 +376,84 @@ class AntigravityArtifactTests(unittest.TestCase):
             self.assertTrue(forced["written"])
 
 
+class HostCapabilitiesEnumTests(unittest.TestCase):
+    """NS-10b: `HOST_CAPABILITIES` declares channels as a closed enum, not
+    prose - a manifest whose declared `stdout`/`os` set falls outside
+    `STDOUT_CHANNELS`/`OS_PLATFORMS` fails `validate_host_capabilities()`,
+    the same "closed enum, membership checked" shape `validate_plugin_v1`
+    already uses for `plugin.json`'s own field list."""
+
+    def test_the_shipped_capabilities_are_clean(self) -> None:
+        self.assertEqual(host_manifests.validate_host_capabilities(), [])
+
+    def test_every_declared_host_capability_stdout_set_is_inside_the_enum(self) -> None:
+        for host, capability in host_manifests.HOST_CAPABILITIES.items():
+            self.assertLessEqual(
+                capability["stdout"], host_manifests.STDOUT_CHANNELS, host)
+
+    def test_every_declared_host_capability_os_set_is_inside_the_enum(self) -> None:
+        for host, capability in host_manifests.HOST_CAPABILITIES.items():
+            self.assertLessEqual(
+                capability["os"], host_manifests.OS_PLATFORMS, host)
+
+    def test_a_channel_outside_the_enum_fails_the_guard(self) -> None:
+        bad = dict(host_manifests.HOST_CAPABILITIES["cursor"])
+        bad["stdout"] = frozenset({"deny", "not-a-real-channel"})
+        with unittest.mock.patch.dict(
+            host_manifests.HOST_CAPABILITIES, {"cursor": bad},
+        ):
+            self.assertIn("cursor", host_manifests.validate_host_capabilities())
+
+    def test_an_os_outside_the_enum_fails_the_guard(self) -> None:
+        bad = dict(host_manifests.HOST_CAPABILITIES["gemini"])
+        bad["os"] = frozenset({"windows", "amiga"})
+        with unittest.mock.patch.dict(
+            host_manifests.HOST_CAPABILITIES, {"gemini": bad},
+        ):
+            self.assertIn("gemini", host_manifests.validate_host_capabilities())
+
+    def test_an_entry_missing_a_required_key_fails_the_guard(self) -> None:
+        """Fix round 1, nit 3: the prior `capability.get("stdout",
+        frozenset())`/`.get("os", frozenset())` made an entry that OMITS
+        the key pass clean (an empty set is a trivial subset of any set).
+        A missing `stdout`, `os`, `events` or `tier` key is now itself an
+        offense."""
+        for missing_key in ("stdout", "os", "events", "tier"):
+            with self.subTest(missing_key=missing_key):
+                bad = {k: v for k, v in host_manifests.HOST_CAPABILITIES["cursor"].items()
+                       if k != missing_key}
+                with unittest.mock.patch.dict(
+                    host_manifests.HOST_CAPABILITIES, {"cursor": bad},
+                ):
+                    self.assertIn("cursor", host_manifests.validate_host_capabilities())
+
+    def test_every_host_capability_tier_agrees_with_the_reach_module(self) -> None:
+        """`HOST_CAPABILITIES["tier"]` is a literal (host_manifests must
+        never import godmode_reach - reach imports host_manifests for the
+        capability enum, and the reverse would cycle), so this cross-module
+        test is what keeps the two declarations from drifting apart."""
+        from godmode_runtime import godmode_reach as reach
+
+        for host, capability in host_manifests.HOST_CAPABILITIES.items():
+            self.assertEqual(capability["tier"], reach.TIER.get(host), host)
+
+    def test_every_hook_artifacts_host_is_also_a_host_capabilities_host(self) -> None:
+        for host in host_manifests.HOOK_ARTIFACTS:
+            self.assertIn(host, host_manifests.HOST_CAPABILITIES, host)
+
+    def test_every_reach_host_is_also_a_host_capabilities_host(self) -> None:
+        """Fix round 1, nit 2: `HOSTS ⊆ HOST_CAPABILITIES` was asserted
+        nowhere - only `HOOK_ARTIFACTS ⊆ HOST_CAPABILITIES` (above), which
+        left opencode/pi/goose uncovered. A host declared in
+        `godmode_reach.HOSTS` with no `HOST_CAPABILITIES` entry now fails
+        this test rather than silently reading as "declares nothing" the
+        next time `godmode_reach` indexes it."""
+        from godmode_runtime import godmode_reach as reach
+
+        for host in reach.HOSTS:
+            self.assertIn(host, host_manifests.HOST_CAPABILITIES, host)
+
+
 class EventAllowlistTraceabilityTests(unittest.TestCase):
     """The governing rule `godmode_host_manifests.py`'s own module docstring
     states: every emitted event name is traceable to an addendum, and the
@@ -387,7 +465,7 @@ class EventAllowlistTraceabilityTests(unittest.TestCase):
         self.assertEqual(host_manifests.codex_emitted_events(), host_manifests.CODEX_HOOK_EVENTS)
 
     def test_cursor_emitted_events_equal_the_allowlist(self) -> None:
-        manifest = host_manifests.build_cursor_manifest()
+        manifest = host_manifests.build_cursor_manifest(PLUGIN_ROOT)
         self.assertEqual(
             host_manifests.cursor_emitted_events(manifest), host_manifests.CURSOR_HOOK_EVENTS)
 
@@ -571,8 +649,8 @@ class CodexHookCasingTripwireTests(unittest.TestCase):
     These tests do not claim that is the cause. They RECORD the exact
     condition, so that (a) it cannot change without someone reading this,
     and (b) Sprint 4's live panel observation has a named state to compare
-    against. The settling observation is stated in
-    `.superpowers/sdd/2026-08-16-cx/task-secB-report.md`.
+    against. The settling observation is recorded in
+    that task's implementation report.
     """
 
     def _shared_events(self) -> list[str]:
@@ -806,19 +884,31 @@ class SkillsHostNeutralityTests(unittest.TestCase):
     def test_skill_forge_destination_defaults_to_dot_grok_skills_on_grok(self) -> None:
         import os
         from unittest import mock
+        from godmode_runtime.godmode_anchor import resolve_anchor
+        from godmode_runtime.godmode_chronicle import Chronicle
         from godmode_runtime.godmode_console import main
 
         with tempfile.TemporaryDirectory() as raw:
             project = Path(raw)
             with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(project / "state")}):
                 main(["--project", str(project), "--json", "init"])
+                # `skill forge` now resolves its `--success-evidence` cites
+                # against the archive (NS-11d, fix round 1 B3), so this call
+                # needs three records that really exist to cite.
+                archive = Chronicle(resolve_anchor(project))
+                cites = [
+                    f"seq:{archive.append('action', f'run-{index}', {'gate': 'allow'})['sequence']}"
+                    for index in range(3)
+                ]
                 with mock.patch.dict(os.environ, {"GROK_AGENT": "1"}, clear=False):
                     main([
                         "--project", str(project), "--json", "skill", "forge",
                         "--name", "test-skill",
                         "--purpose", "A purpose long enough to pass validation.",
-                        "--gap-evidence", "Two observed repeated uses of this gap.",
-                        "--repeated-uses", "2",
+                        "--gap-evidence", "Three observed repeated uses of this gap.",
+                        "--repeated-uses", "3",
+                        "--success-evidence", cites[0], "--success-evidence", cites[1],
+                        "--success-evidence", cites[2],
                         "--positive", "trigger one example", "--positive", "trigger two example",
                         "--negative", "near miss one example", "--negative", "near miss two example",
                         "--assertion", "an observable result",
@@ -899,6 +989,41 @@ class OpencodeShimInstallTests(unittest.TestCase):
             forced = write_opencode_project_shim(PLUGIN_ROOT, project, force=True)
         self.assertFalse(refused["written"])
         self.assertTrue(forced["written"])
+
+
+class ManifestWriteTargetEscapeTests(unittest.TestCase):
+    """NS-8h call-site regression: a write target that escapes the project
+    (here, `.opencode` is a symlink pointing outside it) is refused with
+    `ArchiveError`, never followed to the write."""
+
+    @staticmethod
+    def _can_symlink(base: Path) -> bool:
+        import os
+        try:
+            os.symlink(base, base / "probe-link", target_is_directory=True)
+            (base / "probe-link").unlink()
+            return True
+        except (OSError, NotImplementedError):
+            return False
+
+    def test_a_symlinked_opencode_dir_is_refused_not_written(self) -> None:
+        import os
+        import tempfile
+        from godmode_runtime.godmode_errors import ArchiveError
+        from godmode_runtime.godmode_host_manifests import write_opencode_project_shim
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            if not self._can_symlink(base):
+                self.skipTest("symlinks need privilege here")
+            project = base / "project"
+            project.mkdir()
+            outside = base / "outside"
+            outside.mkdir()
+            os.symlink(outside, project / ".opencode", target_is_directory=True)
+            with self.assertRaises(ArchiveError):
+                write_opencode_project_shim(PLUGIN_ROOT, project)
+            self.assertFalse((outside / "plugins").exists())
 
 
 class EveryShippedMatcherResolvesInItsAdapter(unittest.TestCase):
@@ -1132,6 +1257,194 @@ class GeminiDocumentedToolsResolve(unittest.TestCase):
                 encoding="utf-8"))
         unpublished = sorted(k for k in fragment["hooks"] if k not in published)
         self.assertEqual(unpublished, [])
+
+
+class CopilotManifestTests(unittest.TestCase):
+    """NS-6 (Task 6): `build_copilot_hooks` replicates the private R-1
+    table's `ledger:3` row - Copilot's `.github/hooks/` grouped with "Claude
+    Code + most others" under one shape: a top-level `"hooks"` map, one
+    shell-command STRING per entry (never a `command`+`args` pair - the
+    2026-08-28 field-report shape every other builder in this module
+    already conforms to), dispatched through a plugin-root variable. This
+    is the dotted test id `godmode_reach.REACH["copilot"]["replication_test"]`
+    names.
+    """
+
+    def _reference_shaped_fixture(self) -> dict:
+        """The generic "hooks.json/SKILL.md frontmatter dispatching to shell
+        scripts via a plugin-root variable" shape ledger:3's own row
+        describes for the 13 host directories it groups Copilot under - one
+        shell-command string per hook entry, no `args` array, a `timeout`
+        alongside it. Never the private ledger's own repository/file names -
+        only the SHAPE, reproduced generically, as the module docstring's
+        governing rule requires.
+        """
+        return {
+            "hooks": {
+                "PreToolUse": [
+                    {"hooks": [{"type": "command",
+                                "command": "${PLUGIN_ROOT}/hooks/claude-hook.sh pre-tool-use",
+                                "timeout": 5}]},
+                ],
+            },
+        }
+
+    def test_replicates_the_shared_hooks_json_shape(self) -> None:
+        """N1 (Task 6 fix round 1): the original version of this test only
+        compared TOP-LEVEL key sets (`{"hooks"}` vs `{"hooks"}`) and then
+        walked the manifest's OWN entries for the rest, never actually
+        cross-checking their shape against the fixture - a self-consistent
+        builder would have passed even if the fixture's own body were
+        deleted or gutted. This version asserts every entry's field set
+        against the fixture's own entry, the way `KiroManifestTests`'s
+        replication test already does, so changing (or removing) the
+        fixture's shape changes this test's outcome.
+        """
+        reference = self._reference_shaped_fixture()
+        manifest = host_manifests.build_copilot_hooks()
+        # Same shape, modulo `_note` - a sibling documentation key (N6)
+        # that is no part of ledger:3's shape at all, so its presence or
+        # absence here is not what this test is pinning.
+        self.assertEqual(set(manifest) - {"_note"}, set(reference))
+        ref_block = reference["hooks"]["PreToolUse"][0]
+        ref_entry = ref_block["hooks"][0]
+        self.assertEqual(set(ref_block), {"hooks"})
+        self.assertEqual(set(ref_entry), {"type", "command", "timeout"})
+        for event, blocks in manifest["hooks"].items():
+            for block in blocks:
+                # Same per-block field set, same nesting depth, as the
+                # reference's own block - not just "has a hooks key".
+                self.assertEqual(set(block), set(ref_block))
+                for entry in block["hooks"]:
+                    self.assertEqual(set(entry), set(ref_entry))
+                    self.assertEqual(entry["type"], "command")
+                    # Never a `command` + `args` pair (the shape that failed
+                    # every host in the 2026-08-28 field reports this
+                    # module's own `_shell_entry` docstring cites).
+                    self.assertNotIn("args", entry)
+                    self.assertIsInstance(entry["command"], str)
+                    self.assertIn("timeout", entry)
+
+    def test_dispatches_through_the_launcher_with_the_portable_token_by_default(self) -> None:
+        manifest = host_manifests.build_copilot_hooks()
+        pretool = manifest["hooks"]["PreToolUse"][0]["hooks"][0]
+        self.assertIn("run-hook.cmd", pretool["command"])
+        self.assertIn(host_manifests.COPILOT_ROOT_TOKEN, pretool["command"])
+        self.assertIn("godmode_gate_fast.py", pretool["command"])
+
+    def test_an_explicit_plugin_root_bakes_the_absolute_path(self) -> None:
+        manifest = host_manifests.build_copilot_hooks(PLUGIN_ROOT)
+        pretool = manifest["hooks"]["PreToolUse"][0]["hooks"][0]
+        self.assertIn(PLUGIN_ROOT.as_posix(), pretool["command"])
+        self.assertNotIn(host_manifests.COPILOT_ROOT_TOKEN, pretool["command"])
+
+    def test_emitted_events_equal_the_allowlist(self) -> None:
+        manifest = host_manifests.build_copilot_hooks()
+        self.assertEqual(host_manifests.copilot_emitted_events(manifest),
+                          host_manifests.COPILOT_HOOK_EVENTS)
+
+    def test_the_shipped_manifest_is_current_with_the_builder(self) -> None:
+        shipped = json.loads(
+            (PLUGIN_ROOT / ".github" / "hooks" / "godmode.json").read_text(encoding="utf-8"))
+        self.assertEqual(shipped, host_manifests.build_copilot_hooks())
+
+    def test_a_capability_or_artifact_registry_entry_exists(self) -> None:
+        self.assertIn("copilot", host_manifests.HOST_CAPABILITIES)
+        self.assertIn("copilot", host_manifests.HOOK_ARTIFACTS)
+        self.assertEqual(host_manifests.HOOK_ARTIFACTS["copilot"]["allowed_events"],
+                          host_manifests.COPILOT_HOOK_EVENTS)
+
+    def test_the_instructions_block_names_the_real_enforcement_file_not_itself(self) -> None:
+        block = host_manifests.copilot_instructions_block()
+        self.assertIn(".github/hooks/godmode.json", block)
+        self.assertIn("godmode_gate_fast.py", block)
+
+
+class KiroManifestTests(unittest.TestCase):
+    """NS-6 (Task 6): `build_kiro_hooks` replicates the private R-1 table's
+    `ledger:92` row - declarative rule metadata, routed through the
+    launcher, with root resolution left to the runtime (no plugin-root
+    variable baked in unless one is explicitly given). This is the dotted
+    test id `godmode_reach.REACH["kiro"]["replication_test"]` names.
+    """
+
+    def _reference_shaped_fixture(self) -> dict:
+        """ledger:92's own words: "Declarative .kiro/hooks.json (rule
+        metadata only)" - JSON rule config in, no embedded interpreter code,
+        no shell script body inlined into the rule itself (unlike, say,
+        Codex's Python-adapter row) - only a command reference and a
+        timeout, the same declarative shape `build_kiro_hooks` emits.
+        """
+        return {"hooks": {"toolCall": [{"hooks": [
+            {"type": "command", "command": "<launcher> <script>", "timeout": 8}]}]}}
+
+    def test_replicates_the_declarative_rule_shape(self) -> None:
+        reference = self._reference_shaped_fixture()
+        manifest = host_manifests.build_kiro_hooks()
+        # `_note` (N6) is a sibling documentation key, not part of
+        # ledger:92's shape - excluded the same way CopilotManifestTests
+        # excludes it from its own top-level comparison.
+        self.assertEqual(set(manifest) - {"_note"}, set(reference))
+        self.assertEqual(set(reference["hooks"]), set(manifest["hooks"]))
+        entry = manifest["hooks"]["toolCall"][0]["hooks"][0]
+        # Declarative rule metadata only: a command STRING and a timeout,
+        # never an inlined script body or an embedded interpreter call -
+        # the runtime's own hook.py is what ledger:92 says resolves root
+        # and evaluates the rule, not anything this manifest carries.
+        self.assertEqual(set(entry), {"type", "command", "timeout"})
+        self.assertIsInstance(entry["command"], str)
+
+    def test_dispatches_through_the_launcher_with_the_portable_token_by_default(self) -> None:
+        manifest = host_manifests.build_kiro_hooks()
+        entry = manifest["hooks"]["toolCall"][0]["hooks"][0]
+        self.assertIn("run-hook.cmd", entry["command"])
+        self.assertIn(host_manifests.KIRO_ROOT_TOKEN, entry["command"])
+        self.assertIn("godmode_gate_fast.py", entry["command"])
+
+    def test_an_explicit_plugin_root_bakes_the_absolute_path(self) -> None:
+        manifest = host_manifests.build_kiro_hooks(PLUGIN_ROOT)
+        entry = manifest["hooks"]["toolCall"][0]["hooks"][0]
+        self.assertIn(PLUGIN_ROOT.as_posix(), entry["command"])
+        self.assertNotIn(host_manifests.KIRO_ROOT_TOKEN, entry["command"])
+
+    def test_emitted_events_equal_the_allowlist(self) -> None:
+        manifest = host_manifests.build_kiro_hooks()
+        self.assertEqual(host_manifests.kiro_emitted_events(manifest),
+                          host_manifests.KIRO_HOOK_EVENTS)
+
+    def test_the_shipped_manifest_is_current_with_the_builder(self) -> None:
+        shipped = json.loads(
+            (PLUGIN_ROOT / ".kiro" / "hooks.json").read_text(encoding="utf-8"))
+        self.assertEqual(shipped, host_manifests.build_kiro_hooks())
+
+    def test_a_capability_or_artifact_registry_entry_exists(self) -> None:
+        self.assertIn("kiro", host_manifests.HOST_CAPABILITIES)
+        self.assertIn("kiro", host_manifests.HOOK_ARTIFACTS)
+        self.assertEqual(host_manifests.HOOK_ARTIFACTS["kiro"]["allowed_events"],
+                          host_manifests.KIRO_HOOK_EVENTS)
+
+
+class CopilotAndKiroBindingsRegenerateTests(unittest.TestCase):
+    """The generator (`godmode bindings --write`), not a hand-authored
+    file, produces both new artifacts, byte-stable across repeated runs -
+    the same guarantee `BindingsRegenerateByteStableTests` already pins for
+    the earlier hosts."""
+
+    def test_copilot_and_kiro_are_current_after_a_fresh_write(self) -> None:
+        with _built_project() as project:
+            report = bindings.check(project)
+        by_host = {entry["host"]: entry for entry in report["hosts"]}
+        self.assertEqual(by_host["copilot"]["state"], "current")
+        self.assertEqual(by_host["kiro"]["state"], "current")
+
+    def test_writing_twice_is_byte_identical(self) -> None:
+        with _built_project() as project:
+            copilot_path = project / ".github" / "hooks" / "godmode.json"
+            kiro_path = project / ".kiro" / "hooks.json"
+            before = (copilot_path.read_bytes(), kiro_path.read_bytes())
+            bindings.write(project)
+            after = (copilot_path.read_bytes(), kiro_path.read_bytes())
+        self.assertEqual(before, after)
 
 
 if __name__ == "__main__":

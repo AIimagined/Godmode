@@ -1,0 +1,1 @@
+- The false-green rate counts every verified claim on record instead of only the newest 500.

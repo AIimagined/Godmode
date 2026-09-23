@@ -18,6 +18,7 @@ if str(SCRIPTS) not in sys.path:
 if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 
+from _law_fixtures import operator_lesson  # noqa: E402
 from test_godmode_runtime import isolated_project  # noqa: E402
 from godmode_runtime.godmode_errors import ArchiveError  # noqa: E402
 from godmode_runtime.godmode_law import (  # noqa: E402
@@ -43,25 +44,40 @@ class DebriefGaugeTests(unittest.TestCase):
 
 
 class AmendTests(unittest.TestCase):
-    def _law(self, archive, subject, guard):
-        return archive.append("lesson", subject, {
-            "status": "active", "generalized_guard": guard}, evidence=[])
+    """NS-2 (the authority gate) reaches the amendment loop: a guard is the
+    law only with approval lineage or operator trust. These laws are the
+    operator's (`tests/_law_fixtures.operator_lesson`), and the amendments
+    below are the operator's too - `amend_law(..., as_operator=True)` is the
+    same write `law amend --as-operator` makes. `PendingAmendmentTests`
+    covers the other actor: an agent's amendment never unseats them."""
+
+    def _law(self, archive, subject, guard, **extra):
+        return operator_lesson(archive, subject, guard, **extra)
+
+    def _amend(self, archive, seq, guard):
+        return amend_law(archive, seq, guard,
+                         as_operator=True, operator_verified=True)
 
     def test_an_amendment_becomes_the_law(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
             seq = self._law(archive, "one-law", "old guard text here")["sequence"]
-            amend_law(archive, seq, "new guard text here, reviewed")
+            amended = self._amend(archive, seq, "new guard text here, reviewed")
             laws = top_laws(archive, 5)
+        self.assertFalse(amended["pending"])
         subjects = [l["subject"] for l in laws]
         self.assertEqual(subjects.count("one-law"), 1)
         self.assertIn("new guard", laws[0]["guard"])
+        self.assertIsNone(laws[0]["pending_amendment"])
 
     def test_amending_a_retired_law_refuses(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
             seq = self._law(archive, "dead-law", "old guard")["sequence"]
-            archive.append("lesson", "dead-law", {"status": "retired"}, evidence=[])
+            # The operator retires it: the single-writer close guard
+            # (NS-11h) already refuses an agent closing an operator's lesson.
+            archive.append("lesson", "dead-law", {"status": "retired"}, evidence=[],
+                           as_operator=True, operator_verified=True)
             with self.assertRaises(ArchiveError):
                 amend_law(archive, seq, "resurrection attempt")
 
@@ -71,6 +87,137 @@ class AmendTests(unittest.TestCase):
             seq = self._law(archive, "a-law", "guard")["sequence"]
             with self.assertRaises(ArchiveError):
                 amend_law(archive, seq, "   ")
+
+    def test_amending_a_standing_law_keeps_it_pinned(self) -> None:
+        # A standing law's pin lives on the record newest-wins dedup reads;
+        # amending it must carry the flag forward, or a reworded guard
+        # silently un-pins a law the operator marked enforcing.
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            seq = self._law(archive, "standing-law", "old guard",
+                            standing=True)["sequence"]
+            for index in range(3):
+                self._law(archive, f"newer-{index}", f"guard {index}")
+            self._amend(archive, seq, "new guard text here, reviewed")
+            laws = top_laws(archive, 2)
+        self.assertEqual(laws[0]["subject"], "standing-law")
+        self.assertTrue(laws[0]["standing"])
+        self.assertIn("new guard", laws[0]["guard"])
+
+    def test_amending_an_enforcing_law_keeps_the_guard_armed(self) -> None:
+        # I-1 fix round 2 (Blocking 3): `amend_law` built its replacement
+        # lesson from scratch and carried forward only `standing`, never
+        # `enforce`. `Chronicle._refuse_incomplete_supersession` refuses ANY
+        # `lesson` append on a subject with an active `enforce` unless the
+        # new record reaffirms it or moves to a dormant status, so amending
+        # an enforcing law used to be refused outright, with no way for
+        # this verb to comply - amending is exactly the "living law" case
+        # the completeness rule is supposed to let through.
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            seq = self._law(
+                archive, "no-todo", "no TODOs", value="guard",
+                enforce={"kind": "decision", "predicate": "value contains TODO"},
+            )["sequence"]
+            self._amend(archive, seq, "no TODOs, reworded")
+            laws = top_laws(archive, 5)
+        self.assertEqual(laws[0]["subject"], "no-todo")
+        self.assertIn("reworded", laws[0]["guard"])
+        # The guard is still armed - the amendment reworded it, not
+        # silently disarmed it.
+        with self.assertRaises(ArchiveError):
+            archive.append("decision", "ship-it", {"value": "a TODO here", "status": "active"})
+
+
+class PendingAmendmentTests(unittest.TestCase):
+    """The regression the 0.3.28 release preflight found: with the gate read
+    on the newest record only, an agent's `law amend` on an operator's law
+    wrote a record the gate refused and the subject compiled NOTHING - the
+    operator's standing law vanished because an agent edited it. Now the
+    amendment is pending, the authorised guard binds until it is approved,
+    and every reader says so."""
+
+    def test_an_agent_amendment_leaves_the_operator_guard_in_force(self) -> None:
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            seq = operator_lesson(archive, "one-law", "the operator guard")["sequence"]
+            amended = amend_law(archive, seq, "an agent rewording")
+            laws = top_laws(archive, 5)
+        self.assertTrue(amended["pending"])
+        self.assertEqual([l["subject"] for l in laws], ["one-law"])
+        self.assertEqual(laws[0]["guard"], "the operator guard")
+        self.assertEqual(laws[0]["seq"], seq)
+        self.assertEqual(laws[0]["pending_amendment"], amended["sequence"])
+
+    def test_a_standing_law_stays_pinned_through_a_pending_amendment(self) -> None:
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            seq = operator_lesson(archive, "standing-law", "old guard",
+                                  standing=True)["sequence"]
+            for index in range(3):
+                operator_lesson(archive, f"newer-{index}", f"guard {index}")
+            amend_law(archive, seq, "an agent rewording")
+            laws = top_laws(archive, 2)
+        self.assertEqual(laws[0]["subject"], "standing-law")
+        self.assertTrue(laws[0]["standing"])
+        self.assertEqual(laws[0]["guard"], "old guard")
+
+    def test_an_agent_cannot_revive_a_retired_law_by_amending_it(self) -> None:
+        # The walk back stops at a retirement: `amend_law` itself refuses a
+        # retired subject, so this is the raw append an agent could still
+        # make - and it revives nothing. The retirement is the operator's;
+        # the single-writer close guard (NS-11h) refuses an agent's.
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            operator_lesson(archive, "dead-law", "the operator guard")
+            archive.append("lesson", "dead-law", {"status": "retired"}, evidence=[],
+                           as_operator=True, operator_verified=True)
+            archive.append("lesson", "dead-law", {
+                "status": "active", "generalized_guard": "back from the dead"},
+                evidence=[])
+            laws = top_laws(archive, 5)
+        self.assertEqual(laws, [])
+
+    def test_an_agent_cannot_lift_an_operator_law_with_status_superseded(self) -> None:
+        """Review B2: `retired` was refused by the single-writer close
+        guard, `superseded` was not, and the compiler read it as a lift -
+        one status word de-legislated the operator. Two layers now: the
+        archive refuses the write as a close, and even a record that gets
+        past it (here: the same write forced through the guard-free append
+        path a test can reach) is pending, not a lift, because its trust
+        is below the standing record's."""
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            seq = operator_lesson(archive, "one-law", "the operator guard")["sequence"]
+            with self.assertRaises(ArchiveError) as refused:
+                archive.append("lesson", "one-law", {
+                    "status": "superseded", "generalized_guard": "AGENT rewrite"},
+                    evidence=[f"seq:{seq}"])
+            self.assertIn("lower-trust writer may not close", str(refused.exception))
+            laws = top_laws(archive, 5)
+        self.assertEqual([l["guard"] for l in laws], ["the operator guard"])
+
+    def test_an_agent_still_supersedes_its_own_lesson(self) -> None:
+        # The close guard keys on creator identity and trust rank: an
+        # agent's own lesson is its own to end, with either word.
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            archive.append("lesson", "mine", {
+                "status": "active", "generalized_guard": "first"}, evidence=[])
+            record = archive.append("lesson", "mine", {
+                "status": "superseded", "generalized_guard": "first"}, evidence=[])
+        self.assertEqual(record["data"]["status"], "superseded")
+
+    def test_a_second_operator_amendment_supersedes_the_pending_one(self) -> None:
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            seq = operator_lesson(archive, "one-law", "first")["sequence"]
+            amend_law(archive, seq, "an agent rewording")
+            amend_law(archive, seq, "the operator rewording",
+                      as_operator=True, operator_verified=True)
+            laws = top_laws(archive, 5)
+        self.assertEqual(laws[0]["guard"], "the operator rewording")
+        self.assertIsNone(laws[0]["pending_amendment"])
 
 
 class InstructionPrecisionTests(unittest.TestCase):

@@ -37,6 +37,12 @@ SCENARIO_VERSIONS: dict[str, int] = {
     # 2026-09-09: the staging function gained a swallow-ok reason on its
     # deliberate handler (the ratchet pass); a body change earns a version.
     "removal-forgotten": 2,
+    # 2026-09-16 (201fb59): the docstring was rewritten to describe the
+    # kernel advisory lock (with its O_EXCL-sidecar fallback) that replaced
+    # the plain O_EXCL creation it used to name - a real content change to
+    # what this scenario documents, landed without the version bump the
+    # registry needs to tell drift from intent.
+    "concurrent-agent-collision": 2,
 }
 
 
@@ -427,11 +433,12 @@ def _tool_call_interception(project: Path, archive: Chronicle) -> tuple[bool, st
 def _concurrent_agent_collision(project: Path, archive: Chronicle) -> tuple[bool, str]:
     """Two writers racing one archive must never corrupt the chain.
 
-    Chronicle's write_lock (O_EXCL creation) exists exactly for this: five
-    Chronicle instances - standing in for five agents in five sessions -
-    appending to the SAME archive_root at once. The property under test is
-    INTEGRITY, not that every writer wins the lock within its timeout under
-    arbitrary system load: a writer that correctly backs off with
+    Chronicle's write_lock (a kernel advisory lock, with an O_EXCL-sidecar
+    fallback where no locking module is importable) exists exactly for
+    this: five Chronicle instances - standing in for five agents in five
+    sessions - appending to the SAME archive_root at once. The property
+    under test is INTEGRITY, not that every writer wins the lock within its
+    timeout under arbitrary system load: a writer that correctly backs off with
     "archive is busy" under real contention is the lock working as
     designed, not a collision. What must never happen is a forked or
     dropped chain - verify() failing, or the sequence going non-contiguous
@@ -467,6 +474,12 @@ def _concurrent_agent_collision(project: Path, archive: Chronicle) -> tuple[bool
         result = fresh.verify()
         intact = result["valid"]
         detail = f"{result['records']} records landed, chain valid={result['valid']}"
+        # N-9: verify() now reports a broken record (e.g. a non-contiguous
+        # sequence from the disabled lock above) instead of raising - the
+        # named break still has to reach `detail`, or this control silently
+        # stops detecting the corruption it exists to catch.
+        if not intact:
+            detail += f"; {result['message']}"
     except Exception as exc:  # noqa: BLE001
         intact, detail = False, f"verify raised {exc.__class__.__name__}: {exc}"
     if errors:
@@ -647,7 +660,7 @@ SCENARIO_DIGEST_REGISTRY: dict[str, str] = {
     'session-restart.local.v1': '4d01814d565143bd80ce4ad183f34d4f0044c7fa20b2e45f310e960afe2913b7',
     'prior-fix-unguarded.local.v1': 'bfdae584dcdb48b28511e51457d5ecce04e101704f4f02ead1f3ad6cfdcc57e5',
     'tool-call-interception.local.v1': 'b2999f12ac92abdb0401d0cb1d008e8df2bc37f04011ad11290fd30b31b1c457',
-    'concurrent-agent-collision.local.v1': '306777d20ff49ece77165886926e100a7434d394a03e6bc01a62ead6b5ed8135',
+    'concurrent-agent-collision.local.v2': 'c0679a1f48832d79206e188c5aeb34b942636799a34af92fa3ad503d143eaafb',
     'oracle-moved-with-patch.local.v1': '8986a59fdca16cddff84ac7ef091277bfb1bcce830634ff34376b7a5381d80e4',
     'assertion-literal-moved.local.v1': 'b35cb886af9f3da0a0e9f6209276e5c4b8c58640d60c8b25e637e66fcf2ef6d1',
     'harness-node-dropped.local.v1': '799ef59ca2da12643b4deb0c76f50aa064fee905f2931a7b6b8328eeff14f851',

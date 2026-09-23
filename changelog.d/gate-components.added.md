@@ -1,0 +1,1 @@
+- The gate classifies every component of a compound command and reports them; the worst component decides the call and an unknown component is protected by default.

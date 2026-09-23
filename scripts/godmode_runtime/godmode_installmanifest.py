@@ -143,6 +143,36 @@ def record(
     return manifest
 
 
+def forget(
+    project: Path | str,
+    plugin_name: str,
+    entries: Iterable[str],
+) -> dict[str, Any] | None:
+    """Drop `entries` from every group of this plugin's manifest.
+
+    The counterpart of `record` for a path that is no longer ours on disk:
+    an uninstall archives the files, and a manifest that kept listing them
+    would report every one as missing and would carry a retired version's
+    paths into the next install. A group left empty is removed. Returns the
+    rewritten manifest, or None when there is no manifest of ours to edit.
+    """
+    manifest = read(project, plugin_name)
+    if manifest is None:
+        return None
+    dropped = set(entries)
+    groups = {}
+    for group, paths in manifest["groups"].items():
+        kept = sorted(p for p in paths if p not in dropped)
+        if kept:
+            groups[group] = kept
+    manifest["groups"] = groups
+    path = manifest_path(project, plugin_name)
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        json.dump(manifest, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+    return manifest
+
+
 def recorded_paths(project: Path | str, plugin_name: str) -> list[str]:
     """Every path this plugin recorded, across all groups, sorted and unique."""
     manifest = read(project, plugin_name)

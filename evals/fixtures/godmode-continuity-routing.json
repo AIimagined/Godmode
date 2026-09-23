@@ -1,8 +1,10 @@
 {
   "routes": {
     "near_negative": {
-      "Archive raw conversations or complete source-code bodies.": null,
-      "Start a stateless one-off task with no prior project context.": "godmode-continuity"
+      "Archive raw conversations or complete source-code bodies.": "godmode-codegraph",
+      "Investigate why a build fails and trace the regression to its root cause.": "godmode-investigation",
+      "Prepare a release: bump the version, write the changelog, and tag the build.": "godmode-changelog",
+      "Start a stateless one-off task with nothing carried over from before.": "godmode-code-of-law"
     },
     "positive": {
       "Detect context drift after changing branches or worktrees.": "godmode-continuity",
@@ -12,8 +14,8 @@
   "schema": "godmode-routing-snapshot-v1",
   "skill": "godmode-continuity",
   "summary": {
-    "near_negatives_rejected": 1,
-    "near_negatives_total": 2,
+    "near_negatives_rejected": 4,
+    "near_negatives_total": 4,
     "positives_routed_correctly": 2,
     "positives_total": 2
   }

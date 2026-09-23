@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "godmode": {
+      "command": "python",
+      "args": [
+        "${PLUGIN_ROOT}/scripts/godmode_mcp_server.py",
+        "--project",
+        "${CURSOR_PROJECT_DIR}",
+        "--host",
+        "cursor"
+      ]
+    }
+  }
+}

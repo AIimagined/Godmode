@@ -19,6 +19,10 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = PLUGIN_ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
+if str(Path(__file__).parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).parent))
+
+from _law_fixtures import operator_lesson  # noqa: E402
 
 from godmode_runtime.godmode_console import (  # noqa: E402
     _BOUNDARY_TIERS,
@@ -109,10 +113,12 @@ class LawsSectionTests(unittest.TestCase):
                                  {"GODMODE_STATE_HOME": str(state)}, clear=False):
                 archive = Chronicle(resolve_anchor(root))
                 archive.initialize()
-                archive.append("lesson", "quote-paths", {
-                    "value": "a space broke the loop",
-                    "generalized_guard": "quote every path passed to the shell",
-                    "status": "active"})
+                # A guard is law only with approval lineage or operator
+                # trust (NS-2); this test is about RENDERING, so it takes
+                # the operator carve-out from `tests/_law_fixtures.py`.
+                operator_lesson(archive, "quote-paths",
+                                "quote every path passed to the shell",
+                                value="a space broke the loop")
                 emit_agentsmd(_build_parser(), root, archive=archive)
                 text = (root / "AGENTS.md").read_text(encoding="utf-8")
                 self.assertIn("### Learnings", text)

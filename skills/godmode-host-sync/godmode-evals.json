@@ -1,0 +1,36 @@
+{
+  "schema": "godmode-skill-eval-v1",
+  "skill": "godmode-host-sync",
+  "routing": {
+    "positive": [
+      "Check whether every installed AI CLI host still has Godmode's hooks wired correctly and repair whatever has drifted",
+      "Reconcile Godmode's hook manifests into a newly detected host's native hook format before trusting it to intercept anything"
+    ],
+    "near_negative": [
+      "Explain what one specific hook event does without checking any host's wiring state",
+      "Preview and authorize a single protected git or release operation",
+      "Diagnose why one already-passing test now fails"
+    ]
+  },
+  "behavior_assertions": [
+    {
+      "assert": "hooks status reports each declared host's wire_state before any repair is attempted.",
+      "check": {
+        "command": "python scripts/godmode.py --project . hooks status",
+        "expect_exit": 0,
+        "expect_contains": "\"wire_state\""
+      }
+    },
+    {
+      "assert": "A dry-run reconciliation names exactly what an apply would do and writes nothing.",
+      "check": {
+        "command": "python scripts/godmode.py --project . hooks wire --host opencode --dry-run",
+        "expect_exit": 0,
+        "expect_contains": "\"summary\": \"safe to apply\""
+      }
+    },
+    "A repair to a CONFLICT or INVALID file is never forced without --force, and --force still refuses an INVALID shape."
+  ],
+  "baseline_required": true,
+  "claims_require_evidence": true
+}

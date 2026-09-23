@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import time
@@ -721,17 +722,68 @@ def slice_file(path: Path, start: int = 1, end: int | None = None, limit: int = 
     }
 
 
+def _is_nested_checkout(path: Path, project: Path) -> bool:
+    """A directory that carries its own `.git` entry and is not `project`
+    itself - a linked worktree (`.claude/worktrees/<hash>/`) or a vendored
+    clone nested under this project. `IGNORED_DIRECTORY_NAMES` is a static
+    name list; a nested checkout is a structural fact about a PATH (does it
+    have a `.git`), not a name any static list could usefully carry - so it
+    gets its own check rather than an entry added to that set."""
+    return path != project and (path / ".git").exists()
+
+
+def _candidate_files(
+    project: Path, allowed: set[str], roots: Iterable[str] | None = None,
+) -> list[Path]:
+    """Every file with an allowed suffix under `project` (or, when `roots`
+    is given, under just those project-relative subdirectories), pruning
+    `IGNORED_DIRECTORY_NAMES` and nested checkouts BEFORE descending into
+    them.
+
+    S5 (I-6 fix round 1): the previous shape - `[p for p in
+    project.rglob("*") if ... not any(part in IGNORED_DIRECTORY_NAMES for
+    part in path.parts)]` - filtered by name only AFTER `rglob` had already
+    walked every directory, including a nested nested checkout's own full
+    tree. Measured on this project's own working checkout: 12,864 of
+    13,433 candidate `.py` files lived under `.claude/worktrees/*`, each a
+    full linked-worktree copy of the repository, and the old shape paid the
+    cost of listing all of them before the per-file suffix/name check ever
+    ran. `os.walk`'s own `topdown` pruning (`dirnames[:] = ...`) skips a
+    matched directory's contents entirely, at the point of descent.
+
+    `roots` (I-6 fix round 2, D2i): a caller that only ever needs a known
+    subtree (`godmode_closure`'s closure check needs only `scripts/`,
+    `hooks/`, `tests/`) passes it here so the walk itself never touches
+    anything else - not filtered out afterward, never even listed. A
+    missing/non-directory root is skipped, not an error: a project without
+    a `hooks/` directory, say, still answers for the roots it does have.
+    """
+    bases = [project] if roots is None else [project / root for root in roots]
+    found: list[Path] = []
+    for base in bases:
+        if not base.is_dir():
+            continue
+        for root, dirnames, filenames in os.walk(base):
+            root_path = Path(root)
+            dirnames[:] = [
+                name for name in dirnames
+                if name not in IGNORED_DIRECTORY_NAMES
+                and not _is_nested_checkout(root_path / name, project)
+            ]
+            for name in filenames:
+                candidate = root_path / name
+                if candidate.suffix.lower() in allowed:
+                    found.append(candidate)
+    return sorted(found)
+
+
 def build(project: Path, suffixes: Iterable[str] | None = None,
-          budget_seconds: float | None = None) -> Atlas:
+          budget_seconds: float | None = None, roots: Iterable[str] | None = None) -> Atlas:
     # Registered suffixes are scanned even outside CODE_SUFFIXES: a registration
     # that still needed a constants edit would defeat the registry's purpose.
     allowed = set(suffixes) if suffixes else set(CODE_SUFFIXES) | set(EXTRACTORS)
     atlas = Atlas(project=project)
-    candidates = [
-        path for path in sorted(project.rglob("*"))
-        if path.is_file() and path.suffix.lower() in allowed
-        and not any(part in IGNORED_DIRECTORY_NAMES for part in path.parts)
-    ]
+    candidates = _candidate_files(project, allowed, roots=roots)
     started = time.monotonic()
     for position, path in enumerate(candidates):
         # A build with no ceiling has no honest answer on a repo it cannot
@@ -969,6 +1021,190 @@ def load_index(path: Path, project: Path) -> dict[str, Any]:
         "missing": missing,
         "confidence": round(len(fresh) / total, 2) if total else 0.0,
     }
+
+
+def rehydrate_index(path: Path, project: Path) -> Atlas:
+    """Reconstruct a real, queryable `Atlas` from a saved index - the
+    companion `load_index` itself does not provide.
+
+    S5 (I-6 fix round 1): `load_index` only ever answers freshness
+    (`fresh`/`stale`/`missing`/`confidence`); it never hands a caller back
+    a graph `affected`/`unfollowed_dependents` can traverse. A caller that
+    has already confirmed the index fresh via `load_index` (this project's
+    own `godmode_closure._atlas_for_closure` is the first) uses this to
+    skip a full `build()` walk - measured at 16+ seconds on a clean 510-
+    file checkout, over four hundred on this repository's real working
+    tree before nested checkouts were excluded (see `_candidate_files`).
+    `body_signatures` is deliberately NOT rebuilt here: it exists only for
+    `speculative_seams`'s duplicate-body search, which a saved index was
+    never asked to answer and a caller needing it should `build()` fresh
+    for."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise GodmodeError(f"Cannot read index {path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise GodmodeError(f"Index {path} is not valid JSON: {exc}") from exc
+    atlas = Atlas(project=project)
+    atlas.files = sorted(str(name) for name in data.get("files", {}))
+    atlas.symbols = [
+        Symbol(name=str(s["name"]), kind=str(s["kind"]), path=str(s["path"]),
+               line=int(s["line"]))
+        for s in data.get("symbols", [])
+    ]
+    atlas.edges = [
+        Edge(source=str(e["source"]), target=str(e["target"]), relation=str(e["relation"]),
+             evidence=str(e["evidence"]), line=int(e.get("line", 0)))
+        for e in data.get("edges", [])
+    ]
+    atlas.unparsed = list(data.get("unparsed", []))
+    return atlas
+
+
+# The eleven runtime modules `hooks/godmode_session_hook.py:29-49` imports at
+# module level today: what the hot `pre-action` path (the one every mutating
+# tool call pays for) actually loads. This is the declared surface for
+# MODULE-LEVEL hook imports only - `direction_findings` below enforces it
+# with a statement-level descent that stops at the first `def`/`class`, so a
+# module-level import outside this set is a drift on the path every call
+# pays for, worth naming precisely. A deferred import - one reached only
+# inside a function body, for a branch that fires on session-start,
+# user-prompt, pre-compact, or session-end - was never worth paying for on
+# the hot path, so it is not held to this narrower set; see
+# `HOOK_DEFERRED_DENY` for the one thing still forbidden there.
+HOOK_IMPORT_SURFACE = frozenset({
+    "godmode_anchor", "godmode_constants", "godmode_chronicle", "godmode_errors",
+    "godmode_attest", "godmode_guardrails", "godmode_release_gate",
+    "godmode_hookproof", "godmode_hostevent", "godmode_sentinel",
+    # `contain` is how every path an operator input names gets checked
+    # against a root before the hook trusts it - path containment, not a
+    # policy decision, so it belongs on the hot path like the others above.
+    "godmode_paths",
+})
+
+# A deferred (in-function) hook import may reach any `godmode_runtime.*`
+# module except these - a hook importing the CLI layer is the direction
+# inverted: the console dispatches to hooks' concerns, never the reverse.
+HOOK_DEFERRED_DENY = frozenset({"godmode_console"})
+
+
+def _import_statements(tree: ast.Module) -> list[tuple[int, str, bool]]:
+    """Every import in `tree`, as `(line, dotted-name, top_level)` triples.
+
+    A statement-level descent, not `ast.walk`: it follows `body`, `orelse`,
+    `finalbody`, and exception `handlers` - the compound statements
+    (`if`/`try`/`with`/`for`/`while`) that share the enclosing scope - and
+    stops at a `def`/`async def`/`class`, which is where "module-level" ends
+    and "deferred" begins (`top_level` is False from there down).
+
+    `from x.y import z` and `from x import y` both carry the imported name
+    into the dotted path (`x.y.z` and `x.y` respectively), so a bare
+    `from godmode_runtime import godmode_x` is not silently dropped the way
+    reading only `node.module` would drop it - `direction_findings` below
+    only ever looks at the first one or two segments, so the extra segment
+    never changes which module a finding names.
+    """
+    out: list[tuple[int, str, bool]] = []
+
+    def scan(body: list[ast.stmt], top_level: bool) -> None:
+        for stmt in body:
+            if isinstance(stmt, ast.Import):
+                out.extend((stmt.lineno, alias.name, top_level) for alias in stmt.names)
+            elif isinstance(stmt, ast.ImportFrom):
+                if stmt.module and stmt.level == 0:
+                    out.extend((stmt.lineno, f"{stmt.module}.{alias.name}", top_level)
+                               for alias in stmt.names)
+            elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                scan(stmt.body, top_level=False)
+            elif isinstance(stmt, ast.Try):
+                scan(stmt.body, top_level)
+                for handler in stmt.handlers:
+                    scan(handler.body, top_level)
+                scan(stmt.orelse, top_level)
+                scan(stmt.finalbody, top_level)
+            elif hasattr(stmt, "body"):
+                scan(stmt.body, top_level)
+                if hasattr(stmt, "orelse"):
+                    scan(stmt.orelse, top_level)
+
+    scan(tree.body, top_level=True)
+    return out
+
+
+def direction_findings(repo_root: Path) -> list[dict[str, Any]]:
+    """Where dependency direction breaks: hooks importing outside their
+    declared surface, or the runtime reaching back into hooks.
+
+    Godmode's boundary is one-way, in two tiers. A hook's MODULE-LEVEL
+    imports - the ones the hot `pre-action` path always pays for - may reach
+    only `HOOK_IMPORT_SURFACE`; a hook's DEFERRED imports (inside a function
+    body, for a branch that fires only sometimes) may reach any runtime
+    module except `HOOK_DEFERRED_DENY`. The runtime itself never imports
+    `hooks`, and `hooks/godmode_gate_fast.py` - the fast pre-tool gate
+    documented as a zero-import boundary in its own module docstring -
+    imports no runtime module at all, at any depth. A file that cannot be
+    parsed is reported as a finding naming why, never a traceback. Each
+    finding names the file, the line, the module, and why, so a reversed or
+    out-of-tier import reads as a named defect instead of a silent drift.
+    """
+    root = Path(repo_root)
+    findings: list[dict[str, Any]] = []
+
+    def _scan(path: Path, rel: str) -> list[tuple[int, str, bool]] | None:
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except (SyntaxError, UnicodeDecodeError) as exc:
+            findings.append({
+                "file": rel, "line": 0, "module": "",
+                "why": f"unparseable: {type(exc).__name__}",
+            })
+            return None
+        return _import_statements(tree)
+
+    hooks_dir = root / "hooks"
+    if hooks_dir.is_dir():
+        for path in sorted(hooks_dir.glob("*.py")):
+            rel = path.relative_to(root).as_posix()
+            imports = _scan(path, rel)
+            if imports is None:
+                continue
+            for line, name, top_level in imports:
+                if name != "godmode_runtime" and not name.startswith("godmode_runtime."):
+                    continue
+                parts = name.split(".")
+                module = parts[1] if len(parts) > 1 else ""
+                if path.name == "godmode_gate_fast.py":
+                    findings.append({
+                        "file": rel, "line": line, "module": module,
+                        "why": "the fast gate imports no runtime module",
+                    })
+                elif top_level:
+                    if module and module not in HOOK_IMPORT_SURFACE:
+                        findings.append({
+                            "file": rel, "line": line, "module": module,
+                            "why": "module-level hook import outside the declared surface",
+                        })
+                elif module in HOOK_DEFERRED_DENY:
+                    findings.append({
+                        "file": rel, "line": line, "module": module,
+                        "why": "deferred hook import of a denied module",
+                    })
+
+    runtime_dir = root / "scripts" / "godmode_runtime"
+    if runtime_dir.is_dir():
+        for path in sorted(runtime_dir.glob("*.py")):
+            rel = path.relative_to(root).as_posix()
+            imports = _scan(path, rel)
+            if imports is None:
+                continue
+            for line, name, _top_level in imports:
+                if name == "hooks" or name.startswith("hooks."):
+                    findings.append({
+                        "file": rel, "line": line, "module": name,
+                        "why": "runtime imports hooks",
+                    })
+
+    return findings
 
 
 def _self_check() -> None:

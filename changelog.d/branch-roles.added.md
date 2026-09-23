@@ -1,0 +1,1 @@
+- Branches declare a role: maintained branches get the plan-and-test discipline, spikes do not, and only the operator (`--as-operator`) can declare a branch a spike.

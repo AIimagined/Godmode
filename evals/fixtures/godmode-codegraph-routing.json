@@ -1,0 +1,21 @@
+{
+  "routes": {
+    "near_negative": {
+      "Investigate why one specific test is failing": "godmode-investigation",
+      "Read one small file's contents directly with no need to know its dependents": "godmode-changelog",
+      "Rebuild the loop-record signature history for a stalled retry": "godmode-replicate"
+    },
+    "positive": {
+      "Check which tests must be retested for a set of changed paths using the saved dependency graph": "godmode-codegraph",
+      "Find who calls or imports a module and its blast radius before editing it, using the local dependency graph instead of opening every module by hand": "godmode-codegraph"
+    }
+  },
+  "schema": "godmode-routing-snapshot-v1",
+  "skill": "godmode-codegraph",
+  "summary": {
+    "near_negatives_rejected": 3,
+    "near_negatives_total": 3,
+    "positives_routed_correctly": 2,
+    "positives_total": 2
+  }
+}

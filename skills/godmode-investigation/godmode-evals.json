@@ -4,11 +4,17 @@
   "routing": {
     "positive": [
       "Diagnose a reproducible regression whose root cause is unknown.",
-      "Investigate a test failure after several unsuccessful fixes."
+      "Investigate a test failure after several unsuccessful fixes.",
+      "Write the postmortem for a production failure once its root-cause is found.",
+      "Weigh competing hypotheses for a flaky failure and kill one with an experiment."
     ],
     "near_negative": [
       "Implement an already specified change with a known mechanism.",
-      "Brainstorm an uncommitted product feature without a failure to diagnose."
+      "Brainstorm an uncommitted product idea before it has any defined shape.",
+      "Ship a fully specified change using an already-agreed approach.",
+      "Cut a release: bump the version number and publish the changelog.",
+      "Record a session handoff checkpoint before stopping work for the day.",
+      "Draft user-facing release notes from the merged changelog fragments."
     ]
   },
   "behavior_assertions": [
@@ -18,6 +24,14 @@
         "command": "python scripts/godmode.py --project . method --reports 1 --components",
         "expect_exit": 0,
         "expect_contains": "fmea"
+      }
+    },
+    {
+      "assert": "A postmortem runs the six-step RCA checklist, and a record that skips a step is incomplete.",
+      "check": {
+        "command": "python scripts/godmode.py --project . checklist template rca --for postmortem",
+        "expect_exit": 0,
+        "expect_contains": "rca:postmortem:when"
       }
     },
     "A hypothesis repeated unsuccessfully three times triggers an architectural reassessment."

@@ -170,7 +170,7 @@ class GrownArchiveStaysUnderTheCap(unittest.TestCase):
             self.assertLessEqual(len(context), CLAUDE_CONTEXT_LIMIT)
             self.assertNotIn("[brief truncated locally]", context)
             _prefix, _, payload = context.partition("\n")
-            json.loads(payload)  # parseable - the truncation backstop never fired
+            json.JSONDecoder().raw_decode(payload)  # parseable - the truncation backstop never fired
 
     def test_context_brief_ladder_lands_inside_its_budget(self) -> None:
         from godmode_runtime.godmode_lens import build_context_brief

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godmode Changelog"
+  short_description: "Draft and verify release notes from commits and fragments."
+  default_prompt: "Use $godmode-changelog to check the fragment gate, merge fragments for the version, and build and check the release notes."

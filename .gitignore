@@ -2,6 +2,10 @@
 .godmode/
 .godmode-private/
 .godmode-state/
+# I-6 (fix round 2, D2): a saved atlas index, refreshed by `godmode retest
+# --run` (`godmode_closure.refresh_atlas_index`) - a machine-local cache a
+# closure check rehydrates from, never a fact worth committing or reviewing.
+.godmode-atlas-index.json
 .research/
 .planning/
 .sprints/

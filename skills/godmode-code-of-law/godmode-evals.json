@@ -1,0 +1,27 @@
+{
+  "schema": "godmode-skill-eval-v1",
+  "skill": "godmode-code-of-law",
+  "routing": {
+    "positive": [
+      "Starting a new session, check whether GODMODE-CODE-OF-LAW.md exists at the project root and read it.",
+      "Follow the guards in the project's compiled Code of Law before acting on a new task."
+    ],
+    "near_negative": [
+      "Draft a fresh guard for behavior nobody has ever corrected.",
+      "Retire an old lesson and write a fresh guard from a blank slate."
+    ]
+  },
+  "behavior_assertions": [
+    {
+      "assert": "The compiled law file, when present, is read before substantive work begins.",
+      "check": {
+        "command": "python scripts/godmode.py --project . law show",
+        "expect_exit": 0,
+        "expect_contains": "\"laws\""
+      }
+    },
+    "A guard that seems wrong is named and its underlying lesson retired rather than silently ignored."
+  ],
+  "baseline_required": false,
+  "claims_require_evidence": true
+}

@@ -1,6 +1,6 @@
 ---
 name: godmode-governance
-description: Preview and govern protected engineering actions without executing them implicitly. Use before destructive, externally visible, history-changing, database-changing, release, credential, branch, or worktree operations.
+description: Preview and govern protected engineering actions without executing them implicitly. Use before destructive, externally visible, history-changing, database-changing, release, credential, branch, or worktree operations. Not for reads, tests or edits inside the working tree.
 ---
 
 # Godmode Governance
@@ -19,7 +19,7 @@ Turn a risky requested operation into an explicit, reviewable contract. This ski
    <plugin-root>/bin/godmode --project <path> guard --operation "<exact operation>"
    ```
 
-4. For a protected result, present the exact action, affected scope, likely impact, recovery path, and proof to run afterward.
+4. For a protected result, run `godmode guard --operation "<exact command>"` and present its `brief` (Context / Options / Resolution / Accepted cost) verbatim.
 5. If authorization is required, configure the local authorization secret once and issue a short-lived, one-use capability for the exact action. Never store or pass the secret through Godmode records.
 6. Execute only when the user has authorized the mutation and the host provides an appropriate execution boundary. Keep execution separate from classification.
 7. Consume the matching capability immediately before the protected operation, then verify the result and record evidence.
@@ -42,24 +42,32 @@ Read [godmode-protection-matrix.md](references/godmode-protection-matrix.md) whe
 - `db --propose` walks the schema ladder: existing column, existing table, and only then a reviewed new table.
 - `planmode specify|start|approve|check|arbitrate|bind` gates mutation behind a spec-backed approved plan; `rewind --to SEQ` previews a rollback to a verified checkpoint.
 - `ceilings --spent ...` stops a run that exceeded its declared budget; `removal record|why` keeps deletions explicable.
+- `godmode ownership --check [--diff-only]` shows which gate rule owns each path or command, from the classifier's own tables, and fails closed when the checked-in decision table no longer matches the classifier it was generated from - run it before a commit that touches gate-owning paths.
 
 ## Absorption verdicts
 
 An upstream item (a dependency bump, a vendor release note, a competitor's
 fix) gets a `decision` record with subject `absorb:<item>` and BOTH verdicts
-in its data: `import_verdict` (adopt | extend | diverge | skip | n-a) and
-`behaviour_verdict` (confirmed-have | confirmed-dont | unverified).
-`confirmed-*` needs a `file:` citation proving it. "n-a - different surface"
-answers whether we can import it, never whether the same defect lives in our
-own implementation - that is what the behaviour verdict is for, and an item
-with only an import verdict is half-recorded.
+in its data: `import_verdict` (adopt | extend | diverge | skip | exists |
+unread | n-a) and `behaviour_verdict` (confirmed-have | confirmed-dont |
+unverified). `confirmed-*` needs a `file:` citation proving it. "n-a -
+different surface" answers whether we can import it, never whether the same
+defect lives in our own implementation - that is what the behaviour verdict
+is for, and an item with only an import verdict is half-recorded. `unread`
+is an honest import verdict but is never a settled one: it names a surface
+read that never opened the source, so it still leaves the item
+half-recorded until a real verdict replaces it.
 
-🔴 No CLI verb writes this shape yet - `remember --kind decision` stores one
-free-text `--value`, not two separate verdict fields. Until a dedicated verb
-exists, write the record via direct archive access
-(`archive.append("decision", "absorb:<item>", {"import_verdict": ...,
-"behaviour_verdict": ...}, evidence=["file:..."])`); `godmode_runtime
-.godmode_parity.upstream_verdicts(archive, items)` reads it back and reports
+`remember --kind decision --subject "absorb:<item>" --value "import_verdict:
+<verdict>. behaviour_verdict: <verdict>."` validates both verdicts and
+refuses an adopt or extend verdict that cites no `file:<path>` source
+(README, docs, and release notes do not count as a source cite); a
+surface read may still say unread, skip, or diverge. Once a write passes,
+the parsed verdicts are persisted onto the record's data, so
+`godmode_runtime.godmode_parity.upstream_verdicts(archive, items)` reads a
+CLI-recorded decision the same way it reads one written by direct archive
+access (`archive.append("decision", "absorb:<item>", {"import_verdict": ...,
+"behaviour_verdict": ...}, evidence=["file:..."])`), and reports
 `verdicted` / `half_verdicted` / `unread` per item.
 
 ## Completion

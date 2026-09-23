@@ -1,0 +1,2 @@
+- A lesson can carry an enforce predicate; a matching write is refused with the guard as the remedy.
+- Run `godmode doctor` once after upgrading: it warms the enforce-predicate sidecar outside the write lock, so the first live write on an archive that has never had it does not hold the lock for several seconds.

@@ -1,0 +1,1 @@
+- PDCA, OODA and the research read order are recorded SOPs with a verb per phase; metrics shows cycle time per phase.

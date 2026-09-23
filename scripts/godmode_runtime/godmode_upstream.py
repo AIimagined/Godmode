@@ -102,7 +102,7 @@ from .godmode_errors import GodmodeError
 # module docstring's "loud caps" note and `godmode_egress.scan_project`,
 # whose `DEFAULT_SCAN_LIMIT` this mirrors the reasoning of, not the number:
 # an installed package's public surface is normally in the tens to low
-# hundreds, so 512 gives real headroom while keeping a hit on the cap rare
+# hundreds, so 512 gives real margin while keeping a hit on the cap rare
 # enough that seeing `truncated: true` remains a signal.
 MAX_SYMBOLS_ENUMERATED = 512
 

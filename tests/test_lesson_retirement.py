@@ -35,6 +35,12 @@ from godmode_runtime.godmode_sources import guard_pin_reason  # noqa: E402
 
 SUBJECT = "the widget cache invalidation is confirmed by a differential"
 CLAIM = "the widget cache invalidation is confirmed by a differential and now holds"
+# H5 fix round 1: relevance is now a shared cited stem, and a stem only
+# exists where the text carries path/identifier structure (`/`, `.`, `_`,
+# `-`) - plain prose like SUBJECT carries none. The guard names a
+# structural token so the cited command can actually reach it.
+GUARD = "checked by widget_cache.verify before any claim"
+CITE = ["cmd:sh widget_cache.verify"]
 
 
 class Base(unittest.TestCase):
@@ -45,23 +51,23 @@ class Base(unittest.TestCase):
         self.archive = Chronicle(resolve_anchor(self.root))
 
     def lesson(self, status: str | None = None) -> None:
-        data: dict = {"value": "x"}
+        data: dict = {"value": "x", "generalized_guard": GUARD}
         if status:
             data["status"] = status
         self.archive.append("lesson", SUBJECT, data)
 
-    def advisory(self) -> str:
-        return guard_pin_reason(self.root, self.archive, CLAIM, [])
+    def pin_reason(self) -> str:
+        return guard_pin_reason(self.root, self.archive, CLAIM, CITE)
 
 
 class AnActiveLessonPins(Base):
-    def test_an_active_lesson_produces_the_advisory(self) -> None:
+    def test_an_active_lesson_produces_the_pin(self) -> None:
         """Positive control: without this a passing test proves nothing."""
         self.lesson()
-        self.assertIn("pin already names this surface", self.advisory())
+        self.assertIn("pin already names this surface", self.pin_reason())
 
     def test_no_lesson_produces_no_advisory(self) -> None:
-        self.assertEqual(self.advisory(), "")
+        self.assertEqual(self.pin_reason(), "")
 
 
 class RetirementIsReachable(Base):
@@ -69,25 +75,25 @@ class RetirementIsReachable(Base):
         """The whole point: the instruction the refusal gives must work."""
         self.lesson()
         self.lesson(status="retired")
-        self.assertEqual(self.advisory(), "")
+        self.assertEqual(self.pin_reason(), "")
 
     def test_a_lesson_retired_at_its_own_record_still_clears(self) -> None:
         """The path that already worked must keep working."""
         self.lesson(status="retired")
-        self.assertEqual(self.advisory(), "")
+        self.assertEqual(self.pin_reason(), "")
 
     def test_reviving_a_retired_subject_pins_again(self) -> None:
         """Newest wins in both directions, or the rule is a trapdoor."""
         self.lesson()
         self.lesson(status="retired")
         self.lesson()
-        self.assertIn("pin already names this surface", self.advisory())
+        self.assertIn("pin already names this surface", self.pin_reason())
 
     def test_retiring_one_subject_does_not_retire_another(self) -> None:
-        self.archive.append("lesson", SUBJECT, {"value": "x"})
+        self.lesson()
         self.archive.append("lesson", "an unrelated lesson about timers",
                             {"value": "x", "status": "retired"})
-        self.assertIn("pin already names this surface", self.advisory())
+        self.assertIn("pin already names this surface", self.pin_reason())
 
 
 class OtherSettledStatusesAlsoClear(Base):
@@ -97,7 +103,7 @@ class OtherSettledStatusesAlsoClear(Base):
                 self.setUp()
                 self.lesson()
                 self.lesson(status=status)
-                self.assertEqual(self.advisory(), "", status)
+                self.assertEqual(self.pin_reason(), "", status)
 
 
 if __name__ == "__main__":

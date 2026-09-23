@@ -84,3 +84,44 @@ retries are not in either arm, so nothing here supports a claim about what a
 task costs end to end. The measured cost of a real session is a separate
 question, answered from the host's own transcript, which reads counts and keeps
 counts.
+
+## Gate latency
+
+`gate_latency.py` times the fast gate itself - p50/p95, in milliseconds, for a
+read-only command (fast-allowed, never reaches the full hook) and a mutating
+one (escalates to the full hook's classify+archive round trip):
+
+```
+python benchmarks/gate_latency.py --write-baseline
+python benchmarks/gate_latency.py --check
+```
+
+The committed `gate_latency_baseline.json` is **machine-specific**: a p95 in
+milliseconds means little compared across different hardware, so `--check`
+never compares this machine against another one's number - only against a
+baseline captured here. A CI job establishes and checks its own baseline the
+same way, on its own runner, rather than comparing against this file; that
+wiring is not part of this script and is not added to any workflow here,
+because CI machines differ from a contributor's machine and from each other.
+`--check` exits `0` within budget, `1` on a regression of 20% or more against
+the committed baseline (or a phase the baseline has but the new run is
+missing), and `2` when no usable baseline is committed (absent, unparsable,
+or written under a different schema).
+
+Below 21 samples, the p95 index lands on or next to the plain sample max, not
+a real percentile - `--write-baseline` and `--check` both refuse a smaller
+`--n`. `--check` reuses the committed baseline's own sample count by default,
+so a check and the baseline it is judged against are always comparing the
+same order statistic.
+
+`recommended_timeouts` (also in the baseline file) sizes the hook timeouts a
+later plan wires in, clamped between a floor and a ceiling per timeout so an
+outlier machine cannot recommend something unusably short or long. On a quiet
+machine - roughly under 2 seconds of escalation p95 - all three constants
+collapse to their floor (`pre_tool_use` 3s, `stop`/`user_prompt` 10s each) and
+look identical regardless of the exact p95 underneath; the committed baseline
+above the floor instead (its escalation p95 ran past 2s) is itself the
+demonstration that these numbers move with real machine load, not just with
+code changes. That is also why a single local `--check` run is **advisory
+only** - a reported regression on one run is confirmed by a second run on a
+quiet machine, not acted on from the first exit code alone.

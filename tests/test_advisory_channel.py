@@ -34,7 +34,7 @@ if str(Path(__file__).parent) not in sys.path:
 
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
-from _host_env import HOST_MARKERS  # noqa: E402
+from _host_env import scrubbed_env  # noqa: E402
 
 
 @contextmanager
@@ -53,7 +53,7 @@ def _project():
 
 def _fire(event: str, payload: dict, project: Path, state: Path,
           host_env: dict | None = None) -> subprocess.CompletedProcess:
-    environment = {k: v for k, v in os.environ.items() if k not in HOST_MARKERS}
+    environment = scrubbed_env()
     environment["GODMODE_STATE_HOME"] = str(state)
     environment.update(host_env or {})
     return subprocess.run(
@@ -130,7 +130,7 @@ class PostEditAdvisoryTests(unittest.TestCase):
             doc.write_text("See C:\\Users\\someone\\x for it.\n\nTODO finish\n", encoding="utf-8")
             payload = {"hook_event_name": "PostToolUse", "tool_name": "Edit",
                        "tool_input": {"file_path": str(doc)}, "cwd": str(project)}
-            environment = {k: v for k, v in os.environ.items() if k not in HOST_MARKERS}
+            environment = scrubbed_env()
             done = subprocess.run([sys.executable, str(POST_EDIT)], input=json.dumps(payload),
                                   capture_output=True, text=True, encoding="utf-8",
                                   errors="replace", timeout=60, cwd=str(project),

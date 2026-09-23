@@ -142,8 +142,9 @@ show.
   `_session_anchor_sequence`.
 - `SUBJECT_PROBE_FAILED` (`probe-failed`) - written by `run_probe` itself,
   whenever an attempt's own `denied`/`proof_recorded` isn't both true
-  (including a genuine subprocess timeout, reason `"timeout"`, and an
-  unexpected exit code, reason `"unexpected-exit"` - CX-5 additions).
+  (including a genuine subprocess timeout, reason `"timeout"`; an
+  unexpected exit code, reason `"unexpected-exit"`; and exit 0 with empty
+  stdout, reason `"empty"`, told apart from `"timeout"` - CX-5/NS-10f).
 - `SUBJECT_UNINSTALLED` (`hook-uninstalled`) - real writers: CX-3 (native
   manifest install/uninstall, where implemented) and CX-4 (git-hook
   backstop uninstall, `godmode_githooks.git_hooks_uninstall`).
@@ -210,6 +211,17 @@ DEGRADE_REASON_MALFORMED_PAYLOAD = "malformed-payload"
 DEGRADE_REASON_IDENTITY_MISMATCH = "identity-mismatch"
 DEGRADE_REASON_TIMEOUT = "timeout"
 DEGRADE_REASON_UNEXPECTED_EXIT = "unexpected-exit"
+# NS-10f: exit 0 with nothing on stdout is its own reason, distinct from
+# `DEGRADE_REASON_TIMEOUT` - a probe that never returned and one that
+# returned instantly with nothing to say used to both fall through to the
+# generic `"not-denied"` reason below, hiding which of the two happened.
+DEGRADE_REASON_EMPTY = "empty"
+# C-3/NS-10i: the umbrella reason for every event's own best-effort
+# bookkeeping (a record write, a nudge, brief building) - distinct from
+# the more specific reasons above, which each name one particular failure
+# mode. This one names the shape, not the call site: whichever ancillary
+# step failed, the hook degrades the same way and says so.
+DEGRADE_REASON_ANCILLARY = "ancillary-failed"
 # G-6: these three name real call sites in `hooks/godmode_session_hook.py`
 # (pre-compact/session-end intent capture, the inline-scan record path, the
 # ask-only record path) that already existed before this reason enum was
@@ -226,6 +238,7 @@ DEGRADE_REASON_ASK_ONLY_RECORD_FAILED = "ask-only-record-failed"
 DEGRADE_REASONS = frozenset({
     DEGRADE_REASON_MALFORMED_PAYLOAD, DEGRADE_REASON_IDENTITY_MISMATCH,
     DEGRADE_REASON_TIMEOUT, DEGRADE_REASON_UNEXPECTED_EXIT,
+    DEGRADE_REASON_EMPTY, DEGRADE_REASON_ANCILLARY,
     DEGRADE_REASON_INTERRUPTED_INTENT_CAPTURE_FAILED,
     DEGRADE_REASON_INLINE_SCAN_RECORD_FAILED,
     DEGRADE_REASON_ASK_ONLY_RECORD_FAILED,
@@ -845,7 +858,7 @@ def _supersession_cause(archive: Chronicle, since_sequence: int) -> str:
         if record["subject"] == SUBJECT_UNINSTALLED:
             return "hook-uninstalled"
         if record["subject"] == SUBJECT_PROBE_FAILED:
-            return "probe-failed"
+            return str(record["data"].get("reason") or "probe-failed")
     return "superseded"
 
 
@@ -1009,6 +1022,44 @@ def _pretool_timeout_ms(host: str, package_root: Path | None = None) -> int | No
     return None
 
 
+def codex_runtime_premise(*, timeout: int = 10) -> dict[str, Any]:
+    """What `codex features list` says, read BEFORE any live interception claim.
+
+    N-13: the whole Codex probe rests on the premise that a `codex` binary
+    is installed and can report its own feature set. Checked here, first,
+    with a bounded stdlib subprocess call - never a guess: an absent binary,
+    a launch failure, a timeout, or a non-zero exit all read as `"state":
+    "unavailable"` with the reason named; only a clean run reads
+    `"recorded"`, carrying the command's own stdout verbatim.
+    """
+    import shutil
+
+    codex_bin = shutil.which("codex")
+    if codex_bin is None:
+        return {"state": "unavailable", "reason": "no `codex` binary found on PATH", "output": None}
+    try:
+        completed = subprocess.run(
+            [codex_bin, "features", "list"], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return {"state": "unavailable",
+                "reason": f"codex features list exceeded its {timeout}s timeout",
+                "output": None}
+    except OSError as exc:
+        return {"state": "unavailable",
+                "reason": f"codex features list failed to launch: {exc}"[:200],
+                "output": None}
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()[:2000]
+        return {"state": "unavailable",
+                "reason": f"codex features list exited {completed.returncode}",
+                "output": detail or None}
+    # Bounded like the failure branch: a verbose runtime must not bloat
+    # every probe and status payload that carries the premise.
+    return {"state": "recorded", "reason": None, "output": completed.stdout.strip()[:2000]}
+
+
 def run_probe(
     project: Path, archive: Chronicle, host: str, *, timeout: int = 20
 ) -> dict[str, Any]:
@@ -1035,6 +1086,15 @@ def run_probe(
     stdout is even parsed; every attempt also measures and persists its own
     round-trip latency against the host's declared timeout budget
     (`record_latency_check`), win or lose.
+
+    NS-10f addition: an exit-0-or-2 response whose stdout is empty (or
+    whitespace-only) fails with `reason="empty"`, checked before the JSON
+    parse below - so it is never conflated with `"timeout"` (the process
+    never returned) or with the generic `"not-denied"` a well-formed but
+    non-denying response falls through to. Precedence: an exit code
+    outside `{0, 2}` is always `"unexpected-exit"` regardless of stdout
+    content, because that check runs first and returns before this one is
+    ever reached.
     """
     hook_script = _PACKAGE_ROOT / "hooks" / "godmode_session_hook.py"
     nonce = uuid.uuid4().hex[:16]
@@ -1076,6 +1136,11 @@ def run_probe(
                             "either way, because it is allowed silently and "
                             "records nothing"),
     }
+    if host == "codex":
+        # N-13: recorded first, before any of this attempt's own live
+        # claims (denied/proof_recorded/state) are computed below - the
+        # installed-runtime premise this whole probe rests on.
+        result["premise"] = codex_runtime_premise()
 
     def _record_latency(latency_ms: float) -> None:
         margin = (
@@ -1132,6 +1197,13 @@ def run_probe(
             f"probe subprocess exited {completed.returncode}, neither 0 nor 2",
             "unexpected-exit",
         )
+
+    if not completed.stdout.strip():
+        # NS-10f: exit 0 with empty stdout is its own reason - told apart
+        # from `"timeout"` (the process never returned at all) and from
+        # the generic `"not-denied"` a well-formed-but-non-denying
+        # response would fall through to below.
+        return _fail("probe subprocess exited 0 with empty stdout", "empty")
 
     try:
         response = json.loads(completed.stdout) if completed.stdout.strip() else {}

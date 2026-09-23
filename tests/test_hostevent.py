@@ -1,13 +1,12 @@
 """CX-2: the canonical host-event adapter.
 
 Every case here is red-first against the requirements named in
-`docs/superpowers/plans/2026-08-16-codex-compat.md` (Task CX-2 + Plan
-amendments 1-4) and `docs/superpowers/specs/2026-08-16-codex-compat-design.md`
-(CX-2 unit + Addenda 2/6): field dual-casing, the host detection chain,
+the Codex-compatibility plan (Task CX-2 and plan amendments 1-4) and its
+design (CX-2 unit and Addenda 2/6): field dual-casing, the host detection chain,
 per-host tool maps, unrecognized-tool fail-closed behaviour, the
 payload-capture probe, and multi-host response rendering.
 
-**Fix round 1** (`.superpowers/sdd/2026-08-16-cx/task-cx2-review.md`) added:
+**Fix round 1** (the CX-2 review) added:
 `ApplyPatchMalformedDirectiveTests` (C1 - a patch mixing one well-formed
 directive with one malformed one must fail the WHOLE call closed, never
 just drop the malformed one), `NoDedupTests` (C2/I1 - gate-exactly-once was
@@ -84,6 +83,14 @@ class FieldDualCasingTests(unittest.TestCase):
         self.assertEqual(he.field({"session_id": "s1"}, "session_id"), "s1")
         self.assertEqual(he.field({"workspaceRoot": "/x"}, "cwd"), "/x")
         self.assertEqual(he.field({"cwd": "/x"}, "cwd"), "/x")
+        # R1 (fix round 2, task-14-rereview.md): `permission_mode` fed the
+        # NS-10k unattended row through this same lookup with no alias -
+        # a host spelling it `permissionMode` read as absent (attended, the
+        # looser row).
+        self.assertEqual(he.field({"permissionMode": "auto"}, "permission_mode"),
+                         "auto")
+        self.assertEqual(he.field({"permission_mode": "auto"}, "permission_mode"),
+                         "auto")
 
     def test_absent_field_is_none_not_a_raise(self) -> None:
         self.assertIsNone(he.field({}, "tool_name"))

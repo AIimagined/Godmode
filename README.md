@@ -2,11 +2,12 @@
   <img src="./assets/godmode-logo.png" alt="Godmode" width="260">
 </h1>
 
-<h3 align="center">Your coding agent says "done." Godmode checks.</h3>
+<h3 align="center">Your coding agent says it is done. Godmode decides whether that is true.</h3>
 
 <p align="center">
-  Godmode lives in your agent's hooks and keeps a local, tamper-evident record of what it actually ran, changed, and proved.<br>
-  "Tests pass" means a test ran. A force-push doesn't go through because the agent sounded sure.
+  Godmode keeps a hash-chained record of what your agent actually ran, changed and refused,<br>
+  and grades every "done" against that record instead of against the agent's word.<br>
+  Where the record holds nothing, the work renders <code>declared</code> - said, not shown.
 </p>
 
 <p align="center">
@@ -15,21 +16,99 @@
   <img alt="Runtime dependencies: zero" src="https://img.shields.io/badge/runtime%20dependencies-0-brightgreen">
 </p>
 
-- **Done means proven.** A claim backed only by a check that can't fail - `git status`, `echo`, `ls` - doesn't earn "verified".
-- **Risky commands stop before they run, on hosts with live-proven hooks.** Force-pushes, deletes and releases are judged by what the command does, not how confidently it was asked for.
-- **Context that survives.** Compaction, a new session, a branch switch: the agent resumes from the record, not from memory.
-
 <p align="center">
-  Zero dependencies · nothing leaves your machine · Claude Code · Codex · Grok · OpenCode · Antigravity
-  (<a href="#host-support">how strongly each host is enforced</a>)
+  You have this problem if an agent has ever reported a green suite that never ran,<br>
+  or rewritten history because it sounded sure.
 </p>
 
 ---
 
+## See it decide
+
+Every block below is real output from this repository, run to write this page.
+Nothing here is a mock-up, and every one of these verbs is read-only.
+
+**Before a command that cannot be taken back.** The gate reads what the command
+does, then tells you what this project has already refused in the same category:
+
+```console
+$ godmode forecast --operation "git push --force origin main"
+{
+  "category": "git-history-or-remote",
+  "impact": [
+    "repository history",
+    "branches or worktrees",
+    "possibly a remote"
+  ],
+  "note": "classification is from today's rules; precedent is what this project already refused in the same category",
+  "operation": "git push --force origin main",
+  "precedent": {
+    "examples": [
+      "git push --force",
+      "git push --force origin main",
+      "git reset --hard HEAD~3",
+      "git status && git push origin main",
+      "git commit --amend"
+    ],
+    "same_category": 38
+  },
+  "protected": true,
+  "second_confirmation_required": true,
+  "tier": "R5"
+}
+```
+
+**When the agent says everything is finished.** The record answers from its own
+contents - here, one claim, seven obligations and three rules that nothing has
+closed yet. Drop `--brief` and each one is listed with its age and its source:
+
+```console
+$ godmode --brief status remaining
+work-outstanding | count=11
+```
+
+**On this page.** Claim-shaped prose on a public surface is held to the same bar
+as a claim an agent records: a sentence carrying a measured number, or a verb
+that promises an outcome, has to name its own reproduction on the same line.
+
+```console
+$ godmode claim --scan
+{
+  "claims": 9,
+  "definition": "a sentence with a measured number and unit, or a verb that promises an outcome; covered when its line names a reproduction or a claim record carries its text",
+  "scanned": [
+    "README.md",
+    "docs/LISTING.md",
+    "docs/CAPABILITY-COVERAGE.md",
+    "llms.txt",
+    "GODMODE.md"
+  ],
+  "uncovered": [],
+  "verdict": "covered"
+}
+```
+
+And the same discipline turned on the project itself. The last line is this
+repository admitting that records exist whose cited files have been committed
+over since they were graded; `godmode freshness` names every one of them:
+
+```console
+$ godmode scenarios --brief
+all-caught | total=29
+$ godmode grid --brief
+controls-held | passed=33
+$ godmode untrusted --brief
+data-only
+$ godmode sbom --brief
+no-runtime-dependencies | dependency_count=0
+$ godmode freshness --brief
+stale
+```
+
 ## Install
 
-One plugin package, five hosts. Per-host enforcement detail lives in
-[Host support](#host-support) - read it before you rely on any gate.
+One plugin package. How much of it can be enforced depends on the host - read
+[Host support](#host-support) before relying on a gate anywhere.
 
 **Claude Code**
 
@@ -46,94 +125,69 @@ $ grok plugin marketplace add AIimagined/Godmode
 $ grok plugin install godmode --trust
 ```
 
-**macOS note.** Every hook and the `godmode` shim resolve an interpreter
-by probing `python3`, `python`, then `py` on the hook's PATH, and then the
-usual off-PATH homes (`/opt/homebrew/bin`, `/usr/local/bin`, MacPorts,
-pyenv shims, the python.org framework, `~/.local/bin`, and stock
-`/usr/bin/python3` last, since it is a stub until the developer tools are
-installed). A host launched from the Dock carries a shorter PATH than your
-terminal, which is why the off-PATH list exists. `GODMODE_PYTHON=<path>`
-overrides the probe. `godmode doctor --host claude` reports which
-interpreter answered and whether the launcher kept its executable bit.
+**Codex, Antigravity, OpenCode, Copilot, Kiro.** Skills and the CLI install with
+the package; the hooks need one wiring step per project. Preview it first - the
+preview uses the same code path an apply would, and stops rather than half-apply
+when anything is in the way:
 
-**Codex** - install the same package through Codex's own plugin flow, then
-wire the hooks per project (Codex's CLI ignores plugin-bundled hooks; see
-the host table): run `godmode hooks wire` inside the project and trust the
-commands it lists in `codex`.
+```console
+$ godmode hooks wire --all --dry-run
+{
+  "changed": [],
+  "lines": [
+    "[CREATE] codex: .codex\\hooks.json",
+    "[CREATE] antigravity: .agents\\hooks.json",
+    "[CREATE] opencode: .opencode\\plugins\\godmode.js",
+    "[CONFLICT] copilot: .github\\hooks\\godmode.json + .github\\copilot-instructions.md",
+    "[UPDATE] kiro: .kiro\\hooks.json"
+  ],
+  "summary": "blocked; no changes made"
+}
+```
 
-**OpenCode** - `godmode hooks wire --host opencode` installs the shim
-(runs under Bun or Node) into the project's `.opencode/plugins/`; export
-`GODMODE_PLUGIN_ROOT` in the shell that launches OpenCode.
+That `CONFLICT` is this repository's own checked-in Copilot artifact, and one
+conflicting host is enough to stop the whole pass: a differing file is reported
+rather than overwritten, until `--force` says otherwise. In a project with no
+host config of its own, every line reads `[CREATE]`. Drop `--dry-run` to apply,
+or pass `--host <name>` to wire one. On Codex the operator then Trusts each
+listed command inside `codex`; that step is Codex's own and cannot be automated.
+Per-host wiring detail lives in [docs/hosts/](docs/hosts/).
 
-**Antigravity** - skills are discovered natively: copy `skills/` into the
-workspace's `.agents/skills/`. For the gate, `godmode hooks wire --host
-antigravity` merges the godmode entry into the project's
-`.agents/hooks.json` (foreign hooks preserved); interception stays SOFT
-until a live deny is chronicled - see the host table.
+**macOS.** Every hook and the `godmode` shim probe `python3`, `python`, then `py`
+on the hook's PATH, then the usual off-PATH homes (Homebrew, MacPorts, pyenv
+shims, the python.org framework, `~/.local/bin`, and stock `/usr/bin/python3`
+last, since it is a stub until the developer tools are installed). A host
+launched from the Dock carries a shorter PATH than your terminal, which is why
+that list exists. `GODMODE_PYTHON=<path>` overrides the probe, and
+`godmode doctor --host claude` reports which interpreter answered.
 
-Every `godmode ...` command shown below runs through the host's own shell
-tool: installing the plugin adds its `bin/` directory to that tool's PATH
-on hosts that expose one. Outside a session, call the installed copy
-directly (`ls ~/.claude/plugins/cache/aiimagined/godmode/` lists the
-version directory):
+Inside a session, `godmode ...` resolves through the host's own shell tool.
+Outside one, call the installed copy directly:
 
 ```console
 $ python ~/.claude/plugins/cache/aiimagined/godmode/<version>/scripts/godmode.py init
 ```
 
-Next: run it for a week before you trust it for anything.
+## First five minutes
 
-## Try it with no risk: observe mode
+Start with nothing blocked. In observe mode every gate that would deny or ask
+records what it *would* have done and lets the command through:
 
-Godmode is a local, deterministic runtime that checks each of the three
-problems above from a tamper-evident record of what actually happened,
-computed into exit codes an agent cannot argue past. Enforcement is
-opt-in and reversible: in observe mode, every gate that would deny or ask
-instead records what it *would* have done and lets the command through.
+```console
+$ godmode init
+$ echo '{"gate_mode": "observe"}' > .godmode-authorization-policy.json
+```
 
-1. Initialize the project once:
+Work a normal week, then read what it would have caught:
 
-   ```console
-   $ godmode init
-   ```
+```console
+$ godmode roi --digest
+```
 
-2. Turn on observe mode with one file:
-
-   ```console
-   $ echo '{"gate_mode": "observe"}' > .godmode-authorization-policy.json
-   ```
-
-3. Work a normal week. Nothing is blocked.
-
-4. Read what it would have caught:
-
-   ```console
-   $ godmode roi --digest
-   ```
-
-Every line in that digest is a would-have-denied or would-have-asked count,
-by category, with the sessions it happened in. None of it merges with real
-enforcement numbers, because none of these events were blocked. Delete
-`.godmode-authorization-policy.json` (or remove its `gate_mode` key; an
-empty `{}` file and no file at all are treated identically) to turn
-enforcement on for real.
-
-This is declared from your own editor or terminal, outside a governed
-session — that's the point: `.godmode-authorization-policy.json` is itself a
-protected surface once a session is governed. A `Write`/`Edit` tool call
-from inside a governed session targeting that file asks/denies the same as
-one targeting `.git/` or `.env`; the gate cannot be told to stop watching by
-the thing it watches. Entering or leaving observe mode is also chronicled
-the moment it's next observed, so the posture change leaves a durable
-record, not only the per-call advisory above.
-
-Next: pick a starting profile before you do.
-
-## Starting profile
-
-`godmode init --profile <name>` sets a starting posture on a ratchet that
-only ever tightens. No profile removes an approval category an operator
-already set on record.
+Each line is a would-have-denied or would-have-asked count by category, with the
+sessions it happened in. None of it merges with real enforcement numbers, because
+none of these events were blocked. Delete the policy file - or just its
+`gate_mode` key - to enforce for real, and pick a starting posture:
 
 ```console
 $ godmode init --profile novice     # asks before an ordinary file edit or a new branch
@@ -141,542 +195,138 @@ $ godmode init --profile standard   # today's defaults; writes nothing
 $ godmode init --profile strict     # also asks before a release-affecting write
 ```
 
-Next: see what each posture enforces.
+The posture is a ratchet that only tightens: no profile removes an approval
+category an operator already set on record. Turn observe mode on from your own
+editor or terminal rather than from inside a governed session - once a session is
+governed, that policy file is itself a protected surface, so the gate cannot be
+told to stop watching by the thing it watches.
 
-## What it does
-
-The record carries the product; the gate is one consumer of it. Each
-mechanism below has a command that shows its own current state, not a
-claim about it.
-
-### Continuity across sessions
-
-The archive lives outside the working tree (under the repository's own
-git directory), hash-chained, so it survives whatever a session does to
-files. At session start the hook renders a bounded brief from it -
-identity, last checkpoint, next actions, top laws, open obligations - as
-additional context on hosts that read it, parked to a side file and
-delivered on the first prompt for hosts that ignore session-start output.
-`godmode resume` rebuilds "what is true now" from recorded evidence:
-identity and drift from inspection, filesystem changes from `inventory
-diff`, state from checkpoints and claims - never from prose memory. A
-PreCompact hook records a recovery point before the host summarizes
-context away, and session end auto-checkpoints. When no valid baseline
-exists, `resume` says so and names the rebuild action instead of
-pretending: a `complete` status needs fresh evidence to survive a
-restart, and stale claims land in `status remaining`, not in the brief
-as fact.
+From there, three verbs carry most days:
 
 ```console
-$ godmode resume
-$ godmode status remaining
+$ godmode resume              # what is true now, rebuilt from recorded evidence
+$ godmode status remaining    # what a "complete" still owes
+$ godmode doctor              # archive health, calibration, dormant machinery
 ```
 
-### Verdicts
-
-A "confirmed" claim needs a witness and an independent checker that
-recomputes from the witness alone, never from what the claim's author
-asserts. A refuting checker or a missing witness never folds into
-"false." It reads `refuted` or `witness-malformed` instead, kept apart
-from a claim nobody checked at all.
-
-```console
-$ godmode verdict record --claim "<claim>" --value <value> \
-    --witness file:<path> --checker "<command>"
-```
-
-### Calibration: the record learns how much to trust itself
-
-A claim can declare how sure it is (`--confidence 0..1`). When the
-claim later meets its outcome, `claim --resolve` closes it - held or
-failed, with the evidence that decided it - and the pair leaves a
-calibration score on the record. `godmode doctor` reads the whole
-ledger back: mean score, error rate per confidence band, and the
-standing debt of scored claims nothing ever resolved. Status renders
-carry the same discipline as wording: `verified` is reserved for a
-verified state with cited evidence, and a completion nothing was cited
-for renders `declared` - said, not shown. All of it is advisory; no
-gate verdict reads a calibration number. The doctor also carries the
-demand-vs-use census: per capability family, what the record demanded
-against what fired - dormant machinery with standing demand is named,
-idle reads as health, and the push preflight repeats any dormant family
-as a judgment finding before a password is ever typed.
-
-```console
-$ godmode claim "the fix holds" --confidence 0.9 --cite cmd:"pytest -q"
-$ godmode claim --resolve <seq> --outcome held --cite file:<proof>
-$ godmode doctor
-```
-
-Full walk-through with both dispositions:
-[docs/DEMO.md](docs/DEMO.md#4-one-verdict-walk-through-record-a-claim-watch-it-get-checked).
-
-### Attestation and the plan gate
-
-A step is attested by running it, not by describing it: the command and
-exit code land on the record, and a claim graded `cmd:` resolves only
-after an in-session attestation. Plan mode gates mutation behind a
-spec-backed, approved plan - specify, start, approve, check - and the
-approval is a record, not a vibe.
-
-```console
-$ godmode planmode check
-```
-
-### Register
-
-Findings, fixes, and rejected approaches outlive the session that produced
-them. A disposition (`established`/`superseded`/`refuted`/
-`worse-than-baseline`/`rejected-precedent`/`open`) needs a real citation to
-leave `open`, and a closed one only reopens through a record that names
-exactly what it supersedes.
-
-```console
-$ godmode register show --domain <domain>
-```
-
-### The gate
-
-The gate is one consumer of the record: it computes its decision from what
-the archive holds and writes its own decision back as a record, beside the
-host's. The pre-tool boundary reads a command's own structure, not its vocabulary:
-argument text, unrecognized binaries, and stream tools no longer read as
-mutations by default. A vetted read-only call resolves in-process with no
-subprocess spawned; anything else escalates to the full classifier.
-
-```console
-$ godmode capabilities
-```
-
-Shapes the corpus never named before 0.3.24 are named now: a write to a
-hook, workflow, or host-settings file (`hook-as-code-write`, R3); a
-release-freeze marker created or removed (R3); a docker socket mount
-(R3); a shadow copy, restore point, or backup catalog deleted
-(`recovery-point-destruction`, R5); `git add -A` sweeping files outside
-an approved plan fence (ask, deny in strict). An ask is only an ask when
-a person answers it: in a host permission mode where the host's own
-classifier answers (`auto`, `dontAsk`, `bypassPermissions`) a would-ask
-folds to deny with the staged-capability remedy, the same fold hosts
-with no ask dialog already get.
-
-`tool_call_interception` reports one of five levels
-(`UNAVAILABLE`/`SOFT`/`PARTIAL`/`HARD`/`DEGRADED`), never a claim the
-evidence cannot back. `HARD` needs a fresh, live, chronicled proof: a host
-that actually calls the gate and honors its exit code. Run from a bare
-terminal, outside any hook, the command above reports `PARTIAL` in this
-repository's own checkout (the shipped manifest wires the boundary, but
-nothing just proved it live) — the honest middle answer, not a guess in
-either direction.
-
-### Fleet
-
-More than one agent on a project shares one chronicle. Each declares an
-identity (`GODMODE_AGENT_ID`, else derived), takes exclusive leases on the
-paths it is working, and records who dispatched whom. A lease held by
-another agent and a delegation that would make an agent its own ancestor
-are both refused at write time, with a failing exit code. Leases carry a
-term and lapse by the clock, so a stopped agent does not hold a path.
-
-```console
-$ godmode fleet show
-```
-
-### Citation drift
-
-A claim graded against a file keeps that grade after the file changes.
-`reanchor` names citations that came loose: cited files committed over
-since the record was written, and `commit:` citations whose object the
-repository no longer has. It reports and does not regrade — a stale
-citation and an unsupported claim are different facts.
-
-```console
-$ godmode reanchor
-```
-
-### Restore points
-
-A green is attested rather than inferred from prose: the command, its exit
-code, and the commit it ran against. A failing run cannot mark a commit
-green. The plan names the last green, what changed since, and what is
-uncommitted, then hands over a non-destructive command; it runs nothing.
-
-```console
-$ godmode rollback plan
-```
-
-### Forecast and replay
-
-`forecast` classifies an operation before it runs and reports how many
-distinct operations in the same category this project already refused.
-`replay` re-classifies recorded operations under today's rules and
-separates tightenings from relaxations, since direction is what the
-ratchet is about.
-
-```console
-$ godmode forecast --operation "git push --force origin main"
-$ godmode replay
-```
-
-### Host approvals
-
-Every host ships approval controls of its own. Where a host tells the hook
-what it decided, that is recorded next to what godmode decided, and the
-rows where the two differ are reported in both directions. Neither
-boundary is read to satisfy the other; the operation is stored as a
-digest, not as text.
-
-```console
-$ godmode approvals
-```
-
-### Project governance
-
-Rules proposed from this project's own record: a refusal category with
-enough distinct operations behind it, an obligation restated without being
-discharged, an ask recurring across sessions. Each candidate carries the
-records supporting it, their count and their window. Nothing is installed:
-reading the surface performs no write, and `governance promote` — which
-takes a person, a candidate id and a reason — is what records an adoption.
-
-```console
-$ godmode governance show
-```
-
-### Measurement
-
-A session-log pass counts tool calls, commands, test runs, and token
-totals from a host transcript, using a closed vocabulary of names,
-content-free by construction. The ROI report folds that beside gate
-activity and verdict dispositions, held to a denylist that refuses
-attribution language it never measured.
-
-```console
-$ godmode roi
-```
-
-### The privacy contract
-
-Records hold relative paths, statuses, hashes, keywords, and digests -
-never prompts, conversations, source bodies, or environment dumps. A law
-candidate keeps keywords and a digest of the correction, not the
-sentence. `godmode egress --staged` scans staged and untracked content
-for secret shapes before a commit, and `godmode netgate` differentially
-proves the CLI opens no network connection. Nothing phones home; the
-archive never leaves the machine unless you copy it.
-
-```console
-$ godmode egress --staged
-$ godmode netgate
-```
-
-### The iteration controls
-
-An agent that retries the same fix for hours is spending, not learning.
-Godmode reads the host transcript, never the model's own account of it:
-a **loop episode** is one error signature, the same hunks, and no new
-file, assertion, or error class for six attempts (four in the novice
-profile, eight in strict). Stop names it with the turn where new
-information last arrived, and records a `would-have-stopped-loop`
-receipt. Inside the turn, the fourth run of a command that has failed
-three times against an unchanged tree is asked about with the count.
-Token spend is measured from the transcript's usage fields against a
-declared ceiling; the window is named at seventy percent of the
-`context_window` ceiling; a commit-score plateau and the stall streak
-are named, and the halt threshold blocks until an operator-stated
-record clears it.
-
-```console
-$ godmode loop --transcript <path>
-$ godmode status remaining --digest --transcript <path>
-```
-
-### The scope gate and the oracle
-
-"Everything is complete" is blocked once at Stop while the record still
-holds this session's operator asks, the plan's pending steps, criteria
-no claim cites, a hypothesis that failed three checkpoints, or a
-temporary change (`checkpoint --owes`) nobody restored - with the list
-and each item's closing command.
-
-Twelve integrity monitors read the diff since the last green: an
-assertion removed, a literal moved to match the new output, a skip
-added, a harness node taught to tolerate failure, a test file that is
-new and was never observed red, a test that cannot fail as written, and
-a test weakened in the same diff as the source it checks. `claim
---verify` runs the cited command and records the exit code; a claim
-whose check runs a file this session edited is downgraded. A perimeter
-check (`perimeter add "<boot command>"`) must run this session before
-`session close`, and a step attested green earlier and red since refuses
-closure as a regression.
-
-```console
-$ godmode integrity --base HEAD
-$ godmode perimeter add "python -c 'import app'"
-$ godmode session close
-```
-
-### After a compaction
-
-The brief on every start, including the start after the host compacts
-the conversation, carries a ledger rebuilt from records: goal,
-invariants, acceptance commands, files in play, failed approaches, last
-green, open obligations, and the current step. `session open` records
-the hash and line count of every instruction file, names one past 200
-lines, and names a conflict between a file that forbids editing tests
-and a plan step that edits one. See
-[docs/COMPACTION-AND-LEDGER.md](docs/COMPACTION-AND-LEDGER.md).
-
-### The loops
-
-Three loops keep the record teaching the project instead of just growing.
-
-The **law loop**: operator corrections and standing instructions become
-candidate lessons (keywords and digest only, never the sentence), repeat
-occurrences climb a promotion ladder, and promoted laws compile into the
-project's `GODMODE-CODE-OF-LAW.md`. `godmode law debrief` then measures
-each law - delivered, cited, recurred-after-delivery - and recommends
-promotions (autonomous, behind the ladder) or amendments and retirements
-(`godmode law amend`, operator-reviewed, newest record per subject wins).
-A candidate that was noise can be dismissed by retiring its subject.
-
-The **posture loop**: run the gate in observe mode, read
-`godmode roi --digest` for would-have-denied counts by category, and let
-its enforce section - built from real asks and real denials, including the
-no-ask hosts whose every would-ask folds to a deny - propose `ask_only`
-tuning and policy drift. Proposal only; the operator edits the policy
-file. A second hand-written loosening, `"inline_interpreter": "scan"`,
-reads a Python `-c` or heredoc payload at a segment's head with the
-standard library's `ast` and clears it when every import is from a
-read-only module table and nothing executes, imports dynamically, reaches
-a dunder, or opens a file for writing; a `node -e`/`-p` payload is read as
-tokens against a read-only module table with no eval, Function, import(),
-network object, or writing fs member. Scan is the default posture since
-0.3.24; each clearance leaves an action record and anything unreadable
-keeps the ask.
-
-The **echo loop**: claim-shaped sentences in a reply that never became
-records, and open obligations the turn touched, are parked at Stop and
-delivered back to the model on the next prompt - so unrecorded claims get
-recorded or softened instead of accumulating.
-
-### Trust
-
-`skills/`, `commands/`, `agents/`, settings, and MCP configuration are
-scanned for instruction-shaped and secret-shaped text before a session
-trusts any of it. That content is prose a host loads and follows the
-moment a session starts, not configuration a host merely parses.
-
-```console
-$ godmode untrusted --brief
-```
-
-### Run governance
-
-A composable stop algebra (`MaxRecords`, `MaxWall`, `OperatorStop`,
-`MetricPlateau`) replaces ad hoc loop conditions. A run that overruns its
-wall-clock budget is killed, tree and all, and marked `truncated`, a shape
-the verdict seam refuses to let anyone call `confirmed`.
-
-```console
-$ godmode ceilings --spent tokens=1200,tool_calls=40,seconds=90
-```
-
-Next: the numbers behind these mechanisms, each with its own reproduce
-command.
-
-### Quality, freshness, and the watchdog
-
-Three detectors already produced quality findings in three shapes;
-`quality` folds them into one severity-ranked list, worst first, and
-executes none of the remedies it proposes. `--format editor` prints one
-`path:line: severity: message` per line for an editor's problem matcher;
-`--format sarif` prints a SARIF 2.1.0 document.
-
-```console
-$ godmode quality --format editor
-```
-
-`freshness` asks whether the sources standing records cite are still what
-was graded: a cited file committed over since is stale, a cited commit no
-longer reachable is gone, and a `url:` citation is reported unverifiable,
-never fresh, because nothing here touches the network. `partial` names
-what was not checked and is not a failure.
-
-```console
-$ godmode freshness
-```
-
-`watchdog` reads the newest window of the record on demand — no daemon —
-and names a repeated operation, a burst of refusals, or a run of actions
-with no attestation behind them. `--interrupt` writes the operator-stop
-flag the stop algebra already honours.
-
-```console
-$ godmode watchdog --interrupt
-```
-
-`arbitrate` scores competing plan files on what a plan can be held to and
-returns `undecided` on a tie rather than breaking it. `examples --check`
-reproduces every worked example against the real console. `extensions`
-lists what sits under the private state home and runs one only when the
-project's policy names it. `claim --scan` lists every claim-shaped sentence
-on a public surface whose line names no reproduction.
-
-```console
-$ godmode arbitrate --plan a.md --plan b.md
-$ godmode examples --check
-$ godmode extensions list
-$ godmode claim --scan
-```
-
-Per-edit feedback is opt-in. With `"post_edit_quality": true` in
-`.godmode-authorization-policy.json`, every Write or Edit runs the same
-detectors over the one file just written and returns the findings as an
-advisory; without it the hook exits at once with nothing to say. The
-structure index (`context structure`) now carries who calls what across
-files, names only, and its outline shows each file's dependencies as
-`-> other.py`.
-
-`experiment holdout` takes observations from two arms and one metric and
-computes the verdict from medians: `treatment`, `control`,
-`indistinguishable` within epsilon, or `underpowered` below two
-observations per arm. The last two exit non-zero, because "cannot tell"
-must never read as "yes".
-
-```console
-$ godmode experiment holdout --name terse-brief --metric tokens --epsilon 5 \
-    --control 100 --control 110 --treatment 70 --treatment 72 --lower-is-better
-```
-
-### Minimality and upstream drift
-
-One ranked minimality report aggregates duplicate symbols, orphans,
-unexercised surfaces, speculative seams, and charter decay - and its
-counts carry a recorded ceiling that only ratchets down, so growth past
-it is reported until a reason is recorded. Two in-repo sources of truth
-for the same decision are flagged until a paired artifact names the
-winner. An AST scan catches exception handlers that silence failures,
-with the same tighten-only baseline. When the project tracks or vendors
-an external codebase, paired verdicts compare what was imported against
-how it now behaves - an unexamined difference is not a decision.
-
-```console
-$ godmode minimality
-$ godmode swallow
-$ godmode upstream
-```
-
-## What works on day one, and what grows
-
-Godmode is two halves on different clocks.
-
-**Enforcement is instant.** The action gate's risk tiers, the protected-operation
-refusals, the completion gate (an unrecorded "done" blocks once at the stop with
-the recording command as the reason), the doctrine block on the session brief,
-prompt-shape nudges, and automatic capture of every operator request all work at
-full strength from the first prompt of the first session. None of them needs
-history.
-
-**Intelligence compounds.** The ledger's judgment grows with records, and an
-empty archive is correct silence, not weakness: calibration reports only once
-resolved scored claims exist (`godmode claim --confidence`, then `--resolve`),
-the fix-loop wire arms only after two failed resolutions are on record, laws
-distill only from recorded corrections, and the demand-vs-use census can only
-measure demand the record actually states. Each threshold is a named constant
-in the source, not a vibe - read them in `scripts/godmode_runtime/`.
-
-**Fresh project or mid-project - both work, differently.** A fresh project gets
-full enforcement immediately and earns the memory half organically. A
-mid-project install can backfill instead: `godmode status absorb-docs <file>`
-maps an existing status-shaped markdown file (checkboxes or lead-emoji bullets)
-into proposed store items - dry-run first, a checked box absorbs as a claim of
-done rather than verified truth, and the source file is never touched. Feeding
-an existing backlog reaches useful judgment faster than waiting for it to
-accumulate.
-
-**The honest curve, from this repository's own use**: the claim and checkpoint
-ledger is useful within the first session; calibration and recurrence signals
-need a handful of working sessions; laws and census verdicts firm up over weeks
-of real use. Loop contracts (`godmode loop declare/tick/close`) ship tested but
-young - the bounded-loop discipline they enforce (no contract without an
-iteration cap and stop condition; empty iterations escalate; exhaustion may
-never impersonate completion) is the newest surface here. Verify any of this
-against the commands in the section below.
-
-## The numbers
-
-Every row below was run against this repository to write this document.
-
-| Claim | Reproduce it |
-|---|---|
-| 29 staged failure and attack shapes, all caught | `godmode scenarios --brief` → `all-caught \| total=29` |
-| 12 integrity monitors over the diff since the last green | `python -m unittest tests.test_godmode_runtime.IntegrityTests -v` |
-| 13 adversarial attacks on the controls, all held | `godmode grid --brief` → `controls-held \| passed=13` |
-| 81 capability entries reconciled, 0 dead pointers either direction | `godmode capabilities --reconcile` |
-| 196-command gate regression corpus, zero regressions | `python -m unittest tests.test_gate_corpus -v` |
-| Repository text scanned clean of instruction-shaped strings | `python scripts/godmode.py untrusted --brief` → `data-only` |
-
-Two numbers below are a historical measurement, not a re-assertion of this
-checkout's current state, and they carry their own basis instead:
-
-| Measurement | Value | Basis |
-|---|---|---|
-| Old gate, median latency per gated call | 3.9s | 50-session window, measured 2026-08-14 ([release notes](docs/releases/RELEASE_NOTES_v0.2.11.md)) |
-| New fast-path allow (`git status`) | 90.3ms median | 10 timed runs after warm-up, sorted-sample median ([release notes](docs/releases/RELEASE_NOTES_v0.2.11.md)) |
-| New escalating call (`git push --force`, refused) | 468.6ms median | same method ([release notes](docs/releases/RELEASE_NOTES_v0.2.11.md)) |
-
-Full two-minute walk-through, every command pinned against the real CLI
-parser: [docs/DEMO.md](docs/DEMO.md).
-
-Next: what holds here depends on the host running it.
+## How it works
+
+**The record.** A hash-chained archive lives beside the repository's git metadata
+rather than in the working tree, so it survives whatever a session does to files.
+It holds relative paths, statuses, hashes, keywords and digests - never prompts,
+conversations or source bodies ([GODMODE_PRIVACY.md](GODMODE_PRIVACY.md)). At
+session start a bounded brief is rebuilt from it: identity, last checkpoint, next
+actions, standing laws, open obligations. After a compaction, a branch switch or a
+week away, `godmode resume` reconstructs the same picture from evidence instead of
+from prose memory.
+
+**The bar.** A claim is graded, not accepted. `verified` is reserved for a
+verified state with cited evidence; a `confirmed` verdict needs a witness and an
+independent checker that recomputes from the witness alone. At the end of a
+session the done bar blocks one "everything is complete" while the record still
+holds this session's operator asks, pending plan steps, criteria no claim cites,
+or a temporary change nobody restored - and lists each one with its closing
+command. Thirteen integrity monitors read the diff since the last green for the
+shapes that make a suite go green dishonestly: an assertion removed, a skip
+added, a literal moved to match new output, a test weakened in the same change as
+the code it checks (`godmode integrity --base HEAD`).
+
+**What it learns.** Corrections and standing instructions become candidate
+lessons - keywords and a digest, never the sentence. A candidate that recurs can
+be promoted into the project's own `GODMODE-CODE-OF-LAW.md`, and a promotion
+needs a second actor: `godmode lessons approve` is refused when the approver is
+the promoter, or when the re-run hash repeats the promotion's own. A compiled law
+steers the session through the brief; it hard-refuses a matching record write
+only when its lesson carries an enforce predicate.
+
+**What it forgets.** `godmode forget` expires old episodes into a cold segment
+that stays on the same chain - actions and refusals after thirty days,
+attestations after ninety - while anything a live claim, checkpoint, law guard or
+pin still cites never expires, and history can still reach a cold record by
+sequence. `godmode forget --dry-run` reports a pass without recording one.
+
+Every verb, its purpose, and a command that verifies it:
+[docs/COMMAND-REFERENCE.md](docs/COMMAND-REFERENCE.md), generated from the CLI's
+own parser and guarded against drift. Two-minute walk-through:
+[docs/DEMO.md](docs/DEMO.md).
+
+## What it does not do
+
+- **Most hosts are not proven.** Of eleven declared hosts, two carry a live,
+  chronicled interception proof: Claude Code and Grok. Everything else is a
+  structural claim about what ships, and `godmode capabilities` says so rather
+  than reporting `HARD` - the per-feature grid is in
+  [docs/HOST-FEATURE-REACH.md](docs/HOST-FEATURE-REACH.md).
+- **The gate costs time.** `python benchmarks/gate_latency.py --notes-line` reads the committed baseline from the development machine: p95 162 ms for a fast-allowed read-only command, 624 ms for one that escalates to the full classifier, twenty-one samples each. Re-measure on your own machine with `python benchmarks/gate_latency.py --check`.
+- **Static reading has a floor.** A diff cannot show that a test still means what
+  it meant. A renamed test that keeps its assertion method and loses its meaning,
+  or a weakening split across two change sets, passes the monitors
+  ([CHANGELOG.md](CHANGELOG.md) states the full non-coverage per detector).
+- **Nothing here touches the network**, so a `url:` citation is reported
+  unverifiable rather than fresh, and `godmode netgate` proves zero outbound
+  connections for five CLI surfaces only, not for hook subprocesses or for a
+  check command you supply yourself ([THREAT-MODEL.md](THREAT-MODEL.md)).
+- **Judgment needs history.** Enforcement works from the first prompt, but
+  calibration reports only once resolved scored claims exist, and laws distill
+  only from recorded corrections. An empty archive is correct silence.
+- **Developed and tested on Windows.** The Windows kill path for an overrun run is
+  exercised for real; the POSIX path is pinned by a mocked unit test, not live-probed.
 
 ## Host support
 
-Enforcement tier is computed from what the running environment proves,
-never from the host's name. `godmode capabilities` reports one of five
-levels for `tool_call_interception`: `HARD` only from a live, chronicled
-proof (`godmode hooks probe` sends a marker operation through the real
-pre-tool hook, the hook denies it and records the denial, and `godmode
-hooks status` reads that record back); `DEGRADED` when a proof that WAS
-fresh is now superseded, expired, or drifted; `PARTIAL` when the hook is
-structurally registered but not freshly proven; `SOFT` when only the
-skills+CLI layer is installed with no hook proven at all; `UNAVAILABLE`
-when no compatible boundary exists.
+Enforcement tier is computed from what the running environment proves, never from
+the host's name. `godmode capabilities` reports `tool_call_interception` as one of
+`HARD` (a live, chronicled proof: a real pre-tool hook denied a marker operation
+and recorded the denial), `DEGRADED` (a proof since superseded, expired or
+drifted), `PARTIAL` (wired, not freshly proven), `SOFT` (skills and CLI only), or
+`UNAVAILABLE`.
 
-| Host | What's shipped | What's tested |
+| Host | What ships | Where it stands |
 |---|---|---|
-| **Claude Code** | Plugin, hooks (`SessionStart`, `PreToolUse`, `UserPromptSubmit`) | Live: with the plugin enabled, real tool calls made in a session are intercepted and recorded — a protected command writes a `refusal` record and the submitted prompt writes a `request` record, both observable in the archive. This is direct evidence of host wiring, unlike `hooks probe`, which self-injects. |
-| **Codex** | Same plugin package (`.codex-plugin/plugin.json`), same hooks convention | **One wiring step needed (Codex CLI host bug).** Codex 0.150.1 ignores plugin-bundled hook manifests entirely - its own bundled plugins' hooks also show `Installed: 0` in `/hooks` - which conflicts with its documented plugin-hook behaviour. Codex does load project-level config, so `godmode hooks wire` writes a `.codex/hooks.json` fallback projecting the shared hooks into absolute commands (`py -3` on Windows); the operator reviews and Trusts each command inside `codex`, then `/hooks` reports the events Installed and Active (verified live 2026-08-28: PreToolUse and SessionStart, 1/1, Trusted - hooks execute outside Codex's sandbox, which is why the trust step is Codex's own and cannot be automated). Skills and the CLI work with no fallback. |
-| **Grok** | Same plugin package (`.grok-plugin/plugin.json`), same hooks convention | **Live-proven (2026-08-28 field report, on Windows).** Real tool calls in a live Grok session run the gate: a protected command and an unmapped tool were denied and the host honored the deny (the tools did not run), and `godmode hooks status` reads HARD from a fresh probe whose proof record carries the host's acknowledgement. A second live session (2026-08-29) caught one claim here running ahead of the runtime: the read-only-builtin allowance was pinned under `GROK_AGENT`, a variable Grok's hook subprocess does not set - detection now also keys on `GROK_PLUGIN_ROOT`/`GROK_HOOK_EVENT`, the variables it does inject, pinned exactly so. A third live session (2026-08-29, Grok 1.0.5) then chronicled the pass: the previously denied builtin ran, `grep` and `read_file` pass, and `hooks status` reads HARD with Stop and PostToolUse in the declared events - the claim stands on that chronicle, not on the lab pin that first carried it. Grok sets `CLAUDE_PLUGIN_ROOT` as an alias and loads the shared `hooks/hooks.json`; on Windows it hands each command string to PowerShell and rewrites known `$VAR` refs to `$env:VAR`. A fourth live session (2026-09-05, Grok 1.0.13, Windows) found the quoted-path command shape parse-failing there and every hook fail-open; the entry is now `cd "${CLAUDE_PLUGIN_ROOT}/hooks"; ./run-hook.cmd <hook>`, pinned in a Grok session on that machine (project-scope hooks and a headless deny) and fed to pwsh by a Windows CI job on every run. Grok has no `ask` decision, so a would-ask folds to deny with the staged-capability remedy. |
-| **OpenCode** | Instruction-file adapter plus an optional Bun plugin shim ([`adapters/`](./adapters/README.md)) | Attestation, claim-downgrade, and plan-gate controls run through the host-independent CLI and hold. With `adapters/opencode/godmode.opencode.js` installed as an OpenCode plugin, every `bash`/`write`/`edit`/`patch` call runs through the real gate and a deny throws before the tool runs (fail-closed); `tool_call_interception` is declared `SOFT` until a live OpenCode block is chronicled as a proof. |
-| **Antigravity** | Native skill discovery (`.agents/skills/`) plus a dedicated hook artifact ([`.antigravity-plugin/hooks-fragment.json`](./.antigravity-plugin/hooks-fragment.json)) | **Skills and CLI live-proven (2026-08-29 field report):** an Antigravity agent cloned the repo, ran `godmode init --profile standard`, the full unit suite, the scenario battery (23 at the time), and observe mode entirely through its own tools, with skills discovered from `.agents/skills/`. The hook side is transcribed from Antigravity's published hooks documentation (PreToolUse stdin nests the tool under `toolCall`; stdout is one JSON object `{decision, reason}`, and Antigravity has a real `ask`): the adapter maps `run_command` as shell and `view_file` as read, fails unknown names closed, and `godmode hooks wire --host antigravity` writes the project's `.agents/hooks.json`. `tool_call_interception` is declared SOFT - never probed live - and a community report says Stop hooks may not fire on Windows (IDE 1.107.0). |
-| **Cursor, Gemini CLI** | Instruction-file adapters ([`adapters/`](./adapters/README.md)) plus shipped pre-tool hook manifests (`.cursor-plugin/hooks.json`, `.gemini-plugin/hooks-fragment.json`) | Attestation, claim-downgrade, and plan-gate controls run through the host-independent CLI and hold. `tool_call_interception` reads `PARTIAL` (manifest present, not freshly proven) only when the session explicitly declares itself (`GODMODE_HOST=cursor`/`gemini`); by default neither host sets that, so an ordinary session still reads `UNAVAILABLE`. Neither manifest's wiring is live-probed — neither host is installed on the machine this was developed on — so PARTIAL stays a structural claim about what's shipped, not a proof the host calls it. Both adapters are built from those hosts' own published hook references (tool types and payload field names), and a checked-in test asserts every tool name each shipped manifest subscribes to resolves in the adapter that host uses. |
-| **CI (GitHub Action)** | `action.yml`, integrity and changelog gates | Runs the same CLI the rows above do; no hook boundary involved. |
+| **Claude Code** | Plugin and hooks (`SessionStart`, `PreToolUse`, `UserPromptSubmit`, `Stop`, and the rest) | Live-proven. Real tool calls in a session are intercepted and recorded; a protected command writes a refusal record, a prompt writes a request record. |
+| **Grok** | Same package, same hooks convention | Live-proven on Windows across four field sessions, the latest pinning the command shape its PowerShell path needs. Grok has no `ask`, so a would-ask folds to deny. |
+| **Codex** | Same package plus a project-level fallback (`godmode hooks wire`) | Hooks fired live once; the operator Trusts each command in `codex` first. Codex ignores plugin-bundled hook manifests, which is why the fallback exists. |
+| **Antigravity** | Native skill discovery plus a hook artifact | Skills and CLI live-proven by an agent that cloned this repo and ran the suites through its own tools. The hook side is transcribed from published docs, so the gate reads `SOFT`. |
+| **OpenCode** | Instruction-file adapter plus a Bun/Node plugin shim | Every `bash`/`write`/`edit`/`patch` call runs through the real gate and a deny throws before the tool runs; declared `SOFT` until a live block is chronicled. |
+| **Copilot, Kiro** | Generated hook manifests, wired by `godmode hooks wire` | Replicated from each host's own hook shape and pinned by a checked-in test; awaiting live confirmation. |
+| **Cursor, Gemini CLI** | Instruction-file adapters plus shipped hook manifests | Structural only. Neither is installed on the development machine, so neither manifest is live-probed; an ordinary session reads `UNAVAILABLE` unless it declares its host. |
+| **CI (GitHub Action)** | `action.yml`, integrity and changelog gates | Runs the same CLI; no hook boundary involved. In the dispatch workflow, a generated job per host manifest installs the plugin that host's way and fires one hook. |
 
-Developed and tested on Windows. The Windows kill path for an overrun run
-is exercised for real in the test suite; the POSIX kill path (`os.killpg`)
-is pinned by a mocked unit test, not live-probed on a POSIX host.
+The CLI verbs need no host at all: they run wherever the model can run a shell.
+
+## The numbers
+
+| What | Reproduce it |
+|---|---|
+| 29 staged failure and attack shapes, all caught | `godmode scenarios --brief` |
+| 33 attacks on the controls, all held | `godmode grid --brief` |
+| 105 capability entries reconciled, no dead pointers either way | `godmode capabilities --reconcile` |
+| 214 recorded commands replayed against today's classifier | `python -m unittest tests.test_gate_corpus` |
+| Thirteen integrity monitors over the diff since the last green | `godmode integrity --base HEAD`; the table is `MONITORS` in `scripts/godmode_runtime/godmode_integrity.py` |
+| Repository text clean of instruction-shaped strings | `godmode untrusted --brief` |
+| Zero runtime dependencies, standard library only | `godmode sbom` |
+| 13 agent skills hosts discover natively | [skills/](./skills/) |
+
+Run `python -m unittest discover -s tests` for today's pass count rather than
+trust a number printed here that could go stale on the next commit.
 
 ## Learn more
 
 | Document | Covers |
 |---|---|
 | [docs/DEMO.md](docs/DEMO.md) | Two-minute terminal walk-through, every command pinned against the real CLI |
+| [docs/COMMAND-REFERENCE.md](docs/COMMAND-REFERENCE.md) | Every verb, its purpose, and a command that verifies it - generated from the parser |
 | [docs/LADDER.md](docs/LADDER.md) | Four tiers of onboarding, one session each; `godmode guide --tier N` prints one |
-| [docs/CAPABILITY-COVERAGE.md](docs/CAPABILITY-COVERAGE.md) | What's `covered`, `partial`, or `not-claimed`, and at what grade |
+| [docs/CAPABILITY-COVERAGE.md](docs/CAPABILITY-COVERAGE.md) | What is covered, partial, or not-claimed, and at what grade |
+| [docs/HOST-FEATURE-REACH.md](docs/HOST-FEATURE-REACH.md) | Which feature can fire on which host, and the stated reason for every gap |
+| [docs/COMPACTION-AND-LEDGER.md](docs/COMPACTION-AND-LEDGER.md) | What survives a compaction, the context tripwire, perimeter checks |
+| [docs/hosts/](docs/hosts/) | Per-host pages: wired events, known issues, the proof recipe that earns HARD |
 | [docs/releases/](docs/releases/) | Release notes; every number in them carries its own basis |
-| [docs/COMPACTION-AND-LEDGER.md](docs/COMPACTION-AND-LEDGER.md) | What survives a compaction, the ledger fields, the context tripwire, perimeter checks |
-| [docs/hosts/](docs/hosts/) | Per-host pages (Cursor, Antigravity): wired events, known issues, the proof recipe that earns HARD |
-| [docs/LISTING.md](docs/LISTING.md) | Marketplace listing text and manifest audit |
 | [GODMODE.md](GODMODE.md) | Product guarantees, gates, and the start sequence |
 | [GODMODE_PRIVACY.md](GODMODE_PRIVACY.md) | What is stored, where, and what never leaves |
 | [THREAT-MODEL.md](THREAT-MODEL.md) | Threats, controls, and stated non-goals |
-| [skills/](./skills/) | The seven agent skills hosts discover natively - the layer a session actually follows - with routing evals pinning them |
-| [CHANGELOG.md](CHANGELOG.md) | Released changes |
-
-Run `python -m unittest discover -s tests` to see today's pass count for
-yourself rather than trust a number printed here that could go stale on
-the next commit.
+| [skills/](./skills/) | The agent skills hosts discover natively, with routing evals pinning them |
+| [CHANGELOG.md](CHANGELOG.md) | Released changes, each with the limits of what it checks |
 
 ## License
 

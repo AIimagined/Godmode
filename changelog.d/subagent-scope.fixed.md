@@ -1,0 +1,1 @@
+- A prompt that is a subagent's hand-back message no longer mints an operator request, and a subagent's stop never evaluates the parent session's open requests: a subagent's scope is its own dispatch.

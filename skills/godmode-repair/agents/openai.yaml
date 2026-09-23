@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godmode Repair"
+  short_description: "Re-pitch an answer that did not land."
+  default_prompt: "Use $godmode-repair to re-pitch the last answer clearly and record why it did not land."

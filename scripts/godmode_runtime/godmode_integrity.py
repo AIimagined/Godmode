@@ -142,10 +142,18 @@ def _test_weakened_with_source_edit(ctx: dict[str, Any]) -> list[dict[str, Any]]
         finding["remedy"] = "Use a --base git can read (a ref, A..B or A...B) and run integrity again."
         findings.append(finding)
     # `continue-on-error: true` and `|| true` in a workflow are already the
-    # blocking `harness-node-dropped` shape; that finding stands alone.
-    harness = {f["path"] for f in ctx.get("oracle", []) if f["shape"] == "harness-node-dropped"}
+    # blocking `harness-node-dropped` shape; that finding stands alone. S-6:
+    # only for the LINES it reported - suppressing by path hid a
+    # checker-neutered line (`|| :`, which the harness pattern does not
+    # read) whenever any other line of the same file dropped a node.
+    harness: dict[str, set[str]] = {}
+    for f in ctx.get("oracle", []):
+        if f["shape"] == "harness-node-dropped":
+            harness.setdefault(f["path"], set()).update(
+                str(line).strip() for line in f.get("lines", ()))
     for rule in tamper:
-        if rule["rule"] == "checker-neutered" and rule["path"] in harness and "deleted" not in rule["detail"]:
+        if (rule["rule"] == "checker-neutered" and "deleted" not in rule["detail"]
+                and rule.get("line_text") in harness.get(rule["path"], set())):
             continue
         finding = _finding("oracle-tamper", rule["path"], rule["detail"], blocking=False)
         finding.update({key: rule[key] for key in ("rule", "line", "location", "evidence", "remedy")})
@@ -192,6 +200,26 @@ def _coverage_shape(ctx: dict[str, Any]) -> list[dict[str, Any]]:
         "production path changed with no test change in the same diff",
         blocking=False,
     ) for path in untested]
+
+
+def _edit_without_test(ctx: dict[str, Any]) -> list[dict[str, Any]]:
+    """NS-13h: on a maintained branch a code change carries a test change
+    in the same change set. Advisory - one finding for the change set,
+    naming the branch and where its role came from. A throwaway (spike)
+    branch, or one with no role, is not held to it."""
+    untested = ctx["changed_production"] if not ctx["changed_tests"] else []
+    role = ctx.get("branch_role") or {}
+    if not untested or role.get("role") != "maintained":
+        return []
+    shown = ", ".join(untested[:5]) + (f" and {len(untested) - 5} more" if len(untested) > 5 else "")
+    return [_finding(
+        "edit-without-test", untested[0],
+        f"maintained branch {role.get('branch')} ({role.get('source')} role): "
+        f"{len(untested)} code file(s) changed with no test change in the same "
+        f"change set: {shown}. Add the test that proves the change, or declare a "
+        "spike with `godmode branches --record --role throwaway`",
+        blocking=False,
+    )]
 
 
 def _protected(archive: Chronicle) -> set[str]:
@@ -477,6 +505,7 @@ MONITORS: dict[str, Callable[[dict[str, Any]], list[dict[str, Any]]]] = {
     "skip-quarantine": _skip_quarantine,
     "mock-expansion": _mock_expansion,
     "coverage-shape": _coverage_shape,
+    "edit-without-test": _edit_without_test,
     "requirement-anchor": _requirement_anchor,
     "red-before-green": _red_before_green,
     "harness-validity": _harness_validity,
@@ -487,6 +516,15 @@ MONITORS: dict[str, Callable[[dict[str, Any]], list[dict[str, Any]]]] = {
     "false-green-shape": _false_green_shapes,
     "project-ratchet": _project_ratchet,
 }
+
+
+def _branch_role(archive: Chronicle) -> dict[str, Any] | None:
+    from .godmode_branchrole import branch_role
+
+    try:
+        return branch_role(archive, getattr(archive.anchor, "branch", None))
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable role holds no branch to the test rule; the other monitors still answer
+        return None
 
 
 def analyze(archive: Chronicle, project: Path, base: str = "HEAD") -> dict[str, Any]:
@@ -502,6 +540,7 @@ def analyze(archive: Chronicle, project: Path, base: str = "HEAD") -> dict[str, 
             and Path(p).suffix in {".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".rb"}
         ),
         "protected": _protected(archive),
+        "branch_role": _branch_role(archive),
     }
     ctx["diff"] = {path: _diff_lines(project, base, path) for path in ctx["changed_tests"]}
     try:

@@ -1,0 +1,206 @@
+{
+  "blocks": [
+    {
+      "scores": {
+        "godmode": {
+          "negative_total": 4,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-changelog": {
+          "negative_total": 4,
+          "positive_total": 4,
+          "score": 1.0
+        },
+        "godmode-code-of-law": {
+          "negative_total": 2,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-codegraph": {
+          "negative_total": 3,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-continuity": {
+          "negative_total": 4,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-evidence": {
+          "negative_total": 3,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-governance": {
+          "negative_total": 4,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-host-sync": {
+          "negative_total": 3,
+          "positive_total": 2,
+          "score": 0.8
+        },
+        "godmode-impact-gate": {
+          "negative_total": 3,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-investigation": {
+          "negative_total": 4,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-memory-gardener": {
+          "negative_total": 3,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-repair": {
+          "negative_total": 4,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-replicate": {
+          "negative_total": 3,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-research": {
+          "negative_total": 3,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-second-look": {
+          "negative_total": 4,
+          "positive_total": 4,
+          "score": 1.0
+        },
+        "godmode-skill-eval": {
+          "negative_total": 4,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-skill-forge": {
+          "negative_total": 4,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-spec-lifecycle": {
+          "negative_total": 4,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-triage": {
+          "negative_total": 3,
+          "positive_total": 2,
+          "score": 1.0
+        }
+      },
+      "withhold_memory": false
+    },
+    {
+      "scores": {
+        "godmode": {
+          "negative_total": 4,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-changelog": {
+          "negative_total": 4,
+          "positive_total": 4,
+          "score": 1.0
+        },
+        "godmode-code-of-law": {
+          "negative_total": 2,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-codegraph": {
+          "negative_total": 3,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-continuity": {
+          "negative_total": 4,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-evidence": {
+          "negative_total": 3,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-governance": {
+          "negative_total": 4,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-host-sync": {
+          "negative_total": 3,
+          "positive_total": 2,
+          "score": 0.8
+        },
+        "godmode-impact-gate": {
+          "negative_total": 3,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-investigation": {
+          "negative_total": 4,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-memory-gardener": {
+          "negative_total": 3,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-repair": {
+          "negative_total": 4,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-replicate": {
+          "negative_total": 3,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-research": {
+          "negative_total": 3,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-second-look": {
+          "negative_total": 4,
+          "positive_total": 4,
+          "score": 1.0
+        },
+        "godmode-skill-eval": {
+          "negative_total": 4,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-skill-forge": {
+          "negative_total": 4,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-spec-lifecycle": {
+          "negative_total": 4,
+          "positive_total": 2,
+          "score": 1.0
+        },
+        "godmode-triage": {
+          "negative_total": 3,
+          "positive_total": 2,
+          "score": 1.0
+        }
+      },
+      "withhold_memory": true
+    }
+  ],
+  "runtime_version": "0.3.28",
+  "schema": "godmode-eval-baseline-v3"
+}

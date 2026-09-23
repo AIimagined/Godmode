@@ -1,6 +1,6 @@
 ---
 name: godmode-skill-forge
-description: Create an original, compact project skill after a repeated capability gap is proven. Use when at least two real tasks need the same missing workflow and existing skills do not cover it reliably.
+description: Create an original, compact project skill after a repeated capability gap is proven. Use when at least three real tasks need the same missing workflow and existing skills do not cover it reliably. Not for one-off tasks; do not use before three real tasks proved the gap.
 ---
 
 # Godmode Skill Forge
@@ -12,13 +12,13 @@ Produce a small, validated skill with explicit routing and observable acceptance
 ## Workflow
 
 1. Search the installed and project skill set for an adequate capability.
-2. Record the concrete gap and at least two observed reusable uses.
+2. Record the concrete gap and at least three observed reusable uses of one task type - each one cited by the archive record (`seq:<n>`, from `godmode history`) that proves it happened (a bare count is not evidence). The forge refuses three citations that are not three distinct, existing records; that the cited records are successes of *this* task type is your judgement, not something it can check for you.
 3. Define one purpose, two positive routing examples, two nearby negative examples, and observable behavior assertions.
 4. Capture a baseline showing how the current workflow misses the assertions.
 5. Run the local forge:
 
    ```powershell
-   <plugin-root>/bin/godmode --project <path> skill forge --destination <skills-directory> --name <skill-name> --purpose "<purpose>" --gap-evidence "<evidence>" --repeated-uses 2 --positive "<trigger one>" --positive "<trigger two>" --negative "<near miss one>" --negative "<near miss two>" --assertion "<observable result>"
+   <plugin-root>/bin/godmode --project <path> skill forge --destination <skills-directory> --name <skill-name> --purpose "<purpose>" --gap-evidence "<evidence>" --repeated-uses 3 --success-evidence "seq:<n>" --success-evidence "seq:<n>" --success-evidence "seq:<n>" --positive "<trigger one>" --positive "<trigger two>" --negative "<near miss one>" --negative "<near miss two>" --assertion "<observable result>"
    ```
 
 6. Validate the generated structure with `skill validate`, then use the host's official skill validator when available.

@@ -1,0 +1,45 @@
+{
+  "schema": "godmode-skill-eval-v1",
+  "skill": "godmode-memory-gardener",
+  "routing": {
+    "positive": [
+      "Garden the archive at session close: list near-duplicate lessons, preview which old episodes expire into the cold tier, and supersede the duplicates",
+      "Cluster the recurring correction candidates and promote the ripe lesson with a cited rationale and a second actor's approval"
+    ],
+    "near_negative": [
+      "Resume where the last session stopped and rebuild the lost context brief",
+      "Erase a leaked credential from an archived record",
+      "Follow the compiled code of law before starting a new task"
+    ]
+  },
+  "behavior_assertions": [
+    {
+      "assert": "The forgetting pass offers a dry-run preview that records nothing.",
+      "check": {
+        "command": "python scripts/godmode.py forget --help",
+        "expect_exit": 0,
+        "expect_contains": "--dry-run"
+      }
+    },
+    {
+      "assert": "A duplicate is superseded on the record rather than deleted.",
+      "check": {
+        "command": "python scripts/godmode.py remember --help",
+        "expect_exit": 0,
+        "expect_contains": "--supersedes"
+      }
+    },
+    {
+      "assert": "The skill's own bundle validates structurally.",
+      "check": {
+        "command": "python scripts/godmode.py --project . skill validate --path skills/godmode-memory-gardener",
+        "expect_exit": 0,
+        "expect_contains": "\"valid\": true"
+      }
+    },
+    "A real forget pass never runs before its dry-run preview in the same pass - proven in tests/test_godmode_memory_gardener.py on a bare temp project.",
+    "A promotion is approved only by a second actor with its own re-run hash."
+  ],
+  "baseline_required": true,
+  "claims_require_evidence": true
+}

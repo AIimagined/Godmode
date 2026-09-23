@@ -16,7 +16,7 @@ the moment a future edit adds a per-host `HARD`/"enforced" claim without the
 e2e coverage and passing negative control to back it, not a claim about
 today's prose (which currently trips nothing, by design).
 
-**Fix round 1** (`.superpowers/sdd/2026-08-16-cx/task-cx6-review.md`)
+**Fix round 1** (the CX-6 review)
 fixed two Critical holes in this gate's own matching logic, both
 demonstrated live by the reviewer against the real file:
 

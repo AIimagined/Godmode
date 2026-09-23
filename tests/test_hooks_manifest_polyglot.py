@@ -41,7 +41,10 @@ class PolyglotLauncherTests(unittest.TestCase):
     def test_sh_half_prefers_python3(self) -> None:
         text = (PLUGIN_ROOT / "hooks" / "run-hook.cmd").read_text(
             encoding="utf-8")
-        self.assertIn("for py in python3 python py", text)
+        # POSIX probes python3 first; the order lives in a variable since the
+        # 0.3.28 launcher also orders Windows candidates (python, py, python3).
+        self.assertIn('else order="python3 python py"', text)
+        self.assertIn("for py in $order", text)
         self.assertIn("exec ", text)
         self.assertIn("GODMODE_PYTHON", text)
 

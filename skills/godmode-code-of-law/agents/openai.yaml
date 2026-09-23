@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godmode Code of Law"
+  short_description: "Read and follow the project's compiled guards."
+  default_prompt: "Use $godmode-code-of-law to read GODMODE-CODE-OF-LAW.md, if it exists, and follow its guards before acting."

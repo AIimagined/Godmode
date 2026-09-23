@@ -1,0 +1,1 @@
+- The dispatch workflow takes shard and suite inputs and runs the preflight suite as time-capped shards.

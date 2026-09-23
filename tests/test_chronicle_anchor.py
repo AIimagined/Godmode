@@ -221,3 +221,104 @@ class TruncationDegradesTheProofReaders(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheAnchorAndTheTombstoneAreSequences(unittest.TestCase):
+    """Fix round 2, R2-B3 and R2-B2 - the same shape in two places: a number
+    read off the HOT tier alone where a global sequence belongs.
+
+    Nothing in this repo combined `rotate_to_cold` with either `reanchor` or
+    `expunge` before this class, which is why both survived round 1.
+    """
+
+    @staticmethod
+    def _rotate(archive, sequences: list[int]) -> None:
+        archive.rotate_to_cold(sequences)
+        archive._events_cache_key = None  # noqa: SLF001 - a fresh process reads cold
+
+    @staticmethod
+    def _seal_the_tail_cold(archive) -> int:
+        """Forge the one state `rotate_to_cold` refuses to create: the chain's
+        TRUE tail registered cold with its hot file gone. The record's own
+        bytes travel unchanged, exactly as a rotation moves them."""
+        import hashlib
+        records = archive.read_events(verify=False)
+        tail = records[-1]
+        text = json.dumps(tail, sort_keys=True, separators=(",", ":")) + "\n"
+        (archive.root / "events-cold-1.jsonl").write_text(text, encoding="utf-8")
+        archive._write_cold_registry(  # noqa: SLF001
+            [tail["sequence"]], {tail["sequence"]: tail["record_hash"]},
+            [{"file": "events-cold-1.jsonl", "sequences": [tail["sequence"]],
+              "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()}])
+        for path in archive.events.glob(f"{tail['sequence']:012d}-*.godmode.json"):
+            path.unlink()
+        archive._events_cache_key = None  # noqa: SLF001
+        return int(tail["sequence"])
+
+    def test_reanchor_on_a_rotated_archive_anchors_the_tail_sequence(self) -> None:
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            _grow(archive, 8)
+            self._rotate(archive, [1, 2])
+            outcome = archive.reanchor()
+            self.assertEqual(outcome["anchored_length"], 8,
+                             "the anchor's length is a sequence, never the hot count")
+            # The trailing append then advances it to its own sequence, 9.
+            self.assertEqual(outcome["record"], "seq:9")
+            self.assertEqual(archive._read_chain_anchor()["length"], 9)  # noqa: SLF001
+
+    def test_a_reanchor_whose_trailing_append_fails_leaves_the_archive_readable(self) -> None:
+        # The prop that hid R2-B3: `reanchor`'s last act is an `append` that
+        # rewrites the anchor from the new sequence. Remove it - an enforce
+        # lesson refusing `action`/`chain-reanchored`, a disk error, a kill
+        # between the two - and a hot COUNT in the anchor wedges every read
+        # behind a self-contradicting "records 6 ... but 6 remain".
+        from godmode_runtime.godmode_chronicle import Chronicle
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            _grow(archive, 8)
+            self._rotate(archive, [1, 2])
+            original = Chronicle.append
+
+            def _refuse(self, kind, subject, *args, **kwargs):
+                if subject == "chain-reanchored":
+                    raise ArchiveError("simulated enforce refusal on the trailing append")
+                return original(self, kind, subject, *args, **kwargs)
+
+            with mock.patch.object(Chronicle, "append", _refuse):
+                with self.assertRaises(ArchiveError):
+                    archive.reanchor()
+            archive._events_cache_key = None  # noqa: SLF001
+            records = archive.read_events()   # must not raise tail-truncated
+            self.assertEqual([r["sequence"] for r in records], list(range(3, 9)))
+            self.assertTrue(archive.verify(records)["ok"])
+            self.assertTrue(archive.verify_cold()["ok"])
+
+    def test_expunge_below_the_cold_tier_mints_past_the_cold_tail(self) -> None:
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            _grow(archive, 5)
+            self._rotate(archive, [1, 2])
+            outcome = archive.expunge(4, "a secret slipped past the scanner")
+            self.assertEqual(outcome["tombstone"]["sequence"], 6)
+            self.assertGreater(outcome["tombstone"]["sequence"], 2)
+            self.assertTrue(archive.verify(archive.read_events(verify=False))["ok"])
+            self.assertTrue(archive.verify_cold()["ok"])
+
+    def test_expunge_with_the_true_tail_cold_is_refused_not_forked(self) -> None:
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            _grow(archive, 5)
+            cold_tail = self._seal_the_tail_cold(archive)
+            self.assertEqual(cold_tail, 5)
+            self.assertEqual([int(p.name[:12]) for p in archive.event_paths()],
+                             [1, 2, 3, 4])
+            with self.assertRaises(ArchiveError) as caught:
+                archive.expunge(3, "a secret slipped past the scanner")
+            self.assertIn("cold tier", str(caught.exception))
+            # Nothing was rewritten, and no tombstone reused sequence 5.
+            archive._events_cache_key = None  # noqa: SLF001
+            records = archive.read_events(verify=False)
+            self.assertEqual([r["sequence"] for r in records], [1, 2, 3, 4])
+            self.assertTrue(archive.verify(records)["ok"])
+            self.assertTrue(archive.verify_cold()["ok"], archive.verify_cold())

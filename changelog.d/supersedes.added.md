@@ -1,0 +1,1 @@
+- `remember --supersedes <seq>` records versioned supersession; history renders the chain and every latest-per-subject reader follows it.

@@ -81,7 +81,7 @@ class TheCeilingsRestOnAMeasurement(unittest.TestCase):
         self.assertGreater(G.SKILL_BODY_BUDGET, G.SKILL_BODY_MEASURED_MAX)
 
     def test_the_recorded_measurement_still_resembles_the_tree(self) -> None:
-        """If the measurement drifts far from reality the headroom is a fiction.
+        """If the measurement drifts far from reality the margin is a fiction.
 
         Loose on purpose - this should not fail for one added line - but it
         catches a ceiling whose stated basis has stopped being true.

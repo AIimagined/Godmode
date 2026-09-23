@@ -2,5 +2,12 @@
 # justifies it; an entry with no living lesson should be removed.
 # law seq 4554 (and law 13 before it): batch-fail/isolated-pass under
 # concurrent suite load - three occurrences on 2026-08-29 alone.
+# NS-8o, the lesson-or-leave rule: the retry runner records every isolated
+# rerun, and an entry retried three or more times with no lesson naming it
+# is a preflight finding - gain a lesson cite here, or remove the entry.
+# NS-10c: an entry that fails isolated repeatedly inside a window is
+# parked by the runner's own circuit breaker and skipped until cooldown
+# elapses - a parked entry is non-blocking (printed and recorded, never a
+# run failure), the same as one that passed isolated.
 tests.test_law.BriefTests.test_session_start_brief_carries_the_top_laws
 tests.test_hook_end_to_end.WorkingSessionTests.test_the_host_can_still_do_ordinary_work

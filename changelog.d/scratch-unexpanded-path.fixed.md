@@ -1,0 +1,1 @@
+- The scratch-directory allowance no longer treats an unexpanded `~` or `$VAR` target as a temp path when the process runs under the temp directory; the containment check already refused it.

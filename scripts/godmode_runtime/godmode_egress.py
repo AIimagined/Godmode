@@ -663,7 +663,7 @@ def untrusted_directives(text: str, source: str = "repository") -> dict[str, Any
 # tests/test_gate_falsifiability.py::_break_untrusted, which planted a file
 # past position 400 and the scan reported "data-only" without ever reading
 # it. 2048 is the next power of two at or above 2x that count (1184), giving
-# headroom for ordinary growth. The cap itself stays - an unbounded walk is
+# margin for ordinary growth. The cap itself stays - an unbounded walk is
 # worse - but hitting it must now be loud (see `truncated` below), never a
 # clean verdict over an unscanned population.
 DEFAULT_SCAN_LIMIT = 2048

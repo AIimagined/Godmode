@@ -1,0 +1,1 @@
+- A pinned lesson caps a claim's grade only when the lesson names a path or command stem the claim cites; lessons that merely share vocabulary are listed as advisory and no longer block a verified grade.

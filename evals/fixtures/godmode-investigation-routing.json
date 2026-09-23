@@ -1,20 +1,26 @@
 {
   "routes": {
     "near_negative": {
-      "Brainstorm an uncommitted product feature without a failure to diagnose.": "godmode-investigation",
-      "Implement an already specified change with a known mechanism.": "godmode-repair"
+      "Brainstorm an uncommitted product idea before it has any defined shape.": "godmode-changelog",
+      "Cut a release: bump the version number and publish the changelog.": "godmode-changelog",
+      "Draft user-facing release notes from the merged changelog fragments.": "godmode-changelog",
+      "Implement an already specified change with a known mechanism.": "godmode-replicate",
+      "Record a session handoff checkpoint before stopping work for the day.": "godmode-code-of-law",
+      "Ship a fully specified change using an already-agreed approach.": "godmode-codegraph"
     },
     "positive": {
       "Diagnose a reproducible regression whose root cause is unknown.": "godmode-investigation",
-      "Investigate a test failure after several unsuccessful fixes.": "godmode-investigation"
+      "Investigate a test failure after several unsuccessful fixes.": "godmode-investigation",
+      "Weigh competing hypotheses for a flaky failure and kill one with an experiment.": "godmode-investigation",
+      "Write the postmortem for a production failure once its root-cause is found.": "godmode-investigation"
     }
   },
   "schema": "godmode-routing-snapshot-v1",
   "skill": "godmode-investigation",
   "summary": {
-    "near_negatives_rejected": 1,
-    "near_negatives_total": 2,
-    "positives_routed_correctly": 2,
-    "positives_total": 2
+    "near_negatives_rejected": 6,
+    "near_negatives_total": 6,
+    "positives_routed_correctly": 4,
+    "positives_total": 4
   }
 }

@@ -1,0 +1,1 @@
+- Preflight findings carry a failure class (a blank or unknown class is itself a finding), each preflight record counts findings per class, and `trends` shows a class that recurs across rounds.

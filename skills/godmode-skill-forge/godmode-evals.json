@@ -3,12 +3,14 @@
   "skill": "godmode-skill-forge",
   "routing": {
     "positive": [
-      "Create a project skill for the same missing workflow observed in two real tasks.",
+      "Create a project skill for the same missing workflow observed in three real tasks.",
       "Repair a project skill whose routing and behavior evaluations prove a reusable gap."
     ],
     "near_negative": [
-      "Create permanent instructions for a one-off request.",
-      "Add another skill when an installed skill already covers the capability."
+      "Write standing instructions meant for a single throwaway request.",
+      "Add a duplicate tool when an installed one already does the job.",
+      "Write throwaway instructions for a single one-off request.",
+      "Suggest a new tool after a single occurrence hinted it could help."
     ]
   },
   "behavior_assertions": [

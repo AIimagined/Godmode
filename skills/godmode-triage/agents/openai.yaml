@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godmode Triage"
+  short_description: "Work open asks down to closed, promoted, mapped or parked."
+  default_prompt: "Use $godmode-triage to count the open asks and aging obligations, promote each rule-shaped ask to an invariant, map work asks to plan tasks, close answered or noise asks by their ask id, park the rest with a reason, and prove the queue moved."

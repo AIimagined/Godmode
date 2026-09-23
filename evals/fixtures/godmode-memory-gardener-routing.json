@@ -1,0 +1,21 @@
+{
+  "routes": {
+    "near_negative": {
+      "Erase a leaked credential from an archived record": "godmode-evidence",
+      "Follow the compiled code of law before starting a new task": "godmode-code-of-law",
+      "Resume where the last session stopped and rebuild the lost context brief": "godmode"
+    },
+    "positive": {
+      "Cluster the recurring correction candidates and promote the ripe lesson with a cited rationale and a second actor's approval": "godmode-memory-gardener",
+      "Garden the archive at session close: list near-duplicate lessons, preview which old episodes expire into the cold tier, and supersede the duplicates": "godmode-memory-gardener"
+    }
+  },
+  "schema": "godmode-routing-snapshot-v1",
+  "skill": "godmode-memory-gardener",
+  "summary": {
+    "near_negatives_rejected": 3,
+    "near_negatives_total": 3,
+    "positives_routed_correctly": 2,
+    "positives_total": 2
+  }
+}

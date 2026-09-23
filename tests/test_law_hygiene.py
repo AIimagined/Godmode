@@ -21,14 +21,17 @@ if str(SCRIPTS) not in sys.path:
 if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 
+from _law_fixtures import operator_lesson  # noqa: E402
 from godmode_runtime.godmode_law import hygiene  # noqa: E402
 from test_godmode_runtime import isolated_project  # noqa: E402
 
 
 def _lesson(archive, subject, guard, why="observed failure", status="active"):
-    archive.append("lesson", subject, {
-        "value": why, "generalized_guard": guard, "status": status,
-    })
+    """NS-2 fix round 1 (B1): a guarded lesson reaches the law only with
+    approval lineage or operator trust. Hygiene scans the LIVING laws, so
+    every fixture here has to be one - the operator carve-out
+    (`tests/_law_fixtures.py`) is the one-write way to say so."""
+    operator_lesson(archive, subject, guard, value=why, status=status)
 
 
 class HygieneTests(unittest.TestCase):

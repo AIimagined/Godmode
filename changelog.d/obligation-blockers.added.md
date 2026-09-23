@@ -1,0 +1,1 @@
+- An obligation can name what blocks it; `status remaining` lists it under its blocker, and phantom or circular blockers are refused.

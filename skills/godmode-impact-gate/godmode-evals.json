@@ -1,0 +1,45 @@
+{
+  "schema": "godmode-skill-eval-v1",
+  "skill": "godmode-impact-gate",
+  "routing": {
+    "positive": [
+      "Before committing this staged multi-module edit, score its fan-out of unfollowed dependents and any hook-to-runtime boundary crossing",
+      "Right before git commit, confirm the staged paths stay inside the plan's editable fence, no paired artifact is left behind, and record an escape hatch for the intended crossing"
+    ],
+    "near_negative": [
+      "Find who calls a module before planning an edit to it",
+      "Preview and authorize a force push to the shared branch",
+      "Diagnose why the retest went red after the last edit"
+    ]
+  },
+  "behavior_assertions": [
+    {
+      "assert": "The atlas declares the dependency-direction boundary check the flow's step 4 runs.",
+      "check": {
+        "command": "python scripts/godmode.py atlas --help",
+        "expect_exit": 0,
+        "expect_contains": "--direction"
+      }
+    },
+    {
+      "assert": "The fence audit takes the staged paths the flow's step 5 passes.",
+      "check": {
+        "command": "python scripts/godmode.py fence audit --help",
+        "expect_exit": 0,
+        "expect_contains": "--changed"
+      }
+    },
+    {
+      "assert": "The skill's own bundle validates structurally.",
+      "check": {
+        "command": "python scripts/godmode.py --project . skill validate --path skills/godmode-impact-gate",
+        "expect_exit": 0,
+        "expect_contains": "\"valid\": true"
+      }
+    },
+    "A fan-out is scored only from a graph that verify has proven, never from a stale snapshot - proven in tests/test_godmode_impact_gate.py on a bare temp project.",
+    "An intended crossing is accepted only through a recorded impact-accepted decision naming the path and the reason."
+  ],
+  "baseline_required": true,
+  "claims_require_evidence": true
+}

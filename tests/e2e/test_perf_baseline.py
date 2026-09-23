@@ -58,7 +58,7 @@ SUBPROCESS_STAGES = frozenset({"startup", "decision_round_trip"})
 # the baseline says: `decision_round_trip` is the full hook's classify+
 # archive round trip, at any documented host, and this checkout's own
 # measured baselines sit at 110-200ms - a full second is deliberately
-# generous headroom (never meant to compete with the relative ceiling's
+# generous margin (never meant to compete with the relative ceiling's
 # job of catching a SMALLER regression), but it catches an order-of-
 # magnitude regression that could otherwise hide inside relative noise or
 # an inflated baseline. Both bounds are documented and both are enforced;

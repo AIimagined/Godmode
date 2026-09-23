@@ -1,0 +1,93 @@
+{
+  "_note": "This file is the reference shape for Copilot's `.github/hooks/godmode.json`. `${godmodePluginRoot}` is a portable placeholder, not a real environment variable Copilot expands - `godmode hooks wire --host copilot` replaces it with the absolute install path per project; the copy shipped here is the un-substituted template, not a wired install.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${godmodePluginRoot}/hooks/run-hook.cmd\" godmode_session_hook.py session-start",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${godmodePluginRoot}/hooks/run-hook.cmd\" godmode_session_hook.py user-prompt",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${godmodePluginRoot}/hooks/run-hook.cmd\" godmode_gate_fast.py",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${godmodePluginRoot}/hooks/run-hook.cmd\" godmode_post_edit.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${godmodePluginRoot}/hooks/run-hook.cmd\" godmode_session_hook.py pre-compact",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${godmodePluginRoot}/hooks/run-hook.cmd\" godmode_session_hook.py session-end",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${godmodePluginRoot}/hooks/run-hook.cmd\" godmode_session_hook.py stop",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${godmodePluginRoot}/hooks/run-hook.cmd\" godmode_session_hook.py subagent-stop",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

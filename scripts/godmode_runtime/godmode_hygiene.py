@@ -15,6 +15,7 @@ import re
 from typing import Any
 
 from .godmode_attest import _NEGATION, _salient
+from .godmode_chronicle import latest_by_subject, open_reviews
 
 KINDS = ("lesson", "decision")
 DEFAULT_CAP = 80
@@ -42,11 +43,14 @@ def hygiene(records: list[dict[str, Any]], cap: int = DEFAULT_CAP) -> dict[str, 
     command is `remember ... --status superseded` on the one that lost."""
     out: dict[str, Any] = {"considered": {}, "near_duplicates": [], "contradictions": [], "cap": cap}
     for kind in KINDS:
-        latest: dict[str, dict[str, Any]] = {}
-        for record in records:
-            if record.get("kind") != kind:
-                continue
-            latest[str(record.get("subject", "")).strip()] = record
+        # NS-10e: a lesson/decision another record has named via
+        # `--supersedes` drops out here too - it is never the one
+        # compared for near-duplicates or contradictions again, the same
+        # rule every other latest-per-subject reader now follows.
+        latest = latest_by_subject(
+            [r for r in records if r.get("kind") == kind],
+            key=lambda r: str(r.get("subject", "")).strip(),
+        )
         active = [r for r in latest.values()
                   if str((r.get("data") or {}).get("status", "active")).lower() not in _INACTIVE]
         active = sorted(active, key=lambda r: int(r.get("sequence", 0) or 0))[-cap:]
@@ -75,9 +79,26 @@ def hygiene(records: list[dict[str, Any]], cap: int = DEFAULT_CAP) -> dict[str, 
                 else:
                     finding["why"] = "two phrasings of one rule - keep the sharper, supersede the other"
                     out["near_duplicates"].append(finding)
-    out["review"] = len(out["near_duplicates"]) + len(out["contradictions"])
-    out["next"] = ("`godmode remember --kind <kind> --subject \"<the loser>\" --status superseded` per finding"
-                   if out["review"] else "nothing to review")
+    # NS-11e fix round 1 (review B, B3): the contradictions `godmode forget`
+    # already FLAGGED belong in the same report as the ones this pass just
+    # found - a `review` record nothing surfaces is a finding filed into a
+    # drawer no verb opens. These are exact, recorded findings, so they are
+    # listed separately from this pass's own fuzzy matches rather than mixed
+    # into them.
+    out["open_reviews"] = [
+        {"sequence": entry["sequence"], "subject": entry["subject"][:80],
+         "kind": entry["kind"], "sequences": entry["sequences"]}
+        for entry in open_reviews(records)
+    ]
+    out["review"] = (len(out["near_duplicates"]) + len(out["contradictions"])
+                     + len(out["open_reviews"]))
+    if out["open_reviews"] and not (out["near_duplicates"] or out["contradictions"]):
+        out["next"] = ("`godmode history --kind review` for the open findings, then "
+                       "`godmode remember --kind review --subject \"<subject>\" "
+                       "--status acknowledged` (or `dismissed`) per finding")
+    else:
+        out["next"] = ("`godmode remember --kind <kind> --subject \"<the loser>\" --status superseded` per finding"
+                       if out["review"] else "nothing to review")
     return out
 
 

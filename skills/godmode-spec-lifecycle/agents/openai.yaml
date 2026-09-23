@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godmode Spec Lifecycle"
+  short_description: "Move a spec and its plan through specify, approve, implement, review, and status as one linked record."
+  default_prompt: "Use $godmode-spec-lifecycle to write the spec, get the plan approved by an independent check, bind implementation back to it, and track its status as one resumable record."

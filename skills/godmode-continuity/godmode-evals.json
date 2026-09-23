@@ -7,8 +7,10 @@
       "Detect context drift after changing branches or worktrees."
     ],
     "near_negative": [
-      "Start a stateless one-off task with no prior project context.",
-      "Archive raw conversations or complete source-code bodies."
+      "Start a stateless one-off task with nothing carried over from before.",
+      "Archive raw conversations or complete source-code bodies.",
+      "Investigate why a build fails and trace the regression to its root cause.",
+      "Prepare a release: bump the version, write the changelog, and tag the build."
     ]
   },
   "behavior_assertions": [

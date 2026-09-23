@@ -217,16 +217,113 @@ def _salient_words(text: str) -> set[str]:
     return words
 
 
+#: Fix round 1 on H5: a bare word-length filter turned every ordinary word
+#: in a `cmd:`/prose citation into a "stem" - `cmd:python -m unittest
+#: tests.x` yielded {python, tests, unittest}, capping on lessons that
+#: shared nothing but generic vocabulary. These names never identify a
+#: particular surface even when they carry path structure elsewhere in a
+#: token (`origin/main`, `tests/`), so they are dropped after extraction
+#: rather than trusted to mean anything on their own.
+_STOP_STEMS = frozenset({
+    "git", "python", "python3", "tests", "test", "main", "master",
+    "origin", "scripts", "src", "docs", "run", "cmd", "sh", "exec",
+})
+
+
+def _path_stems(path: str) -> set[str]:
+    """A `file:` citation's own basename (without extension) and its
+    immediate parent directory only - every ancestor above that is
+    dropped, so `scripts/godmode_runtime/godmode_sentinel.py` ->
+    {'godmode_sentinel', 'godmode_runtime'}, not 'scripts'."""
+    parts = [p for p in str(path).replace("\\", "/").split("/") if p]
+    stems: set[str] = set()
+    if parts:
+        basename = parts[-1].split(".")[0].strip("-")
+        if len(basename) >= 3:
+            stems.add(basename.lower())
+        if len(parts) >= 2:
+            parent = parts[-2].split(".")[0].strip("-")
+            if len(parent) >= 3:
+                stems.add(parent.lower())
+    return stems - _STOP_STEMS
+
+
+def _structural_stems(text: str) -> set[str]:
+    """Tokens that carry path or identifier structure - contain `/`, `.`,
+    `_`, or `-` - kept whole with any extension stripped; a plain word
+    carries no such structure and is never a stem. That is what keeps a
+    claim and a lesson that merely share vocabulary (both mention "tests",
+    both mention "main") from reading as the same surface. Used for a
+    lesson's own subject/guard text, for every `cmd:` citation token after
+    the command name, and for any citation kind this module does not
+    otherwise special-case."""
+    stems: set[str] = set()
+    for raw in str(text).split():
+        token = raw.strip(".,;:'\"()[]`")
+        if not token or not any(ch in token for ch in "/._-"):
+            continue
+        candidate = token.split(".")[0].strip("-")
+        if len(candidate) >= 3:
+            stems.add(candidate.lower())
+    return stems - _STOP_STEMS
+
+
+def _cmd_stems(text: str) -> set[str]:
+    """A `cmd:` citation's command name plus every later token that
+    carries path or identifier structure, kept whole (not path-split):
+    `git rev-parse origin/main` -> {'rev-parse', 'origin/main'} - 'git' is
+    too generic to survive the stop-set, and 'origin/main' stays one
+    compound stem rather than splitting into 'origin' and 'main', both of
+    which are themselves too generic to mean anything alone."""
+    tokens = str(text).split()
+    stems: set[str] = set()
+    if tokens:
+        first = tokens[0].split(".")[0].strip("-")
+        if len(first) >= 3:
+            stems.add(first.lower())
+    stems |= _structural_stems(" ".join(tokens[1:]))
+    return stems - _STOP_STEMS
+
+
+def _citation_stems(citation: str) -> set[str]:
+    """Dispatches one raw citation to the tokenizer that matches its
+    kind: a `file:` citation to its own path shape (`_path_stems`), a
+    `cmd:` citation to its command shape (`_cmd_stems`), and any other
+    kind to the same structural-token rule the lesson side uses."""
+    text = str(citation)
+    if text.startswith("file:"):
+        return _path_stems(text[len("file:"):])
+    if text.startswith("cmd:"):
+        return _cmd_stems(text[len("cmd:"):])
+    return _structural_stems(text.split(":", 1)[-1])
+
+
+#: The prefix that marks a `guard_pin_reason` result as informational only:
+#: a shared-vocabulary lesson was found, but it names no cited path or
+#: command stem, so it must never downgrade a grade. Exported so
+#: `godmode_attest.py` checks the same literal string rather than a second
+#: copy that could quietly drift out of sync with a rewording here.
+PIN_ADVISORY_PREFIX = "advisory:"
+
+
 def guard_pin_reason(project: Path, archive: Any, text: str,
                      citations: list[str]) -> str:
-    """Obligation 4166: before a gap claim grades verified, look for the pin.
+    """Obligation 4166 / H5: before a gap claim grades verified, look for
+    the pin.
 
-    A test that names the cited surface but is not itself cited, or an active
-    lesson whose subject/guard shares the claim's vocabulary, means the "gap"
-    may be a deliberate decision with a guard standing on it - the answer is
-    that pin's provenance, not a fix. Returns the downgrade reason, or ""
-    when no pin is found. Bounded: first matching test file wins, lessons
-    scanned via the archive's own bounded select.
+    A test that names the cited surface but is not itself cited caps the
+    claim outright, same as before. For a lesson, relevance is a shared
+    cited path or command stem (`_citation_stems` vs. `_structural_stems`
+    on the lesson's own subject/guard) - vocabulary alone no longer caps.
+    Three returns are possible: "" when no pin is found; the downgrade
+    reason (starts with "a pin already names this surface") when a test or
+    a stem-relevant lesson pins the surface, which the caller must treat
+    as a hard cap; or a `PIN_ADVISORY_PREFIX`-prefixed string when an
+    active lesson merely shares the claim's vocabulary with no cited stem
+    in common - this is informational only and the caller must NOT
+    downgrade on it (it may still be worth surfacing as a note). Bounded:
+    first matching test file wins, lessons scanned via the archive's own
+    bounded select.
     """
     cited_norm = {_fold(str(c)[len("file:"):]) for c in citations
                   if str(c).startswith("file:")}
@@ -253,9 +350,12 @@ def guard_pin_reason(project: Path, archive: Any, text: str,
             if hit:
                 pins.append(f"tests: {rel} names {hit}")
                 break
+    advisories: list[str] = []
     claim_words = _salient_words(text)
-    if claim_words:
+    if claim_words or citations:
         try:
+            cite_stems = (set().union(*(_citation_stems(c) for c in citations))
+                          if citations else set())
             records = list(archive.select(kind="lesson", limit=200))
             # The newest record for a subject decides its status, the same
             # supersession every other kind in this archive relies on. Reading
@@ -281,17 +381,26 @@ def guard_pin_reason(project: Path, archive: Any, text: str,
                 # promoted is not a standing pin either.
                 if status in _SETTLED_OR_CANDIDATE:
                     continue
-                lesson_words = _salient_words(
-                    f"{record.get('subject', '')} {data.get('generalized_guard', '')}")
-                if len(claim_words & lesson_words) >= 3:
+                lesson_text = f"{record.get('subject', '')} {data.get('generalized_guard', '')}"
+                lesson_words = _salient_words(lesson_text)
+                lesson_stems = _structural_stems(lesson_text)
+                if cite_stems & lesson_stems:
                     pins.append(
                         f"lesson seq:{record.get('sequence')} "
                         f"({str(record.get('subject', ''))[:60]})")
                     break
+                if len(claim_words & lesson_words) >= 3:
+                    advisories.append(
+                        f"lesson seq:{record.get('sequence')} "
+                        f"({str(record.get('subject', ''))[:60]})")
         except Exception:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
             pass
-    if not pins:
-        return ""
-    return ("a pin already names this surface (" + "; ".join(pins[:2]) +
-            ") - answer its provenance (is the gap deliberate?) before "
-            "grading a gap verified; cite the pin or retire it first")
+    if pins:
+        return ("a pin already names this surface (" + "; ".join(pins[:2]) +
+                ") - answer its provenance (is the gap deliberate?) before "
+                "grading a gap verified; cite the pin or retire it first")
+    if advisories:
+        return (f"{PIN_ADVISORY_PREFIX} related lessons by vocabulary only (" +
+                "; ".join(advisories[:2]) +
+                ") - not a cap; read them if the surface is the same")
+    return ""

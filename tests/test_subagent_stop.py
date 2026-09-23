@@ -32,7 +32,7 @@ if str(Path(__file__).parent) not in sys.path:
 
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
-from _host_env import HOST_MARKERS  # noqa: E402
+from _host_env import scrubbed_env  # noqa: E402
 
 DONE_TEXT = "Done: the migration is complete and all 12 tests pass."
 
@@ -62,7 +62,7 @@ def _transcript(base: Path, text: str) -> Path:
 
 
 def _fire(event: str, project: Path, state: Path, payload: dict) -> subprocess.CompletedProcess:
-    environment = {k: v for k, v in os.environ.items() if k not in HOST_MARKERS}
+    environment = scrubbed_env()
     environment["GODMODE_STATE_HOME"] = str(state)
     environment["CLAUDE_CODE_ENTRYPOINT"] = "cli"
     return subprocess.run(

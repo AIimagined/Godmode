@@ -620,7 +620,8 @@ _PROMPT_SHAPES = (
                        r"keeps?\s+fail|crash)"),
      "godmode: fix-shaped work - `godmode atlas closure <files>` lists the "
      "dependents a fix must retest; if one check has already failed twice "
-     "with edits between, open `godmode remember --kind incident` before "
+     "with edits between, open `godmode remember --kind incident --repro "
+     "\"<failing command>\"` before "
      "the next attempt, and run the deciding check via `godmode verify` so "
      "its outcome is attested."),
     ("ship", re.compile(r"(?i)\b(?:push|release|ship|deploy|publish|"
@@ -673,7 +674,7 @@ _PROMPT_SHAPES = (
      "godmode: investigation-shaped work - `godmode mistakes` lists prior "
      "incidents of this class; `godmode error-pattern` matches the failure "
      "text against declared patterns; `godmode remember --kind incident --failure-class "
-     "<class>` records the failure while the evidence is fresh; `godmode "
+     "<class> --repro \"<failing command>\"` records the failure while the evidence is fresh; `godmode "
      "differential` records the two states before and after a change; "
      "`godmode plant` proves a guard fails when broken; `godmode verify "
      "<name> --command \"<deciding check>\"` attests the deciding check "
@@ -684,7 +685,7 @@ _PROMPT_SHAPES = (
         r"\byou\s+(?:did\s*n[o']t|missed|forgot|skipped|ignored)\b|"
         r"\bnot\s+what\s+i\s+asked\b|\bwrong\s+again\b)"),
      "godmode: the operator caught a miss - record it while the evidence "
-     "is fresh (`godmode remember --kind incident \"<what happened>\"`); "
+     "is fresh (`godmode remember --kind incident \"<what happened>\" --no-repro \"<why>\"`); "
      "a miss that recurs earns a guard, not another apology."),
 )
 

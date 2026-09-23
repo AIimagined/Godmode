@@ -143,6 +143,7 @@ def oracle_tamper_findings(project: Path, base: str = "HEAD",
                 "shape": "harness-node-dropped", "path": path, "blocking": True,
                 "detail": f"{path} gained {len(dropped)} line(s) that skip, ignore, or tolerate a failing node: "
                           + "; ".join(d[:80] for d in dropped[:2]),
+                "lines": dropped,
             })
     return findings
 

@@ -90,8 +90,8 @@ already doctrine-compliant, reused verbatim rather than rewritten):
 
 **Keywords**: `codex-plugin`, `skill-authoring`, `context-continuity`,
 `evidence-governance`, `local-first`, `developer-tools`,
-`governance gate for coding agents` (added in this fix round, same
-mechanism as the Claude row).
+`governance gate for coding agents` (added the same way as the Claude
+row).
 
 **Category**: Productivity (`interface.category` in the manifest).
 
@@ -124,8 +124,7 @@ pointer is left as-is rather than moved without evidence.
 ### Codex submission kit: test-case mapping
 
 The OpenAI portal's own listing requirements (developer docs, verified
-fetch, recorded in
-`docs/superpowers/specs/2026-08-16-codex-compat-design.md`'s Addendum 2)
+fetch, recorded in the Codex-compatibility design's Addendum 2)
 ask for "five positive + three negative test cases with expected outcomes,"
 and name directly that "the test-case requirement maps onto CX-6 scenarios
 (reuse them)." This section is that mapping — every row names a real,
@@ -213,7 +212,7 @@ Checklist against the five fields this task asked for: `name`,
 | `.codex-plugin/plugin.json` | present (`godmode`) | present | present (`0.2.12`) | present, nested under `interface.logo`; whether a top-level field is also supported is unverified (no published schema found) | present (7 entries, includes `governance gate for coding agents`) |
 | `.grok-plugin/plugin.json` | present (`godmode`) | present | present (`0.2.12`) | **unverified**: no `$schema` pointer and no published schema found, so no field name could be confirmed and none was added | present (5 entries, includes `governance gate for coding agents`) |
 
-What this fix round changed and what it deliberately left alone:
+What this audit changed and what it deliberately left alone:
 
 1. **Closed**: all three manifests now carry `governance gate for coding
    agents` in `keywords`, added once to `packaging/hosts.json`'s shared

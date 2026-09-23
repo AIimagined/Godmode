@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godmode Replicate"
+  short_description: "Rebuild a studied mechanism under Godmode names, pinned by a test that can fail."
+  default_prompt: "Use $godmode-replicate to rebuild this studied mechanism in stdlib under Godmode's names: confirm the reference receipts, plant a break to prove the reproducing test can fail, attest it green, cite receipt and test on the host row, and scrub private terms before committing."

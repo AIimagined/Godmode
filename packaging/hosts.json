@@ -3,7 +3,7 @@
   "identity": {
     "name": "godmode",
     "displayName": "Godmode",
-    "version": "0.3.27",
+    "version": "0.3.28",
     "description": "Your coding agent says \"done.\" Godmode is how you know: a local, tamper-evident evidence ledger of what it did, claimed, and verified - with gates and a completion bar enforced in hooks at runtime on hosts where the hook is live-proven (see the host table). Zero deps, zero network.",
     "author": {
       "name": "AIimagined",
@@ -135,6 +135,20 @@
     "antigravity": {
       "path": ".antigravity-plugin/hooks-fragment.json",
       "mode": "dedicated"
+    },
+    "copilot": {
+      "path": ".github/hooks/godmode.json",
+      "mode": "dedicated"
+    },
+    "kiro": {
+      "path": ".kiro/hooks.json",
+      "mode": "dedicated"
+    }
+  },
+  "mcp_manifests": {
+    "_comment": "NS-10l: per-host MCP-config artifacts (distinct from the identity and hook manifests above). Content is built by scripts/godmode_runtime/godmode_host_manifests.py's MCP_ARTIFACTS registry - this section supplies only the PATH each host's artifact is written to, the same division of labour `hook_manifests` above already uses. `godmode bindings --write`/`--check` drive this section from the same command as the other two. Cursor's `mcp.json` is a reference artifact, not auto-discovered by the host from a fixed plugin path (see MCP_ARTIFACTS['cursor']['gap']), but it is still drift-checked here so a later change to the builder cannot silently diverge from the committed file.",
+    "cursor": {
+      "path": ".cursor-plugin/mcp.json"
     }
   },
   "adapters": {
@@ -188,6 +202,5 @@
         "tool_call_interception": "GEMINI.md context is advisory; no pre-tool boundary is exposed"
       }
     }
-  },
-  "description": "Your coding agent says \"done.\" Godmode is how you know: a local, tamper-evident evidence ledger of what it did, claimed, and verified - with gates and a completion bar enforced in hooks at runtime on hosts where the hook is live-proven (see the host table). Zero deps, zero network."
+  }
 }

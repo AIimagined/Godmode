@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godmode Codegraph"
+  short_description: "Query the local code graph before a raw file read."
+  default_prompt: "Use $godmode-codegraph to verify and, if needed, rebuild the on-demand dependency graph, then name this change's blast radius and required retests before it lands."

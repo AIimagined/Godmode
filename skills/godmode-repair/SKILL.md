@@ -1,6 +1,6 @@
 ---
 name: godmode-repair
-description: Re-pitch an answer that did not land, and record why it did not. Use when the operator says they do not follow, asks for clarity, repeats a question already answered, or asks what is being waited on.
+description: Re-pitch an answer that did not land, and record why it did not. Use when the operator says they do not follow, asks for clarity, repeats a question already answered, or asks what is being waited on. Not for first answers; do not use when the operator has not signalled confusion.
 ---
 
 # Godmode Repair

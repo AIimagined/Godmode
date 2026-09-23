@@ -295,3 +295,89 @@ class BuildCeilingTests(unittest.TestCase):
                 atlas = build(project, budget_seconds=0.0)
             self.assertEqual(atlas.files, [])
             self.assertEqual(atlas.gap["unscanned"], 1)
+
+
+class NestedCheckoutSkipTests(unittest.TestCase):
+    """S5 (I-6 fix round 1): a directory that carries its own `.git` entry
+    and is not the project root itself - a linked worktree
+    (`.claude/worktrees/<hash>/`) or a vendored clone - is a nested
+    checkout and is pruned before descent, the same as
+    `IGNORED_DIRECTORY_NAMES`. Measured on this repository's own real
+    working checkout: 12,864 of 13,433 candidate `.py` files lived under
+    `.claude/worktrees/*`, none of them this project's own code."""
+
+    def test_a_directory_with_its_own_git_entry_is_never_walked(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / "real.py").write_text("def real():\n    return 1\n", encoding="utf-8")
+            nested = project / "vendor" / "clone"
+            nested.mkdir(parents=True)
+            (nested / ".git").mkdir()
+            (nested / "copy.py").write_text("def copy():\n    return 1\n", encoding="utf-8")
+
+            atlas = build(project)
+
+            self.assertEqual(atlas.files, ["real.py"])
+            self.assertFalse(any("copy.py" in f for f in atlas.files), atlas.files)
+
+    def test_the_project_root_itself_is_not_treated_as_a_nested_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / ".git").mkdir()
+            (project / "real.py").write_text("def real():\n    return 1\n", encoding="utf-8")
+
+            atlas = build(project)
+
+            self.assertEqual(atlas.files, ["real.py"])
+
+
+class RootsScopedBuildTests(unittest.TestCase):
+    """D2i (I-6 fix round 2, re-review): a caller that only ever needs a
+    known subtree (`godmode_closure`'s closure check needs only
+    `scripts/`, `hooks/`, `tests/`) passes `roots=` so the walk itself
+    never touches anything else - a top-level file, and a file under a
+    directory not named, are both invisible to the result, not merely
+    filtered out of it. Nested-checkout/`IGNORED_DIRECTORY_NAMES` pruning
+    still applies within each given root."""
+
+    def test_only_the_named_roots_are_walked(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / "top_level.py").write_text("def t():\n    return 1\n", encoding="utf-8")
+            (project / "scripts").mkdir()
+            (project / "scripts" / "in_scope.py").write_text(
+                "def s():\n    return 1\n", encoding="utf-8")
+            (project / "docs").mkdir()
+            (project / "docs" / "out_of_scope.py").write_text(
+                "def d():\n    return 1\n", encoding="utf-8")
+
+            atlas = build(project, roots=("scripts", "hooks", "tests"))
+
+            self.assertEqual(atlas.files, ["scripts/in_scope.py"])
+
+    def test_a_nested_checkout_inside_a_named_root_is_still_pruned(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / "scripts").mkdir()
+            (project / "scripts" / "in_scope.py").write_text(
+                "def s():\n    return 1\n", encoding="utf-8")
+            nested = project / "scripts" / "vendor" / "clone"
+            nested.mkdir(parents=True)
+            (nested / ".git").mkdir()
+            (nested / "copy.py").write_text("def c():\n    return 1\n", encoding="utf-8")
+
+            atlas = build(project, roots=("scripts",))
+
+            self.assertEqual(atlas.files, ["scripts/in_scope.py"])
+
+    def test_a_missing_root_is_skipped_not_an_error(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / "scripts").mkdir()
+            (project / "scripts" / "in_scope.py").write_text(
+                "def s():\n    return 1\n", encoding="utf-8")
+
+            atlas = build(project, roots=("scripts", "hooks", "tests"))
+
+            self.assertEqual(atlas.files, ["scripts/in_scope.py"])
+            self.assertIsNone(atlas.gap)

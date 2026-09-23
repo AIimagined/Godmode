@@ -164,7 +164,7 @@ class HelpFlagTests(GateCase):
         self.allowed("gh --help")
         self.allowed("python scripts/godmode.py release --help")
         self.allowed("git push --help")
-        self.allowed("graphify --version")
+        self.allowed("graphtool --version")
 
     def test_a_help_flag_does_not_excuse_a_redirect_beside_it(self) -> None:
         """The flag stops the command from acting; it does not stop the
@@ -402,7 +402,7 @@ class StillClosedTests(GateCase):
         having no vocabulary entry was the approval-fatigue failure this
         gate's own usability tests exist to catch. No redirect, no named
         write flag, no evidence - read now, at R0."""
-        for command in ("wsl --list --verbose", "graphify clone https://example.invalid/x",
+        for command in ("wsl --list --verbose", "graphtool clone https://example.invalid/x",
                         "codex plugin add godmode"):
             with self.subTest(command=command):
                 self.allowed(command)
@@ -412,7 +412,7 @@ class StillClosedTests(GateCase):
         mutation - a real redirect this classifier cannot evaluate for
         containment on an unrecognised command's behalf."""
         for command in ("wsl --list --verbose > out.txt",
-                        "graphify clone https://example.invalid/x > /etc/hosts",
+                        "graphtool clone https://example.invalid/x > /etc/hosts",
                         "codex plugin add godmode > ~/.bashrc"):
             with self.subTest(command=command):
                 self.refused(command, "unknown-command")
@@ -485,10 +485,12 @@ def corpus_entries() -> list[dict[str, str]]:
     return entries
 
 
-def _decision(operation: str) -> str:
+def _decision(operation: str, tool: str | None = None) -> str:
     """godmode_session_hook's real allow/ask/refuse mapping for a bare
-    operation string - see the module comment above for the reading."""
-    verdict = classify_action(operation, project_root=PROJECT)
+    operation string - see the module comment above for the reading.
+    `tool` (G-5) is the row's `tool` field: it selects the shell dialect
+    the operation is parsed under, exactly as the hook's tool name does."""
+    verdict = classify_action(operation, project_root=PROJECT, tool_name=tool)
     if not verdict["protected"]:
         return "allow"
     return "refuse" if verdict["tier"] == "R5" else "ask"
@@ -540,7 +542,7 @@ class GateCorpus(unittest.TestCase):
     def test_every_entry_matches_expected(self) -> None:
         failures = []
         for entry in corpus_entries():
-            got = _decision(entry["operation"])
+            got = _decision(entry["operation"], entry.get("tool"))
             if got != entry["expected"]:
                 failures.append((entry["class"], entry["operation"][:80],
                                  entry["expected"], got))
@@ -549,3 +551,24 @@ class GateCorpus(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ScratchAllowanceFromTempCwdTests(unittest.TestCase):
+    """The scratch allowance canonicalised `~/.bashrc` against the cwd; run
+    from under the temp dir it read as `<tmp>/~/.bashrc` and was permitted."""
+
+    def test_unexpanded_home_is_not_scratch_when_cwd_is_under_temp(self) -> None:
+        import os
+        import tempfile
+        from pathlib import Path
+        from godmode_runtime import godmode_sentinel as sentinel
+        with tempfile.TemporaryDirectory() as tmp:
+            before = os.getcwd()
+            os.chdir(tmp)
+            try:
+                self.assertFalse(sentinel._is_scratch(Path("~/.bashrc"), None))
+                verdict = sentinel.classify_action("echo pwned > ~/.bashrc")
+            finally:
+                os.chdir(before)
+        self.assertTrue(verdict["protected"])
+        self.assertEqual(verdict["category"], "worktree-file-mutation")

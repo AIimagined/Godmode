@@ -406,14 +406,17 @@ def would_have_summary(archive: Chronicle) -> dict[str, Any]:
     only, never a record's free-text fields. Zero is a real answer - the
     caller renders `total: 0` as an explicit statement, because absence of
     signal stated is the whole point of B4-10 (observe mode that is silent
-    is a mute button, not a trial). Bounded by `select`'s own cap: the 500
-    most recent refusal records, which is also what keeps a long trial from
-    making every session brief pay for its whole history.
+    is a mute button, not a trial). S-3: counts every refusal on record.
+    The old `select(kind="refusal", limit=500)` saved nothing - `select`
+    reads the whole archive before it clamps - and turned a long trial's
+    total into a flat 500.
     """
     summary: dict[str, Any] = {tier: 0 for tier in _WOULD_HAVE_TIERS}
     summary["total"] = 0
     by_tier: dict[str, dict[str, int]] = {tier: {} for tier in _WOULD_HAVE_TIERS}
-    for record in archive.select(kind="refusal", limit=500):
+    for record in archive.read_events():
+        if record["kind"] != "refusal":
+            continue
         data = record.get("data") or {}
         if data.get("observed") is not True:
             continue

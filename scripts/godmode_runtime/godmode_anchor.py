@@ -21,7 +21,21 @@ def canonical_path(path: Path) -> Path:
         raise IdentityError(f"Cannot resolve project path: {path}") from exc
 
 
-def run_git(project: Path, *arguments: str) -> str | None:
+def run_git(project: Path, *arguments: str, text: bool = True) -> str | bytes | None:
+    """Run `git` in `project` and return its stdout, or `None` on any failure.
+
+    `text=True` (the default, and every caller before N5) decodes with
+    `encoding="utf-8", errors="replace"` and strips leading/trailing
+    whitespace - the shape almost every caller wants (a HEAD hash, a
+    porcelain listing read as lines). `text=False` (review finding N5,
+    folding `godmode_fingerprint._raw_git` into this one implementation)
+    skips the decode entirely and returns `result.stdout` as raw `bytes`,
+    unstripped: a caller hashing git's output byte-for-byte (a working-tree
+    fingerprint) cannot afford universal-newline translation folding a
+    CRLF/LF difference invisibly, `errors="replace"` mapping every distinct
+    invalid byte to the same placeholder, or a strip discarding meaningful
+    leading/trailing bytes before it ever sees them.
+    """
     environment = os.environ.copy()
     environment["GIT_OPTIONAL_LOCKS"] = "0"
     environment["GIT_TERMINAL_PROMPT"] = "0"
@@ -30,24 +44,46 @@ def run_git(project: Path, *arguments: str) -> str | None:
             ["git", "-C", str(project), *arguments],
             check=False,
             capture_output=True,
-            text=True,
+            text=text,
             # 2026-08-28: on Windows, text=True decodes with the locale code
             # page (cp1252), and a staged diff carrying any non-ASCII byte
             # crashed the reader thread - which took `egress --staged` down
             # with it. A crashed scanner is not a verdict. UTF-8 with
             # replacement keeps every caller reading what git actually wrote.
-            encoding="utf-8",
-            errors="replace",
+            # Only meaningful in text mode - `encoding`/`errors` are invalid
+            # subprocess.run arguments once `text=False`.
+            encoding="utf-8" if text else None,
+            errors="replace" if text else None,
             timeout=5,
             env=environment,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
-    return result.stdout.strip() if result.returncode == 0 else None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() if text else result.stdout
+
+
+def secure_dir(path: Path) -> Path:
+    """Create `path` (and parents) owner-only.
+
+    POSIX: `0o700` after creation - narrower than `mkdir`'s own umask-applied
+    mode, and reapplied even when the directory already existed with wider
+    bits. Windows inherits its ACL from the parent at creation time and has
+    no numeric mode to reapply here; `state_home_acl` is the check that
+    reports what the platform actually granted.
+    """
+    path.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        try:
+            os.chmod(path, 0o700)
+        except OSError:  # godmode: swallow-ok: best-effort tightening: state_home_acl still reports the real mode
+            pass
+    return path
 
 
 def _secure_create(path: Path, value: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    secure_dir(path.parent)
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(descriptor, "wb") as handle:
@@ -188,7 +224,7 @@ def _store_cached_anchor(requested: Path, identity: tuple[int, int],
                          anchor: ProjectAnchor) -> None:
     path = _anchor_cache_path(requested)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        secure_dir(path.parent)
         payload = asdict(anchor)
         payload["_head_identity"] = list(identity)
         payload["_cache_format"] = _ANCHOR_CACHE_FORMAT
@@ -269,6 +305,25 @@ class ProjectAnchor:
         return data
 
 
+# Environment variables that let git find a repository with no `.git`
+# above the directory it is asked about.
+_GIT_LOCATION_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
+
+
+def git_marker_above(requested: Path) -> bool:
+    """Whether any `.git` (directory or file) exists at or above
+    `requested` - stats only. `_head_identity` returning None does not say
+    this on its own: it also returns None for a `.git` it cannot read."""
+    current = requested
+    for _ in range(64):
+        if (current / ".git").exists():
+            return True
+        if current.parent == current:
+            return False
+        current = current.parent
+    return True  # past the walk bound: let git decide
+
+
 def resolve_anchor(project: str | Path) -> ProjectAnchor:
     requested = canonical_path(Path(project))
     if not requested.exists() or not requested.is_dir():
@@ -285,9 +340,17 @@ def resolve_anchor(project: str | Path) -> ProjectAnchor:
             return cached
 
     # Both paths from one spawn: `rev-parse` answers each query it is given,
-    # in argument order, one per line.
-    located = (run_git(requested, "rev-parse", "--show-toplevel",
-                       "--git-common-dir") or "").splitlines()
+    # in argument order, one per line. No `.git` anywhere above the
+    # directory (identity None) and no environment pointing git elsewhere
+    # means git has nothing to find, so the spawn - 100 ms idle, and far
+    # more under load, on every hook call in a directory that is not a
+    # repository (field report 2026-09-23) - is skipped.
+    if identity is None and not git_marker_above(requested) and not any(
+            os.environ.get(name) for name in _GIT_LOCATION_ENV):
+        located: list[str] = []
+    else:
+        located = (run_git(requested, "rev-parse", "--show-toplevel",
+                           "--git-common-dir") or "").splitlines()
     top = located[0].strip() if located else None
     common = located[1].strip() if len(located) > 1 else None
     if top and common:
@@ -348,6 +411,39 @@ def resolve_anchor(project: str | Path) -> ProjectAnchor:
         remote_hashes=[],
         archive_root=str(canonical_path(home / "projects" / project_key)),
     )
+
+
+def primary_checkout_root(anchor: ProjectAnchor) -> Path | None:
+    """Where `anchor`'s shared git metadata actually lives.
+
+    For the primary checkout this is the same directory as `worktree_root`
+    (`.git` sits directly inside it). For a linked worktree it differs:
+    `git_common_dir` always resolves to the PRIMARY checkout's `.git` (every
+    worktree shares one `objects`/`refs` store there), so its parent names
+    the primary checkout, not the worktree the caller is standing in.
+    `None` when `anchor` is not a git project at all.
+    """
+    if not anchor.git_common_dir:
+        return None
+    return canonical_path(Path(anchor.git_common_dir).parent)
+
+
+def is_linked_worktree(anchor: ProjectAnchor) -> bool:
+    """True when `anchor` names a linked worktree, not the primary checkout.
+
+    `ProjectAnchor` carries no `git_dir` field - only `git_common_dir` and
+    `worktree_root` (N-13's own plan text names a `git_dir` != `git_common_dir`
+    comparison that this codebase has never carried; this derives the same
+    fact honestly from the two fields that do exist). The primary checkout's
+    `git_common_dir` parent IS its `worktree_root`; a linked worktree's own
+    `worktree_root` is a different directory from that parent, because
+    `git_common_dir` still points at the primary checkout's shared metadata.
+    That disagreement is what this checks - never a guess, and `False` for
+    a non-git or already-primary project.
+    """
+    if not anchor.is_git or not anchor.git_common_dir or not anchor.worktree_root:
+        return False
+    return primary_checkout_root(anchor) != canonical_path(Path(anchor.worktree_root))
 
 
 def current_host() -> str:

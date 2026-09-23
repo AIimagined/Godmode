@@ -1,19 +1,21 @@
 {
   "routes": {
     "near_negative": {
-      "Add another skill when an installed skill already covers the capability.": "godmode-skill-forge",
-      "Create permanent instructions for a one-off request.": "godmode"
+      "Add a duplicate tool when an installed one already does the job.": "godmode-evidence",
+      "Suggest a new tool after a single occurrence hinted it could help.": "godmode-changelog",
+      "Write standing instructions meant for a single throwaway request.": "godmode",
+      "Write throwaway instructions for a single one-off request.": "godmode"
     },
     "positive": {
-      "Create a project skill for the same missing workflow observed in two real tasks.": "godmode-skill-forge",
+      "Create a project skill for the same missing workflow observed in three real tasks.": "godmode-skill-forge",
       "Repair a project skill whose routing and behavior evaluations prove a reusable gap.": "godmode-skill-forge"
     }
   },
   "schema": "godmode-routing-snapshot-v1",
   "skill": "godmode-skill-forge",
   "summary": {
-    "near_negatives_rejected": 1,
-    "near_negatives_total": 2,
+    "near_negatives_rejected": 4,
+    "near_negatives_total": 4,
     "positives_routed_correctly": 2,
     "positives_total": 2
   }

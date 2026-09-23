@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import Any
 
 from . import godmode_hostevent as hostevent
+from .godmode_paths import contained_or_refuse
 
 # ---------------------------------------------------------------------------
 # Event-name allowlists. ONE constant per host, each an exhaustive list of
@@ -248,6 +249,54 @@ SESSION_HOOK = "hooks/godmode_session_hook.py"
 GATE_FAST_HOOK = "hooks/godmode_gate_fast.py"
 POST_EDIT_HOOK = "hooks/godmode_post_edit.py"
 
+# N-4: the seconds-dialect defaults every dedicated seconds-based builder
+# used as bare literals before this task. `hook_timeouts()` overlays the
+# committed gate-latency baseline's `recommended_timeouts` (benchmarks/
+# gate_latency_baseline.json, Task N-3) on these when the baseline exists,
+# parses, and names a known key within 1..120 - a missing or malformed
+# baseline (fresh checkout, no benchmark run yet) means these defaults,
+# unchanged from what every builder hardcoded previously.
+DEFAULT_TIMEOUTS: dict[str, int] = {
+    "session_start": 30, "pre_tool_use": 3, "stop": 10, "user_prompt": 60,
+    "post_edit": 5, "pre_compact": 10, "session_end": 10, "subagent_stop": 10,
+}
+
+
+def hook_timeouts(project: Path) -> dict[str, int]:
+    """`DEFAULT_TIMEOUTS`, raised (never lowered) by `benchmarks/
+    gate_latency_baseline.json`'s `recommended_timeouts` under `project`,
+    when that file exists, parses as JSON, and its overrides are known keys
+    with plausible (1..120s) int values.
+
+    Fix round 1 ruling: a recommendation may only RAISE a default, never
+    lower it, until that hook path is itself measured directly - today's
+    `user_prompt` recommendation is derived from the fast-gate proxy, not
+    from a measurement of the prompt hook, so a low proxy reading must not
+    shrink the prompt hook's own budget. Each key is `max(default,
+    recommended)`, never a plain overwrite.
+
+    Any other shape - missing file, unparsable JSON, a `recommended_timeouts`
+    that is not itself a JSON object (string/list/number/null), an unknown
+    key, an out-of-range value, a non-int value (including `bool`, which
+    Python's `int` accepts but JSON never intends as a timeout) - leaves
+    that key (or all keys) at the default; a baseline never lowers or
+    invalidates the floor/ceiling this function itself enforces.
+    """
+    timeouts = dict(DEFAULT_TIMEOUTS)
+    path = Path(project) / "benchmarks" / "gate_latency_baseline.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        recommended = data.get("recommended_timeouts")
+        if not isinstance(recommended, dict):
+            return timeouts
+        for key, value in recommended.items():
+            if (key in timeouts and isinstance(value, int) and not isinstance(value, bool)
+                    and 1 <= value <= 120):
+                timeouts[key] = max(timeouts[key], value)
+    except (OSError, ValueError, TypeError):  # godmode: swallow-ok: a missing or malformed baseline means defaults
+        pass
+    return timeouts
+
 
 def _shell_entry(root_var: str, script: str, *args: str, timeout: int) -> dict[str, Any]:
     """The one hook-entry shape every host parses: `command` is ONE shell
@@ -423,7 +472,8 @@ def write_codex_project_hooks(plugin_root, project, *, force: bool = False) -> d
     import json as _json
     from pathlib import Path as _Path
 
-    target = _Path(project) / ".codex" / "hooks.json"
+    target = contained_or_refuse(_Path(project) / ".codex" / "hooks.json",
+                                  [_Path(project)], "codex hooks path")
     rendered = _json.dumps(codex_project_hooks(plugin_root), indent=2) + "\n"
     if target.exists() and target.read_text(encoding="utf-8") != rendered and not force:
         return {"written": False, "path": str(target),
@@ -552,7 +602,8 @@ def write_antigravity_project_hooks(plugin_root, project, *,
     fragment = build_antigravity_fragment()
     entry = _json.loads(_json.dumps(fragment["godmode"]).replace(
         ANTIGRAVITY_ROOT_TOKEN + "/", root.as_posix() + "/"))
-    target = _Path(project) / ".agents" / "hooks.json"
+    target = contained_or_refuse(_Path(project) / ".agents" / "hooks.json",
+                                  [_Path(project)], "antigravity hooks path")
     existing: dict = {}
     if target.exists():
         try:
@@ -592,7 +643,8 @@ def write_opencode_project_shim(plugin_root, project, *, force: bool = False) ->
     root = _Path(plugin_root)
     source = root / "adapters" / "opencode" / "godmode.opencode.js"
     body = source.read_text(encoding="utf-8")
-    target = _Path(project) / ".opencode" / "plugins" / "godmode.js"
+    target = contained_or_refuse(_Path(project) / ".opencode" / "plugins" / "godmode.js",
+                                  [_Path(project)], "opencode shim path")
     if target.exists() and target.read_text(encoding="utf-8") != body and not force:
         return {"written": False, "path": str(target),
                 "reason": "exists with different content; pass --force to overwrite"}
@@ -669,7 +721,7 @@ def codex_emitted_events() -> frozenset[str]:
 # ---------------------------------------------------------------------------
 
 
-def build_cursor_manifest() -> dict[str, Any]:
+def build_cursor_manifest(project: Path) -> dict[str, Any]:
     """Cursor's own native manifest: `"version": 1` envelope (Addendum 5,
     verified fetch), camelCase event keys, `failClosed: true` set on both
     gate hooks (`preToolUse` and `beforeShellExecution` - Addendum 5: "Cursor
@@ -692,24 +744,26 @@ def build_cursor_manifest() -> dict[str, Any]:
     cannot see.
     """
     root = "${PLUGIN_ROOT}"
+    timeouts = hook_timeouts(project)
     return {
         "version": 1,
         "hooks": {
             "sessionStart": [
-                {"hooks": [_shell_entry(root, SESSION_HOOK, "session-start", timeout=30)]},
+                {"hooks": [_shell_entry(root, SESSION_HOOK, "session-start",
+                                         timeout=timeouts["session_start"])]},
             ],
             "preToolUse": [
                 {
                     "matcher": CURSOR_PRETOOLUSE_MATCHER,
                     "failClosed": True,
-                    "hooks": [_shell_entry(root, GATE_FAST_HOOK, timeout=3)],
+                    "hooks": [_shell_entry(root, GATE_FAST_HOOK, timeout=timeouts["pre_tool_use"])],
                 },
             ],
             "beforeShellExecution": [
                 {
                     "matcher": CURSOR_SHELL_TEXT_MATCHER,
                     "failClosed": True,
-                    "hooks": [_shell_entry(root, GATE_FAST_HOOK, timeout=3)],
+                    "hooks": [_shell_entry(root, GATE_FAST_HOOK, timeout=timeouts["pre_tool_use"])],
                 },
             ],
             # Sweep 2026-09-07 (obligation 9869): Cursor's stop contract is a
@@ -720,26 +774,30 @@ def build_cursor_manifest() -> dict[str, Any]:
             "stop": [
                 {
                     "loop_limit": 1,
-                    "hooks": [_shell_entry(root, SESSION_HOOK, "stop", timeout=10)],
+                    "hooks": [_shell_entry(root, SESSION_HOOK, "stop", timeout=timeouts["stop"])],
                 },
             ],
             # 2026-09-09 (obligation 10120): the prompt boundary, the edit
             # findings, the compaction brief, the session-end checkpoint and
             # the subagent done-bar ride Cursor's own events.
             "beforeSubmitPrompt": [
-                {"hooks": [_shell_entry(root, SESSION_HOOK, "user-prompt", timeout=60)]},
+                {"hooks": [_shell_entry(root, SESSION_HOOK, "user-prompt",
+                                         timeout=timeouts["user_prompt"])]},
             ],
             "afterFileEdit": [
-                {"hooks": [_shell_entry(root, POST_EDIT_HOOK, timeout=5)]},
+                {"hooks": [_shell_entry(root, POST_EDIT_HOOK, timeout=timeouts["post_edit"])]},
             ],
             "preCompact": [
-                {"hooks": [_shell_entry(root, SESSION_HOOK, "pre-compact", timeout=10)]},
+                {"hooks": [_shell_entry(root, SESSION_HOOK, "pre-compact",
+                                         timeout=timeouts["pre_compact"])]},
             ],
             "sessionEnd": [
-                {"hooks": [_shell_entry(root, SESSION_HOOK, "session-end", timeout=10)]},
+                {"hooks": [_shell_entry(root, SESSION_HOOK, "session-end",
+                                         timeout=timeouts["session_end"])]},
             ],
             "subagentStop": [
-                {"hooks": [_shell_entry(root, SESSION_HOOK, "subagent-stop", timeout=10)]},
+                {"hooks": [_shell_entry(root, SESSION_HOOK, "subagent-stop",
+                                         timeout=timeouts["subagent_stop"])]},
             ],
         },
     }
@@ -747,6 +805,115 @@ def build_cursor_manifest() -> dict[str, Any]:
 
 def cursor_emitted_events(manifest: dict[str, Any]) -> frozenset[str]:
     return frozenset(manifest.get("hooks", {}).keys())
+
+
+# ---------------------------------------------------------------------------
+# NS-10l: Cursor's MCP config (`mcp.json`) - the second host the host-generic
+# stdio adapter (`scripts/godmode_mcp_server.py`) serves. Distinct artifact
+# kind from the hook manifest above: an `mcpServers` map, not an event/matcher
+# tree, and per-request/no-port/no-daemon by the same decision (seq 11) the
+# adapter's own docstring states. Additive to this module only - no existing
+# builder, registry, or dispatch above is touched.
+# ---------------------------------------------------------------------------
+
+# Cursor's own documented MCP config env var (Addendum 5, verified fetch):
+# the one project-scoped variable its docs name is `CURSOR_PROJECT_DIR`, not
+# a plugin-root variable. Whether Cursor's MCP loader expands a `${VAR}`
+# token inside an `args` array entry (as opposed to a hooks command string,
+# which Addendum 5 documents separately) is UNVERIFIED - the same kind of gap
+# `build_cursor_manifest`'s own docstring names for `${PLUGIN_ROOT}`, carried
+# here rather than guessed away.
+CURSOR_PROJECT_DIR_TOKEN = "${CURSOR_PROJECT_DIR}"
+
+
+def build_cursor_mcp_manifest(plugin_root: Path) -> dict[str, Any]:
+    """Cursor's own documented MCP config shape: `{"mcpServers": {"<name>":
+    {"command", "args"}}}`. Wires the host-generic stdio adapter
+    (`scripts/godmode_mcp_server.py`) for Cursor - `--host cursor` selects
+    only the server's `serverInfo.name` suffix, never a second
+    implementation (NS-10l's own acceptance line: "one adapter, two hosts,
+    stdio only" - per-request, no port, no daemon, decision seq 11).
+
+    GAP, documented rather than guessed: unlike `.cursor-plugin/hooks.json`,
+    Cursor does not auto-discover a plugin-bundled `mcp.json` at a fixed
+    path (no addendum names one) - this artifact is a reference an operator
+    merges into their own `~/.cursor/mcp.json` or `<project>/.cursor/
+    mcp.json`, the same merge-not-auto-discover posture `build_gemini_
+    fragment` already states for its own settings fragment. That gap is
+    about DISCOVERY, not drift: the file this module writes for it
+    (`.cursor-plugin/mcp.json`) is still drift-checked by
+    `godmode_bindings.write()`/`check()`, the same as the identity and hook
+    manifests - via `packaging/hosts.json`'s own `mcp_manifests` section,
+    which names this artifact's path the way `hook_manifests` already does
+    for the hook manifests.
+    """
+    # Same portable placeholder `build_cursor_manifest` uses for its own
+    # hooks.json (Addendum 3's `${PLUGIN_ROOT}` convention) - the shipped
+    # file never bakes in this machine's absolute install path, so `plugin_
+    # root` is accepted for signature symmetry with `write_cursor_mcp_
+    # manifest` (which resolves the token to a real path at install time)
+    # but never spelled out literally into the committed artifact.
+    del plugin_root
+    server = "${PLUGIN_ROOT}/scripts/godmode_mcp_server.py"
+    return {
+        "mcpServers": {
+            "godmode": {
+                "command": "python",
+                "args": [server, "--project", CURSOR_PROJECT_DIR_TOKEN,
+                         "--host", "cursor"],
+            },
+        },
+    }
+
+
+def write_cursor_mcp_manifest(plugin_root, *, force: bool = False) -> dict:
+    """Regenerate the opt-in reference artifact at `<plugin_root>/
+    .cursor-plugin/mcp.json`, always FROM `build_cursor_mcp_manifest` - never
+    hand-typed, so the shipped file can never silently diverge from what the
+    builder above actually produces. Same overwrite contract as this
+    module's other dedicated writers (`write_codex_project_hooks` etc.): an
+    existing file with different content is refused without `force`.
+    """
+    from pathlib import Path as _Path
+
+    root = _Path(plugin_root)
+    rendered = json.dumps(build_cursor_mcp_manifest(root), indent=2) + "\n"
+    target = root / ".cursor-plugin" / "mcp.json"
+    if target.exists() and target.read_text(encoding="utf-8") != rendered and not force:
+        return {"written": False, "path": str(target),
+                "reason": "exists with different content; pass --force to overwrite"}
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(rendered, encoding="utf-8")
+    return {"written": True, "path": str(target),
+            "note": "reference only - Cursor does not auto-discover a "
+                    "plugin-bundled mcp.json; merge this file's mcpServers "
+                    "entry into ~/.cursor/mcp.json or the project's own "
+                    ".cursor/mcp.json by hand"}
+
+
+# Registration for the artifact kind this section adds - additive: no
+# existing builder, registry, or dispatch above is touched. `godmode_
+# bindings.py`'s `check()`/`write()` consult this registry (`_render_mcp_
+# artifact`/`_mcp_manifest_specs`) the same way they already consult
+# `HOOK_ARTIFACTS`, driven by `packaging/hosts.json`'s own `mcp_manifests`
+# section (parallel to `hook_manifests`) - so this artifact IS drift-checked,
+# unlike the Codex-project/OpenCode/Antigravity project-level writers above,
+# whose targets a caller `wire`s explicitly and which carry no drift check
+# at all. What stays opt-in about this one is DISCOVERY, not drift: Cursor
+# itself has no documented auto-load path for a plugin-bundled `mcp.json`
+# (see the `gap` field below), so an operator still merges the generated
+# file into their own config by hand.
+MCP_ARTIFACTS: dict[str, dict[str, Any]] = {
+    "cursor": {
+        "build": build_cursor_mcp_manifest,
+        "write": write_cursor_mcp_manifest,
+        "path": ".cursor-plugin/mcp.json",
+        "gap": "reference only; Cursor has no documented auto-discovery "
+               "path for a plugin-bundled mcp.json, and whether its MCP "
+               "loader expands ${CURSOR_PROJECT_DIR} inside an args array "
+               "entry is unverified",
+    },
+}
 
 
 # ---------------------------------------------------------------------------
@@ -857,6 +1024,206 @@ def gemini_emitted_events(fragment: dict[str, Any]) -> frozenset[str]:
 
 
 # ---------------------------------------------------------------------------
+# NS-6: GitHub Copilot - dedicated `.github/hooks/godmode.json`, plus a
+# marker-delimited block in `.github/copilot-instructions.md` (merged via
+# `godmode_wire.merge_text_block`, NS-10a's text primitive).
+#
+# Shape, read from the private R-1 hook-mechanism table (never named here -
+# `godmode_reach.REACH["copilot"]["reference"]` cites it as `ledger:3`):
+# ledger:3's own row groups Copilot's `.github/hooks/` directory with
+# "Claude Code + most others" - the same `hooks.json`-shaped manifest
+# (event -> matcher-block list -> command entries) Claude/Codex/Grok already
+# share, dispatching to a shell script via a plugin-root variable - not one
+# of that row's three called-out exceptions (Codex's Python adapter,
+# OpenCode's TS plugin, Cursor's second native-Windows manifest). This
+# module's own event vocabulary for that shared shape is `CODEX_HOOK_EVENTS`
+# (identical to Claude's own `CLAUDE_HOOK_EVENTS` alias below it), so
+# Copilot's allowlist reuses it rather than re-typing the same eight names a
+# third time. A SEPARATE row (`ledger:15`) documents the one Copilot-specific
+# dialect fact this module can cite: "top-level `additionalContext` for
+# Copilot-shaped hosts" (not Claude's nested
+# `hookSpecificOutput.additionalContext`) - carried below as a documented
+# GAP, since `godmode_hostevent.render_decision` has no dedicated `copilot`
+# branch yet (Task 6's own file list is `godmode_host_manifests.py`/
+# `packaging/hosts.json`/tests only - wiring that runtime branch is a
+# separate task's job, never silently claimed done here).
+COPILOT_HOOK_EVENTS = CODEX_HOOK_EVENTS
+
+# No plugin-root variable is documented for Copilot's own hook loader (the
+# R-1 row that groups it under the shared shape names `${CLAUDE_PLUGIN_ROOT}`
+# for ITS siblings, not for Copilot specifically) - the same "portable
+# placeholder, substituted only at wire time" posture `ANTIGRAVITY_ROOT_TOKEN`
+# already uses, for the identical reason: the bundled reference file this
+# module ships must never bake in one machine's absolute install path.
+COPILOT_ROOT_TOKEN = "${godmodePluginRoot}"
+
+
+def build_copilot_hooks(plugin_root: Path | str | None = None) -> dict[str, Any]:
+    """The `.github/hooks/godmode.json` shape: a top-level `"hooks"` map,
+    keyed by the same CamelCase events the shared `hooks/hooks.json` file
+    already carries (ledger:3's "Claude Code + most others" grouping), each
+    routed through the launcher (`_shell_entry`, the one command shape every
+    host this module has code for actually parses).
+
+    `plugin_root=None` (the shape `godmode_bindings._render_hook_artifact`'s
+    generic dispatch calls this with - no parameter literally named
+    `project`) renders the PORTABLE token version bundled into this plugin's
+    own tree; an explicit `plugin_root` bakes the absolute path directly,
+    for a caller (`godmode_wire`'s project-level installer, or a replication
+    test) that already has one.
+
+    No tool-name vocabulary is documented for Copilot anywhere in the R-1
+    table, so `PreToolUse`'s block carries no `matcher` at all - the same
+    "no documented vocabulary, so match everything rather than guess a
+    narrower set" asymmetry `CURSOR_SHELL_TEXT_MATCHER`/`GEMINI_TOOL_MATCHER`
+    already choose, expressed here as an absent key (Claude's own hooks.json
+    convention already reads a matcher-less block as "every tool").
+    """
+    root = Path(plugin_root).as_posix() if plugin_root is not None else COPILOT_ROOT_TOKEN
+    timeouts = DEFAULT_TIMEOUTS
+    return {
+        # N6 (Task 6 fix round 1): this file ships committed at
+        # `.github/hooks/godmode.json`, a path ledger:3 says a real Copilot
+        # discovers - so the portable `${godmodePluginRoot}` token baked
+        # into the bundled reference render is otherwise an unexplained,
+        # unexpandable string sitting in a live discovery location. Same
+        # `_note` posture `build_antigravity_fragment` already uses;
+        # `copilot_emitted_events` reads only `["hooks"]`, so this sibling
+        # key is inert to every consumer that walks the manifest's events.
+        "_note": (
+            "This file is the reference shape for Copilot's "
+            "`.github/hooks/godmode.json`. `${godmodePluginRoot}` is a "
+            "portable placeholder, not a real environment variable Copilot "
+            "expands - `godmode hooks wire --host copilot` replaces it with "
+            "the absolute install path per project; the copy shipped here "
+            "is the un-substituted template, not a wired install."
+        ),
+        "hooks": {
+            "SessionStart": [
+                {"hooks": [_shell_entry(root, SESSION_HOOK, "session-start",
+                                         timeout=timeouts["session_start"])]},
+            ],
+            "UserPromptSubmit": [
+                {"hooks": [_shell_entry(root, SESSION_HOOK, "user-prompt",
+                                         timeout=timeouts["user_prompt"])]},
+            ],
+            "PreToolUse": [
+                {"hooks": [_shell_entry(root, GATE_FAST_HOOK, timeout=timeouts["pre_tool_use"])]},
+            ],
+            "PostToolUse": [
+                {"hooks": [_shell_entry(root, POST_EDIT_HOOK, timeout=timeouts["post_edit"])]},
+            ],
+            "PreCompact": [
+                {"hooks": [_shell_entry(root, SESSION_HOOK, "pre-compact",
+                                         timeout=timeouts["pre_compact"])]},
+            ],
+            "SessionEnd": [
+                {"hooks": [_shell_entry(root, SESSION_HOOK, "session-end",
+                                         timeout=timeouts["session_end"])]},
+            ],
+            "Stop": [
+                {"hooks": [_shell_entry(root, SESSION_HOOK, "stop", timeout=timeouts["stop"])]},
+            ],
+            "SubagentStop": [
+                {"hooks": [_shell_entry(root, SESSION_HOOK, "subagent-stop",
+                                         timeout=timeouts["subagent_stop"])]},
+            ],
+        },
+    }
+
+
+def copilot_emitted_events(manifest: dict[str, Any]) -> frozenset[str]:
+    return frozenset(manifest.get("hooks", {}).keys())
+
+
+def copilot_instructions_block() -> str:
+    """The Godmode block merged into `.github/copilot-instructions.md` via
+    `godmode_wire.merge_text_block` - advisory text only (Copilot's own
+    instructions file is "an auto-read instruction file, not an executed
+    hook", per the R-1 table's own excluded-entry note on the shape), naming
+    the real enforcement point (`.github/hooks/godmode.json`) rather than
+    duplicating it.
+    """
+    return (
+        "Godmode governs protected actions in this repository. Before running "
+        "a destructive or externally visible command, let the gate at "
+        "`.github/hooks/godmode.json` run (it dispatches through "
+        "`hooks/run-hook.cmd godmode_gate_fast.py`) - do not bypass, delete, "
+        "or edit it outside `godmode hooks wire --host copilot`."
+    )
+
+
+# ---------------------------------------------------------------------------
+# NS-6: Kiro - dedicated `.kiro/hooks.json`, routed through the launcher.
+#
+# Shape, read from the private R-1 hook-mechanism table's own row 1
+# (`ledger:92`, cited by `godmode_reach.REACH["kiro"]["reference"]`):
+# "Declarative `.kiro/hooks.json` (rule metadata only) + a Python `hook.py`
+# runtime evaluator that matches rules, sandboxes, and times out"; root
+# resolution is the runtime's own job ("no env var needed"); stdout is a
+# `HookResult` factory (`passthrough`/`reply`/`modify`/`inject_context`),
+# with a separate `ToolHookResult` distinguishing a hard-security deny from
+# a stateful-policy deny. That row names NO specific event-key string
+# (unlike the Codex/Grok/Cursor/Gemini rows, which each cite exact CamelCase
+# keys) - only that rules are matched against tool calls. `KIRO_HOOK_EVENTS`
+# below is therefore this module's own minimal, honestly-labelled inference
+# (`"toolCall"`, the one moment ledger:92's own text is specific enough to
+# name: a rule that "matches" and produces a `ToolHookResult`), never a
+# second event this module cannot back with that row's own words - the same
+# "an unverifiable name is OMITTED, never guessed" rule the module docstring
+# states, applied to a row that gives less to work with than most.
+KIRO_HOOK_EVENTS = frozenset({"toolCall"})
+
+# Same posture as `COPILOT_ROOT_TOKEN`/`ANTIGRAVITY_ROOT_TOKEN`: Kiro's own
+# runtime resolves its root itself (ledger:92), so no plugin-root variable
+# is documented for godmode to emit into a rule's `command` string - a
+# portable placeholder, substituted only at `hooks wire --host kiro` time.
+KIRO_ROOT_TOKEN = "${godmodePluginRoot}"
+
+
+def build_kiro_hooks(plugin_root: Path | str | None = None) -> dict[str, Any]:
+    """The `.kiro/hooks.json` shape: a top-level `"hooks"` map keyed by
+    `KIRO_HOOK_EVENTS`, each event's rule routed through the launcher
+    (`_shell_entry`) - the per-rule field names (`hooks: [{type, command,
+    timeout}]`) are this module's OWN uniform internal shape (the same one
+    `build_cursor_manifest`/`build_gemini_fragment` already use), not a
+    literal transcription of Kiro's own `hook.py` rule schema, which
+    ledger:92 does not spell out field-by-field - the gap is named on
+    `HOOK_ARTIFACTS["kiro"]["gap"]`, never silently presented as read.
+
+    Same `plugin_root=None` -> portable-token, explicit -> baked-absolute-
+    path convention `build_copilot_hooks` uses, for the identical reason
+    (the bundled reference file must never carry one machine's own path).
+    """
+    root = Path(plugin_root).as_posix() if plugin_root is not None else KIRO_ROOT_TOKEN
+    timeouts = DEFAULT_TIMEOUTS
+    return {
+        # N6 (Task 6 fix round 1): same reasoning as `build_copilot_hooks`'s
+        # own `_note` - this file ships committed at `.kiro/hooks.json`, so
+        # the un-substituted `${godmodePluginRoot}` token needs an
+        # explanation in the live discovery location, not just in this
+        # docstring. `kiro_emitted_events` reads only `["hooks"]`.
+        "_note": (
+            "This file is the reference shape for Kiro's `.kiro/hooks.json`. "
+            "`${godmodePluginRoot}` is a portable placeholder, not a real "
+            "environment variable Kiro's runtime expands - `godmode hooks "
+            "wire --host kiro` replaces it with the absolute install path "
+            "per project; the copy shipped here is the un-substituted "
+            "template, not a wired install."
+        ),
+        "hooks": {
+            "toolCall": [
+                {"hooks": [_shell_entry(root, GATE_FAST_HOOK, timeout=timeouts["pre_tool_use"])]},
+            ],
+        },
+    }
+
+
+def kiro_emitted_events(manifest: dict[str, Any]) -> frozenset[str]:
+    return frozenset(manifest.get("hooks", {}).keys())
+
+
+# ---------------------------------------------------------------------------
 # Base `plugin.json` (Agent Plugins Specification v1.0.0) - closed field list.
 # ---------------------------------------------------------------------------
 
@@ -945,4 +1312,224 @@ HOOK_ARTIFACTS: dict[str, dict[str, Any]] = {
                "and no auto-discovery path is verified - an installer must "
                "merge this file's \"hooks\" object by hand",
     },
+    "copilot": {
+        "mode": "dedicated",
+        "build": build_copilot_hooks,
+        "emitted": copilot_emitted_events,
+        "allowed_events": COPILOT_HOOK_EVENTS,
+        # N3/N4 (Task 6 fix round 1): the prior wording said the top-level
+        # additionalContext dialect "is not yet what this runtime emits" -
+        # wrong in the conservative direction. `hooks/godmode_session_hook.py`
+        # already prints it, unconditionally, beside the nested Claude-
+        # dialect key, on UserPromptSubmit; it does NOT print it on
+        # SessionStart (`_emit_claude_context`'s only body is the nested
+        # `hookSpecificOutput.additionalContext`) or in an advisory
+        # (`_advisory_body` is nested-only except on `cursor`'s own dialect).
+        # Naming which event does and does not carry it is the whole point
+        # of a gap field. Host DETECTION is a second, separate absence: the
+        # only "copilot" branch either detection chain has
+        # (`godmode_hostevent.detect_host`/`godmode_anchor.current_host`,
+        # via `godmode_anchor.is_copilot_environment`) fires on a VS Code
+        # Copilot extension install (`CLAUDE_PLUGIN_ROOT` pointing into
+        # `.vscode/agent-plugins/`) - a different product from the GitHub
+        # Copilot coding agent ledger:3 documents, whose `.github/hooks/`
+        # dispatch this manifest actually targets. A hook fired through
+        # `.github/hooks/godmode.json` therefore is not identified as this
+        # host by `current_host()` today, so a future `render_decision`
+        # branch needs its own detection marker first, not just a dialect.
+        "gap": "event names are the shared Claude-family CamelCase set "
+               "ledger:3's row groups Copilot's .github/hooks/ directory "
+               "under ('Claude Code + most others'), never independently "
+               "confirmed for Copilot specifically; render_decision has no "
+               "dedicated copilot branch yet, but the runtime already "
+               "emits the top-level additionalContext dialect ledger:15 "
+               "documents for 'Copilot-shaped hosts' on UserPromptSubmit, "
+               "host-independently; it does not emit it on SessionStart or "
+               "in an advisory, which stay nested-only "
+               "(hookSpecificOutput.additionalContext); host detection has "
+               "no branch for THIS host either - is_copilot_environment() "
+               "(godmode_hostevent.py/godmode_anchor.py) detects a VS Code "
+               "Copilot extension install, not the GitHub Copilot coding "
+               "agent whose .github/hooks/ dispatch this manifest targets, "
+               "so a hook fired through it is not identified as 'copilot' "
+               "by current_host() today; the plugin-root variable is a "
+               "portable placeholder token substituted only at "
+               "`hooks wire --host copilot` time",
+    },
+    "kiro": {
+        "mode": "dedicated",
+        "build": build_kiro_hooks,
+        "emitted": kiro_emitted_events,
+        "allowed_events": KIRO_HOOK_EVENTS,
+        "gap": "the one event name (toolCall) is this module's own inference "
+               "from ledger:92's HookResult/ToolHookResult description, not "
+               "a confirmed Kiro event key, and the per-rule field shape is "
+               "this module's own uniform internal shape, not a literal "
+               "transcription of Kiro's own hook.py rule schema; Kiro's "
+               "runtime resolves its own root (ledger:92), so the launcher "
+               "path here is a portable placeholder token substituted only "
+               "at `hooks wire --host kiro` time; host detection has no "
+               "branch for kiro at all (godmode_hostevent.detect_host and "
+               "godmode_anchor.current_host name no kiro marker anywhere in "
+               "either chain), so a render_decision dialect for it could "
+               "not fire even if one existed",
+    },
 }
+
+
+# ---------------------------------------------------------------------------
+# NS-10b: typed per-host capability declaration. `hooks status` and the R-4
+# matrix (`godmode_reach.py`) read this dict instead of prose, so "a feature
+# that needs a channel the host does not declare" is a computable fact, not
+# a claim someone has to keep a paragraph in sync with by hand.
+#
+# `STDOUT_CHANNELS` and `OS_PLATFORMS` are CLOSED vocabularies - the only two
+# lists a host's own declared `stdout`/`os` sets may ever draw from - the
+# same "closed enum, membership checked" pattern `PLUGIN_V1_CLOSED_FIELDS`/
+# `validate_plugin_v1` already establish above for `plugin.json`'s own
+# fields. `validate_host_capabilities()` is `tests/test_host_manifests.py`'s
+# own guard: a capability entry naming a channel or OS outside these two
+# sets fails it, the same way an invented `plugin.json` key already does.
+# ---------------------------------------------------------------------------
+
+# The four stdout-carried decision/message channels every host dialect in
+# this module resolves to, per `godmode_hostevent.render_decision`: "deny"
+# and "ask" are the two decision values a PreToolUse-family hook can answer
+# with (a host lacking "ask" folds it to "deny" - `HOSTS_WITH_ASK` there is
+# this module's own source for which hosts declare it); "additionalContext"
+# is the model-facing message channel (`hookSpecificOutput.additionalContext`
+# on Claude/Codex/Grok, `agent_message` on Cursor, `reason` on Antigravity -
+# same logical channel, different field name per dialect); "systemMessage"
+# is the operator-facing message channel (`systemMessage` on Claude, `user_
+# message` on Cursor, an "operator text" note in Grok's own Stop dialect).
+STDOUT_CHANNELS: frozenset[str] = frozenset(
+    {"deny", "ask", "additionalContext", "systemMessage"})
+
+# Every OS this plugin ships a launcher for (R-3/R-3a: the polyglot `.cmd`
+# and the generated `.sh` together cover all three) - a host's own `os` set
+# names which of these its manifest/wiring targets, never a platform this
+# module has no launcher path for at all.
+OS_PLATFORMS: frozenset[str] = frozenset({"windows", "linux", "macos"})
+
+_ALL_OS = OS_PLATFORMS
+
+# Claude reads the SAME shared `hooks/hooks.json` this module's Codex/Grok
+# builders patch (`merge_host_tools_into_shared`) - its own declared event
+# set is therefore identical to `CODEX_HOOK_EVENTS` (the shared file's own
+# key set), not a second, independently-typed list that could drift from it.
+CLAUDE_HOOK_EVENTS = CODEX_HOOK_EVENTS
+
+HOST_CAPABILITIES: dict[str, dict[str, Any]] = {
+    # Claude's own hooks reference documents all four channels at the top
+    # level (`hookSpecificOutput.permissionDecision` deny/ask,
+    # `hookSpecificOutput.additionalContext`, `systemMessage`) - the baseline
+    # every other host's dialect is compared against.
+    "claude": {"events": CLAUDE_HOOK_EVENTS, "stdout": STDOUT_CHANNELS,
+               "tier": "hook", "os": _ALL_OS},
+    # Codex: `HOSTS_WITH_ASK` names it for "ask" (PreToolUse wire +
+    # PermissionRequest); additionalContext is documented on its PreToolUse
+    # wire (`godmode_reach.py`'s own advisories cell); no `systemMessage`
+    # field is documented anywhere in its PermissionRequest/PreToolUse
+    # dialect (`_codex_project_entry`/`render_decision`'s codex branch never
+    # emits one).
+    "codex": {"events": CODEX_HOOK_EVENTS,
+              "stdout": frozenset({"deny", "ask", "additionalContext"}),
+              "tier": "hook", "os": _ALL_OS},
+    # Grok: not in `HOSTS_WITH_ASK` (its own docs: "Grok has no ask
+    # decision"), so no "ask"; `grok_keys` folds ask to deny. additionalContext
+    # is delivered "after the call" per its own docs (the PreToolUse-after
+    # channel, distinct from the PostToolUse/UserPromptSubmit stdout its own
+    # guide says is ignored - a per-event gap the feature-reach table still
+    # states per cell, this dict only says the CHANNEL exists somewhere in
+    # its dialect). No documented `systemMessage` field.
+    "grok": {"events": GROK_HOOK_EVENTS,
+             "stdout": frozenset({"deny", "additionalContext"}),
+             "tier": "hook", "os": _ALL_OS},
+    # Cursor: `HOSTS_WITH_ASK` names it; its own `cursor_keys` dialect carries
+    # `agent_message` (this module's additionalContext) and `user_message`
+    # (this module's systemMessage) beside `permission` (deny/ask).
+    "cursor": {"events": CURSOR_HOOK_EVENTS, "stdout": STDOUT_CHANNELS,
+               "tier": "hook", "os": _ALL_OS},
+    # Gemini: not in `HOSTS_WITH_ASK` (Addenda 4a/2: no ask). "deny" holds
+    # (Addendum 4a's own fail-open rule names exit code 2 as the block path)
+    # but no message channel is documented at all - Addendum 4a states only
+    # the stdout-shape constraint ("a single JSON object"), never a field
+    # name a host will actually read, which is exactly why every Gemini cell
+    # needing a message channel in `godmode_reach.py`'s table says "channel
+    # unverified" rather than "yes".
+    "gemini": {"events": GEMINI_HOOK_EVENTS, "stdout": frozenset({"deny"}),
+               "tier": "hook", "os": _ALL_OS},
+    # Antigravity: `HOSTS_WITH_ASK` names it (a real ask/force_ask per its
+    # own docs); its `{decision, reason}` dialect's `reason` field is read
+    # here as carrying both message channels this module tracks, on the
+    # same "one field, whichever channel reads it" reasoning `render_
+    # decision`'s antigravity branch already documents for itself.
+    "antigravity": {"events": ANTIGRAVITY_HOOK_EVENTS, "stdout": STDOUT_CHANNELS,
+                    "tier": "hook", "os": _ALL_OS},
+    # Copilot: not in `HOSTS_WITH_ASK` (no ask dialect documented anywhere
+    # in the R-1 table for it) and `render_decision` has no dedicated
+    # branch yet, so only the two channels the R-1 table actually backs are
+    # declared - "deny" (the universal exit-code-2 block every dialect in
+    # this table shares) and "additionalContext" (ledger:15's own "top-level
+    # additionalContext for Copilot-shaped hosts" finding). No
+    # `systemMessage` field is documented anywhere for it.
+    "copilot": {"events": COPILOT_HOOK_EVENTS,
+                "stdout": frozenset({"deny", "additionalContext"}),
+                "tier": "hook", "os": _ALL_OS},
+    # Kiro: ledger:92's own `HookResult` factory names `inject_context`
+    # (this module's additionalContext) and a `ToolHookResult` deny
+    # distinction (this module's deny) - no ask and no operator-facing
+    # message field is named anywhere in that row.
+    "kiro": {"events": KIRO_HOOK_EVENTS,
+             "stdout": frozenset({"deny", "additionalContext"}),
+             "tier": "hook", "os": _ALL_OS},
+    # OpenCode: no hook event at all (R-3a's "shim" tier) - the Bun shim
+    # relays a deny as a thrown exception, so "deny" is the one channel that
+    # exists; no event name to declare.
+    "opencode": {"events": frozenset(), "stdout": frozenset({"deny"}),
+                 "tier": "shim", "os": _ALL_OS},
+    # pi: an extension on `tool_call`, no permission surface - a deny is
+    # advisory only, but the channel still exists (R-3a's "none" tier is
+    # about hook DISPATCH, not about this one advisory channel).
+    "pi": {"events": frozenset(), "stdout": frozenset({"deny"}),
+           "tier": "none", "os": _ALL_OS},
+    # Goose: an MCP server exposing verbs as tools (R-3a's "mcp" tier) - no
+    # hook lifecycle event fires anything; a tool call's own return value is
+    # this dict's additionalContext-equivalent (content reaching the caller).
+    "goose": {"events": frozenset(), "stdout": frozenset({"additionalContext"}),
+              "tier": "mcp", "os": _ALL_OS},
+}
+
+
+_HOST_CAPABILITY_REQUIRED_KEYS = ("events", "stdout", "tier", "os")
+
+
+def validate_host_capabilities() -> list[str]:
+    """Every `HOST_CAPABILITIES` entry must declare all four required keys,
+    and its `stdout`/`os` sets must be subsets of the two closed
+    vocabularies above - the same enum-membership guard `validate_plugin_v1`
+    already runs for `plugin.json`'s field list.
+
+    Returns the offending host names, sorted; empty means every declared
+    manifest's channels resolve inside the enum. This is what `tests/
+    test_host_manifests.py` calls to fail a manifest whose declared channels
+    fall outside the closed set, per NS-10b's own acceptance line.
+
+    Fix round 1, nit 3: the prior `capability.get("stdout", frozenset())`
+    let an entry that OMITS `stdout`/`os` pass this guard clean (an empty
+    set is trivially a subset of any set) - only a separate test's direct
+    `capability["stdout"]` indexing ever caught that, and `events` had no
+    such test at all. A missing required key is now itself an offense,
+    checked before either subset comparison runs.
+    """
+    offenders = set()
+    for host, capability in HOST_CAPABILITIES.items():
+        missing = [key for key in _HOST_CAPABILITY_REQUIRED_KEYS if key not in capability]
+        if missing:
+            offenders.add(host)
+            continue
+        if not capability["stdout"] <= STDOUT_CHANNELS:
+            offenders.add(host)
+        if not capability["os"] <= OS_PLATFORMS:
+            offenders.add(host)
+    return sorted(offenders)

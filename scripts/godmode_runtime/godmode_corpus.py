@@ -56,6 +56,14 @@ DEFAULT_ROLES: dict[str, list[str]] = {
 
 UNWEIGHTED_ROLE_WEIGHT = 0.5
 
+# NS-12c: the two roles that carry what this project has LEARNED - the
+# lessons it recorded and the law compiled from them - as opposed to the
+# roles that describe how it is built. Named here, beside the role table
+# itself, because withholding them is a property of the brief rather than
+# of whichever caller asks for one; `build_brief(withhold_memory=True)`
+# drops exactly these and says so in `withheld_roles`.
+MEMORY_ROLES = frozenset({"lessons", "code-of-law"})
+
 
 @dataclass(frozen=True)
 class Binding:
@@ -504,15 +512,28 @@ def rank(
     return scored
 
 
-def build_brief(project: Path, task: str, budget: int) -> dict[str, Any]:
+def build_brief(
+    project: Path, task: str, budget: int, withhold_memory: bool = False
+) -> dict[str, Any]:
     """Assemble the bounded, deterministic context brief.
 
     The contract other stages depend on: identical project state plus identical task
     yields an identical brief, whichever model asks for it.
+
+    `withhold_memory=True` (NS-12c) builds the brief without the `MEMORY_ROLES`
+    documents, so the reader gets the project as it is described rather than as
+    it has been corrected. The dropped roles are named in `withheld_roles`: a
+    brief that is missing a layer must say which layer, or a score taken under
+    it reads as an ordinary score.
     """
     resolution = resolve_roles(project)
+    bindings = list(resolution.bindings)
+    withheld: list[str] = []
+    if withhold_memory:
+        withheld = sorted({b.role for b in bindings if b.role in MEMORY_ROLES})
+        bindings = [b for b in bindings if b.role not in MEMORY_ROLES]
     segments: list[Segment] = []
-    for binding in resolution.bindings:
+    for binding in bindings:
         segments.extend(segment_document(binding, resolution.project))
 
     scored = rank(segments, task, project=resolution.project)
@@ -533,19 +554,19 @@ def build_brief(project: Path, task: str, budget: int) -> dict[str, Any]:
         if (segment.path, segment.start_line) not in chosen:
             unread[segment.role] = unread.get(segment.role, 0) + 1
 
-    return {
+    payload: dict[str, Any] = {
         "task": task,
         "scorer": "fts5-bm25" if fts5_available() else "fallback-bm25",
         "budget": {"limit": budget, "used": used},
         "sources": {
-            "roles": len({binding.role for binding in resolution.bindings}),
-            "documents": len(resolution.bindings),
+            "roles": len({binding.role for binding in bindings}),
+            "documents": len(bindings),
             "documents_read": len({entry["path"] for entry in included}),
             "segments": len(segments),
             "segments_read": len(included),
             "statement": (
                 f"read {len({entry['path'] for entry in included})} of "
-                f"{len(resolution.bindings)} required sources"
+                f"{len(bindings)} required sources"
             ),
         },
         "required_but_unread": [
@@ -557,6 +578,12 @@ def build_brief(project: Path, task: str, budget: int) -> dict[str, Any]:
         "collisions": [{"path": path, "roles": list(roles)} for path, roles in resolution.collisions],
         "context": included,
     }
+    # The key appears only when something was actually withheld: an ordinary
+    # brief keeps the exact shape every host adapter already reads, and a
+    # `withheld_roles` key present at all means this brief is missing a layer.
+    if withhold_memory:
+        payload["withheld_roles"] = withheld
+    return payload
 
 
 def _self_check() -> None:

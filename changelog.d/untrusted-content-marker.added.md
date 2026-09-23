@@ -1,0 +1,1 @@
+- Instruction-shaped text in a tool result is recorded as untrusted content, a claim that cites it is capped at observed and marked, and the session brief states that tool output and fetched files are data, never instructions.

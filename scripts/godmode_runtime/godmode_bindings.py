@@ -11,12 +11,14 @@ Adding a fourth host is an entry, not a new tree to keep in step.
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 from pathlib import Path
 from typing import Any
 
 from . import godmode_host_manifests as host_manifests
+from . import godmode_launchers as launchers
 from .godmode_errors import GodmodeError
 
 SOURCE = "packaging/hosts.json"
@@ -75,6 +77,50 @@ def _serialize(manifest: dict[str, Any]) -> str:
     return json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
 
 
+# S-7: the root portable manifest. Its shape is its own (the v1 portable
+# spec, with an `extensions` block no host manifest carries), so it is not a
+# `hosts` entry - but the text a reader sees first, and the version, come
+# from the same identity as every host manifest. Only these fields are
+# generated; every other key in the file is kept as written.
+PORTABLE_MANIFEST = "plugin.json"
+PORTABLE_FIELDS: tuple[str, ...] = ("version", "description")
+
+
+def render_portable(source: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
+    """`existing` with its generated fields set from the shared identity,
+    key order preserved."""
+    rendered = dict(existing)
+    for field in PORTABLE_FIELDS:
+        if field in source["identity"]:
+            rendered[field] = source["identity"][field]
+    return rendered
+
+
+def _portable_entry(project: Path, source: dict[str, Any]) -> dict[str, Any] | None:
+    """The root manifest's drift entry, or None for a project without one."""
+    target = project / PORTABLE_MANIFEST
+    if not target.is_file():
+        return None
+    entry: dict[str, Any] = {"host": "portable", "path": PORTABLE_MANIFEST, "kind": "portable"}
+    actual = target.read_text(encoding="utf-8")
+    try:
+        loaded = json.loads(actual)
+    except json.JSONDecodeError:
+        entry.update(state="drifted", differing_fields=["<unparseable>"])
+        return entry
+    if not isinstance(loaded, dict):
+        entry.update(state="drifted", differing_fields=["<unparseable>"])
+        return entry
+    expected = render_portable(source, loaded)
+    if _serialize(expected) == actual:
+        entry["state"] = "current"
+    else:
+        entry["state"] = "drifted"
+        entry["differing_fields"] = sorted(
+            f for f in PORTABLE_FIELDS if expected.get(f) != loaded.get(f)) or ["<formatting only>"]
+    return entry
+
+
 def _render_hook_artifact(project: Path, host: str, mode: str) -> dict[str, Any]:
     """CX-3: the hook-manifest counterpart of `render()` above, for the
     second artifact kind `packaging/hosts.json`'s `hook_manifests` section
@@ -98,7 +144,17 @@ def _render_hook_artifact(project: Path, host: str, mode: str) -> dict[str, Any]
                 existing = {"hooks": {}}
         return host_manifests.merge_host_tools_into_shared(existing)
     artifact = host_manifests.HOOK_ARTIFACTS[host]
-    return artifact["build"]()
+    build = artifact["build"]
+    # N-4: the seconds-dialect builder (`build_cursor_manifest`) now reads
+    # the measured latency baseline under `project` for its hook timeouts,
+    # so it takes `project`; the millisecond-dialect builders (Antigravity,
+    # Gemini) are untouched by that task and still take none. Fix round 1
+    # (Important finding 2): dispatch by the PARAMETER NAME `project`, not
+    # by arity - a future builder taking some other single argument (not
+    # `project`) would otherwise be called with the wrong value silently.
+    if "project" in inspect.signature(build).parameters:
+        return build(project)
+    return build()
 
 
 def source_hook_path(project: Path, host: str) -> str:
@@ -117,6 +173,29 @@ def _hook_manifest_specs(source: dict[str, Any]) -> dict[str, Any]:
     over a string value where a host spec dict is expected.
     """
     return {k: v for k, v in source.get("hook_manifests", {}).items() if not k.startswith("_")}
+
+
+def _mcp_manifest_specs(source: dict[str, Any]) -> dict[str, Any]:
+    """`mcp_manifests`, minus any `_comment`-style documentation key - the
+    same convention `_hook_manifest_specs` already applies to its own
+    section (NS-10l's own artifact kind, distinct from the hook manifests
+    above)."""
+    return {k: v for k, v in source.get("mcp_manifests", {}).items() if not k.startswith("_")}
+
+
+def _render_mcp_artifact(project: Path, host: str) -> dict[str, Any]:
+    """NS-10l: the MCP-manifest counterpart of `_render_hook_artifact` above,
+    for the third artifact kind `packaging/hosts.json`'s `mcp_manifests`
+    section declares. `host_manifests.MCP_ARTIFACTS[host]["build"]` takes a
+    `plugin_root` positionally (the artifact is portable - it never bakes
+    `project` into the emitted content itself; see `build_cursor_mcp_
+    manifest`'s own docstring), so this calls it with `project` directly
+    rather than reusing `_render_hook_artifact`'s parameter-name dispatch,
+    which assumes a `project`-named parameter or none at all - a shape this
+    builder does not share.
+    """
+    artifact = host_manifests.MCP_ARTIFACTS[host]
+    return artifact["build"](project)
 
 
 def check(project: Path) -> dict[str, Any]:
@@ -161,6 +240,32 @@ def check(project: Path) -> dict[str, Any]:
             entry["differing_fields"] = ["<hook-manifest-content>"]
         results.append(entry)
 
+    for host, spec in sorted(_mcp_manifest_specs(source).items()):
+        target = project / spec["path"]
+        expected = _serialize(_render_mcp_artifact(project, host))
+        if not target.is_file():
+            results.append({"host": host, "path": spec["path"], "state": "missing", "kind": "mcp"})
+            continue
+        actual = target.read_text(encoding="utf-8")
+        drifted = actual != expected
+        entry = {"host": host, "path": spec["path"], "kind": "mcp",
+                 "state": "drifted" if drifted else "current"}
+        if drifted:
+            entry["differing_fields"] = ["<mcp-manifest-content>"]
+        results.append(entry)
+
+    portable = _portable_entry(project, source)
+    if portable is not None:
+        results.append(portable)
+
+    # R-3/R-3a: the launcher template pair (`hooks/run-hook.cmd`, `hooks/
+    # run-hook.sh`) is not host-specific and is not declared in `packaging/
+    # hosts.json` - `godmode_launchers.py` is its own source, checked the
+    # same way (generate -> compare bytes) so it can never drift silently.
+    for entry in launchers.check(project):
+        results.append({"host": entry["launcher"], "path": entry["path"],
+                        "state": entry["state"], "kind": "launcher"})
+
     drifted = [r for r in results if r["state"] != "current"]
     return {
         "source": SOURCE,
@@ -171,7 +276,18 @@ def check(project: Path) -> dict[str, Any]:
 
 
 def write(project: Path) -> dict[str, Any]:
-    """Regenerate every host manifest from the source."""
+    """Regenerate every host manifest from the source.
+
+    C-6 (install manifest): every path this function manages is recorded in
+    `<project>/.godmode/godmode/install-manifest.json` (`godmode_
+    installmanifest.record`, via `host_manifests._record_installed` - the
+    SAME helper the project-level host writers already use, not a second
+    one) whether or not this call actually rewrote its bytes. Recording is
+    unconditional on every managed path, not only a `written` one, so a
+    target that predates this recording (or was regenerated identically)
+    still ends up in the manifest the next time this runs - `hooks status`
+    reads the manifest, not `written`, to report a path as missing.
+    """
     source = _load(project)
     written: list[str] = []
     for host, spec in sorted(source["hosts"].items()):
@@ -181,6 +297,7 @@ def write(project: Path) -> dict[str, Any]:
         if not target.is_file() or target.read_text(encoding="utf-8") != content:
             target.write_text(content, encoding="utf-8")
             written.append(spec["path"])
+        host_manifests._record_installed(project, "bindings", target)
 
     for host, spec in sorted(_hook_manifest_specs(source).items()):
         target = project / spec["path"]
@@ -189,8 +306,40 @@ def write(project: Path) -> dict[str, Any]:
         if not target.is_file() or target.read_text(encoding="utf-8") != content:
             target.write_text(content, encoding="utf-8")
             written.append(spec["path"])
+        host_manifests._record_installed(project, "bindings", target)
 
-    total = len(source["hosts"]) + len(_hook_manifest_specs(source))
+    for host, spec in sorted(_mcp_manifest_specs(source).items()):
+        target = project / spec["path"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        content = _serialize(_render_mcp_artifact(project, host))
+        if not target.is_file() or target.read_text(encoding="utf-8") != content:
+            target.write_text(content, encoding="utf-8")
+            written.append(spec["path"])
+        host_manifests._record_installed(project, "bindings", target)
+
+    portable_target = project / PORTABLE_MANIFEST
+    portable = _portable_entry(project, source)
+    if portable is not None:
+        if portable["state"] != "current" and portable.get("differing_fields") != ["<unparseable>"]:
+            existing = json.loads(portable_target.read_text(encoding="utf-8"))
+            portable_target.write_text(_serialize(render_portable(source, existing)), encoding="utf-8")
+            written.append(PORTABLE_MANIFEST)
+        host_manifests._record_installed(project, "bindings", portable_target)
+
+    # R-3/R-3a: regenerate the launcher pair the same run - one code path
+    # (`bindings --write`) for every generated artifact this project ships,
+    # launchers included. Recorded the same way as every other managed
+    # path above (unconditionally, not only when `written` - the class
+    # docstring's own invariant), so `hooks status`'s `install_manifest`
+    # sees them too.
+    launcher_result = launchers.write_launchers(project)
+    written.extend(launcher_result["written"])
+    for spec in launchers.LAUNCHERS.values():
+        host_manifests._record_installed(project, "bindings", project / spec["path"])
+
+    total = (len(source["hosts"]) + len(_hook_manifest_specs(source))
+             + len(_mcp_manifest_specs(source)) + len(launchers.LAUNCHERS)
+             + (1 if portable is not None else 0))
     return {"source": SOURCE, "written": written, "unchanged": total - len(written)}
 
 
@@ -492,6 +641,12 @@ def sbom(project: Path) -> dict[str, Any]:
 
     source = _load(project)
     stdlib = set(getattr(__import__("sys"), "stdlib_module_names", ()))
+    # `stdlib_module_names` describes only the interpreter running this scan,
+    # while the product supports several. CPython renamed its private hash
+    # modules in 3.12 (`_sha256` and `_sha512` became `_sha2`), so a version
+    # fallback that imports the old name on 3.11 read here as a third-party
+    # dependency. These names are the standard library on a supported Python.
+    stdlib |= {"_sha1", "_sha2", "_sha256", "_sha512", "_sha3", "_md5", "_blake2"}
     # The project's own packages are imported absolutely from the entry points.
     # Counting them as dependencies would make "no runtime dependencies"
     # unfalsifiable: the number could never reach zero however clean the code was.
@@ -688,11 +843,15 @@ def _self_check() -> None:
             },
         }), encoding="utf-8")
 
+        # 2 host manifests + the 2 launcher files (`hooks/run-hook.cmd`,
+        # `hooks/run-hook.sh`) - launchers are unconditional, not driven by
+        # this fixture's `packaging/hosts.json`, so a from-scratch project
+        # is missing all four until the first `write()`.
         first = check(project)
-        assert first["verdict"] == "drifted" and first["drifted"] == 2, first
+        assert first["verdict"] == "drifted" and first["drifted"] == 4, first
 
         result = write(project)
-        assert len(result["written"]) == 2, result
+        assert len(result["written"]) == 4, result
         assert check(project)["verdict"] == "current"
 
         alpha = json.loads((project / ".alpha" / "plugin.json").read_text(encoding="utf-8"))

@@ -1,0 +1,1 @@
+- The stdio MCP adapter is host-generic and opt-in (per request, no port), served to a second host through a generated manifest, with the same four tools on both.

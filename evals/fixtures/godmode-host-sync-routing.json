@@ -1,0 +1,21 @@
+{
+  "routes": {
+    "near_negative": {
+      "Diagnose why one already-passing test now fails": "godmode-investigation",
+      "Explain what one specific hook event does without checking any host's wiring state": "godmode-host-sync",
+      "Preview and authorize a single protected git or release operation": "godmode-governance"
+    },
+    "positive": {
+      "Check whether every installed AI CLI host still has Godmode's hooks wired correctly and repair whatever has drifted": "godmode-host-sync",
+      "Reconcile Godmode's hook manifests into a newly detected host's native hook format before trusting it to intercept anything": "godmode-host-sync"
+    }
+  },
+  "schema": "godmode-routing-snapshot-v1",
+  "skill": "godmode-host-sync",
+  "summary": {
+    "near_negatives_rejected": 2,
+    "near_negatives_total": 3,
+    "positives_routed_correctly": 2,
+    "positives_total": 2
+  }
+}

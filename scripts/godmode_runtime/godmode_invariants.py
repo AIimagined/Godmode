@@ -30,7 +30,12 @@ from datetime import datetime, timezone
 import re
 from typing import Any, Callable
 
-from .godmode_constants import REGISTER_EVIDENCE_PREFIXES, REGISTER_STATES
+from .godmode_constants import (
+    EVENT_KINDS,
+    REGISTER_EVIDENCE_PREFIXES,
+    REGISTER_STATES,
+    checker_commands_match,
+)
 from .godmode_errors import ArchiveError
 
 KindInvariant = Callable[[dict[str, Any]], None]
@@ -82,6 +87,29 @@ def _verdict_invariants(data: dict[str, Any]) -> None:
     no tool declared, or a declared tool's pattern never matched) costs
     this check nothing - it is skipped entirely.
     """
+    # N-11 (final review S1): the witness/checker self-reference rule is
+    # checked UNCONDITIONALLY, above the `disposition != "confirmed"` early
+    # return below - `godmode_verdict.record_verdict` applies this same rule
+    # unconditionally too, and for the same reason its own comment gives: an
+    # unreadable witness of kind other than `file`/`seq` (a bare `cmd:`
+    # witness, say) still folds to `witness-malformed`, never `confirmed`, so
+    # gating this on "folded == confirmed" would silently let the
+    # self-referential case through unrefused on a raw append. The other
+    # rules below (`not_checked`, `criteria`) are correctly confirmed-only -
+    # a non-confirmed verdict may legitimately carry both - so only this one
+    # check moves above the gate.
+    witness_ref = (data.get("witness") or {}).get("ref")
+    if isinstance(witness_ref, str) and witness_ref and any(
+        isinstance(check, dict) and isinstance(check.get("checker"), str)
+        and checker_commands_match(check["checker"], witness_ref)
+        for check in (data.get("checks") or [])
+    ):
+        raise ArchiveError(
+            f"the witness cannot be the same command as a checker: {witness_ref!r} "
+            "- a checker must recompute from data, not judge itself; a raw "
+            "append is held to the same rule record_verdict enforces"
+        )
+
     if data.get("disposition") != "confirmed":
         return
     if data.get("acquitted_by") == "self":
@@ -116,6 +144,38 @@ def _verdict_invariants(data: dict[str, Any]) -> None:
                 "<reason>' - a raw append is held to the same rule "
                 "record_verdict enforces"
             )
+    # N-11: the record is the single source of truth; these are the raw-append
+    # copies of the three rules `godmode_verdict.record_verdict` enforces on the
+    # normal path. Checkable from `data` alone because `_append_verdict`
+    # denormalises `not_checked`/`criteria` and the witness ref into the record.
+    if data.get("not_checked"):
+        raise ArchiveError(
+            "a 'confirmed' verdict cannot carry not_checked items: "
+            + ", ".join(str(item) for item in data.get("not_checked") or [])
+            + " - a raw append is held to the same rule record_verdict enforces"
+        )
+    criteria = data.get("criteria")
+    # Re-review finding C: present-but-wrong-shaped (a list, a string) used
+    # to skip the check entirely instead of being refused as malformed - the
+    # CLI already type-checks `criteria` before this point, so only a raw
+    # append can reach this, and it should not reach `confirmed` un-noticed.
+    if criteria is not None and not isinstance(criteria, dict):
+        raise ArchiveError(
+            "a 'confirmed' verdict's criteria must be an object of name to "
+            f"evidence, not a {type(criteria).__name__} - a raw append is "
+            "held to the same rule record_verdict enforces"
+        )
+    if isinstance(criteria, dict):
+        blank = [str(name) for name, evidence in criteria.items()
+                 if not str(evidence).strip()]
+        if blank:
+            raise ArchiveError(
+                "a 'confirmed' verdict criterion needs non-empty evidence: "
+                + ", ".join(blank)
+                + " - a raw append is held to the same rule record_verdict enforces"
+            )
+    # (the witness/checker self-reference rule now lives above the
+    # `disposition != "confirmed"` early return - see final review S1.)
 
 
 # U-V2's register/evidence vocabulary, read from `godmode_constants` - the
@@ -193,6 +253,72 @@ def _register_invariants(data: dict[str, Any]) -> None:
         )
 
 
+# NS-11c: the semantic layer's ontology for a `decision` - subject, value,
+# evidence - checked the same way `_register_invariants` above already
+# checks a register-shaped one: from `data` alone, because `Chronicle.
+# append()` calls a kind's validator with `data` only, never the separate
+# `evidence=` argument it also stores (see that function's own docstring).
+#
+# This CANNOT be a blanket rule on every `decision` record without
+# rewriting roughly twenty existing call sites across this codebase (leases,
+# delegations, removals, register entries, parity observations, skill
+# lifecycle, absorb verdicts, ...), each with its own bespoke `data` shape
+# and its own already-established validation - and several of them are
+# exercised by name in tests this sprint keeps green with no evidence at
+# all (`tests/test_writer_trust.py`, `tests/test_supersession.py`: bare
+# `remember --kind decision --subject s --value v` and
+# `archive.append("decision", "d", {"value": "v1"})` with no `--evidence`,
+# asserting `code == 0`). A mandatory, unconditional evidence requirement
+# would refuse both.
+#
+# So this is declared-contract, exactly the way `register_key` gates the
+# check above: a decision only enters the new ontology by declaring its own
+# semantic `data["subject"]`, distinct from the record's own label subject,
+# which is often a compound/prefixed key like `"removal:foo"` or
+# `"skill-created:bar"`. No writer in this tree sets that key today, so
+# this cannot regress a single one of them; any future write that wants the
+# memory contract's semantic-fact shape opts in by setting it, and gets
+# refused with a named remedy the moment it does so incompletely.
+#
+# Fix round 1, M1 - what this comment used to claim, and no longer does:
+# that the label subject is "unsuitable for the contradiction-detection
+# grouping NS-11e/Task 7 needs". Task 7 has since landed and
+# `godmode_forget._flag_contradictions` groups by exactly that label
+# subject. The honest statement of where this stands: the opt-in key has no
+# writer, so the ontology is unreached rather than bypassable, and the
+# consumer this comment named consumes the other subject. Deciding whether
+# it becomes mandatory (behind a compatibility shim for the ~20 existing
+# writers) or is dropped is carried to 0.3.29; nothing here should be read
+# as a claim that another module is already using it.
+_SEMANTIC_DECISION_FIELDS = ("subject", "value", "evidence")
+
+
+def _semantic_decision_invariants(data: dict[str, Any]) -> None:
+    if "subject" not in data:
+        return
+    missing = [field for field in _SEMANTIC_DECISION_FIELDS if not data.get(field)]
+    if missing:
+        raise ArchiveError(
+            "A semantic decision (data['subject'] present) must carry "
+            "subject, value and evidence, all non-empty (NS-11c); missing: "
+            + ", ".join(missing)
+            + " - remedy: supply every field, e.g. "
+              "data={'subject': '<the fact this is about>', "
+              "'value': '<what is true>', 'evidence': ['seq:<n>']}, or "
+              "drop data['subject'] entirely for a decision that predates "
+              "this contract"
+        )
+
+
+def _decision_invariants(data: dict[str, Any]) -> None:
+    """Dispatcher for the `decision` kind: register-shaped records keep
+    `_register_invariants`'s existing rule unchanged; every decision (
+    register-shaped or not) also passes through the NS-11c semantic-fact
+    check, which is a no-op unless the record opts in (see above)."""
+    _register_invariants(data)
+    _semantic_decision_invariants(data)
+
+
 # B3-1's paired-verdict rule, checkable from `data` alone. Kept in sync with
 # godmode_upstream.DISPOSITIONS / BEHAVIOR_VERDICTS by hand, not by import -
 # same convention as _REGISTER_STATES above: this module stays dependency-
@@ -250,6 +376,42 @@ def _upstream_diff_invariants(data: dict[str, Any]) -> None:
             )
 
 
+def _lesson_invariants(data: dict[str, Any]) -> None:
+    """I-1 (0.3.28 Plan 5 Task 4): a lesson's `enforce` field, when present,
+    must already be the parsed `{kind, predicate}` shape - never a raw
+    `--enforce` string that slipped past `godmode_law.parse_enforce_spec`.
+    Re-validates `predicate` against the same grammar `parse_enforce_spec`
+    checks (same defense-in-depth this module applies to every other kind):
+    a malformed predicate is refused here too, regardless of whether it
+    arrived through `remember --enforce` or a raw `Chronicle.append` call
+    that built the dict by hand.
+    """
+    enforce = data.get("enforce")
+    if enforce is None:
+        return
+    if not isinstance(enforce, dict):
+        raise ArchiveError("a lesson's 'enforce' field must be a {kind, predicate} mapping")
+    kind = enforce.get("kind")
+    predicate = enforce.get("predicate")
+    if not isinstance(kind, str) or not kind or kind not in EVENT_KINDS:
+        raise ArchiveError(
+            f"a lesson's enforce.kind {kind!r} is not a recognised record kind")
+    from .godmode_law import ENFORCE_FORBIDDEN_KINDS
+    if kind in ENFORCE_FORBIDDEN_KINDS:
+        # I-1 fix round 1 (Blocking 3): same defence-in-depth this module
+        # already applies to the predicate grammar below - a raw
+        # `Chronicle.append` that built the dict by hand, bypassing
+        # `godmode_law.parse_enforce_spec`, is refused here too.
+        raise ArchiveError(
+            f"a lesson's enforce.kind {kind!r} is refused: it is the gate's "
+            "own audit trail, written by hooks - see godmode_law."
+            "ENFORCE_FORBIDDEN_KINDS")
+    if not isinstance(predicate, str) or not predicate.strip():
+        raise ArchiveError("a lesson's enforce.predicate must be a non-empty string")
+    from .godmode_law import parse_enforce_predicate
+    parse_enforce_predicate(predicate)
+
+
 def _pin_invariants(data: dict[str, Any]) -> None:
     """U-B2's protected-evaluator pins - the archived sha256 IS the security
     property this whole mechanism rests on. A pin record with no valid digest
@@ -282,6 +444,303 @@ def _pin_invariants(data: dict[str, Any]) -> None:
             "a pin record must carry the sha256 digest of the pinned file; "
             "an archived pin with no valid hash enforces nothing while "
             "claiming to"
+        )
+
+
+def _pattern_invariants(data: dict[str, Any]) -> None:
+    """NS-12e: a `pattern` record with no class or no occurrence enforces
+    nothing while claiming to track a recurring failure - the same
+    defense-in-depth `_pin_invariants` above applies to a pin with no
+    digest, held here against a raw append that bypasses
+    `godmode_mistakes.record_pattern`'s own checks.
+
+    `class` is checked for PRESENCE only, not membership in
+    `godmode_mistakes.FAILURE_CLASSES` - that table lives in a module which
+    imports `godmode_chronicle`, and this module stays dependency-free of
+    every archive-owning module (see the module docstring above), so a full
+    membership check has to live at `record_pattern`'s own layer instead;
+    this is the structural half only, the same split `_register_invariants`
+    draws between "a state is present" (checked here) and "the state is
+    legal for this transition" (checked by the owning module).
+    """
+    pattern_class = data.get("class")
+    if not isinstance(pattern_class, str) or not pattern_class.strip():
+        raise ArchiveError(
+            "a pattern record must carry a non-empty 'class' - an unclassed "
+            "recurring failure cannot be rolled up or matched against a "
+            "preflight finding's own class"
+        )
+    occurrences = data.get("occurrences")
+    if not isinstance(occurrences, list) or not occurrences:
+        raise ArchiveError(
+            "a pattern record must carry at least one entry in "
+            "'occurrences' - a pattern with none is a claim with nothing "
+            "behind it"
+        )
+    if any(not isinstance(o, int) or isinstance(o, bool) or o <= 0 for o in occurrences):
+        raise ArchiveError(
+            "a pattern record's 'occurrences' must be positive sequence numbers"
+        )
+
+
+def _improvement_proposal_invariants(data: dict[str, Any]) -> None:
+    """NS-4 (0.3.28 Plan 5 Task 3): an `improvement_proposal` with no target,
+    no diff, no citation, or no named actor enforces nothing while claiming
+    to propose a change - the same defense-in-depth `_pattern_invariants`
+    above applies to a pattern with no occurrence, held here against a raw
+    append that bypasses `godmode_bonds.propose`'s own checks.
+    """
+    target = data.get("target")
+    if not isinstance(target, str) or not target.strip():
+        raise ArchiveError(
+            "an improvement_proposal must carry a non-empty 'target' - a "
+            "proposal naming nothing cannot be ratified against anything"
+        )
+    digest = data.get("diff_hash")
+    if not isinstance(digest, str) or len(digest) != 64 or any(
+        char not in "0123456789abcdef" for char in digest.lower()
+    ):
+        raise ArchiveError(
+            "an improvement_proposal must carry the sha256 digest of the "
+            "diff it proposes; an archived proposal with no valid hash "
+            "enforces nothing while claiming to"
+        )
+    evidence = data.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        raise ArchiveError(
+            "an improvement_proposal must carry at least one citation in "
+            "'evidence' - an unevidenced proposal is a request, not a claim"
+        )
+    actor = data.get("actor")
+    if not isinstance(actor, str) or not actor.strip():
+        raise ArchiveError(
+            "an improvement_proposal must carry a non-empty 'actor' - "
+            "ratify's proposer/checker separateness compares actor "
+            "fingerprints, and cannot compare against a missing one"
+        )
+
+
+def _checker_bond_invariants(data: dict[str, Any]) -> None:
+    """NS-4: a `checker_bond` with no session, no actor, no target, no
+    bad-case hash, or a non-boolean `failed_as_expected` enforces nothing
+    while claiming to prove a checker can fail - `ratify` reads
+    `failed_as_expected` as a trilean-shaped fact (a rubber stamp reads
+    exactly like a missing bond otherwise), so it is checked here, not
+    merely at the console seam.
+
+    Fix round 1 (S6): `target` is required too - the file the bond's
+    planted bad case actually broke, so `ratify` can bind a bond to the
+    SAME file its proposal names, never a throwaway fixture with nothing
+    to do with the proposal under review.
+    """
+    for field in ("actor", "target", "bad_case_hash"):
+        value = data.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise ArchiveError(
+                f"a checker_bond must carry a non-empty '{field}' - an "
+                "archived bond with a blank field proves nothing while "
+                "claiming to"
+            )
+    if "session" not in data or not isinstance(data.get("session"), str):
+        raise ArchiveError(
+            "a checker_bond must carry its 'session' (the GODMODE_SESSION "
+            "identity it ran under) as a string, even when empty - ratify "
+            "matches a bond to a session by this field"
+        )
+    if not isinstance(data.get("failed_as_expected"), bool):
+        raise ArchiveError(
+            "a checker_bond's 'failed_as_expected' must be a real boolean - "
+            "a truthy non-boolean (e.g. the string \"true\") would let a "
+            "rubber-stamped bond read as passing"
+        )
+
+
+def _improvement_verdict_invariants(data: dict[str, Any]) -> None:
+    """NS-4: an `improvement_verdict` is valid only chained after a real
+    proposal and a real bond - `proposal_seq`/`bond_seq` must be positive
+    sequence numbers (never a placeholder like 0 or -1), `actor` must name
+    who ratified, and today's only legal `verdict` is "ratified" (a refusal
+    never reaches the archive at all - see `godmode_bonds.ratify`).
+    """
+    actor = data.get("actor")
+    if not isinstance(actor, str) or not actor.strip():
+        raise ArchiveError(
+            "an improvement_verdict must carry a non-empty 'actor'"
+        )
+    for field in ("proposal_seq", "bond_seq"):
+        value = data.get(field)
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ArchiveError(
+                f"an improvement_verdict's '{field}' must be a positive "
+                "sequence number"
+            )
+    if data.get("verdict") != "ratified":
+        raise ArchiveError(
+            "an improvement_verdict's 'verdict' must be \"ratified\" - a "
+            "refused ratification is never archived (godmode_bonds.ratify "
+            "raises instead of writing a record)"
+        )
+
+
+def _lesson_promotion_invariants(data: dict[str, Any]) -> None:
+    """NS-2 (0.3.28 Plan 5 Task 2): a `lesson_promotion` with no lesson_seq,
+    no actor, no citation, or no rerun_hash enforces nothing while claiming
+    to promote a structured lesson - the same defense-in-depth
+    `_improvement_proposal_invariants` above applies to a proposal with a
+    blank field, held here against a raw append that bypasses
+    `godmode_lessons.promote`'s own checks. `law compile`'s chained-approval
+    rule (`approval.actor != promotion.actor`, `approval.rerun_hash !=
+    promotion.rerun_hash`) cannot compare against a missing field.
+    """
+    lesson_seq = data.get("lesson_seq")
+    if not isinstance(lesson_seq, int) or isinstance(lesson_seq, bool) or lesson_seq <= 0:
+        raise ArchiveError(
+            "a lesson_promotion's 'lesson_seq' must be a positive sequence number"
+        )
+    actor = data.get("actor")
+    if not isinstance(actor, str) or not actor.strip():
+        raise ArchiveError("a lesson_promotion must carry a non-empty 'actor'")
+    evidence = data.get("evidence")
+    if not isinstance(evidence, list) or not evidence:
+        raise ArchiveError(
+            "a lesson_promotion must carry at least one citation in "
+            "'evidence' - an unevidenced promotion is a request, not a claim"
+        )
+    rerun_hash = data.get("rerun_hash")
+    if not isinstance(rerun_hash, str) or not _SHA256_HEX.match(rerun_hash.lower()):
+        raise ArchiveError(
+            "a lesson_promotion's 'rerun_hash' must be a sha256 hex digest - "
+            "the independent re-run's own evidence fingerprint, not a label"
+        )
+
+
+def _lesson_approval_invariants(data: dict[str, Any]) -> None:
+    """NS-2: a `lesson_approval` with no promotion_seq, no actor, or no
+    rerun_hash enforces nothing while claiming to approve a promotion -
+    same defense-in-depth as `_lesson_promotion_invariants` above.
+    """
+    promotion_seq = data.get("promotion_seq")
+    if not isinstance(promotion_seq, int) or isinstance(promotion_seq, bool) or promotion_seq <= 0:
+        raise ArchiveError(
+            "a lesson_approval's 'promotion_seq' must be a positive sequence number"
+        )
+    actor = data.get("actor")
+    if not isinstance(actor, str) or not actor.strip():
+        raise ArchiveError("a lesson_approval must carry a non-empty 'actor'")
+    rerun_hash = data.get("rerun_hash")
+    if not isinstance(rerun_hash, str) or not _SHA256_HEX.match(rerun_hash.lower()):
+        raise ArchiveError(
+            "a lesson_approval's 'rerun_hash' must be a sha256 hex digest"
+        )
+
+
+def _lesson_candidate_invariants(data: dict[str, Any]) -> None:
+    """NS-2: the candidate shelf note (`godmode_law.
+    shelve_oldest_candidates`) - a note with no shelved sequence or no
+    reason enforces nothing while claiming one of the live candidates was
+    taken out of the live set.
+    """
+    archived = data.get("archived_seqs")
+    if not isinstance(archived, list) or not archived:
+        raise ArchiveError(
+            "a lesson_candidate note must carry at least one entry in "
+            "'archived_seqs'"
+        )
+    if any(not isinstance(s, int) or isinstance(s, bool) or s <= 0 for s in archived):
+        raise ArchiveError(
+            "a lesson_candidate note's 'archived_seqs' must be positive "
+            "sequence numbers"
+        )
+    reason = data.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        raise ArchiveError("a lesson_candidate note must carry a non-empty 'reason'")
+
+
+def _hypothesis_invariants(data: dict[str, Any]) -> None:
+    """NS-13f: a `hypothesis` names its cause and a kill experiment, and its
+    status agrees with what that experiment did - `killed` only when it ran
+    and fired, `survived` only when it ran and did not. Held here as well as
+    in `godmode_hypothesis` so a raw append cannot mint a survivor a fix
+    could then cite.
+    """
+    if not isinstance(data.get("cause"), str) or not data["cause"].strip():
+        raise ArchiveError("a hypothesis must carry a non-empty 'cause'")
+    kills = data.get("kills")
+    if not (isinstance(kills, dict) and isinstance(kills.get("command"), str)
+            and kills["command"].strip()):
+        raise ArchiveError("a hypothesis must carry 'kills' with the experiment's 'command'")
+    ran, fired = kills.get("ran"), kills.get("fired")
+    if not isinstance(ran, bool) or not isinstance(fired, bool):
+        raise ArchiveError("a hypothesis's kills.ran and kills.fired must be booleans")
+    status = data.get("status")
+    if status not in ("open", "killed", "survived"):
+        raise ArchiveError("a hypothesis's 'status' must be open, killed or survived")
+    if fired and not ran:
+        raise ArchiveError("a kill experiment cannot fire without running")
+    # A run leaves a record: `ran` names the runner's attestation and the
+    # citation it wrote, and a hypothesis that never ran names none. The
+    # reader (`godmode_hypothesis.fix_citation_refusal`) loads that record.
+    check_seq, citation = kills.get("check_seq"), kills.get("citation")
+    if ran:
+        if (not isinstance(check_seq, int) or isinstance(check_seq, bool) or check_seq <= 0
+                or not isinstance(citation, str) or not citation.startswith("cmd:")):
+            raise ArchiveError(
+                "a hypothesis whose kill experiment ran must name the run: kills.check_seq "
+                "(the runner's attestation) and kills.citation (its cmd: citation)")
+    elif check_seq is not None or citation is not None:
+        raise ArchiveError("a kill experiment that has not run names no check_seq or citation")
+    expected = "killed" if ran and fired else "survived" if ran else "open"
+    if status != expected:
+        raise ArchiveError(
+            f"a hypothesis whose kill experiment has ran={ran}, fired={fired} is "
+            f"{expected}, not {status}")
+    confirms = data.get("confirms", [])
+    if not isinstance(confirms, list) or any(not isinstance(c, str) for c in confirms):
+        raise ArchiveError("a hypothesis's 'confirms' must be a list of citations")
+
+
+def _skill_impact_invariants(data: dict[str, Any]) -> None:
+    """NS-12a + NS-12d (0.3.28 Plan 5 Task 9): a `skill_impact` with no
+    target, no valid diff digest, a non-numeric score, or an outcome
+    outside {accepted, rejected} enforces nothing while claiming the
+    strict-improvement gate ran - the same defense-in-depth every other
+    NS-4/NS-12 kind above holds against a raw append bypassing
+    `godmode_skillimpact.record_impact`'s own checks.
+    """
+    target = data.get("target")
+    if not isinstance(target, str) or not target.strip():
+        raise ArchiveError(
+            "a skill_impact must carry a non-empty 'target' - an impact "
+            "naming nothing cannot be compared against anything later"
+        )
+    digest = data.get("diff_hash")
+    if not isinstance(digest, str) or len(digest) != 64 or any(
+        char not in "0123456789abcdef" for char in digest.lower()
+    ):
+        raise ArchiveError(
+            "a skill_impact must carry the sha256 digest of the change it "
+            "scored, in 'diff_hash'"
+        )
+    for field in ("score_before", "score_after"):
+        value = data.get(field)
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise ArchiveError(
+                f"a skill_impact's '{field}' must be a real number - the "
+                "strict-improvement gate compares these directly"
+            )
+    if data.get("outcome") not in ("accepted", "rejected"):
+        raise ArchiveError(
+            "a skill_impact's 'outcome' must be \"accepted\" or \"rejected\" "
+            "- NS-12d's gate has no third state (neutral folds into "
+            "rejected)"
+        )
+    patterns = data.get("patterns", [])
+    if not isinstance(patterns, list) or any(
+        not isinstance(p, int) or isinstance(p, bool) or p <= 0 for p in patterns
+    ):
+        raise ArchiveError(
+            "a skill_impact's 'patterns' must be a list of positive "
+            "sequence numbers (it may be empty)"
         )
 
 
@@ -392,14 +851,172 @@ def _action_invariants(data: dict[str, Any]) -> None:
             )
 
 
+_SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
+
+# NS-1 (0.3.28 Plan 5 Task 1): the named halt reasons a `loop_halt` record
+# may carry. Hand-copied, not imported, from
+# `godmode_looprecords.py` - this module stays dependency-free of every
+# archive-owning module on purpose (see the module docstring above), the
+# same discipline `_PROOF_MAX_TTL_SECONDS`/`_TOOL_ERROR_ACK` above already
+# follow for their own owning modules' copies.
+# `tests/test_atlas_loop.py` asserts the two sets stay equal.
+_LOOP_BUDGET_NAMES = ("steps", "tokens", "wall_time")
+_LOOP_HALT_REASON_INTERRUPTED = "operator-interrupted"
+_LOOP_HALT_REASON_SIGNATURE_REPEATED = "loop-signature-repeated"
+LOOP_HALT_REASONS = frozenset(
+    {f"{name}-exhausted" for name in _LOOP_BUDGET_NAMES}
+    | {_LOOP_HALT_REASON_INTERRUPTED, _LOOP_HALT_REASON_SIGNATURE_REPEATED}
+)
+
+
+def _loop_step_invariants(data: dict[str, Any]) -> None:
+    """NS-1: a `loop_step` record with no task, no positive attempt number,
+    no sha256-shaped signature, or a malformed budget enforces nothing
+    while claiming to gate a retry - the same defense-in-depth
+    `_pattern_invariants` above applies to a pattern with no occurrence,
+    held here against a raw append that bypasses
+    `godmode_looprecords.advance`'s own checks.
+    """
+    task = data.get("task")
+    if not isinstance(task, str) or not task.strip():
+        raise ArchiveError("a loop_step record must carry a non-empty 'task'")
+    attempt_n = data.get("attempt_n")
+    if not isinstance(attempt_n, int) or isinstance(attempt_n, bool) or attempt_n < 1:
+        raise ArchiveError("a loop_step record's 'attempt_n' must be a positive integer")
+    signature_hash = data.get("failure_signature_hash")
+    if not isinstance(signature_hash, str) or not _SHA256_HEX.match(signature_hash.lower()):
+        raise ArchiveError(
+            "a loop_step record's 'failure_signature_hash' must be a sha256 hex digest"
+        )
+    budget = data.get("budget_remaining")
+    if not isinstance(budget, dict) or set(budget) != set(_LOOP_BUDGET_NAMES):
+        raise ArchiveError(
+            "a loop_step record's 'budget_remaining' must carry exactly "
+            f"{sorted(_LOOP_BUDGET_NAMES)}"
+        )
+    for name, value in budget.items():
+        if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0):
+            raise ArchiveError(
+                f"a loop_step record's budget_remaining.{name} must be a "
+                "non-negative integer or null (null means no ceiling declared)"
+            )
+
+
+def _loop_halt_invariants(data: dict[str, Any]) -> None:
+    """NS-1: a `loop_halt` record's 'reason' must be one this runtime
+    actually names, and its 'signatures' must match what that reason
+    implies - three identical sha256 digests for a repeated-signature
+    halt (the whole point of the record), none at all for a budget halt
+    (no signature was ever computed before a budget exhaustion halts, per
+    the checked-before-the-signature-test ordering)."""
+    task = data.get("task")
+    if not isinstance(task, str) or not task.strip():
+        raise ArchiveError("a loop_halt record must carry a non-empty 'task'")
+    reason = data.get("reason")
+    if not isinstance(reason, str) or reason not in LOOP_HALT_REASONS:
+        raise ArchiveError(
+            f"a loop_halt record's 'reason' must be one of {sorted(LOOP_HALT_REASONS)}"
+        )
+    signatures = data.get("signatures")
+    if not isinstance(signatures, list) or any(not isinstance(s, str) for s in signatures):
+        raise ArchiveError("a loop_halt record's 'signatures' must be a list of strings")
+    if reason == _LOOP_HALT_REASON_SIGNATURE_REPEATED:
+        if len(signatures) != 3 or len(set(signatures)) != 1:
+            raise ArchiveError(
+                "a loop-signature-repeated halt must carry exactly three "
+                "identical signatures - that repetition is the halt's own evidence"
+            )
+        if not all(_SHA256_HEX.match(s.lower()) for s in signatures):
+            raise ArchiveError("a loop_halt record's signatures must be sha256 hex digests")
+    elif signatures:
+        raise ArchiveError(
+            f"a '{reason}' halt must carry no signatures - none was computed "
+            "before a budget/interruption halt fires"
+        )
+
+
+# NS-11e fix round 1 (review B, B4): the closed status vocabulary for a
+# `review` record. Kept here, beside the validator that enforces it, and
+# re-exported through `godmode_forget` for the pass that writes them;
+# `godmode_chronicle.REVIEW_CLOSING_STATUSES` is the subset the
+# single-writer close guard treats as a closure.
+REVIEW_STATUSES = frozenset({"open", "acknowledged", "dismissed"})
+
+
+def _review_invariants(data: dict[str, Any]) -> None:
+    """NS-11e (0.3.28 Plan 5 Task 7): `godmode forget`'s contradiction pass
+    writes a `review` record naming which two (or more) active records on
+    one subject disagree - never which one is right, only that both are
+    still standing. A `review` with fewer than two sequences, or with a
+    named kind that is not itself a real record kind, enforces nothing
+    while claiming to flag a contradiction - the same defense-in-depth
+    `_pattern_invariants` above applies to a pattern with no occurrence,
+    held here against a raw append that bypasses `godmode_forget`'s own
+    checks.
+
+    Membership of `kind` against the live `EVENT_KINDS` set is NOT checked
+    here - that table lives in `godmode_constants`, which this
+    dependency-free module does not import (see the module docstring) -
+    the full closed-vocabulary check is `godmode_forget`'s own layer, the
+    same split `_pattern_invariants` draws for its own `class` field.
+
+    Fix round 1 (review B, B4): `status` is required, and closed to
+    `open` / `acknowledged` / `dismissed`. A flagged contradiction an
+    operator has deliberately accepted (`acknowledged`) or judged not to be
+    one (`dismissed`) must be able to STAY that way - without a status
+    vocabulary there was no way to say so durably, and the next pass simply
+    filed the same finding again. The two closing values go through the
+    chronicle's single-writer close guard
+    (`godmode_chronicle.REVIEW_CLOSING_STATUSES`), so closing a review is
+    the deliberate act closing anything else in the archive is.
+    """
+    sequences = data.get("sequences")
+    if not isinstance(sequences, list) or len(sequences) < 2:
+        raise ArchiveError(
+            "a review record must name at least two conflicting sequences - "
+            "one alone is not a contradiction"
+        )
+    if any(not isinstance(s, int) or isinstance(s, bool) or s <= 0 for s in sequences):
+        raise ArchiveError("a review record's 'sequences' must be positive sequence numbers")
+    if len(set(sequences)) != len(sequences):
+        raise ArchiveError("a review record's 'sequences' must not repeat the same sequence")
+    kind = data.get("kind")
+    if not isinstance(kind, str) or not kind.strip():
+        raise ArchiveError(
+            "a review record must carry a non-empty 'kind' - which record "
+            "kind the conflicting sequences belong to"
+        )
+    status = data.get("status")
+    if not isinstance(status, str) or status.strip().lower() not in REVIEW_STATUSES:
+        raise ArchiveError(
+            "a review record's 'status' must be one of "
+            f"{', '.join(sorted(REVIEW_STATUSES))} - an unresolved finding is "
+            "'open', one the operator accepts is 'acknowledged', one that is "
+            "not a real contradiction is 'dismissed'"
+        )
+
+
 # kind -> validator. Every entry here is enforced unconditionally the moment
 # godmode_chronicle.py is imported - see KIND_INVARIANTS in that module,
 # which is seeded from this dict at chronicle module load, not populated
 # lazily by whichever kind-owning module happens to be imported.
 KIND_VALIDATORS: dict[str, KindInvariant] = {
     "verdict": _verdict_invariants,
-    "decision": _register_invariants,
+    "decision": _decision_invariants,
     "pin": _pin_invariants,
     "upstream-diff": _upstream_diff_invariants,
     "action": _action_invariants,
+    "pattern": _pattern_invariants,
+    "loop_step": _loop_step_invariants,
+    "loop_halt": _loop_halt_invariants,
+    "improvement_proposal": _improvement_proposal_invariants,
+    "checker_bond": _checker_bond_invariants,
+    "improvement_verdict": _improvement_verdict_invariants,
+    "lesson": _lesson_invariants,
+    "review": _review_invariants,
+    "lesson_promotion": _lesson_promotion_invariants,
+    "lesson_approval": _lesson_approval_invariants,
+    "lesson_candidate": _lesson_candidate_invariants,
+    "skill_impact": _skill_impact_invariants,
+    "hypothesis": _hypothesis_invariants,
 }

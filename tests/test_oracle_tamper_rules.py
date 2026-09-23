@@ -603,5 +603,51 @@ class ChangeSetFromGit(unittest.TestCase):
             self.assertIn(T.RULE_TEST_WEAKENED, [f.get("rule") for f in report["findings"]])
 
 
+class S6FollowUps(unittest.TestCase):
+    """Plan 7 residue S-6: three mutations, each closed."""
+
+    def test_a_stem_in_a_comment_does_not_link_the_test(self) -> None:
+        old = ("import unittest\n\n# totals come from \"billing\" upstream\n\n\n"
+               "def test_total():\n    assert compute([2, 3]) == 5\n    assert compute([]) == 0\n")
+        new = old.replace("    assert compute([]) == 0\n", "")
+        self.assertEqual(run_rules(with_code(new, old)), [])
+        # The same stem on a real import line still links.
+        imported = old.replace("# totals come from \"billing\" upstream",
+                               "from app.billing import total as compute")
+        self.assertEqual(rules(run_rules(with_code(imported.replace("    assert compute([]) == 0\n", ""),
+                                                   imported))), [T.RULE_TEST_WEAKENED])
+
+    def test_an_exact_count_whose_expected_value_changed_is_not_a_reduced_bound(self) -> None:
+        for before, after in (("self.assertEqual(len(total()), 3)", "self.assertEqual(len(total()), 2)"),
+                              ("assert len(total()) == 3", "assert len(total()) == 2"),
+                              ("self.assertEqual(count_items(total()), 3)",
+                               "self.assertEqual(count_items(total()), 2)")):
+            with self.subTest(before=before):
+                old = f"from app.billing import total\n\n\ndef test_total():\n    {before}\n"
+                self.assertEqual(run_rules(with_code(old.replace(before, after), old)), [])
+        # A real lower bound on a count, reduced, still fires.
+        old = "from app.billing import total\n\n\ndef test_total():\n    assert len(total()) >= 3\n"
+        self.assertEqual(rules(run_rules(with_code(old.replace(">= 3", ">= 1"), old))),
+                         [T.RULE_TEST_WEAKENED])
+
+    def test_a_node_drop_elsewhere_in_the_workflow_does_not_hide_a_neutered_checker(self) -> None:
+        from godmode_runtime.godmode_integrity import _test_weakened_with_source_edit
+        neutered = "run: python quality/checks/example_check.py || :"
+        ctx = {
+            "oracle": [{"shape": "harness-node-dropped", "path": WF, "blocking": True,
+                        "detail": f"{WF} gained 1 line(s)", "lines": ["run: pytest --ignore=tests/flaky"]}],
+            "tamper": [{"rule": T.RULE_CHECKER_NEUTERED, "path": WF, "line": 9,
+                        "location": f"{WF}:9", "detail": f"{WF}: `|| true` added to a workflow command",
+                        "evidence": f"+{neutered}", "remedy": "r", "blocking": False,
+                        "line_text": neutered}],
+        }
+        found = [f for f in _test_weakened_with_source_edit(ctx) if f.get("rule") == T.RULE_CHECKER_NEUTERED]
+        self.assertEqual(len(found), 1, "the neutered checker line was hidden by a different node drop")
+        # The same line already reported as a node drop stays reported once.
+        ctx["oracle"][0]["lines"].append(neutered)
+        found = [f for f in _test_weakened_with_source_edit(ctx) if f.get("rule") == T.RULE_CHECKER_NEUTERED]
+        self.assertEqual(found, [])
+
+
 if __name__ == "__main__":
     unittest.main()

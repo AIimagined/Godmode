@@ -15,6 +15,7 @@ scored claims never resolved. All honest-empty before any data exists.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sys
 import unittest
@@ -744,3 +745,68 @@ class ResolutionPayloadTests(unittest.TestCase):
                       seqs[-1], "--outcome", "failed",
                       "resolution evidence", "--cite", "file:README.md"])
             self.assertIn("withdrawn claim", out2.getvalue())
+
+
+class ExitBearingCiteTests(unittest.TestCase):
+    """I-5: an exit-bearing form (`--quiet`, `-q` including a clustered
+    short flag, `cmp -s`, `test`/`[ ... ]` with a real predicate operator,
+    `merge-base --is-ancestor`) is falsifiable without a wrapper script; a
+    command that only reports state, or a `test`/`[ ... ]` with no real
+    predicate, still caps at observed. `tests/fixtures/cite_forms.json` is
+    the corpus this behaviour is pinned to; this test asserts
+    `falsifiable()` classifies every fixture row exactly as the fixture
+    says, so the fixture and the implementation cannot drift apart."""
+
+    def _fixture(self) -> list[dict]:
+        fixture_path = Path(__file__).parent / "fixtures" / "cite_forms.json"
+        return json.loads(fixture_path.read_text(encoding="utf-8"))
+
+    def test_fixture_rows_match_the_classifier(self) -> None:
+        from godmode_runtime.godmode_attest import (
+            _COMPARISON_OPERATORS,
+            _EXIT_BEARING_FORMS,
+            _FILE_TEST_OPERATORS,
+            _GIT_EXIT_BEARING_SUBCOMMANDS,
+            falsifiable,
+        )
+
+        rows = self._fixture()
+        # A vacuous or one-sided fixture would pass this test for free, so
+        # the non-vacuity is asserted before the per-row loop, not left to
+        # the loop to accidentally enforce. The floor is the total size of
+        # the classifier's own tables, not a hand-typed literal - a hand-
+        # typed floor gets bumped to whatever the fixture happened to hold
+        # last round (round 2 bumped it to round 1's count, which round 2's
+        # own five new rows could then have been deleted without failing).
+        # Deriving it from the tables means the floor grows on its own
+        # whenever a form is added to them, same as this round's `-h`.
+        floor = (len(_EXIT_BEARING_FORMS) + len(_GIT_EXIT_BEARING_SUBCOMMANDS)
+                 + len(_FILE_TEST_OPERATORS) + len(_COMPARISON_OPERATORS))
+        self.assertGreaterEqual(len(rows), floor, rows)
+        self.assertEqual({row["expected"] for row in rows}, {"falsifiable", "reports-state"})
+        for row in rows:
+            want = row["expected"] == "falsifiable"
+            got = falsifiable(f"cmd:{row['command']}")
+            self.assertEqual(got, want, (row["command"], row["note"]))
+
+    def test_record_claim_end_to_end_for_one_of_each(self) -> None:
+        from godmode_runtime.godmode_attest import record_claim, run_check
+        from test_godmode_runtime import isolated_project
+
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            # Exit-bearing form: `git diff --quiet` verifies without a wrapper.
+            run_check(archive, "s1", project, "claim-verify-exit-bearing",
+                       ["git", "diff", "--quiet"])
+            verified = record_claim(
+                archive, project, "s1", "the tree matches the index", "verified",
+                cites=["cmd:git diff --quiet"])
+            self.assertEqual(verified["data"]["grade"], "verified", verified["data"])
+
+            # State-reporting form: `git status` still caps at observed.
+            run_check(archive, "s1", project, "claim-verify-reports-state",
+                       ["git", "status"])
+            capped = record_claim(
+                archive, project, "s1", "nothing was implemented this turn", "verified",
+                cites=["cmd:git status"])
+            self.assertNotEqual(capped["data"]["grade"], "verified", capped["data"])

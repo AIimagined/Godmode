@@ -13,6 +13,7 @@ in the same pass, so the next occurrence is self-diagnosing.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 
 FIVE_WHYS = "5-whys"
@@ -99,8 +100,12 @@ def select(shape: Shape) -> tuple[list[str], str]:
 
 
 # Every field must be present and non-empty for the method to be complete.
+# A 5-Whys chain is not finished when it reaches a root: it is read back from
+# the root to the symptom (`validation`, one cited step per link) and it names
+# three countermeasures - immediate, preventive, and a detection that is a
+# check or ratchet, so the next occurrence is caught by a machine.
 CONTRACTS: dict[str, tuple[str, ...]] = {
-    FIVE_WHYS: ("symptom", "links", "root"),
+    FIVE_WHYS: ("symptom", "links", "root", "validation", "countermeasures"),
     PARETO: ("clusters", "coverage"),
     FISHBONE: ("spines", "assignments", "chosen_spine"),
     FMEA: ("modes",),
@@ -119,10 +124,126 @@ def _link_is_cited(link: Any) -> bool:
     return isinstance(link, dict) and bool(str(link.get("evidence", "")).strip())
 
 
+COUNTERMEASURES = ("immediate", "preventive", "detection")
+
+# Fields whose absence `complete()` names with its own, more specific gap
+# instead of the generic `missing:<field>` - one gap per fault, not two for
+# the same hole.
+_SPECIFIC_GAPS: dict[str, frozenset[str]] = {
+    FIVE_WHYS: frozenset({"links", "root", "validation", "countermeasures"}),
+}
+
+# A detection countermeasure names something that runs: a test, a check, a
+# ratchet, an invariant, a lint, a guard or an alert. Prose about vigilance
+# detects nothing.
+_DETECTION = re.compile(
+    # `check` but not "checklist", `guard` but not the prose "guard against".
+    r"(?i)(?:\bcmd:|\btests?\b|\bcheck(?!list)|\bratchet|\binvariant|\blint"
+    r"|\bguard(?!\s+against)|\bassert|\balert|\bmonitor|\bprobe|\bunittest|\bpytest)")
+
+# A root that is a person or an event is where blame stops, not where the
+# cause is. The contract demands a process, check, invariant or design cause.
+_BLAME = re.compile(
+    r"(?i)\b(?:human[\s-]+error|operator[\s-]+error|user[\s-]+error|forg[eo]t(?:ten)?"
+    r"|careless(?:ness)?|negligen(?:ce|t)|someone|somebody|no[\s-]?one\s+noticed"
+    r"|(?:the\s+)?last\s+deploy(?:ment)?"
+    r"|(?:developer|engineer|dev|author|reviewer|operator|intern)"
+    r"\s+(?:missed|overlooked|neglected|failed\s+to|did\s+not|didn'?t|made\s+a\s+mistake))\b")
+
+# Writer tiers are role words, not names; the blame vocabulary covers the
+# role phrasings that matter.
+_ROLE_WORDS = frozenset({"agent", "operator", "system", "runtime", "hook", "user"})
+
+
+def _people(record: dict[str, Any]) -> list[str]:
+    """Person names the record itself declares: its writer and author tokens."""
+    names: list[str] = []
+    for key in ("writer", "author", "authors", "people"):
+        value = record.get(key)
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            text = str(item or "").strip()
+            if len(text) >= 2 and text.lower() not in _ROLE_WORDS:
+                names.append(text)
+    return names
+
+
+def root_is_blame(root: str, people: list[str] | None = None) -> bool:
+    """Whether a root names a person, "human error", or an event instead of a cause."""
+    text = str(root or "").strip()
+    if not text:
+        return False
+    if _BLAME.search(text):
+        return True
+    lowered = text.lower()
+    return any(re.search(rf"(?<!\w){re.escape(name.lower())}(?!\w)", lowered)
+               for name in people or [])
+
+
+def _chain_validated(links: list[Any], validation: Any) -> bool:
+    """One cited backward step per link: "if the root is fixed, link n would not occur"."""
+    if not isinstance(validation, list) or not links or len(validation) < len(links):
+        return False
+    return all(
+        isinstance(step, dict) and str(step.get("text", "")).strip() and _link_is_cited(step)
+        for step in validation)
+
+
+def _chains(record: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """(label, chain) per branch; a single-chain record is one unlabelled chain.
+
+    Multi-branch chains are allowed - a branch per contributing cause, each
+    with its own links, root and backward validation.
+    """
+    branches = record.get("branches")
+    if isinstance(branches, list) and branches:
+        return [(f"branch{index}", branch if isinstance(branch, dict) else {})
+                for index, branch in enumerate(branches, 1)]
+    return [("", record)]
+
+
+def _five_whys_gaps(record: dict[str, Any]) -> list[str]:
+    gaps: list[str] = []
+    people = _people(record)
+    for label, chain in _chains(record):
+        suffix = f":{label}" if label else ""
+        links = chain.get("links") or []
+        if not links:
+            gaps.append(f"missing:links{suffix}")
+        # A speculative link cannot advance the chain: every 'why' needs evidence.
+        uncited = [index for index, link in enumerate(links, 1) if not _link_is_cited(link)]
+        if uncited:
+            gaps.append(f"uncited_links{suffix}:{','.join(str(i) for i in uncited)}")
+        root = str(chain.get("root", "")).strip()
+        if not root and not str(chain.get("instrument", record.get("instrument", ""))).strip():
+            gaps.append("unknown_without_instrument")
+        # Read back from the root: each step cited, one per link.
+        if not _chain_validated(links, chain.get("validation")):
+            gaps.append(f"chain_not_validated{suffix}")
+        if root and root.lower() not in ("unknown", "unclear") and root_is_blame(root, people):
+            gaps.append(f"root_is_blame{suffix}")
+    countermeasures = record.get("countermeasures")
+    if not isinstance(countermeasures, dict):
+        countermeasures = {}
+    for name in COUNTERMEASURES:
+        measure = countermeasures.get(name)
+        if not (isinstance(measure, dict) and str(measure.get("text", "")).strip()
+                and _link_is_cited(measure)):
+            gaps.append(f"countermeasures_missing:{name}")
+        elif name == "detection" and not _DETECTION.search(
+                f"{measure.get('text', '')} {measure.get('evidence', '')}"):
+            # The detection countermeasure is the ratchet: a recurring miss gets a check.
+            gaps.append("detection_names_no_check")
+    return gaps
+
+
 def complete(method: str, record: dict[str, Any]) -> dict[str, Any]:
     """Check a method record against its contract. Returns gaps, never raises."""
     gaps: list[str] = []
+    specific = _SPECIFIC_GAPS.get(method, frozenset())
     for field in contract(method):
+        if field in specific:
+            continue
         value = record.get(field)
         if value is None or (hasattr(value, "__len__") and len(value) == 0):
             gaps.append(f"missing:{field}")
@@ -134,13 +255,7 @@ def complete(method: str, record: dict[str, Any]) -> dict[str, Any]:
         gaps.append("unknown_without_instrument")
 
     if method == FIVE_WHYS:
-        links = record.get("links") or []
-        # A speculative link cannot advance the chain: every 'why' needs evidence.
-        uncited = [index for index, link in enumerate(links, 1) if not _link_is_cited(link)]
-        if uncited:
-            gaps.append(f"uncited_links:{','.join(str(i) for i in uncited)}")
-        if not root and not str(record.get("instrument", "")).strip():
-            gaps.append("unknown_without_instrument")
+        gaps.extend(gap for gap in _five_whys_gaps(record) if gap not in gaps)
 
     if method == PARETO:
         clusters = record.get("clusters") or []
@@ -242,6 +357,22 @@ def pareto_order(clusters: list[dict[str, Any]], threshold: float = 0.8) -> dict
     return {"ordered": ordered, "fix_first": covered, "threshold": threshold, "reports": total}
 
 
+def _whole_five_whys() -> dict[str, Any]:
+    return {
+        "symptom": "token replay",
+        "links": [{"why": "rotation reused", "evidence": "src/auth.py:88"}],
+        "root": "rotation reuses the previous nonce",
+        "validation": [{"text": "if rotation drew a fresh nonce, replay would not occur",
+                        "evidence": "cmd:python -m unittest tests.test_auth"}],
+        "countermeasures": {
+            "immediate": {"text": "revoke the reused tokens", "evidence": "seq:12"},
+            "preventive": {"text": "draw the nonce per rotation", "evidence": "src/auth.py:88"},
+            "detection": {"text": "a replay test in the auth suite",
+                          "evidence": "cmd:python -m unittest tests.test_auth"},
+        },
+    }
+
+
 def _self_check() -> None:
     # Selection is a lookup: identical shapes always select identically.
     one = Shape(reports=1, reproducible=True)
@@ -262,19 +393,27 @@ def _self_check() -> None:
     })
     assert not partial["complete"] and "uncited_links:2" in partial["gaps"], partial
 
-    whole = complete(FIVE_WHYS, {
-        "symptom": "token replay",
-        "links": [{"why": "rotation reused", "evidence": "src/auth.py:88"}],
-        "root": "rotation reused",
-    })
+    whole = complete(FIVE_WHYS, _whole_five_whys())
     assert whole["complete"], whole
 
+    # The chain is read back from the root; an unvalidated one is not finished.
+    unvalidated = _whole_five_whys()
+    del unvalidated["validation"]
+    assert "chain_not_validated" in complete(FIVE_WHYS, unvalidated)["gaps"]
+    # Detection is the ratchet: it must exist and name something that runs.
+    undetected = _whole_five_whys()
+    del undetected["countermeasures"]["detection"]
+    assert "countermeasures_missing:detection" in complete(FIVE_WHYS, undetected)["gaps"]
+    # A person or "human error" is where blame stops, not a root.
+    blamed = _whole_five_whys()
+    blamed["root"] = "developer forgot to rotate"
+    assert "root_is_blame" in complete(FIVE_WHYS, blamed)["gaps"]
+
     # Unknown is not terminal without an instrument.
-    stuck = complete(FIVE_WHYS, {"symptom": "s", "links": [{"why": "w", "evidence": "e"}], "root": "unknown"})
+    stuck = complete(FIVE_WHYS, {**_whole_five_whys(), "root": "unknown"})
     assert "unknown_without_instrument" in stuck["gaps"]
     instrumented = complete(FIVE_WHYS, {
-        "symptom": "s", "links": [{"why": "w", "evidence": "e"}],
-        "root": "unknown", "instrument": "log token audience at rotation",
+        **_whole_five_whys(), "root": "unknown", "instrument": "log token audience at rotation",
     })
     assert instrumented["complete"], instrumented
 

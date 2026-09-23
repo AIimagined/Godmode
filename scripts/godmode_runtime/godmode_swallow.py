@@ -56,7 +56,7 @@ are even computed (`_auto_tighten`). This closes a creep-back window a
 count-only-grows ratchet would otherwise leave open - fix one of two sites
 in a file without ever running `--update-baseline`, and the very next scan
 already re-measures that file's ceiling at 1, so a later, unrelated third
-site cannot hide inside the first fix's old headroom. `--update-baseline`
+site cannot hide inside the first fix's old margin. `--update-baseline`
 stays initialize-only: it creates the baseline file the first time
 (the population sweep) and, for a file already tracked, only ever tightens
 or holds - never raises - a stored ceiling; a real regression survives
@@ -88,7 +88,7 @@ from .godmode_constants import IGNORED_DIRECTORY_NAMES, RUNTIME_VERSION
 
 BASELINE_FILENAME = ".godmode-swallow-baseline.json"
 
-# Same headroom reasoning as `godmode_egress.DEFAULT_SCAN_LIMIT`: large enough
+# Same margin reasoning as `godmode_egress.DEFAULT_SCAN_LIMIT`: large enough
 # that an ordinary project never hits it, small enough that a scan of an
 # adversarial tree still terminates. Hitting it is loud (`truncated: true`),
 # never silent.
@@ -422,7 +422,7 @@ def _auto_tighten(baseline: dict[str, int], counts: dict[str, int]) -> tuple[dic
     can never quietly adopt a brand-new, never-reviewed site as though it
     had always been budgeted - that site keeps reading as a `regression`.
     Fixing one site in a file that also carries a second, unrelated
-    defect no longer leaves the second defect's old headroom lying around
+    defect no longer leaves the second defect's old margin lying around
     to absorb a THIRD, later site: the ceiling is re-measured on every scan,
     not just on an explicit `--update-baseline`.
     """
@@ -542,7 +542,7 @@ def scan_project(project: Path, limit: int = DEFAULT_SCAN_LIMIT) -> dict[str, An
         # wherever it safely can, before regressions are even computed - see
         # `_auto_tighten`. Regressions are then read off the TIGHTENED map,
         # not the on-disk one, so a fix that just shrank a file's ceiling
-        # cannot leave stale headroom for an unrelated new site to spend.
+        # cannot leave stale margin for an unrelated new site to spend.
         baseline_map, changed = _auto_tighten(baseline_map, counts)
         if changed:
             _write_baseline_file(project, baseline_map)

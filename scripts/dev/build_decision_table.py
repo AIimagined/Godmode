@@ -8,8 +8,7 @@ auto-allow set (Claude Code's `readOnlyValidation` matcher) is not reachable
 from this repo - no bundled copy of the CLI's source ships here, and pinning
 this table to an unpinned dependency would be exactly the drift this module
 exists to prevent. Pinned instead to the conservative, documented set the
-gate-v2 plan recorded for this purpose
-(`.superpowers/sdd/2026-08-14-gate-v2/task-5-brief.md`, Step 1), transcribed
+gate-v2 plan recorded for this purpose (its Task 5 brief, Step 1), transcribed
 here verbatim on 2026-08-14:
     git status|log|diff|show|branch|ls-files|rev-parse|rev-list|remote -v|
     shortlog|describe|blame
@@ -64,7 +63,6 @@ and diffs against the checked-in file).
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import sys
@@ -81,12 +79,19 @@ from godmode_runtime.godmode_sentinel import (  # noqa: E402
     _OUTPUT_FLAGS_BY_HEAD,
     classify_action,
 )
+# The runtime owns the digest this table's freshness check is compared
+# against (`godmode_ownership.table_is_stale`) - imported FROM the runtime
+# here rather than reimplemented, so the two can never independently drift
+# on what they hash. (Fix round: this used to run the other way, the
+# runtime importing this dev script lazily at call time - which made
+# `godmode sbom` see `build_decision_table` as a phantom runtime
+# dependency; the runtime must never import anything under `scripts/dev/`.)
+from godmode_runtime.godmode_ownership import _generated_from  # noqa: E402
 
 assert set(_OUTPUT_FLAGS_BY_HEAD) >= {"git", "sort"}, (
     "expected heads dropped from the sentinel's own _OUTPUT_FLAGS_BY_HEAD"
 )
 
-SENTINEL_PATH = SCRIPTS_DIR / "godmode_runtime" / "godmode_sentinel.py"
 TABLE_PATH = REPO_ROOT / "hooks" / "gate_table.json"
 
 
@@ -334,16 +339,6 @@ def _build_mutation_heads() -> dict[str, list[str]]:
             verified.append(head)
         result[category] = verified
     return result
-
-
-def _generated_from() -> str:
-    # Line-ending-proof: a checkout under autocrlf carries CRLF where CI's
-    # carries LF, and hashing raw bytes made the committed table stale on
-    # every platform but the one that built it (matrix run, 2026-08-31).
-    # The vocabulary this digest protects is text; hash the text.
-    return hashlib.sha256(
-        SENTINEL_PATH.read_bytes().replace(b"\r\n", b"\n")
-    ).hexdigest()[:12]
 
 
 def build_table() -> dict[str, object]:

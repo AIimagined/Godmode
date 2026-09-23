@@ -1,5 +1,5 @@
-"""C1 round 4 (third independent security review, 2026-08-18): the review in
-`.superpowers/sdd/2026-08-16-cx/task-secA-r3-review.md`, Criticals 1-6 and
+"""C1 round 4 (third independent security review, 2026-08-18): the review's
+Criticals 1-6 and
 I-1/I-2/I-3, plus adversarial axes this file adds itself.
 
 Round 3 closed every round-2 Critical and deleted the wrapper table for

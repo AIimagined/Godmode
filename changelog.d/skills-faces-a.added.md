@@ -1,0 +1,1 @@
+- Six more skills ship with purpose files, routing evals and flow tests: memory-gardener, impact-gate, research, replicate, evidence and triage.

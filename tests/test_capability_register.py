@@ -510,6 +510,36 @@ class DogfoodingTests(unittest.TestCase):
                       "tests.test_capability_register.CapabilityDriftPlantTests"],
              replace='        if status == "built":',
              with_text='        if status == "built" and False:'),
+        # Three HARD rules from OPERATOR.md, added in 0.3.28. Each plant
+        # breaks one line the rule's own text names and watches the test
+        # class that exercises that line go red.
+        #
+        # A checker grant is bound to the agent that opened it: dropping the
+        # ownership check lets a foreign agent inherit someone else's
+        # genuinely granted checker session.
+        dict(name="checker-grant-bound-to-its-agent", rule="R-9fef30a983",
+             target="scripts/godmode_runtime/godmode_chronicle.py",
+             command=[sys.executable, "-m", "unittest",
+                      "tests.test_writer_trust.SessionRoleChronicleTests"],
+             replace='            if granted_to != agent_id():',
+             with_text='            if False:'),
+        # Unattended, the refuse-outright floor includes R4: narrowing it
+        # back to R5 turns an unanswerable ask into a stall again.
+        dict(name="unattended-refuse-outright-floor", rule="R-a280f5ace9",
+             target="scripts/godmode_runtime/godmode_sentinel.py",
+             command=[sys.executable, "-m", "unittest",
+                      "tests.test_unattended_tier.LowerAskThresholdTests"],
+             replace='_UNATTENDED_REFUSE_OUTRIGHT = frozenset({"R4", "R5"})',
+             with_text='_UNATTENDED_REFUSE_OUTRIGHT = frozenset({"R5"})'),
+        # `CI` set means nobody is watching: ignoring it leaves a CI run on
+        # the attended row, the defect that once flipped CI red.
+        dict(name="ci-means-unattended", rule="R-6235dcb408",
+             target="scripts/godmode_runtime/godmode_sentinel.py",
+             command=[sys.executable, "-m", "unittest",
+                      "tests.test_unattended_tier.AttendedDetectionTests",
+                      "tests.test_unattended_tier.CIAloneFlipsTheRealHookToUnattendedTests"],
+             replace='    if os.environ.get("CI"):',
+             with_text='    if False:'),
     ]
 
     def setUp(self) -> None:

@@ -1,0 +1,1 @@
+- `claim --verify` grades exit-bearing forms (`--quiet`, `-q`, `cmp -s`, `test`, `merge-base --is-ancestor`) as falsifiable without a wrapper script; state-reporting commands still cap at observed.

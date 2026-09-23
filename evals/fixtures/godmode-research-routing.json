@@ -1,0 +1,21 @@
+{
+  "routes": {
+    "near_negative": {
+      "Independently recheck a verdict another pass already accepted": "godmode-second-look",
+      "Rebuild the studied mechanism in stdlib under Godmode names and pin it with a reproducing test": "godmode-replicate",
+      "Root-cause the crash in our own parser module": "godmode-codegraph"
+    },
+    "positive": {
+      "An earlier survey gave an extend verdict from a README; reopen the outside source, receipt its implementing files, and record both verdicts": "godmode-research",
+      "Survey an outside codebase for a mechanism worth borrowing: classify its licence, receipt the implementing source files by line range, and record the import verdict": "godmode-research"
+    }
+  },
+  "schema": "godmode-routing-snapshot-v1",
+  "skill": "godmode-research",
+  "summary": {
+    "near_negatives_rejected": 3,
+    "near_negatives_total": 3,
+    "positives_routed_correctly": 2,
+    "positives_total": 2
+  }
+}

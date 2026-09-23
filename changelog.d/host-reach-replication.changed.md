@@ -1,0 +1,1 @@
+- The host-reach preflight finding is blocking only for a host that cites neither a replicating test nor a reference still to read; a host whose hook path is replicated and pinned by a test is reported as awaiting live confirmation instead of failing the run.

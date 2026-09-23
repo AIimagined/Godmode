@@ -5,8 +5,7 @@ uses, for the same reason: a payload built by hand and a payload a host
 actually sends are not the same test.
 
 Binding facts this file locks in, all from
-`docs/superpowers/specs/2026-08-16-codex-compat-design.md` Addendum 6 and
-the Plan's amendments:
+the Codex-compatibility design's Addendum 6 and the plan's amendments:
 
 - Grok force-push (`run_terminal_command`) -> deny, and NEVER exit 3 (the
   probe's own finding: any exit other than 0/2 fail-opens on Grok).
@@ -20,7 +19,7 @@ the Plan's amendments:
   the scope fence.
 - Host detection: `GROK_AGENT=1` present -> host `grok`.
 
-**Fix round 1** (`.superpowers/sdd/2026-08-16-cx/task-cx2-review.md`) added
+**Fix round 1** (the CX-2 review) added
 `CodexApplyPatchMalformedDirectiveTests` (C1 - the reviewer's live repro,
 replayed through the real hook subprocess: a patch mixing one well-formed
 target with one malformed one must fail the WHOLE call closed, and the

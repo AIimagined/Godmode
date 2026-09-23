@@ -106,8 +106,11 @@ class HeadCacheTests(unittest.TestCase):
 
             appended = archive.append("lesson", "post-tamper", {"value": "x"}, evidence=[])
             self.assertEqual(appended["sequence"], 4)
-            with self.assertRaises(ArchiveError):
-                archive.verify()
+            # N-9: verify() names the break instead of raising.
+            broken = archive.verify()
+            self.assertFalse(broken["valid"])
+            self.assertFalse(broken["ok"])
+            self.assertEqual(broken["first_broken_path"], first.name)
 
     def test_append_reads_a_bounded_number_of_records_regardless_of_history(self) -> None:
         # The deterministic O(1) proof, immune to machine noise: on a 200-record
@@ -175,6 +178,167 @@ class HeadCacheTests(unittest.TestCase):
             )
             self.assertLessEqual(reads_by_index[199], 2)
             self.assertEqual(archive.verify()["records"], 201)
+
+
+class EnforceIndexColdProcessTests(unittest.TestCase):
+    def test_fresh_chronicle_append_reads_a_bounded_number_of_records(self) -> None:
+        # Blocking 1 (task-4-review.md): a FRESH `Chronicle` instance (every
+        # hook invocation, every write-only CLI call is one) used to pay a
+        # full `read_events()` walk on its first non-lesson append, hunting
+        # for enforce-carrying lessons that on almost every real archive do
+        # not exist - measured 3,082 ms / 4,003 record reads at N=4,000 in
+        # the review, 285 ms / 1,003 at N=1,000. The `godmode-enforce.
+        # index.json` sidecar this fix adds is written on every caught-up
+        # append (see `_write_record`), so the LIVE archive's own last
+        # append already left it fresh for the head a fresh instance opens.
+        with isolated_project() as (_project, _state, anchor, archive):
+            archive.initialize()
+            for index in range(1000):
+                archive.append("action", f"seed-{index}", {"value": index}, evidence=[])
+            self.assertTrue((archive.root / "godmode-enforce.index.json").is_file())
+
+            fresh = Chronicle(anchor)
+            original = Chronicle._read_json
+            reads: list[str] = []
+
+            def counting(path):
+                reads.append(path.name)
+                return original(path)
+
+            with mock.patch.object(Chronicle, "_read_json", staticmethod(counting)):
+                fresh.append("action", "measured", {"value": "tail"}, evidence=[])
+            record_reads = [name for name in reads if name.endswith(".godmode.json")]
+            self.assertLessEqual(
+                len(record_reads), 2,
+                f"a fresh Chronicle's first append on a 1000-record archive "
+                f"read {len(record_reads)} record files hunting for enforce "
+                "lessons",
+            )
+            self.assertTrue(archive.verify()["valid"])
+
+    def test_fresh_chronicle_falls_back_once_when_sidecar_absent(self) -> None:
+        # The fallback path (sidecar missing entirely) still finds a real
+        # enforce lesson - correctness first, the sidecar is only ever a
+        # cost optimisation on top of it.
+        with isolated_project() as (_project, _state, anchor, archive):
+            archive.initialize()
+            for index in range(50):
+                archive.append("action", f"seed-{index}", {"value": index}, evidence=[])
+            archive.append(
+                "lesson", "no-todo",
+                {"value": "guard", "generalized_guard": "no TODOs", "status": "active",
+                 "enforce": {"kind": "decision", "predicate": "value contains TODO"}},
+            )
+            (archive.root / "godmode-enforce.index.json").unlink()
+
+            fresh = Chronicle(anchor)
+            with self.assertRaises(ArchiveError):
+                fresh.append("decision", "ship-it", {"value": "a TODO here", "status": "active"})
+
+    def test_hook_append_then_fresh_cli_append_stays_flat(self) -> None:
+        # I-1 fix round 2 (Blocking 1): `writer == "hook"` writes never call
+        # `_sync_enforce_index` (`_enforced_refusal`'s own early return for
+        # hooks), so a hook append used to leave the on-disk sidecar
+        # describing the PREVIOUS head - stale the instant it happened - and
+        # the next fresh non-hook process would then miss the sidecar's key
+        # check and re-pay a full `read_events()` walk. `_write_record` now
+        # adopts the sidecar (keyed on the pre-append `(sequence - 1,
+        # previous_hash)` it already has in hand) on every append that is
+        # not caught up in-process, hook or not, so a hook append leaves the
+        # sidecar exactly as fresh as any other append does.
+        with isolated_project() as (_project, _state, anchor, archive):
+            archive.initialize()
+            for index in range(1000):
+                archive.append("action", f"seed-{index}", {"value": index}, evidence=[])
+            self.assertTrue((archive.root / "godmode-enforce.index.json").is_file())
+
+            # A fresh Chronicle instance appending as a hook - every real
+            # hook invocation is exactly this: a brand-new process whose
+            # own `_enforce_index_upto` starts at 0.
+            hook_path = str(PLUGIN_ROOT / "hooks" / "godmode_session_hook.py")
+            hook_process = Chronicle(anchor)
+            with mock.patch.object(sys, "argv", [hook_path, "pre-action"]):
+                hook_record = hook_process.append(
+                    "action", "hook-write", {"value": "n"}, evidence=[])
+            self.assertEqual(hook_record["writer"], "hook")
+
+            # The NEXT fresh process (an ordinary CLI append) must still
+            # read a bounded number of record files - the hook append above
+            # must not have left the sidecar stale.
+            fresh = Chronicle(anchor)
+            original = Chronicle._read_json
+            reads: list[str] = []
+
+            def counting(path):
+                reads.append(path.name)
+                return original(path)
+
+            with mock.patch.object(Chronicle, "_read_json", staticmethod(counting)):
+                fresh.append("action", "measured-after-hook", {"value": "tail"}, evidence=[])
+            record_reads = [name for name in reads if name.endswith(".godmode.json")]
+            self.assertLessEqual(
+                len(record_reads), 2,
+                f"a fresh Chronicle's append right after a hook append read "
+                f"{len(record_reads)} record files - the hook append left "
+                "the enforce sidecar stale",
+            )
+            self.assertTrue(archive.verify()["valid"])
+
+
+class DoctorSeedsEnforceIndexTests(unittest.TestCase):
+    def test_seed_enforce_index_warms_sidecar_without_the_write_lock(self) -> None:
+        # I-1 fix round 3 (B1 deployment note): re-review measured that on
+        # an archive that has never had `godmode-enforce.index.json`, the
+        # tier-3 fallback walk (~13s on 18,964 records) runs inside
+        # `append()`'s `write_lock()`, whose acquire deadline is 20s - so
+        # the first live write after this feature lands stalls every
+        # concurrent writer, hooks included, for that whole window.
+        # `godmode doctor` calls `Chronicle.seed_enforce_index()` from its
+        # own already-unlocked full walk instead - this proves the method
+        # itself never touches `write_lock()`.
+        with isolated_project() as (_project, _state, anchor, archive):
+            archive.initialize()
+            for index in range(500):
+                archive.append("action", f"seed-{index}", {"value": index}, evidence=[])
+            (archive.root / "godmode-enforce.index.json").unlink()
+
+            seeder = Chronicle(anchor)
+            with mock.patch.object(
+                    Chronicle, "write_lock",
+                    side_effect=AssertionError(
+                        "seed_enforce_index must never acquire the write lock")):
+                seeder.seed_enforce_index()
+            self.assertTrue((archive.root / "godmode-enforce.index.json").is_file())
+
+            # The NEXT fresh process (a real write, the scenario the
+            # deployment note is about) must now read a bounded number of
+            # record files - the seed above must have left it fresh.
+            fresh = Chronicle(anchor)
+            original = Chronicle._read_json
+            reads: list[str] = []
+
+            def counting(path):
+                reads.append(path.name)
+                return original(path)
+
+            with mock.patch.object(Chronicle, "_read_json", staticmethod(counting)):
+                fresh.append("action", "measured-after-doctor-seed", {"value": "tail"}, evidence=[])
+            record_reads = [name for name in reads if name.endswith(".godmode.json")]
+            self.assertLessEqual(
+                len(record_reads), 2,
+                f"a fresh Chronicle's first append after `godmode doctor` seeded "
+                f"the sidecar read {len(record_reads)} record files",
+            )
+            self.assertTrue(archive.verify()["valid"])
+
+    def test_seed_enforce_index_is_idempotent(self) -> None:
+        with isolated_project() as (_project, _state, anchor, archive):
+            archive.initialize()
+            for index in range(10):
+                archive.append("action", f"seed-{index}", {"value": index}, evidence=[])
+            archive.seed_enforce_index()
+            archive.seed_enforce_index()  # must not raise, must not re-walk destructively
+            self.assertTrue(archive.verify()["valid"])
 
 
 class DedupeTests(unittest.TestCase):

@@ -2,7 +2,7 @@
 
 Approve a proposal only when every answer is yes:
 
-- Does local evidence show the same missing capability in at least two real uses?
+- Does local evidence show the same missing capability in at least three real uses of one task type, each cited by the archive record (`seq:<n>`) that proves it? `skill forge` checks that the three citations are distinct and that each names a record that exists; whether those records are successes of the same task type is the caller's judgement.
 - Did inspection rule out an adequate installed or project skill?
 - Is the responsibility narrow enough to explain in one sentence?
 - Are there at least two positive and two confusingly similar negative routing cases?

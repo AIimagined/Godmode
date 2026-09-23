@@ -43,6 +43,10 @@ _CITATION = re.compile(r"(?i)\barxiv[:\s/]|\bet\s+al\.")
 _DOC_SUFFIXES = {".md", ".mdx", ".rst", ".txt"}
 _LINK = re.compile(r"\]\((?!https?://|#)([^)]+)\)")
 
+#: The untracked working-documents archive, the one tree outside publication.
+#: Named once here so its tests import it rather than restating the path.
+UNPUBLISHED_PREFIX = "docs/superpowers/"
+
 
 def _tracked() -> list[str]:
     out = subprocess.run(["git", "ls-files"], cwd=str(ROOT),
@@ -64,7 +68,9 @@ def citation_findings(tracked: list[str], policy: dict) -> list[str]:
     for rel in tracked:
         if rel in exempt or Path(rel).suffix.lower() not in _DOC_SUFFIXES:
             continue
-        if rel.startswith("tests/") or rel.startswith("docs/superpowers/"):
+        # Tests ship to every reader, so a citation there is a finding too; only
+        # the untracked working-documents archive is outside the published tree.
+        if rel.startswith(UNPUBLISHED_PREFIX):
             continue
         try:
             text = (ROOT / rel).read_text(encoding="utf-8", errors="replace")
@@ -126,9 +132,16 @@ def surface_name_findings() -> list[str]:
     findings = N.scan(ROOT, N.shipped_paths(ROOT), names)
     verdict = N.report(names, findings)
     out = [str(f) for f in findings]
+    messages = N.scan_messages(ROOT, names)
+    if messages is None:
+        out.append(f"commit messages: UNMEASURED - {N.PUSH_BASE} is not a known ref, "
+                   "so the unpushed messages were not read.")
+    else:
+        out += [str(f) for f in messages]
     if verdict["deny_class"] == "unmeasured":
         out.append("deny-name: UNMEASURED - no list supplied, so this class "
-                   "checked nothing. Set GODMODE_DENY_NAMES to measure it.")
+                   "checked nothing. Set GODMODE_DENY_NAMES or place "
+                   "deny-names.txt in the Godmode state home to measure it.")
     return out
 
 

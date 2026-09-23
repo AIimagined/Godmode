@@ -11,7 +11,7 @@ hook and throws on a deny - OpenCode's documented way to stop a tool - so
 a CONFIGURED gate fails closed: an `ask` folds to deny naming the
 staged-capability remedy, and a missing interpreter or gate file refuses
 the call. An UNSET `GODMODE_PLUGIN_ROOT` warns once and allows instead of
-refusing everything (field report 2026-08-29: the old behaviour bricked a
+refusing everything (an earlier version instead bricked a
 live session, `dir` included). The root must point at a real Godmode
 checkout or install; the environment variable must be set in the shell
 that LAUNCHES OpenCode, and plugins load at startup, so a restart follows

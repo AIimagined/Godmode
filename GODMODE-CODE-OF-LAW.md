@@ -8,112 +8,126 @@ it back). Laws are ADVISORY until the promotion ladder ships; follow the
 guard, and when a guard is wrong, retire the lesson rather than ignoring
 the law.
 
-## Law 1 - governance-preview-before-destructive-removal  [ADVISORY]
-Guard: Run the godmode-governance preview before any multi-file removal, untracking, or destructive filesystem change; reading discipline is the backup, not the net.
-Why: promoted from a correction cluster (keywords: assessment, because, build., call, caught, claim, criterion, depend, designed, destructive)
-Provenance: seq:4563, recorded 2026-08-28
+24 law(s) below are marked [GRANDFATHERED]: they were recorded before `law compile` required a second actor, so nobody has ever approved them. They still bind, and they are counted by `godmode law hygiene` until they are converted. To convert one: re-record it as a structured candidate (`godmode remember --kind lesson --subject <subject> --status candidate`, carrying root_cause, correction, reflection, generalized_guard and refuted_by), run `godmode lessons promote <lesson-seq> --cite seq:<n> --rerun-hash <h>`, and have a DIFFERENT actor run `godmode lessons approve <promotion-seq> --rerun-hash <their own h>`. A guard that is wrong is retired instead (`godmode remember --kind lesson --subject <subject> --status retired`), which lifts it here on the next compile.
 
-## Law 2 - brief-law-test-times-out-under-concurrent-suite-load  [ADVISORY]
-Guard: When this test errors in a batch, rerun it isolated at a quiet moment before treating it as a regression; a 180s wall against a sub-second isolated pass is the load signature, not a code fault.
-Why: 2026-08-29: test_session_start_brief_carries_the_top_laws ERRORs at its 180s subprocess wall whenever other agent sessions run suites on this machine (includin…
-Provenance: seq:4554, recorded 2026-08-28
+## Law 1 - path predicates must reject unresolved expansions before canonicalising: _is_scratch realpath'd ~/.bashrc against a temp  [ADVISORY]  [GRANDFATHERED]
+Guard: tests.test_gate_corpus ScratchAllowanceFromTempCwdTests
+Why: tests.test_gate_corpus ScratchAllowanceFromTempCwdTests
+Provenance: seq:17329, recorded 2026-09-17
 
-## Law 3 - this-repo-records-its-claims-before-stating-them  [ADVISORY]
-Guard: In this repository, a test-count, gate-verdict, or host-behaviour statement destined for a reply is recorded first through godmode claim with its cmd: citation; a criterion precedes every sprint-size…
-Why: Self-census 2026-08-29: 284 records tonight, 0 claims, 0 criteria - the maintainer session shows the same disease its fourteen field reports diagnose. The verb…
-Provenance: seq:4537, recorded 2026-08-28
+## Law 2 - compatibility was declared unverifiable while the ledger held reference implementations for every host path  [ADVISORY]  [GRANDFATHERED]
+Guard: a host row may not be marked unverifiable, declared, or paper-only while any ledger repository implements that host's hook path unread; the row must cite the reference file read (path#lines) and the Godmode test that replicates its behaviour, or name the ledger entry still to read. Enforcement point: hooks status and the R-4 matrix refuse an unverifiable row without a reference cite (spec R-1/R-3/R-4).
+Why: 2026-09-16: the operator had supplied a ledger of 184 repos including per-host hook implementations (Kiro hook.py runtime, Aegis and oh-my-openagent…
+Provenance: seq:14934, recorded 2026-09-16
 
-## Law 4 - live-claims-need-the-live-environment-pinned  [ADVISORY]
-Guard: A host-table claim about live behaviour requires a pin that reproduces the host's OWN injected environment (the variables its hook subprocess actually carries), never only a lab override; until then…
-Why: 2026-08-29: the README said Grok's read-only builtins pass while the pin ran under GROK_AGENT - a variable Grok never injects into its hook subprocess; a live…
-Provenance: seq:4528, recorded 2026-08-28
+## Law 3 - README-level sweep recurred after lesson 7999 because 7999 carried no guard  [ADVISORY]  [GRANDFATHERED]
+Guard: an absorb decision whose import_verdict is adopt or extend must cite at least one source-code path inside the source repository (a path that is not README, docs/, or a release note); a README-only read may yield only unread, skip, or diverge. Enforcement point: the record write for subject absorb:* refuses the verdict without such a cite (spec H6). Until H6 lands, the session brief carries this guard as standing law.
+Why: 2026-09-16: seven repos were swept at README level and given extend verdicts before any source file was opened; lesson 7999 (2026-09-0x) recorded the identical…
+Provenance: seq:14408, recorded 2026-09-16
 
-## Law 5 - parallel-gated-calls-race-the-chain-anchor  [ADVISORY]
-Guard: Archive-touching commands (godmode CLI, unittest over hook tests) run ONE per message, never batched in parallel; only ungated reads (Read/Grep/Glob) may accompany them.
-Why: 2026-08-28: batching several archive-touching commands in one agent message spawns concurrent pre-tool hooks; one verifies the chain while another appends, and…
-Provenance: seq:4313, recorded 2026-08-28
+## Law 4 - git restore --staged is refused as worktree-discard  [ADVISORY]  [GRANDFATHERED]
+Guard: separate git restore --staged from git restore in the classifier, pinned by two corpus rows
+Why: On 2026-09-12 the gate refused 'git restore --staged <paths>' at R3 worktree-discard. That form touches only the index; it cannot lose working-tree content.…
+Provenance: seq:12197, recorded 2026-09-12
 
-## Law 6 - chain-anchor-read-during-append-race-2026-08-28  [ADVISORY]
-Guard: The chain check re-reads once after a short beat before declaring truncation; a persisting mismatch is the alarm. S6 candidate alongside the counter doctrine.
-Why: During parallel tool calls the pre-action gate refused an Edit with tail-truncated: anchor 4127 vs 4126 records; seconds later doctor read anchored/valid with…
-Provenance: seq:4128, recorded 2026-08-28
+## Law 5 - quoted heredoc body scanned as live shell  [ADVISORY]  [GRANDFATHERED]
+Guard: strip quoted heredoc bodies before the interpreter scan
+Why: A <<'TAG' body is literal; backticks and $() inside it never run. classify_action read a markdown body's backticks as interpreter-opaque-inline (R2) and the…
+Provenance: seq:12126, recorded 2026-09-11
 
-## Law 7 - ledger-not-guard-the-measurement-2026-08-28  [ADVISORY]
-Guard: Any capability that depends on an agent volunteering a command is unbuilt until a hook writes it: measure kinds-ever-written before shipping another verb.
-Why: Measured in godmode's own archive (500 records, the most godmode-fluent project on this machine): claims 0, verdicts 0, criteria 0, plans 0, metrics 0, inciden…
-Provenance: seq:4099, recorded 2026-08-28
+## Law 6 - a test that asserts a support sentence can be green while the verifier is dead  [ADVISORY]  [GRANDFATHERED]
+Guard: assert the executed count and the exit code of a verify run, never its wording alone; tests/test_claim_calibration.py now asserts 1/1 executed, 1 passed
+Why: assert the executed count and the exit code of a verify run, never its wording alone; tests/test_claim_calibration.py now asserts 1/1 executed, 1 passed
+Provenance: seq:11672, recorded 2026-09-10
 
-## Law 8 - three-field-reports-one-shape-2026-08-28  [ADVISORY]
-Guard: A verdict that cannot vary is not a verdict: every summary godmode emits must be derivable from a counter it also prints, and any counter that cannot change must be deleted rather than displayed.
-Why: Three reports in one day, one mechanism: an artefact's summary of itself was read as the artefact. freshness said 'fresh' having checked 0 citations (fixed: ve…
-Provenance: seq:4095, recorded 2026-08-28
+## Law 7 - a push without a green preflight at HEAD is how CI goes red on steps only CI ran  [ADVISORY]  [GRANDFATHERED]
+Guard: authorize stage refuses a push-shaped operation without a preflight attestation (status ran, head == HEAD); tests.test_preflight_gate.StageGateTests pins it; Codex audit 2026-09-10: 37 red runs, most on workflow-only steps.
+Why: authorize stage refuses a push-shaped operation without a preflight attestation (status ran, head == HEAD); tests.test_preflight_gate.StageGateTests pins it;…
+Provenance: seq:11237, recorded 2026-09-10
 
-## Law 9 - operator-question-why-so-many-slips-2026-08-28  [ADVISORY]
-Guard: Repeat a live observation before changing a contract; every git-state command runs alone; adopt enforce + ask_only on this repo so R2 asks surface instead of being observed away.
-Why: Operator asked why development of godmode itself produced so many mistakes with the plugin on. Honest split: process slips (git stash in a parallel batch -> em…
-Provenance: seq:4031, recorded 2026-08-28
+## Law 8 - an ask is only a gate when a person answers it  [ADVISORY]  [GRANDFATHERED]
+Guard: When a host permission mode auto-answers hook asks (auto, dontAsk, bypassPermissions), every would-ask on a protected call renders as deny; test_a_push_is_denied_not_asked_when_no_human_answers pins it.
+Why: When a host permission mode auto-answers hook asks (auto, dontAsk, bypassPermissions), every would-ask on a protected call renders as deny;…
+Provenance: seq:11068, recorded 2026-09-10
 
-## Law 10 - live-deny-on-claude-2026-08-28-and-one-unexplained-miss  [ADVISORY]
-Guard: A single miss immediately after a plugin reload is not evidence about the body shape; repeat the live call before changing the contract. Keep 4001 on the watch list until a second miss or a reload-ra…
-Why: Supersedes lesson 4017. Live in a real Claude Code session on 0.3.1 with the dual-key body still installed: git push --force was refused with the R5 reason and…
-Provenance: seq:4020, recorded 2026-08-28
+## Law 9 - When a mechanism is declared, count whether it ever triggers  [ADVISORY]  [GRANDFATHERED]
+Guard: When a mechanism is declared, count whether it ever triggers; a declared checkpoint, verifier or memory that never fires is dead code, not capability.
+Why: Read 2026-09-07. Findings that bear on godmode: (1) a creator found 99/100 runs self-reporting success while 48 passed, traced it to premature completion, and…
+Provenance: seq:9766, recorded 2026-09-07
 
-## Law 11 - dual-output-deny-was-discarded-by-claude-2026-08-28  [ADVISORY]
-Guard: A decision body for a positively detected host carries only that host's documented keys; the union is for undetected hosts only. Every host claim of HARD needs a live tool call that was actually bloc…
-Why: First live gate test on Claude Code after the hooks fix: the gate wrote refusal 4001 (R5) and returned a deny carrying every dialect's keys; Claude ran the com…
-Provenance: seq:4017, recorded 2026-08-28
+## Law 10 - field reports 7 and 11 read observed as not-reviewed  [ADVISORY]  [GRANDFATHERED]
+Guard: When two field reports name the same reading of a surface, treat the wording as the defect, not the reader.
+Why: Eleventh field report 2026-09-05 (Claude) repeats the seventh: every claim graded observed without executing a cited command reads to the operator as a ledger,…
+Provenance: seq:9475, recorded 2026-09-05
 
-## Law 12 - field-review-claude-other-project-2026-08-28  [ADVISORY]
-Guard: The observe-mode line in the brief must report would-haves by tier (R4/R5 count, or zero) and never a raw edit count; a stale checkpoint must name the project's own resume doc when one exists.
-Why: A Claude session on another project reported godmode changed zero decisions: the brief carried an 11-day-stale checkpoint, a no-baseline warning, 95 unattested…
-Provenance: seq:3941, recorded 2026-08-27
+## Law 11 - the 0.3.15 install was the first push's snapshot,  [ADVISORY]  [GRANDFATHERED]
+Guard: a CI fix round after the version-bump push bumps the version AGAIN before pushing - the version string is the marketplace's cache key, and an identical version is never re-fetched
+Why: the 0.3.15 install was the first push's snapshot, missing both fix rounds inside the tag - recurrence of the 0.3.13 delivery gap through the CI-fix-round door
+Provenance: seq:8594, recorded 2026-09-03
 
-## Law 13 - field-review-grok-2026-08-28  [ADVISORY]
-Guard: Public copy must not imply value on a default turn without records or without an enforcing hook; the on-ramp must be tier 1 only.
-Why: Grok Build 1.0.5 review of 0.3.0 (hook excluded): CLI 8/10, six skills 6/10, default-turn value 4/10, combined ~6/10. Unique: a claim that cannot be walked bac…
-Provenance: seq:3940, recorded 2026-08-27
+## Law 12 - installed 0.3.12 cache was built from the cut  [ADVISORY]  [GRANDFATHERED]
+Guard: the version bump must be the FINAL commit before the tag - any fix-round commit after the bump never reaches installs, because the marketplace snapshots at first sight of the new version string; a post-bump fix means bumping again
+Why: installed 0.3.12 cache was built from the cut commit fd4ae11, missing the two fix-round commits inside the v0.3.12 tag - discovered by the dip test's…
+Provenance: seq:7962, recorded 2026-09-02
 
-## Law 14 - codex-windows-sandbox-needs-machine-scope-python  [ADVISORY]
-Guard: Codex host readiness row and DEMO: state that Python must be on the machine PATH and readable by CodexSandboxUsers; verify with a machine-PATH-only Get-Command python before claiming Codex is wired.
-Why: Codex CLI 0.150 on Windows runs agent commands as separate local accounts (CodexSandboxOnline/Offline, group CodexSandboxUsers). They inherit only the MACHINE…
-Provenance: seq:3917, recorded 2026-08-27
+## Law 13 - field-lessons-feed-red-flags  [ADVISORY]  [GRANDFATHERED]
+Guard: When building the red-flags table, source rows from recorded field lessons before inventing new ones
+Why: The external LESSONS file supplies ready red-flag rows: a gating claim is a call-site claim never answered from a definition, and a uniform result across many…
+Provenance: seq:7542, recorded 2026-09-02
 
-## Law 15 - test_the_host_can_still_do_ordinary_work fails intermittently in full-suite runs only, cause not yet identified  [ADVISORY]
-Guard: Failed twice in full-suite runs (blocking 'edit a project file' once, 'write a project file' once) and passed every isolated run, including immediately after each failure. Ruled out by experiment, no…
-Why: 
-Provenance: seq:3407, recorded 2026-08-22
+## Law 14 - ci-green-before-tag  [ADVISORY]  [GRANDFATHERED]
+Guard: The release ritual tags only after the CI matrix is green on the release commit; local suite green is necessary, never sufficient, on a single-platform workstation
+Why: The v0.3.11 tag moved twice chasing fixes because it was created before the CI matrix ran; a Windows-only workstation cannot see LF-checkout failures locally,…
+Provenance: seq:7530, recorded 2026-09-02
 
-## Law 16 - The charter compiler makes one rule per physical line, so a hard-wrapped directive compiles as several fragments  [ADVISORY]
-Guard: _directives walks segment.body.splitlines(), so an editor's line wrap splits one directive into separate rules. This repo's own charter shows it: 'Protected operations receive a preview and require a…
-Why: 
-Provenance: seq:3039, recorded 2026-08-20
+## Law 15 - field-report-6-stop-gate-earns-per-turn-nag-does-not  [ADVISORY]  [GRANDFATHERED]
+Guard: The block-gate posture (fire once, at the decisive moment, on the narrowest shape) is the pattern to extend; per-turn advisory breadth is the pattern to narrow - candidate: advisory only for sentences that are both claim-shaped and consequential, or fold advisory entirely into the echo
+Why: Sixth external report: stop-gate blocked two real overclaims and forced honest softening, a cross-session law correctly shaped an investigation, the claim…
+Provenance: seq:7423, recorded 2026-09-02
 
-## Law 17 - GODMODE_STATE_HOME is silently ignored on a git project, so B5-A smoke tests wrote four fleet: records (seq 2648, 2649,   [ADVISORY]
-Guard: For a git checkout the archive anchors at .git/godmode-state and the env override does not apply - it is honoured only for non-git projects, which is why the test harness isolates by creating a NON-g…
-Why: 
-Provenance: seq:2779, recorded 2026-08-20
+## Law 16 - all-out-means-build-not-rule  [ADVISORY]  [GRANDFATHERED]
+Guard: An instruction naming a set to complete before a gate means every member is built or explicitly re-approved as parked BEFORE the gate, never after
+Why: When the operator explicitly widens scope to everything listed, a recorded ruling that parks an item is a scope NARROWING and needs their sign-off before the…
+Provenance: seq:7371, recorded 2026-09-01
 
-## Law 18 - A self-injecting probe never proves the host called you  [ADVISORY]
-Guard: Never derive a host-wiring or enforcement claim from godmode hooks probe: it invokes the hook script itself, and run_probe's own docstring says it does not prove a live host calls that script on real…
-Why: 
-Provenance: seq:2584, recorded 2026-08-19
+## Law 17 - no-edits-while-suite-runs  [ADVISORY]  [GRANDFATHERED]
+Guard: While an attested suite run is in flight, the tree is frozen: no edits, no commits, until the attestation lands
+Why: Both chunk-2 verify failures were self-inflicted: runtime modules edited while the suite ran in background, and a subprocess importing a half-written module…
+Provenance: seq:6906, recorded 2026-09-01
 
-## Law 19 - A measurement that cannot distinguish the two outcomes is not evidence  [ADVISORY]
-Guard: Before reporting a verification result, state which observation would appear if the claim were FALSE. If the same observation appears either way, the test is invalid. Today: piping unittest through t…
-Why: 
-Provenance: seq:2582, recorded 2026-08-19
+## Law 18 - field-report-2026-09-01-ceremony-verdict  [ADVISORY]  [GRANDFATHERED]
+Guard: Advisories that can collide with a project's own instructions must state their fallback (record why not, then proceed); a warning an agent classifies as noise twice should be demoted or given a threshold
+Why: An external project's agent graded godmode net-ceremony: real value in the claim/checkpoint ledger, but 3 CLI retries burned on argument inconsistency (fixed…
+Provenance: seq:6607, recorded 2026-09-01
 
-## Law 20 - an analysis that reverses every pass was never an analysis  [ADVISORY]
-Guard: godmode_mistakes.root_without_code; godmode_mistakes.unretracted_reversal; godmode_mistakes.claim_from_a_sample; godmode_precheck.precheck already_reported
-Why: Publishing when a story first fits rather than when the read set is closed produces an UNSTABLE root, not merely a wrong one. Each pass overturns the previous…
-Provenance: seq:92, recorded 2026-08-11
+## Law 19 - conventions-live-as-records-or-die  [ADVISORY]  [GRANDFATHERED]
+Guard: Any recurring operator convention gets an obligation record the day it is stated; unrecorded conventions are invisible to every wire
+Why: A standing workspace convention (ledger updates, PDF archival) went unmet for a full cycle because it existed only in prose and habit - the machinery that…
+Provenance: seq:6516, recorded 2026-09-01
 
-## Law 21 - a supported claim can still be incommensurable with its sentence  [ADVISORY]
-Guard: godmode_mistakes.unframed_clock; godmode_mistakes.stale_runtime; godmode_lens._parse_time
-Why: Citation binding checks that a claim is SUPPORTED, never that it is commensurable with the frame of the sentence carrying it. Stores write UTC, operator surfac…
-Provenance: seq:89, recorded 2026-08-11
+## Law 20 - suite-runs-stay-foreground-chunked  [ADVISORY]  [GRANDFATHERED]
+Guard: Long test runs execute as foreground chunks under ten minutes each with output teed to a file; never as one background process
+Why: Two background full-suite runs died at the runner's kill ceiling and one lost all output to bad redirection, costing about forty minutes of signal
+Provenance: seq:6343, recorded 2026-08-31
 
-## Law 22 - external state restated from memory when a check was one call away  [ADVISORY]
-Guard: godmode release --status must answer 'which tags are unpublished' from the API, so no handover restates it
-Why: Asserted which releases were published from 17-hour-old recall while holding working API access used minutes earlier for CI. The external-claim detector exists…
-Provenance: seq:54, recorded 2026-08-08
+## Law 21 - workflow-yaml-verified-before-push  [ADVISORY]  [GRANDFATHERED]
+Guard: After editing any workflow file, scan each step for duplicate keys (or dry-dispatch on a branch) before pushing
+Why: A replace-all edit duplicated a with: block in a checkout step; GitHub refused every dispatch until a second push
+Provenance: seq:6342, recorded 2026-08-31
+
+## Law 22 - sentinel-edit-regens-the-table  [ADVISORY]  [GRANDFATHERED]
+Guard: Any edit to godmode_sentinel.py runs build_decision_table.py and tests.test_gate_parity before the commit that carries it
+Why: Two releases in one day shipped a stale decision table because a sentinel edit changed the vocabulary digest and only CI noticed
+Provenance: seq:6341, recorded 2026-08-31
+
+## Law 23 - one-stdout-object-per-hook-run  [ADVISORY]  [GRANDFATHERED]
+Guard: A hook run prints at most one JSON object to stdout; accumulate notices and emit once
+Why: Two json.dumps prints in one hook invocation concatenate into unparseable output; each print site was valid alone
+Provenance: seq:5350, recorded 2026-08-31
+
+## Law 24 - smoke-tests-write-real-records  [ADVISORY]  [GRANDFATHERED]
+Guard: Smoke a new CLI surface in a throwaway project directory (isolated_project pattern), never against the live archive
+Why: CLI smoke tests run against the live archive append permanent records (incident seq:5138 was a smoke artifact); the archive is append-only, so a test record is…
+Provenance: seq:5263, recorded 2026-08-31
+
+22 older guarded lesson(s) beyond the cap of 24 are not rendered here - raise the cap, or retire laws that no longer earn their place.

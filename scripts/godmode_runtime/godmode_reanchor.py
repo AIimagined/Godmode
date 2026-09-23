@@ -224,6 +224,27 @@ _SNAPSHOT_PREFIX = "anchor:commit:"
 _REMAP_PREFIX = "anchor:remap:"
 
 
+# The fingerprint's commit-subject field. Not `subject`: that key inside a
+# `decision` record's data opts the record into the semantic-decision shape
+# (`godmode_invariants._semantic_decision_invariants`, NS-11c), which then
+# demands a `value` and `evidence` the snapshot does not have. A snapshot is
+# not a decision about a subject; it is a fingerprint of a commit - tree,
+# subject line, author date - taken so a later remap can find the commit
+# after a rewrite. The subject line is one of the three matching fields,
+# and it is named for what it is.
+COMMIT_SUBJECT_FIELD = "commit_subject"
+# Snapshots written before the rename carry the subject line under the
+# homonym; the matcher reads either, so an archive snapshotted before this
+# change still remaps after its rewrite.
+_LEGACY_SUBJECT_FIELD = "subject"
+
+
+def _fingerprint_subject(fingerprint: dict[str, Any]) -> str:
+    if COMMIT_SUBJECT_FIELD in fingerprint:
+        return str(fingerprint.get(COMMIT_SUBJECT_FIELD))
+    return str(fingerprint.get(_LEGACY_SUBJECT_FIELD))
+
+
 def commit_fingerprint(project: Path, commit: str) -> dict[str, str] | None:
     """What a commit is, independent of its sha. None when unreachable."""
     code, output = _git(
@@ -234,7 +255,7 @@ def commit_fingerprint(project: Path, commit: str) -> dict[str, str] | None:
     parts = output.splitlines()
     if len(parts) < 3:
         return None
-    return {"tree": parts[0].strip(), "subject": parts[1].strip(),
+    return {"tree": parts[0].strip(), COMMIT_SUBJECT_FIELD: parts[1].strip(),
             "author_date": parts[2].strip()}
 
 
@@ -363,9 +384,27 @@ def remap_commit_citations(archive: Chronicle, project: Path, *,
                            "matches its tree, subject and author date"),
             })
             continue
-        archive.append("decision", f"{_REMAP_PREFIX}{sha}",
-                       {"new": found, **fingerprint},
-                       evidence=[f"commit:{found}"])
+        # Built field by field, never `**fingerprint`: a snapshot written
+        # before the field was renamed carries the subject line under the
+        # legacy `subject` key, and spreading that into a fresh decision
+        # record trips the semantic-decision invariant (NS-11c). The remap
+        # record always carries the current shape whatever shape it read.
+        try:
+            archive.append(
+                "decision", f"{_REMAP_PREFIX}{sha}",
+                {"new": found, "tree": str(fingerprint.get("tree", "")),
+                 COMMIT_SUBJECT_FIELD: _fingerprint_subject(fingerprint),
+                 "author_date": str(fingerprint.get("author_date", ""))},
+                evidence=[f"commit:{found}"])
+        except ArchiveError as exc:
+            # One citation's refusal must not abort the remap for every
+            # other citation: it is reported for that sha and the loop
+            # goes on, so a single odd snapshot cannot strand the archive.
+            unresolved.append({
+                "old": sha, "new": found,
+                "reason": f"commit found but the remap record was refused: {exc}",
+            })
+            continue
         remapped.append({"old": sha, "new": found})
     return {
         "remapped": remapped,
@@ -414,7 +453,7 @@ def _find_by_fingerprint(project: Path,
             continue
         sha, tree, subject, author_date = (p.strip() for p in parts[:4])
         if (tree == str(fingerprint.get("tree"))
-                and subject == str(fingerprint.get("subject"))
+                and subject == _fingerprint_subject(fingerprint)
                 and author_date == str(fingerprint.get("author_date"))):
             return sha
     return None

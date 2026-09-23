@@ -14,7 +14,11 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = PLUGIN_ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
+if str(Path(__file__).parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).parent))
 
+from _host_env import scrubbed_environment  # noqa: E402
+from _repo_copy import copy_repo_without_git, initialise  # noqa: E402
 import godmode_runtime.godmode_evals as evals_module  # noqa: E402
 from godmode_runtime.godmode_evals import (  # noqa: E402
     ASSERTION_SCHEMA,
@@ -33,11 +37,24 @@ from godmode_runtime.godmode_evals import (  # noqa: E402
 
 ALL_SKILLS = [
     "godmode",
+    "godmode-changelog",
+    "godmode-code-of-law",
+    "godmode-codegraph",
     "godmode-continuity",
+    "godmode-evidence",
     "godmode-governance",
+    "godmode-host-sync",
+    "godmode-impact-gate",
     "godmode-investigation",
+    "godmode-memory-gardener",
     "godmode-repair",
+    "godmode-replicate",
+    "godmode-research",
+    "godmode-second-look",
+    "godmode-skill-eval",
     "godmode-skill-forge",
+    "godmode-spec-lifecycle",
+    "godmode-triage",
 ]
 
 # The eval's first run found two positives that did not route home; their
@@ -92,8 +109,8 @@ class RoutingEvalTests(unittest.TestCase):
         # misrouted prompts were reworded. Observed reality, kept current.
         report = run_routing_evals(PLUGIN_ROOT)
         totals = report["totals"]
-        self.assertEqual(totals["positives_total"], 12)
-        self.assertEqual(totals["positives_routed_correctly"], 12)
+        self.assertEqual(totals["positives_total"], 44)
+        self.assertEqual(totals["positives_routed_correctly"], 44)
         self.assertEqual(report["verdict"], "routing-sound")
         failing = {entry["prompt"] for entry in report["failing_prompts"]}
         self.assertEqual(failing, KNOWN_MISROUTED_POSITIVES)
@@ -101,7 +118,7 @@ class RoutingEvalTests(unittest.TestCase):
     def test_near_negatives_reported_not_hidden(self):
         report = run_routing_evals(PLUGIN_ROOT)
         totals = report["totals"]
-        self.assertEqual(totals["near_negatives_total"], 12)
+        self.assertEqual(totals["near_negatives_total"], 68)
         # Captured near-negatives are reported per skill with details.
         for skill, entry in report["skills"].items():
             captured = [m for m in entry["misrouted"] if m["kind"] == "near_negative"]
@@ -195,11 +212,16 @@ class AdversarialGridTests(unittest.TestCase):
             self.assertTrue(valid, cell)
 
     def test_every_control_has_at_least_two_attacks(self):
+        # The meta-gate cells (one guaranteed-deny fixture per protected
+        # class) are appended after the hand-written adversarial attacks and
+        # are deliberately one-per-control, so this bar applies only to the
+        # adversarial slice `adversarial_cells` marks off.
         report = adversarial_grid()
+        adversarial = report["grid"][:report["adversarial_cells"]]
         per_control: dict[str, int] = {}
-        for cell in report["grid"]:
+        for cell in adversarial:
             per_control[cell["control"]] = per_control.get(cell["control"], 0) + 1
-        self.assertEqual(sorted(per_control), sorted(report["controls"]))
+        self.assertEqual(sorted(per_control), sorted({c["control"] for c in adversarial}))
         self.assertEqual(len(per_control), 6)
         for control, count in per_control.items():
             self.assertGreaterEqual(count, 2, control)
@@ -207,11 +229,15 @@ class AdversarialGridTests(unittest.TestCase):
     def test_observed_grid_results(self):
         # The grid found this breach when first run: a verified grade could be
         # laundered through a rec: citation of a prior unverified claim. The
-        # runtime now refuses claim records as rec: support, so all 13 attacks
-        # are refused - and this test keeps that closed.
+        # runtime now refuses claim records as rec: support, so all 13
+        # adversarial attacks are refused - and this test keeps that closed.
+        # The meta-gate suite adds 20 more cells (one guaranteed-deny fixture
+        # per protected class), for 33 cells overall.
         report = adversarial_grid()
-        self.assertEqual(report["cells"], 13)
-        self.assertEqual(report["passed"], 13)
+        self.assertEqual(report["adversarial_cells"], 13)
+        self.assertEqual(report["meta_cells"], 20)
+        self.assertEqual(report["cells"], 33)
+        self.assertEqual(report["passed"], 33)
         self.assertEqual(report["failed"], 0)
         self.assertEqual(report["not_executable"], 0)
         self.assertEqual(report["verdict"], "controls-held")
@@ -279,16 +305,22 @@ class BehaviorAssertionTests(unittest.TestCase):
             self.assertEqual(report["totals"]["declared_only"], 2)
 
     def test_repo_suites_each_ship_a_passing_executable_assertion(self):
-        # Probes run against a disposable state home so this test never depends
-        # on (or mutates) the developer's real archive.
-        with tempfile.TemporaryDirectory() as raw, mock.patch.dict(
-            os.environ, {"GODMODE_STATE_HOME": str(Path(raw) / "state")}, clear=False
-        ):
-            init = subprocess.run(
-                [sys.executable, "scripts/godmode.py", "--project", ".", "init"],
-                cwd=PLUGIN_ROOT, capture_output=True, text=True, timeout=120)
-            self.assertEqual(init.returncode, 0, init.stderr)
-            report = run_behavior_assertions(PLUGIN_ROOT)
+        # The probes run the real CLI with `--project .` and some of them
+        # write (`planmode specify`). For a git checkout the archive lives
+        # under the git directory and `GODMODE_STATE_HOME` does not
+        # redirect it, so this used to mutate the developer's live archive
+        # while claiming a disposable state home. The probes now run inside
+        # a non-git copy of the repository (`_repo_copy`), where the state
+        # home is honoured and thrown away with the copy.
+        with tempfile.TemporaryDirectory() as raw:
+            project = copy_repo_without_git(Path(raw))
+            with scrubbed_environment(GODMODE_STATE_HOME=str(Path(raw) / "state")):
+                initialise(project)
+                # The proof of isolation: the archive landed under the
+                # disposable state home, which a git checkout never uses.
+                self.assertTrue(any((Path(raw) / "state").rglob("*")),
+                                "init did not write under GODMODE_STATE_HOME")
+                report = run_behavior_assertions(project)
         self.assertEqual(sorted(report["skills"]), ALL_SKILLS)
         for skill, entry in report["skills"].items():
             self.assertGreaterEqual(entry["executable"], 1, skill)

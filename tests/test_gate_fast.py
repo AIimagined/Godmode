@@ -21,7 +21,9 @@ import importlib.util
 import json
 import re
 import subprocess
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -153,8 +155,9 @@ class TableShape(unittest.TestCase):
 class Equivalence(unittest.TestCase):
     def test_fast_allow_iff_full_sentinel_allows(self) -> None:
         for entry in corpus_entries():
-            fastv = fast.fast_verdict(payload(entry["operation"]), TABLE)
-            fullv = _decision(entry["operation"])
+            tool = entry.get("tool") or "Bash"
+            fastv = fast.fast_verdict(payload(entry["operation"], tool), TABLE)
+            fullv = _decision(entry["operation"], tool)
             if fastv == "allow":
                 self.assertEqual(fullv, "allow", entry["operation"][:80])
 
@@ -244,13 +247,50 @@ class UngovernedProject(unittest.TestCase):
             (self._git_dir(root) / "godmode-state").mkdir()
             self.assertFalse(fast.ungoverned_project(root))
 
-    def test_a_worktree_or_non_git_directory_escalates(self) -> None:
+    def test_a_git_file_that_points_nowhere_escalates(self) -> None:
         import tempfile
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            self.assertFalse(fast.ungoverned_project(root), "no .git at all")
             (root / ".git").write_text("gitdir: ../elsewhere\n", encoding="utf-8")
-            self.assertFalse(fast.ungoverned_project(root), ".git file (worktree)")
+            self.assertFalse(fast.ungoverned_project(root), ".git file pointing nowhere")
+
+    def test_a_non_git_directory_is_ungoverned_until_its_archive_exists(self) -> None:
+        """Field report 2026-09-23: a directory that is not a repository
+        escalated every mutating call into a second interpreter. Its
+        archive lives in the application home under the salted key
+        `resolve_anchor` derives; only that directory's existence counts."""
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            project, home = base / "project", base / "state"
+            project.mkdir()
+            with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(home)}):
+                self.assertTrue(fast.ungoverned_project(project), "no application home yet")
+                scripts = str(HOOKS_DIR.parent / "scripts")
+                if scripts not in sys.path:
+                    sys.path.insert(0, scripts)
+                from godmode_runtime.godmode_anchor import resolve_anchor
+                Path(resolve_anchor(project).archive_root).mkdir(parents=True)
+                self.assertFalse(fast.ungoverned_project(project), "archive present")
+
+    def test_a_linked_worktree_follows_its_common_dir(self) -> None:
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            main = base / "main"
+            main.mkdir()
+            git = self._git_dir(main)
+            linked = base / "linked"
+            linked.mkdir()
+            admin = git / "worktrees" / "linked"
+            admin.mkdir(parents=True)
+            (admin / "HEAD").write_text("ref: refs/heads/other\n", encoding="utf-8")
+            (admin / "commondir").write_text("../..\n", encoding="utf-8")
+            (linked / ".git").write_text(f"gitdir: {admin}\n", encoding="utf-8")
+            with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(base / "state")}):
+                self.assertTrue(fast.ungoverned_project(linked))
+                (git / "godmode-state").mkdir()
+                self.assertFalse(fast.ungoverned_project(linked))
 
     def test_the_gate_stays_silent_and_skips_the_full_hook_on_an_ungoverned_project(self) -> None:
         # D-3: "skips the full hook" used to be inferred from elapsed time
@@ -258,8 +298,8 @@ class UngovernedProject(unittest.TestCase):
         # otherwise-correct run). The state that bound stood in for is
         # asserted directly instead: `FULL_HOOK` is swapped for a STUB
         # that only touches a marker file, run through a throwaway copy of
-        # the fast gate script (the only two files it imports:
-        # `godmode_stdin.py`, plus its own `gate_table.json`); the marker's
+        # the fast gate script (the files it imports: `godmode_stdin.py`
+        # and `godmode_initstate.py`, plus its own `gate_table.json`); the marker's
         # absence afterward IS "the full hook never ran", not a proxy for it.
         import os, shutil, tempfile
         with tempfile.TemporaryDirectory() as temporary, \
@@ -267,7 +307,8 @@ class UngovernedProject(unittest.TestCase):
             root = Path(temporary)
             self._git_dir(root)
             stub = Path(stub_dir)
-            for name in ("godmode_gate_fast.py", "godmode_stdin.py", "gate_table.json"):
+            for name in ("godmode_gate_fast.py", "godmode_stdin.py", "godmode_initstate.py",
+                         "gate_table.json"):
                 shutil.copy2(HOOKS_DIR / name, stub / name)
             marker = stub / "full-hook-ran.marker"
             (stub / "godmode_session_hook.py").write_text(
@@ -692,11 +733,17 @@ class PayloadGrammarParity(unittest.TestCase):
         }
 
     def _direct(self, raw: bytes) -> subprocess.CompletedProcess[bytes]:
-        return subprocess.run(
-            [sys.executable, str(HOOKS_DIR / "godmode_session_hook.py"), "pre-action"],
-            input=raw, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            cwd=PLUGIN_ROOT, timeout=30,
-        )
+        # Incident 2026-09-18 (chain fork at sequence 19211): this spawn ran
+        # the real hook against the LIVE archive with no isolated state
+        # home, racing the installed plugin's own hooks under a different
+        # lock scheme. Every real-hook spawn gets its own state home.
+        with tempfile.TemporaryDirectory() as state_home:
+            return subprocess.run(
+                [sys.executable, str(HOOKS_DIR / "godmode_session_hook.py"), "pre-action"],
+                input=raw, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                cwd=PLUGIN_ROOT, timeout=30,
+                env={**os.environ, "GODMODE_STATE_HOME": state_home},
+            )
 
     def _fast(self, raw: bytes) -> subprocess.CompletedProcess[bytes]:
         return subprocess.run(

@@ -9,11 +9,10 @@ archive should not have to know any of that - they consume ONE shape,
 `HostEvent`, and this module is the only place host dialects are read or
 written.
 
-**What is BINDING here, and where it comes from** (see
-`docs/superpowers/plans/2026-08-16-codex-compat.md`'s "Plan amendments"
-1-4 and `docs/superpowers/specs/2026-08-16-codex-compat-design.md`'s CX-2
-unit + Addenda 2/6 - every literal spelling below is copied from one of
-those, never guessed):
+**What is BINDING here, and where it comes from** (see the
+Codex-compatibility plan's amendments 1-4 and its design's CX-2 unit and
+Addenda 2/6 - every literal spelling below is copied from one of those,
+never guessed):
 
 - Dual-casing field normalization: `hookEventName`/`hook_event_name`,
   `toolName`/`tool_name`, `toolInput`/`tool_input`, `sessionId`/
@@ -147,6 +146,20 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     # safe; ACTING on one would not be.
     "approval_context": ("approvalContext", "approval_context",
                         "sandboxApproval", "sandbox_approval"),
+    # NS-10k: an optional host declaration of what kind of session this is
+    # (interactive, background, scheduled, ...) - read the same dual-cased
+    # way as every other field here, and read-if-present exactly like
+    # `approval_context` above: no adapter's documented contract names this
+    # field either, so its absence is the ordinary case, not a defect.
+    "session_type": ("sessionType", "session_type"),
+    # NS-10k fix round 2 (task-14-rereview.md R1): read through `field()`
+    # like every field above, but had no alias entry, so it fell back to
+    # `(name,)` and read only the exact snake_case key - a host that spells
+    # it `permissionMode` (Claude Code's own PreToolUse payload documents
+    # `permission_mode`, but nothing here enforced that spelling) would read
+    # as absent, i.e. attended, the looser row. Now dual-cased like every
+    # other security-relevant field this module aliases.
+    "permission_mode": ("permissionMode", "permission_mode"),
 }
 
 
@@ -174,6 +187,55 @@ def field_present(raw: Any, name: str) -> bool:
     if not isinstance(raw, dict):
         return False
     return any(key in raw for key in _ALIASES.get(name, (name,)))
+
+
+# NS-10d: the host-reported usage block, read the same host-neutral way as
+# every other payload field, but not through `field()`/`_ALIASES` - no
+# adapter or plan text documents a camelCase spelling for this key, and
+# guessing one (the way CX-5's `approval_context` guesses do) would put an
+# unverified alias on a figure `check_ceilings` and the spend digest both
+# act on.
+#
+# **This shape is UNVERIFIED against any published host contract - the
+# CX-5 posture, stated plainly rather than implied.** No adapter in this
+# module's own binding docstring names a `usage` field on any documented
+# payload, and no in-tree source confirms one either: `godmode_session_log`'s
+# transcript-shape pin reads `message.usage.{input,output,cache_*}_tokens`
+# off a SEPARATE file (the transcript Claude writes to disk), not off any
+# hook payload, and the only place a top-level `usage` key on a Stop/
+# SessionEnd payload appears anywhere in this repository is this task's own
+# test fixture - plan text, not a host contract. `usage_from_payload` is
+# therefore read-if-present, exactly like `approval_context`: it is checked
+# for under this name on every payload, recorded when found, and never
+# trusted to decide anything beyond what got recorded (never gates, never
+# denies, never blocks). Every adapter below - Claude included - documents
+# no usage field with any confirmed source, so this reads `raw.get("usage")`
+# directly against the whole payload rather than through one adapter,
+# returns `None` when it is absent, and a live session sending nothing
+# under this key is the expected case, not a bug: `source: unavailable`
+# stays the honest answer until a host is actually observed sending it.
+def usage_from_payload(raw: Any) -> dict[str, int] | None:
+    """Whichever of `input_tokens`/`output_tokens`/`cache_read_input_tokens`/
+    `total_tokens` the payload's `usage` block carries, taken as declared
+    (a host figure, never measured here - the same posture
+    `check_ceilings`'s own `measurement` field already states). Read under
+    this name if a host supplies it; no host contract confirming the shape
+    has been found (see the module comment above). `None` when the payload
+    carries no `usage` block at all, or one that is not a dict, or one with
+    none of the four recognised numeric fields - a host that ships an empty
+    or unrecognised usage shape is "nothing observed," not "zero tokens."
+    """
+    if not isinstance(raw, dict):
+        return None
+    usage = raw.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    out: dict[str, int] = {}
+    for key in ("input_tokens", "output_tokens", "cache_read_input_tokens", "total_tokens"):
+        value = usage.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            out[key] = int(value)
+    return out or None
 
 
 # ---------------------------------------------------------------------------

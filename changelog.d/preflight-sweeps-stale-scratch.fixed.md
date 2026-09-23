@@ -1,0 +1,1 @@
+- `precheck --preflight` removes stale `.godmode-preflight-*` scratch directories beside the repository before it runs and reports them, so an aborted earlier run no longer leaves worktrees behind that `cleanup: confirmed` never saw.

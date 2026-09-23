@@ -55,10 +55,10 @@ class EmptyArchiveTests(unittest.TestCase):
                 self.assertEqual(entry["confidence"], "insufficient-data", name)
                 self.assertIsNone(entry["meets_target"], name)
 
-    def test_all_twelve_metrics_are_present_and_ordered(self) -> None:
+    def test_all_fifteen_metrics_are_present_and_ordered(self) -> None:
         with isolated_project() as (project, archive):
             report = metrics(archive, project)
-            self.assertEqual(len(METRIC_ORDER), 12)
+            self.assertEqual(len(METRIC_ORDER), 15)
             self.assertEqual(list(report["metrics"]), list(METRIC_ORDER))
 
 
@@ -198,6 +198,29 @@ class RenderTests(unittest.TestCase):
             first = metrics(archive, project)
             second = metrics(archive, project)
             self.assertEqual(first["metrics"], second["metrics"])
+
+
+class EditRecordedIsBookkeepingTests(unittest.TestCase):
+    """Fix round 2 (Task 8 review, B4): `edit-recorded` is bookkeeping
+    about an edit, never an action that needed a preceding check - it must
+    not lower `action_transparency`, and a session heavy on edits with no
+    attestation must not read `below-target` on that account."""
+
+    def test_edits_before_any_attestation_leave_action_transparency_unchanged(self) -> None:
+        with isolated_project() as (project, archive):
+            archive.append("attestation", "guard:check", {"status": "ok"})
+            archive.append("action", "atlas-query", {"category": "read"})
+            before = metrics(archive, project)["metrics"]["action_transparency"]
+            self.assertEqual(before["value"], 1.0)
+            for i in range(10):
+                archive.append("action", "edit-recorded", {
+                    "path": f"src/f{i}.py", "operation": f"edit:{i:012x}",
+                })
+            after = metrics(archive, project)
+            after_entry = after["metrics"]["action_transparency"]
+            self.assertEqual(after_entry["value"], 1.0)
+            self.assertEqual(after_entry["basis"], before["basis"])
+            self.assertNotEqual(after["verdict"], "below-target")
 
 
 if __name__ == "__main__":

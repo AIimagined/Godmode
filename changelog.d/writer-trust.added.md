@@ -1,0 +1,1 @@
+- Every record names its writer and carries a derived trust; an operator correction outranks an agent record, a secret in free text refuses the write, and only a subject's creator can close it.

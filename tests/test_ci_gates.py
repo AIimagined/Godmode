@@ -43,6 +43,19 @@ def _workflow_gates() -> list[str]:
         # to the gate's argument list.
         gate = re.split(r"[>|;&]", match.group(1))[0]
         gate = " ".join(gate.split())
+        # A gate parameterised by a dispatch input (`${{ inputs.shards }}`)
+        # is not a command until GitHub substitutes it; running the literal
+        # text here would test argparse's error message, not the gate. The
+        # sharded preflight job is covered by `tests/test_workflow_hardening.py`
+        # (the input is declared and passed through) and by
+        # `tests/test_push_preflight.py` (the shard actually runs).
+        if "${{" in gate:
+            continue
+        # Setup steps are not gates. Replaying `init` here would write this
+        # repository's own archive, which no test may do; CI runs it on its
+        # fresh checkout so the behaviour probes have an archive to read.
+        if gate.split()[:1] in (["init"], ["session"]):
+            continue
         if gate and gate not in found:
             found.append(gate)
     return found

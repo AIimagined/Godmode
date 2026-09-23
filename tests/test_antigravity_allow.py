@@ -32,7 +32,7 @@ if str(Path(__file__).parent) not in sys.path:
 
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
-from _host_env import HOST_MARKERS  # noqa: E402
+from _host_env import scrubbed_env  # noqa: E402
 
 
 @contextmanager
@@ -51,7 +51,7 @@ def _project():
 
 
 def _run(script: Path, argv: list[str], payload: dict, state: Path) -> subprocess.CompletedProcess:
-    environment = {k: v for k, v in os.environ.items() if k not in HOST_MARKERS}
+    environment = scrubbed_env()
     environment["GODMODE_STATE_HOME"] = str(state)
     environment["ANTIGRAVITY_AGENT"] = "1"
     return subprocess.run(

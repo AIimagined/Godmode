@@ -1,0 +1,1 @@
+- `atlas loop advance` refuses a third identical failure signature and records a halt; `atlas loop resume` reopens only with evidence from a different actor.

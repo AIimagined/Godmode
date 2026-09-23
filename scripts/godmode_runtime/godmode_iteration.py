@@ -27,25 +27,45 @@ def open_scope(archive: Any, session_id: str | None) -> dict[str, list[str]]:
     pending steps, criteria no claim has cited, and a hypothesis that has
     failed three checkpoints. Each entry is a sentence a reader can act
     on, with the closing command where one exists."""
-    from .godmode_requests import open_stated_requests
+    from .godmode_chronicle import latest_by_subject
+    from .godmode_requests import open_stated_requests, read_request_window
 
-    out: dict[str, list[str]] = {"asks": [], "steps": [], "criteria": [], "hypotheses": [], "temporaries": []}
+    out: dict[str, Any] = {"asks": [], "steps": [], "criteria": [], "hypotheses": [],
+                           "temporaries": [], "window_overflow": False, "blocked_obligations": []}
     records = archive.select(limit=600)
-    latest_obligation: dict[str, dict[str, Any]] = {}
-    for record in records:
-        if record.get("kind") == "obligation":
-            latest_obligation[str(record.get("subject", ""))] = record
+    # NS-10e: an obligation another record has named via `--supersedes` is
+    # never latest here either, same rule `godmode_status.remaining` folds
+    # through - this reader carries no trust rule of its own, so the
+    # default `combine` (plain recency) is exactly what it used before.
+    latest_obligation = latest_by_subject(
+        [r for r in records if r.get("kind") == "obligation"])
+
+    def _obligation_open(record: dict[str, Any]) -> bool:
+        status = str((record.get("data") or {}).get("status", "open")).lower()
+        return status not in ("closed", "done", "retired", "waived")
+
     for subject, record in latest_obligation.items():
+        if not _obligation_open(record):
+            continue
         data = record.get("data") or {}
-        if subject.startswith("temporary:") and str(data.get("status", "open")).lower() not in ("closed", "done", "retired", "waived"):
+        # NS-8n: an obligation blocked by another open obligation is listed
+        # here so it is never lost, but stays out of every nagged list
+        # (`scope_items` does not read this key) until its blocker closes.
+        open_blockers = [b for b in (data.get("blocked_by") or [])
+                         if b in latest_obligation and _obligation_open(latest_obligation[b])]
+        if open_blockers:
+            out["blocked_obligations"].append(f"{subject} blocked by {', '.join(open_blockers)}")
+            continue
+        if subject.startswith("temporary:"):
             out["temporaries"].append(
                 f"{subject} still on record - restore it, then `godmode remember --kind obligation "
                 f"--subject \"{subject}\" --status closed`")
-    # The request-only window, the same one the closure command reads
-    # (2026-09-11): a window over every kind stopped short of the closure
-    # in a busy session, and the gate named an ask the closure had already
-    # answered.
-    requests = archive.select(kind="request", limit=600)
+    # The one shared reader every open-ask surface now pulls through
+    # (Task 2, 0.3.28): a per-caller record count here disagreed with the
+    # closure command's own count in a busy session, and the gate named an
+    # ask the closure had already answered.
+    requests, window_overflow = read_request_window(archive)
+    out["window_overflow"] = window_overflow
     for record in open_stated_requests(requests):
         data = record.get("data") or {}
         if session_id and str(data.get("session") or "") != str(session_id):
@@ -254,6 +274,11 @@ def commit_score_plateau(project: Path, window: int = 12, streak: int = 4) -> di
     already leaves: `score = <n>` in commit subjects on the current branch.
     `streak` consecutive newest commits whose score did not beat the best
     before them is a plateau; the report carries the numbers."""
+    from .godmode_anchor import git_marker_above
+    if not git_marker_above(Path(project).resolve()):
+        # Not a repository: nothing to read, and the spawn costs 100 ms or
+        # more on every Stop (field report 2026-09-23).
+        return None
     try:
         done = subprocess.run(["git", "log", f"-{window}", "--format=%h %s"], cwd=str(project),
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)

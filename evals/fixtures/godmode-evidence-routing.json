@@ -1,0 +1,21 @@
+{
+  "routes": {
+    "near_negative": {
+      "Independently recheck a verdict another pass already accepted": "godmode-second-look",
+      "Merge the changelog fragments and build the release notes": "godmode-changelog",
+      "Root-cause the crash in the nightly build": "godmode-investigation"
+    },
+    "positive": {
+      "My claim keeps being downgraded to observed; reshape its citation around an exit-bearing command and record it through --verify": "godmode-evidence",
+      "The Stop gate keeps blocking on unsupported sentences and a stale citation; repair the drifted evidence, give the hypothesis a falsifier, and resolve the settled claim": "godmode-evidence"
+    }
+  },
+  "schema": "godmode-routing-snapshot-v1",
+  "skill": "godmode-evidence",
+  "summary": {
+    "near_negatives_rejected": 3,
+    "near_negatives_total": 3,
+    "positives_routed_correctly": 2,
+    "positives_total": 2
+  }
+}

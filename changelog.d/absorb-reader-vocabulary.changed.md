@@ -1,0 +1,1 @@
+- The absorption reader's import-verdict vocabulary now matches the write-time gate's: an `exists` verdict grades like a settled `n-a`, and `unread` is accepted as a known token but still grades as half-recorded, since it names a surface read that never opened the source.

@@ -94,7 +94,7 @@ class ResumeDigestInTheBrief(unittest.TestCase):
         brief = observe._session_start(project)
         context = brief["hookSpecificOutput"]["additionalContext"]
         _prefix, _, payload = context.partition("\n")
-        return json.loads(payload)
+        return json.JSONDecoder().raw_decode(payload)[0]
 
     def test_the_digest_carries_the_resume_counts(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):

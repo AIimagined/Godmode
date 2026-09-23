@@ -1,0 +1,1 @@
+- Commands are parsed once under their shell's semantics before classification, so Bash and PowerShell get the same decision; a corpus differential reports any decision flip between two commits.

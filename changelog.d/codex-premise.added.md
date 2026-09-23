@@ -1,0 +1,1 @@
+- `hooks wire --host codex` refuses from a linked worktree and names the primary checkout; the Codex probe records the installed-runtime premise first.

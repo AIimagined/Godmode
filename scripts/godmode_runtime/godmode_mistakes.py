@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 from typing import Any
 
-from .godmode_chronicle import Chronicle
+from .godmode_chronicle import Chronicle, latest_by_subject
 from .godmode_errors import ArchiveError
 from .godmode_constants import CODE_SUFFIXES, IGNORED_DIRECTORY_NAMES
 
@@ -43,29 +43,30 @@ FAILURE_CLASSES = (
 )
 
 
-def record_incident(
-    archive: Chronicle,
-    subject: str,
-    detail: str,
-    *,
-    failure_class: str | None = None,
-    turning_point: bool = False,
-    cites: list[str] | None = None,
-    predicts: str | None = None,
-) -> dict[str, Any]:
-    """One incident, optionally classed, optionally the turning point.
+REPRO_PREFIX = "repro:"
 
-    `predicts` (absorbed 2026-09-11 from a multi-agent workspace's review
-    rules): a mechanism that explains the observation is not evidence for
-    it until it forbids something - name one consequence the hypothesis
-    requires, a check that must come out a particular way, and go look.
+# What a reproduction run showed at incident time. Only `red` can anchor a
+# fix claim: a command that passed, or never started, reproduced nothing.
+REPRO_RED = "red"
+REPRO_NOT_REPRODUCING = "repro-not-reproducing"
+REPRO_NOT_RUNNABLE = "repro-not-runnable"
+REPRO_WAIVED = "waived"
 
-    The class comes from `FAILURE_CLASSES` or is absent - an off-list word
-    is refused with the list rendered, because the whole value of a class
-    is that two records can share it. `turning_point` marks the first
-    failure the run never recovered from; it is a causal claim, so it
-    requires at least one citation.
-    """
+
+def repro_command(cites: list[str] | None) -> str | None:
+    """The first `repro:<cmd>` citation's command, or None."""
+    for cite in cites or []:
+        text = str(cite)
+        if text.startswith(REPRO_PREFIX) and text[len(REPRO_PREFIX):].strip():
+            return text[len(REPRO_PREFIX):].strip()
+    return None
+
+
+def validate_incident(failure_class: str | None, turning_point: bool,
+                      cites: list[str] | None) -> None:
+    """The refusals `record_incident` raises, checkable before anything runs -
+    so a reproduction command is never executed for a record that will then be
+    refused."""
     if failure_class is not None and failure_class not in FAILURE_CLASSES:
         raise ArchiveError(
             f"Unknown failure class '{failure_class}'; expected one of: "
@@ -76,6 +77,90 @@ def record_incident(
             "a turning point is a causal claim - cite the record or artifact "
             "that shows the run never recovered past it"
         )
+
+
+def run_repro(
+    archive: Chronicle, session: str, project: Path, command: str, timeout: int = 900,
+) -> dict[str, Any]:
+    """Run an incident's reproduction command through the attested runner (NS-13e).
+
+    The exit code is recorded at write time, by the runner, never reported by
+    the author: argv with no shell, bounded by `timeout`. A shell operator is
+    refused by name for the same reason `claim --verify` refuses it - the
+    runner would pass it as a literal argument.
+    """
+    from .godmode_attest import run_check, split_command, unsupported_shell_grammar
+
+    offending = unsupported_shell_grammar(command)
+    if offending:
+        raise ArchiveError(
+            f"the reproduction command contains {offending!r}, which the runner cannot "
+            "use: it runs as argv with no shell - put a multi-step reproduction in a "
+            "script and cite that script")
+    outcome = run_check(archive, session, Path(project), "repro", split_command(command),
+                        timeout=timeout)
+    code = int(outcome["exit_code"])
+    # Not runnable only when the runner could not start it: a script that
+    # itself exits 127 (a tool missing inside it) is a genuine red.
+    never_started = str(outcome.get("detail", "")).startswith("command not found")
+    state = (REPRO_NOT_REPRODUCING if code == 0
+             else REPRO_NOT_RUNNABLE if never_started else REPRO_RED)
+    return {"command": command, "citation": outcome["citation"], "exit_code": code,
+            "state": state, "check_seq": outcome["sequence"],
+            "detail": str(outcome.get("detail", ""))[:200]}
+
+
+def record_incident(
+    archive: Chronicle,
+    subject: str,
+    detail: str,
+    *,
+    failure_class: str | None = None,
+    turning_point: bool = False,
+    cites: list[str] | None = None,
+    predicts: str | None = None,
+    refuted_by: str | None = None,
+    hypothesis: str | None = None,
+    repro: dict[str, Any] | None = None,
+    no_repro: str | None = None,
+) -> dict[str, Any]:
+    """One incident, optionally classed, optionally the turning point.
+
+    `predicts` (absorbed 2026-09-11 from a multi-agent workspace's review
+    rules): a mechanism that explains the observation is not evidence for
+    it until it forbids something - name one consequence the hypothesis
+    requires, a check that must come out a particular way, and go look.
+
+    `refuted_by` (I-3): the one command or observation that would refute
+    this incident's hypothesis, the same field a claim carries. Stored,
+    not required - `godmode_falsifiers.due_falsifiers` is what ages an
+    unrun one into a finding, not this call.
+
+    `hypothesis` (I-4): the explanation itself, in the operator's own
+    words - what `refuted_by` is a falsifier FOR. Neither alone is the
+    record the two-reversals gate (`godmode_reversals.
+    third_edit_without_incident`) reads for: a `refuted_by` with no stated
+    `hypothesis` is a command with nothing named to refute, and the gate
+    requires both before it lifts a refusal.
+
+    The class comes from `FAILURE_CLASSES` or is absent - an off-list word
+    is refused with the list rendered, because the whole value of a class
+    is that two records can share it. `turning_point` marks the first
+    failure the run never recovered from; it is a causal claim, so it
+    requires at least one citation.
+
+    `repro` (NS-13e) is `run_repro`'s result: the reproduction command and
+    the exit code the runner saw at write time. `no_repro` is the stated
+    reason there is none; the incident is then classed `underspecified-ask`
+    unless a class was given, because the record shows the failure was
+    never pinned to a command. `remember --kind incident` requires one of
+    the two; internal writers may still record without either.
+    """
+    if repro is not None and no_repro:
+        raise ArchiveError("an incident carries a reproduction or a reason it has none, not both")
+    if no_repro is not None and not str(no_repro).strip():
+        raise ArchiveError("--no-repro needs the reason there is no reproduction command")
+    validate_incident(failure_class, turning_point, cites)
     advisories: list[str] = []
     if not predicts:
         advisories.append(
@@ -90,14 +175,191 @@ def record_incident(
             "no assumption records exist - state the assumptions this "
             "investigation rests on (godmode remember --kind assumption) "
             "so a wrong one can be found instead of lived in")
+    evidence = list(cites or [])
+    data_repro: dict[str, Any] | None = None
+    if repro is not None:
+        data_repro = dict(repro)
+        for cite in (f"{REPRO_PREFIX}{repro['command']}", f"seq:{repro['check_seq']}"):
+            if cite not in evidence:
+                evidence.append(cite)
+        if repro.get("state") == REPRO_NOT_REPRODUCING:
+            advisories.append(
+                "the reproduction command passed at write time, so it does not reproduce "
+                "this failure - a fix claim cannot pair against it; find the command that "
+                "fails, then record the incident again")
+        elif repro.get("state") == REPRO_NOT_RUNNABLE:
+            advisories.append(
+                "the reproduction command did not start (exit 127) - it reproduced "
+                "nothing; cite a command that runs on this machine")
+    elif no_repro is not None:
+        data_repro = {"state": REPRO_WAIVED, "reason": str(no_repro).strip(),
+                      "class": "underspecified-ask"}
+        if failure_class is None:
+            failure_class = "underspecified-ask"
     return archive.append(
         "incident", subject,
         {"detail": detail, "failure_class": failure_class,
             "predicts": predicts,
          "turning_point": bool(turning_point),
+         "refuted_by": refuted_by,
+         "hypothesis": hypothesis,
+         **({"repro": data_repro} if data_repro is not None else {}),
          "advisories": advisories},
-        evidence=cites or [],
+        evidence=evidence,
     )
+
+
+# Fix round 1 (review finding 1): a bound on the detect-and-merge retry
+# below. Each attempt writes one more superseding record; a subject racing
+# past this many hand-offs is refused loudly instead of looping forever.
+_PATTERN_RACE_MAX_ATTEMPTS = 3
+
+
+def _fold_pattern_occurrences(
+    records: list[dict[str, Any]], subject: str
+) -> tuple[list[int], int]:
+    """The latest `occurrences` for `subject` in `records`, plus the highest
+    `sequence` among the pattern records folded - the fold's high-water
+    mark, used by `record_pattern` to detect a concurrent writer it missed.
+    """
+    occurrences: list[int] = []
+    high_water = 0
+    for record in records:
+        if record.get("kind") != "pattern" or str(record.get("subject", "")) != subject:
+            continue
+        occurrences = list((record.get("data") or {}).get("occurrences") or [])
+        sequence = record.get("sequence")
+        if isinstance(sequence, int) and sequence > high_water:
+            high_water = sequence
+    return occurrences, high_water
+
+
+def record_pattern(
+    archive: Chronicle,
+    subject: str,
+    workaround: str,
+    pattern_class: str,
+    *,
+    occurrence: int | None = None,
+    cites: list[str] | None = None,
+) -> dict[str, Any]:
+    """NS-12e: a recurring failure mode as a record that ACCUMULATES.
+
+    The archive is append-only, so "append an occurrence to an existing
+    pattern" cannot mean rewriting the first record - it means writing a
+    NEW `pattern` record for the same subject whose `occurrences` carries
+    every prior sighting plus this one, so the latest record is always the
+    whole picture and a second sighting never mints a duplicate the way a
+    naive `remember` would. `history --kind pattern` still shows every
+    step as its own record (the evolution log); `list_patterns` below folds
+    to the latest per subject (the index).
+
+    `pattern_class` is checked against the same closed table
+    `record_incident`'s `failure_class` uses - one vocabulary a preflight
+    finding's own `class` field can be matched against
+    (`godmode_preflight.pattern_workaround_findings`), rather than a second,
+    independently-typed set of bucket names.
+
+    Concurrency (fix round 1, review finding 1): the fold above and the
+    `archive.append()` below are two separate chronicle operations, not
+    one atomic step, so two processes calling `record_pattern` for the
+    same subject at nearly the same time can both fold the same prior
+    occurrences and each write a divergent "next" record. This cannot be
+    closed by wrapping both in one `with archive.write_lock():` here -
+    `append()` takes its own `write_lock()` on a fresh descriptor, and
+    flock/msvcrt do not reenter across descriptors in the same process, so
+    nesting would stall every call until the 20 s "archive is busy"
+    timeout. Instead this detects the race AFTER the write: it remembers
+    the highest sequence its own fold saw, and once `append()` returns it
+    re-reads the subject's pattern records for any sequence strictly
+    between that high-water mark and the record it just wrote - exactly
+    the record its own fold missed. If found, it writes ONE more
+    superseding record whose `occurrences` is the union, then repeats the
+    check (a fresh writer could race the merge write too), bounded to
+    `_PATTERN_RACE_MAX_ATTEMPTS` attempts before refusing loudly rather
+    than looping forever or silently dropping an occurrence.
+    """
+    if pattern_class not in FAILURE_CLASSES:
+        raise ArchiveError(
+            f"Unknown pattern class '{pattern_class}'; expected one of: "
+            + ", ".join(FAILURE_CLASSES)
+        )
+    prior_occurrences, fold_high_water = _fold_pattern_occurrences(
+        archive.read_events(), subject
+    )
+    occurrences = list(prior_occurrences)
+    if occurrence is not None and occurrence not in occurrences:
+        occurrences.append(int(occurrence))
+    if not occurrences:
+        raise ArchiveError(
+            "a new pattern needs at least one occurrence - pass "
+            "--occurrence seq:<n> naming the record that shows one instance"
+        )
+    data = {"workaround": workaround, "class": pattern_class, "occurrences": occurrences}
+    # dedupe=True (review finding 2): a retried `remember --kind pattern`
+    # with the same subject/class/occurrence folds to byte-identical data
+    # (the idempotency check just above already keeps a repeated
+    # `--occurrence` from appearing twice in the list) - Chronicle's own
+    # dedupe machinery returns the existing record instead of growing the
+    # chain with a duplicate. A retry that adds a genuinely new occurrence,
+    # or changes the workaround text, produces different data and is never
+    # collapsed by this.
+    written = archive.append("pattern", subject, data, evidence=cites or [], dedupe=True)
+    if written.get("deduplicated"):
+        return written
+
+    attempts = 0
+    while True:
+        written_sequence = written.get("sequence")
+        interlopers = [
+            record for record in archive.read_events()
+            if record.get("kind") == "pattern"
+            and str(record.get("subject", "")) == subject
+            and isinstance(record.get("sequence"), int)
+            and fold_high_water < record["sequence"] < written_sequence
+        ]
+        if not interlopers:
+            return written
+        attempts += 1
+        if attempts > _PATTERN_RACE_MAX_ATTEMPTS:
+            raise ArchiveError(
+                f"record_pattern: subject {subject!r} kept racing a "
+                f"concurrent writer across {attempts - 1} merge attempts - "
+                "run `godmode index patterns` to inspect the raw chain and "
+                "reconcile the occurrence lists by hand"
+            )
+        merged = set(occurrences)
+        for record in interlopers:
+            merged.update((record.get("data") or {}).get("occurrences") or [])
+        occurrences = sorted(merged)
+        fold_high_water = written_sequence
+        data = {"workaround": workaround, "class": pattern_class, "occurrences": occurrences}
+        written = archive.append("pattern", subject, data, evidence=cites or [])
+
+
+def list_patterns(archive: Any) -> list[dict[str, Any]]:
+    """NS-12e's index: one row per pattern subject, folded to its latest
+    record - read before deciding whether a new sighting is a fresh
+    pattern or one more occurrence of an old one. `history --kind pattern`
+    is the sibling evolution log, unfolded."""
+    # NS-10e: a pattern another record has named via `--supersedes` (e.g.
+    # merged into a broader pattern subject) drops out of the index the
+    # same way any other latest-per-subject reader now excludes one.
+    latest = latest_by_subject(
+        [r for r in archive.read_events() if r.get("kind") == "pattern"])
+    rows: list[dict[str, Any]] = []
+    for subject, record in sorted(latest.items()):
+        data = record.get("data") or {}
+        occurrences = list(data.get("occurrences") or [])
+        rows.append({
+            "subject": subject,
+            "class": data.get("class"),
+            "workaround": data.get("workaround"),
+            "occurrences": occurrences,
+            "occurrence_count": len(occurrences),
+            "sequence": record.get("sequence"),
+        })
+    return rows
 
 
 _CLAIM_SPLIT = re.compile(r";\s+|\b(?:and also|as well as)\b|\n\s*\d+[.)]\s")
@@ -790,6 +1052,11 @@ def obligation_sibling_advisory(archive: Any, subject: str,
     and the corpses nag beside the living one. At record time the overlap
     is cheapest to name: >=3 shared salient words with an OPEN obligation
     of a different subject means close or supersede the elder now.
+
+    Fix round 1 (NS-10e task-6, ruling 4): now routed through
+    `latest_by_subject` - the exact `supersedes` link this docstring
+    describes as absent now exists, and a superseded elder should stop
+    nagging here the same way it stops nagging in `status.remaining()`.
     """
     from .godmode_sources import _salient_words
 
@@ -797,9 +1064,7 @@ def obligation_sibling_advisory(archive: Any, subject: str,
     if not new_vocab:
         return None
     try:
-        latest: dict[str, dict] = {}
-        for record in archive.select(kind="obligation", limit=200):
-            latest[str(record.get("subject", ""))] = record
+        latest = latest_by_subject(archive.select(kind="obligation", limit=200))
     except Exception:  # noqa: BLE001
         return None
     for elder_subject, record in latest.items():

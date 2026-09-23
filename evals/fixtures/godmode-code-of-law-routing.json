@@ -1,0 +1,20 @@
+{
+  "routes": {
+    "near_negative": {
+      "Draft a fresh guard for behavior nobody has ever corrected.": "godmode-changelog",
+      "Retire an old lesson and write a fresh guard from a blank slate.": "godmode-memory-gardener"
+    },
+    "positive": {
+      "Follow the guards in the project's compiled Code of Law before acting on a new task.": "godmode-code-of-law",
+      "Starting a new session, check whether GODMODE-CODE-OF-LAW.md exists at the project root and read it.": "godmode-code-of-law"
+    }
+  },
+  "schema": "godmode-routing-snapshot-v1",
+  "skill": "godmode-code-of-law",
+  "summary": {
+    "near_negatives_rejected": 2,
+    "near_negatives_total": 2,
+    "positives_routed_correctly": 2,
+    "positives_total": 2
+  }
+}

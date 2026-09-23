@@ -1,0 +1,1 @@
+- `docs/COMMAND-REFERENCE.md` is generated from the CLI's own parser (`scripts/dev/build_command_reference.py`) and listed in the README's docs index, so the public command reference cannot drift from what `--help` actually says; `tests/test_command_reference_drift.py` fails the build if the generated file and the parser disagree.

@@ -15,7 +15,8 @@ from pathlib import Path
 import re
 from typing import Any
 
-from .godmode_chronicle import Chronicle
+from .godmode_chronicle import (CLOSING_STATUSES, Chronicle, latest_by_subject,
+                               open_reviews, record_trust)
 from .godmode_errors import ArchiveError
 
 STATES = ("proposed", "ready", "active", "blocked", "review", "verified", "closed")
@@ -52,6 +53,41 @@ def _evidence_cites_incident(archive: Chronicle, evidence: list[str]) -> bool:
         return False
     return any(record["sequence"] in cited
                for record in archive.select(kind="incident", limit=500))
+
+
+def _check_dependencies(existing_ids: dict[str, list[str]], new_id: str, deps: list[str]) -> None:
+    """The dependency walker every id-carrying kind shares: existence,
+    self-dependency and cycle, refused before the record ever lands.
+
+    `existing_ids` maps every already-known id to ITS OWN outgoing
+    dependency list (whatever the caller's field is named - `depends_on`
+    for sprint items, `blocked_by` for obligations), so a cycle several
+    hops away is still found. `new_id` need not be a key of `existing_ids`
+    itself; only its proposed `deps` are checked.
+    """
+    missing = [d for d in deps if d != new_id and d not in existing_ids]
+    if missing:
+        raise ArchiveError(
+            f"'{new_id}' depends on unknown item(s): {', '.join(missing)}. "
+            "Record the dependency first, or fix the name."
+        )
+    if new_id in deps:
+        raise ArchiveError(f"'{new_id}' cannot depend on itself")
+    # A dependency chain that loops back makes every member unstartable
+    # forever, so the write that would close the loop is the one refused.
+    stack = list(deps)
+    seen: set[str] = set()
+    while stack:
+        node = stack.pop()
+        if node == new_id:
+            raise ArchiveError(
+                f"'{new_id}' -> {', '.join(deps)} closes a dependency "
+                "cycle; a cycle makes every member unstartable"
+            )
+        if node in seen:
+            continue
+        seen.add(node)
+        stack.extend(existing_ids.get(node, []) or [])
 
 
 def record_item(
@@ -119,31 +155,13 @@ def record_item(
     if depends_on:
         # Existence-checked at write time, the same discipline pending items
         # already get: a phantom blocker would freeze this item forever with
-        # nothing anyone could ever resolve.
+        # nothing anyone could ever resolve. The shared walker also carries
+        # the self-dependency and cycle checks (`_check_dependencies`).
         known = items(archive)
-        missing = [d for d in depends_on if d != item and d not in known]
-        if missing:
-            raise ArchiveError(
-                f"'{item}' depends on unknown item(s): {', '.join(missing)}. "
-                "Record the dependency first, or fix the name."
-            )
-        if item in depends_on:
-            raise ArchiveError(f"'{item}' cannot depend on itself")
-        # A dependency chain that loops back makes every member unstartable
-        # forever, so the write that would close the loop is the one refused.
-        stack = list(depends_on)
-        seen: set[str] = set()
-        while stack:
-            node = stack.pop()
-            if node == item:
-                raise ArchiveError(
-                    f"'{item}' -> {', '.join(depends_on)} closes a dependency "
-                    "cycle; a cycle makes every member unstartable"
-                )
-            if node in seen:
-                continue
-            seen.add(node)
-            stack.extend(known.get(node, {}).get("depends_on", []) or [])
+        _check_dependencies(
+            {name: entry.get("depends_on") or [] for name, entry in known.items()},
+            item, depends_on,
+        )
     if state == "verified" and (effective_acceptance or "").strip() and not evidence:
         raise ArchiveError(
             f"'{item}' declares acceptance criteria; moving to verified requires evidence "
@@ -487,6 +505,34 @@ def _age_days(recorded_at: Any, now: Any = None) -> int | None:
     return max(0, int((current - written).total_seconds() // 86_400))
 
 
+def _prefer_latest_unless_contradicted(
+    current_best: dict[str, Any] | None, record: dict[str, Any]
+) -> dict[str, Any]:
+    """NS-8k's status-trust rule (fix round 1, F3): latest-by-time stays the
+    BASE rule; trust only breaks a genuine contradiction.
+
+    The old rule (`record_trust(record) >= record_trust(current_best)`) let
+    trust dominate every later record on a subject, not only a contradictory
+    one - once any operator or checker record touched a subject, no agent
+    record on it ever surfaced in `remaining()` again, including the owning
+    agent legitimately progressing or re-closing its own obligation. The
+    fix: the later record wins UNLESS the incumbent is strictly higher trust
+    AND the newcomer's `status` actually differs from the incumbent's. A
+    same-status update from a lower-trust writer contradicts nothing and
+    still wins by recency, exactly as it always did when every writer on a
+    subject shared the same trust (the overwhelmingly common case).
+    """
+    if current_best is None:
+        return record
+    if record_trust(current_best) <= record_trust(record):
+        return record
+    incumbent_status = str(current_best["data"].get("status", "")).strip().lower()
+    newcomer_status = str(record["data"].get("status", "")).strip().lower()
+    if newcomer_status == incumbent_status:
+        return record
+    return current_best
+
+
 def remaining(
     archive: Chronicle,
     project: Path,
@@ -534,16 +580,45 @@ def remaining(
     # The latest record per subject is the obligation's state: a later
     # `closed` or `retired` record supersedes the original `open` one, so
     # closing through `remember --status closed` actually closes.
-    latest_obligation: dict[str, dict[str, Any]] = {}
-    for record in archive.select(kind="obligation", limit=500):
-        latest_obligation[record["subject"]] = record
+    # NS-8k: "latest" bends to trust only on a CONTRADICTION - a higher-
+    # trust record (an operator's correction) persists across a later,
+    # lower-trust record that disagrees with its status, the "persistent
+    # human override" the spec cites - but a same-status update (the agent
+    # progressing or re-closing its own obligation) still wins by recency,
+    # exactly as before `writer` existed (see
+    # `_prefer_latest_unless_contradicted`, fix round 1, F3).
+    # NS-10e: `latest_by_subject` first drops any obligation record another
+    # record has named via `--supersedes` - it is never "latest" again no
+    # matter how it compares by trust or recency - then folds the
+    # survivors with `combine=_prefer_latest_unless_contradicted`, so
+    # Task 5's trust-contradiction rule composes with the edge instead of
+    # being replaced by it.
+    latest_obligation = latest_by_subject(
+        archive.select(kind="obligation", limit=500),
+        combine=_prefer_latest_unless_contradicted,
+    )
     consulted.append("open obligations")
     for record in latest_obligation.values():
         status = str(record["data"].get("status", "open")).lower()
-        if status not in ("closed", "met", "done", "retired"):
+        if status not in CLOSING_STATUSES:
             items_left.append({"source": "obligation", "id": record["subject"],
                                "detail": str(record["data"].get("value", ""))[:160],
                                "age_days": _age_days(record.get("recorded_at"), now)})
+
+    # NS-11e fix round 1 (review B, B3): a contradiction `godmode forget`
+    # flagged is work left - two active records on one subject disagree and
+    # nobody has said which stands. It stayed invisible to every surface but
+    # `history --kind review` until it was listed here.
+    reviews = open_reviews(archive.select(kind="review", limit=500))
+    consulted.append("open contradiction reviews")
+    for entry in reviews:
+        items_left.append({
+            "source": "review", "id": entry["subject"],
+            "detail": (f"{entry['kind'] or 'record'}s at "
+                       + ", ".join(f"seq:{s}" for s in entry["sequences"])
+                       + " disagree on this subject and are both active"),
+            "age_days": None,
+        })
 
     if charter is None:
         unavailable.append({"source": "unattested rules",
@@ -574,9 +649,13 @@ def remaining(
         # 2026-08-29: two hypothesis-graded retries sat listed beside their
         # own verified successor). The latest record per subject is the
         # claim's state - the same rule obligations already follow.
-        latest_claim: dict[str, dict[str, Any]] = {}
-        for record in archive.select(kind="claim", limit=500):
-            latest_claim[str(record["subject"])] = record
+        # NS-8k trust rule composed with NS-10e's edge, same as
+        # `latest_obligation` above.
+        latest_claim = latest_by_subject(
+            archive.select(kind="claim", limit=500),
+            key=lambda record: str(record["subject"]),
+            combine=_prefer_latest_unless_contradicted,
+        )
         for record in latest_claim.values():
             data = record["data"]
             if data.get("session") == session and data.get("downgraded"):
@@ -618,6 +697,24 @@ def remaining(
             blocked.append({**row, "blocked_by": ", ".join(blockers)})
         else:
             ready.append(row)
+
+    # NS-8n: an obligation can name another obligation as its blocker
+    # (`remember --kind obligation --blocked-by <id>`, existence/self/cycle
+    # checked by `_check_dependencies` at write time). A blocked one is
+    # listed here under its blocker instead of standing alone; it still
+    # appears in `remaining` above either way, so it is never lost.
+    def _obligation_open(data: dict[str, Any]) -> bool:
+        return str(data.get("status", "open")).lower() not in CLOSING_STATUSES
+
+    for subject, record in sorted(latest_obligation.items()):
+        data = record["data"]
+        if not _obligation_open(data):
+            continue
+        blockers = [b for b in (data.get("blocked_by") or [])
+                    if b in latest_obligation and _obligation_open(latest_obligation[b]["data"])]
+        if blockers:
+            blocked.append({"id": subject, "title": str(data.get("value", ""))[:160],
+                            "state": "obligation", "blocked_by": ", ".join(blockers)})
 
     return {
         "remaining": items_left,

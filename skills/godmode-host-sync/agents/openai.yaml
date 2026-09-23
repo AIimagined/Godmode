@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godmode Host Sync"
+  short_description: "Detect, reconcile, and drift-repair a host's hook wiring."
+  default_prompt: "Use $godmode-host-sync to preview a host's hook reconciliation, show the diff, and repair only after the preview is shown."

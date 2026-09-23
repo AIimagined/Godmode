@@ -1,0 +1,22 @@
+{
+  "routes": {
+    "near_negative": {
+      "Create a new project skill after the same missing workflow was needed twice": "godmode-skill-forge",
+      "Pick a different testing framework for the whole project": "godmode-code-of-law",
+      "Review this pull request's code changes for bugs": "godmode",
+      "Run the project's full automated test suite before merging": "godmode-changelog"
+    },
+    "positive": {
+      "Confirm a skill's overlap scores still hold and that the ratchet shows no regression before it is enabled by default": "godmode-skill-eval",
+      "Score a drafted skill's authored routing rows against the committed baseline and validate its bundle before it ships": "godmode-skill-eval"
+    }
+  },
+  "schema": "godmode-routing-snapshot-v1",
+  "skill": "godmode-skill-eval",
+  "summary": {
+    "near_negatives_rejected": 4,
+    "near_negatives_total": 4,
+    "positives_routed_correctly": 2,
+    "positives_total": 2
+  }
+}

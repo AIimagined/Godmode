@@ -29,14 +29,14 @@ if str(Path(__file__).parent) not in sys.path:
 from godmode_runtime import godmode_host_manifests as host_manifests  # noqa: E402
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
-from _host_env import HOST_MARKERS  # noqa: E402
+from _host_env import scrubbed_env  # noqa: E402
 
 DONE_TEXT = "Done: the migration is complete and all 12 tests pass."
 
 
 class CursorStopManifestTests(unittest.TestCase):
     def test_the_cursor_manifest_declares_a_bounded_stop_hook(self) -> None:
-        manifest = host_manifests.build_cursor_manifest()
+        manifest = host_manifests.build_cursor_manifest(PLUGIN_ROOT)
         stops = manifest["hooks"].get("stop") or []
         self.assertTrue(stops, manifest["hooks"].keys())
         self.assertEqual(stops[0].get("loop_limit"), 1)
@@ -58,7 +58,7 @@ class CursorStopRenderTests(unittest.TestCase):
                 json.dumps({"type": "user", "message": {"content": "do it"}}),
                 json.dumps({"type": "assistant", "message": {"content": [
                     {"type": "text", "text": DONE_TEXT}]}})]), encoding="utf-8")
-            environment = {k: v for k, v in os.environ.items() if k not in HOST_MARKERS}
+            environment = scrubbed_env()
             environment["GODMODE_STATE_HOME"] = str(state)
             environment["GODMODE_HOST"] = "cursor"
             done = subprocess.run(

@@ -1,0 +1,39 @@
+{
+  "schema": "godmode-skill-eval-v1",
+  "skill": "godmode-codegraph",
+  "routing": {
+    "positive": [
+      "Find who calls or imports a module and its blast radius before editing it, using the local dependency graph instead of opening every module by hand",
+      "Check which tests must be retested for a set of changed paths using the saved dependency graph"
+    ],
+    "near_negative": [
+      "Read one small file's contents directly with no need to know its dependents",
+      "Investigate why one specific test is failing",
+      "Rebuild the loop-record signature history for a stalled retry"
+    ]
+  },
+  "behavior_assertions": [
+    {
+      "assert": "atlas graph declares exactly the rebuild, query, and verify subcommands the flow names.",
+      "check": {
+        "command": "python scripts/godmode.py --project . atlas graph --help",
+        "expect_exit": 0,
+        "expect_contains": "{rebuild,query,verify}"
+      }
+    },
+    {
+      "assert": "the skill's own bundle (frontmatter, PURPOSE.md cite, routing rows, this file) validates structurally.",
+      "check": {
+        "command": "python scripts/godmode.py --project . skill validate --path skills/godmode-codegraph",
+        "expect_exit": 0,
+        "expect_contains": "\"valid\": true"
+      }
+    },
+    "atlas graph verify rebuilds fresh in memory and reports whether the saved snapshot still matches, without overwriting it - proven in tests/test_godmode_codegraph.py's stale/no-snapshot cases, not run here since it needs an initialized archive.",
+    "atlas graph rebuild derives a fresh graph from the archive and overwrites the saved snapshot, deterministically - proven in tests/test_godmode_codegraph.py, not run here for the same reason.",
+    "atlas closure names every dependent of a changed file that was not itself changed, before a blast-radius edit.",
+    "A query for a node the graph has never seen refuses with unknown_node rather than guessing."
+  ],
+  "baseline_required": true,
+  "claims_require_evidence": true
+}

@@ -105,7 +105,6 @@ class ChronicleCacheTests(unittest.TestCase):
         # tampered disk content because it re-checked stale, pre-tamper
         # in-memory data. Caught live by test_godmode_runtime's own
         # tamper-evidence test; pinned here as this module's own guard.
-        from godmode_runtime.godmode_errors import ArchiveError
         import json
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
@@ -116,8 +115,11 @@ class ChronicleCacheTests(unittest.TestCase):
             payload = json.loads(first.read_text(encoding="utf-8"))
             payload["data"]["value"] = "altered"
             first.write_text(json.dumps(payload), encoding="utf-8")
-            with self.assertRaises(ArchiveError):
-                archive.verify()
+            # N-9: verify() names the break instead of raising.
+            broken = archive.verify()
+            self.assertFalse(broken["valid"])
+            self.assertFalse(broken["ok"])
+            self.assertEqual(broken["first_broken_path"], first.name)
 
     def test_verify_false_still_uses_the_cache(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):

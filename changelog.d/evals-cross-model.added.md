@@ -1,0 +1,1 @@
+- The eval report carries one row per skill per declared model and flags a skill that passes only under its authoring model; with no per-model measurements declared, every row replays the same run.

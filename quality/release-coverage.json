@@ -53,7 +53,8 @@
         "stage",
         "grid",
         "assurance",
-        "branches"
+        "branches",
+        "ownership"
       ]
     },
     "SB": {
@@ -100,7 +101,8 @@
         "register",
         "plant",
         "digest",
-        "db"
+        "db",
+        "forget"
       ]
     },
     "S4": {
@@ -134,6 +136,7 @@
         "paired-artifact",
         "watch",
         "sop",
+        "hypothesis",
         "sprint",
         "plan",
         "planmode",
@@ -144,7 +147,8 @@
         "topology",
         "precheck",
         "inspect",
-        "slice"
+        "slice",
+        "read"
       ]
     },
     "S5": {
@@ -181,7 +185,19 @@
     "godmode-investigation": "S4",
     "godmode-repair": "S4",
     "godmode-skill-forge": "S4",
-    "godmode-code-of-law": "S4"
+    "godmode-code-of-law": "S4",
+    "godmode-changelog": "S4",
+    "godmode-codegraph": "S4",
+    "godmode-host-sync": "S4",
+    "godmode-second-look": "S4",
+    "godmode-skill-eval": "S4",
+    "godmode-spec-lifecycle": "S4",
+    "godmode-memory-gardener": "S4",
+    "godmode-impact-gate": "S4",
+    "godmode-research": "S4",
+    "godmode-replicate": "S4",
+    "godmode-evidence": "S4",
+    "godmode-triage": "S4"
   },
   "work_items": {
     "roadmap-1.1": "S3",

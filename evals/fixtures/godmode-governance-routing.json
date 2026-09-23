@@ -1,8 +1,10 @@
 {
   "routes": {
     "near_negative": {
-      "Inspect a local file and explain its contents.": "godmode-continuity",
-      "Read repository status without changing state.": "godmode"
+      "Change a local setting that never leaves this machine.": "godmode-codegraph",
+      "Inspect a local file and explain its contents.": "godmode-changelog",
+      "Read repository status without changing state.": "godmode",
+      "Run the automated checks for the gate module before merging.": "godmode-changelog"
     },
     "positive": {
       "Govern a destructive file, database migration, release, or external write.": "godmode-governance",
@@ -12,8 +14,8 @@
   "schema": "godmode-routing-snapshot-v1",
   "skill": "godmode-governance",
   "summary": {
-    "near_negatives_rejected": 2,
-    "near_negatives_total": 2,
+    "near_negatives_rejected": 4,
+    "near_negatives_total": 4,
     "positives_routed_correctly": 2,
     "positives_total": 2
   }

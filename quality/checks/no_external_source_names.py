@@ -23,9 +23,15 @@ Deliberate limits, stated so they are not mistaken for coverage:
 - A bare `owner/repo` pair in prose is not matched. A regex for it fires on
   every relative path in the tree, and a guard that cries wolf gets disabled.
   The supplied list is what catches those, when one is supplied.
-- `tests/` is not scanned. Fixtures there legitimately carry sample forge URLs
-  because some of them test forge-URL detection. The cost is that a real leak
-  inside a test body is invisible here.
+- In `tests/` the forge-URL class is not reported, because fixtures there test
+  forge-URL detection. Deny-listed names are still reported there.
+
+Commit messages are a shipped surface too: a push publishes every message in
+the pushed range. `scan_messages` reads the unpushed range (`PUSH_BASE..HEAD`)
+with the same two classes plus `private-path`, a path into the private working
+tree. `--message-file` scans one message, for a local commit-msg hook. Until
+0.3.28 no check read messages at all, so a report path pasted into a commit
+body passed every check that existed.
 """
 
 from __future__ import annotations
@@ -58,11 +64,28 @@ _TEXT_SUFFIXES = {
 
 #: Paths excluded from scanning, each with the reason it is excluded.
 _EXCLUDED_PREFIXES = {
-    "tests/": "fixtures legitimately carry sample forge URLs to test forge-URL detection",
     "docs/superpowers/": "working specs and plans; checked separately and never published",
 }
 
+#: Paths where forge-URL findings are expected, each with the reason. The
+#: exemption covers that one class only: deny-listed names are still reported
+#: here, because tests ship to every reader of the repository. (Until 0.3.28
+#: tests/ was skipped wholesale on this reason, which let two outside names
+#: ship in a test file while the check read clean.)
+_FORGE_URL_EXEMPT_PREFIXES = {
+    "tests/": "fixtures legitimately carry sample forge URLs to test forge-URL detection",
+}
+
 ALLOWLIST_PATH = ROOT / "quality" / "external-name-allowlist.json"
+
+#: The published branch. Messages above it are what the next push publishes.
+PUSH_BASE = "origin/main"
+
+#: A path into the private working tree: a subagent report directory or the
+#: private state folder. It is fine inside the tree, which never ships, but a
+#: message that names one publishes it. The private tree's own folder name is
+#: on the deny list, so the deny-name class covers it and it is not spelled here.
+_PRIVATE_PATH = re.compile(r"[\w./-]*(?:\bsdd/|\.godmode-private/)[^\s`'\")]*", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -139,11 +162,12 @@ def scan(root: Path, paths: list[Path], deny_names: list[str] | None) -> list[Fi
         except ValueError:
             rel = path.as_posix()
 
+        forge_exempt = any(rel.startswith(p) for p in _FORGE_URL_EXEMPT_PREFIXES)
         for number, line in enumerate(text.splitlines(), start=1):
             if f"{rel}:{number}" in allow:
                 continue
 
-            for match in _FORGE.finditer(line):
+            for match in ([] if forge_exempt else _FORGE.finditer(line)):
                 if match.group("owner").lower() in SELF_OWNERS:
                     continue
                 findings.append(Finding(
@@ -181,12 +205,40 @@ def report(deny_names: list[str] | None, findings: list[Finding]) -> dict[str, s
     }
 
 
-def _deny_from_env() -> list[str] | None:
+def _deny_list_path() -> Path | None:
+    """Where the deny-names file lives, honouring the env var and then the
+    private per-user state home.
+
+    `GODMODE_DENY_NAMES` (an explicit path) always wins when set. Absent
+    that, the list falls back to `deny-names.txt` in Godmode's own state
+    home (`application_home()` in `scripts/godmode_runtime/godmode_anchor.py`)
+    so the class can be measured without exporting a variable in every
+    shell. The list itself never lives inside this repository - only the
+    lookup for where to find it does.
+    """
     raw = os.environ.get("GODMODE_DENY_NAMES")
-    if not raw:
+    if raw:
+        path = Path(raw)
+        return path if path.exists() else None
+
+    try:
+        scripts_dir = ROOT / "scripts"
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        from godmode_runtime.godmode_anchor import application_home
+    except Exception:  # godmode: swallow-ok: import failure keeps prior UNMEASURED behaviour
         return None
-    path = Path(raw)
-    if not path.exists():
+
+    try:
+        home_path = application_home() / "deny-names.txt"
+    except Exception:  # godmode: swallow-ok: resolution failure keeps prior UNMEASURED behaviour
+        return None
+    return home_path if home_path.exists() else None
+
+
+def _deny_from_env() -> list[str] | None:
+    path = _deny_list_path()
+    if path is None:
         return None
     return [
         line.strip()
@@ -195,8 +247,64 @@ def _deny_from_env() -> list[str] | None:
     ]
 
 
+#: Internal-process wording in a commit message: review rounds, reviewers,
+#: model names, private ledger rows, citations of outside scholarship. A push
+#: publishes the message, and these describe how the work was made, not what
+#: changed (2026-09-23: "the opus review's seven blocking findings" and "the
+#: private R-1 ledger rows" reached the public sprint branch).
+_INTERNAL_PROCESS = re.compile(
+    r"(?i)\b(?:opus|sonnet|fable)\b|\bfix[- ]round\b|\breview(?:er'?s?)? rounds?\b"
+    r"|\breviewer'?s?\b|\bnits\b|\bledger:\d|\bprivate\b[^.\n]{0,40}\bledger\b"
+    r"|\bpreprint\b|\barxiv\b|\bet al\.|\boutside paper\b")
+
+
+def scan_message(label: str, message: str, deny_names: list[str] | None) -> list[Finding]:
+    """Every private reference in one commit message."""
+    deny = _deny_pattern(deny_names) if deny_names else None
+    findings: list[Finding] = []
+    remedy = ("Reword the message by what changed. A message is published with the "
+              "push, so it may not cite private paths, reports, or deny-listed names.")
+    for number, line in enumerate(message.splitlines(), start=1):
+        hits = [("private-path", m.group(0)) for m in _PRIVATE_PATH.finditer(line)]
+        hits += [("internal-process", m.group(0)) for m in _INTERNAL_PROCESS.finditer(line)]
+        hits += [("forge-url", m.group(0)) for m in _FORGE.finditer(line)
+                 if m.group("owner").lower() not in SELF_OWNERS]
+        if deny is not None:
+            hits += [("deny-name", m.group(0)) for m in deny.finditer(line)]
+        findings += [Finding(path=label, line=number, kind=kind, matched=text, remedy=remedy)
+                     for kind, text in hits]
+    return findings
+
+
+def scan_messages(root: Path, deny_names: list[str] | None,
+                  base: str = PUSH_BASE) -> list[Finding] | None:
+    """Findings across every unpushed commit message; None when `base` is unknown."""
+    known = subprocess.run(["git", "rev-parse", "--verify", "--quiet", base],
+                           cwd=str(root), capture_output=True, text=True, timeout=30)
+    if known.returncode != 0:
+        return None
+    out = subprocess.run(["git", "log", "--format=%h%x00%B%x1e", f"{base}..HEAD"],
+                         cwd=str(root), capture_output=True, text=True,
+                         encoding="utf-8", errors="replace", timeout=120)
+    if out.returncode != 0:
+        raise SystemExit(f"git log failed: {out.stderr.strip()}")
+    findings: list[Finding] = []
+    for record in out.stdout.split("\x1e"):
+        sha, _, body = record.strip("\n").partition("\x00")
+        if sha:
+            findings += scan_message(f"commit {sha}", body, deny_names)
+    return findings
+
+
 def main() -> int:
     deny_names = _deny_from_env()
+    if "--message-file" in sys.argv:
+        target = Path(sys.argv[sys.argv.index("--message-file") + 1])
+        found = scan_message("message", target.read_text(encoding="utf-8", errors="replace"),
+                             deny_names)
+        for finding in found:
+            print(f"FAIL: {finding}\n      {finding.remedy}", file=sys.stderr)
+        return 1 if found else 0
     paths = shipped_paths(ROOT)
     findings = scan(ROOT, paths, deny_names)
     verdict = report(deny_names, findings)
@@ -205,6 +313,13 @@ def main() -> int:
     print(f"  forge-url   {verdict['forge_class']}")
     print(f"  deny-name {verdict['deny_class']}"
           + ("" if deny_names else "  (set GODMODE_DENY_NAMES to a names file to measure)"))
+
+    messages = scan_messages(ROOT, deny_names)
+    if messages is None:
+        print(f"  messages    unmeasured  ({PUSH_BASE} is not a known ref)")
+    else:
+        print(f"  messages    {'findings' if messages else 'clean'}  ({PUSH_BASE}..HEAD)")
+        findings = findings + messages
 
     accepted = load_allowlist()
     if accepted:

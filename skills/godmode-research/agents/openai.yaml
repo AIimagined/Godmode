@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godmode Research"
+  short_description: "Survey an outside codebase in a fixed order and record both verdicts."
+  default_prompt: "Use $godmode-research to survey this outside codebase: classify its licence, receipt each implementing source file with its line range, confirm the reading is not surface-only, and record the import and behaviour verdicts."

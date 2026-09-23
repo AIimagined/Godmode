@@ -1,5 +1,5 @@
-"""C1 round 3 (second independent security review, 2026-08-17): the review
-in `.superpowers/sdd/2026-08-16-cx/task-secA-r2-review.md`, findings C-1
+"""C1 round 3 (second independent security review, 2026-08-17): the review's
+findings C-1
 through C-5 and I-1, plus adversarial combinations this file adds itself.
 
 Rounds 1 and 2 both extended an ENUMERATION of dangerous spellings, and

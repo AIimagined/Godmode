@@ -1,0 +1,1 @@
+- The stale-lock advisory now fires only when the archive's write lock is actually held (probed the same way the writer itself acquires it), not merely when its sidecar file is old, since that sidecar can outlive the process that held it.

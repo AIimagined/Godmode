@@ -1,0 +1,1 @@
+- `observe`, the would-have counts, `authorize stage --from-last-refusal` and the flaky-test ranking now read every record on file instead of the newest 500, so a long history no longer hides or undercounts entries.

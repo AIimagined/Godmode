@@ -1,0 +1,1 @@
+- The installed pre-commit backstop refuses a commit that stages a version surface out of step with the others and names `version --reconcile` as the remedy.

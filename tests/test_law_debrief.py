@@ -18,6 +18,7 @@ if str(SCRIPTS) not in sys.path:
 if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 
+from _law_fixtures import operator_lesson  # noqa: E402
 from test_godmode_runtime import isolated_project  # noqa: E402
 from godmode_runtime.godmode_law import (  # noqa: E402
     debrief, record_delivery, record_instruction_candidate, top_laws,
@@ -25,10 +26,11 @@ from godmode_runtime.godmode_law import (  # noqa: E402
 
 
 def _law(archive, subject: str, guard: str) -> int:
-    record = archive.append(
-        "lesson", subject,
-        {"status": "active", "generalized_guard": guard}, evidence=[])
-    return record["sequence"]
+    """NS-2 fix round 1 (B1): a debrief reads laws that are already
+    standing, so the fixture takes the operator carve-out
+    (`tests/_law_fixtures.py`) rather than staging a promotion the
+    amendment loop itself has no opinion about."""
+    return operator_lesson(archive, subject, guard)["sequence"]
 
 
 class DebriefTests(unittest.TestCase):

@@ -96,6 +96,32 @@ class UpstreamVerdictTests(unittest.TestCase):
             report = upstream_verdicts(archive, ["0.7.109-shader-default"])
         self.assertEqual(report["verdict"], "absorbed")
 
+    def test_exists_grades_like_n_a_settled(self) -> None:
+        # Fix round 1 (coordinator ruling): the vocabulary is the union of
+        # this reader's set and godmode_absorb's - `exists` joins here and
+        # grades as settled, same as `n-a`.
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            archive.append("decision", "absorb:0.7.110-vector-index",
+                           {"import_verdict": "exists",
+                            "behaviour_verdict": "unverified"}, evidence=[])
+            report = upstream_verdicts(archive, ["0.7.110-vector-index"])
+        self.assertEqual(report["verdict"], "absorbed", report["half_verdicted"])
+
+    def test_unread_is_a_known_token_but_never_settled(self) -> None:
+        # `unread` joins the reader's vocabulary too, but it names a surface
+        # read that never opened the source - it must not grade as settled
+        # where `n-a` would.
+        with isolated_project() as (_p, _s, _a, archive):
+            archive.initialize()
+            archive.append("decision", "absorb:0.7.111-cache-warmup",
+                           {"import_verdict": "unread",
+                            "behaviour_verdict": "unverified"}, evidence=[])
+            report = upstream_verdicts(archive, ["0.7.111-cache-warmup"])
+        self.assertEqual(report["verdict"], "absorption-open")
+        self.assertEqual(len(report["half_verdicted"]), 1)
+        self.assertIn("unread", report["half_verdicted"][0]["problems"][0])
+
 
 class PushDisclosureTests(unittest.TestCase):
     def test_a_push_names_its_wired_workflow(self) -> None:

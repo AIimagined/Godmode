@@ -159,6 +159,41 @@ class ThresholdConfigTests(unittest.TestCase):
         self.assertEqual(repeat_threshold(None), 3)
 
 
+class EditRecordedIsAMutationResetTests(unittest.TestCase):
+    """Fix round 2 (Task 8 review, B1): `edit-recorded` IS a mutation
+    record - added to `_MUTATION_SUBJECTS`, it both resets
+    `_repeated_actions`' "nothing changed since the last run" tracking the
+    way a `change`/`attestation`/checkpoint record already does, and is
+    itself excluded from the action-repetition tally (the same branch that
+    treats it as a mutation `continue`s before ever counting it)."""
+
+    def test_three_edits_to_one_file_is_not_a_repeated_action(self) -> None:
+        from godmode_runtime.godmode_loop import analyze
+
+        with isolated_archive() as (_project, archive):
+            for _ in range(3):
+                archive.append("action", "edit-recorded", {
+                    "path": "src/a.py", "operation": "edit:aaaaaaaaaaaa",
+                })
+            report = analyze(archive)
+            self.assertFalse(
+                [f for f in report["findings"] if f["detector"] == "repeated-action"])
+
+    def test_an_edit_between_two_identical_runs_clears_the_streak(self) -> None:
+        from godmode_runtime.godmode_loop import analyze
+
+        with isolated_archive() as (_project, archive):
+            archive.append("action", "run the suite", {"command": "unittest"})
+            archive.append("action", "run the suite", {"command": "unittest"})
+            archive.append("action", "edit-recorded", {
+                "path": "src/a.py", "operation": "edit:aaaaaaaaaaaa",
+            })
+            archive.append("action", "run the suite", {"command": "unittest"})
+            report = analyze(archive)
+            self.assertFalse(
+                [f for f in report["findings"] if f["detector"] == "repeated-action"])
+
+
 class ModelBlameTransportRouteTests(unittest.TestCase):
     """Request/response captured at the transport layer is a non-model control:
     no model sits between the wire and the record."""

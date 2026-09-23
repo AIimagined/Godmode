@@ -2,7 +2,7 @@
 
 A completion claim citing a test command is admissible only when the SAME
 command is observed failing before the fix-edit and passing after - the
-temporal shape, not just the citation (E4 R4 / E6 tdd, superpowers-class).
+temporal shape, not just the citation (E4 R4 / E6 tdd class).
 Criterion pre-registration (E4): state what passing looks like
 before doing the work, and cite it from the claim that judges the work done.
 

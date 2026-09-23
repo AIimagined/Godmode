@@ -1,0 +1,16 @@
+{
+  "_note": "This file is the reference shape for Kiro's `.kiro/hooks.json`. `${godmodePluginRoot}` is a portable placeholder, not a real environment variable Kiro's runtime expands - `godmode hooks wire --host kiro` replaces it with the absolute install path per project; the copy shipped here is the un-substituted template, not a wired install.",
+  "hooks": {
+    "toolCall": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${godmodePluginRoot}/hooks/run-hook.cmd\" godmode_gate_fast.py",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

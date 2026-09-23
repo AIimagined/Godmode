@@ -291,11 +291,14 @@ def selftest() -> dict[str, Any]:
     command exists to catch.
     """
     from .godmode_anchor import resolve_anchor
+    from .godmode_atlas import direction_findings
     from .godmode_attest import gate, open_session, record_claim, record_step
     from .godmode_chronicle import Chronicle
     from .godmode_drift import capabilities
     from .godmode_errors import ArchiveError
     from .godmode_plan import mutation_verdict, specify as plan_specify, start as plan_start
+    from .godmode_refusal_lint import lint_hook_strings
+    from .godmode_selftest import PLUGIN_ROOT, looks_like_godmode_source_tree, verb_coverage
     from .godmode_status import record_item
 
     controls: list[dict[str, Any]] = []
@@ -368,14 +371,106 @@ def selftest() -> dict[str, Any]:
             check("completed-work immunity", "verified work needs proof to reopen", finished_work_stays_finished)
             check("plan mode", "mutation is closed until the plan is approved", plan_gates_mutation)
 
+    def every_verb_is_named():
+        coverage = verb_coverage(PLUGIN_ROOT)
+        orphans = coverage["untested"] or coverage["undocumented"] or coverage["unrouted"]
+        if orphans:
+            return False, (
+                f"untested={coverage['untested']} "
+                f"undocumented={coverage['undocumented']} "
+                f"unrouted={coverage['unrouted']}"
+            )
+        return True, "every CLI verb is named by a test, a public doc, and a skill"
+
+    # The control reads Godmode's OWN shipped tree (PLUGIN_ROOT), never the
+    # project selftest was invoked against - a downstream project's docs
+    # cannot and should not name Godmode's internal verbs. An install shape
+    # that dropped its own tests/source cannot run the probe at all; that is
+    # reported as unavailable rather than as a failing control.
+    def dependency_direction_enforced():
+        # Minimal on purpose: a full copy of hooks/ + scripts/godmode_runtime/
+        # cost seconds per `selftest` run for no extra proof. The control only
+        # needs to observe a refusal, so it seeds the smallest shape that can
+        # produce one - two empty directories and one hook file with a
+        # deferred import of the one denied module.
+        with tempfile.TemporaryDirectory() as raw:
+            probe_root = Path(raw)
+            (probe_root / "hooks").mkdir()
+            (probe_root / "scripts" / "godmode_runtime").mkdir(parents=True)
+            seed = probe_root / "hooks" / "zz_direction_probe.py"
+            seed.write_text(
+                "def handler():\n"
+                "    from godmode_runtime import godmode_console\n"
+                "    return godmode_console\n",
+                encoding="utf-8",
+            )
+            findings = direction_findings(probe_root)
+            return bool(findings), f"{len(findings)} denied-import finding(s) named on a seeded hook"
+
+    # Verb coverage's gate is about Godmode's own tree; this probe seeds its
+    # own disposable directories and needs neither, but runs alongside it for
+    # one shared "is this a real checkout" story rather than two.
+    verb_coverage_runnable = looks_like_godmode_source_tree(PLUGIN_ROOT)
+    if verb_coverage_runnable:
+        check("verb coverage", "every CLI verb is named by a test, a public doc, and a skill",
+              every_verb_is_named)
+        check("dependency direction",
+              "hooks import the runtime only through the declared surface and the runtime never imports hooks",
+              dependency_direction_enforced)
+
+    def _frontmatter_probe() -> tuple[bool, str]:
+        from .godmode_skillfront import lint_all
+        report = lint_all(PLUGIN_ROOT / "skills")
+        failing = [name for name, r in report["per_skill"].items() if not r["passed"]]
+        return report["passed"], ("every shipped skill passes" if report["passed"]
+                                  else "failing: " + ", ".join(failing))
+
+    check("skill frontmatter", "every SKILL.md carries a negative-scope clause, a description "
+          "within budget, no orphan path, and a PURPOSE.md citing a well-formed seq: record "
+          "(checked against this checkout's own archive when one is available; unresolved "
+          "there is reported, not a failure)",
+          _frontmatter_probe)
+
+    def refusal_wording_clean():
+        report = lint_hook_strings(PLUGIN_ROOT / "hooks")
+        if not report["passed"]:
+            if report["scanned"] == 0:
+                return False, "no operator-facing source file was found to scan"
+            shown = "; ".join(
+                f"{f['file']}:{f['line']} {f['finding']}" for f in report["findings"][:3])
+            if len(report["findings"]) > 3:
+                shown += f" (+{len(report['findings']) - 3} more)"
+            return False, shown
+        return True, (f"{report['scanned']} assembled message(s) scanned; none carry a bare "
+                       "tier code, double negative, command-less remedy, internal record "
+                       "vocabulary, or overlong sentence")
+
+    # This control reads Godmode's OWN shipped `hooks/` tree, same reason as
+    # `verb coverage` above - a downstream project's hooks are not what this
+    # lints. Gated on the directory it actually reads existing, not on the
+    # source-tree heuristic `verb coverage` uses, since an install shape can
+    # ship `hooks/` without shipping its own tests.
+    refusal_lint_runnable = (PLUGIN_ROOT / "hooks").is_dir()
+    if refusal_lint_runnable:
+        check("refusal wording",
+              "gate and stop-boundary strings carry no bare tier codes, double negatives, command-less remedies or overlong sentences",
+              refusal_wording_clean)
+
     surface = capabilities()
     enforced = sum(1 for c in controls if c["enforced"])
+    unavailable = list(surface["unavailable"])
+    if not verb_coverage_runnable:
+        unavailable.append("verb coverage")
+    if not refusal_lint_runnable:
+        unavailable.append("refusal wording")
+    if not verb_coverage_runnable:
+        unavailable.append("dependency direction")
     return {
         "controls": controls,
         "enforced": enforced,
         "total": len(controls),
         "host": surface["host"],
-        "unavailable_here": surface["unavailable"],
+        "unavailable_here": unavailable,
         "verdict": "enforcing" if enforced == len(controls) else "degraded",
     }
 
@@ -475,7 +570,12 @@ def _self_check() -> None:
         assert clean["verdict"] in ("governable", "workable"), clean["findings"]
 
     surface = selftest()
-    assert surface["total"] == 5, surface
+    # Five original probes plus the "verb coverage", "skill frontmatter", "refusal wording"
+    # and "dependency direction" controls `selftest` adds when
+    # `looks_like_godmode_source_tree(PLUGIN_ROOT)` holds (true here, since this
+    # self-check only ever runs inside the real checkout) - a control added or
+    # removed there must update this count too.
+    assert surface["total"] == 9, surface
     assert surface["verdict"] == "enforcing", surface["controls"]
 
     document = assurance_case()

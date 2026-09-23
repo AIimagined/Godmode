@@ -106,6 +106,7 @@ _CHECK_COMMAND = re.compile(
     r"jest|vitest|mocha|go\s+vet|cargo\s+(?:test|clippy))\b")
 _SCRIPT_TOKEN = re.compile(r"[\w./\\-]+\.(?:py|sh|bash|ps1|js|mjs|cjs|ts|rb)\b")
 _OR_TRUE = re.compile(r"\|\|\s*(?:true|:)(?:\s|$|;)")
+_COMMENT_LINE = re.compile(r"^\s*(?:#|//|/\*|\*)")
 _EXIT_ZERO = re.compile(r"^\s*(?:exit\s+0\b|sys\.exit\(\s*0?\s*\)|raise\s+SystemExit\(\s*0?\s*\)|os\._exit\(\s*0\s*\))")
 _EXIT_COMPUTED = re.compile(r"\b(?:exit\s+(?!0\b)\S+|sys\.exit\(\s*(?!0?\s*\))|SystemExit\(\s*(?!0?\s*\)))")
 _CONTINUE_ON_ERROR = re.compile(r"^\s*continue-on-error:\s*(?:true|'true'|\"true\")\s*(?:#.*)?$")
@@ -257,7 +258,10 @@ def _loosening(old: str, new: str) -> str | None:
     new_exact = new_method in _EXACT or (new_method == "assert" and "==" in new)
     if old_exact and not new_exact:
         return f"exact check loosened: {old.strip()} -> {new.strip()}"
-    if _shape(old) == _shape(new):
+    # S-6: an exact check whose expected value changed (`assertEqual(len(x),
+    # 3)` -> `2`) is a changed expectation at the same strength, not a
+    # reduced bound; `len(`/`count` in its text used to read it as one.
+    if _shape(old) == _shape(new) and not (old_exact and new_exact):
         before, after = _numbers(old), _numbers(new)
         for b, a in zip(before, after):
             if b == a:
@@ -287,7 +291,11 @@ def _names_code(source: str, path: str) -> bool:
     word = re.compile(rf"(?<![\w-]){re.escape(stem)}(?![\w-])")
     if re.search(rf"(?<![\w-]){re.escape(p.name)}(?![\w-])", source) and p.stem == stem:
         return True
-    return any(_IMPORT_LINE.match(line) and word.search(line) for line in source.split("\n"))
+    # S-6: a comment is not an import. `_IMPORT_LINE`'s `from "..."` and
+    # `require(` arms match anywhere in a line, so a comment such as
+    # `# totals come from "billing"` used to link the test by its stem.
+    return any(_IMPORT_LINE.match(line) and word.search(line)
+               for line in source.split("\n") if not _COMMENT_LINE.match(line))
 
 
 def _test_signals(entry: dict[str, Any], added_anywhere: set[str], defs_added_anywhere: set[str]) -> list:
@@ -557,8 +565,12 @@ def _rule_checker_neutered(files: list[dict[str, Any]], old: Source, new: Source
                 elif _EXIT_ZERO.match(text) and any(_EXIT_COMPUTED.search(r) for r in removed):
                     why = f"exit forced to success, replacing a computed exit: {text.strip()}"
                 if why:
-                    findings.append(_finding(RULE_CHECKER_NEUTERED, entry["path"], new_line,
-                                             f"{entry['path']}: {why}", _excerpt(hunk, new_line, "new")))
+                    finding = _finding(RULE_CHECKER_NEUTERED, entry["path"], new_line,
+                                       f"{entry['path']}: {why}", _excerpt(hunk, new_line, "new"))
+                    # The added line itself, so a caller that already reports
+                    # some lines of this file elsewhere can tell which ones.
+                    finding["line_text"] = text.strip()
+                    findings.append(finding)
     return findings
 
 

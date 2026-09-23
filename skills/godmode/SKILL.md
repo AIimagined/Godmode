@@ -1,6 +1,6 @@
 ---
 name: godmode
-description: Coordinate local context continuity, evidence, and guarded coding workflows. Use when starting or resuming substantive repository work, when current reality is uncertain, or when a request spans multiple Godmode capabilities.
+description: Coordinate local context continuity, evidence, and guarded coding workflows. Use when starting or resuming substantive repository work, when current reality is uncertain, or when a request spans multiple Godmode capabilities. Not for a single-file edit with no continuity, evidence or gating concern.
 ---
 
 # Godmode
@@ -45,6 +45,31 @@ advisories, and stage a protected operation with `authorize stage` before it.
 - Use `godmode-repair` when the operator says an answer did not land, asks for clarity,
   repeats a question, or asks what is being waited on.
 - Use `godmode-skill-forge` only after a repeated reusable capability gap is proven.
+- Use `godmode-second-look` to independently recheck a change, session, PR, or diff that
+  already carries an accepted claim or verdict, before it is relied on.
+- Use `godmode-changelog` to check the changelog-fragment gate, merge fragments for a
+  version, and build and check that version's release notes.
+- Use `godmode-code-of-law` at the start of every session and before every new task, when
+  `GODMODE-CODE-OF-LAW.md` exists at the project root.
+- Use `godmode-host-sync` to check whether every installed host still has the hooks wired
+  and to reconcile a drifted or newly detected host's manifest.
+- Use `godmode-codegraph` to rebuild or read the local code dependency graph: blast radius
+  of a change, who calls a symbol, which tests a change must retest.
+- Use `godmode-skill-eval` to score a skill's routing and behaviour against its baseline
+  and to ratchet a regression rather than write it into the snapshot.
+- Use `godmode-spec-lifecycle` to take a spec from draft through review, reconciliation and
+  approval without approving its own plan or hand-editing the compiled law.
+- Use `godmode-memory-gardener` at session close to list duplicate or contradicting
+  lessons, preview expiry before it runs, and promote a ripe lesson with a cited rationale.
+- Use `godmode-impact-gate` before committing a multi-module edit: fan-out, import
+  direction, fence and paired artifacts, with a recorded decision as the escape hatch.
+- Use `godmode-research` to survey an outside codebase: licence first, receipted source
+  reads, and both verdicts, never adopt or extend from a surface read.
+- Use `godmode-replicate` to rebuild a studied mechanism under Godmode names, pinned by
+  a test proven able to fail and cited on its host row.
+- Use `godmode-evidence` when a claim keeps being downgraded or cited evidence drifted:
+  exit-bearing cites, falsifiers, stale-citation repair, one resolution.
+- Use `godmode-triage` to work open asks down to closed, promoted, mapped or parked.
 
 Do not invoke every specialist. One specialist owns each overlapping capability; use a
 second only when the request genuinely crosses its boundary.

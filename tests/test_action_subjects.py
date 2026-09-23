@@ -16,11 +16,26 @@ SCRIPTS = PLUGIN_ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
+from godmode_runtime import godmode_constants as _constants_module  # noqa: E402
 from godmode_runtime.godmode_constants import ACTION_SUBJECTS  # noqa: E402
 
-_WRITER = re.compile(r'append\(\s*"action",\s*"([a-z0-9_-]+)"')
-_READER = re.compile(r'select\(\s*kind="action",\s*subject="([a-z0-9_-]+)"')
+# Fix round 1 (Task 3 review, S2): the original two patterns only ever
+# matched a quoted literal in the subject position, so a writer that
+# passes an imported constant instead - `append("action", DONEBAR_TURN_
+# SUBJECT, ...)` - was invisible to this whole census, exactly the gap
+# that let an unregistered subject through review. The second alternative
+# in each pattern also accepts a bare ALL_CAPS identifier there; `_literals`
+# resolves it against `godmode_constants`'s own module namespace (the one
+# place a subject constant can be defined) rather than trusting the name
+# alone, so an unrelated all-caps local never counts as a match.
+_WRITER = re.compile(r'append\(\s*"action",\s*(?:"([a-z0-9_-]+)"|([A-Z][A-Z0-9_]*))')
+_READER = re.compile(r'select\(\s*kind="action",\s*subject=(?:"([a-z0-9_-]+)"|([A-Z][A-Z0-9_]*))')
 _SCANNED = (PLUGIN_ROOT / "hooks", PLUGIN_ROOT / "scripts" / "godmode_runtime")
+
+_CONST_SUBJECTS = {
+    name: value for name, value in vars(_constants_module).items()
+    if isinstance(value, str) and name.isupper()
+}
 
 
 def _literals(pattern: re.Pattern[str]) -> dict[str, set[str]]:
@@ -28,7 +43,11 @@ def _literals(pattern: re.Pattern[str]) -> dict[str, set[str]]:
     for base in _SCANNED:
         for path in sorted(base.rglob("*.py")):
             for match in pattern.finditer(path.read_text(encoding="utf-8", errors="replace")):
-                found.setdefault(match.group(1), set()).add(path.name)
+                literal, const_name = match.group(1), match.group(2)
+                subject = literal if literal is not None else _CONST_SUBJECTS.get(const_name or "")
+                if not subject:
+                    continue
+                found.setdefault(subject, set()).add(path.name)
     return found
 
 

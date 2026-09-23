@@ -107,7 +107,12 @@ def _godmode_subcommand_tokens(command: str) -> list[str]:
     """Bare tokens right after `godmode`, up to the first flag/placeholder/quoted arg."""
     if not command.startswith("godmode "):
         return []
-    return _bare_subcommand_tokens(command[len("godmode "):])
+    # Global flags that take no argument may precede the subcommand
+    # (`godmode --brief status remaining`); skip them before reading the chain.
+    words = command[len("godmode "):].split()
+    while words and words[0] in ("--json", "--brief", "--terse"):
+        words.pop(0)
+    return _bare_subcommand_tokens(" ".join(words))
 
 
 def _python_scripts_godmode_subcommand_tokens(command: str) -> list[str]:

@@ -1,0 +1,1 @@
+- `hooks wire` names every target project-relative in its report, even when the project path was given through an alias or an unnormalised spelling; it used to print the absolute resolved path in that case.

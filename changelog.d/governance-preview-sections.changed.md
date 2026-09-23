@@ -1,0 +1,1 @@
+- `guard` returns a `brief` with Context, Options, Resolution and Accepted cost so a protected action is decided from what it costs if wrong, and the governance skill presents that brief verbatim.

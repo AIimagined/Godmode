@@ -27,6 +27,10 @@ from pathlib import Path
 from typing import Any
 
 from .godmode_chronicle import Chronicle
+from .godmode_constants import BOOKKEEPING_SUBJECTS, EDIT_RECORD_SUBJECT
+from .godmode_fence import _matches, _SEPARATORS as _FENCE_SEPARATORS, _TAG_PREFIX as _FENCE_TAG_PREFIX
+from .godmode_plan import APPROVED as _PLAN_APPROVED, OPEN as _PLAN_OPEN
+from .godmode_requests import CLOSED_STATUSES
 
 # metric -> (target value, comparison, prose target for the report)
 _TARGETS: dict[str, tuple[float | None, str, str]] = {
@@ -44,6 +48,12 @@ _TARGETS: dict[str, tuple[float | None, str, str]] = {
     "gate_effectiveness": (None, "", "reported, no target"),
     "evidence_density": (1.0, ">=", ">= 1.0"),
     "attestation_coverage": (0.9, ">=", ">= 0.9"),
+    "plan_adherence": (0.9, ">=", ">= 0.9"),
+    # Informational, like `gate_effectiveness` and `duplicate_build_prevention`
+    # above: no target keeps a low rate from flipping the overall verdict to
+    # below-target on a metric that is reported, not judged.
+    "tool_selection": (None, "", "reported, no target"),
+    "execution_efficiency": (None, "", "reported, no target"),
 }
 
 METRIC_ORDER: tuple[str, ...] = tuple(_TARGETS)
@@ -141,7 +151,14 @@ def _false_complete_rate(records: list[dict[str, Any]]) -> tuple[float | None, s
 
 
 def _action_transparency(records: list[dict[str, Any]]) -> tuple[float | None, str]:
-    actions = [r for r in records if r["kind"] == "action"]
+    # Fix round 2 (Task 8 review, B4): `edit-recorded` is bookkeeping about
+    # an edit that already happened, not a previewed action a guard check
+    # could have preceded - counting it here would ask every edit to have
+    # been "previewed", which is not what this ratio means. Task 7 (NS-8f):
+    # `BOOKKEEPING_SUBJECTS` also excludes `untrusted-content-seen` for the
+    # same reason - it is bookkeeping about a read, not a previewed action.
+    actions = [r for r in records
+               if r["kind"] == "action" and r.get("subject") not in BOOKKEEPING_SUBJECTS]
     if not actions:
         return None, "0 action records"
     previewed = sum(
@@ -152,6 +169,201 @@ def _action_transparency(records: list[dict[str, Any]]) -> tuple[float | None, s
                for r in records)
     )
     return _ratio(previewed, len(actions)), f"{previewed} of {len(actions)} actions preceded by a check"
+
+
+def _action_paths(data: dict[str, Any]) -> list[str]:
+    """The path(s) an `edit-recorded` action touched, normalised to `/`."""
+    single = data.get("path")
+    if single:
+        return [str(single).replace("\\", "/")]
+    many = data.get("paths")
+    if isinstance(many, list) and many:
+        return [str(p).replace("\\", "/") for p in many]
+    return []
+
+
+# Q3 (I-6 fix round 1): a public name for the same function, so a module
+# outside this one (`godmode_closure.py`) reads it as a real export rather
+# than a cross-module private import of another module's internals. The
+# private name and every in-module caller above are unchanged.
+action_paths = _action_paths
+
+
+def _plan_active_at(plan_records: list[dict[str, Any]], sequence: int) -> bool:
+    """Whether the latest plan known before `sequence` was OPEN or APPROVED.
+
+    Only a non-closed plan is "active" - the same reading `godmode_plan.
+    active_plan` already uses (state != CLOSED). A plan drafted (OPEN) but
+    never approved fences nothing (its fence patterns are empty until
+    APPROVED - see `_fence_from`), so an edit taken while only an OPEN plan
+    exists still counts toward the denominator ("a plan was active") but can
+    never land "inside" an undeclared fence.
+    """
+    state = None
+    for plan in plan_records:
+        if plan["sequence"] >= sequence:
+            break
+        state = (plan.get("data") or {}).get("state")
+    return state in (_PLAN_OPEN, _PLAN_APPROVED)
+
+
+def _fence_from(plan_records: list[dict[str, Any]]) -> list[str]:
+    """The editable-glob patterns of the latest APPROVED plan among
+    `plan_records` - the same field `godmode_fence.declared_fence` reads
+    (`contract.editable` on the most recently approved plan), but parsed
+    from the SAME windowed record list `_plan_active_at` above already
+    walks, rather than a second, independent full-archive read. Fix round 1
+    (Task 8 review, Minor finding 6): reading plan state from the metric's
+    own window and the fence from `declared_fence(archive)`'s unwindowed
+    full-archive scan let the two disagree about which plan was "current"
+    at the edge of a window; one source removes that.
+    """
+    raw = None
+    for plan in plan_records:
+        data = plan.get("data") or {}
+        if data.get("state") != _PLAN_APPROVED:
+            continue
+        raw = str((data.get("contract") or {}).get("editable", "")).strip()
+    if not raw:
+        return []
+    return [
+        part.strip() for part in _FENCE_SEPARATORS.split(raw)
+        if part.strip() and not part.strip().lower().startswith(_FENCE_TAG_PREFIX)
+    ]
+
+
+# Fix round 1 (Task 8 review, Important finding 5): below this many pathed
+# edits, a real ratio reads as a verdict the sample cannot support - three
+# edits landing 3-of-4 inside the fence says nothing reliable about the next
+# thirty. Reported as `insufficient-data` (never `below-target`) exactly the
+# way a zero denominator already is, using the same mechanism (`_entry`
+# returns `meets_target=None` for a `None` value) rather than a second one.
+_PLAN_ADHERENCE_MIN_SAMPLE = 20
+
+
+def _plan_adherence(records: list[dict[str, Any]]) -> tuple[float | None, str]:
+    """Edit actions that stayed inside the plan's declared fence, of those
+    taken while some plan was active.
+
+    Reads `edit-recorded` actions only - `hooks/godmode_post_edit.py`'s own
+    write, the one real writer that both sees every edit (its host matcher
+    is already scoped to `Write|Edit|MultiEdit|NotebookEdit|write|
+    search_replace`) and already resolves the repo-relative path. No
+    PreToolUse gate writer carries a path on an ordinary mutation - only a
+    deletion pre-check does, and that is a different, much narrower gate
+    (fix round 1, Task 8 review, Critical finding 2).
+    """
+    plan_records = [r for r in records if r["kind"] == "plan"]
+    plan_was_active = any(
+        (r.get("data") or {}).get("state") in (_PLAN_OPEN, _PLAN_APPROVED)
+        for r in plan_records
+    )
+    if not plan_was_active:
+        return None, "no plan was active"
+    fence = _fence_from(plan_records)
+    pathed = 0
+    inside = 0
+    for record in records:
+        if record["kind"] != "action" or record.get("subject") != EDIT_RECORD_SUBJECT:
+            continue
+        if not _plan_active_at(plan_records, record["sequence"]):
+            continue
+        paths = _action_paths(record.get("data") or {})
+        if not paths:
+            continue
+        pathed += 1
+        if fence and all(any(_matches(path, pattern) for pattern in fence) for path in paths):
+            inside += 1
+    if pathed == 0:
+        return None, "0 of 0 pathed edits while a plan was active"
+    if pathed < _PLAN_ADHERENCE_MIN_SAMPLE:
+        return None, (f"{inside} of {pathed} pathed edits while a plan was active "
+                       f"(below the {_PLAN_ADHERENCE_MIN_SAMPLE}-edit sample floor)")
+    return _ratio(inside, pathed), f"{inside} of {pathed} pathed edits while a plan was active"
+
+
+def edit_records(archive: Chronicle, limit: int = 500) -> list[dict[str, Any]]:
+    """Every `edit-recorded` action, oldest first - the same records
+    `_plan_adherence` reads out of its own windowed record list, exposed
+    here as a direct query for auditing the ratio's basis outside a
+    metrics window. Fix round 2 (Task 8 review, B6): the literal
+    `subject="edit-recorded"` below (not `EDIT_RECORD_SUBJECT`) is
+    deliberate - it is what puts `_plan_adherence`'s subject use on
+    `tests/test_action_subjects.py`'s reader-side census, which matches a
+    quoted literal, not a name; without a real `select(kind="action",
+    subject="...")` call somewhere, a typo in that constant would drift
+    silently past the one test built to catch exactly that.
+    """
+    return archive.select(kind="action", subject="edit-recorded", limit=limit)
+
+
+# The codebase's own idiom for "a protected decision was made and let
+# through" (see `godmode_roi.py`'s tally: `record.get("subject") ==
+# "gate-asked"` for the ask side; `capability-consumed` is the same idea for
+# a call a minted capability authorised). Neither writer's `data` carries a
+# `gate` key - fix round 1, Task 8 review, Critical finding 1: the only
+# writers of `gate: allow` are auto-silenced paths (`ask_only`, the inline-
+# interpreter clearance), not the ask/capability idiom this ratio actually
+# means - so membership in this subject set IS the protected-attempt signal,
+# not a `data.gate`/`data.tier` check on top of it.
+_PROTECTED_ATTEMPT_SUBJECTS = frozenset({"gate-asked", "capability-consumed"})
+
+
+def _tool_selection(records: list[dict[str, Any]]) -> tuple[float | None, str]:
+    """Refusals against every protected attempt - refused or let through.
+
+    A protected attempt is an `action` record whose subject is `gate-asked`
+    (an enforce-mode ask that was not effectively denied) or
+    `capability-consumed` (a minted capability authorised the call); a
+    refusal is the same class of gate declining. The ratio is silent on
+    whether either individual decision was right - it only says how often
+    the gate stopped something, against how often it had a protected
+    decision to make at all.
+    """
+    refusals = [r for r in records if r["kind"] == "refusal"]
+    protected_attempts = [
+        r for r in records
+        if r["kind"] == "action" and r.get("subject") in _PROTECTED_ATTEMPT_SUBJECTS
+    ]
+    denominator = len(refusals) + len(protected_attempts)
+    return (_ratio(len(refusals), denominator),
+            f"{len(refusals)} refusals over {denominator} protected attempts")
+
+
+def _execution_efficiency(records: list[dict[str, Any]]) -> tuple[float | None, str]:
+    """Tool actions spent per ask actually closed.
+
+    The numerator is every `action` record in the window, bookkeeping
+    included (nudges, relay-seen markers, gate asks) - it is not scoped to
+    edits the way `plan_adherence` is, so a session heavy on advisory
+    bookkeeping reads as less efficient, which is the honest reading: those
+    actions were still spent. Closed asks use `godmode_requests.
+    CLOSED_STATUSES` (closed/done/answered/addressed/declined/withdrawn/
+    superseded/already-built/refused), not the literal string "closed" -
+    the same vocabulary the request module itself treats as "out of force".
+    Deduplicated by subject: a re-closure of the same ask (a hand-written
+    `remember --status closed` over one the runtime already closed) states
+    the same fact twice and must not inflate the denominator.
+    """
+    actions = [r for r in records if r["kind"] == "action"]
+    closed = {
+        r["subject"] for r in records
+        if r["kind"] == "request"
+        and str((r.get("data") or {}).get("status", "")).lower() in CLOSED_STATUSES
+    }
+    return (_ratio(len(actions), len(closed)),
+            f"{len(actions)} tool actions over {len(closed)} closed asks")
+
+
+def agentic_ratios(records: list[dict[str, Any]]) -> dict[str, tuple[float | None, str]]:
+    """The three deterministic agentic ratios, shared by `metrics()` and
+    `godmode_trends.trends_report()` so both read the exact same counts from
+    the exact same record list - no separate, unwindowed archive read."""
+    return {
+        "plan_adherence": _plan_adherence(records),
+        "tool_selection": _tool_selection(records),
+        "execution_efficiency": _execution_efficiency(records),
+    }
 
 
 def _token_reduction(archive: Chronicle, records: list[dict[str, Any]]) -> tuple[float | None, str]:
@@ -591,6 +803,7 @@ def metrics(archive: Chronicle, project: Path, window: int = 500) -> dict[str, A
         "gate_effectiveness": _gate_effectiveness(records),
         "evidence_density": _evidence_density(records),
         "attestation_coverage": _attestation_coverage(project, records),
+        **agentic_ratios(records),
     }
 
     report: dict[str, Any] = {}
@@ -601,10 +814,14 @@ def metrics(archive: Chronicle, project: Path, window: int = 500) -> dict[str, A
     measured = [e for e in report.values() if e["confidence"] == "measured"]
     meeting = [e for e in measured if e["meets_target"] is True]
     failing = [e for e in measured if e["meets_target"] is False]
+    # NS-13c: cycle time per PDCA phase, as records between phase
+    # attestations, so a stalled Check (fixes without retests) is visible.
+    from .godmode_stages import pdca_cycle
     return {
         "records_considered": len(records),
         "window": window,
         "metrics": report,
+        "pdca_cycle": pdca_cycle(records),
         "economics": economics(archive, project),
         "summary": {
             "measured": len(measured),
@@ -679,7 +896,7 @@ def oversight_pulse(archive: Chronicle,
 
 
 _FAMILY_VERBS = {
-    "investigation": "open the loop as an incident: `godmode remember --kind incident`",
+    "investigation": "open the loop as an incident: `godmode remember --kind incident --repro \"<failing command>\"`",
     "learning": "distill the incident: `godmode remember --kind lesson --guard <rule>`",
     "verification": "attest a real check: `godmode verify <name> -- <command>`",
     "criteria": "give the active item a pass condition: `godmode criterion`",

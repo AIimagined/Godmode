@@ -220,3 +220,113 @@ class UntrustedOutputTests(unittest.TestCase):
         matchers = " ".join(e["matcher"]
                             for e in manifest["hooks"]["PostToolUse"])
         self.assertIn("WebFetch", matchers)
+
+
+class EditRecordTests(unittest.TestCase):
+    """U-N-1: `godmode_metrics.plan_adherence`'s real path source - one
+    `edit-recorded` action per edit-shaped PostToolUse call: `path` plus a
+    distinguishing `operation` digest (fix round 2, B2). No PreToolUse
+    gate writer carries a path on an ordinary mutation, so this hook
+    (already scoped by its host matcher to
+    Write/Edit/MultiEdit/NotebookEdit/write/search_replace) is the one
+    real writer that both sees every edit and already resolves it."""
+
+    def _read_fresh(self, project, state):
+        from godmode_runtime.godmode_anchor import resolve_anchor
+        from godmode_runtime.godmode_chronicle import Chronicle
+        return Chronicle(resolve_anchor(project)).read_events()
+
+    def _run_named_tool(self, project, state, target, tool_name: str, file_field: str = "file_path"):
+        payload = {"hook_event_name": "PostToolUse", "tool_name": tool_name,
+                   "tool_input": {file_field: str(target)},
+                   "cwd": str(project), "session_id": "S1"}
+        env = dict(os.environ)
+        env["GODMODE_STATE_HOME"] = str(state)
+        done = subprocess.run(
+            [sys.executable, str(HOOK)], input=json.dumps(payload),
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=60, cwd=str(project), env=env)
+        return (done.stdout or "").strip()
+
+    def test_an_edit_writes_a_path_and_operation_action_record(self) -> None:
+        impact = ImpactBriefTests()
+        with impact._archive_project() as (project, state, _archive):
+            target = project / "lib" / "gate.py"
+            target.parent.mkdir()
+            target.write_text("x = 1\n", encoding="utf-8")
+            impact._run_with_state(project, state, target)
+            records = self._read_fresh(project, state)
+        edits = [r for r in records if r["kind"] == "action" and r["subject"] == "edit-recorded"]
+        self.assertEqual(len(edits), 1)
+        self.assertEqual(edits[0]["data"]["path"], "lib/gate.py")
+        self.assertTrue(str(edits[0]["data"]["operation"]).startswith("edit:"))
+
+    def test_two_edits_write_two_records(self) -> None:
+        impact = ImpactBriefTests()
+        with impact._archive_project() as (project, state, _archive):
+            target = project / "lib" / "gate.py"
+            target.parent.mkdir()
+            target.write_text("x = 1\n", encoding="utf-8")
+            impact._run_with_state(project, state, target)
+            impact._run_with_state(project, state, target)
+            records = self._read_fresh(project, state)
+        edits = [r for r in records if r["kind"] == "action" and r["subject"] == "edit-recorded"]
+        self.assertEqual(len(edits), 2)
+
+    def test_a_read_payload_with_a_path_writes_nothing(self) -> None:
+        """Fix round 2, B5: on Gemini/Antigravity this hook is wired with a
+        `.*` matcher, so a `Read`/`read_file`/`view_file` call (which also
+        carries a path-shaped field) reaches `main()` exactly like an edit
+        does. `_record_edit`'s tool-name allow-list must refuse to turn it
+        into an `edit-recorded` action."""
+        impact = ImpactBriefTests()
+        with impact._archive_project() as (project, state, _archive):
+            target = project / "lib" / "gate.py"
+            target.parent.mkdir()
+            target.write_text("x = 1\n", encoding="utf-8")
+            for tool_name in ("Read", "read_file", "view_file"):
+                self._run_named_tool(project, state, target, tool_name)
+            records = self._read_fresh(project, state)
+        edits = [r for r in records if r["kind"] == "action" and r["subject"] == "edit-recorded"]
+        self.assertEqual(edits, [])
+
+    def test_no_archive_no_write_and_no_crash(self) -> None:
+        """Off an uninitialized archive, `_record_edit` is a silent no-op -
+        the hook must still exit 0 with no `edit-recorded` record."""
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            target = project / "notes.md"
+            target.write_text("hi\n", encoding="utf-8")
+            code, out = _run(project, target, tool="Edit")
+        self.assertEqual(code, 0)
+
+
+class PathEscapeFixtureTests(unittest.TestCase):
+    """NS-8h call-site regression: a `file_path` that escapes the project
+    (here via `..`) must produce no `edit-recorded` archive entry and no
+    quality findings - exit 0, empty stdout, the escaped file never read."""
+
+    def test_a_dotdot_escaping_file_path_writes_no_record_and_emits_nothing(self) -> None:
+        impact = ImpactBriefTests()
+        with impact._archive_project() as (project, state, _archive):
+            outside = project.parent / "outside-secret.py"
+            outside.write_text("SECRET = 1  # not this project's file\n", encoding="utf-8")
+            (project / POLICY).write_text(json.dumps({"post_edit_quality": True}),
+                                          encoding="utf-8")
+            escaping = "../outside-secret.py"
+            payload = {"hook_event_name": "PostToolUse", "tool_name": "Edit",
+                       "tool_input": {"file_path": escaping},
+                       "cwd": str(project), "session_id": "S1"}
+            env = dict(os.environ)
+            env["GODMODE_STATE_HOME"] = str(state)
+            done = subprocess.run(
+                [sys.executable, str(HOOK)], input=json.dumps(payload),
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=60, cwd=str(project), env=env)
+            self.assertEqual(done.returncode, 0)
+            self.assertEqual((done.stdout or "").strip(), "")
+            from godmode_runtime.godmode_anchor import resolve_anchor
+            from godmode_runtime.godmode_chronicle import Chronicle
+            records = Chronicle(resolve_anchor(project)).read_events()
+        edits = [r for r in records if r["kind"] == "action" and r["subject"] == "edit-recorded"]
+        self.assertEqual(edits, [])

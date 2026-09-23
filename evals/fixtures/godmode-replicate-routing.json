@@ -1,0 +1,21 @@
+{
+  "routes": {
+    "near_negative": {
+      "Confirm the hook wiring with a live protected command inside the host's own IDE": "godmode-host-sync",
+      "Copy the reference's code verbatim into this repository": "godmode",
+      "Survey an outside codebase nobody has read yet and classify its licence": "godmode-research"
+    },
+    "positive": {
+      "A host row reads unverifiable while its reference implementation sits unread; rebuild the mechanism in stdlib under Godmode names and pin it with a reproducing test": "godmode-replicate",
+      "Prove the replicating test fails on a planted break, attest it green, and cite the reference receipt on the host row before committing": "godmode-replicate"
+    }
+  },
+  "schema": "godmode-routing-snapshot-v1",
+  "skill": "godmode-replicate",
+  "summary": {
+    "near_negatives_rejected": 3,
+    "near_negatives_total": 3,
+    "positives_routed_correctly": 2,
+    "positives_total": 2
+  }
+}

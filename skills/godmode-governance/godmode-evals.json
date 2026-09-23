@@ -8,7 +8,9 @@
     ],
     "near_negative": [
       "Read repository status without changing state.",
-      "Inspect a local file and explain its contents."
+      "Inspect a local file and explain its contents.",
+      "Run the automated checks for the gate module before merging.",
+      "Change a local setting that never leaves this machine."
     ]
   },
   "behavior_assertions": [
@@ -18,6 +20,14 @@
         "command": "python scripts/godmode.py --project . environment --target \"postgres://prod-db/orders\"",
         "expect_exit": 1,
         "expect_contains": "\"environment\": \"production\""
+      }
+    },
+    {
+      "assert": "A protected guard preview ends with Context, Options, Resolution and Accepted cost.",
+      "check": {
+        "command": "python scripts/godmode.py --project . guard --operation \"git push --force origin main\"",
+        "expect_exit": 3,
+        "expect_contains": "Context:\\n  operation: git push --force origin main\\n  category: git-history-or-remote  tier: R5\\nOptions:\\n  1. proceed with a staged capability for this exact operation\\n  2. choose a non-protected route that reaches the same goal\\n  3. stop and record why\\nResolution:\\n  the gate denies outright; a staged capability is required\\nAccepted cost:"
       }
     },
     "A capability is exact-operation-bound, expiring, and single-use."

@@ -23,7 +23,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = PLUGIN_ROOT / "hooks" / "run-hook.cmd"
 if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
-from _host_env import HOST_MARKERS  # noqa: E402
+from _host_env import scrubbed_env  # noqa: E402
 
 POISON = "raise SystemExit('poisoned json module imported by a godmode hook')\n"
 
@@ -41,8 +41,11 @@ def _sh() -> str | None:
 
 
 def _run(argv: list[str], poison_dir: Path, payload: dict, cwd: Path) -> subprocess.CompletedProcess:
-    environment = {k: v for k, v in os.environ.items() if k not in HOST_MARKERS}
+    environment = scrubbed_env()
     environment.pop("GODMODE_PYTHON", None)
+    # Its own application home: no interpreter cache from this machine, and
+    # the temp project's archive (when a test makes one) lives beside it.
+    environment["GODMODE_STATE_HOME"] = str(cwd / "state")
     environment["PYTHONPATH"] = str(poison_dir)
     environment["CLAUDE_CODE_ENTRYPOINT"] = "cli"
     return subprocess.run(argv, input=json.dumps(payload), capture_output=True,
@@ -81,11 +84,21 @@ class IsolatedInterpreterTests(unittest.TestCase):
 
     def test_the_fast_gate_escalates_isolated_too(self) -> None:
         """The fast gate re-spawns the full hook; that child must carry the
-        same flags or the isolation ends at the first escalation."""
+        same flags or the isolation ends at the first escalation. The temp
+        project is initialized: an uninitialized one is answered by the
+        fast gate itself and never escalates (field report 2026-09-23)."""
         sh = _sh()
         if not sh:
             self.skipTest("no POSIX sh on this machine")
         with tempfile.TemporaryDirectory() as temporary:
+            scripts = str(PLUGIN_ROOT / "scripts")
+            if scripts not in sys.path:
+                sys.path.insert(0, scripts)
+            from unittest import mock
+            from godmode_runtime.godmode_anchor import resolve_anchor
+            from godmode_runtime.godmode_chronicle import Chronicle
+            with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(Path(temporary) / "state")}):
+                Chronicle(resolve_anchor(temporary)).initialize()
             poison = Path(temporary) / "poison"
             poison.mkdir()
             (poison / "json.py").write_text(POISON, encoding="utf-8")
@@ -94,6 +107,9 @@ class IsolatedInterpreterTests(unittest.TestCase):
                          "tool_input": {"command": "git push --force origin main"},
                          "cwd": temporary}, Path(temporary))
         self.assertNotIn("poisoned", done.stderr + done.stdout)
+        # The full hook answered (a force push is never a silent allow),
+        # so the escalation this test exists for really happened.
+        self.assertIn("deny", done.stdout + done.stderr)
 
 
 if __name__ == "__main__":

@@ -467,6 +467,7 @@ class DictationFormTests(unittest.TestCase):
 
             main(["--project", str(project), "remember", "--kind", "incident",
                   "--failure-class", "environment-failure",
+                  "--no-repro", "seen in a field session",
                   "the CLI rejected the recording invocation so the incident "
                   "lived in prose instead of the archive"])
             written = [r for r in archive.read_events()

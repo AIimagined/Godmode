@@ -468,7 +468,12 @@ def absorption_check(archive: Chronicle, path: str) -> dict[str, Any]:
 # reimplemented surface while the shared defect stayed live. A behaviour
 # verdict of confirmed-* is a claim about code and needs its proving line;
 # `unverified` is the honest third state and needs nothing but the word.
-_IMPORT_VERDICTS = frozenset({"adopt", "extend", "diverge", "skip", "n-a"})
+# Fix round 1 (coordinator ruling): the write-time gate in godmode_absorb.py
+# used `exists`/`unread` where this reader had neither - the vocabulary is
+# the union of both sets. `exists` grades like `n-a` (a settled import
+# verdict); `unread` is accepted as a known token but graded below as still
+# half-recorded, since it names a surface read that never opened the source.
+_IMPORT_VERDICTS = frozenset({"adopt", "extend", "diverge", "skip", "n-a", "exists", "unread"})
 _BEHAVIOUR_VERDICTS = frozenset({"confirmed-have", "confirmed-dont", "unverified"})
 
 
@@ -511,6 +516,11 @@ def upstream_verdicts(archive: Chronicle, items: list[str]) -> dict[str, Any]:
         if import_verdict not in _IMPORT_VERDICTS:
             problems.append(
                 f"import verdict missing or unknown ({import_verdict or 'absent'})")
+        elif import_verdict == "unread":
+            problems.append(
+                "import verdict is 'unread' - a surface read names itself so, "
+                "but that does not settle the item; read the source and "
+                "record adopt, extend, diverge, skip, n-a, or exists")
         if behaviour_verdict not in _BEHAVIOUR_VERDICTS:
             problems.append(
                 f"behaviour verdict missing or unknown ({behaviour_verdict or 'absent'})"

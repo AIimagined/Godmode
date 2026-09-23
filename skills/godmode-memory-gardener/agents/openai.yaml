@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godmode Memory Gardener"
+  short_description: "Prune duplicates, preview expiry, and promote lessons with a cited rationale."
+  default_prompt: "Use $godmode-memory-gardener to tell this session as dated prose, list duplicate or contradicting lessons, preview the forgetting pass before it runs, and promote any ripe candidate cluster with a cite and a second actor's approval."

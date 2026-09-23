@@ -1,0 +1,1 @@
+- Done-bar checks carry a role: reviewer checks cannot be escalated, builder checks accept a recorded reason for a few turns; `governance --checks` prints the table.

@@ -22,14 +22,17 @@ if str(SCRIPTS) not in sys.path:
 if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 
+from _law_fixtures import operator_lesson  # noqa: E402
 from godmode_runtime.godmode_law import compile_laws, fresh_laws  # noqa: E402
 from test_godmode_runtime import isolated_project  # noqa: E402
 
 
 def _lesson(archive, subject, guard):
-    archive.append("lesson", subject,
-                   {"value": "observed", "generalized_guard": guard,
-                    "status": "active"})
+    """NS-2 fix round 1 (B1): freshness asks whether a STANDING law has
+    reached the compiled file yet - a lesson that could never compile has
+    no freshness to measure - so the fixture takes the operator carve-out
+    (`tests/_law_fixtures.py`)."""
+    operator_lesson(archive, subject, guard)
 
 
 class FreshLawsTests(unittest.TestCase):
@@ -77,16 +80,22 @@ class CheckpointLearnNagTests(unittest.TestCase):
         return Runtime(anchor=anchor, archive=archive)
 
     def test_an_unlearned_incident_draws_the_advisory(self) -> None:
-        with isolated_project() as (_p, _s, anchor, archive):
+        with isolated_project() as (project, _s, anchor, archive):
             archive.initialize()
+            # `--evidence file:README.md` must resolve against the project;
+            # the bare fixture carries no files of its own, so the checkpoint
+            # cites a file this test writes rather than one it merely hopes
+            # a real project would have.
+            (project / "README.md").write_text("fixture project\n", encoding="utf-8")
             archive.append("incident", "export broke", {"detail": "boom"})
             result = self._checkpoint(self._runtime(anchor, archive))
             self.assertIn("advisories", result.payload)
             self.assertIn("lesson", result.payload["advisories"][0])
 
     def test_a_recorded_lesson_silences_it(self) -> None:
-        with isolated_project() as (_p, _s, anchor, archive):
+        with isolated_project() as (project, _s, anchor, archive):
             archive.initialize()
+            (project / "README.md").write_text("fixture project\n", encoding="utf-8")
             archive.append("incident", "export broke", {"detail": "boom"})
             _lesson(archive, "export-rule", "bound the export size")
             result = self._checkpoint(self._runtime(anchor, archive))

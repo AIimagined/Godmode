@@ -1,0 +1,21 @@
+{
+  "routes": {
+    "near_negative": {
+      "Prune duplicate lessons and preview archive expiry at session close": "godmode-memory-gardener",
+      "Re-explain the answer the operator did not follow": "godmode-repair",
+      "Write a spec and get the plan approved for a new feature": "godmode-spec-lifecycle"
+    },
+    "positive": {
+      "Obligations and falsifiers have aged unread for days and asks keep repeating; park the leftovers with a reason and prove the open-asks queue moved": "godmode-triage",
+      "Sixty open operator asks nag at every stop; promote the rule-shaped ones to invariants, map the work asks to plan tasks, and close the noise by ask id": "godmode-triage"
+    }
+  },
+  "schema": "godmode-routing-snapshot-v1",
+  "skill": "godmode-triage",
+  "summary": {
+    "near_negatives_rejected": 3,
+    "near_negatives_total": 3,
+    "positives_routed_correctly": 2,
+    "positives_total": 2
+  }
+}

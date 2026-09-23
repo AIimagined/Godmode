@@ -89,10 +89,13 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from .godmode_closure import closure_survey, staged_name_status
+from .godmode_ownership import table_is_stale
 from .godmode_hookproof import (
     SUBJECT_PROBE_FAILED, SUBJECT_UNINSTALLED, interception_state,
     record_interception_proof,
 )
+from .godmode_reconcile import reconcile_versions, version_surfaces
 from .godmode_sentinel import (
     POLICY_FILENAME,
     CapabilityBroker,
@@ -418,7 +421,7 @@ _BOUNDARY_NOTES: dict[str, str] = {
                 "shas git hands it; CANNOT see the --force/--force-with-lease flag itself, "
                 "only its non-fast-forward sha-level consequence",
     "commit-msg": "reads the message from stdin and refuses a private term in it",
-    "pre-commit": "sees the staged file-name list only (`git diff --cached --name-only`); "
+    "pre-commit": "sees the staged file-name/status list (`git diff --cached --name-status`); "
                   "detects a pinned evaluator about to be committed, nothing about content",
     "pre-rebase": "sees only that a rebase is starting, never whether the commits it would "
                   "rewrite were already pushed anywhere; treats every rebase as protected, "
@@ -646,24 +649,6 @@ def _evaluate_pre_push(
     return result
 
 
-def _staged_paths(project_root: Path) -> list[str] | None:
-    """The staged file-name list, or `None` when the inspection itself
-    failed - never `[]` for that case.
-
-    H2 (external audit): `git diff --cached --name-only` failing (a
-    corrupt index, a git binary that cannot run, a repository git itself
-    cannot open) used to be converted to an empty list here, which reads
-    to `_evaluate_pre_commit` as "no staged changes" - allow, exit 0,
-    every pinned-file check and capability consumption skipped, on a
-    commit `_evaluate_pre_commit` never actually inspected. A failed
-    inspection is not an empty result; the two are now distinguishable at
-    the type level so the caller cannot fold them back together by
-    accident the way `bool([])`/`bool(None)` both being falsy would invite.
-    """
-    result = _git("diff", "--cached", "--name-only", cwd=project_root, timeout=10)
-    if result.returncode != 0:
-        return None
-    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
 def _inspection_failed_result(
@@ -720,6 +705,66 @@ def _private_term_hits(project_root: Path, text: str) -> int:
     return sum(1 for term in terms if re.search(r"\b" + re.escape(term.lower()) + r"\b", lowered))
 
 
+def _closure_inspection_failed(archive: Any, detail: str) -> dict[str, Any]:
+    """A failure INSIDE the I-6 closure check (`godmode_closure.
+    closure_survey` raising, or reporting a failed inspection) blocks
+    unconditionally, regardless of the declared `git_backstop` policy.
+
+    Fix round 2 (D2iii, re-review): round 1 routed this through
+    `_inspection_failed_result`, whose ordinary behavior - advisory-allow
+    when `git_backstop` is not declared - is exactly right for every OTHER
+    hook this file evaluates, all of which sit behind that policy gate by
+    design. The closure check does not: it is unconditional, with no
+    declared-policy gate and no capability escape (S8), because a stale
+    closure claim shipped in a commit is history a later commit cannot
+    undo. Routing its OWN failure through the policy-gated helper silently
+    reopened exactly the gap the check exists to close - reported directly
+    here as a hard block instead, chronicled the same way
+    `_inspection_failed_result` already does."""
+    try:
+        archive.append(
+            "action", "git-hook-inspection-failed",
+            {"host": "git", "git_hook": "pre-commit", "enforced": True},
+            evidence=[],
+        )
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
+        pass
+    return {
+        "git_hook": "pre-commit", "verdict": "block", "protected": True,
+        "category": "inspection-failed",
+        "reason": (
+            f"refused: the closure check failed ({detail}); this check has no declared-"
+            "policy gate, so its own failed inspection blocks unconditionally too"
+        ),
+    }
+
+
+def _table_freshness_check_failed(archive: Any, detail: str) -> dict[str, Any]:
+    """A failure INSIDE the gate-table freshness check (`table_is_stale`
+    raising - its `_generated_from()` imports `scripts/dev/
+    build_decision_table` lazily, and that module executes real work,
+    including an assertion, at import time) blocks unconditionally, the
+    same way `_closure_inspection_failed` does for the I-6 check either
+    side of it in `_evaluate_pre_commit`: no declared-policy gate, no
+    capability escape, and never a bare traceback out of this hook."""
+    try:
+        archive.append(
+            "action", "git-hook-inspection-failed",
+            {"host": "git", "git_hook": "pre-commit", "enforced": True},
+            evidence=[],
+        )
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
+        pass
+    return {
+        "git_hook": "pre-commit", "verdict": "block", "protected": True,
+        "category": "gate-table-stale-check-failed",
+        "reason": (
+            f"refused: the gate-table freshness check failed ({detail}); this check has no "
+            "declared-policy gate, so its own failed inspection blocks unconditionally too"
+        ),
+    }
+
+
 def _evaluate_commit_msg(archive: Any, project_root: Path, message: str | None) -> dict[str, Any]:
     """The commit message is exposure surface the tree scan never sees
     (2026-09-10: a private term reached the remote inside one message and
@@ -737,7 +782,9 @@ def _evaluate_commit_msg(archive: Any, project_root: Path, message: str | None) 
 
 
 def _evaluate_pre_commit(archive: Any, project_root: Path) -> dict[str, Any]:
-    staged = _staged_paths(project_root)
+    entries = staged_name_status(project_root)
+    staged = None if entries is None else [path for _status, path in entries]
+    deleted = set() if entries is None else {path for status, path in entries if status == "D"}
     # The staged DIFF, not only the staged names: a term in a line about to
     # be committed is exposure whatever the file's final state (2026-09-11).
     diff = _git("diff", "--cached", cwd=project_root, timeout=30)
@@ -751,11 +798,121 @@ def _evaluate_pre_commit(archive: Any, project_root: Path) -> dict[str, Any]:
     if staged is None:
         return _inspection_failed_result(
             archive, project_root, "pre-commit",
-            "`git diff --cached --name-only` exited nonzero")
+            "`git diff --cached --name-status` exited nonzero")
     if not staged:
         return {
             "git_hook": "pre-commit", "verdict": "allow", "staged_files": 0,
             "reason": "no staged changes visible to pre-commit",
+        }
+    # NS-8g: a commit that stages one version surface out of step with its
+    # siblings ships a claim the project itself already disagrees with. This
+    # is unconditional (not gated behind the declared `git_backstop` policy,
+    # unlike `_decide` below) for the same reason the private-term scan
+    # above is: drift shipped once is history, whatever a later commit does.
+    # `version_surfaces()` is the single source for which repo-relative path
+    # backs each surface (its own `"path"` field, `None` for the two
+    # surfaces - the latest tag, the tagged tree - that are not a
+    # working-tree file at all); this reads that instead of hand-maintaining
+    # a second surface-to-path registry here.
+    surface_paths = {s["path"] for s in version_surfaces(project_root) if s.get("path")}
+    if set(staged) & surface_paths:
+        report = reconcile_versions(project_root)
+        if report["verdict"] == "version-drift":
+            named = ", ".join(f"{s['surface']}={s['version']}" for s in report["surfaces"])
+            return {
+                "git_hook": "pre-commit", "verdict": "block", "protected": True,
+                "staged_files": len(staged), "category": "version-drift",
+                "reason": (
+                    f"refused: version surfaces disagree ({named}); run "
+                    "`godmode version --reconcile` and stage every surface together"
+                ),
+            }
+    # C-6 (0.3.28 Plan 4 Task 2): `hooks/gate_table.json`'s own
+    # `generated_from` naming a digest the live sentinel no longer produces
+    # is the exact 0.3.27 miss this closes - a decision table silently out
+    # of step with the classifier it was generated from, caught nowhere
+    # until `tests.test_gate_parity` happened to run. Unconditional, exactly
+    # like the version-drift and closure checks either side of it: a commit
+    # that ships a stale table is a fact about that commit, not a risk a
+    # later commit can retroactively fix, so this is never gated behind the
+    # declared `git_backstop` policy and has no capability escape.
+    try:
+        freshness = table_is_stale(project_root)
+    except Exception as exc:  # noqa: BLE001  # godmode: swallow-ok: this file's own standard - a failed inspection blocks with a reason, never a bare traceback
+        return _table_freshness_check_failed(archive, str(exc))
+    if freshness["stale"]:
+        return {
+            "git_hook": "pre-commit", "verdict": "block", "protected": True,
+            "staged_files": len(staged), "category": "gate-table-stale",
+            "reason": (
+                "refused: hooks/gate_table.json's generated_from "
+                f"({freshness['recorded']!r}) no longer matches the "
+                f"sentinel's current digest ({freshness['current']!r}); run "
+                "`python scripts/dev/build_decision_table.py` and stage the "
+                "regenerated table"
+            ),
+        }
+    # I-6: a staged code file with no green retest newer than its last edit
+    # is a closure claim nobody checked. Unconditional, exactly like the
+    # version-drift check above and for the identical reason - a commit
+    # that shipped unretested is history a later `retest --run` cannot
+    # retroactively undo, so this is never gated behind the declared
+    # `git_backstop` policy and has no capability escape.
+    #
+    # Fix round 1 (Q1) / round 2 (D2iii): a failure INSIDE the survey (a
+    # bad record, an atlas build that hit its own time budget) must read
+    # as a reason, never a bare traceback, AND must block unconditionally
+    # like every other closure verdict - `_closure_inspection_failed`
+    # (never the shared, policy-gated `_inspection_failed_result`) is what
+    # both of those together require.
+    try:
+        survey = closure_survey(project_root, archive, staged=staged, deleted=deleted)
+    except Exception as exc:  # noqa: BLE001  # godmode: swallow-ok: fails closed with a reason, never a bare traceback
+        return _closure_inspection_failed(archive, str(exc))
+    if survey is None:
+        return _closure_inspection_failed(
+            archive, "`git diff --cached --name-status` exited nonzero")
+    # S3 (coordinator ruling): an uncovered file is its own category with
+    # its own remedy - never folded into the "stale" list under a retest
+    # remedy that could never clear it, because nothing retests it today.
+    uncovered = survey["uncovered"]
+    if uncovered:
+        remedy = "; ".join(f"add a pinning test for {path}; nothing retests it today"
+                           for path in uncovered)
+        return {
+            "git_hook": "pre-commit", "verdict": "block", "protected": True,
+            "staged_files": len(staged), "category": "uncovered",
+            "uncovered_files": uncovered,
+            "reason": f"refused: {remedy}",
+        }
+    # D5 (coordinator ruling, fix round 2): a file with no `edit-recorded`
+    # action AND no green retest whose blob-hash or clean-tree proof
+    # covers its current content is its OWN category too - "stage the
+    # retest result" (the `stale` remedy below) is a no-op for a file that
+    # never had an edit record to begin with.
+    unattested = survey["unattested"]
+    if unattested:
+        named = ", ".join(entry["path"] for entry in unattested)
+        return {
+            "git_hook": "pre-commit", "verdict": "block", "protected": True,
+            "staged_files": len(staged), "category": "unattested",
+            "unattested_files": unattested,
+            "reason": (
+                f"refused: no edit was recorded for {named} and no green retest's blob "
+                "matches its staged content; run `godmode retest --run`, or record the edit"
+            ),
+        }
+    stale = survey["stale"]
+    if stale:
+        named = ", ".join(entry["path"] for entry in stale)
+        return {
+            "git_hook": "pre-commit", "verdict": "block", "protected": True,
+            "staged_files": len(staged), "category": "closure-not-attested",
+            "stale_files": stale,
+            "reason": (
+                f"refused: staged file(s) lack a green retest newer than their last "
+                f"edit ({named}); run `godmode retest --run` and stage the result"
+            ),
         }
     results = [_decide(archive, project_root, "pre-commit", f"edit file {path}")
                for path in staged]

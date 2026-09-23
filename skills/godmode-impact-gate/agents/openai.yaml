@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godmode Impact Gate"
+  short_description: "Score a staged commit's fan-out and boundary crossings before committing."
+  default_prompt: "Use $godmode-impact-gate on the staged edit: verify the graph, score its unfollowed dependents, run the import-direction, fence and paired-artifact checks, attest the retests, and record an impact-accepted decision for any intended crossing before the commit."

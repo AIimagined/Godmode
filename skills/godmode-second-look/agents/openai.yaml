@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godmode Second Look"
+  short_description: "Independently recheck an already-accepted pass."
+  default_prompt: "Use $godmode-second-look to recheck an already-accepted claim or verdict with independent evidence, and record a held or superseded disposition."

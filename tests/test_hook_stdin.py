@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
 from pathlib import Path
 import subprocess
 import sys
@@ -23,7 +22,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 HOOKS = PLUGIN_ROOT / "hooks"
 if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
-from _host_env import HOST_MARKERS  # noqa: E402
+from _host_env import scrubbed_env  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location("godmode_stdin", HOOKS / "godmode_stdin.py")
 godmode_stdin = importlib.util.module_from_spec(_spec)
@@ -34,7 +33,7 @@ HOLD_OPEN_SECONDS = 20
 
 
 def _exits_with_stdin_held_open(argv: list[str], payload: dict, cwd: Path) -> subprocess.Popen:
-    environment = {k: v for k, v in os.environ.items() if k not in HOST_MARKERS}
+    environment = scrubbed_env()
     environment["CLAUDE_CODE_ENTRYPOINT"] = "cli"
     proc = subprocess.Popen(
         [sys.executable, *argv], stdin=subprocess.PIPE, stdout=subprocess.PIPE,

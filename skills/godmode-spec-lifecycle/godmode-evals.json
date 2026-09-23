@@ -1,0 +1,39 @@
+{
+  "schema": "godmode-skill-eval-v1",
+  "skill": "godmode-spec-lifecycle",
+  "routing": {
+    "positive": [
+      "Write the spec, get the plan approved by an independent check, and bind the implementation back to it as one resumable linked record",
+      "Reconcile two divergent drafts of the same plan and check whether the contract is approved before any mutation happens"
+    ],
+    "near_negative": [
+      "Write the design doc",
+      "Create a new skill after a repeated capability gap has been proven at least twice",
+      "Review this pull request's code changes for bugs",
+      "Write a one-off design note with nobody asked to sign off on it"
+    ]
+  },
+  "behavior_assertions": [
+    {
+      "assert": "The shipped skill's own bundle validates: scope, delivery, safety, and no orphaned or dead-linked file.",
+      "check": {
+        "command": "python scripts/godmode.py skill lint --path skills/godmode-spec-lifecycle",
+        "expect_exit": 0,
+        "expect_contains": "\"passed\": true"
+      }
+    },
+    {
+      "assert": "planmode specify refuses a spec missing any of its four required fields rather than starting incomplete.",
+      "check": {
+        "command": "python scripts/godmode.py --project . planmode specify --title \"x\" --objective \"o\"",
+        "expect_exit": 2,
+        "expect_contains": "needs every field"
+      }
+    },
+    "planmode check reports mutation is not allowed and names the missing contract fields when no plan has been approved (proven on an isolated fixture in tests/test_godmode_spec_lifecycle.py, never against ambient project-wide plan state).",
+    "planmode approve refuses an incomplete contract and names its exact missing fields rather than waiving them.",
+    "planmode bind names every file outside a plan's declared scope as drift rather than allowing it silently."
+  ],
+  "baseline_required": true,
+  "claims_require_evidence": true
+}

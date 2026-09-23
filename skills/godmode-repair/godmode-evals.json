@@ -8,7 +8,9 @@
     ],
     "near_negative": [
       "Diagnose a reproducible regression whose root cause is unknown.",
-      "Recover session continuity after a branch change stranded the archive."
+      "Recover session continuity after a branch change stranded the archive.",
+      "Respond to a brand-new request that nobody has raised before now.",
+      "Reply to a brand-new request while the requester seems perfectly satisfied."
     ]
   },
   "behavior_assertions": [

@@ -4,6 +4,143 @@ All notable changes to Godmode will be documented in this file.
 
 The format follows Keep a Changelog principles, and releases use semantic versioning.
 
+## [0.3.28] - 2026-09-18
+
+### Added
+
+- `godmode forget` expires old episodes into a cold, still-chained segment, reports supersession chains and flags contradictions as review records; a record cited by a live claim, a checkpoint, a law guard or a pin never expires, and history can still reach a cold record by sequence. `remember --kind review --review seq:<n>` names which flagged contradiction a closure closes, so a subject carrying more than one open review can be cleared one finding at a time.
+- `remember --supersedes <seq>` records versioned supersession; history renders the chain and every latest-per-subject reader follows it.
+- The archive's five memory layers are covered by an eight-test contract: recall across sessions, contradiction flagging, staleness, promotion after three successes, load, the scheduled forget pass, continuity and project isolation.
+- A checkpoint is an audited chain entry: verification walks only the records since the last checkpoint proven by a full walk; tampering before that checkpoint is caught at the next full walk. `godmode doctor` now exits 1 with an `archive-chain-broken` finding when its walk fails.
+- Every record names its writer and carries a derived trust; an operator correction outranks an agent record, a secret in free text refuses the write, and only a subject's creator can close it.
+- Instruction-shaped text in a tool result is recorded as untrusted content, a claim that cites it is capped at observed and marked, and the session brief states that tool output and fetched files are data, never instructions.
+- Recurring failure modes are pattern records that accumulate occurrences instead of duplicating.
+- Claims record a working-tree fingerprint and verdicts record their witness's hash at cite time, `claim --stale` reports a claim whose tree or a verdict whose witness changed since, and a citation of a record sequence that does not exist is refused.
+- The state home and anchor cache are created owner-only, and doctor warns when group, world, Everyone or Users can read or write the state home (mode bits on POSIX, the DACL on Windows).
+- When a host sends a `usage` block on Stop/SessionEnd, it is recorded per event, `status remaining --digest` shows the session's spend from it, and `ceilings` counts tokens from it for the current session.
+- An agent's guard reaches the compiled law only through a promotion approved by a different actor with an independent re-run; an operator's own guard is the second actor and needs no promotion. A promotion names the structured fields an unstructured lesson lacks, is approved once, and is refused as stale once its subject has moved on - a retirement is never silently undone. The three-session ladder feeds the same pipeline, and its five structured fields are synthesized from the cluster's own counters, not authored analysis.
+- Upgrading a project whose lessons predate that rule no longer empties its Code of Law: the first `law compile` records one chained migration naming the cutoff sequence and the guards it grandfathers, those laws are marked [GRANDFATHERED] in the file with the steps to convert one, and `law hygiene` counts the ones still unapproved. A guard recorded after the rule shipped still needs a second actor, and retiring a grandfathered guard still lifts it.
+- A lesson can carry an enforce predicate; a matching write is refused with the guard as the remedy.
+- Run `godmode doctor` once after upgrading: it warms the enforce-predicate sidecar outside the write lock, so the first live write on an archive that has never had it does not hold the lock for several seconds.
+- `atlas law ratify` accepts a law, guard or skill change only after the checker proved in the same session that it fails a planted bad case, and never from the proposer.
+- Every skill carries a PURPOSE file citing the records that motivated it, and the skill linter requires one.
+- Six new skills ship through skill-forge with purpose files, routing evals and flow tests: second-look, changelog, host-sync, codegraph, skill-eval, spec-lifecycle.
+- Copilot and Kiro hook manifests are generated, wired through the launcher and covered by the host matrix.
+- `hooks wire --all --dry-run` previews every host's wiring with the same code that applies it, merges only the Godmode-owned block of a shared config, and `hooks status` shows in-sync, drifted or absent per host.
+- One documented hook contract every host manifest is tested against; the same command gets the same decision from Bash and PowerShell.
+- The dispatch workflow gains a generated job per host manifest that installs the plugin that host's way and fires one hook.
+- `doctor` flags a shipped hook missing from a host manifest and a manifest entry pointing at a missing file.
+- `hooks wire --host codex` refuses from a linked worktree and names the primary checkout; the Codex probe records the installed-runtime premise first.
+- Both hook launchers are generated from templates and diffed by a test; hosts without hook dispatch carry a named fallback tier instead of "unverifiable".
+- `godmode ownership --check` shows which gate rule owns each path or command and fails when the decision table is stale against the classifier; the installer records every path it creates and `hooks status` reads that manifest.
+- A hook that times out is recorded as `timeout`, distinct from a hook that returned nothing (`empty`).
+- The gate classifies every component of a compound command and reports them; the worst component decides the call and an unknown component is protected by default.
+- The gate applies a stricter policy row when no operator is present: lower ask threshold, no `--without-preflight`, faster capability expiry.
+- `benchmarks/gate_latency.py --check` compares the PreToolUse fast-gate and escalation p95 against a committed baseline and fails on a regression of twenty percent or more; `--write-baseline` records the baseline and the hook timeouts it recommends.
+- `grid` runs a meta-gate suite with a guaranteed-deny fixture for every protected class, and a test proves that removing one classifier rule turns the suite red.
+- `selftest` lints assembled gate refusal and Stop-boundary messages in the session hook, the fast gate, the host renderer, and the staging hint against a bad/fixed wording table (bare tier codes, double negatives, remedies that name no command, internal record vocabulary, overlong sentences), and those messages now pass it.
+- Done-bar checks carry a role: reviewer checks cannot be escalated, builder checks accept a recorded reason for a few turns; `governance --checks` prints the table.
+- After two red retests of one check, a third edit to the same file is refused until an incident names the hypothesis and its falsifier.
+- The installed pre-commit backstop refuses a commit that stages a version surface out of step with the others and names `version --reconcile` as the remedy.
+- The git pre-commit backstop refuses a commit whose staged code files lack a green retest newer than their last edit, naming the stale files; an uncovered file (nothing retests it) or an unattested one (no recorded edit and no matching retest) is refused separately with its own remedy; a staged deletion is never checked; `godmode retest --run` refreshes a saved atlas index so the check answers fast on a clean tree; a build that has to run prints a one-line stderr notice first, instead of sitting mute for up to 180s.
+- `atlas --direction` (also a `selftest` control and a CI gate) fails when a hook imports a runtime module outside the declared surface, when the fast gate imports any runtime module, or when the runtime imports a hook.
+- `verdict record` carries `checked`, `not_checked` and per-criterion evidence, a PASS is refused while anything is not checked, the witness may not be the checker, and `--payload` files for `verdict record` and `claim` decode strictly (duplicate keys, unknown fields and trailing data are refused); hook input stays tolerant.
+- `remember --kind decision --subject absorb:<item>` validates both verdicts and refuses an adopt or extend verdict that cites no source file, so a surface read can park or skip an item but never fund code.
+- `godmode read` records what was opened (path, lines, digest); absorb decisions cite receipts and a README-only reading is refused as surface-only; `parity --sources` shows files opened per source.
+- A hypothesis or incident whose falsifier was never run ages into a preflight finding after two days; `verify --falsifiers` runs the due ones and attests them.
+- An obligation can name what blocks it; `status remaining` lists it under its blocker, and phantom or circular blockers are refused.
+- `atlas graph rebuild|query|verify` derive a typed, time-valid evidence graph from the archive; `atlas closure` refuses to decide against an unverified graph.
+- `atlas loop advance` refuses a third identical failure signature and records a halt; `atlas loop resume` reopens only with evidence from a different actor.
+- `evals --ratchet` fails on any skill whose routing score drops below the committed baseline (`evals/baseline.json`, which only rises), and `evals --determinism` runs the offline harness twice and names any case whose route differs; both run in CI.
+- The eval report carries one row per skill per declared model and flags a skill that passes only under its authoring model; with no per-model measurements declared, every row replays the same run.
+- The flaky-test retry runner records every isolated rerun, `trends` ranks flakes by frequency, and the preflight reports a flake retried three or more times that carries no lesson.
+- The flaky retry runner trips a breaker: an id that fails N isolated retries in a window is parked with a reason and re-admitted only after cooldown.
+- Preflight findings carry a failure class (a blank or unknown class is itself a finding), each preflight record counts findings per class, and `trends` shows a class that recurs across rounds.
+- `metrics` reports plan adherence, tool-selection rate and execution efficiency as exact ratios over the archive's own records, and `trends` carries the three per runtime version.
+- The PostToolUse edit hook now records one `edit-recorded` bookkeeping action per edit-shaped tool call (path plus a distinguishing operation digest) - the real source `plan_adherence` checks against the plan's declared fence - and every detector that reasons about repeated or unattested operations (the loop, watchdog, and action-transparency checks) treats it as bookkeeping, never as an operation of its own.
+- `selftest` fails on any CLI verb that no test, no public doc, or no skill names, so a verb cannot ship untested or unfindable.
+- `docs/COMMAND-REFERENCE.md` is generated from the CLI's own parser (`scripts/dev/build_command_reference.py`) and listed in the README's docs index, so the public command reference cannot drift from what `--help` actually says; `tests/test_command_reference_drift.py` fails the build if the generated file and the parser disagree.
+- Release notes carry the gate's measured p95 line, and the notes check refuses notes without it.
+- The dispatch workflow takes shard and suite inputs and runs the preflight suite as time-capped shards.
+- The eval harness can withhold lessons and laws so a score measures the skill; the baseline is recorded both ways.
+- Every skill or law proposal records its diff, scores and outcome; a previously rejected diff is refused, and a change ships only on strict improvement.
+- Branches declare a role: maintained branches get the plan-and-test discipline, spikes do not, and only the operator (`--as-operator`) can declare a branch a spike.
+- A 5-Whys record must validate its chain backwards, name immediate, preventive and detection countermeasures, and cannot end at a person or "human error".
+- Competing hypotheses are records with a kill experiment; a fix may cite only a hypothesis whose kill ran and did not fire.
+- A test per host proves that installing a new version over an old one leaves exactly the new payload.
+- PDCA, OODA and the research read order are recorded SOPs with a verb per phase; metrics shows cycle time per phase.
+- Commands are parsed once under their shell's semantics before classification, so Bash and PowerShell get the same decision; a corpus differential reports any decision flip between two commits.
+- The first Edit or Write that makes an unplanned change span a second file now asks for confirmation (it is an ask, not a refusal) until a plan is recorded and approved; the agent can approve its own plan, so this enforces the planning step, not operator consent. Single-file edits and edits of 40 lines or fewer stay free, and shell writes (`echo >`, heredocs, `tee`, `mv`) are outside it.
+- The RCA ritual is a checklist template; a record that skips a step is incomplete.
+- An incident carries its reproduction command and its red run; a fix claim verifies only against the same command green.
+- Six more skills ship with purpose files, routing evals and flow tests: memory-gardener, impact-gate, research, replicate, evidence and triage.
+
+### Changed
+
+- Host capabilities are a closed enum; the host support matrix is generated from it and from each row's reference and replicating test, and can no longer drift.
+- The host-reach preflight finding is blocking only for a host that cites neither a replicating test nor a reference still to read; a host whose hook path is replicated and pinned by a test is reported as awaiting live confirmation instead of failing the run.
+- `hooks wire --all --host <name>` now refuses (exit 1) instead of silently wiring every host and ignoring the `--host` scope - any script already passing both flags together needs to drop one.
+- Generated host manifests take their hook timeouts from the committed gate-latency baseline's recommended values when present, with the previous constants as defaults. A recommendation only raises a timeout above its default, never lowers it, until that hook path is measured directly.
+- The stdio MCP adapter is host-generic and opt-in (per request, no port), served to a second host through a generated manifest, with the same four tools on both.
+- The fast gate defers its subprocess import to the escalate branch, so the allow path imports nothing beyond the standard library it already used.
+- `guard` returns a `brief` with Context, Options, Resolution and Accepted cost so a protected action is decided from what it costs if wrong, and the governance skill presents that brief verbatim.
+- The stale-lock advisory now fires only when the archive's write lock is actually held (probed the same way the writer itself acquires it), not merely when its sidecar file is old, since that sidecar can outlive the process that held it.
+- `resume` lists declared state before inferred state, names a conflict between the two with the declaration winning, and adds a per-day catch-up section when more than one day passed since the last checkpoint.
+- An ask or obligation idle for several turns is re-surfaced once and then left quiet for a cooldown instead of being re-listed every turn.
+- The absorption reader's import-verdict vocabulary now matches the write-time gate's: an `exists` verdict grades like a settled `n-a`, and `unread` is accepted as a known token but still grades as half-recorded, since it names a surface read that never opened the source.
+- Every skill description names the cases it is not for, near-negative routing rows pin them, and `selftest` fails on a skill whose frontmatter lacks the clause, exceeds its budget or references a path that does not exist.
+- The routing and charter eval snapshots now include the release checklist's pre-tag version check, which is an advisory charter rule and ranks first for release preparation.
+- The prepublication deny-name check reads its name list from `deny-names.txt` in the Godmode state home when `GODMODE_DENY_NAMES` is unset, so the class is measured without a per-shell variable.
+- The session brief caps each section, names what it trimmed, and, like every gate message, leads with the rule, then the detail, then a checklist.
+- The investigation skill runs the postmortem flow: validated 5-Whys, competing hypotheses, reproduce-first and the RCA checklist.
+- `version --reconcile` now lists each drifted surface with a remedy, and reports a hand-edited manifest description; the root `plugin.json` description and version are generated by `bindings --write` from `packaging/hosts.json`, so that text is written in one place.
+
+### Fixed
+
+- Archive appends are serialized by an operating-system advisory lock that is released when the writer exits, so a crashed writer no longer blocks the next append until an age-out; the previous exclusive-create path remains as a fallback where no locking module exists.
+- A checkout copied together with its `.git` (a moved clone, a test harness copy) keeps reading its own archive: the project key the archive was created under counts as its own identity, so records past the read index no longer fail verification as a project identity mismatch.
+- `export` writes records in canonical order with a seal line, so two exports of the same archive are byte-identical regardless of directory listing order.
+- `context-status`, `doctor` and the archive's chain check report the first broken record's sequence, file and line instead of a bare failure, and a missing archive verifies as an intact empty one.
+- `law compile` no longer reverts the Code of Law skill's own text. Its embedded template had fallen behind the reviewed wording, so every compile silently rewrote the skill to claim the law file is always present, dropping the correction that a project with no guarded lessons legitimately has no file. The template now carries the reviewed text, and a compile is idempotent against it.
+- A lesson recorded with `--standing` keeps that flag and is always delivered in the session brief, ahead of the newest guarded lessons, instead of falling off once newer lessons arrive.
+- Every hook event degrades to exit 0 with a recorded reason when its bookkeeping fails; the PreToolUse deny path stays fail-closed, and a test per event proves it.
+- The Windows hook launcher derives the plugin root from its own location and tries `py -3` before `python` and `python3`, and passes gate exit codes through unchanged.
+- `bin/godmode.cmd` now probes `py -3` before `python` and `python3`, and calls every shimmed interpreter (a pyenv-win shim or a venv activation-style `.bat`/`.cmd` wrapper needs `call` to return control), matching the fix already proven in `hooks/run-hook.cmd`.
+- A prompt that is a subagent's hand-back message no longer mints an operator request, and a subagent's stop never evaluates the parent session's open requests: a subagent's scope is its own dispatch.
+- The stop hook, status, preflight and history read open asks through one reader with one window, so a closed ask never reappears on one surface while another shows it closed.
+- A pinned lesson caps a claim's grade only when the lesson names a path or command stem the claim cites; lessons that merely share vocabulary are listed as advisory and no longer block a verified grade.
+- `claim --verify` grades exit-bearing forms (`--quiet`, `-q`, `cmp -s`, `test`, `merge-base --is-ancestor`) as falsifiable without a wrapper script; state-reporting commands still cap at observed.
+- `precheck --preflight` removes stale `.godmode-preflight-*` scratch directories beside the repository before it runs and reports them, so an aborted earlier run no longer leaves worktrees behind that `cleanup: confirmed` never saw.
+- The scratch-directory allowance no longer treats an unexpanded `~` or `$VAR` target as a temp path when the process runs under the temp directory; the containment check already refused it.
+- `selftest`'s verb-coverage control reads the verb list from the generated command reference instead of the live parser (no import cycle), and the concurrency scenario's documented lock shape is versioned so the registry can tell drift from intent.
+- CI now initializes the archive and opens a session before running the skills' behaviour probes, which a fresh checkout never had; the dispatch run had only been green because the unit tests initialized the repository as a side effect.
+- The prepublication citation check also covers documents under tests/, which ship to every reader like any other tracked file.
+- An empty or whitespace-only pre-tool payload is refused before it is counted against the project's tool-call budget.
+- The false-green rate counts every verified claim on record instead of only the newest 500.
+- Hooks are much faster, most of all in projects where Godmode was never initialized. There, every hook now checks for Godmode state with a few file lookups and exits silently without loading the runtime: the pre-tool gate no longer starts a second interpreter, and Stop, SessionEnd and prompt events no longer load the archive or run git. A host's own diagnostics should no longer see these hooks time out or suggest disabling the plugin.
+- The hook launcher finds Python once and stores its path in the Godmode application directory, so later hooks start one interpreter instead of two. On Windows it tries `python`, then `py`, then `python3`, and uses the slow Microsoft Store alias only when nothing else is installed.
+- In a project without Godmode, exiting no longer prints `SessionEnd hook ... failed: Hook cancelled`. In an initialized project, SessionEnd does less at exit: a transcript over 1 MiB is measured at the next session start instead.
+- In an initialized project that is not a git repository, hooks no longer run git calls that were bound to fail on every Stop and every archive lookup.
+- In a project with a large archive, hooks no longer check every record file one at a time on each call. On a 20,000-record archive, a gated tool call that goes to the full hook dropped from about 20 s to about 2 s, and Stop from about 8 s to about 2 s.
+- The publication name check now also scans test files for names it must not publish. Forge-URL fixtures in tests/ are still not reported, since testing forge-URL detection needs them.
+- The publication checks now read commit messages. A push publishes every message in its range, and until now no check read one. The name check and the prepublication check scan each unpushed message for private paths, names it must not publish, and outside forge links. A `--message-file` mode serves a local commit-msg hook.
+- A stalled test no longer costs a release check its full hour. Each shard runs under a per-test watchdog that re-arms at every test boundary. A test or class fixture that runs past ten minutes has every thread's stack dumped, and the check reports the stuck frames by name instead of a bare timeout.
+- The compiled law file keeps citation text out of the shared file: a law whose lesson subject cites a paper is titled from its guard, and its reason omits the cited text; the lesson itself keeps the citation in the local archive.
+- The oracle-tamper checks no longer link a test through a name that appears only in a comment, no longer read a changed exact count as a reduced bound, and no longer hide a neutered checker line because a different line of the same workflow dropped a test.
+- The release preflight no longer refuses a tree whose only changes are untracked files. It never validated those files, so stray scratch output only blocked runs; the report still names them as not validated.
+- `observe`, the would-have counts, `authorize stage --from-last-refusal` and the flaky-test ranking now read every record on file instead of the newest 500, so a long history no longer hides or undercounts entries.
+- The no-terminal password message and the irreversible-command refusal name the launcher by its real path instead of a placeholder or a bare `godmode` command.
+- Uninstalling from the install manifest now also drops the removed files from the manifest, so `hooks status` no longer reports them missing and the next install does not inherit them.
+- `godmode evals` no longer fails the code-of-law behaviour assertion on a project that has no laws yet: the `law show` probe now checks that the verb reports its laws list rather than requiring a guard to already exist in the archive.
+- `hooks wire` names every target project-relative in its report, even when the project path was given through an alias or an unnormalised spelling; it used to print the absolute resolved path in that case.
+- `law amend` no longer makes an operator's law vanish when an agent rewords it: an amendment written without operator trust is recorded as pending, the last authorised guard stays in force, and `law compile`, `law show` and the compiled file mark the pending sequence; the operator amends in place with `law amend --as-operator`.
+- An agent can no longer lift an operator's law with `remember --kind lesson --status superseded`: for a lesson, `superseded` is a close the single-writer guard refuses below the creator's trust, and `law compile` treats any lift written below the standing law's trust as pending rather than as a retirement.
+- `reanchor` commit snapshots and remaps write again: the fingerprint kept the commit subject line under a key the archive now reads as a semantic decision, so every snapshot before a history rewrite was refused; snapshots taken before this change still remap.
+
+### Security
+
+- Every path Godmode resolves from a record, a manifest or a host payload is contained to the project or the state home after symlink resolution; an escape is refused or skipped, never followed.
+
 ## [0.3.27] - 2026-09-15
 
 ### Added
@@ -438,7 +575,7 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ### Changed
 
-- Doctor now reads the archive once and hands the same records list to the census, calibration, and oversight blocks instead of each rescanning - scale headroom on append-only archives that only grow.
+- Doctor now reads the archive once and hands the same records list to the census, calibration, and oversight blocks instead of each rescanning - scale margin on append-only archives that only grow.
 
 ### Fixed
 
@@ -474,7 +611,7 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 - Obligations that are one duty in different clothes (a version-bearing subject mints a fresh record every bump) no longer accumulate in the nags: the turn advisory collapses open obligations sharing three or more salient words to the newest, and recording such a sibling draws an advisory naming the elder with the exact close command - supersede it now, or both nag forever.
 - Receipt-bounded advisories (verify promotion, prompt shapes, green-streak/stale-retry) now require a session key: without one the once-per-session receipt silently became once-per-archive-forever - the advisory fired exactly once in an archive's whole life and then never again. Silence beats a bound that lies. Also: next_actions moved from the lens to the metrics module, closing an import cycle the dependency test caught, and one changelog fragment lost a superlative godmode's own docs linter refused.
 - The five-host header line links to the host-support matrix it was always answerable to: an external review read the bare list as a uniform enforcement promise, and the matrix's own SOFT/PARTIAL/HARD grades are the honest reading - now one click from the first line.
-- The user-prompt hook's timeout doubles to 60s: a post-install cold start (first import of the runtime on a machine that just fetched the plugin) was field-observed once at just over 30s; steady state stays ~350ms, and the hook is async so the headroom costs the prompt nothing.
+- The user-prompt hook's timeout doubles to 60s: a post-install cold start (first import of the runtime on a machine that just fetched the plugin) was field-observed once at just over 30s; steady state stays ~350ms, and the hook is async so the margin costs the prompt nothing.
 
 ## [0.3.8] - 2026-09-01
 
@@ -1309,7 +1446,7 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
   The default cap moves from 400 to 2048: this repository's own walk currently
   returns 592 candidates, and 2048 is the next power of two at or above 2x
-  that, giving headroom before the gap reopens. The cap itself stays - an
+  that, giving margin before the gap reopens. The cap itself stays - an
   unbounded walk is worse - but hitting it is loud now, not silent.
 - Non-git context ranking no longer depends on copy/checkout timing, within
   the non-git mode. `godmode_corpus.rank`'s freshness ordering fell back to

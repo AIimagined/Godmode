@@ -409,7 +409,7 @@ class ScanProjectAndRatchetTests(unittest.TestCase):
         site in the same file. Before the fix, this passed through
         completely undetected (`verdict: "findings"`, `regressions: []`) -
         the auto-tightened ceiling from the first fix must not leave the
-        old count's headroom lying around for the new site to spend."""
+        old count's slack lying around for the new site to spend."""
         with temp_project() as project:
             (project / "a.py").write_text(
                 "try:\n    do_thing()\nexcept Exception:\n    pass\n"

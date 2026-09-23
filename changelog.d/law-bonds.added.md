@@ -1,0 +1,1 @@
+- `atlas law ratify` accepts a law, guard or skill change only after the checker proved in the same session that it fails a planted bad case, and never from the proposer.

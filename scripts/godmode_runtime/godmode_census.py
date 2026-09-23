@@ -49,6 +49,28 @@ TRACKED_SURFACES: dict[str, str] = {
     "decision": "decision - choices recorded with their rationale",
     "sprint": "sprint - units of work and their proof",
     "inventory": "inventory - the baseline a resume is measured against",
+    # NS-4 (0.3.28 Plan 5 Task 3), fix round 1 nit N4: declared so these
+    # three surface as real coverage rather than `undeclared_kinds` - the
+    # exact failure this census exists to catch.
+    "improvement_proposal": "atlas law propose - a law/guard/skill change proposed with cited evidence",
+    "checker_bond": "atlas law bond-test - a checker proving, this session, that it can fail",
+    "improvement_verdict": "atlas law ratify - a proposal accepted against a fresh, passing bond",
+    # NS-11e (0.3.28 Plan 5 Task 7): declared so the forgetting engine's
+    # contradiction pass surfaces as real coverage rather than
+    # `undeclared_kinds` the moment a project's archive first holds one.
+    "review": "forget - two active records on one subject disagree, flagged without picking a side",
+    # NS-2 + NS-10j (0.3.28 Plan 5 Task 2): a lesson's promotion/approval
+    # chain, and the shelf note when the live candidate set is over cap.
+    "lesson_promotion": "lessons promote - a structured lesson cited for graduation, with a re-run hash",
+    "lesson_approval": "lessons approve - a promotion approved by a different actor with an independent re-run",
+    "lesson_candidate": "law hygiene - the oldest live candidates shelved once MAX_CANDIDATES/MAX_CANDIDATE_CHARS is exceeded",
+    # NS-12a + NS-12d (0.3.28 Plan 5 Task 9): `atlas law ratify` (for a
+    # skill target) and `skill forge` both write this - the ledger entry
+    # every skill/law proposal's before/after score and accept/reject
+    # outcome lands in.
+    "skill_impact": "atlas law ratify / skill forge - a skill change's before/after score and its accept/reject outcome",
+    # NS-13f (0.3.28 Plan 7 Task 5).
+    "hypothesis": "hypothesis add/kill - competing causes, each with a kill experiment a fix must survive",
 }
 
 

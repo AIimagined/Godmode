@@ -1,0 +1,47 @@
+{
+  "schema": "godmode-skill-eval-v1",
+  "skill": "godmode-changelog",
+  "routing": {
+    "positive": [
+      "Draft the release-notes for this version from the merged changelog fragments and the commits since the last tag.",
+      "Check that every user-visible update on this branch carries a changelog fragment before the version ships.",
+      "Merge the accumulated changelog fragments into the changelog for version 0.4.0 and build its release-notes.",
+      "Is the changelog fragment gate satisfied for this branch, and does the built release-note hold the required shape?"
+    ],
+    "near_negative": [
+      "Explain in plain language what a specific function returns to a teammate.",
+      "Rename an internal variable for clarity inside one method.",
+      "Write a commit message for this change.",
+      "Summarize what changed in this release for the team."
+    ]
+  },
+  "behavior_assertions": [
+    {
+      "assert": "The fragment gate this flow's step 1 depends on (changelog check --base) exists in this build.",
+      "check": {
+        "command": "python scripts/godmode.py changelog check --help",
+        "expect_exit": 0,
+        "expect_contains": "--base"
+      }
+    },
+    {
+      "assert": "The version-scoped merge this flow's step 4 depends on (changelog merge --set-version) exists in this build.",
+      "check": {
+        "command": "python scripts/godmode.py changelog merge --help",
+        "expect_exit": 0,
+        "expect_contains": "--set-version"
+      }
+    },
+    {
+      "assert": "The build-then-check pair this flow's steps 5-6 depend on (release-notes build|check) exists in this build.",
+      "check": {
+        "command": "python scripts/godmode.py release-notes --help",
+        "expect_exit": 0,
+        "expect_contains": "check"
+      }
+    },
+    "A release is never cut while the fragment gate reports missing-fragment, and a built note is never shipped without its shape check passing."
+  ],
+  "baseline_required": true,
+  "claims_require_evidence": true
+}

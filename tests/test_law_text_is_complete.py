@@ -24,10 +24,11 @@ from unittest import mock
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = PLUGIN_ROOT / "scripts"
 HOOKS = PLUGIN_ROOT / "hooks"
-for entry in (SCRIPTS, HOOKS):
+for entry in (SCRIPTS, HOOKS, Path(__file__).parent):
     if str(entry) not in sys.path:
         sys.path.insert(0, str(entry))
 
+from _law_fixtures import operator_lesson  # noqa: E402
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_runtime import godmode_law  # noqa: E402
@@ -50,10 +51,11 @@ def _project():
 
 
 def _lesson(archive, subject, value, guard):
-    return archive.append(
-        "lesson", subject,
-        {"status": "active", "value": value, "generalized_guard": guard},
-        evidence=[])
+    """NS-2 fix round 1 (B1): a guarded lesson compiles only with approval
+    lineage or operator trust. Every fixture here is about whether the
+    guard TEXT survives the render, not about how it earned its place, so
+    it takes the operator carve-out (`tests/_law_fixtures.py`)."""
+    return operator_lesson(archive, subject, guard, value=value)
 
 
 # Deliberately longer than the old 200-char GUARD_CHARS cap, as one

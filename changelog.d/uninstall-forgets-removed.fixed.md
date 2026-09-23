@@ -1,0 +1,1 @@
+- Uninstalling from the install manifest now also drops the removed files from the manifest, so `hooks status` no longer reports them missing and the next install does not inherit them.

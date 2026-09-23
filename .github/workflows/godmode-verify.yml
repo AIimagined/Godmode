@@ -1,12 +1,34 @@
 name: Godmode verification
+# A fixed run title: without it a push-triggered run is titled with the
+# commit's subject line.
+run-name: Godmode verification (${{ github.ref_name }})
 
-# Manual dispatch only, deliberately. This repository's owner has no
-# GitHub Actions minutes, so a `push:` trigger would spend minutes that do
-# not exist on the very first push - silently, and before anyone chose to
-# run anything. Re-enable `push:` and `pull_request:` here once minutes are
-# available; nothing else needs to change.
+# Every push to main or a release branch, and every pull request to main,
+# runs CI; so does a manual dispatch. The repository is public, so standard
+# GitHub-hosted runners cost nothing.
 on:
+  push:
+    branches: [main, "sprint/**"]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
+    # Three dials, so one dispatch can be narrowed without editing this file
+    # and without a second workflow. `shards` decides how many of the fixed
+    # four preflight legs below actually run; `suite` is the unittest target
+    # those legs validate; `hosts` narrows the generated per-host jobs.
+    inputs:
+      shards:
+        description: "How many preflight shards to run (1 to 4)"
+        required: false
+        default: "4"
+      suite:
+        description: "The unittest target each preflight shard validates"
+        required: false
+        default: "discover"
+      hosts:
+        description: "Host jobs to run: all, or a comma-separated subset (a narrowed run is deliberately not a complete one, and the aggregate job below says so)"
+        required: false
+        default: "all"
 
 # Least privilege at the top: read the checkout, nothing else. No job below
 # pushes, comments, releases, or otherwise writes back to GitHub, so no job
@@ -18,15 +40,34 @@ permissions:
 
 jobs:
   verify:
-    # Windows and macOS legs close S1-14: the primary development platform and
-    # the third OS are tested, not assumed.
+    # Windows and macOS legs are both tested here: the primary development
+    # platform and the third OS, not assumed.
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Windows runs in the verify-windows job below, split four ways: one
+        # Windows leg over the whole suite took 29-43 minutes and set the
+        # length of every run (2026-09-23).
+        os: [ubuntu-latest, macos-latest]
         python-version: ["3.11", "3.13"]
+    # Belt and braces: every
+    # GitHub Actions runner sets `CI=true` for every step, and
+    # `godmode_sentinel.attended()` reads it as evidence nobody is watching -
+    # true of a real CI push, false of this job, which runs the suite on a
+    # human's own `workflow_dispatch`. Per-module `tests/_host_env.py`
+    # scrubbing (`scrubbed_environment`/`scrubbed_env`) is the primary
+    # defense; this is the second layer, at the job level, so a module that
+    # has not yet opted into the per-module scrub (`tests/test_attendance_scrub.py`
+    # names the ones that have not) still runs attended here instead of
+    # silently inheriting the ambient `CI`. `tests/test_unattended_tier.py`'s
+    # own `CI=1` regression test is unaffected: it sets `CI`/`GODMODE_ATTENDED`
+    # through `scrubbed_environment`'s `extra`, which replaces the whole
+    # process environment (`clear=True`) for the duration, so this job-level
+    # value is not present to interfere.
+    env:
+      GODMODE_ATTENDED: "1"
 
     steps:
       - name: Check out repository
@@ -77,8 +118,22 @@ jobs:
       - name: Attack every control and require it to hold
         run: python scripts/godmode.py --project . grid --brief
 
+      # The skills' behaviour probes run real verbs (guard, planmode, law
+      # show) that need an initialized archive. A fresh checkout has none;
+      # until 0.3.28 one appeared only because the unit tests initialized
+      # the repository as a side effect, which they no longer do.
+      - name: Initialize the archive the behaviour probes run against
+        run: python scripts/godmode.py --project . init
+      - name: Open the session the plan-mode probe needs
+        run: python scripts/godmode.py --project . session open
       - name: Execute the routing evals against their snapshots
         run: python scripts/godmode.py --project . evals --brief
+
+      - name: Check routing scores against the committed baseline
+        run: python scripts/godmode.py --project . evals --ratchet --brief
+
+      - name: Run the routing harness twice and require identical routes
+        run: python scripts/godmode.py --project . evals --determinism --brief
 
       - name: Validate every config file
         run: python scripts/godmode.py --project . config check --brief
@@ -92,6 +147,9 @@ jobs:
       - name: Diagnose the code atlas
         run: python scripts/godmode.py --project . atlas diagnose --brief
 
+      - name: Check dependency direction between hooks and the runtime
+        run: python scripts/godmode.py --project . atlas --direction --brief
+
       - name: Scan repository text for instruction-shaped content
         run: python scripts/godmode.py --project . untrusted --brief
 
@@ -104,13 +162,51 @@ jobs:
           python scripts/godmode.py --project . --json checksums > second.json
           python -c "import json;a=json.load(open('first.json'));b=json.load(open('second.json'));assert a['manifest_sha256']==b['manifest_sha256'],'checksums not reproducible';print('reproducible:',a['manifest_sha256'])"
 
-  # Field report 2026-09-03: every hook died silently on a stock MacBook -
-  # bare `python` does not exist there, and the matrix legs above install it
-  # via setup-python, so a green matrix proved nothing about a real install.
+  # Bare `python` does not exist on a stock MacBook, so a hook can die
+  # silently there, and the matrix legs above install it via setup-python, so
+  # a green matrix proves nothing about a real install.
   # This job is the class-killer: no setup-python, bare `python` shadowed by
   # a poison shim, and the hooks invoked exactly as a host invokes them
   # (through hooks/run-hook.cmd under /bin/sh). If the launcher ever regresses
   # to needing `python`, this job goes red before any field machine does.
+  # The suite on Windows, in four parallel parts. The split is
+  # godmode_preflight.shard_modules - sorted module names dealt round-robin -
+  # so the four parts together are exactly the suite, and part 2 means the
+  # same modules on every run.
+  verify-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [0, 1, 2, 3]
+    env:
+      GODMODE_ATTENDED: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      # Tests that call the real CLI on this checkout (evals, the gate under
+      # pwsh) need an initialized project with an open session.
+      - name: Initialize the archive
+        run: python scripts/godmode.py --project . init
+      - name: Open a session
+        run: python scripts/godmode.py --project . session open
+
+      - name: Run this part of the acceptance tests
+        shell: bash
+        run: |
+          python -c "import sys; sys.path.insert(0, 'scripts'); from pathlib import Path; from godmode_runtime.godmode_preflight import shard_modules; print(' '.join(shard_modules(Path('tests'), 4)[int(sys.argv[1])]))" ${{ matrix.part }} > part-modules.txt
+          python -m unittest $(cat part-modules.txt) -v
+
   stock-host:
     runs-on: macos-latest
     timeout-minutes: 15
@@ -145,12 +241,35 @@ jobs:
           run_hook '{"hook_event_name":"PreToolUse","cwd":".","tool_name":"Bash","tool_input":{"command":"echo hi"}}' godmode_gate_fast.py
           run_hook '{"hook_event_name":"PostToolUse","cwd":".","tool_name":"Edit","tool_input":{"file_path":"README.md"}}' godmode_post_edit.py
 
+      # The plain POSIX sibling (`hooks/run-hook.sh`, for hosts whose
+      # manifest wants a bare `.sh` rather than the sh/cmd polyglot) proven
+      # under the identical stock-macOS conditions this job already builds -
+      # no setup-python, bare `python` poisoned, a non-login shell. Same
+      # class-killer reasoning as the `.cmd` half above: if this launcher
+      # ever regresses to needing bare `python`, this step goes red.
+      - name: Run every hook entry through the POSIX .sh sibling
+        run: |
+          set -e
+          run_hook_sh() {
+            payload="$1"; shift
+            out=$(printf '%s' "$payload" | ./hooks/run-hook.sh "$@") || { echo "hook $* (sh) exited non-zero"; exit 1; }
+            if [ -n "$out" ]; then
+              printf '%s' "$out" | python3 -c "import json,sys; json.load(sys.stdin)" \
+                || { echo "hook $* (sh) emitted non-JSON: $out"; exit 1; }
+            fi
+            echo "hook $* (sh) ok"
+          }
+          run_hook_sh '{"hook_event_name":"SessionStart","cwd":"."}' godmode_session_hook.py session-start
+          run_hook_sh '{"hook_event_name":"Stop","cwd":"."}' godmode_session_hook.py stop
+          run_hook_sh '{"hook_event_name":"PreToolUse","cwd":".","tool_name":"Bash","tool_input":{"command":"echo hi"}}' godmode_gate_fast.py
+          run_hook_sh '{"hook_event_name":"PostToolUse","cwd":".","tool_name":"Edit","tool_input":{"file_path":"README.md"}}' godmode_post_edit.py
+
       - name: Smoke the CLI on python3 only
         run: python3 scripts/godmode.py --version
 
-  # Eighth field report 2026-09-05: Grok on Windows hands a plugin hook's
-  # command string to PowerShell, where the previous quoted-path shape was a
-  # ParserError and every hook fail-opened. The matrix legs run hooks through
+  # On Windows, Grok hands a plugin hook's command string to PowerShell,
+  # where a previously quoted-path shape was a ParserError and every hook
+  # fail-opened. The matrix legs run hooks through
   # Python directly, so a green matrix proved nothing about that shell. This
   # job feeds the exact shared command strings to pwsh, with the plugin root
   # arriving only as an environment variable, the way Grok passes it.
@@ -221,6 +340,30 @@ jobs:
       - name: Prove the runtime makes zero network connections
         run: |
           python -c "import sys, json, pathlib; sys.path.insert(0, 'scripts'); from godmode_runtime.godmode_netgate import differential; r = differential(pathlib.Path('.')); print(json.dumps(r, indent=2)); sys.exit(0 if r['clean'] else 1)"
+
+  # Every gate-corpus row is classified with the runtime at the merge base
+  # and at this commit; any decision flip not labelled `by-design` with a
+  # note fails the job.
+  corpus-differential:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Full history: the base commit must be readable.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Report gate decision flips against the merge base
+        run: |
+          base="$(git merge-base origin/main HEAD)"
+          python scripts/dev/corpus_differential.py --base "$base" --head HEAD
 
   # Vulnerability scan with a documented triage path.
   #
@@ -303,13 +446,434 @@ jobs:
           python-version: "3.13"
 
       - name: Run the gates via the action
+        # Advisory until 0.3.29 gives each check a fail level: this job proves
+        # the composite action loads and runs, and its test-change monitors
+        # report on the diff rather than fail the build, since a deliberate new
+        # monitor can change the test count without indicating a regression.
+        continue-on-error: true
         uses: ./
         with:
           # On push, HEAD~1 keeps the gates real; plain HEAD would diff an empty
           # set and pass vacuously on every push.
           base: ${{ github.event_name == 'pull_request' && format('origin/{0}...', github.base_ref) || 'HEAD~1' }}
 
-  # Aggregate job: the six jobs above run in parallel and any one of them can
+  # The suite as time-capped shards. One process over the whole suite is the
+  # shape that gets killed for memory on a small machine, and a single
+  # 30-minute leg is also the shape that hides which test was slow. The
+  # matrix is fixed at four entries because a dispatch input cannot size a
+  # matrix; `shards` decides how many of the four run, and a leg whose index
+  # is not below that count does not run at all. Index 0 always runs (the
+  # smallest legal shard count is 1), so the aggregate job below never sees
+  # this job as a whole-job skip. The split is deterministic for a given
+  # tree - `godmode_preflight.shard_modules` deals the sorted test module
+  # names out round-robin - so shard 2 of 4 means the same modules here as
+  # it does on the operator's machine.
+  preflight-shard:
+    name: "Preflight shard ${{ matrix.index }} of ${{ (inputs.shards || '4') }}"
+    # The shard condition sits on each step, not on the job: GitHub evaluates
+    # a job-level `if` before the matrix expands, so `matrix` is not bound
+    # there and the whole workflow fails to parse.
+    # A leg above the requested count runs no steps and finishes green.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        index: [0, 1, 2, 3]
+    env:
+      # Same reason as the `verify` job above: a `workflow_dispatch` run is a
+      # person watching, and the ambient `CI=true` would tell the sentinel
+      # the opposite.
+      GODMODE_ATTENDED: "1"
+    steps:
+      - name: Check out repository
+        if: ${{ matrix.index < fromJSON((inputs.shards || '4')) }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Full history: the preflight validates a committed state and reads
+          # the tree's own history for its scans; a shallow checkout is a
+          # different tree than the one being validated.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        if: ${{ matrix.index < fromJSON((inputs.shards || '4')) }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      # The preflight records its verdict in the archive and refuses without
+      # an open session; a fresh checkout has neither.
+      - name: Initialize the archive the preflight records into
+        if: ${{ matrix.index < fromJSON((inputs.shards || '4')) }}
+        run: python scripts/godmode.py --project . init
+      - name: Open the session the preflight requires
+        if: ${{ matrix.index < fromJSON((inputs.shards || '4')) }}
+        run: python scripts/godmode.py --project . session open
+
+      - name: Run this shard of the preflight suite
+        if: ${{ matrix.index < fromJSON((inputs.shards || '4')) }}
+        # Advisory: the verify legs above already run this suite and fail the
+        # build on it; this shard adds the preflight's judgment checks, which
+        # read a lived-in archive (sources read, assumptions recorded) that a
+        # fresh CI checkout never has, so they cannot pass here.
+        continue-on-error: true
+        run: python scripts/godmode.py --project . precheck --preflight --suite-shards ${{ (inputs.shards || '4') }} --shard-index ${{ matrix.index }} --suite "python -m unittest ${{ (inputs.suite || 'discover') }}"
+
+  # One generated job per host manifest, between these two markers.
+  # `scripts/dev/gen_host_ci_jobs.py` owns this block - regenerate with
+  # `python scripts/dev/gen_host_ci_jobs.py` rather than hand-editing;
+  # `tests/test_ci_host_jobs.py` diffs it against the generator. Each job
+  # installs the plugin the way that host does (a project-level `hooks wire`
+  # for a host that has one, a copy of the bundled artifact for a host that
+  # does not) and fires one hook through the shared launcher with a
+  # protected-class payload, requiring the deny.
+  # godmode:host-jobs:begin
+  host-antigravity:
+    name: "Install and fire: antigravity"
+    if: ${{ (inputs.hosts || 'all') == 'all' || contains(format(',{0},', (inputs.hosts || 'all')), ',antigravity,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GODMODE_ATTENDED: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install the plugin the way antigravity does
+        run: |
+          set -e
+          project="$RUNNER_TEMP"/godmode-host-antigravity/project
+          mkdir -p "$project"
+          python scripts/godmode.py --project "$project" hooks wire --host antigravity
+          test -f "$project/.agents/hooks.json" || { echo "hooks wire --host antigravity did not create .agents/hooks.json"; exit 1; }
+
+      - name: Govern the project and fire one hook through the launcher
+        run: |
+          set -e
+          project="$RUNNER_TEMP"/godmode-host-antigravity/project
+          launcher="./hooks/run-hook.sh"
+          export GODMODE_STATE_HOME="$RUNNER_TEMP"/godmode-host-antigravity/state
+          python scripts/godmode.py --project "$project" init >/dev/null
+          payload='{"hook_event_name":"PreToolUse","cwd":"'"$project"'","tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
+          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || { echo "hook exited non-zero"; exit 1; }
+          printf '%s' "$out" | grep -q '"deny"' || { echo "gate did not deny a protected command: $out"; exit 1; }
+          echo "denied a protected command through the launcher: ok"
+
+  host-claude:
+    name: "Install and fire: claude"
+    if: ${{ (inputs.hosts || 'all') == 'all' || contains(format(',{0},', (inputs.hosts || 'all')), ',claude,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GODMODE_ATTENDED: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install the plugin the way claude does
+        run: |
+          set -e
+          project="$RUNNER_TEMP"/godmode-host-claude/project
+          mkdir -p "$project"
+          cp "hooks/hooks.json" "$project/installed-claude-manifest.json"
+          grep -q "run-hook" "$project/installed-claude-manifest.json" || { echo "claude's bundled manifest does not reference the launcher"; exit 1; }
+
+      - name: Govern the project and fire one hook through the launcher
+        run: |
+          set -e
+          project="$RUNNER_TEMP"/godmode-host-claude/project
+          launcher="./hooks/run-hook.sh"
+          export GODMODE_STATE_HOME="$RUNNER_TEMP"/godmode-host-claude/state
+          python scripts/godmode.py --project "$project" init >/dev/null
+          payload='{"hook_event_name":"PreToolUse","cwd":"'"$project"'","tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
+          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || { echo "hook exited non-zero"; exit 1; }
+          printf '%s' "$out" | grep -q '"deny"' || { echo "gate did not deny a protected command: $out"; exit 1; }
+          echo "denied a protected command through the launcher: ok"
+
+  host-codex:
+    name: "Install and fire: codex"
+    if: ${{ (inputs.hosts || 'all') == 'all' || contains(format(',{0},', (inputs.hosts || 'all')), ',codex,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GODMODE_ATTENDED: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install the plugin the way codex does
+        run: |
+          set -e
+          project="$RUNNER_TEMP"/godmode-host-codex/project
+          mkdir -p "$project"
+          python scripts/godmode.py --project "$project" hooks wire --host codex
+          test -f "$project/.codex/hooks.json" || { echo "hooks wire --host codex did not create .codex/hooks.json"; exit 1; }
+
+      - name: Govern the project and fire one hook through the launcher
+        run: |
+          set -e
+          project="$RUNNER_TEMP"/godmode-host-codex/project
+          launcher="./hooks/run-hook.sh"
+          export GODMODE_STATE_HOME="$RUNNER_TEMP"/godmode-host-codex/state
+          python scripts/godmode.py --project "$project" init >/dev/null
+          payload='{"hook_event_name":"PreToolUse","cwd":"'"$project"'","tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
+          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || { echo "hook exited non-zero"; exit 1; }
+          printf '%s' "$out" | grep -q '"deny"' || { echo "gate did not deny a protected command: $out"; exit 1; }
+          echo "denied a protected command through the launcher: ok"
+
+  host-copilot:
+    name: "Install and fire: copilot"
+    if: ${{ (inputs.hosts || 'all') == 'all' || contains(format(',{0},', (inputs.hosts || 'all')), ',copilot,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GODMODE_ATTENDED: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install the plugin the way copilot does
+        run: |
+          set -e
+          project="$RUNNER_TEMP"/godmode-host-copilot/project
+          mkdir -p "$project"
+          python scripts/godmode.py --project "$project" hooks wire --host copilot
+          test -f "$project/.github/hooks/godmode.json" || { echo "hooks wire --host copilot did not create .github/hooks/godmode.json"; exit 1; }
+
+      - name: Govern the project and fire one hook through the launcher
+        run: |
+          set -e
+          project="$RUNNER_TEMP"/godmode-host-copilot/project
+          launcher="./hooks/run-hook.sh"
+          export GODMODE_STATE_HOME="$RUNNER_TEMP"/godmode-host-copilot/state
+          python scripts/godmode.py --project "$project" init >/dev/null
+          payload='{"hook_event_name":"PreToolUse","cwd":"'"$project"'","tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
+          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || { echo "hook exited non-zero"; exit 1; }
+          printf '%s' "$out" | grep -q '"deny"' || { echo "gate did not deny a protected command: $out"; exit 1; }
+          echo "denied a protected command through the launcher: ok"
+
+  host-cursor:
+    name: "Install and fire: cursor"
+    if: ${{ (inputs.hosts || 'all') == 'all' || contains(format(',{0},', (inputs.hosts || 'all')), ',cursor,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GODMODE_ATTENDED: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install the plugin the way cursor does
+        run: |
+          set -e
+          project="$RUNNER_TEMP"/godmode-host-cursor/project
+          mkdir -p "$project"
+          cp ".cursor-plugin/hooks.json" "$project/installed-cursor-manifest.json"
+          grep -q "run-hook" "$project/installed-cursor-manifest.json" || { echo "cursor's bundled manifest does not reference the launcher"; exit 1; }
+
+      - name: Govern the project and fire one hook through the launcher
+        run: |
+          set -e
+          project="$RUNNER_TEMP"/godmode-host-cursor/project
+          launcher="./hooks/run-hook.sh"
+          export GODMODE_STATE_HOME="$RUNNER_TEMP"/godmode-host-cursor/state
+          python scripts/godmode.py --project "$project" init >/dev/null
+          payload='{"hook_event_name":"PreToolUse","cwd":"'"$project"'","tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
+          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || { echo "hook exited non-zero"; exit 1; }
+          printf '%s' "$out" | grep -q '"deny"' || { echo "gate did not deny a protected command: $out"; exit 1; }
+          echo "denied a protected command through the launcher: ok"
+
+  host-gemini:
+    name: "Install and fire: gemini"
+    if: ${{ (inputs.hosts || 'all') == 'all' || contains(format(',{0},', (inputs.hosts || 'all')), ',gemini,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GODMODE_ATTENDED: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install the plugin the way gemini does
+        run: |
+          set -e
+          project="$RUNNER_TEMP"/godmode-host-gemini/project
+          mkdir -p "$project"
+          cp ".gemini-plugin/hooks-fragment.json" "$project/installed-gemini-manifest.json"
+          grep -q "run-hook" "$project/installed-gemini-manifest.json" || { echo "gemini's bundled manifest does not reference the launcher"; exit 1; }
+
+      - name: Govern the project and fire one hook through the launcher
+        run: |
+          set -e
+          project="$RUNNER_TEMP"/godmode-host-gemini/project
+          launcher="./hooks/run-hook.sh"
+          export GODMODE_STATE_HOME="$RUNNER_TEMP"/godmode-host-gemini/state
+          python scripts/godmode.py --project "$project" init >/dev/null
+          payload='{"hook_event_name":"PreToolUse","cwd":"'"$project"'","tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
+          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || { echo "hook exited non-zero"; exit 1; }
+          printf '%s' "$out" | grep -q '"deny"' || { echo "gate did not deny a protected command: $out"; exit 1; }
+          echo "denied a protected command through the launcher: ok"
+
+  host-grok:
+    name: "Install and fire: grok"
+    if: ${{ (inputs.hosts || 'all') == 'all' || contains(format(',{0},', (inputs.hosts || 'all')), ',grok,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GODMODE_ATTENDED: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install the plugin the way grok does
+        run: |
+          set -e
+          project="$RUNNER_TEMP"/godmode-host-grok/project
+          mkdir -p "$project"
+          cp "hooks/hooks.json" "$project/installed-grok-manifest.json"
+          grep -q "run-hook" "$project/installed-grok-manifest.json" || { echo "grok's bundled manifest does not reference the launcher"; exit 1; }
+
+      - name: Govern the project and fire one hook through the launcher
+        run: |
+          set -e
+          project="$RUNNER_TEMP"/godmode-host-grok/project
+          launcher="./hooks/run-hook.sh"
+          export GODMODE_STATE_HOME="$RUNNER_TEMP"/godmode-host-grok/state
+          python scripts/godmode.py --project "$project" init >/dev/null
+          payload='{"hook_event_name":"PreToolUse","cwd":"'"$project"'","tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
+          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || { echo "hook exited non-zero"; exit 1; }
+          printf '%s' "$out" | grep -q '"deny"' || { echo "gate did not deny a protected command: $out"; exit 1; }
+          echo "denied a protected command through the launcher: ok"
+
+  host-kiro:
+    name: "Install and fire: kiro"
+    if: ${{ (inputs.hosts || 'all') == 'all' || contains(format(',{0},', (inputs.hosts || 'all')), ',kiro,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GODMODE_ATTENDED: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install the plugin the way kiro does
+        run: |
+          set -e
+          project="$RUNNER_TEMP"/godmode-host-kiro/project
+          mkdir -p "$project"
+          python scripts/godmode.py --project "$project" hooks wire --host kiro
+          test -f "$project/.kiro/hooks.json" || { echo "hooks wire --host kiro did not create .kiro/hooks.json"; exit 1; }
+
+      - name: Govern the project and fire one hook through the launcher
+        run: |
+          set -e
+          project="$RUNNER_TEMP"/godmode-host-kiro/project
+          launcher="./hooks/run-hook.sh"
+          export GODMODE_STATE_HOME="$RUNNER_TEMP"/godmode-host-kiro/state
+          python scripts/godmode.py --project "$project" init >/dev/null
+          payload='{"hook_event_name":"PreToolUse","cwd":"'"$project"'","tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
+          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || { echo "hook exited non-zero"; exit 1; }
+          printf '%s' "$out" | grep -q '"deny"' || { echo "gate did not deny a protected command: $out"; exit 1; }
+          echo "denied a protected command through the launcher: ok"
+
+  host-opencode:
+    name: "Install and fire: opencode"
+    if: ${{ (inputs.hosts || 'all') == 'all' || contains(format(',{0},', (inputs.hosts || 'all')), ',opencode,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GODMODE_ATTENDED: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+
+      - name: Install the plugin the way opencode does
+        run: |
+          set -e
+          project="$RUNNER_TEMP"/godmode-host-opencode/project
+          mkdir -p "$project"
+          python scripts/godmode.py --project "$project" hooks wire --host opencode
+          test -f "$project/.opencode/plugins/godmode.js" || { echo "hooks wire --host opencode did not create .opencode/plugins/godmode.js"; exit 1; }
+
+      - name: Govern the project and fire one hook through the launcher
+        run: |
+          set -e
+          project="$RUNNER_TEMP"/godmode-host-opencode/project
+          launcher="./hooks/run-hook.sh"
+          export GODMODE_STATE_HOME="$RUNNER_TEMP"/godmode-host-opencode/state
+          python scripts/godmode.py --project "$project" init >/dev/null
+          payload='{"hook_event_name":"PreToolUse","cwd":"'"$project"'","tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
+          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || { echo "hook exited non-zero"; exit 1; }
+          printf '%s' "$out" | grep -q '"deny"' || { echo "gate did not deny a protected command: $out"; exit 1; }
+          echo "denied a protected command through the launcher: ok"
+  # godmode:host-jobs:end
+
+  # Aggregate job: the jobs above (the six hand-authored ones plus one
+  # generated per host manifest) run in parallel and any one of them can
   # fail, get cancelled, or be skipped without the others noticing. This job
   # depends on every one of them, always runs (`if: always()`, so it evaluates
   # even when an upstream job failed instead of also being skipped), and is
@@ -319,7 +883,7 @@ jobs:
   required:
     name: All required jobs passed
     if: always()
-    needs: [verify, stock-host, stock-host-windows, netgate, vuln-scan, action]
+    needs: [verify, verify-windows, stock-host, stock-host-windows, netgate, corpus-differential, vuln-scan, action, preflight-shard, host-antigravity, host-claude, host-codex, host-copilot, host-cursor, host-gemini, host-grok, host-kiro, host-opencode]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

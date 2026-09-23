@@ -1,0 +1,1 @@
+- Six new skills ship through skill-forge with purpose files, routing evals and flow tests: second-look, changelog, host-sync, codegraph, skill-eval, spec-lifecycle.

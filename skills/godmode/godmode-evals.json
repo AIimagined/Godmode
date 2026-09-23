@@ -8,7 +8,9 @@
     ],
     "near_negative": [
       "Answer a self-contained conceptual question with no repository state.",
-      "Create a standalone image that does not involve a coding project."
+      "Create a standalone image that does not involve a coding project.",
+      "Correct a one-line typo in a single file; no other decision is involved.",
+      "Fix a typo in a single file with no coordination or approval decision involved."
     ]
   },
   "behavior_assertions": [

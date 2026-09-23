@@ -1,0 +1,1 @@
+- A hook that times out is recorded as `timeout`, distinct from a hook that returned nothing (`empty`).

@@ -1,0 +1,39 @@
+{
+  "schema": "godmode-skill-eval-v1",
+  "skill": "godmode-second-look",
+  "routing": {
+    "positive": [
+      "Independently recheck a diff or session that another pass already marked accepted, before trusting that pass.",
+      "Re-review a change that was approved earlier, sorting any new finding into a gap, bug, verification-miss, or scope-drift.",
+      "Give this already-merged change an independent recheck before its accepted verdict is trusted.",
+      "Someone else's verdict on this fix looks too quick; recheck it independently before relying on it."
+    ],
+    "near_negative": [
+      "Write documentation explaining how a brand-new configuration flag works.",
+      "Run the test suite once and record its result.",
+      "Investigate a performance regression that has never come up before.",
+      "Review this PR."
+    ]
+  },
+  "behavior_assertions": [
+    {
+      "assert": "The reversal mechanism this flow's step 7 depends on (claim --resolve ... --outcome superseded) exists in this build.",
+      "check": {
+        "command": "python scripts/godmode.py claim --help",
+        "expect_exit": 0,
+        "expect_contains": "superseded"
+      }
+    },
+    {
+      "assert": "The independent-verdict mechanism this flow's step 6 depends on (verdict record --acquitted-by independent) exists in this build.",
+      "check": {
+        "command": "python scripts/godmode.py verdict record --help",
+        "expect_exit": 0,
+        "expect_contains": "independent"
+      }
+    },
+    "A second look ends in a recorded held or superseded disposition on the original claim, never a private opinion that lives only in the reviewer's head."
+  ],
+  "baseline_required": true,
+  "claims_require_evidence": true
+}

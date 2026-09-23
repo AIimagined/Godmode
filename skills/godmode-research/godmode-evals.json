@@ -1,0 +1,45 @@
+{
+  "schema": "godmode-skill-eval-v1",
+  "skill": "godmode-research",
+  "routing": {
+    "positive": [
+      "Survey an outside codebase for a mechanism worth borrowing: classify its licence, receipt the implementing source files by line range, and record the import verdict",
+      "An earlier survey gave an extend verdict from a README; reopen the outside source, receipt its implementing files, and record both verdicts"
+    ],
+    "near_negative": [
+      "Rebuild the studied mechanism in stdlib under Godmode names and pin it with a reproducing test",
+      "Root-cause the crash in our own parser module",
+      "Independently recheck a verdict another pass already accepted"
+    ]
+  },
+  "behavior_assertions": [
+    {
+      "assert": "Read receipts take the line range each implementing file was read at.",
+      "check": {
+        "command": "python scripts/godmode.py read --help",
+        "expect_exit": 0,
+        "expect_contains": "--lines"
+      }
+    },
+    {
+      "assert": "Parity reports files opened and surface-only per source from receipts.",
+      "check": {
+        "command": "python scripts/godmode.py parity --help",
+        "expect_exit": 0,
+        "expect_contains": "--sources"
+      }
+    },
+    {
+      "assert": "The skill's own bundle validates structurally.",
+      "check": {
+        "command": "python scripts/godmode.py --project . skill validate --path skills/godmode-research",
+        "expect_exit": 0,
+        "expect_contains": "\"valid\": true"
+      }
+    },
+    "An adopt or extend verdict citing only a README receipt is refused as surface-only - proven in tests/test_godmode_research.py on a bare temp project.",
+    "The licence is classified before any implementing file is receipted."
+  ],
+  "baseline_required": true,
+  "claims_require_evidence": true
+}

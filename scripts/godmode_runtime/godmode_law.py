@@ -73,39 +73,659 @@ def _ellipsize(text: str, limit: int) -> str:
     return truncated.rstrip() + "…"
 
 
-def _guarded_lessons(archive: Any) -> list[dict[str, Any]]:
-    # Dedup by subject, newest record wins (2026-08-29): a promotion retried
-    # after a parse error wrote the same law twice, and two 2026-08-11
-    # lessons had shared a subject since before the compiler existed - each
-    # rendered as its own law. One subject, one law, and appending a
-    # retired record now actually retires the law (the newest record is the
-    # subject's state, the same rule status remaining already follows).
-    by_subject: dict[str, dict[str, Any]] = {}
+# I-1 fix round 1 (nit 7): the one shared "not really active" status set -
+# `_guarded_lessons` (the law compiler, below) and
+# `Chronicle._enforced_refusal` (godmode_chronicle.py, the guard that
+# actually refuses writes) used to keep separate, silently-diverging
+# copies of this set: a `--status superseded` lesson stopped refusing
+# writes but kept rendering as `[ADVISORY]` law in the brief, so an
+# operator reading the brief saw a guard the archive no longer enforced.
+# One set, imported by `godmode_chronicle.py` rather than copied, so a
+# status that retires a lesson for one reader retires it for both.
+LESSON_DORMANT_STATUSES = frozenset({"retired", "candidate", "superseded"})
+
+
+# NS-2 fix round 2 (the upgrade blocker): where the one-time grandfather
+# cutoff lives. The gate below is right for every new write and wrong for
+# every write that predates it - an archive recorded before the gate
+# existed holds guarded lessons with neither approval lineage nor operator
+# trust, because neither was asked for at the time, so the first compile
+# after an upgrade silently emptied a project's whole Code of Law. The
+# remedy is a MIGRATION RECORD, appended once, through the archive's own
+# chained append so it is auditable like everything else: it names the
+# archive head at migration time, and every guarded lesson at or below that
+# sequence keeps its standing. A lesson recorded after it does not - the
+# cutoff is a line under the past, never a standing exemption.
+#
+# `decision` rather than a new kind: the vocabulary already carries "this
+# project decided X, here is the evidence", `EVENT_KINDS` is a frozen
+# allow-list every reader shares, and a migration IS a decision with a
+# scope. The label subject is fixed so the reader below can find it without
+# scanning data.
+LAW_MIGRATION_KIND = "decision"
+LAW_MIGRATION_SUBJECT = "law-authority-grandfather"
+
+# The day the authority gate landed. A lesson recorded BEFORE this date was
+# written under rules that never asked for a second actor, and is what the
+# migration grandfathers; a lesson recorded on or after it was written with
+# the gate in force and is held to it, whenever the project gets around to
+# upgrading.
+#
+# This date is what keeps the migration from becoming the hole the gate
+# closed. Without it, "pre-gate" would have to mean "already in the archive
+# when the first compile ran", and on a BRAND-NEW project that is satisfied
+# by an agent appending its own guard and then compiling - self-legislation
+# with one extra step, and `tests/test_law.py::test_an_agent_written_guard_
+# is_not_law_without_an_approval` measures exactly that. A fixed date cannot
+# be reached by anything written from here on, so the grandfathered set can
+# only ever shrink.
+#
+# Compared against the record's own sealed `recorded_at` date, and a record
+# with no readable date is NOT pre-gate (fail closed).
+GATE_SHIPPED_DATE = "2026-09-18"
+
+
+def _recorded_before_the_gate(record: dict[str, Any]) -> bool:
+    day = str(record.get("recorded_at", ""))[:10]
+    return len(day) == 10 and day < GATE_SHIPPED_DATE
+
+
+def _migration_cutoff_of(record: dict[str, Any]) -> int:
+    """The cutoff sequence a migration record carries, or 0 if it carries
+    nothing readable. Never raises on a hand-mangled record: an unreadable
+    cutoff grandfathers nothing, which is the fail-closed direction."""
+    raw = (record.get("data") or {}).get("cutoff_seq")
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+        return 0
+    return raw
+
+
+def _is_migration_record(record: dict[str, Any]) -> bool:
+    return (record.get("kind") == LAW_MIGRATION_KIND
+            and record.get("subject") == LAW_MIGRATION_SUBJECT)
+
+
+def migration_cutoff(archive: Any) -> int:
+    """The highest grandfather cutoff this archive has recorded, or 0 when
+    it has never been migrated. Read-only."""
+    cutoff = 0
     for record in archive.read_events():
+        if _is_migration_record(record):
+            cutoff = max(cutoff, _migration_cutoff_of(record))
+    return cutoff
+
+
+def lesson_carries_authority(record: dict[str, Any], *, cutoff: int = 0) -> bool:
+    """NS-2 (0.3.28 Plan 5 Task 2, fix round 1, B1): may this lesson's guard
+    become compiled law at all?
+
+    Three ways now, and the third is a one-time line under the past:
+    `cutoff` is the grandfather sequence a migration record recorded (0 when
+    the archive has never been migrated, which is the default and admits
+    nothing extra). A lesson at or below it was written before the gate
+    existed and keeps the standing it already had; a lesson above it is held
+    to the two rules below exactly as designed, even when it is a fresh
+    record on a subject the migration did grandfather.
+
+    Two ways otherwise. Either the record carries APPROVAL LINEAGE - an
+    `approval_seq` written by `godmode_lessons.approve`, which is the only
+    code path that mints one and only mints it after comparing the promoter
+    and the approver as fingerprints - or it was written with OPERATOR
+    TRUST (`godmode_chronicle.record_writer`, sealed into the record at
+    write time and covered by its own hash, so it cannot be back-filled).
+
+    The rule stated plainly: *an agent's guard needs a second actor; an
+    operator's guard is the second actor.* Before this, any process could
+    `append("lesson", s, {"status": "active", "generalized_guard": ...})`
+    and read its own sentence back out of `GODMODE-CODE-OF-LAW.md` on the
+    next compile - self-legislation with no promotion, no approval and no
+    trust, in the one file every session is instructed to obey. The
+    operator carve-out is deliberate and named: NS-2's target is an AGENT
+    legislating for itself, and an operator typing their own standing guard
+    is already the highest trust the model has - `--standing` and the
+    charter path would otherwise have to stage a two-actor dance against
+    themselves.
+
+    Not a status check: `LESSON_DORMANT_STATUSES` above answers "is this
+    lesson still live", which is a different question and is asked
+    separately. A retired lesson with a perfect approval chain still
+    compiles nothing.
+    """
+    # Deferred: `godmode_chronicle` imports THIS module at its own module
+    # level, so the dependency only runs one way at import time. By the time
+    # any archive exists to read lessons out of, chronicle is in sys.modules.
+    from .godmode_chronicle import TRUST_ORDER, record_trust
+
+    data = record.get("data") or {}
+    approval = data.get("approval_seq")
+    if isinstance(approval, int) and not isinstance(approval, bool) and approval > 0:
+        return True
+    if record_trust(record) >= TRUST_ORDER["operator"]:
+        return True
+    return cutoff > 0 and int(record.get("sequence", 0)) <= cutoff
+
+
+def _lesson_records_by_subject(
+    archive: Any,
+) -> tuple[dict[str, list[dict[str, Any]]], int, int]:
+    """One pass over the archive: every `lesson` record grouped by subject
+    in sequence order, the grandfather cutoff this archive has recorded,
+    and the archive head sequence. The history is kept, not only the newest
+    record, because `_standing_record` below has to look PAST a record that
+    cannot carry authority to the one that still does."""
+    by_subject: dict[str, list[dict[str, Any]]] = {}
+    cutoff = 0
+    head = 0
+    for record in archive.read_events():
+        head = max(head, int(record.get("sequence", 0)))
+        if _is_migration_record(record):
+            cutoff = max(cutoff, _migration_cutoff_of(record))
+            continue
         if record.get("kind") != "lesson":
             continue
-        current = by_subject.get(str(record.get("subject", "")))
-        if current is None or int(record.get("sequence", 0)) > current["sequence"]:
-            by_subject[str(record.get("subject", ""))] = {
-                "sequence": int(record.get("sequence", 0)), "record": record}
+        by_subject.setdefault(str(record.get("subject", "")), []).append(record)
+    for history in by_subject.values():
+        history.sort(key=lambda record: int(record.get("sequence", 0)))
+    return by_subject, cutoff, head
+
+
+def _is_dormant(record: dict[str, Any]) -> bool:
+    # Normalised the same way `Chronicle` stores and compares it
+    # (`.strip().lower()`, godmode_chronicle.py's `_write_record` /
+    # `_sync_enforce_index`) - a raw comparison read a `"Superseded"`
+    # lesson as dormant here and active for enforcement, the same class of
+    # reader/writer drift nit 7 already closed once.
+    data = record.get("data") or {}
+    return str(data.get("status", "active")).strip().lower() in LESSON_DORMANT_STATUSES
+
+
+def _is_live_guarded(record: dict[str, Any]) -> bool:
+    data = record.get("data") or {}
+    return (not _is_dormant(record)
+            and bool(str(data.get("generalized_guard") or "").strip()))
+
+
+def _live_guarded_lesson_records(archive: Any) -> tuple[list[dict[str, Any]], int, int]:
+    """The newest LIVE, GUARDED `lesson` record per subject (authority not
+    yet asked about), the grandfather cutoff this archive has recorded, and
+    the archive head sequence.
+
+    Split out of `_guarded_lessons` (NS-2 fix round 2) because the migration
+    writer needs exactly this population - what the law would carry if the
+    gate were not there - and reading it twice, once with a different
+    dedup, is how the two copies of `LESSON_DORMANT_STATUSES` drifted
+    before.
+    """
+    by_subject, cutoff, head = _lesson_records_by_subject(archive)
+    live = [history[-1] for history in by_subject.values()
+            if _is_live_guarded(history[-1])]
+    return live, cutoff, head
+
+
+# The one dormant status that means "waiting for a second actor" rather
+# than "this subject's guard is lifted". A `candidate` on a subject that
+# already has a standing law is the documented conversion path
+# (`_GRANDFATHER_NOTE`: re-record as a structured candidate, promote,
+# approve) in flight; it is not a retirement, so it must not read as one.
+_PENDING_STATUS = "candidate"
+
+
+def _is_lift(record: dict[str, Any]) -> bool:
+    """A record that says "this guard no longer stands": a dormant status
+    other than `candidate` (retired, superseded), or a live record that
+    dropped the guard. Whether it is ALLOWED to lift the standing law is
+    `_standing_record`'s question, answered by trust."""
+    data = record.get("data") or {}
+    status = str(data.get("status", "active")).strip().lower()
+    if status == _PENDING_STATUS:
+        return False
+    return _is_dormant(record) or not _is_live_guarded(record)
+
+
+def _standing_record(
+    history: list[dict[str, Any]], cutoff: int,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Which record of a subject's history IS the law, and which newer
+    record (if any) is waiting on approval to replace or lift it.
+
+    Newest-wins dedup with the authority gate read on the newest record
+    alone had a hole (0.3.28 release preflight): an agent's `law amend` on
+    an operator's standing law wrote a newer record the gate refused, and
+    the subject then compiled NOTHING - the operator's law vanished because
+    an agent edited it, which is the opposite of what the gate exists for.
+    So the standing record is the NEWEST record that is live, guarded and
+    carries authority (`lesson_carries_authority`); every record after it
+    is then read for what it tries to do:
+
+    * an amendment (live, guarded, no authority) or a `candidate` is
+      PENDING - the standing record stays the law and the compiled file
+      names the pending sequence, never silently;
+    * a lift (`retired`, `superseded`, or a guard dropped) counts only when
+      its writer's trust is at least the standing record's
+      (`record_trust`): an operator lifts anything, an agent lifts its own
+      or another agent's law, and a lower-trust writer cannot lift what a
+      higher-trust one set - the same rank rule the archive's single-writer
+      close guard applies to `retired` (NS-11h), applied here to every lift
+      word, because `superseded` is not a close there and would otherwise
+      be a one-word way for an agent to de-legislate the operator. A lift
+      that lacks the rank is pending like an amendment. A lift that has it
+      ends the law, and nothing written after it revives the subject
+      without authority of its own (the newest authorised record is
+      searched for first, so a later approved or operator record does).
+    """
+    from .godmode_chronicle import record_trust
+
+    standing_index = None
+    for index in range(len(history) - 1, -1, -1):
+        record = history[index]
+        if _is_live_guarded(record) and lesson_carries_authority(record, cutoff=cutoff):
+            standing_index = index
+            break
+    if standing_index is None:
+        return None, None
+    standing = history[standing_index]
+    newer = history[standing_index + 1:]
+    for record in newer:
+        if _is_lift(record) and record_trust(record) >= record_trust(standing):
+            return None, None
+    return standing, (newer[-1] if newer else None)
+
+
+def _guarded_lessons(archive: Any) -> list[dict[str, Any]]:
+    """Every living guarded lesson admitted into the law, newest first.
+
+    Dedup by subject, newest record wins (2026-08-29): a promotion retried
+    after a parse error wrote the same law twice, and two 2026-08-11
+    lessons had shared a subject since before the compiler existed - each
+    rendered as its own law. One subject, one law, and appending a retired
+    record now actually retires the law (the newest record is the subject's
+    state, the same rule status remaining already follows) - including a
+    GRANDFATHERED law: the retirement record is the subject's newest, it is
+    dormant, and dormancy is read before authority is ever asked about, so
+    retirement lifts a grandfathered guard exactly as it lifts any other.
+
+    Newest-wins has one qualification since the 0.3.28 release preflight:
+    a newest record that is merely PENDING (a candidate, or a guard with no
+    authority) does not unseat the subject's standing law - see
+    `_standing_record`. The law stays what it was, and `pending_amendment`
+    names the record waiting on approval.
+    """
+    by_subject, cutoff, _head = _lesson_records_by_subject(archive)
     lessons = []
-    for kept in by_subject.values():
-        record = kept["record"]
+    for history in by_subject.values():
+        # NS-2 fix round 1 (B1): the gate. Asked only of records that got
+        # this far - a guardless or dormant lesson compiles nothing either
+        # way, so neither pays for the trust lookup. Fix round 2: `cutoff`
+        # is the one-time grandfather line (0 on an unmigrated archive).
+        record, pending = _standing_record(history, cutoff)
+        if record is None:
+            continue
         data = record.get("data") or {}
-        if str(data.get("status", "active")) in ("retired", "candidate"):
-            continue
-        guard = str(data.get("generalized_guard") or "").strip()
-        if not guard:
-            continue
         lessons.append({
             "sequence": int(record.get("sequence", 0)),
             "subject": str(record.get("subject", ""))[:120],
-            "guard": guard,
+            "guard": str(data.get("generalized_guard") or "").strip(),
             "why": str(data.get("value", "")),
             "recorded_at": str(record.get("recorded_at", ""))[:10],
+            "standing": bool(data.get("standing")),
+            # Visible, not silent: this law is in the file only because it
+            # predates the gate, and no second actor has ever approved it.
+            "grandfathered": not lesson_carries_authority(record),
+            # Visible, not silent, the other way: a newer record on this
+            # subject is waiting on approval; until then this one binds.
+            "pending_amendment": (
+                int(pending.get("sequence", 0)) if pending is not None else None),
         })
     lessons.sort(key=lambda lesson: lesson["sequence"], reverse=True)
     return lessons
+
+
+# I-1 (0.3.28 Plan 5 Task 4): guards that execute. A lesson may carry
+# `enforce: {kind, predicate}` - the archive refuses a write of `kind`
+# whose `data` matches `predicate`, the guard text standing in as the
+# remedy. The grammar is deliberately three operators, nothing richer:
+# `field == literal`, `field contains literal`, `field matches <regex>`,
+# always read against the INCOMING record's `data` (never `evidence` or
+# other top-level fields, and a dotted path such as `a.b` descends into
+# nested dicts). A field the write never set never matches - an enforce
+# rule refuses what a write says, not what it silently omitted.
+ENFORCE_OPS: tuple[str, ...] = ("==", "contains", "matches")
+_ENFORCE_FIELD_RE = re.compile(r"[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*")
+
+# I-1 fix round 1 (Blocking 2): both bounds review-measured as missing. The
+# literal is refused OVER this length at parse time (predicate authoring is
+# rare and cheap to refuse loudly); the scanned field text is bounded at
+# match time instead (see `enforce_predicate_matches`) because that side
+# runs on every write of the guarded kind, not once at authoring. Fix round
+# 3 (Blocking 2): a `matches` field over this length REFUSES the write
+# fail-closed instead of being truncated-then-scanned - round 2's
+# truncate-then-scan reintroduced the exact hazard round 1's docstring had
+# named as the reason not to truncate (a refusal for a match the real value
+# never contained; see `enforce_predicate_matches`). `contains`/`==` still
+# truncate: truncation can only ever LOSE a `contains` match
+# (`literal in text[:N]` implies `literal in text`), and `==` against a
+# truncated prefix is unconditionally false for a literal no longer than
+# `_ENFORCE_LITERAL_MAX`, same as an untruncated compare against a longer
+# value always was.
+_ENFORCE_LITERAL_MAX = 256
+_ENFORCE_TEXT_MAX = 4096
+
+
+class EnforceFieldTooLong(Exception):
+    """Raised by `enforce_predicate_matches` when a `matches` predicate's
+    scanned field exceeds `_ENFORCE_TEXT_MAX` characters (fix round 3,
+    Blocking 2). NOT an `ArchiveError`, on purpose: `Chronicle.
+    _enforced_refusal` swallows `ArchiveError` from this module to skip a
+    predicate that no longer parses on a hand-edited archive, and this is
+    the opposite case - a predicate that parses fine but cannot be
+    evaluated safely against oversized data - so it must reach the caller
+    and refuse the write, never be treated as "this rule does not apply."
+    """
+
+    def __init__(self, field: str) -> None:
+        self.field = field
+        super().__init__(
+            f"field {field!r} is too long for an enforce predicate: shorten "
+            "it or cite it as evidence")
+
+
+# I-1 fix round 1 (Blocking 2), widened round 2, tightened round 3
+# (Blocking 1): a conservative syntactic refusal against catastrophic
+# backtracking. Round 1 only refused a quantified atom directly inside a
+# group that is itself quantified (`(x+)+`, `(x*)*`); round 2 widened that
+# to ANY quantifier following a `)`, whatever the group contains - but
+# re-review measured that stacked quantified ATOMS (never inside a group at
+# all) are polynomial and just as unusable at the 4,096-character cap:
+# `a+a+a+a+X` took 44.6s at 200 scanned characters (~n^5.7) and did not
+# finish in 45s at 4,096, run inside the write lock's 20s deadline. Round
+# 2's own remedy text recommended exactly that construction.
+#
+# `matches` now accepts AT MOST ONE quantifier in the entire pattern -
+# `+`, `*`, `?`, `{n}`, `{n,}`, or `{n,m}` - applied to a single atom or
+# character class, never a group and never a second one anywhere else in
+# the pattern (anchors and plain literals are free, and cost nothing: a
+# fixed number of anchor/literal comparisons per scanned character). This
+# is the bound the "bounded regex against bounded text" claim in
+# `enforce_predicate_matches` rests on: one quantifier over at most
+# `_ENFORCE_TEXT_MAX` (4,096) characters is at worst quadratic in that
+# length on CPython's backtracking engine (`.*X` with no X: 0.075 s at
+# 4,096; the slowest accepted shape measured, `(?=.*X)`, 0.26 s) - bounded
+# and small, not linear. Two or more quantifiers - even two plain atoms,
+# `a*a*b` - or an alternation inside a group (`(a|aa)` chained) can force
+# that scan to be repeated once per position the earlier choice could have
+# stopped at, which is exactly the polynomial/exponential blowup this
+# refuses. Non-greedy forms (`+?`, `*?`) read as a second quantifier and
+# are refused too.
+#
+# Deliberately NOT a general ReDoS detector (undecidable in general): a
+# fast, syntax-only scan over the regex SOURCE text, never executed
+# against user data, that counts quantifier occurrences and refuses at the
+# first sign of more than one, or of one bound to a group. A quantifier
+# hidden behind an escape (`\+`, `\)`) is not distinguished from a real one
+# (the whole escaped pair is skipped, so it is never counted as either) -
+# conservative, per the same ruling; a `?` immediately after an unescaped
+# `(` is treated as the special-group opener it is (`(?:`, `(?=`, `(?!`,
+# `(?i)`, `(?<name>`, `(?P<name>`, ...), not a quantifier, so those inline
+# constructs do not eat the pattern's one allowed quantifier.
+def _enforce_regex_quantifier_violation(pattern: str) -> str | None:
+    """`None` when `pattern` carries at most one quantifier and it binds to
+    an atom or character class, never a group; otherwise a short reason
+    string for the refusal message."""
+    in_class = False
+    quantifier_seen = False
+    depth = 0
+    index = 0
+    length = len(pattern)
+    while index < length:
+        char = pattern[index]
+        if char == "\\":
+            index += 2  # an escaped pair is never a quantifier or a class boundary
+            continue
+        if in_class:
+            if char == "]":
+                in_class = False
+            index += 1
+            continue
+        if char == "[":
+            in_class = True
+            index += 1
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth = max(0, depth - 1)
+        elif char == "|" and depth > 0:
+            # Re-review round 3: an ambiguous alternation inside a group
+            # needs no quantifier at all to blow up - `(a|aa)` chained 42
+            # times is under the literal cap, parses clean, and did not
+            # finish in 90 s against 4,096 characters. Top-level branches
+            # are each tried once; a grouped one can be re-entered per
+            # position, so it is refused outright.
+            return "alternates inside a group"
+        preceding = pattern[index - 1] if index > 0 else ""
+        if char == "?" and preceding == "(":
+            index += 1  # `(?...)` - a special group opener, not a quantifier
+            continue
+        end = index
+        if char in "+*?":
+            end = index + 1
+        elif char == "{":
+            brace = re.match(r"\{\d+(,\d*)?\}", pattern[index:])
+            if brace:
+                end = index + brace.end()
+        if end != index:
+            if preceding == ")":
+                return "quantifies a group"
+            if quantifier_seen:
+                return "carries more than one quantifier"
+            quantifier_seen = True
+            index = end
+            continue
+        index += 1
+    return None
+
+# I-1 fix round 1 (Blocking 3): a lesson's `enforce` may never target one of
+# the gate's own audit-trail kinds. `record_refusal` (kind=refusal),
+# every hook-side nudge/observation (kind=action), and C-8's checkpoints
+# (kind=checkpoint) are all written by `writer == "hook"` - see the matching
+# exemption in `Chronicle._enforced_refusal` (godmode_chronicle.py). That
+# exemption alone stops a brick (a hook's own write is never refused), but
+# an enforce lesson naming one of these kinds would still silently delete
+# every OTHER writer's matching record with no signal the operator asked
+# for it, so authoring one is refused here, loudly, with the reason named -
+# the same "refuse now, not silently never fire" contract every other
+# malformed `--enforce` already gets.
+ENFORCE_FORBIDDEN_KINDS = frozenset({"refusal", "action", "checkpoint"})
+
+
+def parse_enforce_predicate(predicate: str) -> dict[str, str]:
+    """Parse `field == literal` / `field contains literal` / `field matches
+    <regex>` into `{"field", "op", "literal"}`. Refuses (ArchiveError) a
+    predicate with no recognised operator, an empty field or literal, a
+    field that is not a plain dotted path, a literal over
+    `_ENFORCE_LITERAL_MAX` characters, a `matches` literal that does not
+    compile as a regex, or one that carries more than one quantifier or
+    quantifies a group at all - `(x+)+`, `(a|aa)+`, `(x+){2,}`, `(ab)?`,
+    `a+a+a+a+X`, `a*a*b`, `[ab]*[ab]*c`, whatever the shape (fix round 3,
+    see `_enforce_regex_quantifier_violation`: AT MOST ONE quantifier is
+    allowed anywhere in the pattern, and it must bind to a single atom or
+    character class, never a group) - the same shape check runs whether the
+    predicate arrives through `remember --enforce` or straight at
+    `Chronicle.append`, so a malformed one is refused at write time no
+    matter which caller wrote it."""
+    from .godmode_errors import ArchiveError
+
+    text = str(predicate or "").strip()
+    if not text:
+        raise ArchiveError("--enforce predicate must not be empty")
+    # Leftmost operator, not longest-first (fix round 1, nit 6): a literal
+    # such as "some text that contains a word" after "value == " used to be
+    # mis-split on " contains " (checked first for being the longer marker),
+    # producing a field ("value == some text that") that fails the field
+    # regex and refuses a well-formed "==" predicate with a confusing
+    # remedy. The FIRST operator marker to actually occur in the text is
+    # the one the operator meant, no matter how long its name is.
+    earliest: tuple[int, str] | None = None
+    for op in ENFORCE_OPS:
+        marker = f" {op} "
+        position = text.find(marker)
+        if position == -1:
+            continue
+        if earliest is None or position < earliest[0]:
+            earliest = (position, op)
+    if earliest is not None:
+        op = earliest[1]
+        field, _, literal = text.partition(f" {op} ")
+        field, literal = field.strip(), literal.strip()
+        if not field or not _ENFORCE_FIELD_RE.fullmatch(field):
+            raise ArchiveError(
+                f"--enforce predicate field {field!r} must be a dotted path "
+                "of plain names (e.g. 'value' or 'import_verdict.kind')")
+        if not literal:
+            raise ArchiveError(
+                f"--enforce predicate '{op}' needs a non-empty literal")
+        if len(literal) > _ENFORCE_LITERAL_MAX:
+            raise ArchiveError(
+                f"--enforce predicate literal is {len(literal)} characters, "
+                f"max {_ENFORCE_LITERAL_MAX} - put the detail in the guard "
+                "text, not the match literal")
+        if op == "matches":
+            try:
+                re.compile(literal)
+            except re.error as exc:
+                raise ArchiveError(
+                    f"--enforce predicate regex {literal!r} does not compile: {exc}"
+                ) from exc
+            violation = _enforce_regex_quantifier_violation(literal)
+            if violation is not None:
+                raise ArchiveError(
+                    f"--enforce predicate regex {literal!r} {violation} - "
+                    "'matches' accepts AT MOST ONE quantifier in the whole "
+                    "pattern ('+', '*', '?', '{n}', '{n,}', '{n,m}'), bound "
+                    "to a single atom or character class, never a group: "
+                    "'(x+)+', '(a|aa)+', '(x+){2,}', '(ab)?', 'a+a+a+a+X', "
+                    "'a*a*b' and '[ab]*[ab]*c' are all refused, because a "
+                    "second quantifier (grouped or not) can run "
+                    "catastrophically or polynomially slowly and this match "
+                    "runs inside the archive's write lock, stalling every "
+                    "other writer; rewrite it with a single quantified atom "
+                    "or character class (e.g. 'x+', '[a-z]{1,40}') instead, "
+                    "or use 'field contains literal' if a substring test is "
+                    "enough")
+        return {"field": field, "op": op, "literal": literal}
+    raise ArchiveError(
+        "--enforce predicate must be 'field == literal', 'field contains "
+        "literal', or 'field matches <regex>' (got " + repr(text) + ")")
+
+
+def parse_enforce_spec(spec: str) -> dict[str, str]:
+    """Parse `kind=<record kind>;predicate=<field op value>` into
+    `{"kind", "predicate"}`, validating both halves so a malformed
+    `--enforce` is refused at `remember` time rather than persisted and
+    silently never firing. Split on the FIRST ';' only: the predicate half
+    may itself contain ';' (rare, but a regex alternation could)."""
+    from .godmode_errors import ArchiveError
+    from .godmode_constants import EVENT_KINDS
+
+    text = str(spec or "").strip()
+    first, sep, rest = text.partition(";")
+    if not sep:
+        raise ArchiveError(
+            "--enforce must be 'kind=<record kind>;predicate=<field op "
+            "value>'")
+    kind_key, kind_sep, kind = first.partition("=")
+    predicate_key, predicate_sep, predicate = rest.partition("=")
+    if kind_key.strip().lower() != "kind" or not kind_sep:
+        raise ArchiveError("--enforce's first clause must be 'kind=<record kind>'")
+    if predicate_key.strip().lower() != "predicate" or not predicate_sep:
+        raise ArchiveError(
+            "--enforce's second clause must be 'predicate=<field op value>'")
+    kind = kind.strip()
+    predicate = predicate.strip()
+    if not kind or kind not in EVENT_KINDS:
+        raise ArchiveError(f"--enforce kind {kind!r} is not a recognised record kind")
+    if kind in ENFORCE_FORBIDDEN_KINDS:
+        raise ArchiveError(
+            f"--enforce kind {kind!r} is refused: {kind} is the gate's own "
+            "audit trail, written by hooks on the operator's behalf "
+            "(record_refusal, tripwire/usage/edit actions, checkpoints) - "
+            "an enforce guard against it would silently drop those hooks' "
+            "own records with no signal, since a hook's writes are exempt "
+            "from enforcement and never refused themselves; target a kind "
+            "an agent or operator writes directly instead")
+    parse_enforce_predicate(predicate)  # raises on malformed; result unused here
+    return {"kind": kind, "predicate": predicate}
+
+
+def _enforce_field_value(data: dict[str, Any], field: str) -> tuple[Any, bool]:
+    current: Any = data
+    for part in field.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None, False
+        current = current[part]
+    return current, True
+
+
+def _enforce_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        return "\n".join(_enforce_text(item) for item in value)
+    if value is None:
+        return ""
+    return str(value)
+
+
+def enforce_predicate_matches(predicate: str, data: dict[str, Any]) -> bool:
+    """True when `data` (a record's own `data` payload - never `evidence`
+    or other top-level fields) matches `predicate`. A field the payload
+    never set is never a match, dotted paths descend into nested dicts,
+    and list/tuple values are matched against each stringified item
+    joined by newlines so `contains`/`matches` can find one among several.
+
+    A scanned field longer than `_ENFORCE_TEXT_MAX` characters is handled
+    differently per operator (fix round 3, Blocking 2 - corrected from
+    round 2's blanket truncate-then-scan): `contains` and `==` TRUNCATE to
+    the first `_ENFORCE_TEXT_MAX` characters, unchanged from round 2, and
+    that is safe for both - `literal in text[:N]` implies `literal in
+    text`, so truncation can only ever LOSE a `contains` match, never
+    invent one, and `==` against a truncated prefix is unconditionally
+    false for a literal no longer than `_ENFORCE_LITERAL_MAX` compared to a
+    longer value, same as an untruncated compare against a longer value
+    always was. `matches` is different in kind, not degree: truncating
+    first and then running the regex can INVENT a match the full value
+    never had, not merely miss one - verified in re-review, `value matches
+    TODO$` against `"x" * 4092 + "TODO" + "y" * 40` (a value that does not
+    end in "TODO") matched once truncated to the first 4,096 characters,
+    because truncation moved what the pattern anchors against. Round 1's
+    docstring had already named this exact hazard as the reason not to
+    truncate; round 2 dropped the sentence without solving it. So `matches`
+    against an over-cap field raises `EnforceFieldTooLong` instead of
+    guessing either direction - the write is refused, fail-closed, naming
+    the field, rather than truncated-then-compared or silently passed.
+
+    A single quantifier over a field within `_ENFORCE_TEXT_MAX` is at
+    worst quadratic in that length - 0.26 s for the slowest accepted shape
+    at the cap (see `_enforce_regex_quantifier_violation`, which is
+    what keeps `matches` itself bounded once a field is short enough to be
+    evaluated at all)."""
+    parsed = parse_enforce_predicate(predicate)
+    value, found = _enforce_field_value(data or {}, parsed["field"])
+    if not found:
+        return False
+    text = _enforce_text(value)
+    op, literal = parsed["op"], parsed["literal"]
+    if len(text) > _ENFORCE_TEXT_MAX:
+        if op == "matches":
+            raise EnforceFieldTooLong(parsed["field"])
+        text = text[:_ENFORCE_TEXT_MAX]
+    if op == "==":
+        return text == literal
+    if op == "contains":
+        return literal in text
+    if op == "matches":
+        return re.search(literal, text) is not None
+    return False
 
 
 def _delivered_seqs(archive: Any) -> set[int]:
@@ -118,23 +738,108 @@ def _delivered_seqs(archive: Any) -> set[int]:
 
 
 def top_laws(archive: Any, k: int) -> list[dict[str, Any]]:
-    """The k newest laws, bounded for the brief's budget. `dormant` means no
+    """The k newest laws, bounded for the brief's budget - plus every
+    standing law, pinned ahead of them regardless of k. `dormant` means no
     delivery receipt has ever named this law - L3's decay input, flagged
-    rather than silently carried."""
+    rather than silently carried. A standing lesson (`--standing`) is a
+    guard the operator marked as enforcing, not advisory; a budget that
+    drops it once k newer lessons arrive turns an enforcing guard into
+    advice by attrition, which is the failure this pins against.
+    """
     delivered = _delivered_seqs(archive)
+    guarded = _guarded_lessons(archive)
+    standing = [lesson for lesson in guarded if lesson["standing"]]
+    rest = [lesson for lesson in guarded if not lesson["standing"]][: max(0, k)]
     return [
         {"subject": lesson["subject"], "guard": _flatten(lesson["guard"]),
-         "seq": lesson["sequence"], "dormant": lesson["sequence"] not in delivered}
-        for lesson in _guarded_lessons(archive)[: max(0, k)]
+         "seq": lesson["sequence"], "dormant": lesson["sequence"] not in delivered,
+         "standing": lesson["standing"],
+         "pending_amendment": lesson.get("pending_amendment")}
+        for lesson in standing + rest
     ]
+
+
+# NS-2 fix round 2: the grandfather marker, stated in the artifact rather
+# than left for a reader to infer. A `[GRANDFATHERED]` law is in this file
+# only because it predates the authority gate: no second actor has ever
+# approved it, and the note below says exactly how to convert one. Same
+# doctrine as the cap line under it - no silent anything.
+_GRANDFATHER_NOTE = (
+    "{count} law(s) below are marked [GRANDFATHERED]: they were recorded "
+    "before `law compile` required a second actor, so nobody has ever "
+    "approved them. They still bind, and they are counted by `godmode law "
+    "hygiene` until they are converted. To convert one: re-record it as a "
+    "structured candidate (`godmode remember --kind lesson --subject "
+    "<subject> --status candidate`, carrying root_cause, correction, "
+    "reflection, generalized_guard and refuted_by), run `godmode lessons "
+    "promote <lesson-seq> --cite seq:<n> --rerun-hash <h>`, and have a "
+    "DIFFERENT actor run `godmode lessons approve <promotion-seq> "
+    "--rerun-hash <their own h>`. A guard that is wrong is retired instead "
+    "(`godmode remember --kind lesson --subject <subject> --status "
+    "retired`), which lifts it here on the next compile."
+)
+
+
+_PENDING_NOTE = (
+    "{count} law(s) below carry [AMENDMENT PENDING seq:<n>]: a newer record "
+    "on that subject was written without a second actor's approval, "
+    "operator trust, or the trust to lift it, so it is not the law yet. The "
+    "guard shown is the last one that carried authority, and it binds until "
+    "one of: the operator re-issues the guard (`godmode law amend "
+    "--as-operator`) or retires the law; or a NEW structured candidate is "
+    "recorded on the same subject (`godmode remember --kind lesson "
+    "--subject <subject> --status candidate` with root_cause, correction, "
+    "reflection, generalized_guard and refuted_by), promoted with `godmode "
+    "lessons promote`, and approved by a different actor with `godmode "
+    "lessons approve`. The pending record itself is active, not a "
+    "candidate, so it cannot be promoted; it is superseded by whichever of "
+    "those lands."
+)
+
+
+# The compiled law file is shared with the project; the lesson it came from
+# stays in the local archive. A citation of outside scholarship in a lesson's
+# subject or why is kept there and not copied into the shared file (0.3.28:
+# a law title named a preprint and every compile rewrote it).
+_CITATION = re.compile(r"(?i)\barxiv[:\s/]|\bet\s+al\.")
+_CITATION_SPAN = re.compile(r"(?i)\s*\([^)]*(?:\barxiv\b|\bet\s+al\.)[^)]*\)")
+
+
+def _shared_title(lesson: dict[str, Any]) -> str:
+    """The law's heading: its subject, or its guard's first clause when the
+    subject cites outside scholarship."""
+    subject = str(lesson["subject"])
+    if not _CITATION.search(subject):
+        return subject
+    first = re.split(r"(?<=[.;])\s", _flatten(lesson["guard"]), maxsplit=1)[0]
+    return _ellipsize(first.rstrip(".;"), 80)
+
+
+def _shared_why(lesson: dict[str, Any]) -> str:
+    why = _CITATION_SPAN.sub("", str(lesson["why"]))
+    if _CITATION.search(why):
+        return f"the reasoning cites outside sources; read it at seq:{lesson['sequence']} in the local archive"
+    return why
 
 
 def _render(laws: list[dict[str, Any]], dropped: int, cap: int) -> str:
     lines = [_HEADER]
+    grandfathered = sum(1 for lesson in laws if lesson.get("grandfathered"))
+    if grandfathered:
+        lines.append(_GRANDFATHER_NOTE.format(count=grandfathered))
+        lines.append("")
+    pending = sum(1 for lesson in laws if lesson.get("pending_amendment"))
+    if pending:
+        lines.append(_PENDING_NOTE.format(count=pending))
+        lines.append("")
     for number, lesson in enumerate(laws, 1):
-        lines.append(f"## Law {number} - {lesson['subject']}  [ADVISORY]")
+        marks = "[ADVISORY]" + (
+            "  [GRANDFATHERED]" if lesson.get("grandfathered") else "")
+        if lesson.get("pending_amendment"):
+            marks += f"  [AMENDMENT PENDING seq:{lesson['pending_amendment']}]"
+        lines.append(f"## Law {number} - {_shared_title(lesson)}  {marks}")
         lines.append(f"Guard: {_flatten(lesson['guard'])}")
-        lines.append(f"Why: {_ellipsize(lesson['why'], WHY_CHARS)}")
+        lines.append(f"Why: {_ellipsize(_shared_why(lesson), WHY_CHARS)}")
         lines.append(
             f"Provenance: seq:{lesson['sequence']}, recorded {lesson['recorded_at']}")
         lines.append("")
@@ -149,12 +854,12 @@ def _render(laws: list[dict[str, Any]], dropped: int, cap: int) -> str:
 
 _SKILL_BODY = f"""---
 name: {SKILL_DIRNAME}
-description: Use at the start of every session and before every new task - read {LAW_FILENAME} at the project root, the project's generated Code of Law, and follow its guards before acting.
+description: Use at the start of every session and before every new task - read {LAW_FILENAME} at the project root when it exists (the project's generated Code of Law; `godmode law compile` writes it), and follow its guards before acting. Not for writing new laws; do not use when {LAW_FILENAME} is absent.
 ---
 
 # The project's Code of Law
 
-Read `{LAW_FILENAME}` at the project root before substantive work. Every law
+Read `{LAW_FILENAME}` at the project root before substantive work, if it exists. A project with no guarded lessons yet has no file, and that is not an error: `godmode law compile` writes it once at least one lesson carries a guard. Every law
 was recorded by this project from its own corrections and carries its
 archive provenance. Follow each law's guard; when one seems wrong, say so
 and retire the underlying lesson (`godmode lessons`) rather than silently
@@ -196,19 +901,153 @@ def _hygiene_terms(text: str) -> set[str]:
     }
 
 
-def hygiene(archive: Any) -> dict[str, Any]:
-    """Maintenance scan over the living laws. Names candidates; never retires.
+def _archived_candidate_seqs(archive: Any) -> set[int]:
+    """Every candidate sequence a `lesson_candidate` shelf note has already
+    taken out of the live set - `shelve_oldest_candidates` and
+    `law_candidates` both skip these, the same way both already skip a
+    promoted or dismissed one."""
+    archived: set[int] = set()
+    for record in archive.read_events():
+        if record.get("kind") != "lesson_candidate":
+            continue
+        for seq in (record.get("data") or {}).get("archived_seqs") or []:
+            try:
+                archived.add(int(seq))
+            except (TypeError, ValueError):  # godmode: swallow-ok: a malformed cite names nothing to archive
+                continue
+    return archived
 
-    Three checks, each about a different way a ratchet rots: a law with no
+
+def shelve_oldest_candidates(archive: Any) -> dict[str, Any]:
+    """NS-2: bound the LIVE candidate set on two axes - count
+    (`MAX_CANDIDATES`) and combined text (`MAX_CANDIDATE_CHARS`) - never
+    unbounded (an unbounded candidate set is the named failure mode this
+    guards against).
+
+    Never chain-breaking: nothing is deleted or rewritten (the archive is
+    append-only). Over either cap, the OLDEST live candidates are named in
+    one `lesson_candidate` shelf note; `law_candidates` and this
+    function's own next call both treat a shelved sequence as no longer
+    live, the same way they already treat a promoted or dismissed one.
+    Idempotent - a call that finds nothing over cap writes nothing.
+
+    Fix round 1 (M3): `law_candidates` now actually honours the note. It
+    did not before, so a shelved candidate still clustered, still counted
+    toward `occurrences`/`distinct_sessions`, and was still promotable -
+    the cap bought nothing but its own idempotence while this docstring
+    claimed a bound that had no reader.
+
+    NOT named "rotate" (fix round 1, merge review): NS-11e's
+    `Chronicle.rotate_to_cold` genuinely MOVES records into a cold segment.
+    This only appends a note naming them. Two meanings for one word, in one
+    archive, is how an operator comes to believe their candidates were
+    moved somewhere they can no longer be read.
+    """
+    from .godmode_lessons import MAX_CANDIDATE_CHARS, MAX_CANDIDATES
+
+    archived = _archived_candidate_seqs(archive)
+    live = [
+        record for record in archive.read_events()
+        if record.get("kind") == "lesson"
+        and str((record.get("data") or {}).get("status")) == "candidate"
+        and int(record.get("sequence", 0)) not in archived
+    ]
+    live.sort(key=lambda record: int(record.get("sequence", 0)))
+    import json as _json
+
+    def _chars(record: dict[str, Any]) -> int:
+        return len(_json.dumps(record.get("data") or {}, sort_keys=True))
+
+    archive_count = max(0, len(live) - MAX_CANDIDATES)
+    remaining = live[archive_count:]
+    remaining_chars = sum(_chars(record) for record in remaining)
+    while remaining_chars > MAX_CANDIDATE_CHARS and remaining:
+        removed = remaining.pop(0)
+        archive_count += 1
+        remaining_chars -= _chars(removed)
+    to_archive = live[:archive_count]
+    if not to_archive:
+        return {"archived": 0, "live": len(live)}
+    seqs = [int(record["sequence"]) for record in to_archive]
+    archive.append(
+        "lesson_candidate", "candidate-shelf",
+        # `archived_count` is redundant with `len(archived_seqs)` on the
+        # stored record and deliberately so (fix round 1, nit 6): the
+        # compressed brief mask keeps the COUNT, because a mask exists to
+        # bound and a 200-entry sequence list entering a brief verbatim is
+        # the opposite of bounding. The full list stays here, in the
+        # archive, reachable by the `reconstruct` seq the mask already
+        # prints.
+        {"archived_seqs": seqs, "archived_count": len(seqs),
+         "reason": f"shelved over MAX_CANDIDATES={MAX_CANDIDATES}/"
+                   f"MAX_CANDIDATE_CHARS={MAX_CANDIDATE_CHARS}"},
+        evidence=[f"seq:{seq}" for seq in seqs],
+    )
+    return {"archived": len(seqs), "live": len(live) - len(seqs)}
+
+
+def hygiene(archive: Any) -> dict[str, Any]:
+    """Maintenance pass over the living laws. Names candidates; never retires.
+
+    NOT purely a scan, and the CLI help now says so too (fix round 1, nit
+    1): this pass also bounds the live candidate set, which appends ONE
+    `lesson_candidate` shelf note when that set is over cap. It is the only
+    write the pass makes, it deletes nothing, and it is reported under
+    `shelved_candidates` rather than as a finding - but a verb documented
+    as a read-only scan that quietly mutates the archive is exactly the
+    surprise this project refuses everywhere else.
+
+    Four checks, each about a different way a ratchet rots: a law with no
     recorded origin cannot be re-validated when the world changes; two
     active laws sharing their subject matter with opposite polarity are a
-    disagreement waiting for a release to expose it; and a law whose guard
+    disagreement waiting for a release to expose it; a law whose guard
     a pin now enforces mechanically is a retirement candidate - prose
-    duplicating a sensor is debt, not protection. (Staleness and dormancy
-    already live in `law debrief`; this scan does not repeat them.)
+    duplicating a sensor is debt, not protection; and a candidate cluster
+    that has recurred for the ladder's own promotion bar (NS-2) with no
+    promotion feeding it is named, never auto-promoted (a guard is
+    reviewed prose). (Staleness and dormancy already live in `law
+    debrief`; this pass does not repeat them.)
     """
     lessons = _guarded_lessons(archive)
     findings: list[dict[str, Any]] = []
+
+    for cluster in law_candidates(archive):
+        if cluster["promotable"]:
+            findings.append({
+                "check": "stale-candidate",
+                # Fix round 1 (nit 2): every flag the parser makes
+                # required is in the printed remedy. `--guard` and
+                # `--subject` are required alongside `--candidate`, so the
+                # old line exited 2 exactly as pasted, and a remedy that
+                # does not run is not a remedy.
+                "detail": f"candidate cluster at seq:{cluster['first_seq']} has "
+                          f"recurred in {cluster['distinct_sessions']} distinct "
+                          "session(s) with no promotion feeding it - `law "
+                          f"promote --candidate {cluster['first_seq']} --guard "
+                          "<the reviewed guard> --subject <subject>` or dismiss "
+                          "it (`remember --kind lesson --subject <subject> "
+                          "--status retired`)",
+            })
+
+    # NS-2 fix round 2: the grandfathered set is a debt to be worked down,
+    # not a permanent class. One finding, naming the count and the two ways
+    # out, so an operator can see it shrinking instead of discovering years
+    # later that a third of the law was never approved by anyone.
+    grandfathered = [lesson for lesson in lessons if lesson.get("grandfathered")]
+    if grandfathered:
+        findings.append({
+            "check": "grandfathered-law",
+            "detail": f"{len(grandfathered)} law(s) predate the authority gate "
+                      "and have never been approved by a second actor (seq:"
+                      + ", seq:".join(str(lesson["sequence"])
+                                      for lesson in grandfathered[:10])
+                      + (", ..." if len(grandfathered) > 10 else "")
+                      + ") - promote and approve each one (`godmode lessons "
+                        "promote <lesson-seq> --cite seq:<n> --rerun-hash <h>`, "
+                        "then a DIFFERENT actor runs `godmode lessons approve "
+                        "<promotion-seq> --rerun-hash <h>`), or retire the ones "
+                        "that no longer earn their place",
+        })
 
     for lesson in lessons:
         if not str(lesson.get("why", "")).strip():
@@ -256,8 +1095,10 @@ def hygiene(archive: Any) -> dict[str, Any]:
 
     return {
         "laws_scanned": len(lessons),
+        "grandfathered_unapproved": len(grandfathered),
         "findings": findings,
         "verdict": "clean" if not findings else "candidates-found",
+        "shelved_candidates": shelve_oldest_candidates(archive),
     }
 
 
@@ -402,11 +1243,20 @@ def law_candidates(archive: Any) -> list[dict[str, Any]]:
         if record.get("kind") == "lesson":
             dismissed[str(record.get("subject", ""))] = (
                 str((record.get("data") or {}).get("status")) == "retired")
+    # NS-2 fix round 1 (M3): a SHELVED candidate is no longer live. Without
+    # this, the cap `shelve_oldest_candidates` enforces bounded nothing any
+    # reader consulted - shelved records still clustered, still counted
+    # toward the promotion ladder's own recurrence bar, and were still
+    # promotable. A cap that buys only its own idempotence is a claim its
+    # docstring makes and its code does not keep.
+    shelved = _archived_candidate_seqs(archive)
     for record in archive.read_events():
         if record.get("kind") != "lesson":
             continue
         data = record.get("data") or {}
         if str(data.get("status")) != "candidate":
+            continue
+        if int(record.get("sequence", 0)) in shelved:
             continue
         if dismissed.get(str(record.get("subject", ""))):
             # S11 follow-up: a candidate whose subject was later retired is
@@ -444,15 +1294,29 @@ def law_candidates(archive: Any) -> list[dict[str, Any]]:
 
 def promote_candidate(archive: Any, first_seq: int, *, guard: str,
                       subject: str) -> dict[str, Any]:
-    """Promote a candidate cluster into a law - a guarded, active lesson.
+    """Promote a candidate cluster into a `lesson_promotion` - NOT directly
+    into a law (0.3.28 Plan 5 Task 2: the ladder now feeds the same
+    approval-gated pipeline `lessons promote`/`lessons approve` use). The
+    guard is still REVIEWED prose written here, at promotion time (a
+    candidate carries keywords, never a sentence worth enshrining
+    verbatim), and the ladder still holds: below PROMOTION_SESSIONS
+    distinct sessions, promotion is refused rather than discouraged.
 
-    The guard is REVIEWED prose written at promotion time (a candidate
-    carries keywords, never a sentence worth enshrining verbatim), and the
-    ladder holds: below PROMOTION_SESSIONS distinct sessions, promotion is
-    refused rather than discouraged. HARD enforcement stays with the
-    charter; every promoted law is ADVISORY here.
+    What changed: the freshly-authored lesson lands as a CANDIDATE (the
+    same dormant status any other unapproved structured lesson carries),
+    synthesized into NS-10j's five structured fields from the cluster's own
+    evidence, then immediately cited into a `lesson_promotion` naming this
+    same actor. It compiles into the law only once a DIFFERENT actor runs
+    `godmode lessons approve <promotion-seq> --rerun-hash <h>` with a
+    different rerun_hash than the one synthesized below - the promotion by
+    itself never grants an advisory guard the way a direct `remember --kind
+    lesson --status active` write still can (HARD enforcement stays with
+    the charter; the ladder is ADVISORY, both before and after this task).
     """
+    import hashlib
+
     from .godmode_errors import ArchiveError
+    from .godmode_lessons import promote as lessons_promote
 
     guard = " ".join(str(guard).split())
     subject = str(subject).strip()
@@ -468,19 +1332,38 @@ def promote_candidate(archive: Any, first_seq: int, *, guard: str,
             f"Cluster at seq {first_seq} has recurred in {cluster['distinct_sessions']} "
             f"distinct session(s); the ladder requires {PROMOTION_SESSIONS} - "
             "reliability first, promotion second")
-    return archive.append(
+    keyword_text = ", ".join(cluster["keywords"][:10])
+    lesson = archive.append(
         "lesson", subject,
         {
-            "status": "active",
+            "status": "candidate",
             "value": ("promoted from a correction cluster (keywords: "
-                      + ", ".join(cluster["keywords"][:10]) + ")"),
+                      + keyword_text + ")"),
             "generalized_guard": guard,
+            "root_cause": f"a {cluster['origin']} recurred across "
+                          f"{cluster['distinct_sessions']} distinct sessions "
+                          f"(keywords: {keyword_text})",
+            "correction": guard,
+            "reflection": f"the cluster at seq:{cluster['first_seq']} repeated "
+                          f"{cluster['occurrences']} time(s) before this guard "
+                          "was reviewed and written",
+            "refuted_by": "the same correction recurs again after this guard "
+                          "is delivered",
             "promoted_from": cluster["first_seq"],
             "occurrences": cluster["occurrences"],
             "distinct_sessions": cluster["distinct_sessions"],
         },
         evidence=[f"seq:{cluster['first_seq']}", f"seq:{cluster['last_seq']}"],
     )
+    rerun_hash = hashlib.sha256(
+        f"ladder:{cluster['first_seq']}:{cluster['last_seq']}:{guard}".encode("utf-8")
+    ).hexdigest()
+    promotion = lessons_promote(
+        archive, lesson["sequence"],
+        cite=[f"seq:{cluster['first_seq']}", f"seq:{cluster['last_seq']}"],
+        rerun_hash=rerun_hash,
+    )
+    return {**lesson, "promotion": promotion}
 
 
 def debrief(archive: Any) -> dict[str, Any]:
@@ -598,13 +1481,24 @@ def debrief_status(archive: Any) -> dict[str, Any]:
     }
 
 
-def amend_law(archive: Any, law_seq: int, guard: str) -> dict[str, Any]:
+def amend_law(archive: Any, law_seq: int, guard: str, *,
+              as_operator: bool = False,
+              operator_verified: bool | None = None) -> dict[str, Any]:
     """S11-D: execute a debrief amendment without hand-crafted appends.
 
     Appends a lesson with the SAME subject as the law at `law_seq` carrying
-    the new reviewed guard; newest-wins dedup makes it the law. Refuses an
-    empty guard, an unknown sequence, and a subject whose current state is
-    retired or candidate - amendment is for living laws."""
+    the new reviewed guard. Refuses an empty guard, an unknown sequence,
+    and a subject whose current state is retired or candidate - amendment
+    is for living laws.
+
+    Whether the amendment IS the law from here on is the authority gate's
+    question, not this verb's (`lesson_carries_authority`): written with
+    operator trust (`as_operator`, verified the way every other operator
+    write is), it binds on the next compile; written by an agent, it is
+    PENDING and the prior authorised guard stays in force until a second
+    actor approves it - `_standing_record` has the rule. The returned
+    record's `pending` says which happened, so the caller never has to
+    infer it from a compile."""
     from .godmode_errors import ArchiveError
 
     guard = " ".join(str(guard).split())
@@ -622,20 +1516,44 @@ def amend_law(archive: Any, law_seq: int, guard: str) -> dict[str, Any]:
         raise ArchiveError(f"No lesson record at seq {law_seq}")
     subject = str(target.get("subject", ""))
     current = latest_by_subject.get(subject) or {}
-    status = str((current.get("data") or {}).get("status", "active"))
+    current_data = current.get("data") or {}
+    status = str(current_data.get("status", "active"))
     if status in ("retired", "candidate"):
         raise ArchiveError(
             f"'{subject[:60]}' is {status}; amendment is for living laws")
-    return archive.append(
-        "lesson", subject,
-        {
-            "status": "active",
-            "generalized_guard": guard,
-            "value": f"amended from seq {int(law_seq)} (S11 law amend)",
-            "amended_from": int(law_seq),
-        },
+    amended: dict[str, Any] = {
+        "status": "active",
+        "generalized_guard": guard,
+        "value": f"amended from seq {int(law_seq)} (S11 law amend)",
+        "amended_from": int(law_seq),
+    }
+    # Newest-wins dedup (by subject) means this append IS the law from here
+    # on - a standing law's flag lives only on the record being superseded,
+    # so an amendment that dropped it would silently un-pin a law the
+    # operator marked enforcing, while trying only to reword its guard.
+    if bool(current_data.get("standing")):
+        amended["standing"] = True
+    # Fix round 2 (Blocking 3): the same principle as `standing`, and it
+    # matters more, because dropping it does not just un-pin a law - it
+    # trips `Chronicle._refuse_incomplete_supersession`. That guard refuses
+    # ANY `lesson` append on a subject with an active `enforce` unless the
+    # new record either reaffirms `enforce` or moves to a dormant status,
+    # so before this an amendment on an enforcing law was refused outright,
+    # with no way for this verb to comply - `amend_law` builds `amended`
+    # from scratch and never carried `enforce` forward. Carrying it here
+    # keeps the amendment doing what it says: reword the guard, not
+    # silently disarm it.
+    current_enforce = current_data.get("enforce")
+    if isinstance(current_enforce, dict):
+        amended["enforce"] = current_enforce
+    record = archive.append(
+        "lesson", subject, amended,
         evidence=[f"seq:{int(law_seq)}"],
+        as_operator=as_operator, operator_verified=operator_verified,
     )
+    # A fresh record always sits above any grandfather cutoff, so the gate
+    # with no cutoff is exact here.
+    return {**record, "pending": not lesson_carries_authority(record)}
 
 
 def record_delivery(archive: Any, laws: list[dict[str, Any]], *,
@@ -689,9 +1607,104 @@ def fresh_laws(archive: Any, project: Path | str) -> list[dict[str, Any]]:
     ]
 
 
+def grandfather_pre_gate_lessons(archive: Any) -> dict[str, Any] | None:
+    """NS-2 fix round 2 (the 0.3.28 upgrade blocker): draw the one-time line
+    under an archive written before the authority gate existed. Returns the
+    migration record's summary, or None when there is nothing to migrate or
+    the archive already carries a migration record.
+
+    WHY A RECORD AND NOT A FLAG. The gate (`lesson_carries_authority`) is
+    right: an agent's guard needs a second actor. But it was added to a
+    reader, not to a writer, so it applies retroactively to every lesson
+    ever recorded - and every one of those was agent-written with neither
+    approval lineage nor operator trust, because at the time neither was
+    asked for. The first compile after an upgrade therefore emptied a
+    project's whole Code of Law with no message, no diff explanation and no
+    way back. A version flag in a config file would fix the symptom and
+    leave no trace; this writes ONE `decision` through the archive's normal
+    append, so the grandfathering is hash-chained, dated, attributable and
+    readable by `godmode history` like any other fact.
+
+    WHAT IT GRANDFATHERS. Every guarded, living lesson recorded before
+    `GATE_SHIPPED_DATE` - "the state the project was already operating
+    under" - and nothing else. The cutoff written down is the newest of
+    those lessons' own sequence, so the rule every reader applies afterwards
+    is a plain `sequence <= cutoff` with no clock in it: the DATE decides
+    once, here, and the SEQUENCE carries that decision forever. A lesson
+    recorded after the gate shipped is outside the cutoff and is held to the
+    gate as designed, even when it is a fresh record on a subject the
+    migration grandfathered.
+
+    WHY NOT THE ARCHIVE HEAD. Because "everything already in the archive"
+    is satisfied on a brand-new project by an agent appending its own guard
+    and then compiling, which is the self-legislation the gate exists to
+    refuse (`tests/test_law.py::test_an_agent_written_guard_is_not_law_
+    without_an_approval`). The head is recorded alongside the cutoff so the
+    record still says where the archive stood, but it grants nothing.
+
+    IDEMPOTENT. One migration record per archive, keyed on kind+subject: a
+    second run finds it and writes nothing, so a compile in a loop, a
+    SessionStart hook and a `law compile` by hand all agree.
+    """
+    live, cutoff, head = _live_guarded_lesson_records(archive)
+    if cutoff:
+        return None
+    pre_gate = [record for record in live
+                if not lesson_carries_authority(record)
+                and _recorded_before_the_gate(record)]
+    if not pre_gate:
+        return None
+    pre_gate.sort(key=lambda record: int(record.get("sequence", 0)))
+    subjects = [str(record.get("subject", ""))[:120] for record in pre_gate]
+    citations = [f"seq:{int(record.get('sequence', 0))}" for record in pre_gate]
+    # The cutoff is the NEWEST grandfathered lesson's own sequence, not the
+    # archive head: sequences are monotonic in time, so everything at or
+    # below it was recorded no later than that lesson - already pre-gate -
+    # while the head would take in anything an agent appended between the
+    # upgrade and this first compile. The head is recorded alongside it so
+    # the record still says where the archive stood at migration time.
+    cutoff_seq = int(pre_gate[-1].get("sequence", 0))
+    value = (
+        f"{len(pre_gate)} guarded lesson(s) recorded before {GATE_SHIPPED_DATE} "
+        f"(at or below seq:{cutoff_seq}, archive head seq:{head}) predate the "
+        "law authority gate and keep their standing; every lesson recorded "
+        "after that sequence needs a second actor's approval, as designed."
+    )
+    record = archive.append(
+        LAW_MIGRATION_KIND,
+        LAW_MIGRATION_SUBJECT,
+        {
+            # NS-11c's semantic-decision shape, supplied in full: this is a
+            # fact about the project, and it should read like one.
+            "subject": LAW_MIGRATION_SUBJECT,
+            "value": value,
+            "evidence": citations,
+            "cutoff_seq": cutoff_seq,
+            "head_seq": int(head),
+            "gate_shipped": GATE_SHIPPED_DATE,
+            "grandfathered": len(pre_gate),
+            "subjects": subjects,
+        },
+        evidence=citations,
+    )
+    return {
+        "sequence": int(record.get("sequence", 0)),
+        "cutoff_seq": cutoff_seq,
+        "head_seq": int(head),
+        "grandfathered": len(pre_gate),
+        "subjects": subjects,
+    }
+
+
 def compile_laws(archive: Any, project: Path | str, *, cap: int = LAW_CAP) -> dict[str, Any]:
-    """Fold guarded lessons into the law file and its wrapper skill."""
+    """Fold guarded lessons into the law file and its wrapper skill.
+
+    The compile path owns the one-time grandfather migration (above): it is
+    the first thing that reads the gate on an upgraded archive, so it is
+    where the line gets drawn, once, before anything is rendered.
+    """
     root = Path(project)
+    migration = grandfather_pre_gate_lessons(archive)
     lessons = _guarded_lessons(archive)
     skipped = sum(
         1 for record in archive.read_events()
@@ -707,6 +1720,9 @@ def compile_laws(archive: Any, project: Path | str, *, cap: int = LAW_CAP) -> di
         "laws": len(kept),
         "dropped_over_cap": dropped,
         "skipped_without_guard": skipped,
+        "grandfathered": sum(1 for lesson in kept if lesson.get("grandfathered")),
+        "pending_amendments": sum(1 for lesson in kept if lesson.get("pending_amendment")),
+        "migration": migration,
         "cap": cap,
         "path": LAW_FILENAME,
         "skill": f"skills/{SKILL_DIRNAME}/SKILL.md",
