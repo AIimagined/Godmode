@@ -1,0 +1,1 @@
+- `scripts/dev/affected_tests.py` runs only the test modules affected by the current change, plus a small smoke set, for a fast loop during development.
