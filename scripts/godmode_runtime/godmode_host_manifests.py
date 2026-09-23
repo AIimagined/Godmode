@@ -257,7 +257,7 @@ POST_EDIT_HOOK = "hooks/godmode_post_edit.py"
 # baseline (fresh checkout, no benchmark run yet) means these defaults,
 # unchanged from what every builder hardcoded previously.
 DEFAULT_TIMEOUTS: dict[str, int] = {
-    "session_start": 30, "pre_tool_use": 3, "stop": 10, "user_prompt": 60,
+    "session_start": 30, "pre_tool_use": 30, "stop": 10, "user_prompt": 60,
     "post_edit": 5, "pre_compact": 10, "session_end": 10, "subagent_stop": 10,
 }
 
@@ -534,7 +534,7 @@ def build_antigravity_fragment() -> dict:
                         {
                             "type": "command",
                             "command": f"{root}/hooks/run-hook.cmd godmode_gate_fast.py",
-                            "timeout": 8,
+                            "timeout": 30,
                         },
                     ],
                 },

@@ -26,13 +26,13 @@ class TimeoutTests(unittest.TestCase):
     def test_defaults_without_baseline(self) -> None:
         root = Path(tempfile.mkdtemp())
         self.addCleanup(__import__("shutil").rmtree, root, ignore_errors=True)
-        self.assertEqual(hm.hook_timeouts(root)["pre_tool_use"], 3)
+        self.assertEqual(hm.hook_timeouts(root)["pre_tool_use"], 30)
 
     def test_baseline_overrides(self) -> None:
         root = Path(tempfile.mkdtemp())
         self.addCleanup(__import__("shutil").rmtree, root, ignore_errors=True)
-        _baseline(root, {"pre_tool_use": 7})
-        self.assertEqual(hm.hook_timeouts(root)["pre_tool_use"], 7)
+        _baseline(root, {"pre_tool_use": 45})
+        self.assertEqual(hm.hook_timeouts(root)["pre_tool_use"], 45)
         self.assertEqual(hm.hook_timeouts(root)["stop"], 10)
 
     def test_a_recommendation_below_the_default_leaves_the_default(self) -> None:
@@ -64,7 +64,7 @@ class TimeoutTests(unittest.TestCase):
         root = Path(tempfile.mkdtemp())
         self.addCleanup(__import__("shutil").rmtree, root, ignore_errors=True)
         _baseline(root, {"pre_tool_use": True})
-        self.assertEqual(hm.hook_timeouts(root)["pre_tool_use"], 3)
+        self.assertEqual(hm.hook_timeouts(root)["pre_tool_use"], 30)
 
     def test_generated_manifest_uses_the_timeouts(self) -> None:
         # The brief's `build_claude_manifest` does not exist in this module -

@@ -661,6 +661,28 @@ class EndToEndSmoke(unittest.TestCase):
         self.assertEqual(result.returncode, direct.returncode)
         self.assertEqual(result.stdout, direct.stdout)
 
+    def test_a_full_check_past_the_deadline_refuses_instead_of_timing_out_open(self) -> None:
+        """A host runs the tool when a hook outlives its timeout, so the fast
+        gate must answer first: a hung full check is a refusal (exit 2)."""
+        import io
+        from unittest import mock
+        payload = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                              "tool_input": {"command": "true; git push origin HEAD:main"}}).encode()
+        with tempfile.TemporaryDirectory() as tmp:
+            hung = Path(tmp) / "hung.py"
+            hung.write_text("import time\ntime.sleep(30)\n", encoding="utf-8")
+            sys.path.insert(0, str(HOOKS_DIR))
+            import godmode_stdin
+            err = io.StringIO()
+            with mock.patch.object(godmode_stdin, "read_first_json", lambda: payload), \
+                    mock.patch.object(fast, "FULL_HOOK", hung), \
+                    mock.patch.object(fast, "FULL_HOOK_DEADLINE_SECONDS", 1), \
+                    mock.patch.object(fast, "ungoverned_project", lambda _p: False), \
+                    mock.patch.object(sys, "stderr", err):
+                code = fast.main()
+        self.assertEqual(code, 2)
+        self.assertIn("could not decide", err.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

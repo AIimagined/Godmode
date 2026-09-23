@@ -29,7 +29,7 @@
           {
             "type": "command",
             "command": "\"${godmodePluginRoot}/hooks/run-hook.cmd\" godmode_gate_fast.py",
-            "timeout": 3
+            "timeout": 30
           }
         ]
       }

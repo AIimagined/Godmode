@@ -55,6 +55,8 @@ from pathlib import Path
 HOOKS_DIR = Path(__file__).resolve().parent
 TABLE_PATH = HOOKS_DIR / "gate_table.json"
 FULL_HOOK = HOOKS_DIR / "godmode_session_hook.py"
+# Under every host's pre-tool timeout (30s in every manifest this plugin ships).
+FULL_HOOK_DEADLINE_SECONDS = 25
 
 # Tools the scope fence governs by naming their own target file. They never
 # reach the fast path - not because they are always dangerous, but because
@@ -649,12 +651,25 @@ def main() -> int:
     # anyway - never on the silent allow path, this module's entire reason
     # to exist.
     import subprocess
-    result = subprocess.run(
-        [sys.executable, "-I", "-B", str(FULL_HOOK), "pre-action"],
-        input=raw,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+    # A host treats a hook that outlives its timeout as a failed hook and runs
+    # the tool anyway, so a slow full check was an open gate: on a 21k-record
+    # archive it took 7.6-8.2s against an 8s budget and a push went through
+    # unchecked (2026-09-24). The fast gate keeps its own deadline under the
+    # host's and refuses when the full check has not answered by then.
+    try:
+        result = subprocess.run(
+            [sys.executable, "-I", "-B", str(FULL_HOOK), "pre-action"],
+            input=raw,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=FULL_HOOK_DEADLINE_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        sys.stderr.write(
+            f"godmode: refused - the gate could not decide within "
+            f"{FULL_HOOK_DEADLINE_SECONDS}s, and an undecided call is not an allowed one. "
+            "Retry; if it repeats, run `godmode doctor`.\n")
+        return 2
     if result.stdout:
         sys.stdout.buffer.write(result.stdout)
     if result.stderr:

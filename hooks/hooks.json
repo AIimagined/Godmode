@@ -96,7 +96,7 @@
           {
             "type": "command",
             "command": "cd \"${CLAUDE_PLUGIN_ROOT}/hooks\"; ./run-hook.cmd godmode_gate_fast.py",
-            "timeout": 8
+            "timeout": 30
           }
         ]
       }
