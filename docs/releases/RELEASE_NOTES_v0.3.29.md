@@ -21,7 +21,8 @@ developer scripts run only the affected tests and CI's own checks before a push.
 
 - Godmode now advises on quality by default: the completion, stall and claim checks report once per session and never block. `godmode config mode strict` restores blocking. Checks on pushes, tags and releases are the same in both modes.
 - `scripts/dev/affected_tests.py` runs only the test modules affected by the current change, plus a small smoke set, for a fast loop during development.
-- `scripts/dev/ci_local.py` runs the workflow's gate list and the affected tests on HEAD in a disposable worktree, several test modules at once (`--jobs`), and `scripts/dev/pre-push` runs it before every push.
+- `scripts/dev/ci_local.py` runs the workflow's gate list and the affected tests on HEAD in a disposable worktree, and `scripts/dev/pre-push` runs it before every push.
+- `scripts/dev/ci_local.py` runs several test modules at once (`--jobs`, default half the CPUs); modules that write into the repository run alone after the others.
 
 ## Changed
 
