@@ -743,6 +743,14 @@ class PayloadGrammarParity(unittest.TestCase):
     _READ_ONLY = payload("git status")
     _DENY = payload("git push --force origin main")
 
+    def setUp(self) -> None:
+        # The full hook asks some things once per session (a fresh archive's
+        # unread required sources, for one); whichever shape runs first would
+        # get that ask instead of a silent allow, so the result depended on
+        # which test module used the session before this one. One throwaway
+        # call spends those asks before any shape is compared.
+        self._direct(json.dumps(self._READ_ONLY).encode("utf-8"))
+
     @staticmethod
     def _shapes(base: dict[str, Any]) -> dict[str, bytes]:
         plain = json.dumps(base).encode("utf-8")
