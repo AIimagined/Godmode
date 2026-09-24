@@ -1,0 +1,1 @@
+- `scripts/dev/pre-push` no longer runs the local checks for a branch delete or a tag push; with no branch code in the push, it goes straight through instead of being refused after the full local run.
