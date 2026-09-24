@@ -2153,15 +2153,33 @@ _AGENT_RELAY = re.compile(
     r"^\s*(<agent-message\b|\[Subagent hand-back\]|"
     r"Another Claude session sent a message)")
 
+# The host can preface a real delivery with its own notice before the
+# envelope opens - observed live (archive sequence 21090): a hand-back
+# arrived behind the "delivered while you were working" notice, and the
+# FIRST-non-blank-line rule above tested that notice's line instead of the
+# `<agent-message ...>` line one further down, so the relay read as an
+# operator ask. Neither shape is operator- or subagent-authored text; both
+# are the host's own wrapper around whatever comes next. Stripped from the
+# front, in any combination, before the first-line check runs.
+_RELAY_PREAMBLE = re.compile(
+    r"\A(?:\s*(?:"
+    r"The user sent a new message while you were working:?"
+    r"|<system-reminder>.*?</system-reminder>"
+    r"))+",
+    re.DOTALL)
+
 
 def _is_agent_relay(prompt: str) -> bool:
     """Text a subagent handed back is data about work done, never an
     operator ask - it must never mint a request record.
 
-    Judged on the prompt's first non-blank line alone: the envelope is how
-    the message OPENS, so an operator prompt that goes on to quote or
-    describe a hand-back further down stays an operator prompt."""
-    first_line = next((line for line in prompt.splitlines() if line.strip()), "")
+    Judged on the first non-blank line remaining after any host preamble
+    (`_RELAY_PREAMBLE`) is stripped: the envelope is how the message OPENS,
+    once the host's own wrapper is looked past, so an operator prompt that
+    goes on to quote or describe a hand-back further down stays an operator
+    prompt."""
+    body = _RELAY_PREAMBLE.sub("", prompt, count=1)
+    first_line = next((line for line in body.splitlines() if line.strip()), "")
     return bool(_AGENT_RELAY.match(first_line))
 
 

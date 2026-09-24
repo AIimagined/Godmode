@@ -134,6 +134,34 @@ class SubagentScopeTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(open_requests(self.project), before)
 
+    def test_relay_preceded_by_the_hosts_delivery_notice_mints_no_ask(self) -> None:
+        """Field case (archive sequence 21090): the host prefaces a delivery
+        arriving mid-task with its own notice before the envelope opens, so
+        the FIRST-non-blank-line rule tested that notice's line instead of
+        the `<agent-message ...>` line one further down, and the relay
+        recorded as an operator ask. `_RELAY_PREAMBLE` strips that notice
+        before the first-line check runs."""
+        before = open_requests(self.project)
+        payload = {"hook_event_name": "UserPromptSubmit", "cwd": str(self.project),
+                   "prompt": "The user sent a new message while you were working:\n"
+                             "<agent-message from=\"abc123\">\n"
+                             "[Subagent hand-back] done: C:/x/report.md\n</agent-message>"}
+        proc = run_hook("user-prompt", payload, self.project)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(open_requests(self.project), before)
+
+    def test_relay_preceded_by_a_system_reminder_block_mints_no_ask(self) -> None:
+        """The same escape, a different host wrapper: a `<system-reminder>`
+        block ahead of the envelope, rather than the delivery notice."""
+        before = open_requests(self.project)
+        payload = {"hook_event_name": "UserPromptSubmit", "cwd": str(self.project),
+                   "prompt": "<system-reminder>\nsome injected context\n</system-reminder>\n"
+                             "<agent-message from=\"abc123\">\n"
+                             "[Subagent hand-back] done: C:/x/report.md\n</agent-message>"}
+        proc = run_hook("user-prompt", payload, self.project)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(open_requests(self.project), before)
+
     def test_relay_prompt_mints_no_law_candidate(self) -> None:
         """Fix round 1, cheap item 2: a hand-back is agent-authored, not an
         operator correcting or instructing anything, so it must not seed a

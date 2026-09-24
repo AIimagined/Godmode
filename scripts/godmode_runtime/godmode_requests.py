@@ -165,6 +165,7 @@ def _reviewable(record: dict[str, Any]) -> str:
 # types. Anything not matched is kept.
 _HOST_ENVELOPES = (
     re.compile(r"^\s*<task-notification>"),
+    re.compile(r"^\s*\[SYSTEM NOTIFICATION\b"),
     re.compile(r"^\s*<system-reminder>"),
     # "Hook PreToolUse:Bash requires confirmation for this command: ..."
     re.compile(r"^\s*Hook [A-Za-z]+:[A-Za-z]+ requires confirmation\b"),
@@ -191,12 +192,34 @@ _HOST_ENVELOPES = (
 )
 
 
+# A person can paste terminal output straight into the chat box; the host
+# wraps it as `<pasted_content id="...">...</pasted_content id="...">`. That
+# text is a paste, not something the operator wrote - it carries none of the
+# operator's own words, and a prompt that is ONLY a paste (a pasted
+# command's error output, most often - field cases: archive sequences
+# 21094, 21119, 21133, 21153, all `authorize stage` error transcripts) must
+# record no ask at all. Non-greedy and DOTALL: a paste can itself hold
+# blank lines and, in principle, a second pasted block.
+_PASTED_CONTENT = re.compile(
+    r"<pasted_content\b[^>]*>.*?</pasted_content\b[^>]*>",
+    re.DOTALL | re.IGNORECASE)
+
+
+def _strip_pasted_content(text: str) -> str:
+    """The text with every pasted block removed, so nothing derived from it
+    - the ask's keywords, its digest, whether it counts as an ask at all -
+    can be pulled from words the operator never typed."""
+    return _PASTED_CONTENT.sub(" ", text)
+
+
 def is_operator_ask(text: str) -> bool:
     """Whether a prompt is a person asking for something.
 
-    False for a host envelope and for a prompt carrying no word at all - a
-    rule of box-drawing characters is a separator, not a request.
+    False for a host envelope, for a prompt that is nothing but a pasted
+    block, and for a prompt carrying no word at all - a rule of
+    box-drawing characters is a separator, not a request.
     """
+    text = _strip_pasted_content(str(text))
     if not text or not text.strip():
         return False
     if not _WORD.findall(text):
@@ -231,8 +254,12 @@ def record_request(archive: Any, text: str, *, session: str | None = None,
     The prompt is stored through the archive's ordinary append, which runs the
     secret scan every other record runs. A prompt is exactly where a pasted
     token turns up, and a ledger of asks is not worth a store of credentials.
+
+    Pasted blocks are removed before anything below reads the text: a
+    digest, keywords, or an ask-vs-not verdict built from a pasted command's
+    output is not the operator's own words. What is left, if anything, is.
     """
-    flattened = " ".join(str(text).split())
+    flattened = " ".join(_strip_pasted_content(str(text)).split())
     if not flattened:
         return None
     if not is_operator_ask(flattened):

@@ -422,6 +422,26 @@ class ArchiveContractTests(unittest.TestCase):
             archive.append("change", "carried on anyway", {"status": "done"}, evidence=[])
             self.assertEqual(inferred_ask_blocking(archive.read_events()), [])
 
+    def test_an_expunged_ask_leaves_the_open_count(self) -> None:
+        """Spec R12 (archive sequence 10262): an expunged ask used to still
+        count as open and could not be closed. `Chronicle.expunge` replaces
+        the record's `data` with an expunge marker (no `digest`, no
+        `status`), which already keeps it out of `open_stated_requests`'s
+        digest-keyed fold and out of `review_requests`'s open tally - this
+        pins that behaviour rather than assuming it."""
+        with isolated_project() as (_project, _s, _a, archive):
+            archive.initialize()
+            record = record_request(archive, "check the release page once more")
+            before = review_requests(archive.read_events())
+            self.assertEqual(before["requests_seen"], 1, before)
+            self.assertEqual(len(before["findings"]), 1, before)
+
+            archive.expunge(record["sequence"], "operator instruction: drop this ask")
+
+            after = review_requests(archive.read_events())
+            self.assertEqual(after["requests_seen"], 0, after)
+            self.assertEqual(after["findings"], [], after)
+
     def test_a_secret_shaped_prompt_is_refused_by_the_archive(self) -> None:
         """A prompt is exactly where a pasted token turns up, and a ledger of
         asks is not worth a store of credentials. The append path runs the
