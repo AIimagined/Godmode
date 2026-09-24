@@ -371,5 +371,87 @@ class ConsoleSmokeTests(unittest.TestCase):
         self.assertEqual(payload["claimed"], "verified")
 
 
+class VerifyCapConsoleTests(unittest.TestCase):
+    """A check gone red at claim time caps the grade the same way the
+    other downgrade paths above do: `claimed` keeps the grade the caller
+    asked for, `grade` is the capped grade, `downgraded` is true, and the
+    exit code is 1 - not a rewritten request that quietly reports
+    `claimed: "observed"` with `downgraded: false` and exit 0."""
+
+    def test_a_failing_verify_cite_downgrades_without_rewriting_the_request(self) -> None:
+        import contextlib
+        import io
+        import json as jsonlib
+
+        from godmode_runtime.godmode_console import main
+
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            main(["--project", str(project), "session", "open", "--label", "console"])
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                exit_code = main([
+                    "--project", str(project), "claim",
+                    "the probe prints the answer", "--grade", "verified", "--verify",
+                    "--cite", f'cmd:{PYTHON} -c "import sys; sys.exit(1)"',
+                ])
+        payload = jsonlib.loads(out.getvalue())
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(payload["claimed"], "verified")
+        self.assertEqual(payload["grade"], "observed")
+        self.assertTrue(payload["downgraded"])
+
+    def test_a_red_held_back_check_downgrades_without_rewriting_the_request(self) -> None:
+        import contextlib
+        import io
+        import json as jsonlib
+
+        from godmode_runtime.godmode_console import main
+        from godmode_runtime.godmode_heldback import hold_check
+        from godmode_runtime.godmode_sentinel import CapabilityBroker
+
+        password = "correct horse battery"
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            CapabilityBroker(archive).configure(password)
+            hold_check(archive, f'{PYTHON} -c "import sys; sys.exit(1)"', password)
+            main(["--project", str(project), "session", "open", "--label", "console"])
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                exit_code = main([
+                    "--project", str(project), "claim",
+                    "the probe prints the answer", "--grade", "verified", "--verify",
+                    "--cite", f'cmd:{PYTHON} -c "print(42)"',
+                ])
+        payload = jsonlib.loads(out.getvalue())
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(payload["claimed"], "verified")
+        self.assertEqual(payload["grade"], "observed")
+        self.assertTrue(payload["downgraded"])
+
+    def test_a_passing_verify_cite_stays_verified(self) -> None:
+        import contextlib
+        import io
+        import json as jsonlib
+
+        from godmode_runtime.godmode_console import main
+
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            main(["--project", str(project), "session", "open", "--label", "console"])
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                exit_code = main([
+                    "--project", str(project), "claim",
+                    "the probe prints the answer", "--grade", "verified", "--verify",
+                    "--cite", f"cmd:{PYTHON} -c \"print(42)\"",
+                ])
+        payload = jsonlib.loads(out.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["claimed"], "verified")
+        self.assertEqual(payload["grade"], "verified")
+        self.assertFalse(payload["downgraded"])
+
+
 if __name__ == "__main__":
     unittest.main()

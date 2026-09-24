@@ -1299,19 +1299,27 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # Field feedback 2026-09-11: a claim arrived `--grade verified` beside
     # a cited check that had just failed, and the record said "verified".
     # A check run red this instant caps the grade at observed, whatever
-    # the caller asserted.
+    # the caller asserted - but the caller still *asked* for verified, so
+    # the request goes to record_claim unchanged and the cap is applied
+    # there (`cap_grade`); rewriting `args.grade` here made `claimed_grade`
+    # lie about what was asked for and hid the downgrade - `claimed` stayed
+    # "verified", `downgraded` reported false, and the command exited 0.
     held_results: list[dict[str, Any]] = []
     if getattr(args, "verify", False):
         from .godmode_heldback import run_held_checks
         held_results = run_held_checks(runtime.archive, _session(runtime, args.session),
                                        Path(runtime.anchor.project_root),
                                        timeout=getattr(args, "timeout", 900) or 900)
+    cap_grade = None
+    cap_reason = ""
     if check_results and any(not c.get("passed") for c in check_results) and args.grade == "verified":
-        args.grade = "observed"
-    if held_results and any(not r["passed"] for r in held_results) and args.grade == "verified":
+        cap_grade, cap_reason = "observed", (
+            "a cited check ran red just now; caps the grade at observed")
+    elif held_results and any(not r["passed"] for r in held_results) and args.grade == "verified":
         # The held-back oracle (2026-09-10): a check the agent did not
         # choose went red; the claim cannot be verified on the checks it did.
-        args.grade = "observed"
+        cap_grade, cap_reason = "observed", (
+            "a held-back check ran red; caps the grade at observed")
     record = record_claim(
         runtime.archive,
         Path(runtime.anchor.project_root),
@@ -1327,6 +1335,8 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         refuted_by=getattr(args, "refuted_by", None),
         depends_on=getattr(args, "depends_on", None) or None,
         fixes=getattr(args, "fixes", None),
+        cap_grade=cap_grade,
+        cap_reason=cap_reason,
     )
     data = record["data"]
     if check_results:

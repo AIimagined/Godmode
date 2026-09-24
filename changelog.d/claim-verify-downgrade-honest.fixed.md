@@ -1,0 +1,1 @@
+- A claim whose cited check just failed, or whose held-back check ran red, now reports the downgrade honestly: `claim --verify` keeps the grade you asked for on record, reports the grade it actually earned, and exits nonzero - instead of silently rewriting the request and exiting clean.

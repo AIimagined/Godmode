@@ -2585,6 +2585,8 @@ def record_claim(
     transcript_path: str | Path | None = None,
     depends_on: list[int] | None = None,
     fixes: int | None = None,
+    cap_grade: str | None = None,
+    cap_reason: str = "",
 ) -> dict[str, Any]:
     """Persist a claim, downgrading it when its citations do not resolve.
 
@@ -2618,6 +2620,15 @@ def record_claim(
     citations that both resolve to the same file, or two copies of the same
     `cmd:` string, are one witness said twice and downgrade exactly like too
     few citations at all, naming the bar in the reason.
+
+    `cap_grade` (with `cap_reason`) caps the effective grade at that grade
+    without touching `grade` itself - the caller's requested grade is what
+    `claimed_grade` records, so a claim that gets capped still shows
+    `downgraded: true` instead of quietly reporting the capped grade as
+    what was asked for. Used by `claim --verify` when a cited check just
+    ran red or a held-back check disagreed: the claim stays "claimed
+    verified, graded observed, downgraded" rather than being rewritten to
+    ask for observed before it ever reaches this ladder.
     """
     if grade not in GRADES:
         raise ArchiveError(f"Unknown claim grade '{grade}'; expected one of {', '.join(GRADES)}")
@@ -3132,6 +3143,17 @@ def record_claim(
         if not reason:
             reason = "citation rests on content the untrusted-content scan flagged; capped at observed"
         effective = "observed"
+    # Field feedback 2026-09-11 / the held-back oracle (2026-09-10): a cited
+    # check that just ran red, or a held-back check the agent did not
+    # choose, caps the grade the same way `untrusted` does above - after
+    # composition, so nothing upstream can re-elevate past it. `grade`
+    # (and therefore `claimed_grade` below) is left alone: the caller
+    # asked for `cap_grade`'s better grade and did not get it, which is
+    # exactly what `downgraded` exists to say.
+    if cap_grade is not None and _GRADE_RANK.get(effective, 0) > _GRADE_RANK.get(cap_grade, 0):
+        if not reason:
+            reason = cap_reason or f"capped at {cap_grade}"
+        effective = cap_grade
     if fix_incident is not None:
         # NS-13e, applied after composition for the same reason as the cap
         # above: nothing downstream may re-elevate an unpaired fix.
