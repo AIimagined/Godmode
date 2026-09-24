@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Select and run the test modules affected by the current changes.
 
-    python scripts/dev/affected_tests.py [--base <ref>] [--list]
+    python scripts/dev/affected_tests.py [--base <ref>] [--list] [--all] [--jobs N] [module ...]
 
 Running the full suite (413 modules, ~40 minutes) on every edit is too slow
 for iteration. This picks a much smaller set: test modules that are
@@ -121,18 +121,66 @@ def select(changed: set[Path], modules: dict[str, Path]) -> list[str]:
     return sorted(set(result))
 
 
+def all_modules() -> list[str]:
+    return sorted(f"tests.{path.stem}" for path in TESTS_DIR.glob("test_*.py"))
+
+
+# These plant files into the repository tree itself and restore them after, so
+# they run alone once the pool is done: a module copying or scanning the tree
+# at the same moment would see the plant (e.g. test_gate_falsifiability's copy).
+TREE_WRITERS = {"tests.test_capability_register", "tests.test_riders_b4f"}
+
+
+def run_parallel(modules: list[str], jobs: int) -> int:
+    """Each module in its own process, `jobs` at a time; a failing module's
+    full output is printed, so its FAIL/ERROR lines reach the caller.
+    Each module runs in isolation, as it would alone."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def run(module: str) -> tuple[str, subprocess.CompletedProcess]:
+        return module, subprocess.run([sys.executable, "-m", "unittest", module], cwd=REPO_ROOT,
+                                      capture_output=True, text=True, encoding="utf-8", errors="replace")
+
+    failed = []
+
+    def report(module: str, done: subprocess.CompletedProcess) -> None:
+        if done.returncode:
+            failed.append(module)
+            print(f"==== {module} (exit {done.returncode})\n{done.stdout}{done.stderr}", flush=True)
+
+    pooled = [m for m in modules if m not in TREE_WRITERS]
+    with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+        for module, done in pool.map(run, pooled):
+            report(module, done)
+    for module in [m for m in modules if m in TREE_WRITERS]:
+        report(*run(module))
+    print(f"{len(modules) - len(failed)} of {len(modules)} module(s) passed"
+          + (f"; FAILED: {' '.join(failed)}" if failed else ""))
+    return 1 if failed else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--base", default="origin/main", help="ref to diff against (default: origin/main)")
     parser.add_argument("--list", action="store_true", help="print selected modules and exit")
+    parser.add_argument("--all", action="store_true", help="every test module, not only the affected ones")
+    parser.add_argument("--jobs", type=int, default=1, help="modules to run at once (default: 1)")
+    parser.add_argument("modules", nargs="*", help="run these modules instead of selecting")
     args = parser.parse_args(argv)
 
-    modules = select(changed_files(args.base), module_map())
+    if args.modules:
+        modules = args.modules
+    elif args.all:
+        modules = all_modules()
+    else:
+        modules = select(changed_files(args.base), module_map())
     if args.list:
         # Bytes, so a Windows console does not turn the newlines into CRLF for `$(...)`.
         sys.stdout.buffer.write(("\n".join(modules) + "\n").encode())
         return 0
+    if args.jobs > 1:
+        return run_parallel(modules, args.jobs)
     print(f"running {len(modules)} module(s):\n  " + "\n  ".join(modules))
     done = subprocess.run([sys.executable, "-m", "unittest", *modules], cwd=REPO_ROOT)
     return done.returncode

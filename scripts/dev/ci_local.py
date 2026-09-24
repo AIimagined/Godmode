@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run CI's checks on HEAD locally before a push.
 
-    python scripts/dev/ci_local.py [--base <ref>] [--full]
+    python scripts/dev/ci_local.py [--base <ref>] [--full] [--jobs N]
 
 `godmode precheck --preflight` already runs the committed workflow's gate list
 in a disposable worktree of HEAD. This feeds it the tests affected by the
@@ -15,6 +15,7 @@ shows up. Install as the repository's pre-push hook with:
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 
@@ -26,14 +27,19 @@ def main(argv: list[str] | None = None) -> int:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--base", default="origin/main", help="ref to diff against (default: origin/main)")
     parser.add_argument("--full", action="store_true", help="run the whole suite, as CI does")
+    parser.add_argument("--jobs", type=int, default=max(2, (os.cpu_count() or 4) // 2),
+                        help="test modules to run at once (default: half the CPUs)")
     args = parser.parse_args(argv)
     command = [sys.executable, "scripts/godmode.py", "--project", ".", "precheck", "--preflight"]
+    # The suite runs one module per process, several at once, as CI's parallel
+    # legs do: one process after another took close to an hour.
+    runner = f"python scripts/dev/affected_tests.py --jobs {args.jobs} "
     if args.full:
-        command += ["--suite-shards", "4"]
+        command.append("--suite=" + runner + "--all")
     else:
         # One string: argparse would read a bare `-m` as an option of its own.
         modules = select(changed_files(args.base), module_map())
-        command.append("--suite=python -m unittest " + " ".join(modules))
+        command.append("--suite=" + runner + " ".join(modules))
     return subprocess.call(command, cwd=REPO_ROOT)
 
 
