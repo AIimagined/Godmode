@@ -3111,6 +3111,17 @@ def _advise_block_kind(reason: str) -> str | None:
     return reason[index + len(marker):].split(":", 1)[0].strip()
 
 
+# The notices a Stop block carries in its systemMessage, kept apart from the
+# fallback text that only describes the block, so advise mode can pass the
+# notices on without the block's own wording. Cleared before each Stop.
+_STOP_NOTICES: list[str] = []
+
+
+def _park_stop_notices(notices: list[str]) -> str:
+    _STOP_NOTICES[:] = notices
+    return "\n".join(notices)
+
+
 def _emit_advise_stop(archive: Chronicle, submitted: dict[str, Any], captured: str) -> None:
     """R1's one interception point for the Stop path: `captured` is
     whatever the Stop branch would have printed to stdout under strict
@@ -3134,10 +3145,15 @@ def _emit_advise_stop(archive: Chronicle, submitted: dict[str, Any], captured: s
     reason = str(payload.get("reason") or "")
     kind = _advise_block_kind(reason) or "GODMODE"
     session_id = str(submitted.get("session_id") or "") or None
-    if not advise_seen(archive, session_id, kind):
-        return
-    first_line = reason.splitlines()[0] if reason else "a quality-class Stop was advised, not enforced"
-    print(json.dumps({"systemMessage": f"godmode (advice): {first_line}"}, ensure_ascii=False))
+    # The block's notices (open asks, spend ceilings) are not the block: they
+    # reach the host whether or not the advice is shown.
+    lines = []
+    if advise_seen(archive, session_id, kind):
+        first_line = reason.splitlines()[0] if reason else "a quality-class Stop was advised, not enforced"
+        lines.append(f"godmode (advice): {first_line}")
+    lines.extend(_STOP_NOTICES)
+    if lines:
+        print(json.dumps({"systemMessage": "\n".join(lines)}, ensure_ascii=False))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -3909,7 +3925,7 @@ def main(argv: list[str] | None = None) -> int:
                     block_body = {
                         "decision": "continue" if current_host() == "antigravity" else "block",
                         "reason": scope_reason,
-                        "systemMessage": "\n".join(notices) if notices else
+                        "systemMessage": _park_stop_notices(notices) if notices else
                             "godmode: completion blocked once pending the open scope; the re-fire passes.",
                     }
                     print(json.dumps(block_body, ensure_ascii=False))
@@ -3923,7 +3939,7 @@ def main(argv: list[str] | None = None) -> int:
                             "keep ending with nothing changed, attested or decided.",
                             stall_block[len('godmode: '):],
                             ["An operator-stated record clears it; continuing does not."]),
-                        "systemMessage": "\n".join(notices) if notices else stall_block,
+                        "systemMessage": _park_stop_notices(notices) if notices else stall_block,
                     }, ensure_ascii=False))
                     return 0
                 # Deterministic grade at the bar (obligations 10118, 10245): a
@@ -3967,7 +3983,7 @@ def main(argv: list[str] | None = None) -> int:
                              "Or `godmode claim \"<text>\" --cite <evidence>` records an "
                              "observed grade.",
                              "Or soften the wording. Then finish. This check blocks only once."]),
-                        "systemMessage": "\n".join(notices) if notices else
+                        "systemMessage": _park_stop_notices(notices) if notices else
                             "godmode: completion blocked once pending a record; "
                             "the re-fire passes.",
                     }
@@ -4019,6 +4035,7 @@ def main(argv: list[str] | None = None) -> int:
             import contextlib
             import io
             _stop_buffer = io.StringIO()
+            _STOP_NOTICES.clear()
             with contextlib.redirect_stdout(_stop_buffer):
                 _stop_exit = _stop_body()
             _emit_advise_stop(archive, submitted, _stop_buffer.getvalue())
