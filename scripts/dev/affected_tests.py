@@ -39,7 +39,11 @@ MODULE_DIRS = [REPO_ROOT / "scripts", REPO_ROOT / "scripts" / "godmode_runtime",
 # each is well under a second and exercises a wide surface (the full CLI
 # verb table, the boundary/protection registry, the atlas registry).
 SMOKE_SET = ["tests.test_command_reference_drift", "tests.test_boundary_registry",
-             "tests.test_atlas_registry"]
+             "tests.test_atlas_registry",
+             # These scan every test module, so no import edge ever selects
+             # them, yet any new test can break them.
+             "tests.test_attendance_scrub", "tests.test_godmode_skill_eval",
+             "tests.test_godmode_spec_lifecycle"]
 
 
 def _git(*args: str) -> list[str]:

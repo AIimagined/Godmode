@@ -23,6 +23,7 @@ developer scripts run only the affected tests and CI's own checks before a push.
 - `scripts/dev/affected_tests.py` runs only the test modules affected by the current change, plus a small smoke set, for a fast loop during development.
 - `scripts/dev/ci_local.py` runs the workflow's gate list and the affected tests on HEAD in a disposable worktree, and `scripts/dev/pre-push` runs it before every push.
 - `scripts/dev/ci_local.py` runs several test modules at once (`--jobs`, default half the CPUs); modules that write into the repository run alone after the others.
+- `scripts/dev/affected_tests.py` always runs the checks that scan every test module, since no import selects them.
 
 ## Changed
 
