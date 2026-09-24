@@ -10,7 +10,6 @@ parity is asserted directly, not inferred from the Stop-side tests.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 import subprocess
 import sys
@@ -28,6 +27,9 @@ if str(SCRIPTS) not in sys.path:
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_runtime.godmode_projectmode import project_mode  # noqa: E402
+if str(Path(__file__).parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).parent))
+from _host_env import scrubbed_env  # noqa: E402
 
 DONE_CLAIM = "The migration is complete and all tests pass"
 
@@ -57,7 +59,7 @@ def _transcript(base: Path, text: str) -> Path:
 
 
 def _run_hook(event: str, project: Path, state: Path, payload: dict) -> subprocess.CompletedProcess:
-    environment = dict(os.environ, GODMODE_STATE_HOME=str(state))
+    environment = scrubbed_env(GODMODE_STATE_HOME=str(state))
     return subprocess.run(
         [sys.executable, str(HOOK), event, "--project", str(project)],
         input=json.dumps(payload), capture_output=True, text=True,
@@ -65,7 +67,7 @@ def _run_hook(event: str, project: Path, state: Path, payload: dict) -> subproce
 
 
 def _cli(project: Path, state: Path, *args: str) -> subprocess.CompletedProcess:
-    environment = dict(os.environ, GODMODE_STATE_HOME=str(state))
+    environment = scrubbed_env(GODMODE_STATE_HOME=str(state))
     return subprocess.run(
         [sys.executable, "-B", str(GODMODE_CLI), "--project", str(project), *args],
         capture_output=True, text=True, env=environment)
