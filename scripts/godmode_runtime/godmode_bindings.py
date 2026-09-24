@@ -656,10 +656,12 @@ def sbom(project: Path) -> dict[str, Any]:
         for child in (project / parent).glob("*")
         if child.is_dir() and (child / "__init__.py").is_file()
     }
+    # Recursive, like the scan below: a script under scripts/dev/ that imports
+    # its sibling by name is importing this project, not a third party.
     first_party |= {
         path.stem
         for parent in ("scripts", "hooks")
-        for path in (project / parent).glob("*.py")
+        for path in (project / parent).rglob("*.py")
     }
     modules: list[str] = []
     third_party: set[str] = set()
