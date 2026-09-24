@@ -4,6 +4,13 @@ All notable changes to Godmode will be documented in this file.
 
 The format follows Keep a Changelog principles, and releases use semantic versioning.
 
+## [0.3.30] - 2026-09-25
+
+### Fixed
+
+- `scripts/dev/pre-push` no longer runs the local checks for a branch delete or a tag push; with no branch code in the push, it goes straight through instead of being refused after the full local run.
+- The push preflight's local bookkeeping findings (open operator asks, stale claims, flake and falsifier aging, host reach) now advise instead of blocking in the default mode; `strict` mode still blocks on them, and CI is unaffected either way.
+
 ## [0.3.29] - 2026-09-24
 
 ### Added
