@@ -474,3 +474,54 @@ class AdvisorySeverityGateTests(OpenAsksGateTests):
                 report = push_preflight(proj, archive=archive)
             self.assertEqual(report["verdict"], "findings")
             self.assertIn(severity_less, report["judgment"])
+
+
+class ProjectModeArchiveScanGateTests(OpenAsksGateTests):
+    """R1 "enforce harm, advise on quality": the archive-bookkeeping
+    findings (open asks, host reach, stale claims, flake and falsifier
+    aging) are local judgment calls CI never sees - in the default
+    advise mode they still get reported, they just never fail the gate.
+    `strict` mode leaves this gate exactly as recorded."""
+
+    def test_advise_mode_reports_an_open_ask_as_advisory_and_stays_clean(self) -> None:
+        import sys as _sys
+        from unittest import mock
+
+        from godmode_runtime.godmode_preflight import push_preflight
+        from godmode_runtime.godmode_requests import record_request
+
+        with self._project() as (proj, archive):
+            # Neutralize the other findings this fixture would otherwise
+            # carry (an undesignated suite, no recorded assumption, real
+            # host-reach gaps), so only the open ask is left to prove the
+            # verdict change.
+            archive.append("assumption", "the bed assumes nothing moves",
+                           {"detail": "test fixture"})
+            archive.append("criterion", "preflight-suite",
+                           {"command": f'"{_sys.executable}" -c "pass"'})
+            record_request(archive, "sweep the upstream repos before the cut")
+            with mock.patch("godmode_runtime.godmode_reach.reach_finding", return_value=None):
+                report = push_preflight(proj, archive=archive)
+            findings = [j for j in report["judgment"] if j.get("check") == "open-operator-asks"]
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].get("severity"), "advisory")
+            self.assertEqual(report["verdict"], "clean")
+
+    def test_strict_mode_leaves_the_same_open_ask_failing(self) -> None:
+        from unittest import mock
+
+        from godmode_runtime.godmode_preflight import push_preflight
+        from godmode_runtime.godmode_projectmode import set_project_mode
+        from godmode_runtime.godmode_requests import record_request
+
+        with self._project() as (proj, archive):
+            archive.append("assumption", "the bed assumes nothing moves",
+                           {"detail": "test fixture"})
+            record_request(archive, "sweep the upstream repos before the cut")
+            set_project_mode(archive, "strict")
+            with mock.patch("godmode_runtime.godmode_reach.reach_finding", return_value=None):
+                report = push_preflight(proj, archive=archive)
+            findings = [j for j in report["judgment"] if j.get("check") == "open-operator-asks"]
+            self.assertEqual(len(findings), 1)
+            self.assertNotEqual(findings[0].get("severity"), "advisory")
+            self.assertEqual(report["verdict"], "findings")

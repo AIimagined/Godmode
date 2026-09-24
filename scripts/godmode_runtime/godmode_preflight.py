@@ -904,6 +904,12 @@ def push_preflight(project: Path | str,
     # inside a spec and the cut staged anyway). Every OPEN stated request
     # is a judgment finding: close it, or park it EXPLICITLY with the
     # operator's own words.
+    # R1 "enforce harm, advise on quality": the archive-scan findings below
+    # are local bookkeeping (open asks, host reach, stale claims, flake and
+    # falsifier aging) that CI never sees - in the default advise mode they
+    # report, they do not fail the gate. The slice recorded here is marked
+    # advisory right after the scan, once, below.
+    _archive_scan_start = len(judgment)
     if archive is not None:
         try:
             # Closure honouring lives in one place (open_stated_requests),
@@ -989,6 +995,13 @@ def push_preflight(project: Path | str,
             pattern_workaround_findings(mechanical + judgment, archive)
         except Exception:  # noqa: BLE001  # godmode: swallow-ok: a scan that cannot run is named in skipped, never a gate crash
             skipped.append("pattern-workaround scan: unavailable")
+        # R1: in advise mode (the default) the archive-scan findings above
+        # are quality bookkeeping, not harm - they still get reported, they
+        # just never fail the gate on their own. `strict` mode is untouched.
+        from .godmode_projectmode import project_mode
+        if project_mode(archive) == "advise":
+            for _finding in judgment[_archive_scan_start:]:
+                _finding.setdefault("severity", "advisory")
     # N-12: a class that does not name a real class (blank, or outside
     # FAILURE_CLASSES) is itself a mechanical finding - checked over both
     # buckets before the fold below, so a malformed class in a judgment

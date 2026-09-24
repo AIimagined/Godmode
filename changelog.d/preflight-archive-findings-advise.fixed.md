@@ -1,0 +1,1 @@
+- The push preflight's local bookkeeping findings (open operator asks, stale claims, flake and falsifier aging, host reach) now advise instead of blocking in the default mode; `strict` mode still blocks on them, and CI is unaffected either way.
