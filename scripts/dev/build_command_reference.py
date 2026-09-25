@@ -38,7 +38,7 @@ _VERIFY_OVERRIDES: dict[str, str] = {
     "ceilings": "`tests/test_verb_ceilings.py`",
     "rewind": "`tests/test_verb_rewind.py`",
     "sop": "`tests/test_verb_sop.py`",
-    "explain-context": 'see README "Continuity across sessions"',
+    "explain-context": "`tests/test_verb_explain_context.py`",
     "reflect": 'see README "Verdicts"',
     "locale": 'see README "Quality, freshness, and the watchdog"',
     "absorb": 'see README "Minimality and upstream drift"',

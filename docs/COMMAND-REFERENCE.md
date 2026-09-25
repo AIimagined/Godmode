@@ -43,7 +43,7 @@ Every top-level verb, its purpose, and a command that verifies it is real. Gener
 | `evals` | Execute the authored skill evals: routing accuracy plus snapshot diff | `godmode evals --help` |
 | `examples` | The worked-example corpus; --check reproduces every example against the real console in a throwaway project | `godmode examples --help` |
 | `experiment` | The declarative bounded experiment loop from .godmode-experiment.json, cycle-ledgered with epsilon adjudication (U-R3) | `godmode experiment --help` |
-| `explain-context` | Explain included and excluded continuity data | see README "Continuity across sessions" |
+| `explain-context` | Deprecated: use `context why` instead (alias kept through one release) | `tests/test_verb_explain_context.py` |
 | `export` | Write a sanitized context report | `godmode export --help` |
 | `expunge` | Erase a leaked secret from a record, re-sealing the chain with an auditable tombstone | `godmode expunge --help` |
 | `extensions` | Extensions under the private state home; run one only when the project's policy names it | `godmode extensions --help` |

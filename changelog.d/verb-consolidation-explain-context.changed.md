@@ -1,0 +1,1 @@
+- `godmode explain-context` is renamed to `godmode context why` (call it with no `--about` for the same output as before). The old name still runs for this release: it prints a one-line deprecation note naming `context why` to stderr, then runs exactly what it always ran, before being removed in a later release.

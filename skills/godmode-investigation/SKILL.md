@@ -107,6 +107,6 @@ Each line names the one verb for the situation; run it then, not after.
 - A source to read before judging it: `godmode read --source <name> --path <file> --lines a-b` records what was opened (path, lines, digest) so an absorb verdict can cite the implementing code rather than a README; `godmode parity --sources` shows which sources were read past the surface.
 - Two states to compare: `godmode differential` records both before the next edit; `godmode replay` re-reads a recorded run; `godmode inspect <seq>` opens one record in full.
 - A guard that must be proven: `godmode plant` breaks the target and shows the guard fails; `godmode fuzz` drives the parser with malformed inputs; `godmode scenarios` runs the recorded scenario suite against the current tree.
-- Where a change reaches: `godmode topology` maps the call structure, `godmode explain-context` says why a file is in context, `godmode drift` names what moved since the last inventory.
+- Where a change reaches: `godmode topology` maps the call structure, `godmode context why` says why a file is in context, `godmode drift` names what moved since the last inventory.
 - Something silently swallowing errors: `godmode swallow` lists the handlers and holds the committed ceiling.
 - A slow path: `godmode benchmark` times it cold, and `godmode watchdog` bounds a run that may not return; `godmode watch` follows a file or log while the run is live.

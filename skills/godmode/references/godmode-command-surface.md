@@ -39,7 +39,7 @@ and `--json` work on every command and may appear in any position;
 | `environment` | Classify a mutation target's blast radius; unknown fails closed |
 | `evals` | Execute the authored skill evals: routing accuracy plus snapshot diff |
 | `experiment` | Run the declared bounded experiment loop from .godmode-experiment.json |
-| `explain-context` | Explain included and excluded continuity data |
+| `explain-context` | Deprecated: use `context why` instead (alias kept through one release) |
 | `export` | Write a sanitized context report |
 | `forget` | Expire old episodes into a cold, still-chained segment (action and refusal after 30 days, attestation after 90; a record cited by a live claim, a checkpoint, a law guard or a pin never expires); report supersession chains; flag same-subject value contradictions |
 | `gate` | Check a trigger; exit non-zero when a HARD rule is unattested |
