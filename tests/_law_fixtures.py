@@ -53,6 +53,31 @@ def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def binding_for_agent(agent: str) -> dict[str, Any]:
+    """A process binding standing in for `agent` running in its own OS
+    process, under its own parent and its own driving program. `approve`
+    compares bindings read from the operating system, and every test in one
+    run shares one real process - so a test about two actors says which
+    process each one is, exactly as two real agents would differ."""
+    base = 100_000 + int(_digest(agent)[:6], 16) % 800_000 * 4
+    return {
+        "pid": base, "platform": "fixture",
+        "lineage": [{"pid": base + 1, "name": f"{agent}-shell"},
+                    {"pid": base + 2, "name": f"{agent}-host"}],
+        "driver": {"pid": base + 2, "name": f"{agent}-host"},
+        "session": "",
+    }
+
+
+def processes_per_agent_id():
+    """Patch `process_binding` so each declared GODMODE_AGENT_ID is its own
+    process for the duration - the shape two genuinely separate agents
+    have. Use as a context manager or start()/stop() it per module."""
+    return mock.patch(
+        "godmode_runtime.godmode_lessons.process_binding",
+        side_effect=lambda: binding_for_agent(os.environ.get("GODMODE_AGENT_ID", "") or "default"))
+
+
 def graduated_lesson(archive: Any, subject: str, guard: str, *,
                      value: str = "observed", promoter: str = "fixture-author",
                      approver: str = "fixture-checker",
@@ -73,13 +98,14 @@ def graduated_lesson(archive: Any, subject: str, guard: str, *,
     data = {**STRUCTURED_FIELDS, "value": value, **extra,
             "generalized_guard": guard, "status": "candidate"}
     candidate = archive.append("lesson", subject, data, evidence=[])
-    with mock.patch.dict(os.environ, {"GODMODE_AGENT_ID": promoter}, clear=False):
-        promotion = promote(
-            archive, candidate["sequence"],
-            [f"seq:{candidate['sequence']}"], _digest(f"author:{subject}:{guard}"))
-    with mock.patch.dict(os.environ, {"GODMODE_AGENT_ID": approver}, clear=False):
-        outcome = approve(
-            archive, promotion["sequence"], _digest(f"checker:{subject}:{guard}"))
+    with processes_per_agent_id():
+        with mock.patch.dict(os.environ, {"GODMODE_AGENT_ID": promoter}, clear=False):
+            promotion = promote(
+                archive, candidate["sequence"],
+                [f"seq:{candidate['sequence']}"], _digest(f"author:{subject}:{guard}"))
+        with mock.patch.dict(os.environ, {"GODMODE_AGENT_ID": approver}, clear=False):
+            outcome = approve(
+                archive, promotion["sequence"], _digest(f"checker:{subject}:{guard}"))
     graduated = None
     for record in archive.read_events(verify=False):
         if int(record.get("sequence", 0)) == int(outcome["graduated_seq"]):

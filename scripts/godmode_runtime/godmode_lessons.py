@@ -50,12 +50,172 @@ from __future__ import annotations
 
 import difflib
 import json
+import os
+from pathlib import Path
 import re
+import sys
 from typing import Any
 
 from .godmode_chronicle import Chronicle
 from .godmode_constants import agent_id
 from .godmode_errors import ArchiveError
+
+# Actor separateness cannot rest on `GODMODE_AGENT_ID` alone: any process
+# may set it, so one process could promote and then approve under a renamed
+# id. Both records therefore also carry the writing process's binding - its
+# own pid, its ancestor chain, the first ancestor that is not a shell,
+# launcher or interpreter (the program driving it: an agent host, a
+# terminal), and the session it declared - and `approve` refuses when the
+# two bindings share a process, a session, a parent, or a driver. Read
+# from the operating system, not from the environment, so renaming an id
+# changes none of it.
+_LINEAGE_DEPTH = 8
+_PASS_THROUGH = frozenset({
+    "bash", "sh", "zsh", "dash", "fish", "ksh", "tcsh", "csh", "busybox",
+    "cmd", "conhost", "pwsh", "powershell", "wsl", "env", "sudo", "nohup",
+    "timeout", "py", "pyw", "uv", "time", "xargs",
+})
+
+
+def _base_name(name: str) -> str:
+    base = os.path.basename(str(name or "")).strip().lower()
+    return base[:-4] if base.endswith(".exe") else base
+
+
+def _passes_through(name: str) -> bool:
+    base = _base_name(name)
+    return base in _PASS_THROUGH or base.startswith("python")
+
+
+def _windows_process_table() -> dict[int, tuple[int, str]]:
+    """pid -> (parent pid, image name), from one Toolhelp snapshot."""
+    import ctypes
+    from ctypes import wintypes
+
+    class _Entry(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_size_t),
+            ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD), ("szExeFile", ctypes.c_wchar * 260),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_Entry)]
+    kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_Entry)]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if not snapshot or snapshot == ctypes.c_void_p(-1).value:
+        return {}
+    table: dict[int, tuple[int, str]] = {}
+    try:
+        entry = _Entry()
+        entry.dwSize = ctypes.sizeof(_Entry)
+        more = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while more:
+            table[int(entry.th32ProcessID)] = (int(entry.th32ParentProcessID), str(entry.szExeFile))
+            more = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snapshot)
+    return table
+
+
+def _proc_parent(pid: int) -> tuple[int, str] | None:
+    """(parent pid, name) from /proc, where the platform has one."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8", errors="replace")
+        name = Path(f"/proc/{pid}/comm").read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return None
+    fields = stat[stat.rfind(")") + 2:].split()
+    try:
+        return int(fields[1]), name
+    except (IndexError, ValueError):
+        return None
+
+
+def _process_lineage() -> list[dict[str, Any]]:
+    """This process's ancestors, nearest first, as {pid, name}. Best
+    effort: Windows reads a Toolhelp snapshot, Linux reads /proc, and any
+    other platform records the parent pid alone, with no name."""
+    lineage: list[dict[str, Any]] = []
+    seen = {os.getpid()}
+    try:
+        if os.name == "nt":
+            table = _windows_process_table()
+            pid = table.get(os.getpid(), (0, ""))[0]
+            while pid > 4 and pid not in seen and len(lineage) < _LINEAGE_DEPTH:
+                seen.add(pid)
+                parent, name = table.get(pid, (0, ""))
+                if pid not in table:
+                    break
+                lineage.append({"pid": pid, "name": name})
+                pid = parent
+        elif Path("/proc/self/stat").exists():
+            pid = os.getppid()
+            while pid > 1 and pid not in seen and len(lineage) < _LINEAGE_DEPTH:
+                seen.add(pid)
+                found = _proc_parent(pid)
+                if found is None:
+                    break
+                lineage.append({"pid": pid, "name": found[1]})
+                pid = found[0]
+        elif os.getppid() > 1:
+            lineage.append({"pid": os.getppid(), "name": ""})
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: a lineage that cannot be read binds by pid and session alone, and says so by being empty
+        return lineage
+    return lineage
+
+
+def process_binding() -> dict[str, Any]:
+    """The writing process as the operating system knows it - recorded on
+    every promotion and approval, and compared by `approve`."""
+    lineage = _process_lineage()
+    driver = None
+    if lineage and all(entry.get("name") for entry in lineage):
+        driver = next((entry for entry in lineage if not _passes_through(entry["name"])), None)
+    return {
+        "pid": os.getpid(),
+        "platform": sys.platform,
+        "lineage": lineage,
+        "driver": driver,
+        "session": os.environ.get("GODMODE_SESSION", "").strip(),
+    }
+
+
+def _same_process(left: dict[str, Any] | None, right: dict[str, Any] | None) -> bool:
+    if not left or not right:
+        return False
+    if int(left.get("pid", -1)) != int(right.get("pid", -2)):
+        return False
+    left_name, right_name = str(left.get("name") or ""), str(right.get("name") or "")
+    return not (left_name and right_name and _base_name(left_name) != _base_name(right_name))
+
+
+def shared_actor(promoter: dict[str, Any] | None, approver: dict[str, Any]) -> str | None:
+    """Why two bindings are one actor, or None when nothing ties them."""
+    if not isinstance(promoter, dict) or "pid" not in promoter:
+        return ("the promotion carries no process binding, so nothing shows it "
+                "came from a different process - re-mint the promotion")
+    if int(promoter["pid"]) == int(approver["pid"]) and promoter.get("platform") == approver.get("platform"):
+        return f"the same process (pid {approver['pid']})"
+    if promoter.get("session") and promoter.get("session") == approver.get("session"):
+        return f"the same session ({approver['session']})"
+    promoter_lineage = list(promoter.get("lineage") or [])
+    approver_lineage = list(approver.get("lineage") or [])
+    if any(int(entry.get("pid", -1)) == int(approver["pid"]) for entry in promoter_lineage):
+        return "the approving process started the promoting one"
+    if any(int(entry.get("pid", -1)) == int(promoter["pid"]) for entry in approver_lineage):
+        return "the promoting process started the approving one"
+    if promoter_lineage and approver_lineage and _same_process(promoter_lineage[0], approver_lineage[0]):
+        return f"the same parent process (pid {approver_lineage[0].get('pid')})"
+    if _same_process(promoter.get("driver"), approver.get("driver")):
+        driver = approver["driver"]
+        return f"the same driving process ({driver.get('name')}, pid {driver.get('pid')})"
+    return None
 
 # NS-10j's five fields, in the archive's own canonical keys. `guard` and
 # `falsifier` are NS-10j's names for the pre-existing `generalized_guard`/
@@ -267,6 +427,7 @@ def promote(
         {
             "lesson_seq": int(lesson_seq), "actor": actor,
             "evidence": cite_list, "rerun_hash": digest,
+            "binding": process_binding(),
         },
         evidence=cite_list + [f"seq:{lesson_seq}"],
     )
@@ -328,6 +489,16 @@ def approve(archive: Chronicle, promotion_seq: int, rerun_hash: str) -> dict[str
             "fingerprint, not by role label - a promotion cannot approve "
             "itself"
         )
+    # The id above is only a declaration; the binding is what the operating
+    # system says about who is writing, and a renamed id changes none of it.
+    binding = process_binding()
+    shared = shared_actor(promotion_data.get("binding"), binding)
+    if shared is not None:
+        raise ArchiveError(
+            f"Refusing to approve promotion {promotion_seq}: the approver and "
+            f"the promoter resolve to {shared}, whatever agent ids they "
+            "declare - approve from a separate agent process or terminal"
+        )
     if digest == promotion_data.get("rerun_hash"):
         raise ArchiveError(
             f"Refusing to approve promotion {promotion_seq}: --rerun-hash "
@@ -370,7 +541,8 @@ def approve(archive: Chronicle, promotion_seq: int, rerun_hash: str) -> dict[str
     record = archive.append(
         "lesson_approval",
         f"approval:{promotion_seq}",
-        {"promotion_seq": int(promotion_seq), "actor": actor, "rerun_hash": digest},
+        {"promotion_seq": int(promotion_seq), "actor": actor, "rerun_hash": digest,
+         "binding": binding},
         evidence=[f"seq:{promotion_seq}", f"seq:{lesson_seq}"],
     )
     graduated = archive.append(

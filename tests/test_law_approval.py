@@ -28,7 +28,9 @@ if str(SCRIPTS) not in sys.path:
 if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 
-from _law_fixtures import OPERATOR_RECORD_FIELDS  # noqa: E402
+from _law_fixtures import (  # noqa: E402
+    OPERATOR_RECORD_FIELDS, binding_for_agent, processes_per_agent_id,
+)
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_runtime.godmode_errors import ArchiveError  # noqa: E402
@@ -37,9 +39,24 @@ from godmode_runtime.godmode_law import (  # noqa: E402
     _standing_record, compile_laws, hygiene, law_candidates, promote_candidate,
     record_correction_candidate, shelve_oldest_candidates, top_laws,
 )
+from godmode_runtime import godmode_lessons  # noqa: E402
 from godmode_runtime.godmode_lessons import (  # noqa: E402
     MAX_CANDIDATE_CHARS, MAX_CANDIDATES, approve, promote,
 )
+
+_REAL_BINDING = godmode_lessons.process_binding
+_PER_AGENT = processes_per_agent_id()
+
+
+def setUpModule() -> None:
+    # Every test here runs in one real process; the tests about two actors
+    # declare which process each agent id is, the way two real agents differ.
+    # `SameProcessApprovalTests` below puts the real binding back.
+    _PER_AGENT.start()
+
+
+def tearDownModule() -> None:
+    _PER_AGENT.stop()
 
 
 @contextmanager
@@ -136,6 +153,94 @@ class ApproveRefusalTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {"GODMODE_AGENT_ID": "checker-agent"}):
                 with self.assertRaises(ArchiveError):
                     approve(archive, 99999, _hash("checker-rerun"))
+
+
+class SameProcessApprovalTests(unittest.TestCase):
+    """Separateness does not rest on the agent id: a renamed id in one
+    process, a shared session, a shared parent, a shared driving program,
+    or one process starting the other is one actor."""
+
+    def _promote(self, archive: Chronicle, binding: dict | None = None) -> dict:
+        lesson = _structured_lesson(archive, "flush-before-export")
+        with mock.patch.dict(os.environ, {"GODMODE_AGENT_ID": "author-agent"}):
+            if binding is None:
+                return promote(archive, lesson["sequence"], ["seq:1"], _hash("author-rerun"))
+            with mock.patch.object(godmode_lessons, "process_binding", return_value=binding):
+                return promote(archive, lesson["sequence"], ["seq:1"], _hash("author-rerun"))
+
+    def _approve(self, archive: Chronicle, promotion: dict, binding: dict | None = None):
+        with mock.patch.dict(os.environ, {"GODMODE_AGENT_ID": "renamed-agent"}):
+            with mock.patch.object(godmode_lessons, "process_binding",
+                                   return_value=binding) if binding else mock.patch.object(
+                                       godmode_lessons, "process_binding", _REAL_BINDING):
+                return approve(archive, promotion["sequence"], _hash("checker-rerun"))
+
+    def test_a_renamed_id_in_the_same_process_is_refused(self) -> None:
+        with _project() as (_root, archive):
+            with mock.patch.object(godmode_lessons, "process_binding", _REAL_BINDING):
+                promotion = self._promote(archive)
+            with self.assertRaises(ArchiveError) as ctx:
+                self._approve(archive, promotion)
+            approvals = [r for r in archive.read_events(verify=False)
+                         if r["kind"] == "lesson_approval"]
+        self.assertIn("same process", str(ctx.exception))
+        self.assertEqual(approvals, [])
+
+    def _refused_with(self, promoter: dict, approver: dict) -> str:
+        with _project() as (_root, archive):
+            promotion = self._promote(archive, promoter)
+            with self.assertRaises(ArchiveError) as ctx:
+                self._approve(archive, promotion, approver)
+        return str(ctx.exception)
+
+    def test_a_shared_session_is_refused(self) -> None:
+        promoter = {**binding_for_agent("a"), "session": "S-abc"}
+        approver = {**binding_for_agent("b"), "session": "S-abc"}
+        self.assertIn("same session", self._refused_with(promoter, approver))
+
+    def test_a_shared_parent_is_refused(self) -> None:
+        promoter = binding_for_agent("a")
+        approver = {**binding_for_agent("b"), "lineage": promoter["lineage"]}
+        self.assertIn("same parent process", self._refused_with(promoter, approver))
+
+    def test_a_shared_driving_program_is_refused(self) -> None:
+        promoter = binding_for_agent("a")
+        approver = {**binding_for_agent("b"), "driver": promoter["driver"]}
+        self.assertIn("same driving process", self._refused_with(promoter, approver))
+
+    def test_one_process_starting_the_other_is_refused(self) -> None:
+        approver = binding_for_agent("b")
+        promoter = {**binding_for_agent("a"),
+                    "lineage": [{"pid": approver["pid"], "name": "b-shell"}]}
+        self.assertIn("started the promoting one", self._refused_with(promoter, approver))
+
+    def test_a_promotion_with_no_binding_is_refused(self) -> None:
+        with _project() as (_root, archive):
+            lesson = _structured_lesson(archive, "flush-before-export")
+            promotion = archive.append("lesson_promotion", "promotion:flush-before-export", {
+                "lesson_seq": lesson["sequence"], "actor": "author-agent",
+                "evidence": ["seq:1"], "rerun_hash": _hash("author-rerun"),
+            }, evidence=["seq:1"])
+            with self.assertRaises(ArchiveError) as ctx:
+                self._approve(archive, promotion, binding_for_agent("b"))
+        self.assertIn("re-mint", str(ctx.exception))
+
+    def test_separate_processes_approve_and_both_records_carry_the_binding(self) -> None:
+        with _project() as (_root, archive):
+            promotion = self._promote(archive, binding_for_agent("a"))
+            self._approve(archive, promotion, binding_for_agent("b"))
+            records = {r["kind"]: r for r in archive.read_events(verify=False)
+                       if r["kind"] in ("lesson_promotion", "lesson_approval")}
+        self.assertEqual(records["lesson_promotion"]["data"]["binding"], binding_for_agent("a"))
+        self.assertEqual(records["lesson_approval"]["data"]["binding"], binding_for_agent("b"))
+
+    def test_the_real_binding_reads_this_process_from_the_system(self) -> None:
+        binding = _REAL_BINDING()
+        self.assertEqual(binding["pid"], os.getpid())
+        self.assertIsInstance(binding["lineage"], list)
+        if os.name == "nt" or Path("/proc/self/stat").exists():
+            self.assertTrue(binding["lineage"], "the parent chain should be readable here")
+            self.assertEqual(binding["lineage"][0]["pid"], os.getppid())
 
 
 class ChainedApprovalCompilesTests(unittest.TestCase):
