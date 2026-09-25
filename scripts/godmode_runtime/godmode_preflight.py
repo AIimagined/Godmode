@@ -1122,6 +1122,25 @@ def push_preflight(project: Path | str,
     if suite_skipped and verdict == "clean":
         verdict = "incomplete"
     if archive is not None:
+        # Row 38 (limits-0.3.29.md #14): the enforce-lesson sidecar's
+        # tier-3 fallback (a full, unlocked-by-default `read_events()` walk,
+        # paid once per process when the sidecar is absent or stale) runs
+        # from INSIDE `append()`'s `write_lock()` when nothing warmed it
+        # first - fine once caught up, but on a large, never-warmed archive
+        # that walk is exactly what turns one attestation write into a long
+        # hold, blocking every other writer (hooks included) for the
+        # window. `godmode doctor` already avoids this by calling
+        # `seed_enforce_index()` from its own unlocked health-check walk
+        # before any write needs to; a preflight run - long-lived, and the
+        # one moment other writers most need the archive free - gets the
+        # same treatment here, so the write_lock the final append below
+        # takes is scoped to the write itself, never to catching up a
+        # backlog. Best-effort: a warm-up that cannot run must not cost the
+        # preflight its own attestation.
+        try:
+            archive.seed_enforce_index()
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: a cache warm is an optimization, never a preflight finding
+            pass
         # The attestation `authorize stage` reads before it stages a push.
         # A preflight that ran no suite attests `incomplete`, never `ran`.
         try:

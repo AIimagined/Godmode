@@ -525,3 +525,71 @@ class ProjectModeArchiveScanGateTests(OpenAsksGateTests):
             self.assertEqual(len(findings), 1)
             self.assertNotEqual(findings[0].get("severity"), "advisory")
             self.assertEqual(report["verdict"], "findings")
+
+
+class SeedEnforceIndexBeforeAttestationTests(unittest.TestCase):
+    """Row 38 (limits-0.3.29.md #14): the enforce-lesson sidecar's one-time
+    catch-up walk (`_sync_enforce_index`'s tier-3 fallback) must run OUTSIDE
+    the write lock a preflight's own attestation write takes -
+    `seed_enforce_index()` (the same warm-up `godmode doctor` already pays
+    from its own unlocked walk) runs first, so the `write_lock()` the final
+    `archive.append()` takes stays scoped to the write itself, never to
+    catching up a backlog behind it."""
+
+    def test_the_enforce_index_is_warmed_before_the_attestation_write(self) -> None:
+        from unittest import mock
+
+        from godmode_runtime.godmode_anchor import resolve_anchor
+        from godmode_runtime.godmode_chronicle import Chronicle
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp))
+            state = Path(tmp) / "state"
+            with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(state)}, clear=False):
+                archive = Chronicle(resolve_anchor(repo))
+                archive.initialize()
+
+                calls: list[str] = []
+                real_seed = archive.seed_enforce_index
+                real_append = archive.append
+
+                def _tracked_seed(*args, **kwargs):
+                    calls.append("seed")
+                    return real_seed(*args, **kwargs)
+
+                def _tracked_append(*args, **kwargs):
+                    calls.append("append")
+                    return real_append(*args, **kwargs)
+
+                with mock.patch.object(archive, "seed_enforce_index",
+                                       side_effect=_tracked_seed), \
+                     mock.patch.object(archive, "append", side_effect=_tracked_append):
+                    push_preflight(repo, archive=archive)
+
+                self.assertIn("seed", calls)
+                self.assertIn("append", calls)
+                self.assertEqual(
+                    calls.index("seed"), 0,
+                    "the enforce index must be warmed before the attestation "
+                    "append takes the write lock, not from inside it")
+
+    def test_a_warm_up_failure_does_not_cost_the_attestation(self) -> None:
+        """Best-effort, like every other cache warm in this codebase: a
+        preflight run must still attest even if the warm-up itself cannot."""
+        from unittest import mock
+
+        from godmode_runtime.godmode_anchor import resolve_anchor
+        from godmode_runtime.godmode_chronicle import Chronicle
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp))
+            state = Path(tmp) / "state"
+            with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(state)}, clear=False):
+                archive = Chronicle(resolve_anchor(repo))
+                archive.initialize()
+                with mock.patch.object(archive, "seed_enforce_index",
+                                       side_effect=RuntimeError("boom")):
+                    push_preflight(repo, archive=archive)
+                attested = [r for r in archive.select(kind="attestation", limit=100)
+                            if str(r.get("subject", "")) == "preflight"]
+                self.assertTrue(attested, "a warm-up failure must not skip the attestation")
