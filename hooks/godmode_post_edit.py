@@ -397,7 +397,15 @@ def main() -> int:
     if not isinstance(payload, dict):
         return 0
     project = Path(str(payload.get("cwd") or "."))
-    tool_name = str(payload.get("tool_name") or "")
+    # Grok build 1.0.41 (~/.grok/docs/user-guide/10-hooks.md, "camelCase
+    # input"): its stdin envelope is camelCase throughout except `cwd`
+    # (spelled the same either way) and the one deliberate snake_case
+    # alias it documents, `tool_response` (already read below via
+    # `_tool_result_text`). Without this fallback, `tool_name` read ""
+    # for every Grok call, so this whole hook silently no-op'd on Grok:
+    # the untrusted-content scan below never ran and `_record_edit`/
+    # `_findings` never saw a file_path either.
+    tool_name = str(payload.get("tool_name") or payload.get("toolName") or "")
     # Fetch-class output is untrusted CONTENT - data, never instructions
     # (absorbed from an output-policy governance pattern, 2026-09-03).
     # The session notice below stays once per session; the NS-8f scan
@@ -409,7 +417,7 @@ def main() -> int:
             archive = _open_archive(project)
             output: dict[str, Any] = {}
             if archive is not None:
-                session = str(payload.get("session_id") or "tp")
+                session = str(payload.get("session_id") or payload.get("sessionId") or "tp")
                 marker = archive.root / "godmode-untrusted-seen.json"
                 try:
                     seen = json.loads(marker.read_text(encoding="utf-8"))
@@ -435,12 +443,12 @@ def main() -> int:
         except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
             pass
         return 0
-    tool_input = payload.get("tool_input") or {}
+    tool_input = payload.get("tool_input") or payload.get("toolInput") or {}
     file_path = tool_input.get("file_path") or tool_input.get("path") or ""
     if not file_path:
         return 0
     messages: list[str] = []
-    session = str(payload.get("session_id") or "tp")
+    session = str(payload.get("session_id") or payload.get("sessionId") or "tp")
     archive = _open_archive(project)
     _record_edit(archive, project, Path(str(file_path)), tool_name)
     impact = _impact_brief(archive, project, Path(str(file_path)), session)

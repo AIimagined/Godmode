@@ -79,18 +79,41 @@ _TABLE: dict[str, dict[str, tuple[str, str]]] = {
         "ask-decision": (_P, "PreToolUse ask accepted by its wire; PermissionRequest deny dialect projected; unproven live"),
     },
     "grok": {
+        # Task 16 (0.3.31): `~/.grok/docs/user-guide/10-hooks.md` (build
+        # 1.0.41) now documents a real `ask` decision and reads `PostToolUse`
+        # stdout - superseding the "no ask decision"/"PostToolUse ignored"
+        # reading an older build gave this row. Both cells below are marked
+        # `partial` ("guide, live proof pending"), never `yes` - a code read
+        # of the guide, not a live Grok session, and the proof date/version
+        # cell (this module's `REACH[...]["live_proof"]`, a different, per-
+        # host field from these per-feature cells) stays empty until that
+        # session happens.
+        #
+        # `ask-decision`'s cell here says `partial`, but `reach_table()`'s
+        # OWN channel-gate (`_capability_unreachable`, driven by
+        # `godmode_host_manifests.HOST_CAPABILITIES["grok"]["stdout"]`,
+        # which still declares only `{"deny", "additionalContext"}`, not
+        # `"ask"`) downgrades the rendered cell back to `no` until that one
+        # dict value also gains `"ask"` - a one-line, purely-additive
+        # change this task deliberately left to the file's own owner rather
+        # than editing it here. `post-edit-findings` needs no such
+        # companion change: `additionalContext` was already declared.
         "pre-tool-gate": (_Y, "PreToolUse wired; pinned live on 1.0.13 Windows via project-scope hooks"),
         "advisories": (_Y, "PreToolUse additionalContext delivered after the call"),
         "continuity-brief": (_Y, "SessionStart stdout ignored by Grok; the brief rides the first allowed call, pinned live"),
         "prompt-nudges": (_N, "an allowing UserPromptSubmit hook's stdout is discarded by Grok; only parked echoes re-route"),
         "claim-echo": (_Y, "rides the first allowed call as additionalContext"),
         "request-recording": (_Y, "UserPromptSubmit wired; recorded, nudges lost"),
-        "post-edit-findings": (_N, "PostToolUse stdout ignored by Grok"),
+        "post-edit-findings": (_P, "supported per Grok 1.0.41 guide, live proof pending - "
+                                   "its docs now read PostToolUse stdout (additionalContext "
+                                   "delivered with the tool result)"),
         "done-bar": (_Y, "Stop block read"),
         "stop-notices": (_P, "operator text only; the model copy rides the next allowed call"),
         "auto-checkpoint": (_Y, "SessionEnd and PreCompact wired"),
         "subagent-stop": (_Y, "SubagentStop wired"),
-        "ask-decision": (_N, "no ask in its dialect; folds to deny"),
+        "ask-decision": (_P, "supported per Grok 1.0.41 guide, live proof pending - its docs "
+                             "now document {\"decision\": \"ask\"} reaching a real permission "
+                             "prompt"),
     },
     "cursor": {
         "pre-tool-gate": (_P, "preToolUse and beforeShellExecution wired, failClosed; plugin-root expansion by its loader unverified"),

@@ -67,7 +67,7 @@ Legend: **yes** = event wired, channel declared, live proof; **partial** = wired
 | prompt-nudges | yes | partial | no | partial | no | partial | partial | no | no | no | no |
 | claim-echo | yes | partial | yes | partial | no | partial | partial | no | no | no | no |
 | request-recording | yes | yes | yes | partial | no | partial | partial | no | no | no | no |
-| post-edit-findings | yes | partial | no | partial | no | partial | partial | no | no | no | no |
+| post-edit-findings | yes | partial | partial | partial | no | partial | partial | no | no | no | no |
 | done-bar | yes | partial | yes | partial | no | partial | partial | no | no | no | no |
 | stop-notices | yes | partial | partial | partial | no | partial | partial | no | no | no | no |
 | auto-checkpoint | yes | yes | yes | partial | no | no | partial | no | no | no | partial |
@@ -90,9 +90,9 @@ The reason behind every non-`yes` cell above, `reach_table()`'s own per-cell tex
 | codex | subagent-stop | partial | SubagentStop declared since 2026-09-08; unproven live |
 | codex | ask-decision | partial | PreToolUse ask accepted by its wire; PermissionRequest deny dialect projected; unproven live |
 | grok | prompt-nudges | no | an allowing UserPromptSubmit hook's stdout is discarded by Grok; only parked echoes re-route |
-| grok | post-edit-findings | no | PostToolUse stdout ignored by Grok |
+| grok | post-edit-findings | partial | supported per Grok 1.0.41 guide, live proof pending - its docs now read PostToolUse stdout (additionalContext delivered with the tool result) |
 | grok | stop-notices | partial | operator text only; the model copy rides the next allowed call |
-| grok | ask-decision | no | no ask in its dialect; folds to deny |
+| grok | ask-decision | no | supported per Grok 1.0.41 guide, live proof pending - its docs now document {"decision": "ask"} reaching a real permission prompt - unreachable: grok does not declare the ask channel |
 | cursor | pre-tool-gate | partial | preToolUse and beforeShellExecution wired, failClosed; plugin-root expansion by its loader unverified |
 | cursor | advisories | partial | agent_message on its own contract; unverified |
 | cursor | continuity-brief | partial | sessionStart wired; channel unverified |

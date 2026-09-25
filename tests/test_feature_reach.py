@@ -99,6 +99,55 @@ class ReachTableTests(unittest.TestCase):
             self.assertIn("unverifiable", finding["detail"])
 
 
+class GrokAskAndPostToolUseReachTests(unittest.TestCase):
+    """Task 16 (0.3.31): grok build 1.0.41's guide documents a real `ask`
+    decision and says `PostToolUse` stdout is read - a code read of
+    `~/.grok/docs/user-guide/10-hooks.md`, not yet a live Grok session, so
+    both cells report "guide, live proof pending", never "proven"."""
+
+    def test_post_edit_findings_reads_as_supported_by_the_guide(self) -> None:
+        status, reason = reach._TABLE["grok"]["post-edit-findings"]
+        self.assertEqual(status, reach._P)
+        self.assertIn("Grok 1.0.41 guide", reason)
+        self.assertIn("live proof pending", reason)
+        self.assertNotIn("proven", reason)
+
+    def test_ask_decision_reads_as_supported_by_the_guide(self) -> None:
+        status, reason = reach._TABLE["grok"]["ask-decision"]
+        self.assertEqual(status, reach._P)
+        self.assertIn("Grok 1.0.41 guide", reason)
+        self.assertIn("live proof pending", reason)
+        self.assertNotIn("proven", reason)
+
+    def test_post_edit_findings_is_partial_end_to_end(self) -> None:
+        # `additionalContext` was already a declared grok stdout channel,
+        # so this cell's authored `partial` survives `reach_table()`'s own
+        # channel gate unchanged.
+        cell = reach.reach_table()["grok"]["post-edit-findings"]
+        self.assertEqual(cell["status"], "partial")
+
+    def test_ask_decision_still_reads_no_until_the_channel_is_declared(self) -> None:
+        # Known, named gap (not this task's file to fix): `reach_table()`'s
+        # channel gate downgrades this cell to "no" until
+        # `godmode_host_manifests.HOST_CAPABILITIES["grok"]["stdout"]` also
+        # declares "ask" - a one-line change outside this task's fence.
+        # This test pins today's honest, if incomplete, state and will
+        # need updating (to "partial") the same day that line lands.
+        cell = reach.reach_table()["grok"]["ask-decision"]
+        self.assertEqual(cell["status"], "no")
+        self.assertIn("Grok 1.0.41 guide", cell["reason"])
+        self.assertIn("does not declare the ask channel", cell["reason"])
+
+    def test_neither_cell_claims_a_proof_date_or_version(self) -> None:
+        # The proof date/version live on `REACH[...]["live_proof"]` (a
+        # different, per-host field, about the pre-tool-gate proof) and
+        # must stay untouched by this task - no fabricated date/version for
+        # either of these two features.
+        for feature in ("post-edit-findings", "ask-decision"):
+            _status, reason = reach._TABLE["grok"][feature]
+            self.assertNotRegex(reason, r"\d{4}-\d{2}-\d{2}")
+
+
 class ReachRenderingTests(unittest.TestCase):
     def test_hooks_status_carries_the_reach_row_for_the_host(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):

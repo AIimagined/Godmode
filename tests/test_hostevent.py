@@ -888,18 +888,31 @@ class RenderDecisionTests(unittest.TestCase):
         body, _code = he.render_decision("cursor", "PreToolUse", "ask", "why")
         self.assertEqual(body["permission"], "ask")
 
+    def test_grok_keeps_ask_as_ask_in_both_its_dialect_keys(self) -> None:
+        # Task 16 (0.3.31): grok build 1.0.41 documents a real `ask`
+        # decision (~/.grok/docs/user-guide/10-hooks.md) - joining
+        # `HOSTS_WITH_ASK` 2026-09-25, superseding Addendum 6's "Grok has
+        # no ask decision" (read against an older build). Both of grok's
+        # own keys carry it: the canonical `hookSpecificOutput.
+        # permissionDecision` and its own top-level `decision`.
+        body, _code = he.render_decision("grok", "PreToolUse", "ask", "why")
+        self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "ask")
+        self.assertEqual(body["decision"], "ask")
+        self.assertEqual(body["reason"], "why")
+
     def test_hosts_without_ask_receive_deny_naming_the_staged_remedy_style(self) -> None:
         # render_decision itself only folds the DECISION, not the reason text
         # (the hook constructs the deny-shaped reason before calling in) -
         # this asserts the fold, and that the caller's reason travels intact.
         reason = ('refused: unclassified-mutation (R3). stage a capability: '
                   '`godmode authorize stage --operation "..."`')
-        # Codex left this list on 2026-09-08: its PreToolUse wire accepts "ask".
-        for host in ("grok", "gemini", "unknown"):
+        # Codex left this list on 2026-09-08 (its PreToolUse wire accepts
+        # "ask") and grok left it 2026-09-25 (see the dedicated test above).
+        for host in ("gemini", "unknown"):
             body, _code = he.render_decision(host, "PreToolUse", "ask", reason)
             self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "deny")
             self.assertEqual(body["hookSpecificOutput"]["permissionDecisionReason"], reason)
-        for host in ("grok", "gemini", "unknown"):
+        for host in ("gemini", "unknown"):
             body, _code = he.render_decision(host, "PreToolUse", "ask", reason)
             self.assertEqual(body["decision"], "deny")
             self.assertEqual(body["reason"], reason)

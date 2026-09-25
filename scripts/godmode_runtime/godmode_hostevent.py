@@ -1471,16 +1471,25 @@ def capture_payload_probe(archive: Any, raw: Any, event: HostEvent) -> None:
 # ---------------------------------------------------------------------------
 
 # Hosts whose own documented contract includes an `ask`/third decision.
-# Everyone else has only allow/deny (Addendum 6: "Grok has no ask decision";
-# Addenda 4a/2 document no ask for Gemini/Codex either) - `render_decision`
-# folds `ask` down to `deny` for those, with a remedy that names the staged-
-# capability escape hatch by its exact command.
+# Everyone else has only allow/deny (Addenda 4a/2 document no ask for
+# Gemini/Codex either) - `render_decision` folds `ask` down to `deny` for
+# those, with a remedy that names the staged-capability escape hatch by its
+# exact command.
 # Antigravity belongs here: its documented decision vocabulary includes a
 # real "ask" (and "force_ask") - antigravity.google/docs/hooks.
 # Codex joined 2026-09-08: its PreToolUse wire accepts permissionDecision
 # "ask" (hooks/src/schema.rs PreToolUsePermissionDecisionWire) and its
 # PermissionRequest hook is an ask surface of its own.
-HOSTS_WITH_ASK = frozenset({"claude", "cursor", "antigravity", "codex"})
+# Grok joined on build 1.0.41 (superseding Addendum 6's "Grok has no ask
+# decision", read against an older build): ~/.grok/docs/user-guide/
+# 10-hooks.md's "Output (Blocking Hooks)" section now documents
+# `{"decision": "ask", "reason": "..."}` on `PreToolUse` as a first-class
+# decision alongside allow/deny/defer, reaching a real permission prompt
+# (its own "An ask makes the call reach the permission prompt" wording).
+# Code-read, not yet a live-session proof - task 3.31/16 tracks the live
+# check separately; `godmode_reach.py`'s `ask-decision` cell for grok
+# stays `partial` ("guide, live proof pending") until that proof lands.
+HOSTS_WITH_ASK = frozenset({"claude", "cursor", "antigravity", "codex", "grok"})
 
 
 def render_decision(host: str, event_name: str, base_decision: str,
@@ -1502,6 +1511,11 @@ def render_decision(host: str, event_name: str, base_decision: str,
             "decision": {"behavior": "deny", "message": reason},
         }}, 0
     effective = base_decision if (base_decision != "ask" or host in HOSTS_WITH_ASK) else "deny"
+    # `grok_decision` backs the union fallback below, reached only when
+    # detection failed and the host is genuinely unknown - conservative on
+    # purpose, so it keeps folding `ask` to `deny` there regardless of
+    # `HOSTS_WITH_ASK`. Grok itself is positively detected (`host == "grok"`
+    # below) and uses `effective` directly, which is already host-aware.
     grok_decision = "deny" if base_decision == "ask" else base_decision
     claude_key = {
         "hookSpecificOutput": {
@@ -1531,7 +1545,14 @@ def render_decision(host: str, event_name: str, base_decision: str,
         # base decision travels unfolded.
         return {"decision": base_decision, "reason": reason}, 0
     if host == "grok":
-        return {**claude_key, **grok_keys}, 0
+        # Build 1.0.41: grok's own top-level `decision` takes the same
+        # {allow, deny, ask, defer} vocabulary as `hookSpecificOutput.
+        # permissionDecision` (whichever is present decides; the guide
+        # names `permissionDecision` canonical when both are), so `ask`
+        # travels through unfolded here too, via `effective` - not the
+        # unconditionally-folded `grok_decision` the undetected-host
+        # fallback below still uses.
+        return {**claude_key, "decision": effective, "reason": reason}, 0
     if host == "cursor":
         return cursor_keys, 0
     return {**claude_key, **grok_keys, **cursor_keys}, 0
