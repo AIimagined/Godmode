@@ -560,6 +560,21 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+def _unlink_shared(path: Path) -> None:
+    """Remove a small sidecar other processes may be reading. On Windows a
+    reader's open handle refuses the delete for a moment; retry briefly,
+    then leave it - a stale queue ticket is cleared by the next writer once
+    its owner is gone."""
+    for _attempt in range(50):
+        try:
+            path.unlink(missing_ok=True)
+            return
+        except PermissionError:
+            time.sleep(0.002)
+        except OSError:
+            return
+
+
 def _payload_pid(text: str) -> int | None:
     """The pid on the first line of a lock or claim payload, or None."""
     first = text.split("\n", 1)[0].strip()
@@ -813,6 +828,11 @@ class Chronicle:
         # and retries instead of forking the chain. Only the newest claim
         # or two are kept; older ones are pruned after each seal.
         self.sequence_claims = self.root / "godmode-sequence-claims"
+        # The write lock's waiting line: each contender takes the next
+        # ticket here by exclusive create and enters the lock only once its
+        # ticket is the lowest one standing. It orders the writers; the
+        # kernel (or exclusive-create) lock alone still keeps them apart.
+        self.lock_queue = self.root / "godmode-write.queue"
         # B4-1: the tail-truncation anchor. The hash chain is tamper-evident
         # mid-chain but silent on tail truncation (deleting the newest
         # record(s) leaves a shorter, internally valid chain), and the head
@@ -1178,8 +1198,25 @@ class Chronicle:
         ERRNOS`): a latch tried in an earlier round let two different
         processes, each reacting to their own errno, serialize on two
         different sidecars at once - a silent chain fork.
+
+        Contenders queue first (`_take_queue_ticket`) and try the lock only
+        at their turn, so under load each waits behind the writers ahead of
+        it rather than losing every poll to whoever happens to retry first;
+        `timeout_seconds` bounds the queue wait and the lock wait together.
         """
         self.root.mkdir(parents=True, exist_ok=True)
+        deadline = time.monotonic() + timeout_seconds
+        ticket = self._take_queue_ticket()
+        try:
+            self._wait_for_queue_turn(ticket, deadline)
+            yield from self._write_lock_acquired(max(0.0, deadline - time.monotonic()))
+        finally:
+            if ticket is not None:
+                _unlink_shared(ticket)
+
+    def _write_lock_acquired(self, timeout_seconds: float) -> Iterator[None]:
+        """The lock itself, entered once this writer's turn in the queue
+        has come (see `write_lock`)."""
         if not _has_kernel_locking():
             yield from self._write_lock_exclusive_create(timeout_seconds)
             return
@@ -1258,6 +1295,108 @@ class Chronicle:
             except OSError:  # godmode: swallow-ok: the descriptor close releases it anyway
                 pass
             os.close(descriptor)
+
+    def _take_queue_ticket(self) -> Path | None:
+        """Join the write lock's waiting line: exclusively create the ticket
+        one above the highest standing one. None when the line cannot be
+        joined at all (an unwritable folder) - the lock still excludes,
+        it just no longer orders this writer.
+
+        Fairness: a ticket is created above every ticket standing when its
+        writer listed the folder, so a writer can be overtaken only by a
+        writer that listed before its own ticket existed - at most one per
+        other contender - and every writer then waits for at most one
+        critical section per writer ahead of it."""
+        try:
+            self.lock_queue.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return None
+        for _attempt in range(64):
+            standing = self._queue_tickets()
+            number = (standing[-1][0] + 1) if standing else 1
+            path = self.lock_queue / f"{number:012d}.ticket"
+            try:
+                descriptor = os.open(
+                    _syscall_path(path),
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+            except (FileExistsError, PermissionError):
+                # PermissionError: on Windows, a name whose delete is still
+                # pending behind a reader's handle - taken, for now.
+                continue
+            except OSError:
+                return None
+            try:
+                os.write(descriptor, f"{os.getpid()}\n{uuid.uuid4().hex}\n".encode())
+            except OSError:  # godmode: swallow-ok: a pid-less ticket ages out like a pid-less claim
+                pass
+            finally:
+                os.close(descriptor)
+            return path
+        return None
+
+    def _queue_tickets(self) -> list[tuple[int, Path]]:
+        """Standing tickets, lowest first."""
+        try:
+            names = os.listdir(self.lock_queue)
+        except OSError:
+            return []
+        tickets = []
+        for name in names:
+            head, _, suffix = name.partition(".")
+            if suffix == "ticket" and head.isdigit():
+                tickets.append((int(head), self.lock_queue / name))
+        tickets.sort()
+        return tickets
+
+    def _wait_for_queue_turn(self, ticket: Path | None, deadline: float) -> None:
+        """Block until no live ticket stands below `ticket`, or raise busy
+        at `deadline`. A ticket below is cleared only when its writer is
+        provably gone (the same rule as a sequence claim), or - so a reused
+        pid cannot wedge the line - once it has stood past the fallback's
+        sweep window while nobody holds the lock. A wrong clear only
+        reorders writers: exclusion never depended on the queue."""
+        if ticket is None:
+            return
+        mine = int(ticket.name[:12])
+        watched: Path | None = None
+        since = 0.0
+        while True:
+            ahead = [(n, p) for n, p in self._queue_tickets() if n < mine]
+            if not ahead:
+                return
+            lowest = ahead[0][1]
+            now = time.monotonic()
+            if lowest != watched:
+                watched, since = lowest, now
+            # Only a ticket that has stood at the front for a while is read:
+            # on Windows an open read blocks its owner's release unlink, so
+            # every waiter reading the front ticket on every poll would
+            # stall the very hand-off it is waiting for.
+            elif now - since >= 0.5:
+                since = now
+                if self._queue_ticket_abandoned(lowest):
+                    _unlink_shared(lowest)
+                    continue
+            if now >= deadline:
+                path = self.lock_owner_path if _has_kernel_locking() else self.excl_lock_path
+                raise ArchiveError(_busy_message(path))
+            # The writer next in line polls fast so the hand-off is quick;
+            # those further back poll in proportion to their distance, so a
+            # long line does not slow the holder's own disk work.
+            time.sleep(min(0.25, 0.003 + 0.02 * (len(ahead) - 1)))
+
+    def _queue_ticket_abandoned(self, path: Path) -> bool:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+            age = time.time() - path.stat().st_mtime
+        except OSError:
+            return False
+        pid = _payload_pid(text)
+        if pid is not None and not _pid_alive(pid):
+            return True
+        if pid is None and age > 10:
+            return True
+        return age > _EXCLUSIVE_CREATE_SWEEP_SECONDS and not self.lock_is_held()
 
     def lock_is_held(self) -> bool:
         """Whether some process holds the write lock right now.

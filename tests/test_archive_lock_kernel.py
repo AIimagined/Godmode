@@ -365,6 +365,24 @@ def _append_many(root: str, state: str, n: int, count: int) -> None:
             raise SystemExit(f"writer {n} starved at append {i}")
 
 
+def _append_strict(root: str, state: str, n: int, count: int, busy) -> None:
+    """A hook-shaped writer that never retries: every append must land
+    within the default deadline. Busy timeouts are counted, not raised,
+    so the parent reports how many writers were refused."""
+    os.environ["GODMODE_STATE_HOME"] = state
+    archive = Chronicle(resolve_anchor(Path(root)))
+    archive.pin_identity()
+    archive.read_events(verify=False)
+    for i in range(count):
+        try:
+            archive.append("action", "cooldown", {"anchor": f"w{n}-{i}"})
+        except ArchiveError as exc:
+            if "busy" not in str(exc):
+                raise
+            with busy.get_lock():
+                busy.value += 1
+
+
 def _stale_writer_code(root: str) -> str:
     """A writer that dies between sealing its record and writing the head
     hint - the shape that leaves a lagging hint behind."""
@@ -416,6 +434,34 @@ class NoDuplicateSequenceTests(unittest.TestCase):
                 result = Chronicle(resolve_anchor(Path(root))).verify()
                 self.assertTrue(result["ok"], result)
                 self.assertEqual(result["anchor"], "anchored")
+
+    def test_24_writers_x_20_appends_none_refused_busy(self) -> None:
+        """A fair lock: under 24 writers each appending 20 records, no
+        append waits past the default deadline, and the chain is whole."""
+        with tempfile.TemporaryDirectory(prefix="godmode-lock-root-") as root,                 tempfile.TemporaryDirectory(prefix="godmode-lock-state-") as state:
+            with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": state}, clear=False):
+                archive = self._archive(root)
+                archive.append("claim", "seed", {"text": "x"})
+                busy = multiprocessing.Value("i", 0)
+                started = time.monotonic()
+                procs = [multiprocessing.Process(
+                    target=_append_strict, args=(root, state, n, 20, busy))
+                    for n in range(24)]
+                for proc in procs:
+                    proc.start()
+                for proc in procs:
+                    proc.join(180)
+                elapsed = time.monotonic() - started
+                print(f"24x20 wall time: {elapsed:.2f}s, busy timeouts: {busy.value}",
+                      file=sys.stderr)
+                for proc in procs:
+                    self.assertEqual(proc.exitcode, 0, f"writer process failed: {proc}")
+                self.assertEqual(busy.value, 0)
+                self.assertEqual(self._sequences(archive), list(range(1, 482)))
+                result = Chronicle(resolve_anchor(Path(root))).verify()
+                self.assertTrue(result["ok"], result)
+                self.assertEqual(result["anchor"], "anchored")
+                self.assertLess(elapsed, 90)
 
     def test_pinned_writer_behind_a_lagging_head_hint_does_not_fork(self) -> None:
         """The field fork: a hook process pinned its directory identity, a
