@@ -27,6 +27,17 @@ answer "is every segment head floor-clean", not carry the sentinel's full
 `Segment` contract. `tests/test_gate_fast.py::SegmentSplitEquivalence` is the
 drift guard: it runs both implementations against the same command list and
 fails if they ever disagree about where a segment ends.
+
+One exception to "never decides": a project with no Godmode archive at all
+(`ungoverned_project`) has no full hook to escalate to, so this module
+answers it (`uninitialized_body`). In the default `guard` mode a
+harm-class command - force-push, history rewrite, a delete outside the
+project, a release or publish - gets the host's own ask (a deny with the
+remedy on a host with no ask), and everything else stays silent. A cheap
+keyword screen (`harm_candidate`) keeps ordinary commands on the stat-only
+path; only a command that names a harm-class word pays for the runtime's
+own classifier (`godmode_sentinel.classify_action`, the same splitter and
+rules a governed project uses). No archive is created or opened.
 """
 
 from __future__ import annotations
@@ -600,6 +611,393 @@ def brief_pending(start: Path) -> bool:
         return True
 
 
+# ---------------------------------------------------------------------------
+# Uninitialized projects: the harm guard.
+# ---------------------------------------------------------------------------
+
+# Every word that can make `classify_action` answer a harm-class tier, or
+# that names the guard's own setting. A superset on purpose: a hit only
+# costs the runtime classifier (about 0.1 s); a miss would be a silent
+# allow. `tests/test_gate_fast.py::UninitializedGuard` runs the gate corpus
+# and a harm sample list through the classifier and fails if any harm-class
+# command is not a candidate here.
+_HARM_HINT = re.compile(
+    r"(?:^|[^a-z0-9_])(?:push|reset|clean|branch|drop|truncate|rm|rmdir|rd|del|delete|"
+    r"erase|unlink|remove|rmtree|move-item|new-item|set-content|add-content|out-file|"
+    r"clear-content|rename-item|find|deploy|publish|release|upload|send|post|create|"
+    r"eval|vssadmin|wmic|wbadmin|tmutil|password|godmode|uninitialized|config)"
+    r"(?=[^a-z0-9_]|$)|shadowcopy|computerrestore")
+# Quote, escape and caret characters a shell removes before it runs a word:
+# `r"m"`, `p\ush` and `pu^sh` all run the word the screen must see.
+_FLATTEN = re.compile(r"[\"'\\^`]")
+# `godmode_sentinel._SCRIPT_HEADS` (copied; the drift guard compares them):
+# the classifier reads a script these run, so the screen reads it too.
+_SCRIPT_HEADS = frozenset({
+    "python", "python3", "py", "node", "bun", "deno",
+    "ruby", "perl", "bash", "sh", "zsh", "pwsh", "powershell",
+})
+_MAX_SCRIPT_BYTES = 256 * 1024
+_MAX_HINT_STRINGS = 512
+# The verbs `godmode_sentinel`'s filesystem-mutation rule names, as heads.
+_MUTATING_VERBS = frozenset({
+    "rm", "rm.exe", "rmdir", "rd", "del", "erase", "unlink", "remove-item", "move-item",
+    "new-item", "set-content", "add-content", "out-file", "clear-content",
+    "rename-item", "find",
+})
+
+# The guard's own setting, named in a command or targeted by an edit.
+_GUARD_SETTING_TEXT = re.compile(r"(?i)uninitialized|godmode-settings|\.git[\\/]+config\b")
+_GIT_CONFIG = re.compile(r"(?is)\bgit\b.*\bconfig\b")
+
+_HARM_LABELS = {
+    "git-history-or-remote": "history or remote",
+    "git-branch-mutation": "branch deletion",
+    "filesystem-mutation": "delete or overwrite outside the project",
+    "release-or-external-write": "release or publish",
+    "database-mutation": "database drop",
+    "recovery-point-destruction": "recovery point deletion",
+    "interpreter-opaque-inline": "an interpreter payload naming a harm-class operation",
+    "password-in-transcript": "a password typed into the transcript",
+}
+
+
+def _hint_strings(payload: dict[str, Any]) -> list[str] | None:
+    """Every string the tool call carries, or None when there are more
+    than this screen reads (which the caller treats as a candidate)."""
+    source: Any = payload.get("toolInput", payload.get("tool_input"))
+    if source is None and isinstance(payload.get("toolCall"), dict):
+        source = payload["toolCall"]
+    if source is None:
+        source = payload
+    found: list[str] = []
+    stack: list[tuple[Any, int]] = [(source, 0)]
+    while stack:
+        value, depth = stack.pop()
+        if isinstance(value, str):
+            found.append(value)
+        elif isinstance(value, (dict, list)):
+            if depth > 8:
+                return None
+            items = value.values() if isinstance(value, dict) else value
+            stack.extend((item, depth + 1) for item in items)
+        if len(found) > _MAX_HINT_STRINGS:
+            return None
+    return found
+
+
+def _names_harm(text: str) -> bool:
+    lowered = text.lower()
+    return bool(_HARM_HINT.search(lowered) or _HARM_HINT.search(_FLATTEN.sub("", lowered)))
+
+
+def _script_bodies(text: str, roots: list[str]) -> list[str] | None:
+    """The scripts a script head in `text` would run, read the way the
+    classifier reads them; None when one cannot be read (a candidate)."""
+    bodies: list[str] = []
+    tokens = text.split()
+    for index, token in enumerate(tokens):
+        head = _FLATTEN.sub("", token).replace("\\", "/").rsplit("/", 1)[-1].lower()
+        if head.endswith(".exe"):
+            head = head[:-4]
+        if head not in _SCRIPT_HEADS:
+            continue
+        for operand in tokens[index + 1:]:
+            if operand.startswith("-"):
+                continue
+            operand = operand.strip("\"'")
+            for base in roots:
+                path = operand if os.path.isabs(operand) else os.path.join(base, operand)
+                try:
+                    if not os.path.isfile(path):
+                        continue
+                    if os.path.getsize(path) > _MAX_SCRIPT_BYTES:
+                        continue
+                    with open(path, encoding="utf-8", errors="replace") as handle:
+                        bodies.append(handle.read())
+                except OSError:
+                    return None
+            break
+    return bodies
+
+
+def harm_candidate(payload: dict[str, Any], roots: list[str]) -> bool:
+    """Whether this call might be harm-class or might touch the guard's
+    own setting - decided with regular expressions and at most a script
+    read, nothing imported. False only when no string in the call, nor
+    any script it runs, names a word the classifier could turn into a
+    harm-class answer."""
+    strings = _hint_strings(payload)
+    if strings is None:
+        return True
+    for text in strings:
+        if _names_harm(text):
+            return True
+        bodies = _script_bodies(text, roots)
+        if bodies is None or any(_names_harm(body) for body in bodies):
+            return True
+    return False
+
+
+def _disables_guard(operation: str, targets: list[str]) -> bool:
+    """Whether this call would change the guard's own setting: the
+    machine-wide file, `godmode config set uninitialized`, or a
+    repository's `godmode.uninitialized` key. Changing it is the operator's
+    decision, so it is asked about like a harm-class command, and never
+    rides silently beside one in the same compound command."""
+    for text in (operation, _FLATTEN.sub("", operation)):
+        if _GUARD_SETTING_TEXT.search(text):
+            return True
+        if _GIT_CONFIG.search(text) and re.search(r"(?i)godmode|[$`%]", text):
+            return True
+    for target in targets:
+        shown = target.replace("\\", "/").lower().rstrip("/")
+        if (shown == ".git/config" or shown.endswith("/.git/config")
+                or shown.endswith("godmode-settings.json")):
+            return True
+    return False
+
+
+def _inside_tree(text: str, root: str, contained: Any) -> bool:
+    """Whether every operand of one filesystem-mutation segment lands
+    inside `root`. Operands are whitespace words with quotes dropped; a
+    backslash is read both as an escape and as a separator, and both
+    readings must stay inside. No operand at all (`xargs rm`) is not
+    known to be inside."""
+    tokens = text.split()
+    # Operands follow the mutating verb, not a wrapper before it
+    # (`xargs rm`, `sudo rm`): the verb itself is never an operand.
+    verb = next((index for index, token in enumerate(tokens)
+                 if _FLATTEN.sub("", token).replace("\\", "/").rsplit("/", 1)[-1].lower()
+                 in _MUTATING_VERBS), 0)
+    operands: list[str] = []
+    for token in tokens[verb + 1:]:
+        if token in ("{}", ";", "\\;", "+"):
+            continue
+        if token.startswith("-"):
+            for separator in ("=", ":"):
+                if separator in token:
+                    operands.append(token.split(separator, 1)[1])
+                    break
+            continue
+        operands.append(token)
+    if not operands:
+        return False
+    for operand in operands:
+        bare = operand.replace('"', "").replace("'", "")
+        if not bare:
+            continue
+        for reading in {bare, bare.replace("\\", "/"), bare.replace("\\", "")}:
+            if not reading or not contained(reading, Path(root)):
+                return False
+    return True
+
+
+def _harm_category(verdict: dict[str, Any], root: str, contained: Any) -> str | None:
+    """The harm-class category in a classifier verdict, or None. Harm is
+    the classifier's own irreversible tiers (a forced push, a hard reset,
+    a push or release, a delete); a delete or overwrite whose every operand
+    stays inside the project is not harm here."""
+    tier = verdict.get("tier")
+    category = str(verdict.get("category") or "unclassified")
+    if tier == "R5":
+        return category
+    if tier != "R4":
+        return None
+    parts = [part for part in verdict.get("components") or []
+             if isinstance(part, dict) and part.get("tier") in ("R4", "R5")]
+    if not parts:
+        return category
+    for part in parts:
+        part_category = str(part.get("category") or category)
+        if (part_category != "filesystem-mutation"
+                or not _inside_tree(str(part.get("text") or ""), root, contained)):
+            return part_category
+    return None
+
+
+def _shown(operation: str) -> str:
+    text = " ".join(operation.split())
+    return text if len(text) <= 120 else text[:117] + "..."
+
+
+def _guard_reason(kind: str, operation: str, label: str, can_ask: bool) -> str:
+    shown = _shown(operation)
+    if kind == "setting":
+        if can_ask:
+            return ("Godmode: this changes the guard for uninitialized projects "
+                    f"(`{shown}`). Only you should change it; approve only if you asked for it.")
+        return ("godmode: refused - this changes the guard for uninitialized projects "
+                f"(`{shown}`), which is yours to change. Run "
+                "`godmode config set uninitialized off` yourself in a terminal, "
+                "or run `godmode init` here for full Godmode.")
+    if can_ask:
+        return (f"Godmode is not initialized here, and `{shown}` is a harm-class command "
+                f"({label}). Your approval at this prompt is the only check it gets. "
+                "Run `godmode init` here for full Godmode, or turn this guard off with "
+                "`godmode config set uninitialized off`.")
+    return (f"godmode: refused - `{shown}` is a harm-class command ({label}), and "
+            "Godmode is not initialized here. Run `godmode init` here to approve it "
+            "with your password, run it yourself in a terminal, or turn this guard "
+            "off with `godmode config set uninitialized off`.")
+
+
+def _guard_decision(payload: dict[str, Any], root: str) -> dict[str, Any] | None:
+    """The host body for a harm-class call in an uninitialized project, or
+    None to allow. Only reached by a `harm_candidate`; any failure here
+    asks (or denies) rather than allowing, since the call already named a
+    harm-class word."""
+    host = "unknown"
+    event_name = "PreToolUse"
+    operation = ""
+    try:
+        scripts = str(HOOKS_DIR.parent / "scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        from godmode_runtime import godmode_hostevent as hostevent
+        from godmode_runtime.godmode_sentinel import _contained, classify_action
+        event = hostevent.parse_host_payload(payload)
+        host, event_name = event.host, event.event or "PreToolUse"
+        can_ask = host in hostevent.HOSTS_WITH_ASK
+
+        def body(kind: str, label: str = "") -> dict[str, Any]:
+            decision = "ask" if can_ask else "deny"
+            rendered, _code = hostevent.render_decision(
+                host, event_name, decision, _guard_reason(kind, operation, label, can_ask))
+            return rendered
+
+        if event.tool_kind in (hostevent.TOOL_KIND_READ, hostevent.TOOL_KIND_OTHER):
+            return None
+        operation = event.operation or ""
+        if event.tool_kind not in (hostevent.TOOL_KIND_SHELL, hostevent.TOOL_KIND_FENCED):
+            return body("harm", "a tool call Godmode could not read")
+        if not operation.strip():
+            return None
+        if _disables_guard(operation, list(event.targets or [])):
+            return body("setting")
+        verdict = classify_action(operation, project_root=Path(root), tool_name=event.tool)
+        category = _harm_category(verdict, root, _contained)
+        if category is None:
+            return None
+        return body("harm", _HARM_LABELS.get(category, category.replace("-", " ")))
+    except Exception:  # noqa: BLE001 - a harm-class candidate that cannot be judged is not allowed
+        return _unjudged_refusal(host, event_name)
+
+
+def _unjudged_refusal(host: str = "unknown", event_name: str = "PreToolUse") -> dict[str, Any]:
+    """The deny for a harm-class candidate this module could not judge -
+    in the host's own dialect when the runtime can render it, else every
+    documented dialect's keys at once."""
+    reason = ("godmode: refused - this names a harm-class operation and Godmode, "
+              "not initialized here, could not classify it. Run it yourself in a "
+              "terminal, run `godmode init` here, or turn this guard off with "
+              "`godmode config set uninitialized off`.")
+    try:
+        from godmode_runtime.godmode_hostevent import render_decision
+        rendered, _code = render_decision(host, event_name, "deny", reason)
+        return rendered
+    except Exception:  # noqa: BLE001 - the runtime itself is unreachable
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                       "permissionDecision": "deny",
+                                       "permissionDecisionReason": reason},
+                "decision": "deny", "reason": reason}
+
+
+def _hears_no_session_start(payload: dict[str, Any]) -> bool:
+    """Grok ignores SessionStart output; the first PreToolUse answer is
+    where its model hears anything. The same env chain as
+    `godmode_hostevent.detect_host`, cut to the one answer needed here."""
+    declared = os.environ.get("GODMODE_HOST")
+    if declared:
+        return declared == "grok"
+    if isinstance(payload.get("toolCall"), dict) or os.environ.get(
+            "ANTIGRAVITY_AGENT") or os.environ.get("ANTIGRAVITY_CONVERSATION_ID"):
+        return False
+    return bool(os.environ.get("GROK_AGENT") or os.environ.get("GROK_PLUGIN_ROOT")
+                or os.environ.get("GROK_HOOK_EVENT"))
+
+
+def _session_mark(payload: dict[str, Any]) -> str:
+    direct = payload.get("session_id") or payload.get("sessionId")
+    if isinstance(direct, str) and direct:
+        return direct
+    transcript = payload.get("transcript_path") or payload.get("transcriptPath")
+    return str(transcript or "")
+
+
+def _notice_marker(root: str) -> str:
+    """One small file per project in the application home - never in the
+    working tree, never an archive - holding the session that heard the
+    notice last."""
+    from godmode_initstate import _sha256_hex, application_home, canonical
+    key = _sha256_hex(f"notice\0{canonical(root)}".encode("utf-8"))[:24]
+    return os.path.join(application_home(), "notices", key)
+
+
+def _notice_due(payload: dict[str, Any], root: str) -> bool:
+    try:
+        with open(_notice_marker(root), encoding="utf-8") as handle:
+            return handle.read() != _session_mark(payload)
+    except OSError:
+        return True
+
+
+def _mark_notice(payload: dict[str, Any], root: str) -> None:
+    try:
+        marker = _notice_marker(root)
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        with open(marker, "w", encoding="utf-8") as handle:
+            handle.write(_session_mark(payload))
+    except OSError:  # godmode: swallow-ok: a missed mark repeats the notice once more; nothing worse
+        pass
+
+
+def uninitialized_notice_due(payload: dict[str, Any], start: Path) -> bool:
+    """Grok only: this uninitialized, guarded project's session has not
+    yet heard the notice, so even a floor read must answer with it."""
+    if not _hears_no_session_start(payload):
+        return False
+    try:
+        if str(HOOKS_DIR) not in sys.path:
+            sys.path.insert(0, str(HOOKS_DIR))
+        from godmode_initstate import ABSENT, UNINITIALIZED_OFF, project_state, uninitialized_mode
+        state, root = project_state(str(start))
+        if state != ABSENT or not root:
+            return False
+        return uninitialized_mode(root) != UNINITIALIZED_OFF and _notice_due(payload, root)
+    except Exception:  # noqa: BLE001 - a notice is never worth a failed call
+        return False
+
+
+def uninitialized_body(payload: dict[str, Any], start: Path,
+                       root: str | None = None) -> dict[str, Any] | None:
+    """What a project with no Godmode archive answers for one pre-tool
+    call: None for a silent allow, else the host body to print. `off`
+    (machine-wide or for this repository) is always silent; `guard` asks
+    about harm-class commands and, on a host that ignores SessionStart,
+    carries the not-initialized notice on the session's first call."""
+    if str(HOOKS_DIR) not in sys.path:
+        sys.path.insert(0, str(HOOKS_DIR))
+    from godmode_initstate import GUARD_NOTICE, UNINITIALIZED_OFF, project_state, uninitialized_mode
+    if root is None:
+        _state, root = project_state(str(start))
+    root = root or str(start)
+    if uninitialized_mode(root) == UNINITIALIZED_OFF:
+        return None
+    body = None
+    if harm_candidate(payload, [root, str(start)]):
+        body = _guard_decision(payload, root)
+    if _hears_no_session_start(payload) and _notice_due(payload, root):
+        if body is None:
+            body = {"decision": "allow",
+                    "hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                           "additionalContext": GUARD_NOTICE}}
+        else:
+            specific = body.setdefault("hookSpecificOutput", {"hookEventName": "PreToolUse"})
+            specific["additionalContext"] = GUARD_NOTICE
+        _mark_notice(payload, root)
+    return body
+
+
 def spoken_allow(payload: dict[str, Any]) -> None:
     """Antigravity reads a silent PreToolUse as a denial (a memory plugin's
     Antigravity bridge, verified on agy 1.0.15: a bare `{}` refuses every matched
@@ -623,19 +1021,34 @@ def main() -> int:
     # Same project the full hook would resolve: the payload's `cwd` when
     # it carries one, else the process directory.
     cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) else None
-    if fast_verdict(payload, table) == "allow" and not brief_pending(
-            Path(cwd) if cwd else Path.cwd()):
+    start = Path(cwd) if cwd else Path.cwd()
+    if (fast_verdict(payload, table) == "allow" and not brief_pending(start)
+            and not uninitialized_notice_due(payload, start)):
         spoken_allow(payload)
         return 0
     # The full hook reads a non-string `cwd` as `str(cwd)`, not as the
     # process directory, so only a string or absent `cwd` may take this exit.
-    if payload and (cwd or payload.get("cwd") in (None, "")) and ungoverned_project(
-            Path(cwd) if cwd else Path.cwd()):
+    if payload and (cwd or payload.get("cwd") in (None, "")) and ungoverned_project(start):
         # Nothing was initialized for this checkout: no archive, no
-        # policy, no pins. Silent allow, the same answer the full hook
-        # gives after loading everything. A malformed payload (parsed to
+        # policy, no pins. Ordinary work is a silent allow; a harm-class
+        # command gets the host's ask (`uninitialized_body`) unless the
+        # operator turned that guard off. A malformed payload (parsed to
         # `{}`) never takes this exit; it still fails closed below.
-        spoken_allow(payload)
+        # The full hook would exit silently for this project, so a failure
+        # here is judged here: a harm-class candidate is refused, anything
+        # else is ordinary work and allowed.
+        try:
+            body = uninitialized_body(payload, start)
+        except Exception:  # noqa: BLE001 - judged below, never raised into the host
+            try:
+                candidate = harm_candidate(payload, [str(start)])
+            except Exception:  # noqa: BLE001 - an unreadable call is treated as a candidate
+                candidate = True
+            body = _unjudged_refusal() if candidate else None
+        if body is None:
+            spoken_allow(payload)
+        else:
+            sys.stdout.write(json.dumps(body, ensure_ascii=False) + "\n")
         return 0
     # Escalate: re-feed the exact bytes read from stdin to the full hook and
     # mirror its stdout/stderr/exit code verbatim - the fast gate must be

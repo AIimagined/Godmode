@@ -173,6 +173,106 @@ def project_state(project: str) -> tuple[str, str | None]:
         return UNKNOWN, None
 
 
+# What an installed Godmode does in a project nobody initialized. `guard`
+# (the default) still asks before, or blocks, the harm-class commands -
+# force-push, history rewrite, deletes outside the project, releases - and
+# nothing else; `off` stays silent there. One machine-wide value, set with
+# `godmode config set uninitialized guard|off`, beside the operator policy
+# (`godmode_sentinel.machine_settings_path`, mirrored below and pinned by
+# `tests/test_hook_uninitialized_fast_exit.py`), and one per-repository
+# override in that repository's own git config (`godmode.uninitialized`),
+# which writes nothing into the working tree.
+UNINITIALIZED_GUARD = "guard"
+UNINITIALIZED_OFF = "off"
+UNINITIALIZED_VALUES = (UNINITIALIZED_GUARD, UNINITIALIZED_OFF)
+SETTINGS_FILENAME = "godmode-settings.json"
+REPO_SETTING_SECTION = "godmode"
+REPO_SETTING_KEY = "uninitialized"
+
+GUARD_NOTICE = (
+    "Godmode is installed but NOT initialized here; only harm-class commands "
+    "are guarded (force-push, history rewrite, deletes outside the project, "
+    "releases and publishes). Nothing is recorded. Run `godmode init` for full "
+    "Godmode, or `godmode config set uninitialized off` to stop guarding "
+    "uninitialized projects.")
+OFF_NOTICE = (
+    "godmode is installed but NOT initialized for this "
+    "project - nothing is being gated or recorded. Run "
+    "`godmode init` to switch it on, or ignore this if "
+    "the project is deliberately ungoverned.")
+
+
+def machine_settings_path() -> str:
+    """`godmode_sentinel.machine_settings_path()` without pathlib: under
+    GODMODE_STATE_HOME when set, else the user profile's .godmode
+    directory - the operator policy's own directory, outside every
+    repository."""
+    home = os.environ.get("GODMODE_STATE_HOME")
+    base = home if home else os.path.join(os.path.expanduser("~"), ".godmode")
+    return os.path.join(base, SETTINGS_FILENAME)
+
+
+def _machine_uninitialized() -> str | None:
+    import json
+    try:
+        with open(machine_settings_path(), encoding="utf-8") as handle:
+            value = json.load(handle).get("uninitialized")
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: no readable setting is the default, guard
+        return None
+    return value if value in UNINITIALIZED_VALUES else None
+
+
+def repo_uninitialized(common_dir: str) -> str | None:
+    """`godmode.uninitialized` from a repository's own config file, the
+    last value git itself would read, or None. A minimal reader: sections,
+    keys and values as git writes them; includes are not followed, so an
+    override reached only through an include is not honoured (that can
+    only leave the guard on)."""
+    found: str | None = None
+    with open(os.path.join(common_dir, "config"), encoding="utf-8", errors="replace") as handle:
+        section: str | None = None
+        for line in handle:
+            text = line.strip()
+            if not text or text[0] in "#;":
+                continue
+            if text.startswith("["):
+                end = text.find("]")
+                section = text[1:end].strip().lower() if end > 0 else None
+                continue
+            if section != REPO_SETTING_SECTION:
+                continue
+            key, _sep, value = text.partition("=")
+            if key.strip().lower() != REPO_SETTING_KEY:
+                continue
+            value = value.split("#", 1)[0].split(";", 1)[0].strip().strip('"').strip().lower()
+            found = value
+    return found if found in UNINITIALIZED_VALUES else None
+
+
+def uninitialized_mode(project: str) -> str:
+    """`guard` or `off` for `project`: its repository's override when it
+    has one, else the machine-wide value, else `guard`. Never raises; any
+    doubt answers `guard`, which only ever asks about harm-class
+    commands."""
+    try:
+        located = _git_location(canonical(str(project)))
+        if located is not None:
+            repo = repo_uninitialized(located[1])
+            if repo is not None:
+                return repo
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable override falls back to the machine value
+        pass
+    return _machine_uninitialized() or UNINITIALIZED_GUARD
+
+
+def not_initialized_notice(project: str | None) -> str:
+    """The session-start notice for an uninitialized project, worded for
+    the mode that project is actually in."""
+    if uninitialized_mode(project or ".") == UNINITIALIZED_OFF:
+        return OFF_NOTICE
+    return GUARD_NOTICE
+
+
 # The session hook's events, as its argparse `choices` name them.
 SESSION_EVENTS = ("stop", "session-start", "pre-compact", "session-end",
                   "pre-action", "user-prompt", "subagent-stop")

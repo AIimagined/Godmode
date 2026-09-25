@@ -17,11 +17,14 @@ CAPTURE_PAYLOAD_ENV = "GODMODE_CAPTURE_HOST_PAYLOADS"
 
 CLAUDE_CONTEXT_LIMIT = 9_000
 
-_NOT_INITIALIZED_NOTICE = (
-    "godmode is installed but NOT initialized for this "
-    "project - nothing is being gated or recorded. Run "
-    "`godmode init` to switch it on, or ignore this if "
-    "the project is deliberately ungoverned.")
+def _not_initialized_notice(project: str | None) -> str:
+    """The not-initialized notice, worded for the project's uninitialized
+    mode (`godmode_initstate.not_initialized_notice`, the one source)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    from godmode_initstate import not_initialized_notice
+    return not_initialized_notice(project)
 
 # The sections the truncation cap must never eat: commands and live
 # advisories first, inventory last (S15 item 5 - sort_keys put
@@ -116,14 +119,15 @@ def _uninitialized_early_exit(argv: list[str]) -> tuple[int | None, bytes | None
         here = os.path.dirname(os.path.abspath(__file__))
         if here not in sys.path:
             sys.path.insert(0, here)
-        from godmode_initstate import EXIT, NOTICE, early_session_decision
+        from godmode_initstate import (EXIT, NOTICE, early_session_decision,
+                                       not_initialized_notice)
         action, _submitted, raw, root = early_session_decision(argv)
         if action == NOTICE:
             reconfigure = getattr(sys.stdout, "reconfigure", None)
             if reconfigure is not None:
                 reconfigure(encoding="utf-8", errors="replace")
             _emit_claude_context({"godmode": "not-initialized", "project": root,
-                                  "notice": _NOT_INITIALIZED_NOTICE})
+                                  "notice": not_initialized_notice(root)})
             return 0, raw
         if action == EXIT:
             return 0, raw
@@ -3290,6 +3294,19 @@ def main(argv: list[str] | None = None) -> int:
             # the truth was cwd-relative - every answer here names the
             # resolved project root it is about.
             resolved_root = str(anchor.project_root)
+            if args.event == "pre-action":
+                # The fast gate's own guard for a project with no archive
+                # (it escalated only because it could not be sure there
+                # was none): a harm-class command is still asked about,
+                # unless the operator turned that guard off.
+                try:
+                    from godmode_gate_fast import uninitialized_body
+                    guarded = uninitialized_body(submitted, Path(resolved_root), resolved_root)
+                except Exception:  # noqa: BLE001  # godmode: swallow-ok: the guard judges its own failures; an import failure leaves today's answer
+                    guarded = None
+                if guarded is not None:
+                    print(json.dumps(guarded, ensure_ascii=False))
+                    return 0
             stranded = archive.orphaned()
             if stranded:
                 notice = {
@@ -3312,7 +3329,7 @@ def main(argv: list[str] | None = None) -> int:
                 _emit_claude_context({
                     "godmode": "not-initialized",
                     "project": resolved_root,
-                    "notice": _NOT_INITIALIZED_NOTICE,
+                    "notice": _not_initialized_notice(resolved_root),
                 })
             else:
                 print(json.dumps({

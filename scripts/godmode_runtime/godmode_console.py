@@ -848,6 +848,47 @@ def cmd_config_mode(args: argparse.Namespace, runtime: Runtime) -> CommandResult
     return CommandResult({"mode": args.value})
 
 
+def cmd_config_set(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """`config set uninitialized guard|off`: what an installed Godmode does
+    in a project nobody initialized. Machine-wide by default, in the
+    operator's settings file outside every repository; `--repo` sets this
+    repository's own override in its git config, which writes nothing into
+    the working tree. Creates no archive."""
+    value = args.value
+    if args.repo:
+        common = getattr(runtime.anchor, "git_common_dir", None)
+        if not common:
+            raise UsageError("--repo needs a git repository; this project is not one. "
+                             "Drop --repo to set the machine-wide value.")
+        import subprocess
+        root = str(runtime.anchor.project_root)
+        done = subprocess.run(
+            ["git", "config", "--local", "godmode.uninitialized", value],
+            cwd=root, capture_output=True, text=True)
+        if done.returncode != 0:
+            raise UsageError(f"git config failed: {done.stderr.strip() or done.returncode}")
+        return CommandResult({"setting": "uninitialized", "value": value, "scope": "repository",
+                              "project": root,
+                              "where": str(Path(common) / "config")})
+    from .godmode_sentinel import machine_settings_path
+    path = machine_settings_path()
+    settings: dict[str, Any] = {}
+    if path.is_file():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise UsageError(f"{path} is not valid JSON ({exc.msg}); fix or remove it") from exc
+        if isinstance(loaded, dict):
+            settings = loaded
+    settings[args.key] = value
+    path.parent.mkdir(parents=True, exist_ok=True)
+    staging = path.with_name(path.name + ".tmp")
+    staging.write_text(json.dumps(settings, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(staging, path)
+    return CommandResult({"setting": "uninitialized", "value": value, "scope": "machine",
+                          "where": str(path)})
+
+
 OPERATOR_FILENAME = ".godmode-operator.json"
 _OPERATOR_FIELDS = {
     "persona": str, "hard_gates": list, "communication": str, "decision_authority": str,
@@ -7339,6 +7380,16 @@ def _build_parser() -> argparse.ArgumentParser:
     config_mode.add_argument("value", nargs="?", choices=("advise", "strict"), default=None,
                              help="Omit to print the current mode")
     config_mode.set_defaults(handler=cmd_config_mode)
+    config_set = config_sub.add_parser(
+        "set",
+        help="Set a machine-wide setting. `uninitialized guard` (default) asks "
+             "before force-push, history rewrite, deletes outside the project and "
+             "releases in projects nobody initialized; `off` stays silent there.")
+    config_set.add_argument("key", choices=("uninitialized",))
+    config_set.add_argument("value", choices=("guard", "off"))
+    config_set.add_argument("--repo", action="store_true",
+                            help="Set it for this git repository only (its own git config)")
+    config_set.set_defaults(handler=cmd_config_set)
     charter.set_defaults(handler=cmd_charter)
 
     session = sub.add_parser("session", help="Open or close an attested session")

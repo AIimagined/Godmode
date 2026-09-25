@@ -5828,6 +5828,17 @@ def operator_policy_path() -> Path:
     return base / OPERATOR_POLICY_FILENAME
 
 
+MACHINE_SETTINGS_FILENAME = "godmode-settings.json"
+
+
+def machine_settings_path() -> Path:
+    """Machine-wide settings (today only `uninitialized`: what an installed
+    Godmode does in a project nobody initialized), in the operator policy's
+    own directory. `hooks/godmode_initstate.machine_settings_path` mirrors
+    it without importing this module."""
+    return operator_policy_path().parent / MACHINE_SETTINGS_FILENAME
+
+
 def compose_policies(operator: dict[str, Any], project: dict[str, Any]) -> dict[str, Any]:
     """Tightest wins, key by key. The project layer may add protected
     categories, approvals, tool gates and ask_only categories, shorten the

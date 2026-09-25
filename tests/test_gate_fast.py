@@ -48,8 +48,9 @@ if str(PLUGIN_ROOT) not in sys.path:
 from tests.test_gate_corpus import corpus_entries, _decision  # noqa: E402
 from tests._gate_mode_isolation import park_local_policy, restore_local_policy  # noqa: E402
 from godmode_runtime.godmode_sentinel import (  # noqa: E402
-    _raw_segments, _executable_text, _FIND_MUTATION, classify_action,
+    _raw_segments, _executable_text, _FIND_MUTATION, _contained, classify_action,
 )
+from tests._host_env import scrubbed_env  # noqa: E402
 
 
 def setUpModule() -> None:
@@ -338,16 +339,279 @@ class UngovernedProject(unittest.TestCase):
                 "sys.exit(0)\n",
                 encoding="utf-8",
             )
-            body = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
-                               "tool_input": {"command": "rm -rf build"},
-                               "cwd": str(root)})
-            done = subprocess.run(
-                [sys.executable, str(stub / "godmode_gate_fast.py")], input=body.encode(),
-                capture_output=True, cwd=str(root), timeout=60,
-                env={**os.environ, "GODMODE_STATE_HOME": str(root / "state")})
+            def run(command: str) -> subprocess.CompletedProcess[bytes]:
+                body = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                                   "tool_input": {"command": command},
+                                   "cwd": str(root)})
+                return subprocess.run(
+                    [sys.executable, str(stub / "godmode_gate_fast.py")], input=body.encode(),
+                    capture_output=True, cwd=str(root), timeout=60,
+                    env=scrubbed_env(GODMODE_STATE_HOME=str(root / "state")))
+
+            # Ordinary mutating work: silent, and the stub copy's missing
+            # runtime is never needed.
+            done = run("npm install")
             self.assertEqual(done.returncode, 0, done.stderr)
             self.assertEqual(done.stdout.strip(), b"", done.stdout[:300])
+            # A harm-class command whose classifier cannot be reached (the
+            # stub has no runtime beside it) fails closed, still without
+            # the full hook.
+            done = run("git push --force")
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertIn(b'"deny"', done.stdout)
             self.assertFalse(marker.exists(), "the full hook was spawned")
+
+
+def _uninitialized_repo(base: Path) -> Path:
+    project = base / "project"
+    project.mkdir()
+    git = project / ".git"
+    git.mkdir()
+    (git / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+    (git / "config").write_text("[core]\n\tbare = false\n", encoding="utf-8")
+    return project
+
+
+class UninitializedGuard(unittest.TestCase):
+    """An installed Godmode guards harm-class commands in a project nobody
+    initialized: the host's own ask where it has one, a deny naming the
+    remedy where it has none, and nothing for ordinary work. No archive is
+    created and nothing is written into the working tree."""
+
+    FORCE_PUSH = "git push --force"
+
+    def setUp(self) -> None:
+        self.base = Path(tempfile.mkdtemp(prefix="godmode-uninit-guard-"))
+        self.addCleanup(shutil.rmtree, self.base, ignore_errors=True)
+        self.project = _uninitialized_repo(self.base)
+        self.home = self.base / "state"
+
+    def _run(self, command: str, tool: str = "Bash", cwd: Path | None = None,
+             session: str = "s-1", **env: str) -> dict[str, Any] | None:
+        cwd = cwd or self.project
+        body = {"hook_event_name": "PreToolUse", "tool_name": tool, "session_id": session,
+                "tool_input": {"command": command}, "cwd": str(cwd)}
+        done = subprocess.run(
+            [sys.executable, "-I", "-B", str(FAST_GATE)], input=json.dumps(body).encode(),
+            capture_output=True, cwd=str(cwd), timeout=60,
+            env=scrubbed_env(GODMODE_STATE_HOME=str(self.home), **env))
+        self.assertEqual(done.returncode, 0, done.stderr[-600:])
+        text = done.stdout.decode("utf-8").strip()
+        return json.loads(text) if text else None
+
+    def _decision(self, body: dict[str, Any] | None) -> str:
+        if body is None:
+            return "allow"
+        specific = body.get("hookSpecificOutput") or {}
+        return specific.get("permissionDecision") or body.get("decision") or "allow"
+
+    def _grok(self, command: str, **kwargs: Any) -> dict[str, Any] | None:
+        return self._run(command, tool="run_terminal_command", GROK_AGENT="1", **kwargs)
+
+    def _write_setting(self, value: str) -> None:
+        self.home.mkdir(parents=True, exist_ok=True)
+        (self.home / "godmode-settings.json").write_text(
+            json.dumps({"uninitialized": value}), encoding="utf-8")
+
+    def _assert_nothing_created(self) -> None:
+        self.assertFalse((self.project / ".git" / "godmode-state").exists(), "archive created")
+        self.assertFalse((self.home / "projects").exists(), "archive created")
+        self.assertEqual(sorted(p.name for p in self.project.iterdir()), [".git"])
+
+    def test_a_force_push_asks_on_a_host_with_ask(self) -> None:
+        body = self._run(self.FORCE_PUSH)
+        self.assertEqual(self._decision(body), "ask")
+        reason = body["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("godmode config set uninitialized off", reason)
+        self.assertIn("godmode init", reason)
+        self._assert_nothing_created()
+
+    def test_a_force_push_is_denied_with_the_remedy_on_a_host_without_ask(self) -> None:
+        body = self._grok(self.FORCE_PUSH)
+        self.assertEqual(body["decision"], "deny")
+        self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "deny")
+        for remedy in ("godmode init", "password", "godmode config set uninitialized off"):
+            self.assertIn(remedy, body["reason"])
+        self._assert_nothing_created()
+
+    def test_ordinary_work_is_silent_and_creates_nothing(self) -> None:
+        for command in ("git status", "npm install", "python -m unittest", "rm -rf build",
+                        "git commit -m x"):
+            with self.subTest(command=command):
+                self.assertIsNone(self._run(command))
+        self._assert_nothing_created()
+
+    def test_a_delete_outside_the_project_asks_or_is_denied(self) -> None:
+        for command in ("rm -rf ../other", "rm -rf /", "rm ~/notes.txt"):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(self._run(command)), "ask")
+                self.assertEqual(self._decision(self._grok(command, session=command)), "deny")
+
+    def test_a_compound_command_is_judged_by_its_worst_part(self) -> None:
+        for command in ("echo x ; git push --force", "echo x && git push --force",
+                        "ls | git push --force", "(cd . ; git push --force)"):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(self._run(command)), "ask")
+                self.assertEqual(self._decision(self._grok(command, session=command)), "deny")
+
+    def test_releases_and_history_rewrites_ask(self) -> None:
+        for command in ("npm publish", "gh release create v1", "git reset --hard HEAD~3",
+                        "git branch -D topic", "git push origin v1.0"):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(self._run(command)), "ask")
+
+    def test_machine_wide_off_is_silent(self) -> None:
+        self._write_setting("off")
+        self.assertIsNone(self._run(self.FORCE_PUSH))
+        self.assertIsNone(self._grok(self.FORCE_PUSH))
+
+    def test_repository_off_is_silent_in_that_repository_only(self) -> None:
+        with (self.project / ".git" / "config").open("a", encoding="utf-8") as handle:
+            handle.write("[godmode]\n\tuninitialized = off\n")
+        other = self.base / "other"
+        other.mkdir()
+        (other / ".git").mkdir()
+        (other / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+        self.assertIsNone(self._run(self.FORCE_PUSH))
+        self.assertEqual(self._decision(self._run(self.FORCE_PUSH, cwd=other)), "ask")
+
+    def test_a_repository_guard_overrides_a_machine_off(self) -> None:
+        self._write_setting("off")
+        with (self.project / ".git" / "config").open("a", encoding="utf-8") as handle:
+            handle.write("[GodMode]\n\tUninitialized = guard\n")
+        self.assertEqual(self._decision(self._run(self.FORCE_PUSH)), "ask")
+
+    def test_turning_the_guard_off_is_itself_asked_about(self) -> None:
+        for command in ("godmode config set uninitialized off",
+                        "git config godmode.uninitialized off",
+                        "git config --local godmode.uninitialized off ; git push --force",
+                        "godmode config set uninitialized off && git push --force",
+                        "echo {} > ~/.godmode/godmode-settings.json"):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(self._run(command)), "ask")
+                self.assertEqual(self._decision(self._grok(command, session=command)), "deny")
+
+    def test_an_edit_of_the_repository_config_is_asked_about(self) -> None:
+        body = {"hook_event_name": "PreToolUse", "tool_name": "Write",
+                "tool_input": {"file_path": str(self.project / ".git" / "config"),
+                               "content": "[godmode]\nuninitialized = off\n"},
+                "cwd": str(self.project)}
+        done = subprocess.run(
+            [sys.executable, "-I", "-B", str(FAST_GATE)], input=json.dumps(body).encode(),
+            capture_output=True, cwd=str(self.project), timeout=60,
+            env=scrubbed_env(GODMODE_STATE_HOME=str(self.home)))
+        self.assertIn(b'"ask"', done.stdout)
+
+    def test_the_notice_reaches_a_host_without_session_start_once(self) -> None:
+        first = self._grok("git status")
+        self.assertEqual(first["decision"], "allow")
+        notice = first["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("installed but NOT initialized here", notice)
+        self.assertIn("only harm-class commands are guarded", notice)
+        self.assertIn("godmode config set uninitialized off", notice)
+        self.assertIsNone(self._grok("git status"))
+        self.assertIsNone(self._grok("npm install"))
+        self.assertIsNotNone(self._grok("git status", session="s-2"), "a new session hears it")
+        self._assert_nothing_created()
+
+    def test_the_full_hook_guards_the_same_when_the_fast_gate_is_unsure(self) -> None:
+        # A `GIT_DIR` override makes the stat-only check unsure, so the
+        # call escalates; the full hook, finding no archive, asks the same.
+        git_dir = str(self.project / ".git")
+        self.assertEqual(self._decision(self._run(self.FORCE_PUSH, GIT_DIR=git_dir)), "ask")
+        self.assertNotIn(self._decision(self._run("npm install", GIT_DIR=git_dir)),
+                         ("ask", "deny"))
+        self._assert_nothing_created()
+
+    def test_a_host_with_session_start_gets_no_notice_on_its_calls(self) -> None:
+        self.assertIsNone(self._run("git status"))
+
+    def test_the_notice_is_not_given_when_the_guard_is_off(self) -> None:
+        self._write_setting("off")
+        self.assertIsNone(self._grok("git status"))
+
+    def test_ordinary_work_never_imports_the_runtime(self) -> None:
+        """The ordinary path stays the stat-only path: no module from the
+        runtime package is imported for it, read from the interpreter's own
+        module table after `main()` returns. A harm-class command is the
+        only one that pays for the classifier."""
+        script = (
+            "import io, json, sys\n"
+            f"sys.path.insert(0, {str(HOOKS_DIR)!r})\n"
+            "import godmode_stdin, godmode_gate_fast as gate\n"
+            "godmode_stdin.read_first_json = lambda: sys.argv[1].encode()\n"
+            "sys.stdout = io.StringIO()\n"
+            "gate.main()\n"
+            "sys.stdout = sys.__stdout__\n"
+            "print(json.dumps(sorted(m for m in sys.modules if m.startswith('godmode_runtime'))))\n")
+
+        def loaded(command: str) -> list[str]:
+            body = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                               "tool_input": {"command": command}, "cwd": str(self.project)})
+            done = subprocess.run(
+                [sys.executable, "-I", "-B", "-c", script, body], capture_output=True,
+                cwd=str(self.project), timeout=60,
+                env=scrubbed_env(GODMODE_STATE_HOME=str(self.home)))
+            self.assertEqual(done.returncode, 0, done.stderr[-600:])
+            return json.loads(done.stdout.decode().strip().splitlines()[-1])
+
+        for command in ("npm install", "python -m unittest", "cargo build", "make"):
+            with self.subTest(command=command):
+                self.assertEqual(loaded(command), [])
+        self.assertIn("godmode_runtime.godmode_sentinel", loaded(self.FORCE_PUSH))
+
+
+class UninitializedGuardScreen(unittest.TestCase):
+    """The keyword screen is what keeps ordinary work off the classifier,
+    so it must never miss a command the classifier calls harm-class."""
+
+    def test_every_harm_class_command_is_a_candidate(self) -> None:
+        samples = [entry["operation"] for entry in corpus_entries()] + [
+            "git push", "git push --force", "git -C . push -f", "git reset --hard",
+            "git clean -fdx", "git branch -D x", "rm -rf /", "rm -rf ../x",
+            "Remove-Item -Recurse ..\\x", "del C:\\x", "npm publish", "twine upload dist/*",
+            "gh release create v1", "make release", "claude plugin eval",
+            "psql -c 'DROP TABLE users'", "find / -delete", "find . -exec touch {} ;",
+            "vssadmin delete shadows /all", "tmutil delete x",
+            "bash -c 'git push --force'", "python -c \"import os; os.system('rm -rf /')\"",
+            "echo pw | godmode authorize stage --password-stdin",
+            "g\"i\"t pu''sh --force", "git p\\ush --force", "r^m -rf ..\\x",
+        ]
+        missed = []
+        for command in samples:
+            verdict = classify_action(command, project_root=PLUGIN_ROOT, tool_name="Bash")
+            harmful = fast._harm_category(verdict, str(PLUGIN_ROOT), _contained)
+            if harmful and not fast.harm_candidate(payload(command), [str(PLUGIN_ROOT)]):
+                missed.append((command, harmful))
+        self.assertEqual(missed, [])
+
+    def test_a_script_the_classifier_reads_is_read_by_the_screen(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            (Path(temporary) / "ship.py").write_text(
+                'import subprocess\nsubprocess.run(["git", "push", "--force"])\n', encoding="utf-8")
+            (Path(temporary) / "calm.py").write_text("print(1)\n", encoding="utf-8")
+            self.assertTrue(fast.harm_candidate(payload("python ship.py"), [temporary]))
+            self.assertFalse(fast.harm_candidate(payload("python calm.py"), [temporary]))
+
+    def test_the_script_heads_match_the_classifier(self) -> None:
+        from godmode_runtime.godmode_sentinel import _SCRIPT_HEADS, _MAX_SCRIPT_BYTES
+        self.assertEqual(fast._SCRIPT_HEADS, _SCRIPT_HEADS)
+        self.assertEqual(fast._MAX_SCRIPT_BYTES, _MAX_SCRIPT_BYTES)
+
+    def test_ordinary_commands_are_not_candidates(self) -> None:
+        for command in ("npm install", "python -m unittest", "cargo build", "make",
+                        "git commit -m wip", "pytest -q tests"):
+            with self.subTest(command=command):
+                self.assertFalse(fast.harm_candidate(payload(command), ["."]))
+
+    def test_a_delete_inside_the_project_is_not_harm(self) -> None:
+        for command, harmful in (("rm -rf build", False), ("rm -rf ../x", True),
+                                 ("rm $TARGET", True), ("ls | xargs rm", True),
+                                 ("rm -rf build/*", False)):
+            with self.subTest(command=command):
+                verdict = classify_action(command, project_root=PLUGIN_ROOT, tool_name="Bash")
+                got = fast._harm_category(verdict, str(PLUGIN_ROOT), _contained)
+                self.assertEqual(got is not None, harmful, verdict)
 
 
 class AntigravityPayloadShape(unittest.TestCase):
