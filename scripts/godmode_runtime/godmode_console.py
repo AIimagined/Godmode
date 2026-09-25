@@ -2212,6 +2212,17 @@ def session_digest(runtime: Runtime, session: str | None, transcript: str | None
             # never triggers and `session_end` stays None.
             session_end = record["sequence"]
             break
+        # Row 21 (2026-09-25 carried-items triage): an unknown `--session`
+        # id used to fall through with session_start left at its 0 default,
+        # which `_belongs` below reads as "everything" - the same window an
+        # explicit `session=None` gets. A caller who mistyped an id, or
+        # passed one from a different project's archive, got lifetime spend
+        # back silently instead of a refusal naming the problem.
+        if not found_start:
+            raise ArchiveError(
+                f"no session {session!r} in this archive; omit --session for "
+                "the latest one, or pass the id from that session's own "
+                "`session open`/`session close` record")
 
     def _belongs(record: dict[str, Any]) -> bool:
         return (record["sequence"] >= session_start
