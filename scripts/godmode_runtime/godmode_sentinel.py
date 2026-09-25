@@ -537,6 +537,39 @@ def _positionals(tokens: list[str], value_flags: frozenset[str] = frozenset()) -
     return kept
 
 
+# The `authorize` verbs that open the operator's password prompt. An agent's
+# own tool call has no terminal to type into, so since the prompt became a
+# native dialog one of these would pop it at the operator on the agent's
+# behalf - and an agent that can raise the prompt can ask for it to be
+# answered. `request`/`requests` are the verbs meant for agents and stay free.
+_OPERATOR_AUTHORIZE_VERBS = frozenset({"stage", "setup", "grant", "issue"})
+_GODMODE_LAUNCHER = re.compile(r"(?i)^godmode(?:\.(?:py|pyw|cmd|bat|exe|ps1|sh))?$")
+
+
+def _operator_authorize_verb(normalized: str, argv: list[str] | None) -> str | None:
+    """The password-bearing `authorize` verb this segment runs, or None.
+
+    Any launcher form counts - the bare `godmode`, `bin/godmode`, a quoted
+    absolute path, `python scripts/godmode.py` - because the head is found
+    by the token's own basename, anywhere before the `authorize` word."""
+    if not argv:
+        return None
+    if (_SAFE_SHELL_READS.match(normalized) or _POWERSHELL_READS.match(normalized)
+            or any(pattern.search(normalized) for pattern in _SAFE_INSPECTION_PATTERNS)):
+        return None
+    lowered = [token.lower() for token in argv]
+    for index, token in enumerate(lowered):
+        if token != "authorize":
+            continue
+        heads = (t.lstrip("({").replace("\\", "/").rsplit("/", 1)[-1] for t in lowered[:index])
+        if not any(_GODMODE_LAUNCHER.match(head) for head in heads):
+            continue
+        positionals = _positionals(lowered[index + 1:])
+        if positionals and positionals[0] in _OPERATOR_AUTHORIZE_VERBS:
+            return positionals[0]
+    return None
+
+
 def _protection_weakening(normalized: str, argv: list[str] | None,
                           write_target: str | None) -> str | None:
     """What this segment would weaken of Godmode's own protection, or None."""
@@ -1808,6 +1841,14 @@ _OPAQUE_R5_EVIDENCE = re.compile(
 _OPAQUE_POLICY_WRITE_EVIDENCE = re.compile(re.escape(POLICY_FILENAME))
 
 
+# A password-bearing `authorize` verb inside a shell or interpreter payload
+# (`bash -c "godmode authorize stage ..."`): the same prompt raised one
+# wrapper deeper, judged the same as the bare command.
+_OPAQUE_OPERATOR_AUTHORIZE = re.compile(
+    r"(?i)godmode(?:\.(?:py|pyw|cmd|bat|exe|ps1|sh))?[\"']?\s+(?:\S+\s+){0,3}?"
+    r"authorize\s+(?:stage|setup|grant|issue)\b")
+
+
 def _opaque_inline_verdict(payload: str) -> tuple[str, bool, list[str]]:
     """category/protected/impact for an opaque interpreter payload this
     module does not and must not try to parse. Always protected; the only
@@ -1817,6 +1858,10 @@ def _opaque_inline_verdict(payload: str) -> tuple[str, bool, list[str]]:
     flag shape, `payload` is the whole normalized segment) and
     `classify_action` (the heredoc shape, `payload` is the recovered body,
     or the header line alone when the body could not be read)."""
+    if _OPAQUE_OPERATOR_AUTHORIZE.search(payload):
+        return ("operator-authorization-from-agent", True,
+                ["an interpreter payload starts a password-bearing `authorize` verb; "
+                 "the operator types `! godmode authorize ...` themselves"])
     if _OPAQUE_POLICY_WRITE_EVIDENCE.search(payload):
         return ("worktree-file-mutation", True,
                 [f"an interpreter payload names {POLICY_FILENAME}; opaque "
@@ -3329,6 +3374,11 @@ _TIER_BY_CATEGORY = {
     "pinned-evaluator-mutation": "R5",
     "evaluator-unpin": "R5",
     "password-in-transcript": "R5",
+    # An agent's own tool call starting a password-bearing `authorize` verb
+    # (stage/setup/grant/issue): the prompt it raises lands on the operator,
+    # and a click-through there is consent nobody gave. Refused in every
+    # mode; the operator runs the same command with a leading `!`.
+    "operator-authorization-from-agent": "R5",
 }
 
 _GIT_PUSH = re.compile(r"(?i)\bgit\s+push\b")
@@ -3741,7 +3791,16 @@ def _categorize(normalized: str, project_root: Path | None = None,
         write_target = _output_flag_target(segment)
         from_output_flag = write_target is not None
 
-    weakened = _protection_weakening(normalized, _argv_tokens(normalized), write_target)
+    argv = _argv_tokens(normalized)
+    operator_verb = _operator_authorize_verb(normalized, argv)
+    if operator_verb is not None:
+        return ("operator-authorization-from-agent", True,
+                [f"`authorize {operator_verb}` opens the operator's password prompt, "
+                 "and an agent's tool call must never raise it",
+                 f"the operator types `! godmode authorize {operator_verb} ...` "
+                 "themselves; an agent records `godmode authorize request` instead"])
+
+    weakened = _protection_weakening(normalized, argv, write_target)
     if weakened is not None:
         return ("protection-weakening", True,
                 [f"weakens Godmode's own protection: {weakened}",
@@ -6263,7 +6322,8 @@ def stage_from_refusal(archive: Any, nth: int = 1, with_digest: bool = False) ->
     # `select`'s 500 cap had the same flaw one level up - a real refusal
     # behind 500 observed ones read as "no refusal is on record".
     records = [record for record in archive.read_events() if record["kind"] == "refusal"]
-    stageable = [record for record in records if not record["data"].get("observed")]
+    stageable = [record for record in records if not record["data"].get("observed")
+                 and record["data"].get("stageable", True)]
     if len(stageable) < nth:
         raise AuthorizationError("No refusal is on record; nothing to stage")
     data = stageable[-nth]["data"]

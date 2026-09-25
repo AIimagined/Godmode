@@ -2972,6 +2972,28 @@ _REMOVAL_SHAPED = frozenset({
 # second copy that could drift from it.
 
 
+OPERATOR_AUTHORIZATION = "operator-authorization-from-agent"
+
+
+def _operator_authorization_reason(operation: str) -> str:
+    """The refusal an agent's own `authorize stage|setup|grant|issue` gets.
+
+    Those verbs open the operator's password dialog. An agent cannot type
+    the password, but it can ask for it, and a prompt raised on an agent's
+    behalf teaches the operator to answer it. The remedy is the operator's
+    own `!` command, which never passes this gate."""
+    found = re.search(r"(?i)\bauthorize\s+(stage|setup|grant|issue)\b", operation)
+    verb = found.group(1).lower() if found else "stage"
+    launcher = (PLUGIN_ROOT / "bin" / "godmode").as_posix()
+    return (
+        f"refused: an agent's tool call may not run `authorize {verb}` - it opens "
+        "the operator's password dialog, in every mode. The operator types it "
+        f'themselves with a leading `!`: `! "{launcher}" authorize {verb} ...` '
+        "(or `! godmode authorize ...` where the launcher is on PATH). To ask for "
+        "an approval, record it instead: `godmode authorize request --operation "
+        '"<command>" --purpose "<why>"`.')
+
+
 def _decision_for(preview: dict[str, Any], attended_flag: bool = True) -> str:
     """`ask` or `deny`, from the tier the classifier already computed.
 
@@ -4803,6 +4825,26 @@ def main(argv: list[str] | None = None) -> int:
                         record_hook_degradation(archive, current_host(), "inline-scan-record-failed")
                     except Exception:  # noqa: BLE001  # godmode: swallow-ok: recording the degradation itself must not raise
                         pass
+        elif preview.get("category") == OPERATOR_AUTHORIZATION:
+            # Refused in every mode: no staged capability, observe mode or
+            # host permission mode turns an agent-raised password prompt
+            # into an allow. Recorded, but never offered to
+            # `--from-last-refusal` - staging this command would be the
+            # same prompt again.
+            preview["allow"] = False
+            preview["decision_override"] = "deny"
+            preview["hard_deny"] = True
+            preview["reason"] = _operator_authorization_reason(operation)
+            try:
+                record_refusal(archive, submitted, OPERATOR_AUTHORIZATION, {
+                    "operation": operation[:500],
+                    "tool": tool or "operation",
+                    "tier": str(preview.get("tier", "R5")),
+                    "category": OPERATOR_AUTHORIZATION,
+                    "stageable": False,
+                })
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: the denial above is already final; recording it is best-effort
+                _report_ancillary_failure(archive)
         elif (ci_gap := tag_push_refusal(operation, Path(anchor.project_root), archive)) is not None:
             # A tag push is a release and CI on the tagged commit is its
             # proof (0.3.20, 2026-09-08: the tag went public with the matrix
@@ -5276,7 +5318,7 @@ def main(argv: list[str] | None = None) -> int:
         # observe mode". The fast gate stays out of this entirely: its allow
         # path was already silent and untouched, and every escalation lands
         # here, where this already applies.
-        if observe and not preview.get("allow", True):
+        if observe and not preview.get("allow", True) and not preview.get("hard_deny"):
             preview = _apply_observe_mode(archive, tool, operation, preview, submitted)
 
         # Sprint 9: what the host said about its OWN boundary, recorded

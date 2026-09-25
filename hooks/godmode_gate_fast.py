@@ -977,6 +977,7 @@ _HARM_LABELS = {
     "recovery-point-destruction": "recovery point deletion",
     "interpreter-opaque-inline": "an interpreter payload naming a harm-class operation",
     "password-in-transcript": "a password typed into the transcript",
+    "operator-authorization-from-agent": "an agent opening the operator's password prompt",
 }
 
 
