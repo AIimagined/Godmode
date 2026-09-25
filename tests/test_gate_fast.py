@@ -20,6 +20,7 @@ import builtins
 import importlib.util
 import json
 import re
+import shutil
 import subprocess
 import os
 import sys
@@ -68,6 +69,26 @@ def payload(command: str, tool: str = "Bash") -> dict[str, Any]:
         "tool_name": tool,
         "tool_input": {"command": command},
     }
+
+
+def _governed_project() -> Path:
+    """A fresh git checkout with its own initialized archive, so a
+    subprocess driven against it is governed no matter whether THIS repo's
+    own checkout has ever run `godmode init` - see `UngovernedProject`
+    below for what an ungoverned checkout does instead (silent allow, no
+    archive touched). Some subprocess smokes below used to run with `cwd`
+    on this checkout, so on a fresh, uninitialized install they fell
+    through that same silent-allow path, and every assertion expecting a
+    real escalation or denial found nothing on stdout instead. The caller
+    owns cleanup (`shutil.rmtree`)."""
+    project = Path(tempfile.mkdtemp(prefix="godmode-gate-fast-project-"))
+    for command in (["init", "-q"], ["config", "user.email", "gate-fast@example.invalid"],
+                    ["config", "user.name", "gate-fast"]):
+        subprocess.run(["git", *command], cwd=project, check=True, capture_output=True)
+    from godmode_runtime.godmode_anchor import resolve_anchor
+    from godmode_runtime.godmode_chronicle import Chronicle
+    Chronicle(resolve_anchor(project)).initialize()
+    return project
 
 
 def _table() -> dict[str, Any]:
@@ -594,14 +615,20 @@ class Adversarial(unittest.TestCase):
         """The exact end-to-end smoke the review asked for: pipe the C1
         payload into the actual script and confirm the full hook's
         refusal JSON appears on stdout, proving escalation - not just the
-        in-process `fast_verdict` call - actually happens."""
-        raw = json.dumps(payload("cat $(rm -rf build)")).encode("utf-8")
-        result = subprocess.run(
-            [sys.executable, str(FAST_GATE)],
-            input=raw, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            cwd=PLUGIN_ROOT, timeout=30,
-        )
-        self.assertIn(b"permissionDecision", result.stdout)
+        in-process `fast_verdict` call - actually happens. Run against a
+        project this test governs itself (see `_governed_project`), not
+        THIS checkout, so it proves the same thing on a fresh install."""
+        project = _governed_project()
+        try:
+            raw = json.dumps(payload("cat $(rm -rf build)")).encode("utf-8")
+            result = subprocess.run(
+                [sys.executable, str(FAST_GATE)],
+                input=raw, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                cwd=project, timeout=30,
+            )
+            self.assertIn(b"permissionDecision", result.stdout)
+        finally:
+            shutil.rmtree(project, ignore_errors=True)
 
 
 class RepeatedVerdicts(unittest.TestCase):
@@ -622,12 +649,13 @@ class EndToEndSmoke(unittest.TestCase):
     """Real subprocess invocations of the fast gate script itself, exactly
     as the host would run it."""
 
-    def _run(self, command: str, tool: str = "Bash") -> subprocess.CompletedProcess[bytes]:
+    def _run(self, command: str, tool: str = "Bash",
+              cwd: Path | None = None) -> subprocess.CompletedProcess[bytes]:
         raw = json.dumps(payload(command, tool=tool)).encode("utf-8")
         return subprocess.run(
             [sys.executable, str(FAST_GATE)],
             input=raw, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            cwd=PLUGIN_ROOT, timeout=30,
+            cwd=cwd or PLUGIN_ROOT, timeout=30,
         )
 
     def test_a_floor_read_exits_silently(self) -> None:
@@ -636,9 +664,18 @@ class EndToEndSmoke(unittest.TestCase):
         self.assertEqual(result.stdout, b"")
 
     def test_a_refused_mutation_escalates_to_the_full_hook(self) -> None:
-        result = self._run("git push --force")
-        self.assertIn(b"permissionDecision", result.stdout)
-        self.assertIn(b"deny", result.stdout)
+        """Run against a project this test governs itself
+        (`_governed_project`), not THIS checkout: a mutation escalates to
+        the full hook only when there is something for it to gate, and a
+        fresh, uninitialized install has nothing under THIS checkout's own
+        `.git` to find."""
+        project = _governed_project()
+        try:
+            result = self._run("git push --force", cwd=project)
+            self.assertIn(b"permissionDecision", result.stdout)
+            self.assertIn(b"deny", result.stdout)
+        finally:
+            shutil.rmtree(project, ignore_errors=True)
 
     def test_empty_stdin_escalates_without_crashing(self) -> None:
         """Empty input carries no `hook_event_name: PreToolUse`, so the full
@@ -744,12 +781,21 @@ class PayloadGrammarParity(unittest.TestCase):
     _DENY = payload("git push --force origin main")
 
     def setUp(self) -> None:
+        # Each test governs its own project (`_governed_project`) rather
+        # than running `cwd` on THIS checkout: `_direct`'s own docstring
+        # notes it used to spawn against the live archive here, and a
+        # fresh, uninitialized install has no archive under THIS
+        # checkout's `.git` for the full hook to gate against at all.
+        self.project = _governed_project()
         # The full hook asks some things once per session (a fresh archive's
         # unread required sources, for one); whichever shape runs first would
         # get that ask instead of a silent allow, so the result depended on
         # which test module used the session before this one. One throwaway
         # call spends those asks before any shape is compared.
         self._direct(json.dumps(self._READ_ONLY).encode("utf-8"))
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.project, ignore_errors=True)
 
     @staticmethod
     def _shapes(base: dict[str, Any]) -> dict[str, bytes]:
@@ -766,12 +812,17 @@ class PayloadGrammarParity(unittest.TestCase):
         # Incident 2026-09-18 (chain fork at sequence 19211): this spawn ran
         # the real hook against the LIVE archive with no isolated state
         # home, racing the installed plugin's own hooks under a different
-        # lock scheme. Every real-hook spawn gets its own state home.
+        # lock scheme. Every real-hook spawn gets its own state home AND
+        # its own governed project (`self.project`, from `setUp`) rather
+        # than THIS checkout - a git project's archive lives under its own
+        # `.git`, which `GODMODE_STATE_HOME` does not redirect, so running
+        # with `cwd` on THIS checkout still reached the live archive (or,
+        # on a fresh install, no archive at all).
         with tempfile.TemporaryDirectory() as state_home:
             return subprocess.run(
                 [sys.executable, str(HOOKS_DIR / "godmode_session_hook.py"), "pre-action"],
                 input=raw, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                cwd=PLUGIN_ROOT, timeout=30,
+                cwd=self.project, timeout=30,
                 env={**os.environ, "GODMODE_STATE_HOME": state_home},
             )
 
@@ -779,7 +830,7 @@ class PayloadGrammarParity(unittest.TestCase):
         return subprocess.run(
             [sys.executable, str(FAST_GATE)],
             input=raw, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            cwd=PLUGIN_ROOT, timeout=30,
+            cwd=self.project, timeout=30,
         )
 
     def test_read_only_command_allows_on_both_stages_for_every_shape(self) -> None:
