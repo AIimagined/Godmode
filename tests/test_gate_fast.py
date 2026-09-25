@@ -387,9 +387,10 @@ class UninitializedGuard(unittest.TestCase):
         self.home = self.base / "state"
 
     def _run(self, command: str, tool: str = "Bash", cwd: Path | None = None,
-             session: str = "s-1", **env: str) -> dict[str, Any] | None:
+             session: str = "s-1", event: str = "PreToolUse",
+             **env: str) -> dict[str, Any] | None:
         cwd = cwd or self.project
-        body = {"hook_event_name": "PreToolUse", "tool_name": tool, "session_id": session,
+        body = {"hook_event_name": event, "tool_name": tool, "session_id": session,
                 "tool_input": {"command": command}, "cwd": str(cwd)}
         done = subprocess.run(
             [sys.executable, "-I", "-B", str(FAST_GATE)], input=json.dumps(body).encode(),
@@ -407,6 +408,11 @@ class UninitializedGuard(unittest.TestCase):
 
     def _grok(self, command: str, **kwargs: Any) -> dict[str, Any] | None:
         return self._run(command, tool="run_terminal_command", GROK_AGENT="1", **kwargs)
+
+    def _no_ask(self, command: str, **kwargs: Any) -> dict[str, Any] | None:
+        # A host whose hook dialect has no `ask` (Gemini's BeforeTool); Grok
+        # gained `ask` and now takes the ask path like Claude.
+        return self._run(command, tool="run_shell_command", event="BeforeTool", **kwargs)
 
     def _write_setting(self, value: str) -> None:
         self.home.mkdir(parents=True, exist_ok=True)
@@ -427,7 +433,9 @@ class UninitializedGuard(unittest.TestCase):
         self._assert_nothing_created()
 
     def test_a_force_push_is_denied_with_the_remedy_on_a_host_without_ask(self) -> None:
-        body = self._grok(self.FORCE_PUSH)
+        # Grok reads `ask` now, so it gets the host prompt, not the deny.
+        self.assertEqual(self._decision(self._grok(self.FORCE_PUSH, session="g")), "ask")
+        body = self._no_ask(self.FORCE_PUSH)
         self.assertEqual(body["decision"], "deny")
         self.assertEqual(body["hookSpecificOutput"]["permissionDecision"], "deny")
         for remedy in ("godmode init", "password", "godmode config set uninitialized off"):
@@ -445,14 +453,14 @@ class UninitializedGuard(unittest.TestCase):
         for command in ("rm -rf ../other", "rm -rf /", "rm ~/notes.txt"):
             with self.subTest(command=command):
                 self.assertEqual(self._decision(self._run(command)), "ask")
-                self.assertEqual(self._decision(self._grok(command, session=command)), "deny")
+                self.assertEqual(self._decision(self._no_ask(command, session=command)), "deny")
 
     def test_a_compound_command_is_judged_by_its_worst_part(self) -> None:
         for command in ("echo x ; git push --force", "echo x && git push --force",
                         "ls | git push --force", "(cd . ; git push --force)"):
             with self.subTest(command=command):
                 self.assertEqual(self._decision(self._run(command)), "ask")
-                self.assertEqual(self._decision(self._grok(command, session=command)), "deny")
+                self.assertEqual(self._decision(self._no_ask(command, session=command)), "deny")
 
     def test_releases_and_history_rewrites_ask(self) -> None:
         for command in ("npm publish", "gh release create v1", "git reset --hard HEAD~3",
@@ -464,6 +472,7 @@ class UninitializedGuard(unittest.TestCase):
         self._write_setting("off")
         self.assertIsNone(self._run(self.FORCE_PUSH))
         self.assertIsNone(self._grok(self.FORCE_PUSH))
+        self.assertIsNone(self._no_ask(self.FORCE_PUSH))
 
     def test_repository_off_is_silent_in_that_repository_only(self) -> None:
         with (self.project / ".git" / "config").open("a", encoding="utf-8") as handle:
@@ -489,7 +498,7 @@ class UninitializedGuard(unittest.TestCase):
                         "echo {} > ~/.godmode/godmode-settings.json"):
             with self.subTest(command=command):
                 self.assertEqual(self._decision(self._run(command)), "ask")
-                self.assertEqual(self._decision(self._grok(command, session=command)), "deny")
+                self.assertEqual(self._decision(self._no_ask(command, session=command)), "deny")
 
     def test_an_edit_of_the_repository_config_is_asked_about(self) -> None:
         body = {"hook_event_name": "PreToolUse", "tool_name": "Write",
