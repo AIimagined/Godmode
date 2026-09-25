@@ -202,6 +202,66 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, check=False)
 
 
+_TEST_MODULE_PATH = re.compile(r"^tests/test_[^/]+\.py$")
+_TEST_FUNC_DEF = re.compile(r"^\s*def test_")
+
+
+def _suite_size(repo: Path, ref: str) -> tuple[int, int] | None:
+    """(module count, `def test_` count) of `tests/test_*.py` at `ref`.
+    None when `ref` cannot be read at all - no such ref (no tag yet), a
+    shallow clone missing it, or git itself unavailable - so the caller
+    reports nothing rather than a crash or a made-up zero."""
+    listing = _git(repo, "ls-tree", "-r", "--name-only", ref, "--", "tests")
+    if listing.returncode != 0:
+        return None
+    paths = [p for p in listing.stdout.decode("utf-8", errors="replace").splitlines()
+             if _TEST_MODULE_PATH.match(p)]
+    functions = 0
+    for path in paths:
+        shown = _git(repo, "show", f"{ref}:{path}")
+        if shown.returncode != 0:
+            continue
+        text = shown.stdout.decode("utf-8", errors="replace")
+        functions += sum(1 for line in text.splitlines() if _TEST_FUNC_DEF.match(line))
+    return len(paths), functions
+
+
+def suite_growth_finding(repo: Path) -> dict[str, str] | None:
+    """How much `tests/test_*.py` grew - module count and `def test_`
+    count - since the previous release tag (`git describe --tags
+    --abbrev=0` .. HEAD). None (report nothing) with no previous tag, an
+    unreadable ref, or git unavailable - this check never fails a
+    preflight on its own absence. A finding only past 10% growth on
+    either count over its own previous count; whether it blocks is the
+    caller's call (advise: informational; strict: a finding)."""
+    described = _git(repo, "describe", "--tags", "--abbrev=0")
+    if described.returncode != 0:
+        return None
+    tag = described.stdout.decode("utf-8", errors="replace").strip()
+    if not tag:
+        return None
+    before = _suite_size(repo, tag)
+    after = _suite_size(repo, "HEAD")
+    if before is None or after is None:
+        return None
+    before_modules, before_functions = before
+    after_modules, after_functions = after
+    added_modules = after_modules - before_modules
+    added_functions = after_functions - before_functions
+    module_growth = (added_modules / before_modules) if before_modules else None
+    function_growth = (added_functions / before_functions) if before_functions else None
+    if not ((module_growth is not None and module_growth > 0.10)
+            or (function_growth is not None and function_growth > 0.10)):
+        return None
+    return {
+        "check": "suite-growth",
+        "detail": (f"tests grew from {before_modules} module(s)/{before_functions} "
+                   f"function(s) at {tag} to {after_modules}/{after_functions} at HEAD "
+                   f"({added_modules:+d} module(s), {added_functions:+d} function(s)) - "
+                   "over 10% growth since the previous release"),
+    }
+
+
 def _term_list(repo: Path) -> Path | None:
     override = os.environ.get("GODMODE_COVERAGE_TERMS")
     if override:
@@ -988,6 +1048,16 @@ def push_preflight(project: Path | str,
             judgment.extend(falsifier_stale_findings(archive))
         except Exception:  # noqa: BLE001  # godmode: swallow-ok: a scan that cannot run is named in skipped, never a gate crash
             skipped.append("falsifier-aging scan: unavailable")
+        # Suite growth: tests/test_*.py modules and `def test_` functions
+        # added since the previous release tag - a quality signal, not
+        # harm, so it rides the same archive-scan slice and the same
+        # mode-severity rule below as every other check in it.
+        try:
+            growth = suite_growth_finding(repo)
+            if growth is not None:
+                judgment.append(growth)
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: a scan that cannot run is named in skipped, never a gate crash
+            skipped.append("suite-growth scan: unavailable")
         # NS-12e: a finding's class matched against a recorded pattern's
         # subject - the workaround named the last time this class fired,
         # so a recurring failure is not rediscovered from scratch.

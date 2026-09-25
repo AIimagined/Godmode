@@ -13,6 +13,7 @@ for extra in (PLUGIN_ROOT / "scripts", PLUGIN_ROOT / "tests"):
         sys.path.insert(0, str(extra))
 
 from godmode_runtime.godmode_preflight import (preflight_gate, shard_modules,  # noqa: E402
+                                              suite_growth_finding,
                                               workflow_gate_commands)
 from test_godmode_runtime import isolated_project  # noqa: E402
 
@@ -119,6 +120,136 @@ class RemoteRefTests(unittest.TestCase):
             self.assertEqual(_remote_ref(project), "")
             subprocess.run(git + ["update-ref", "refs/remotes/origin/main", "HEAD"], check=True, capture_output=True)
             self.assertEqual(_remote_ref(project), "origin/main")
+
+
+def _write_test_module(project: Path, name: str, count: int) -> None:
+    (project / "tests").mkdir(exist_ok=True)
+    body = "\n\n".join(f"def test_{i}():\n    pass" for i in range(count)) + "\n"
+    (project / "tests" / f"test_{name}.py").write_text(body, encoding="utf-8")
+
+
+def _commit(project: Path, message: str) -> None:
+    subprocess.run(["git", "add", "-A"], cwd=project, check=True, capture_output=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", message],
+                   cwd=project, check=True, capture_output=True)
+
+
+class SuiteGrowthFindingTests(unittest.TestCase):
+    """Release check: how much `tests/test_*.py` grew (modules, `def
+    test_` functions) since `git describe --tags --abbrev=0` .. HEAD.
+    Reports nothing with no previous tag; a finding only past 10% growth
+    over the previous count."""
+
+    def test_no_previous_tag_reports_nothing(self) -> None:
+        with isolated_project() as (project, _s, _a, _archive):
+            subprocess.run(["git", "init", "-q"], cwd=project, check=True, capture_output=True)
+            _write_test_module(project, "a", 5)
+            _commit(project, "seed")
+            self.assertIsNone(suite_growth_finding(project))
+
+    def test_git_unavailable_reports_nothing(self) -> None:
+        # Not a git repository at all: `git describe` fails the same way
+        # a missing git binary would for this check's purposes.
+        with isolated_project() as (project, _s, _a, _archive):
+            self.assertIsNone(suite_growth_finding(project))
+
+    def test_growth_under_ten_percent_reports_nothing(self) -> None:
+        with isolated_project() as (project, _s, _a, _archive):
+            subprocess.run(["git", "init", "-q"], cwd=project, check=True, capture_output=True)
+            _write_test_module(project, "a", 20)
+            _commit(project, "seed")
+            subprocess.run(["git", "tag", "v1.0.0"], cwd=project, check=True, capture_output=True)
+            _write_test_module(project, "a", 21)  # +1 of 20 = 5%
+            _commit(project, "one more test")
+            self.assertIsNone(suite_growth_finding(project))
+
+    def test_growth_over_ten_percent_is_a_finding(self) -> None:
+        with isolated_project() as (project, _s, _a, _archive):
+            subprocess.run(["git", "init", "-q"], cwd=project, check=True, capture_output=True)
+            _write_test_module(project, "a", 10)
+            _commit(project, "seed")
+            subprocess.run(["git", "tag", "v1.0.0"], cwd=project, check=True, capture_output=True)
+            _write_test_module(project, "a", 13)  # +3 of 10 = 30%
+            _commit(project, "more tests")
+            finding = suite_growth_finding(project)
+            self.assertIsNotNone(finding)
+            self.assertEqual(finding["check"], "suite-growth")
+            self.assertIn("v1.0.0", finding["detail"])
+
+    def test_a_new_test_module_alone_can_cross_the_threshold(self) -> None:
+        with isolated_project() as (project, _s, _a, _archive):
+            subprocess.run(["git", "init", "-q"], cwd=project, check=True, capture_output=True)
+            _write_test_module(project, "a", 10)
+            _commit(project, "seed")
+            subprocess.run(["git", "tag", "v1.0.0"], cwd=project, check=True, capture_output=True)
+            _write_test_module(project, "b", 5)
+            _commit(project, "new module")
+            finding = suite_growth_finding(project)
+            self.assertIsNotNone(finding)
+
+
+class SuiteGrowthProjectModeTests(unittest.TestCase):
+    """R1 "enforce harm, advise on quality" as it lands on the suite-growth
+    check: past-10% growth is informational in the default advise mode
+    and a real finding in strict mode - the same rule the rest of the
+    archive-scan slice already follows."""
+
+    def _repo_over_threshold(self, project: Path) -> None:
+        subprocess.run(["git", "init", "-q"], cwd=project, check=True, capture_output=True)
+        _write_test_module(project, "a", 10)
+        _commit(project, "seed")
+        subprocess.run(["git", "tag", "v1.0.0"], cwd=project, check=True, capture_output=True)
+        _write_test_module(project, "a", 13)
+        _commit(project, "more tests")
+
+    def test_advise_mode_reports_growth_as_advisory(self) -> None:
+        from unittest import mock
+
+        from godmode_runtime.godmode_preflight import push_preflight
+
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            self._repo_over_threshold(project)
+            archive.append("assumption", "the bed assumes nothing moves", {"detail": "test fixture"})
+            with mock.patch("godmode_runtime.godmode_reach.reach_finding", return_value=None):
+                report = push_preflight(project, archive=archive)
+            findings = [j for j in report["judgment"] if j.get("check") == "suite-growth"]
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].get("severity"), "advisory")
+
+    def test_strict_mode_leaves_the_growth_finding_blocking(self) -> None:
+        from unittest import mock
+
+        from godmode_runtime.godmode_preflight import push_preflight
+        from godmode_runtime.godmode_projectmode import set_project_mode
+
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            self._repo_over_threshold(project)
+            archive.append("assumption", "the bed assumes nothing moves", {"detail": "test fixture"})
+            set_project_mode(archive, "strict")
+            with mock.patch("godmode_runtime.godmode_reach.reach_finding", return_value=None):
+                report = push_preflight(project, archive=archive)
+            findings = [j for j in report["judgment"] if j.get("check") == "suite-growth"]
+            self.assertEqual(len(findings), 1)
+            self.assertNotEqual(findings[0].get("severity"), "advisory")
+            self.assertEqual(report["verdict"], "findings")
+
+    def test_no_tag_yields_no_finding_either_mode(self) -> None:
+        from unittest import mock
+
+        from godmode_runtime.godmode_preflight import push_preflight
+
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            subprocess.run(["git", "init", "-q"], cwd=project, check=True, capture_output=True)
+            _write_test_module(project, "a", 10)
+            _commit(project, "seed")
+            archive.append("assumption", "the bed assumes nothing moves", {"detail": "test fixture"})
+            with mock.patch("godmode_runtime.godmode_reach.reach_finding", return_value=None):
+                report = push_preflight(project, archive=archive)
+            findings = [j for j in report["judgment"] if j.get("check") == "suite-growth"]
+            self.assertEqual(findings, [])
 
 
 class AttestationSemanticsTests(unittest.TestCase):
