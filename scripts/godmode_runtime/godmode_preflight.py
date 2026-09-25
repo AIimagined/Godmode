@@ -755,6 +755,17 @@ def push_preflight(project: Path | str,
             import shlex
             suite = shlex.split(suite[0])
         suite_designated = bool(suite)
+        if suite:
+            # This IS the release check (the once-per-release full run, or
+            # its CI-gate equivalent): the suite it runs is the whole
+            # designated command, not a developer's routine local pass, so
+            # `tests/_slow.py`-gated modules (subprocess-heavy; skipped by
+            # default so `python -m unittest discover` stays fast) belong
+            # in it. `aliased_temp_environment()` below copies `os.environ`
+            # (or, when it returns None, the child inherits it directly),
+            # so setting it here reaches both the sharded and single-process
+            # runs.
+            os.environ["GODMODE_RUN_SLOW"] = "1"
         if suite and (shards_total > 1 or shard_index is not None) and "discover" in " ".join(suite):
             # One process over 3,400 tests is killed for memory on the
             # reference machine; N sequential shards finish. Each shard's
