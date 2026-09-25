@@ -5755,15 +5755,32 @@ def cmd_authorize_stage(args: argparse.Namespace, runtime: Runtime) -> CommandRe
                                {"reason": str(args.without_preflight)[:200], "operation": operation[:120]},
                                evidence=[])
     broker = CapabilityBroker(runtime.archive)
-    password = read_password_stdin() if args.password_stdin else None
-    if password is None:
-        from .godmode_sentinel import _require_tty
+    if args.password_stdin:
+        password = read_password_stdin()
+    else:
+        # A terminal prompts; without one (a chat's `!` prefix) a native
+        # password dialog shows the exact command and its scope. The dialog
+        # path takes no password from stdin or arguments: a human types it.
+        from .godmode_errors import AuthorizationError
+        from .godmode_sentinel import read_approval_password
 
-        _require_tty()
-        import getpass
-
-        password = getpass.getpass("Godmode authorization password: ")
-    broker.stage(operation, password, args.ttl, operation_digest=staged_digest)
+        if not broker.configured():
+            # Before any dialog opens: a password nobody can check is not asked for.
+            raise AuthorizationError("Run `authorize setup` before issuing capabilities")
+        password = read_approval_password(
+            operation, broker.stage_ttl_seconds(args.ttl),
+            staged_digest or classify_action(operation)["operation_digest"])
+        if password is None:
+            return CommandResult({
+                "staged": False,
+                "cancelled": True,
+                "operation": operation,
+                "note": "the password dialog was cancelled; nothing was staged",
+            }, exit_code=1)
+    try:
+        broker.stage(operation, password, args.ttl, operation_digest=staged_digest)
+    finally:
+        password = None
     preview = classify_action(operation)
     return CommandResult({
         "staged": True,

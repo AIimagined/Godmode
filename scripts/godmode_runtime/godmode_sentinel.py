@@ -77,6 +77,31 @@ def _require_tty() -> None:
         )
 
 
+def read_approval_password(operation: str, ttl_seconds: int,
+                           digest: str | None = None) -> str | None:
+    """The password for staging `operation`, from wherever a human can type it.
+
+    A terminal prompts as before. Without one - a chat's `!` prefix - a native
+    password dialog opens showing the exact command and its scope; the typed
+    password comes straight back into this process, never through the chat,
+    argv or the environment. None means the operator cancelled. Only when no
+    dialog can be shown does the old "use a separate terminal" refusal stand.
+    """
+    if _stdin_is_interactive():
+        import getpass
+
+        print(f"Staging (one use, expires in {ttl_seconds} seconds): {operation}",
+              file=sys.stderr)
+        return getpass.getpass("Godmode authorization password: ")
+    from .godmode_passdialog import DialogUnavailable, approval_message, ask_password
+
+    try:
+        return ask_password(approval_message(operation, ttl_seconds, digest))
+    except DialogUnavailable:
+        _require_tty()
+        raise
+
+
 def read_password_stdin() -> str:
     password = sys.stdin.readline().rstrip("\r\n")
     if not password:
@@ -5780,6 +5805,14 @@ class CapabilityBroker:
     def _store(self, data: dict[str, Any]) -> None:
         _atomic_json(self.path, data)
 
+    def stage_ttl_seconds(self, ttl_seconds: int | None = None) -> int:
+        """The lifetime `issue` will give a capability, shown before the
+        password is asked for so the approval names its real expiry."""
+        if ttl_seconds is None:
+            ttl_seconds = self._policy().get("capability_ttl_seconds", _DEFAULT_TTL_SECONDS)
+        return ttl_seconds if attended() else max(
+            _EXPLICIT_TTL_FLOOR_SECONDS, halved_ttl_seconds(ttl_seconds))
+
     def stage(
         self, operation: str, password: str, ttl_seconds: int | None = None,
         operation_digest: str | None = None,
@@ -6184,7 +6217,7 @@ def stage_hint(plugin_root: Path | str) -> str:
     posix_launcher = root / "bin" / "godmode"
     hint = (
         f'Stage it: `! "{posix_launcher.as_posix()}" authorize stage '
-        '--from-last-refusal` (Claude prompt / bash)'
+        '--from-last-refusal` (Claude prompt / bash; opens a password dialog)'
     )
     if os.name == "nt":
         cmd_launcher = root / "bin" / "godmode.cmd"

@@ -46,6 +46,28 @@ apply regardless of which session or agent is doing the work.
   can answer for itself, so a configured password - not the prompt - is
   the real boundary.
 
+## Approving a protected call from the chat
+
+When the gate refuses a protected call, the refusal names one command to
+type at the chat prompt: `! "<plugin>/bin/godmode" authorize stage
+--from-last-refusal`. The chat's `!` prefix has no terminal for a hidden
+prompt, so `authorize stage` opens a native password dialog instead:
+
+- Windows: the system credential prompt (CredUI), shown in-process.
+- macOS: an `osascript` dialog with a hidden answer.
+- Linux desktop: `zenity`, else `kdialog`.
+
+The dialog shows the exact command, that the approval is spent once, and
+when it expires. The password goes from the dialog straight into the
+approval check in the same process: it is never in the chat, the
+transcript, a command line or the environment. Dialog programs are taken
+from the system directories, not from `PATH`. The dialog path reads no
+password from standard input or arguments, so only a person typing into it
+can approve. A wrong password is refused as before; Cancel stages nothing.
+In a real terminal the hidden terminal prompt is used as before; with no
+terminal and no dialog (a headless machine), the command says to run it in
+a separate terminal window. Which calls need approval is unchanged.
+
 ## Unattended gating policy
 
 Every gate decision applies one of two rows, depending on whether an
