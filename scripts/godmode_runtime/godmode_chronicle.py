@@ -955,7 +955,34 @@ class Chronicle:
         if self.config.exists():
             existing = self._read_json(self.config)
             if existing.get("project_key") != self.anchor.project_key:
-                raise ArchiveError("Archive identity does not match this project")
+                # Row 12 (limits-0.3.29.md #13): the check itself stays
+                # exactly as strict as before - fail-closed, an exact match
+                # only, never widened to accepted_keys() (which trivially
+                # contains `self.anchor.project_key` by construction and so
+                # cannot be used to loosen THIS comparison without making it
+                # vacuous). What changed is the message: a moved or copied
+                # checkout - the archive travels with it when it lives
+                # inside `.git`, but its stamped identity does not - used to
+                # get a bare "does not match", naming neither key nor a next
+                # step. Both keys are named now, and the archive's own
+                # `adopted_keys` (already how a genuinely relinked archive
+                # is recognized) is checked directly, rather than via a
+                # helper whose trivial self-inclusion would defeat the
+                # point of asking.
+                adopted = existing.get("adopted_keys")
+                already_adopted = isinstance(adopted, list) and self.anchor.project_key in adopted
+                if not already_adopted:
+                    raise ArchiveError(
+                        "Archive identity does not match this project: "
+                        f"recorded {existing.get('project_key')!r}, this "
+                        f"checkout resolves {self.anchor.project_key!r}. If "
+                        "this checkout was moved or copied together with its "
+                        "archive, that is the born identity drifting, not "
+                        "tampering - `godmode doctor` names what this "
+                        "project currently resolves to; `godmode adopt "
+                        "--confirm` relinks a separate, stranded archive "
+                        "from a previous identity, not this same one."
+                    )
             if existing.get("schema_version") != SCHEMA_VERSION:
                 raise ArchiveError("Archive schema requires an explicit migration")
             refreshed = dict(existing)
@@ -1942,6 +1969,27 @@ class Chronicle:
                 # that happens to start above 1 - the hot tier right after a
                 # cold rotation - still hands the loop the right starting
                 # point below.
+                #
+                # Row 12 (limits-0.3.29.md #13): unchanged stat identity
+                # proves these bytes still match what the index recorded -
+                # it says nothing about which PROJECT wrote them. Skipping
+                # the identity check here let a record whose project_key
+                # is not one of this archive's accepted_keys() ride the
+                # trusted prefix straight past the exact check the tail
+                # enforces below, so a verdict depended on how much of the
+                # archive the index happened to cover. Cheap enough (a set
+                # lookup, no hashing) to run unconditionally without
+                # undoing what the index actually accelerates: the hash
+                # work, not this.
+                if record.get("project_key") not in self.accepted_keys():
+                    if path_at is not None:
+                        path = path_at(position)
+                    else:
+                        paths = self.event_paths()
+                        path = paths[position] if position < len(paths) else None
+                    return self._broken(
+                        position, len(records), previous, record.get("sequence"),
+                        path, '"project_key"', "record project identity mismatch")
                 previous = record["record_hash"]
                 expected_sequence = _sequence_of(record) + 1
                 continue
