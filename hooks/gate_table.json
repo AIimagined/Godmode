@@ -41,7 +41,9 @@
     "date",
     "basename",
     "dirname",
-    "realpath"
+    "realpath",
+    "nl",
+    "column"
   ],
   "mutation_heads": {
     "filesystem-mutation": [

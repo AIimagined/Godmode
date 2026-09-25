@@ -164,6 +164,9 @@ _READ_HEADS = [
     # generation time exactly like the originals - a wrong guess fails the
     # build loudly, not the table silently.
     "rev", "date", "basename", "dirname", "realpath",
+    # Pipeline filters with no output-file flag. `tee` (writes the files it
+    # names) and `xargs` (runs a command) are deliberately not here.
+    "nl", "column",
 ]
 
 # --- git_ask / git_refuse: curated candidates, bucketed by the sentinel's

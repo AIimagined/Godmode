@@ -30,6 +30,7 @@ from .godmode_fingerprint import (
     seq_cite_resolves,
     tree_fingerprint,
 )
+from .godmode_parseview import _xargs_command
 from .godmode_sentinel import shell_segments
 from .godmode_session_log import command_digest
 
@@ -2198,11 +2199,20 @@ def stale_claims(archive: Chronicle, project: Path, limit: int = 500) -> list[di
 # reshaping state is not a verdict about it, so every head here except the
 # search family caps a claim at observed. Adding a head here therefore
 # tightens both paths at once - see `_reports_state`.
+#
+# `tee` belongs here: it copies its input and exits on its own success, so a
+# run piped into it reports tee's exit code. `xargs` does not: its exit code
+# is the command it runs (123 when any run fails), so an `xargs` stage is
+# judged by that command instead (`_head_and_rest`). PowerShell's object
+# cmdlets reshape a pipeline and set no exit code of their own.
 _FILTER_HEADS = frozenset({
     "grep", "rg", "egrep", "fgrep", "ag", "echo", "printf", "cat", "head", "tail", "wc",
     "sort", "uniq", "cut", "tr", "awk", "sed", "ls", "find", "test", "[", "true", "false",
     "type", "which", "where", "stat", "file", "less", "more", "jq", "select-string",
     "get-content", "findstr", "write-output", "write-host",
+    "tee", "nl", "column", "rev",
+    "select-object", "sort-object", "group-object", "measure-object", "where-object",
+    "tee-object", "format-table", "format-list", "out-string", "out-host",
 })
 
 
@@ -2244,6 +2254,11 @@ def _head_and_rest(stage: str) -> tuple[str, list[str]]:
     head = tokens[0].replace("\\", "/").split("/")[-1].lower()
     if head.endswith(".exe"):
         head = head[:-4]
+    if head == "xargs":
+        # The command xargs runs decides its exit code; a bare `xargs`
+        # runs `echo`.
+        command = _xargs_command(stage.split("xargs", 1)[1])
+        return _head_and_rest(command) if command else ("echo", [])
     return head, tokens[1:]
 
 

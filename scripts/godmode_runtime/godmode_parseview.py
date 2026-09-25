@@ -1023,6 +1023,77 @@ def pty_wrapped(segment: str) -> str | None:
         remaining = after
 
 
+# `xargs` options that take the next word as their value.
+_XARGS_VALUED = frozenset({"-I", "-n", "-L", "-P", "-d", "-E", "-s", "-a",
+                           "--arg-file", "--delimiter", "--max-args", "--max-lines",
+                           "--max-procs", "--max-chars", "--eof", "--replace"})
+
+
+def _xargs_command(text: str) -> str | None:
+    """The command `xargs` runs, as written after its own options. A bare
+    `xargs` runs `echo`, which needs no reading."""
+    remaining = text
+    while True:
+        stripped = remaining.lstrip()
+        word, after = _leading_word(stripped)
+        if not word:
+            return None
+        if word == "--":
+            return after.strip() or None
+        if not word.startswith("-"):
+            return stripped
+        remaining = after
+        if word in _XARGS_VALUED:
+            _value, remaining = _leading_word(remaining.lstrip())
+
+
+def _tee_readings(program: str, rest: str) -> list[str]:
+    """A write to each file `tee` or `Tee-Object` names, spelled as a
+    redirect, so where it lands is judged the way a `>` is."""
+    try:
+        tokens = shlex.split(rest, posix=True)
+    except ValueError:
+        return []
+    targets: list[str] = []
+    append = False
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        lowered = token.lower()
+        if program == "tee":
+            if token == "--":
+                targets.extend(tokens[index + 1:])
+                break
+            if token.startswith("-") and len(token) > 1:
+                append = append or token == "--append" or (
+                    not token.startswith("--") and "a" in token[1:])
+            else:
+                targets.append(token)
+            index += 1
+            continue
+        # Tee-Object: -FilePath / -LiteralPath (any unambiguous prefix, and
+        # -Path), -Append, -Variable (a variable, not a file).
+        if lowered.startswith("-"):
+            name = lowered[1:].split(":", 1)[0]
+            if name and ("filepath".startswith(name) or "literalpath".startswith(name)
+                         or name == "path"):
+                if index + 1 < len(tokens):
+                    targets.append(tokens[index + 1])
+                index += 2
+                continue
+            if len(name) > 1 and "variable".startswith(name):
+                index += 2
+                continue
+            if len(name) > 1 and "append".startswith(name):
+                append = True
+            index += 1
+            continue
+        targets.append(token)
+        index += 1
+    operator = ">>" if append else ">"
+    return [f"echo {operator} {shlex.quote(target)}" for target in targets if target]
+
+
 # Heads whose next positional word selects what they do, so quoting that
 # word hides the operation from a head-and-subcommand rule.
 _SUBCOMMAND_HEADS = frozenset({
@@ -1121,6 +1192,13 @@ def command_readings(segment: str) -> list[str]:
         reading, _opaque = _start_process_reading(rest)
         if reading:
             readings.append(reading)
+    program = _program_name(value).lower() if value is not None else ""
+    if program in ("tee", "tee-object"):
+        readings.extend(_tee_readings(program, rest))
+    if program == "xargs":
+        command = _xargs_command(rest)
+        if command:
+            readings.append(command)
     wrapped = pty_wrapped(segment)
     if wrapped:
         readings.append(wrapped)

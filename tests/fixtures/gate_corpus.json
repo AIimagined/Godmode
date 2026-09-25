@@ -1492,5 +1492,61 @@
     "class": "by-design",
     "tool": "Bash",
     "note": "near-miss: a timed read stays a read"
+  },
+  {
+    "operation": "cat notes.md | tee /etc/hosts",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "tee writes the files it names; a write outside the tree is judged like a redirect"
+  },
+  {
+    "operation": "cat notes.md | tee -a ~/.bashrc",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "tee -a appends to a file outside the tree"
+  },
+  {
+    "operation": "git log --oneline | tee log.txt",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: tee into the working tree stays free"
+  },
+  {
+    "operation": "Get-ChildItem | Tee-Object -FilePath C:/Windows/x.txt",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "Tee-Object writes its file"
+  },
+  {
+    "operation": "Get-ChildItem | Sort-Object Name | Select-Object -First 3 | Out-String",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "near-miss: object cmdlets reshaping a pipeline stay free"
+  },
+  {
+    "operation": "ls | xargs -n1 $'git' reset --hard",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "xargs is judged by the command it runs"
+  },
+  {
+    "operation": "ls | xargs wc -l",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: xargs running a read"
+  },
+  {
+    "operation": "cat notes.md | nl | column -t | rev",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: reshaping filters stay free"
   }
 ]
