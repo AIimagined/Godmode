@@ -6,11 +6,11 @@
       "trigger": "always",
       "verify": "none"
     },
-    "R-1b73eb11ad": {
+    "R-20491c95b3": {
       "enforcement": "ADVISORY",
-      "text_hash": "c51492baf0bc64c2",
-      "trigger": "before_completion",
-      "verify": "second_probe_cited"
+      "text_hash": "7cc2e8241e44782b",
+      "trigger": "always",
+      "verify": "none"
     },
     "R-2259c5b00c": {
       "enforcement": "HARD",
