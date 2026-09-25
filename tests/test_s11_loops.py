@@ -328,10 +328,15 @@ class HostAwareGuideTests(unittest.TestCase):
         return done.stdout
 
     def test_a_no_ask_host_sees_deny_not_ask(self) -> None:
-        text = self._guide({"GROK_PLUGIN_ROOT": "C:/x"})
+        text = self._guide({"COPILOT_PLUGIN_DATA": "C:/x"})
         self.assertIn("HAS NO ASK", text)
         self.assertIn("authorize stage", text)
         self.assertNotIn("WHAT ASKS FIRST", text)
+
+    def test_grok_now_reads_ask(self) -> None:
+        text = self._guide({"GROK_PLUGIN_ROOT": "C:/x"})
+        self.assertIn("WHAT ASKS FIRST", text)
+        self.assertNotIn("HAS NO ASK", text)
 
     def test_an_ask_host_keeps_the_dialog_line(self) -> None:
         text = self._guide({"CLAUDE_CODE_ENTRYPOINT": "cli"})
