@@ -5680,7 +5680,7 @@ class CapabilityBroker:
         anchor = getattr(self.archive, "anchor", None)
         root = getattr(anchor, "project_root", None)
         policy = self._policy()
-        return classify_action(
+        classification = classify_action(
             operation, extra_protected=policy.get("password_required", ()),
             project_root=Path(root) if root else None,
             archive=self.archive,
@@ -5688,6 +5688,17 @@ class CapabilityBroker:
             require_approval=policy.get("approval_required", ()),
             inline_scan=policy.get("inline_interpreter", "scan") == "scan",
         )
+        if not classification["protected"] and root:
+            # An edit onto a declared design surface is refused outright at
+            # the tool boundary, so it is exactly what the password moves:
+            # staging it must not answer "read-only inspection".
+            surface = design_surface_of(operation, Path(root))
+            if surface is not None:
+                classification = dict(
+                    classification, protected=True, category=DESIGN_BOUNDARY_EDIT,
+                    tier="R3",
+                    impact=[f"a declared design surface: {surface}"])
+        return classification
 
     def _mint_context(self) -> dict[str, str]:
         """Identity a capability binds to at mint time.
@@ -6246,6 +6257,42 @@ def explain_policy(archive: Any) -> dict[str, Any]:
 
 def local_authorization_policy(archive: Any) -> dict[str, Any]:
     return CapabilityBroker(archive)._policy()  # noqa: SLF001
+
+
+DESIGN_BOUNDARY_EDIT = "design-boundary-edit"
+
+
+def design_surface_of(operation: str, project_root: Path) -> str | None:
+    """The project-relative path an `edit file <path>` / `write file <path>`
+    operation lands on when `.godmode-boundaries.json` declares it a design
+    surface, else None. The hook refuses such an edit outright; this is what
+    lets the operator's staged approval for it exist and be spent."""
+    edit = _TOOL_FILE_EDIT.match(operation.strip())
+    if not edit:
+        return None
+    from .godmode_fence import design_verdict
+
+    verdict = design_verdict(project_root, edit.group("path").strip().strip("\"'"))
+    return None if verdict["allowed"] else str(verdict["path"])
+
+
+def design_edit_operation(relative: str) -> str:
+    """The one operation text a design-surface approval is staged and spent
+    under, whichever writer (Edit, Write, a skill command) reaches the path."""
+    return f"edit file {relative}"
+
+
+def stage_operation_hint(plugin_root: Path | str, operation: str) -> str:
+    """`stage_hint` for one named operation rather than the last refusal:
+    the operator's own runnable command, both launcher forms."""
+    root = Path(plugin_root).resolve()
+    quoted = json.dumps(operation, ensure_ascii=False)
+    hint = (f'`! "{(root / "bin" / "godmode").as_posix()}" authorize stage '
+            f'--operation {quoted}` (Claude prompt / bash; opens a password dialog)')
+    if os.name == "nt":
+        hint += (f' or `& "{root / "bin" / "godmode.cmd"}" authorize stage '
+                 f'--operation {quoted}` (PowerShell)')
+    return hint
 
 
 def stage_hint(plugin_root: Path | str) -> str:

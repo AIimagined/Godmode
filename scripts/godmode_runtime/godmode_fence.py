@@ -37,7 +37,13 @@ from .godmode_errors import ArchiveError
 from .godmode_loop import _git
 from .godmode_paths import contain
 from .godmode_plan import APPROVED
-from .godmode_sentinel import POLICY_FILENAME, _pinned_evaluator_hit, declared_gate_ratchet
+from .godmode_sentinel import (
+    POLICY_FILENAME, _pinned_evaluator_hit, declared_gate_ratchet, design_edit_operation,
+    stage_operation_hint,
+)
+
+# The running plugin's own root, for a remedy the operator can run as printed.
+_PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 
 # Patterns are separated by commas or newlines so a contract field can be
 # written either way round without the author having to know which.
@@ -334,9 +340,9 @@ def design_verdict(project_root: Path | str, path: str) -> dict[str, Any]:
         "path": relative,
         "detail": f"'{relative}' is a declared design surface; the look of this product "
                   "is a decision somebody made, not a defect to be improved in passing",
-        "remedy": "have the operator authorise this exact edit: `godmode authorize stage "
-                  f"--operation {json.dumps('Edit ' + relative)}` - it needs the password "
-                  "from `godmode authorize setup`, is spent once, and expires",
+        "remedy": "the operator authorises this exact edit with the password from "
+                  "`godmode authorize setup` - spent once, and it expires: "
+                  + stage_operation_hint(_PLUGIN_ROOT, design_edit_operation(relative)),
     }
 
 

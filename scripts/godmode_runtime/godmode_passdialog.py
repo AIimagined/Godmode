@@ -151,9 +151,11 @@ def _run_pipe_dialog(backend: str, program: str, message: str) -> str | None:
         for index in range(len(buffer)):
             buffer[index] = 0
         for stream in (process.stdout, process.stderr):
+            if stream is None:
+                continue
             try:
                 stream.close()
-            except (OSError, AttributeError):
+            except OSError:  # godmode: swallow-ok: the dialog's answer is already read and the buffer zeroed; a pipe that fails to close leaks nothing the caller could act on
                 pass
 
 

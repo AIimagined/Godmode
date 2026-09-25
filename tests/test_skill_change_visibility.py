@@ -14,6 +14,8 @@ import contextlib
 import io
 import json
 import os
+import re
+import shlex
 import subprocess
 import sys
 import unittest
@@ -245,6 +247,67 @@ class BoundaryLockTests(unittest.TestCase):
         self.assertNotEqual(wrong[0], 0, wrong[1])
         self.assertEqual(right[0], 0, right[1])
         self.assertEqual(right[1]["lifecycle"], "deprecated")
+
+
+_REMEDY = re.compile(r'`! "(?P<launcher>[^"]+)" (?P<command>authorize stage --operation "[^"]+")`')
+
+
+def _stage_as_printed(test: unittest.TestCase, project: Path, refusal: str) -> str:
+    """Run the staging command a refusal names, exactly as printed, with the
+    password typed on stdin the way the other authorize tests supply it."""
+    match = _REMEDY.search(refusal)
+    test.assertIsNotNone(match, refusal)
+    test.assertTrue(Path(match["launcher"]).is_file(), match["launcher"])
+    code, staged, err = _run(project, *shlex.split(match["command"]), "--password-stdin",
+                             stdin=PASSWORD + "\n")
+    test.assertEqual(code, 0, (staged, err))
+    test.assertTrue(staged["staged"], staged)
+    return staged["operation"]
+
+
+class StagedApprovalTests(unittest.TestCase):
+    """The password-staged approval each boundary refusal names unlocks the
+    locked skill for one change - the hook's Edit/Write and the skill
+    commands alike - and is spent by it."""
+
+    def test_the_hooks_remedy_stages_an_edit_that_then_passes_once(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            CapabilityBroker(archive).configure(PASSWORD)
+            target = _skill(project).parent / "SKILL.md"
+            _lock(project)
+            write = {"file_path": str(target), "content": "# a\n"}
+            with _attended(True):
+                refused = _hook(project, "Write", write)
+                self.assertEqual(refused[0], "deny", refused)
+                reason = json.loads(refused[1])["hookSpecificOutput"]["permissionDecisionReason"]
+                operation = _stage_as_printed(self, project, reason)
+                allowed = _hook(project, "Write", write)
+                spent = _hook(project, "Edit", {"file_path": str(target),
+                                                "old_string": "# demo", "new_string": "# b"})
+        self.assertEqual(operation, "edit file skills/demo/SKILL.md")
+        self.assertEqual(allowed[0], "allow", allowed)
+        self.assertEqual(spent[0], "deny", spent)
+
+    def test_the_skill_commands_remedy_stages_a_retire_that_then_passes(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            CapabilityBroker(archive).configure(PASSWORD)
+            evals = _skill(project)
+            _lock(project)
+            with _attended(False):
+                code, refused, err = _run(project, "skill", "retire", "--name", "demo",
+                                          "--reason", "x")
+                self.assertNotEqual(code, 0, refused)
+                operation = _stage_as_printed(self, project, json.loads(err)["message"])
+                code, retired, err = _run(project, "skill", "retire", "--name", "demo",
+                                          "--reason", "x")
+                again = _run(project, "skill", "restore", "--seq", str(retired.get("sequence")))
+            lifecycle = json.loads(evals.read_text(encoding="utf-8"))["lifecycle"]
+        self.assertEqual(operation, "edit file skills/demo/godmode-evals.json")
+        self.assertEqual(code, 0, (retired, err))
+        self.assertEqual(lifecycle, "deprecated")
+        self.assertNotEqual(again[0], 0, again[1])
 
 
 if __name__ == "__main__":

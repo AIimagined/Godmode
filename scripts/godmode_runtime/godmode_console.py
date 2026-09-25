@@ -5804,7 +5804,7 @@ def cmd_authorize_stage(args: argparse.Namespace, runtime: Runtime) -> CommandRe
         broker.stage(operation, password, args.ttl, operation_digest=staged_digest)
     finally:
         password = None
-    preview = classify_action(operation)
+    preview = broker._classify(operation)
     return CommandResult({
         "staged": True,
         "operation": operation,
@@ -6915,13 +6915,14 @@ def cmd_skill_retire(args: argparse.Namespace, runtime: Runtime) -> CommandResul
 
 
 def _refuse_locked_skill(runtime: Runtime, skill_dir: Path, action: str,
-                        operator_verified: bool) -> None:
+                        operator_verified: bool, primary: str = "godmode-evals.json") -> None:
     """A skill a declared design boundary covers is refused to every writer,
     in every session - the same `design_verdict` the pre-tool hook applies to
     an Edit/Write of its files. Any other skill changes freely."""
     from .godmode_skillchange import skill_boundary_refusal
     refusal = skill_boundary_refusal(Path(runtime.anchor.project_root), skill_dir, action,
-                                     operator_verified=operator_verified)
+                                     operator_verified=operator_verified,
+                                     archive=runtime.archive, primary=primary)
     if refusal:
         raise ArchiveError(refusal)
 
@@ -7208,7 +7209,7 @@ def cmd_skill_forge(args: argparse.Namespace, runtime: Runtime) -> CommandResult
             destination = str(project_root / "skills")
     # A boundary-listed skill is refused to the forge as to every other writer.
     _refuse_locked_skill(runtime, Path(destination).expanduser() / args.name, "forge",
-                         _resolve_operator_verified(runtime, args))
+                         _resolve_operator_verified(runtime, args), primary="SKILL.md")
     created = forge_skill(destination, proposal)
     # NS-12a + NS-12d (Task 9): a forged skill is scored against the eval
     # harness before it is kept - `evaluate_forged_skill` removes it and

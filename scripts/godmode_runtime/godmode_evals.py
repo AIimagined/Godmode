@@ -618,10 +618,13 @@ def _write_fixture_text(path: Path, text: str) -> bool:
     """
     if path.is_file():
         try:
-            if path.read_text(encoding="utf-8", newline="") == text:
-                return False
+            current: str | None = path.read_text(encoding="utf-8", newline="")
         except OSError:
-            pass
+            # Unreadable is not current: rewrite it, and let the write
+            # itself raise if the path is truly unusable.
+            current = None
+        if current == text:
+            return False
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8", newline="\n")
     return True
