@@ -1,0 +1,1 @@
+- An edit refused by a design boundary (or any other per-file check that ends in a deny) now leaves one refusal on the record, the same as a refused command, so `authorize stage --from-last-refusal` and the refusal history see it; an edit that only asks still writes none.

@@ -4968,7 +4968,8 @@ def main(argv: list[str] | None = None) -> int:
         # delete/rename target reaches this same fence). First denial wins -
         # both checks are binary allow/deny, so there is no "worst of" to
         # rank, only the first target that is not allowed.
-        if preview.get("allow") and event.targets:
+        target_checks_ran = bool(preview.get("allow") and event.targets)
+        if target_checks_ran:
             # Deferred: only fenced tool calls pay for the fence module - the
             # far more common read-only and R0-R2 tool calls never reach
             # this branch.
@@ -5059,6 +5060,34 @@ def main(argv: list[str] | None = None) -> int:
                         preview["reason"] = (
                             "the plan-first small-edit exemption could not be recorded "
                             f"({type(exc).__name__}); approve this edit or record a plan")
+
+        # The per-target checks above (design boundary, fence, frozen region,
+        # repeated reversal, plan-first) run after the classifier's refusal
+        # was recorded, so a denial born here needs its own record - exactly
+        # one, whichever check denied. An `ask` writes none, the same contract
+        # the classifier path keeps. Observe mode records it later instead.
+        if (target_checks_ran and not preview.get("allow") and not observe
+                and (preview.get("forced_decision") or _decision_for(preview)) == "deny"):
+            try:
+                boundary = ("design-boundary" if preview.get("design_block")
+                            else "scope-fence" if preview.get("fence")
+                            else "frozen-region" if preview.get("frozen_region")
+                            else str(preview.get("category") or "target-refusal"))
+                record_refusal(
+                    archive, submitted, boundary[:200],
+                    {
+                        "operation": operation[:500],
+                        "operation_truncated": len(operation) > 500,
+                        "operation_digest": hashlib.sha256(
+                            operation.strip().encode()).hexdigest(),
+                        "tool": tool or "operation",
+                        "tier": str(preview.get("tier", "R?")),
+                        "category": boundary,
+                        "targets": [str(t)[:300] for t in event.targets][:20],
+                    },
+                )
+            except Exception:  # noqa: BLE001  # godmode: swallow-ok: the denial above is already final; recording it is best-effort
+                _report_ancillary_failure(archive)
 
         # S16 (E56): declarative per-tool gates. The policy file may declare
         # `tool_gates: {"ToolName": "ask"|"deny"}` - approval demanded at the

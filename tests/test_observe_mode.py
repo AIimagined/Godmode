@@ -278,6 +278,8 @@ class DeclaredFenceBlockConvertsUnderObserve(unittest.TestCase):
             result = _decide(project, "Edit", self._fence_target(project))
             self.assertEqual(result["decision"], "ask")
             self.assertIn("editable set", result["reason"])
+            # An ask writes no refusal record.
+            self.assertEqual(archive.select(kind="refusal", limit=10), [])
 
     def test_an_edit_outside_the_fence_is_advisory_under_observe(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
@@ -318,6 +320,12 @@ class DesignBoundaryBlockConvertsUnderObserve(unittest.TestCase):
             result = _decide(project, "Edit", self._boundary_target(project))
             self.assertEqual(result["decision"], "deny")
             self.assertIn("design surface", result["reason"])
+            # The denial leaves exactly one refusal on the record, like a
+            # classifier refusal does.
+            records = archive.select(kind="refusal", limit=10)
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["data"]["category"], "design-boundary")
+            self.assertNotIn("observed", records[0]["data"])
 
     def test_an_edit_inside_the_design_boundary_is_advisory_under_observe(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
