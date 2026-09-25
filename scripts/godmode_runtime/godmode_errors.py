@@ -27,3 +27,7 @@ class ForgeError(GodmodeError):
 
 class CorpusError(GodmodeError):
     """The project's authority corpus could not be resolved."""
+
+
+class UsageError(GodmodeError):
+    """The command line itself could not be parsed."""

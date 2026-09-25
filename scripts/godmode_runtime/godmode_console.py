@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 from dataclasses import dataclass
 import hashlib
 import os
@@ -202,7 +203,7 @@ from .godmode_scope import minimality
 # block above.
 from .godmode_swallow import scan_project as scan_swallow
 from .godmode_swallow import update_baseline as update_swallow_baseline
-from .godmode_errors import ArchiveError, GodmodeError
+from .godmode_errors import ArchiveError, GodmodeError, UsageError
 from .godmode_verdict import record_verdict, verdict_for
 # U-V2 disposition register - a minimal, isolated block (imports, two
 # handlers, one subparser) since other in-flight work also touches this
@@ -7119,8 +7120,60 @@ def _all_verbs_text(parser: argparse.ArgumentParser) -> str:
     return "\n".join(lines)
 
 
+_JSON_ARGPARSE_ERRORS = False  # see `_json_argparse_errors`; main() only, single-threaded CLI
+
+
+@contextlib.contextmanager
+def _json_argparse_errors() -> Iterator[None]:
+    """Scopes `_JSONErrorArgumentParser.error()`'s JSON behavior to `main`'s
+    own call: a caller that reaches `_build_parser()` directly (several
+    test modules do, expecting plain argparse - `SystemExit` on a bad
+    argv, no JSON) keeps that contract; only parsing done through `main`
+    gets the console's own error shape."""
+    global _JSON_ARGPARSE_ERRORS
+    previous, _JSON_ARGPARSE_ERRORS = _JSON_ARGPARSE_ERRORS, True
+    try:
+        yield
+    finally:
+        _JSON_ARGPARSE_ERRORS = previous
+
+
+class _JSONErrorArgumentParser(argparse.ArgumentParser):
+    """`argparse.ArgumentParser.error()` prints usage text straight to
+    stderr and calls `sys.exit(2)` itself, before `main()` gets a chance
+    to run - so `godmode remember --kind notakind --json` printed plain
+    usage text instead of the `{"error": ...}` shape every other CLI
+    failure returns, and a JSON-consuming caller had to special-case it.
+    Raising `UsageError` here instead - only while `main` is the one
+    parsing, per `_json_argparse_errors` - lets `main` format a bad
+    command line exactly like any other `GodmodeError`. `add_subparsers()`
+    defaults its `parser_class` to the parser's own class, so every
+    subparser (`sub = parser.add_subparsers(...)`, `sub.add_parser(
+    "remember", ...)`, ...) inherits this without being named
+    individually."""
+
+    def error(self, message: str) -> None:  # type: ignore[override]
+        if _JSON_ARGPARSE_ERRORS:
+            raise UsageError(f"{self.prog}: {message}")
+        super().error(message)
+
+
+def _emit_cli_error(exc: GodmodeError, brief: bool) -> int:
+    """The one formatting the console uses for a failure that never ran a
+    handler - `_dispatch`'s own `except GodmodeError` and `main`'s bad
+    command line both fall through here, so a `--json` caller sees the
+    same `{"error": <class name>, "message": ...}` shape on stderr with
+    exit 2 whichever one refused."""
+    payload = {"error": exc.__class__.__name__, "message": str(exc)}
+    if brief:
+        print(f"{payload['error']}: {payload['message']}", file=sys.stderr)
+    else:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True), file=sys.stderr)
+    return 2
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _JSONErrorArgumentParser(
         prog="godmode",
         description="A local, tamper-evident record of what a coding agent did, "
                     "what it claimed, and what was verified.",
@@ -9395,24 +9448,33 @@ def main(argv: list[str] | None = None) -> int:
     if raw == ["--all"]:
         print(_all_verbs_text(parser), end="")
         return 0
-    args = parser.parse_args(lifted + raw)
-    if args.command == "guide":
-        tier = getattr(args, "tier", None)
-        if tier is None:
-            print(GUIDE_TEXT, end="")
-            return 0
-        # C-61: one tier at a time, so the day-one reader is never handed
-        # the fleet tier by accident. The doc is the authority; this only
-        # cuts it at the tier headings.
-        ladder = (_PLUGIN_ROOT / "docs" / "LADDER.md").read_text(encoding="utf-8")
-        parts = re.split(r"^(?=## Tier \d\b)", ladder, flags=re.M)
-        section = next((p for p in parts if p.startswith(f"## Tier {tier}")), None)
-        if section is None:
-            parser.error(f"docs/LADDER.md has no `## Tier {tier}` section")
-        print(section.rstrip() + "\n", end="")
-        return 0
-    if hasattr(args, "token_budget") and not 200 <= args.token_budget <= 10_000:
-        parser.error("--token-budget must be between 200 and 10000")
+    # A bad command line raises `UsageError` (see `_JSONErrorArgumentParser`)
+    # instead of argparse's own usage-text-and-exit(2), so `--json`/`--brief`
+    # format it the same way any other CLI failure is formatted below - the
+    # flags were already lifted out of `raw` above, so they are known here
+    # even when parsing itself is what failed.
+    try:
+        with _json_argparse_errors():
+            args = parser.parse_args(lifted + raw)
+            if args.command == "guide":
+                tier = getattr(args, "tier", None)
+                if tier is None:
+                    print(GUIDE_TEXT, end="")
+                    return 0
+                # C-61: one tier at a time, so the day-one reader is never
+                # handed the fleet tier by accident. The doc is the
+                # authority; this only cuts it at the tier headings.
+                ladder = (_PLUGIN_ROOT / "docs" / "LADDER.md").read_text(encoding="utf-8")
+                parts = re.split(r"^(?=## Tier \d\b)", ladder, flags=re.M)
+                section = next((p for p in parts if p.startswith(f"## Tier {tier}")), None)
+                if section is None:
+                    parser.error(f"docs/LADDER.md has no `## Tier {tier}` section")
+                print(section.rstrip() + "\n", end="")
+                return 0
+            if hasattr(args, "token_budget") and not 200 <= args.token_budget <= 10_000:
+                parser.error("--token-budget must be between 200 and 10000")
+    except UsageError as exc:
+        return _emit_cli_error(exc, "--brief" in lifted)
     # S21-01: mode changes exposure, never enforcement. `guided` explains a
     # refusal in plain language; `expert` reports one line; gates are identical.
     mode = os.environ.get("GODMODE_MODE", "standard")
@@ -9481,12 +9543,7 @@ def _dispatch(args: argparse.Namespace, mode: str = "standard") -> int:
         )
         return result.exit_code
     except GodmodeError as exc:
-        payload = {"error": exc.__class__.__name__, "message": str(exc)}
-        if getattr(args, "brief", False):
-            print(f"{payload['error']}: {payload['message']}", file=sys.stderr)
-        else:
-            print(json.dumps(payload, ensure_ascii=False, sort_keys=True), file=sys.stderr)
-        return 2
+        return _emit_cli_error(exc, getattr(args, "brief", False))
 
 
 if __name__ == "__main__":

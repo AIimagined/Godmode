@@ -283,6 +283,64 @@ class ScopeExplicitResponseTests(unittest.TestCase):
             self.assertIn(str(anchor.project_root), message)
 
 
+class ArgparseErrorJSONTests(unittest.TestCase):
+    """A bad command line used to bypass every other error path: argparse's
+    own `.error()` prints usage text straight to stderr and calls
+    `sys.exit(2)` before `main()` runs, so `--json`/`--brief` had no effect
+    on it - the one caller-visible seam was plain usage text, not the
+    `{"error": ...}` shape every other CLI failure returns."""
+
+    def _run(self, argv: list[str]) -> tuple[int, str]:
+        err = io.StringIO()
+        with mock.patch.object(sys, "stdout", io.StringIO()), \
+                mock.patch.object(sys, "stderr", err):
+            code = console.main(argv)
+        return code, err.getvalue()
+
+    def test_an_invalid_choice_is_json_with_json(self) -> None:
+        code, stderr = self._run(["remember", "--kind", "notakind", "--json"])
+        self.assertEqual(code, 2)
+        payload = json.loads(stderr)
+        self.assertEqual(payload["error"], "UsageError")
+        self.assertIn("--kind", payload["message"])
+
+    def test_an_invalid_choice_is_json_by_default(self) -> None:
+        """The console's default output is already JSON-shaped (`--json`
+        only changes compact vs. pretty printing) - a bad command line
+        must match that default, not only the explicit flag."""
+        code, stderr = self._run(["remember", "--kind", "notakind"])
+        self.assertEqual(code, 2)
+        payload = json.loads(stderr)
+        self.assertEqual(payload["error"], "UsageError")
+
+    def test_an_invalid_choice_is_one_line_with_brief(self) -> None:
+        code, stderr = self._run(["remember", "--kind", "notakind", "--brief"])
+        self.assertEqual(code, 2)
+        self.assertTrue(stderr.startswith("UsageError: "), stderr)
+
+    def test_a_missing_required_subcommand_is_also_json(self) -> None:
+        code, stderr = self._run(["--json"])
+        self.assertEqual(code, 2)
+        payload = json.loads(stderr)
+        self.assertEqual(payload["error"], "UsageError")
+
+    def test_an_unknown_top_level_verb_is_also_json(self) -> None:
+        code, stderr = self._run(["not-a-real-verb", "--json"])
+        self.assertEqual(code, 2)
+        payload = json.loads(stderr)
+        self.assertEqual(payload["error"], "UsageError")
+
+    def test_the_out_of_range_token_budget_check_is_also_json(self) -> None:
+        """`main()` calls `parser.error(...)` itself for a check argparse's
+        own grammar cannot express - the same seam, exercised the other
+        way it is reached."""
+        code, stderr = self._run(["brief", "sometask", "--token-budget", "50", "--json"])
+        self.assertEqual(code, 2)
+        payload = json.loads(stderr)
+        self.assertEqual(payload["error"], "UsageError")
+        self.assertIn("token-budget", payload["message"])
+
+
 if __name__ == "__main__":
     unittest.main()
 
