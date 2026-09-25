@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -237,9 +236,21 @@ class GateFalsifiabilityTests(unittest.TestCase):
         # the harness testing an out-of-contract shape. Copying `.git`
         # keeps the harness itself in-contract; the copy stays cheap
         # (~20MB for this repository).
-        shutil.copytree(
-            PLUGIN_ROOT, cls.project,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        #
+        # A `git clone`, not a raw directory copy: a contributor's working
+        # tree routinely carries files git itself ignores - an editor's own
+        # `.claude/settings.local.json`, a stray build artifact - and a raw
+        # `shutil.copytree` carried those into the "pristine" project too,
+        # so a gate that inspects the working tree (`trust`) could report a
+        # finding that belongs to the machine running the suite, not to
+        # this repository. A local clone only ever materializes tracked
+        # content from `HEAD` plus the object database, which is exactly
+        # "this repository"'s contract, and - source and destination on the
+        # same filesystem - hardlinks objects by default, so it is no more
+        # expensive than the copy it replaces.
+        subprocess.run(
+            ["git", "clone", "--quiet", str(PLUGIN_ROOT), str(cls.project)],
+            check=True, timeout=120)
 
     @classmethod
     def tearDownClass(cls) -> None:
