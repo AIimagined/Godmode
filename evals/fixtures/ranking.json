@@ -1,6 +1,6 @@
 {
   "budget": 1200,
-  "freshness_mode": "git",
+  "freshness_mode": "content",
   "schema": "godmode-ranking-snapshot-v1",
   "scorer": "fts5-bm25",
   "tasks": {
@@ -31,11 +31,11 @@
       ],
       [
         "GODMODE-CODE-OF-LAW.md",
-        18
+        78
       ],
       [
         "GODMODE-CODE-OF-LAW.md",
-        78
+        18
       ],
       [
         "GODMODE-CODE-OF-LAW.md",
@@ -64,12 +64,12 @@
         23
       ],
       [
-        "docs/FIXED-REGISTRY.md",
-        1
-      ],
-      [
         "GODMODE.md",
         34
+      ],
+      [
+        "docs/FIXED-REGISTRY.md",
+        1
       ],
       [
         "GODMODE-CODE-OF-LAW.md",
@@ -86,12 +86,16 @@
     ],
     "prepare a release: changelog, version surfaces, and docs": [
       [
+        "docs/RELEASE-CHECKLIST.md",
+        1
+      ],
+      [
         "GODMODE-CODE-OF-LAW.md",
         23
       ],
       [
-        "docs/RELEASE-CHECKLIST.md",
-        1
+        "GODMODE.md",
+        34
       ],
       [
         "GODMODE-CODE-OF-LAW.md",
@@ -100,10 +104,6 @@
       [
         "GODMODE-CODE-OF-LAW.md",
         78
-      ],
-      [
-        "GODMODE-CODE-OF-LAW.md",
-        68
       ],
       [
         "GODMODE.md",

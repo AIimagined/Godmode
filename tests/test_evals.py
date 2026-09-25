@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import argparse
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -451,6 +453,160 @@ class RankingSnapshotTests(unittest.TestCase):
         data = json.loads(fixture.read_text(encoding="utf-8"))
         self.assertEqual(data["schema"], RANKING_SNAPSHOT_SCHEMA)
         self.assertEqual(sorted(data["tasks"]), sorted(RANKING_TASKS))
+
+
+def _git(args: list[str], cwd: Path, env: dict | None = None) -> str:
+    result = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True,
+                             text=True, timeout=30, env=env)
+    assert result.returncode == 0, f"git {args} failed: {result.stderr}"
+    return result.stdout
+
+
+def _init_repo_with_commit_order(root: Path, order: list[str]) -> None:
+    """A git repo holding a `GODMODE.md` plus two same-weight custom-role
+    documents whose content never matches `RANKING_TASKS` vocabulary (so
+    they always tie on relevance), committed one file per commit in `order`
+    - each at its own explicit, distinct commit time. Two calls with a
+    different `order` build byte-identical trees whose commit histories
+    nonetheless disagree about every file's last-commit time, so a ranking
+    snapshot that used commit time for its tie-break would disagree too.
+    """
+    contents = {
+        "GODMODE.md": "# Guide\n- Keep the guard suite green.\n",
+        "docs/alpha.md": "# Alpha\nWidgets sprockets gizmos, alpha edition.\n",
+        "docs/beta.md": "# Beta\nWidgets sprockets gizmos, beta edition.\n",
+        ".godmode-roles.json": json.dumps({
+            "roles": {"operating-guide": "GODMODE.md"},
+            "custom": {
+                "twin-a": {"paths": ["docs/alpha.md"], "weight": 0.5},
+                "twin-b": {"paths": ["docs/beta.md"], "weight": 0.5},
+            },
+        }),
+    }
+    assert sorted(order) == sorted(contents), (order, list(contents))
+    root.mkdir(parents=True, exist_ok=True)
+    _git(["init", "-q"], root)
+    _git(["config", "user.email", "t@example.com"], root)
+    _git(["config", "user.name", "T"], root)
+    for index, relpath in enumerate(order):
+        path = root / relpath
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(contents[relpath], encoding="utf-8")
+        _git(["add", relpath], root)
+        date = f"2020-01-{index + 1:02d}T00:00:00"
+        env = {
+            **os.environ, "GIT_AUTHOR_DATE": date, "GIT_COMMITTER_DATE": date,
+            "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@example.com",
+            "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@example.com",
+        }
+        _git(["commit", "-q", "-m", f"add {relpath}"], root, env=env)
+
+
+class RankingCommitOrderIndependenceTests(unittest.TestCase):
+    """R15: the committed ranking snapshot must not depend on git commit
+    time/order (2026-09-25 carried-items triage, row 66)."""
+
+    def test_two_commit_orders_give_the_identical_fixture(self) -> None:
+        from godmode_runtime import godmode_corpus
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            files = ["GODMODE.md", "docs/alpha.md", "docs/beta.md", ".godmode-roles.json"]
+            repo_a, repo_b = root / "a", root / "b"
+            _init_repo_with_commit_order(repo_a, files)
+            _init_repo_with_commit_order(repo_b, list(reversed(files)))
+
+            # Sanity: the OLD git-log instrument really would disagree here -
+            # confirms this test would have caught the bug it is pinned
+            # against, not just exercised a path that was never at risk.
+            stamp_a = godmode_corpus._freshness_stamp(repo_a, "docs/alpha.md", True)
+            stamp_b = godmode_corpus._freshness_stamp(repo_b, "docs/alpha.md", True)
+            self.assertNotEqual(stamp_a, stamp_b)
+
+            written_a = ranking_snapshot(repo_a, write=True)
+            written_b = ranking_snapshot(repo_b, write=True)
+            self.assertEqual(written_a["verdict"], "snapshot-written")
+            self.assertEqual(written_b["verdict"], "snapshot-written")
+
+            fixture_a = (repo_a / "evals" / "fixtures" / "ranking.json").read_bytes()
+            fixture_b = (repo_b / "evals" / "fixtures" / "ranking.json").read_bytes()
+            self.assertEqual(fixture_a, fixture_b)
+            data = json.loads(fixture_a.decode("utf-8"))
+            self.assertEqual(data["freshness_mode"], "content")
+
+
+class RefreshVerbTests(unittest.TestCase):
+    """`godmode evals --refresh` (R15): one command that rewrites every
+    committed eval snapshot/fixture, LF-only, skipping a file whose content
+    is already current."""
+
+    def test_the_flag_is_on_the_verb(self) -> None:
+        from godmode_runtime.godmode_console import _build_parser
+
+        args = _build_parser().parse_args(["evals", "--refresh"])
+        self.assertTrue(args.refresh)
+        self.assertFalse(_build_parser().parse_args(["evals"]).refresh)
+        with self.assertRaises(SystemExit):
+            _build_parser().parse_args(["evals", "--refresh", "--write-snapshots"])
+
+    def test_refresh_reproduces_the_checked_out_fixtures_and_is_then_a_no_op(self) -> None:
+        from godmode_runtime.godmode_console import cmd_evals
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = copy_repo_without_git(Path(raw))
+            runtime = types.SimpleNamespace(
+                anchor=types.SimpleNamespace(project_root=str(project)))
+            args = argparse.Namespace(write_snapshots=False, refresh=True,
+                                       withhold_memory=False)
+
+            result = cmd_evals(args, runtime).payload
+            self.assertEqual(result["verdict"], "snapshots-refreshed")
+            # The copy started from the checked-out tree, so a correct
+            # refresh of routing/stability/ranking touches nothing here.
+            # Charter is deliberately not asserted: it can be mid-edit on a
+            # concurrently-worked branch and that drift is not this scope.
+            self.assertEqual(result["routing"]["written"], [])
+            self.assertFalse(result["stability"]["fixture_changed"])
+            self.assertFalse(result["ranking"]["fixture_changed"])
+
+            fixtures = project / "evals" / "fixtures"
+            for path in fixtures.glob("*.json"):
+                self.assertNotIn(b"\r\n", path.read_bytes(), path.name)
+
+            second = cmd_evals(args, runtime).payload
+            self.assertEqual(second["routing"]["written"], [])
+            self.assertFalse(second["stability"]["fixture_changed"])
+            self.assertFalse(second["ranking"]["fixture_changed"])
+
+    def test_refresh_updates_a_stale_ranking_fixture(self) -> None:
+        from godmode_runtime.godmode_console import cmd_evals
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = copy_repo_without_git(Path(raw))
+            fixture = project / "evals" / "fixtures" / "ranking.json"
+            original = fixture.read_bytes()
+            fixture.write_bytes(b"{}")
+            runtime = types.SimpleNamespace(
+                anchor=types.SimpleNamespace(project_root=str(project)))
+            args = argparse.Namespace(write_snapshots=False, refresh=True,
+                                       withhold_memory=False)
+
+            result = cmd_evals(args, runtime).payload
+            self.assertTrue(result["ranking"]["fixture_changed"])
+            self.assertIn("ranking.json", result["changed"])
+            self.assertEqual(fixture.read_bytes(), original)
+
+    def test_refresh_refuses_withhold_memory(self) -> None:
+        from godmode_runtime.godmode_console import cmd_evals
+        from godmode_runtime.godmode_errors import ArchiveError
+
+        runtime = types.SimpleNamespace(
+            anchor=types.SimpleNamespace(project_root=str(PLUGIN_ROOT)))
+        args = argparse.Namespace(write_snapshots=False, refresh=True,
+                                   withhold_memory=True)
+        with self.assertRaises(ArchiveError) as caught:
+            cmd_evals(args, runtime)
+        self.assertIn("--refresh", str(caught.exception))
 
 
 class DocsSiteTests(unittest.TestCase):

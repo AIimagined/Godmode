@@ -660,8 +660,7 @@ def _write_baseline(
         "runtime_version": RUNTIME_VERSION,
     }
     path = project / BASELINE_PATH
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _write_fixture_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
 def ratchet(project: Path, write: bool = False, withhold_memory: bool = False) -> dict[str, Any]:
@@ -829,11 +828,9 @@ def check_snapshots(project: Path, write: bool = False) -> dict[str, Any]:
         written: list[str] = []
         for skill, entry in sorted(report["skills"].items()):
             name = f"{skill}-routing.json"
-            (fixtures / name).write_text(
-                json.dumps(_snapshot_of(skill, entry), indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-            written.append(name)
+            text = json.dumps(_snapshot_of(skill, entry), indent=2, sort_keys=True) + "\n"
+            if _write_fixture_text(fixtures / name, text):
+                written.append(name)
         return {"fixtures": str(fixtures), "written": written, "verdict": "snapshots-written"}
 
     diffs: list[dict[str, Any]] = []
@@ -1069,11 +1066,10 @@ def charter_snapshot(project: Path, write: bool = False) -> dict[str, Any]:
     current = _charter_view(project)
 
     if write:
-        fixture.parent.mkdir(parents=True, exist_ok=True)
-        fixture.write_text(
-            json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        text = json.dumps(current, indent=2, sort_keys=True) + "\n"
+        fixture_changed = _write_fixture_text(fixture, text)
         return {"fixture": str(fixture), "rules": len(current["rules"]),
-                "verdict": "snapshot-written"}
+                "fixture_changed": fixture_changed, "verdict": "snapshot-written"}
 
     if not fixture.is_file():
         return {"fixture": str(fixture), "missing_snapshot": True,
@@ -1121,6 +1117,24 @@ def _ranking_view(project: Path, withhold_memory: bool = False) -> dict[str, Any
     - and the roles that were dropped are named in the view. The key is added
     only in that mode: the committed snapshot is a with-memory artefact and
     its shape must not move because a second mode exists.
+
+    Freshness is pinned to `freshness_source="content"`
+    (`godmode_corpus._content_stamp`, a hash of each file's bytes), never git
+    commit time. `godmode_corpus.rank`'s default git-log instrument is stable
+    across two CHECKOUTS of the identical commits, but not across two
+    different commit HISTORIES that arrive at the same tree: each commit's
+    timestamp is whatever wall-clock time it happened to be made at, so a
+    snapshot taken after a squash or a differently-ordered rebase could
+    tie-break equally-scored segments differently despite byte-identical
+    files (2026-09-25 carried-items triage, row 66: "ranking freshness reads
+    git commit time, so the snapshot depends on commit order"). The content
+    instrument depends on nothing but the bytes on disk, so
+    `godmode evals --refresh` gives a byte-identical fixture regardless of how
+    the tree was committed. This is deliberately narrower than what
+    `godmode brief` uses for a live session (the git-log default, kept as-is)
+    - that command ranks the real, evolving project and a genuine recency
+    signal is the point there; the committed snapshot only needs a
+    reproducible tie-break, never a claim about recency.
     """
     from .godmode_corpus import build_brief
 
@@ -1128,30 +1142,19 @@ def _ranking_view(project: Path, withhold_memory: bool = False) -> dict[str, Any
     scorer = None
     withheld_roles: list[str] = []
     for task in RANKING_TASKS:
-        brief = build_brief(project, task, RANKING_BUDGET, withhold_memory=withhold_memory)
+        brief = build_brief(
+            project, task, RANKING_BUDGET, withhold_memory=withhold_memory,
+            freshness_source="content",
+        )
         scorer = brief["scorer"]
         withheld_roles = list(brief.get("withheld_roles", []))
         tasks[task] = [
             [entry["path"], entry["lines"][0]] for entry in brief["context"]
         ]
-    # The freshness instrument is part of the ranking's identity, exactly
-    # like the scorer: full-git commit time, shallow-git (history the walk
-    # cannot reach reads as absent), and path-sort are three different
-    # instruments free to disagree on tie order for the same content. A
-    # snapshot is only comparable within its own mode (field report,
-    # 2026-08-31: a shallow CI checkout reordered two tasks against a
-    # full-clone snapshot and read as drift).
-    git_dir = project / ".git"
-    if not git_dir.exists():
-        freshness_mode = "path"
-    elif (git_dir / "shallow").is_file() if git_dir.is_dir() else False:
-        freshness_mode = "git-shallow"
-    else:
-        freshness_mode = "git"
     view = {
         "schema": RANKING_SNAPSHOT_SCHEMA,
         "scorer": scorer,
-        "freshness_mode": freshness_mode,
+        "freshness_mode": "content",
         "budget": RANKING_BUDGET,
         "tasks": tasks,
     }
@@ -1194,11 +1197,10 @@ def ranking_snapshot(
     current = _ranking_view(project)
 
     if write:
-        fixture.parent.mkdir(parents=True, exist_ok=True)
-        fixture.write_text(
-            json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        text = json.dumps(current, indent=2, sort_keys=True) + "\n"
+        fixture_changed = _write_fixture_text(fixture, text)
         return {"fixture": str(fixture), "tasks": len(RANKING_TASKS),
-                "verdict": "snapshot-written"}
+                "fixture_changed": fixture_changed, "verdict": "snapshot-written"}
 
     if not fixture.is_file():
         return {"fixture": str(fixture), "missing_snapshot": True, "diffs": [],
