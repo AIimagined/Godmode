@@ -22,6 +22,9 @@ report should not be a second copy of it.
 from __future__ import annotations
 
 import hashlib
+import os
+import subprocess
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +39,161 @@ UNATTESTED_THRESHOLD = 5
 
 NOTE = ("on demand, read between steps - godmode runs no daemon; invoke "
         "this before the next guarded step, or pass --interrupt to halt it")
+
+# 2026-09-25: a scratch Python child spawned during preflight ran to 8.9 GB
+# before anything noticed. No stdlib API returns a running child's RSS
+# directly (`resource.getrusage` only sees a reaped child), so this polls
+# the OS's own per-process memory view instead: /proc on POSIX,
+# GetProcessMemoryInfo via ctypes on Windows - no psutil, no daemon, the
+# poll thread lives only as long as the one call that started it.
+DEFAULT_CHILD_MEMORY_LIMIT_MB = 4096
+MEMORY_POLL_SECONDS = 2.0
+
+
+def child_memory_limit_bytes() -> int:
+    """The cap `run_with_memory_cap` uses when the caller passes none - a
+    fixed default, overridable per host via `GODMODE_CHILD_MEMORY_LIMIT_MB`
+    (0 disables the cap)."""
+    raw = os.environ.get("GODMODE_CHILD_MEMORY_LIMIT_MB")
+    if raw is None:
+        return DEFAULT_CHILD_MEMORY_LIMIT_MB * 1024 * 1024
+    try:
+        mb = int(raw)
+    except ValueError:
+        return DEFAULT_CHILD_MEMORY_LIMIT_MB * 1024 * 1024
+    return max(mb, 0) * 1024 * 1024
+
+
+def child_rss_bytes(pid: int) -> int | None:
+    """The current resident-set size of `pid`, in bytes; None when it can't
+    be read (the process already exited, no permission, or an unsupported
+    platform) - never raises, so a failed read only means "no sample"."""
+    if os.name == "nt":
+        return _child_rss_bytes_windows(pid)
+    return _child_rss_bytes_posix(pid)
+
+
+def _child_rss_bytes_posix(pid: int) -> int | None:
+    try:
+        with open(f"/proc/{pid}/status", "r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("VmRSS:"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return int(parts[1]) * 1024  # kB -> bytes
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def _child_rss_bytes_windows(pid: int) -> int | None:
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _ProcessMemoryCounters(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD),
+                ("PageFaultCount", wintypes.DWORD),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        psapi = ctypes.windll.psapi  # type: ignore[attr-defined]
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return None
+        try:
+            counters = _ProcessMemoryCounters()
+            counters.cb = ctypes.sizeof(_ProcessMemoryCounters)
+            ok = psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb)
+            if not ok:
+                return None
+            return int(counters.WorkingSetSize)
+        finally:
+            kernel32.CloseHandle(handle)
+    except (OSError, AttributeError, ValueError):
+        return None
+
+
+def run_with_memory_cap(
+    argv: list[str],
+    *,
+    cwd: Path | str | None = None,
+    env: dict[str, str] | None = None,
+    timeout: float | None = None,
+    capture_output: bool = True,
+    check: bool = False,
+    memory_limit_bytes: int | None = None,
+    poll_seconds: float = MEMORY_POLL_SECONDS,
+) -> subprocess.CompletedProcess:
+    """`subprocess.run`, with the child's peak RSS polled and the child
+    killed the moment it crosses `memory_limit_bytes` (defaults to
+    `child_memory_limit_bytes()`; pass 0 to disable the cap - report-only).
+
+    The returned `CompletedProcess` carries two extra attributes:
+    `peak_rss_bytes` (best sample seen, 0 if the platform never yielded
+    one) and `memory_killed` (True when the cap fired). A timeout still
+    raises `subprocess.TimeoutExpired` exactly as `subprocess.run` does;
+    that exception also carries `peak_rss_bytes` for the same reporting.
+    """
+    if memory_limit_bytes is None:
+        memory_limit_bytes = child_memory_limit_bytes()
+    proc = subprocess.Popen(
+        argv,
+        cwd=cwd,
+        env=env,
+        stdout=subprocess.PIPE if capture_output else None,
+        stderr=subprocess.PIPE if capture_output else None,
+    )
+    state: dict[str, Any] = {"peak": 0, "memory_killed": False}
+    stop = threading.Event()
+
+    def _poll() -> None:
+        while not stop.wait(poll_seconds):
+            rss = child_rss_bytes(proc.pid)
+            if rss is None:
+                continue
+            if rss > state["peak"]:
+                state["peak"] = rss
+            if memory_limit_bytes and rss > memory_limit_bytes:
+                state["memory_killed"] = True
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+                return
+
+    monitor = threading.Thread(target=_poll, daemon=True)
+    monitor.start()
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        stdout, stderr = proc.communicate()
+        stop.set()
+        monitor.join(timeout=poll_seconds + 1)
+        expired = subprocess.TimeoutExpired(argv, timeout, output=stdout, stderr=stderr)
+        expired.peak_rss_bytes = state["peak"]  # type: ignore[attr-defined]
+        raise expired
+    stop.set()
+    monitor.join(timeout=poll_seconds + 1)
+    result = subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
+    result.peak_rss_bytes = state["peak"]  # type: ignore[attr-defined]
+    result.memory_killed = state["memory_killed"]  # type: ignore[attr-defined]
+    if result.memory_killed and result.returncode == 0:
+        result.returncode = -9
+    if check and result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode, argv, stdout, stderr)
+    return result
 
 
 def _operation_digest(record: dict[str, Any]) -> str:

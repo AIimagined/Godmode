@@ -82,6 +82,7 @@ from pathlib import Path
 from typing import Any
 
 from .godmode_errors import ArchiveError
+from .godmode_watchdog import run_with_memory_cap
 
 
 def swallow_ratchet_finding(project: Path | str) -> dict[str, str] | None:
@@ -771,14 +772,29 @@ def push_preflight(project: Path | str,
                     continue
                 ran_shards.append(index)
                 try:
-                    shard = subprocess.run(watchdog_command(modules), cwd=worktree,
-                                           capture_output=True, check=False, timeout=SUITE_TIMEOUT_SECONDS,
-                                           env=aliased_temp_environment())
-                except subprocess.TimeoutExpired:
+                    # Memory-capped, not a bare subprocess.run: a runaway
+                    # scratch process under a shard (8.9 GB observed
+                    # 2026-09-25) used to run unbounded until the OS or the
+                    # timeout stopped it; this polls RSS and kills past the
+                    # configurable cap instead of waiting either out.
+                    shard = run_with_memory_cap(watchdog_command(modules), cwd=worktree,
+                                                capture_output=True, check=False, timeout=SUITE_TIMEOUT_SECONDS,
+                                                env=aliased_temp_environment())
+                except subprocess.TimeoutExpired as expired:
+                    peak = getattr(expired, "peak_rss_bytes", 0)
                     judgment.append({"check": "suite", "class": "environment-failure",
                                      "detail": f"shard {index} killed after "
-                                               f"{SUITE_TIMEOUT_SECONDS}s without a verdict"})
+                                               f"{SUITE_TIMEOUT_SECONDS}s without a verdict"
+                                               + (f"; peak child RSS {peak // (1024 * 1024)} MB"
+                                                  if peak else "")})
                     break
+                if shard.memory_killed:
+                    peak = shard.peak_rss_bytes // (1024 * 1024)
+                    judgment.append({"check": "suite", "class": "environment-failure",
+                                     "detail": f"shard {index} killed for memory: child RSS reached "
+                                               f"{peak} MB, over the configured cap "
+                                               "(GODMODE_CHILD_MEMORY_LIMIT_MB)"})
+                    continue
                 if shard.returncode != 0:
                     # Every shard runs: one gate round names every red test
                     # instead of the first shard's, so the next round is
@@ -803,8 +819,11 @@ def push_preflight(project: Path | str,
             # minutes on the reference machine, and a timeout kill is
             # indistinguishable from a failure in the finding.
             try:
-                run = subprocess.run(suite, cwd=worktree, capture_output=True,
-                                     check=False, timeout=SUITE_TIMEOUT_SECONDS)
+                # Memory-capped for the same reason as the sharded run
+                # above: an unbounded suite process is exactly where the
+                # 8.9 GB scratch runaway was observed.
+                run = run_with_memory_cap(suite, cwd=worktree, capture_output=True,
+                                          check=False, timeout=SUITE_TIMEOUT_SECONDS)
             except subprocess.TimeoutExpired as expired:
                 # A timeout kill is a verdict, not a crash: round 7 of the
                 # 0.3.18 gate died here as a bare traceback and the hour of
@@ -821,6 +840,7 @@ def push_preflight(project: Path | str,
                 # reported 300 dots and nothing else - a tail with no
                 # position in it).
                 completed = sum(len(m) for m in re.findall(r"[.FEsx]{5,}", text))
+                peak = getattr(expired, "peak_rss_bytes", 0)
                 judgment.append({
                     "check": "suite",
                     "class": "environment-failure",
@@ -831,10 +851,20 @@ def push_preflight(project: Path | str,
                               "it stopped in"
                               + (f"; about {completed} quiet-mode test marks "
                                  "before the kill" if completed else "")
+                              + (f"; peak child RSS {peak // (1024 * 1024)} MB" if peak else "")
                               + (f"; last output: {tail[-300:]!r}" if tail else ""),
                 })
                 run = None
-            if run is not None and run.returncode != 0:
+            if run is not None and run.memory_killed:
+                peak = run.peak_rss_bytes // (1024 * 1024)
+                judgment.append({
+                    "check": "suite",
+                    "class": "environment-failure",
+                    "detail": f"designated suite killed for memory: child RSS reached "
+                              f"{peak} MB, over the configured cap "
+                              "(GODMODE_CHILD_MEMORY_LIMIT_MB)",
+                })
+            elif run is not None and run.returncode != 0:
                 # The finding names its catch: "exit 1" alone trains a
                 # 20-minute re-run to learn which test failed (first live
                 # run of the ratchet, 2026-09-04). unittest writes verdicts
