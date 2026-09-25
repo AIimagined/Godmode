@@ -11,13 +11,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
-for entry in (PLUGIN_ROOT / "scripts", PLUGIN_ROOT):
+for entry in (PLUGIN_ROOT / "scripts", PLUGIN_ROOT, Path(__file__).parent):
     if str(entry) not in sys.path:
         sys.path.insert(0, str(entry))
 
+from _repo_copy import copy_repo_without_git  # noqa: E402
 from godmode_runtime.godmode_evals import routing_stability  # noqa: E402
 
 
@@ -29,21 +31,54 @@ class RoutingStabilityTests(unittest.TestCase):
         self.assertGreater(report["cases"], 20)
 
     def test_a_flipped_case_is_named_fragile(self) -> None:
-        import tempfile
         report = routing_stability(PLUGIN_ROOT)
         fixture = PLUGIN_ROOT / "evals" / "fixtures" / "routing-stability.json"
         stored = json.loads(fixture.read_text(encoding="utf-8"))
         victim = sorted(stored["routes"])[0]
         original = stored["routes"][victim]
         stored["routes"][victim] = original + "-flipped"
-        backup = fixture.read_text(encoding="utf-8")
+        # Byte-exact backup/restore (not `write_text`, which translates `\n`
+        # to `os.linesep` with no `newline=` given): this test targets the
+        # real committed fixture, not a temp copy, and a CRLF restore on
+        # Windows dirties the tracked tree with no content change - the
+        # incident named in the 2026-09-25 carried-items triage (row 89).
+        backup = fixture.read_bytes()
         try:
-            fixture.write_text(json.dumps(stored), encoding="utf-8")
+            fixture.write_text(json.dumps(stored), encoding="utf-8", newline="\n")
             report = routing_stability(PLUGIN_ROOT)
             self.assertEqual(report["verdict"], "fragile-cases-found")
             self.assertIn(victim, report["fragile"])
         finally:
-            fixture.write_text(backup, encoding="utf-8")
+            fixture.write_bytes(backup)
+
+
+class WriteIsLFAndIdempotentTests(unittest.TestCase):
+    """2026-09-25 carried-items triage, row 89: a test run rewrote this exact
+    fixture CRLF-only on Windows and dirtied an otherwise clean tree. The
+    writer now goes through `_write_fixture_text` (LF endings, skip the
+    write when content is unchanged); this pins both properties directly
+    against a disposable copy, never the real committed fixture."""
+
+    def test_two_writes_on_a_temp_copy_are_byte_identical_and_lf_only(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            project = copy_repo_without_git(Path(raw))
+            fixture = project / "evals" / "fixtures" / "routing-stability.json"
+            # Start from a CRLF-corrupted copy - the exact shape row 89
+            # named - to prove the writer both fixes it and then leaves it
+            # alone, not merely that it happens to match already.
+            fixture.write_bytes(fixture.read_bytes().replace(b"\n", b"\r\n"))
+
+            first = routing_stability(project, write=True)
+            self.assertTrue(first["fixture_changed"])
+            bytes_first = fixture.read_bytes()
+            self.assertNotIn(b"\r\n", bytes_first)
+            self.assertTrue(bytes_first.endswith(b"\n"))
+
+            second = routing_stability(project, write=True)
+            self.assertFalse(second["fixture_changed"])
+            bytes_second = fixture.read_bytes()
+            self.assertEqual(bytes_first, bytes_second)
+            self.assertNotIn(b"\r\n", bytes_second)
 
 
 if __name__ == "__main__":

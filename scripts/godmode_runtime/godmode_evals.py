@@ -597,6 +597,33 @@ def _read_baseline(
     return baseline
 
 
+def _write_fixture_text(path: Path, text: str) -> bool:
+    """Write `text` to `path` with LF endings, skipping the write entirely
+    when the file already holds exactly that text. Returns whether it wrote.
+
+    `Path.write_text` translates every `\\n` to `os.linesep` when no
+    `newline=` is given, so an unconditional write on Windows turns a
+    committed eval fixture CRLF on every run even though nothing in it
+    changed - the exact incident `routing-stability.json` suffered mid-sprint
+    (2026-09-25 carried-items triage, row 89: "a test run rewrites
+    evals/fixtures/routing-stability.json with CRLF (content unchanged),
+    dirtying the tracked tree"). Writing with `newline="\\n"` keeps the bytes
+    identical on every platform, and skipping the write when the content is
+    already current means a clean tree stays clean after a run that changed
+    nothing - `godmode evals --refresh`'s second run is a no-op by
+    construction, not by luck.
+    """
+    if path.is_file():
+        try:
+            if path.read_text(encoding="utf-8", newline="") == text:
+                return False
+        except OSError:
+            pass
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8", newline="\n")
+    return True
+
+
 def _write_baseline(
     project: Path, scores: dict[str, dict[str, Any]], withhold_memory: bool = False
 ) -> None:
@@ -1574,13 +1601,14 @@ def routing_stability(project: Path, write: bool = False) -> dict[str, Any]:
 
     fixture = project / "evals" / "fixtures" / _STABILITY_FIXTURE
     if write or not fixture.is_file():
-        fixture.parent.mkdir(parents=True, exist_ok=True)
-        fixture.write_text(json.dumps(
+        text = json.dumps(
             {"schema": "godmode-routing-stability-v1",
              "suites_digest": digest, "routes": routes},
-            indent=1, sort_keys=True), encoding="utf-8")
+            indent=1, sort_keys=True) + "\n"
+        fixture_changed = _write_fixture_text(fixture, text)
         return {"verdict": "stability-snapshot-written",
-                "cases": len(routes), "suites_digest": digest}
+                "cases": len(routes), "suites_digest": digest,
+                "fixture_changed": fixture_changed}
 
     stored = json.loads(fixture.read_text(encoding="utf-8"))
     if stored.get("suites_digest") != digest:
