@@ -968,17 +968,6 @@ _MUTATING_VERBS = frozenset({
 _GUARD_SETTING_TEXT = re.compile(r"(?i)uninitialized|godmode-settings|\.git[\\/]+config\b")
 _GIT_CONFIG = re.compile(r"(?is)\bgit\b.*\bconfig\b")
 
-_HARM_LABELS = {
-    "git-history-or-remote": "history or remote",
-    "git-branch-mutation": "branch deletion",
-    "filesystem-mutation": "delete or overwrite outside the project",
-    "release-or-external-write": "release or publish",
-    "database-mutation": "database drop",
-    "recovery-point-destruction": "recovery point deletion",
-    "interpreter-opaque-inline": "an interpreter payload naming a harm-class operation",
-    "password-in-transcript": "a password typed into the transcript",
-}
-
 
 def _hint_strings(payload: dict[str, Any]) -> list[str] | None:
     """Every string the tool call carries, or None when there are more
@@ -1134,87 +1123,48 @@ def _harm_category(verdict: dict[str, Any], root: str, contained: Any) -> str | 
     return None
 
 
-def _shown(operation: str) -> str:
-    text = " ".join(operation.split())
-    return text if len(text) <= 120 else text[:117] + "..."
-
-
-def _guard_reason(kind: str, operation: str, label: str, can_ask: bool) -> str:
-    shown = _shown(operation)
-    if kind == "setting":
-        if can_ask:
-            return ("Godmode: this changes the guard for uninitialized projects "
-                    f"(`{shown}`). Only you should change it; approve only if you asked for it.")
-        return ("godmode: refused - this changes the guard for uninitialized projects "
-                f"(`{shown}`), which is yours to change. Run "
-                "`godmode config set uninitialized off` yourself in a terminal, "
-                "or run `godmode init` here for full Godmode.")
-    if can_ask:
-        return (f"Godmode is not initialized here, and `{shown}` is a harm-class command "
-                f"({label}). Your approval at this prompt is the only check it gets. "
-                "Run `godmode init` here for full Godmode, or turn this guard off with "
-                "`godmode config set uninitialized off`.")
-    return (f"godmode: refused - `{shown}` is a harm-class command ({label}), and "
-            "Godmode is not initialized here. Run `godmode init` here to approve it "
-            "with your password, run it yourself in a terminal, or turn this guard "
-            "off with `godmode config set uninitialized off`.")
-
-
 def _guard_decision(payload: dict[str, Any], root: str) -> dict[str, Any] | None:
     """The host body for a harm-class call in an uninitialized project, or
     None to allow. Only reached by a `harm_candidate`; any failure here
     asks (or denies) rather than allowing, since the call already named a
-    harm-class word."""
-    host = "unknown"
-    event_name = "PreToolUse"
-    operation = ""
+    harm-class word.
+
+    This is the one branch that needs the real classifier and the host
+    dialect renderer, both from `godmode_runtime` - imports this module's
+    own docstring forbids at any depth. That half of the work lives in the
+    sibling hooks module `godmode_uninitialized_guard.py` instead; a hook
+    importing another hook is not the boundary `godmode_atlas
+    .direction_findings` enforces, so reaching it here, only on this rare
+    confirmed-candidate path, keeps this module itself import-free. A
+    deployment missing that sibling file is judged exactly like a runtime
+    the sibling module itself could not reach: refused, not raised."""
     try:
-        scripts = str(HOOKS_DIR.parent / "scripts")
-        if scripts not in sys.path:
-            sys.path.insert(0, scripts)
-        from godmode_runtime import godmode_hostevent as hostevent
-        from godmode_runtime.godmode_sentinel import _contained, classify_action
-        event = hostevent.parse_host_payload(payload)
-        host, event_name = event.host, event.event or "PreToolUse"
-        can_ask = host in hostevent.HOSTS_WITH_ASK
-
-        def body(kind: str, label: str = "") -> dict[str, Any]:
-            decision = "ask" if can_ask else "deny"
-            rendered, _code = hostevent.render_decision(
-                host, event_name, decision, _guard_reason(kind, operation, label, can_ask))
-            return rendered
-
-        if event.tool_kind in (hostevent.TOOL_KIND_READ, hostevent.TOOL_KIND_OTHER):
-            return None
-        operation = event.operation or ""
-        if event.tool_kind not in (hostevent.TOOL_KIND_SHELL, hostevent.TOOL_KIND_FENCED):
-            return body("harm", "a tool call Godmode could not read")
-        if not operation.strip():
-            return None
-        if _disables_guard(operation, list(event.targets or [])):
-            return body("setting")
-        verdict = classify_action(operation, project_root=Path(root), tool_name=event.tool)
-        category = _harm_category(verdict, root, _contained)
-        if category is None:
-            return None
-        return body("harm", _HARM_LABELS.get(category, category.replace("-", " ")))
-    except Exception:  # noqa: BLE001 - a harm-class candidate that cannot be judged is not allowed
-        return _unjudged_refusal(host, event_name)
+        if str(HOOKS_DIR) not in sys.path:
+            sys.path.insert(0, str(HOOKS_DIR))
+        from godmode_uninitialized_guard import guard_decision
+    except Exception:  # noqa: BLE001 - the sibling guard module is unreachable; deny, never raise
+        return _unjudged_refusal()
+    return guard_decision(payload, root)
 
 
 def _unjudged_refusal(host: str = "unknown", event_name: str = "PreToolUse") -> dict[str, Any]:
     """The deny for a harm-class candidate this module could not judge -
     in the host's own dialect when the runtime can render it, else every
-    documented dialect's keys at once."""
+    documented dialect's keys at once. See `_guard_decision` above: the
+    rendering lives in `godmode_uninitialized_guard.py` for the same
+    zero-import reason; this module's own fallback below covers a
+    deployment missing that sibling file too, the same way it already
+    covered a runtime the sibling module could not reach."""
     reason = ("godmode: refused - this names a harm-class operation and Godmode, "
               "not initialized here, could not classify it. Run it yourself in a "
               "terminal, run `godmode init` here, or turn this guard off with "
               "`godmode config set uninitialized off`.")
     try:
-        from godmode_runtime.godmode_hostevent import render_decision
-        rendered, _code = render_decision(host, event_name, "deny", reason)
-        return rendered
-    except Exception:  # noqa: BLE001 - the runtime itself is unreachable
+        if str(HOOKS_DIR) not in sys.path:
+            sys.path.insert(0, str(HOOKS_DIR))
+        from godmode_uninitialized_guard import unjudged_refusal
+        return unjudged_refusal(host, event_name)
+    except Exception:  # noqa: BLE001 - the runtime and the sibling guard module are both unreachable
         return {"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                        "permissionDecision": "deny",
                                        "permissionDecisionReason": reason},
