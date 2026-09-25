@@ -105,6 +105,51 @@ class ArchiveRatherThanUnlink(Base):
         self.assertEqual(result["missing"], ["a.json"])
 
 
+class ASharedFileKeepsOtherTools(Base):
+    """Row 87: `.agents/hooks.json`-shaped files are keyed by tool; removal
+    must strip only this plugin's key, never the whole file."""
+
+    def test_a_sibling_tools_key_survives_removal(self) -> None:
+        shared = self.touch(
+            ".agents/hooks.json",
+            json.dumps({"godmode": {"enabled": True}, "othertool": {"x": 1}}) + "\n",
+        )
+        M.record(self.project, "godmode", "antigravity-hooks", [shared])
+
+        result = R.archive(self.project, "godmode")
+
+        self.assertEqual(result["archived"], [".agents/hooks.json"])
+        self.assertTrue(shared.exists(), "the shared file was removed entirely")
+        remaining = json.loads(shared.read_text(encoding="utf-8"))
+        self.assertEqual(remaining, {"othertool": {"x": 1}})
+        recovered = Path(result["archive_dir"]) / ".agents/hooks.json"
+        self.assertEqual(json.loads(recovered.read_text(encoding="utf-8")),
+                          {"godmode": {"enabled": True}})
+
+    def test_a_file_only_this_plugin_wrote_is_removed_entirely(self) -> None:
+        shared = self.touch(
+            ".agents/hooks.json",
+            json.dumps({"godmode": {"enabled": True}}) + "\n",
+        )
+        M.record(self.project, "godmode", "antigravity-hooks", [shared])
+
+        result = R.archive(self.project, "godmode")
+
+        self.assertEqual(result["archived"], [".agents/hooks.json"])
+        self.assertFalse(shared.exists(),
+                          "an uninstall with no sibling tool must leave nothing behind")
+
+    def test_a_key_already_absent_is_reported_missing_not_fatal(self) -> None:
+        shared = self.touch(".agents/hooks.json", json.dumps({"othertool": {}}) + "\n")
+        M.record(self.project, "godmode", "antigravity-hooks", [shared])
+
+        result = R.archive(self.project, "godmode")
+
+        self.assertEqual(result["missing"], [".agents/hooks.json"])
+        self.assertTrue(shared.exists())
+        self.assertEqual(json.loads(shared.read_text(encoding="utf-8")), {"othertool": {}})
+
+
 class ACorruptedManifestRemovesNothing(Base):
     def _corrupt(self, entries: list[str]) -> None:
         self.touch("real.json")
