@@ -362,6 +362,226 @@ class UngovernedProject(unittest.TestCase):
             self.assertFalse(marker.exists(), "the full hook was spawned")
 
 
+class EditClearance(unittest.TestCase):
+    """R11: an ordinary re-edit of a file the full hook already cleared, in
+    the same session, is decided by the fast gate without the full hook -
+    and every check that can refuse an edit still fires the moment its
+    trigger exists. Driven through the real gate and post-edit hook."""
+
+    SESSION = "s-edit"
+
+    def setUp(self) -> None:
+        self.base = Path(tempfile.mkdtemp(prefix="godmode-edit-clearance-"))
+        self.addCleanup(shutil.rmtree, self.base, ignore_errors=True)
+        self.project = _governed_project()
+        self.addCleanup(shutil.rmtree, self.project, ignore_errors=True)
+        (self.project / "app.py").write_text("def parse(text):\n    return text\n",
+                                             encoding="utf-8")
+        for command in (["add", "-A"], ["commit", "-qm", "seed"]):
+            subprocess.run(["git", *command], cwd=self.project, check=True,
+                           capture_output=True)
+        self.home = self.base / "state"
+        self.target = str(self.project / "app.py")
+
+    def _payload(self, target: str | None = None, tool: str = "Edit",
+                 session: str | None = None, **tool_input: Any) -> dict[str, Any]:
+        tool_input = tool_input or {"old_string": "return text", "new_string": "return text"}
+        return {"hook_event_name": "PreToolUse", "tool_name": tool,
+                "session_id": session or self.SESSION, "cwd": str(self.project),
+                "tool_input": {"file_path": target or self.target, **tool_input}}
+
+    def _hook(self, script: str, body: dict[str, Any], *args: str,
+              **env: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-I", "-B", str(HOOKS_DIR / script), *args],
+            input=json.dumps(body).encode(), capture_output=True, cwd=str(self.project),
+            timeout=120, env=scrubbed_env(GODMODE_STATE_HOME=str(self.home), **env))
+
+    def _gate(self, body: dict[str, Any], **env: str) -> str:
+        done = self._hook("godmode_gate_fast.py", body, **env)
+        text = done.stdout.decode("utf-8").strip()
+        if done.returncode == 2:
+            return "deny"
+        if not text:
+            return "allow"
+        decoded = json.loads(text)
+        specific = decoded.get("hookSpecificOutput") or {}
+        return specific.get("permissionDecision") or decoded.get("decision") or "allow"
+
+    def _edit(self, body: dict[str, Any] | None = None, **env: str) -> str:
+        body = body or self._payload()
+        decision = self._gate(body, **env)
+        if decision == "allow":
+            self._hook("godmode_post_edit.py", {**body, "hook_event_name": "PostToolUse"}, **env)
+        return decision
+
+    def _cleared(self, body: dict[str, Any] | None = None) -> bool:
+        return fast.edit_cleared(body or self._payload(), self.project, TABLE)
+
+    def _clear(self) -> None:
+        """Two ordinary edits: the first enrolls the file in the change,
+        the second is allowed for a standing reason and cleared."""
+        self.assertEqual(self._edit(), "allow")
+        self.assertFalse(self._cleared(), "a first edit must not be cleared")
+        self.assertEqual(self._edit(), "allow")
+        self.assertTrue(self._cleared(), "the second silent allow should clear the file")
+
+    def _archive(self) -> Any:
+        from godmode_runtime.godmode_anchor import resolve_anchor
+        from godmode_runtime.godmode_chronicle import Chronicle
+        return Chronicle(resolve_anchor(self.project))
+
+    def test_a_cleared_re_edit_needs_no_full_hook_and_the_full_hook_agrees(self) -> None:
+        self._clear()
+        # Parity: the full hook, asked directly, allows the same call silently.
+        full = self._hook("godmode_session_hook.py", self._payload(), "pre-action")
+        self.assertEqual(full.returncode, 0, full.stderr[-600:])
+        self.assertEqual(full.stdout.strip(), b"")
+        # The re-edit is decided without starting the full hook at all.
+        spawned = self.base / "spawned"
+        stub = self.base / "stub_hook.py"
+        stub.write_text(f"open({str(spawned)!r}, 'w').close()\n", encoding="utf-8")
+        code = ("import runpy,sys;sys.argv=[sys.argv[1]];import importlib.util as u;"
+                "s=u.spec_from_file_location('g',sys.argv[0]);m=u.module_from_spec(s);"
+                "s.loader.exec_module(m);m.FULL_HOOK=__import__('pathlib').Path(" + repr(str(stub))
+                + ");raise SystemExit(m.main())")
+        done = subprocess.run([sys.executable, "-I", "-B", "-c", code, str(FAST_GATE)],
+                              input=json.dumps(self._payload()).encode(), capture_output=True,
+                              timeout=60, env=scrubbed_env(GODMODE_STATE_HOME=str(self.home)))
+        self.assertEqual((done.returncode, done.stdout.strip()), (0, b""), done.stderr[-600:])
+        self.assertFalse(spawned.exists(), "the full hook was started for a cleared re-edit")
+
+    def test_the_clearance_survives_an_operator_prompt(self) -> None:
+        self._clear()
+        prompt = {"hook_event_name": "UserPromptSubmit", "prompt": "keep going on the parser",
+                  "session_id": self.SESSION, "cwd": str(self.project)}
+        done = self._hook("godmode_session_hook.py", prompt, "user-prompt")
+        self.assertEqual(done.returncode, 0, done.stderr[-600:])
+        kinds = [record["kind"] for record in self._archive().read_events()]
+        self.assertIn("request", kinds)
+        self.assertTrue(self._cleared())
+
+    def test_another_session_a_new_file_or_a_relative_path_escalates(self) -> None:
+        self._clear()
+        self.assertFalse(self._cleared(self._payload(session="other")))
+        (self.project / "b.py").write_text("x = 1\n", encoding="utf-8")
+        self.assertFalse(self._cleared(self._payload(str(self.project / "b.py"))))
+        self.assertFalse(self._cleared(self._payload("app.py")))
+        self.assertFalse(self._cleared(self._payload(tool="apply_patch")))
+
+    def test_a_protected_path_is_never_cleared_even_when_listed(self) -> None:
+        self._clear()
+        common = self.project / ".git"
+        clearance = json.loads((common / fast.CLEARANCE_NAME).read_text(encoding="utf-8"))
+        for relative in (".env", ".godmode-authorization-policy.json", "skills/x/SKILL.md",
+                         ".github/workflows/ci.yml", "CODEFREEZE"):
+            path = self.project / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x\n", encoding="utf-8")
+            clearance["targets"].append(relative)
+        (common / fast.CLEARANCE_NAME).write_text(json.dumps(clearance), encoding="utf-8")
+        for relative in (".env", ".godmode-authorization-policy.json", "skills/x/SKILL.md",
+                         ".github/workflows/ci.yml", "CODEFREEZE"):
+            with self.subTest(path=relative):
+                self.assertFalse(self._cleared(self._payload(str(self.project / relative))))
+        # Secret-shaped and pinned-skill targets reach the full hook, which
+        # still stops them (unattended, for the skill). The placeholder policy
+        # and freeze files would otherwise decide first.
+        for relative in (".godmode-authorization-policy.json", "CODEFREEZE"):
+            (self.project / relative).unlink()
+        self.assertNotEqual(self._gate(self._payload(str(self.project / ".env"))), "allow")
+        self.assertEqual(self._gate(self._payload(str(self.project / "skills/x/SKILL.md")),
+                                    GODMODE_ATTENDED="0"), "deny")
+
+    def test_the_design_boundary_still_denies(self) -> None:
+        self._clear()
+        (self.project / ".godmode-boundaries.json").write_text(
+            json.dumps({"ui": {"declared": ["app.py"]}}), encoding="utf-8")
+        self.assertFalse(self._cleared())
+        self.assertEqual(self._gate(self._payload()), "deny")
+
+    def test_the_scope_fence_still_stops_it(self) -> None:
+        self._clear()
+        from godmode_runtime.godmode_plan import CONTRACT_FIELDS, approve, specify, start
+        archive = self._archive()
+        specify(archive, "S-1", "narrow fix", {"objective": "o", "outcome": "u",
+                                               "acceptance": "a", "non_goals": "n"})
+        contract = {field: "x" for field in CONTRACT_FIELDS if field != "editable"}
+        contract.update({"accept": "cmd:x", "editable": "docs/**"})
+        start(archive, "S-1", "narrow fix", contract)
+        approve(archive, "S-1")
+        self.assertFalse(self._cleared())
+        self.assertIn(self._gate(self._payload()), ("ask", "deny"))
+
+    def test_a_frozen_region_still_denies(self) -> None:
+        self._clear()
+        (self.project / "app.py").write_text(
+            "def parse(text):\n    return text\n# GODMODE-EDITABLE-START\nx = 1\n"
+            "# GODMODE-EDITABLE-END\n", encoding="utf-8")
+        self.assertFalse(self._cleared())
+        self.assertIn(self._gate(self._payload()), ("ask", "deny"))
+
+    def test_a_declared_tool_gate_a_stop_flag_and_a_ceiling_still_stop_it(self) -> None:
+        for name, content in ((".godmode-authorization-policy.json",
+                               json.dumps({"tool_gates": {"Edit": "deny"}})),
+                              (".godmode-stop", "stop\n"),
+                              (".godmode-ceilings.json", json.dumps({"tool_calls": 1}))):
+            with self.subTest(setting=name):
+                self.setUp()
+                # The stop flag is read at a session's boundary.
+                self._archive().append("session", "session-open", {}, evidence=[])
+                self._clear()
+                (self.project / name).write_text(content, encoding="utf-8")
+                self.assertFalse(self._cleared())
+                self.assertEqual(self._gate(self._payload()), "deny")
+
+    def test_plan_first_still_asks_for_a_new_file(self) -> None:
+        self._clear()
+        big = "\n".join(f"line_{i} = {i}" for i in range(80)) + "\n"
+        body = self._payload(str(self.project / "new_module.py"), tool="Write", content=big)
+        self.assertFalse(self._cleared(body))
+        self.assertIn(self._gate(body), ("ask", "deny"))
+
+    def test_a_pinned_evaluator_still_denies(self) -> None:
+        self._clear()
+        from godmode_runtime.godmode_sentinel import pin_evaluator
+        pin_evaluator(self._archive(), self.project, self.target)
+        self.assertFalse(self._cleared())
+        self.assertEqual(self._gate(self._payload()), "deny")
+
+    def test_any_record_an_edit_check_reads_voids_the_clearance(self) -> None:
+        for kind, subject, data in (("attestation", "check:retest:tests.test_app",
+                                     {"status": "blocked"}),
+                                    ("plan", "plan:x", {"state": "approved"}),
+                                    ("checkpoint", "handover", {"status": "green"}),
+                                    ("decision", "sources-exemption:README.md", {})):
+            with self.subTest(kind=kind):
+                self.setUp()
+                self._clear()
+                self._archive().append(kind, subject, data, evidence=[])
+                self.assertFalse(self._cleared())
+
+    def test_two_red_retests_stop_the_clearance_being_granted(self) -> None:
+        archive = self._archive()
+        for _ in range(2):
+            archive.append("attestation", "check:retest:tests.test_app",
+                           {"status": "blocked"}, evidence=[])
+        self.assertEqual(self._edit(), "allow")
+        self.assertEqual(self._edit(), "allow")
+        self.assertFalse(self._cleared())
+
+    def test_a_project_whose_archive_is_gone_is_not_cleared(self) -> None:
+        self._clear()
+        shutil.rmtree(self.project / ".git" / "godmode-state")
+        self.assertFalse(self._cleared())
+
+    def test_a_host_that_hears_no_session_start_is_not_cleared(self) -> None:
+        self._clear()
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"GROK_AGENT": "1"}):
+            self.assertFalse(self._cleared())
+
+
 def _uninitialized_repo(base: Path) -> Path:
     project = base / "project"
     project.mkdir()

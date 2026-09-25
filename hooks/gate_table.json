@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_from": "13c944b82854",
+  "generated_from": "19e083cc7073",
   "floor": {
     "claude-code": [
       "git status",
@@ -154,5 +154,14 @@
       "-o",
       "--output"
     ]
-  }
+  },
+  "protected_edit_paths": [
+    "(?i)(?:^|[/\\\\])\\.git[/\\\\]|(?:^|[/\\\\])\\.env\\b|credential|\\bid_rsa\\b|\\.pem$|\\.key$|(?:^|[/\\\\])\\.godmode\\-authorization\\-policy\\.json$",
+    "(?i)(?:^|[/\\\\])(?:\\.git[/\\\\]hooks[/\\\\]|\\.github[/\\\\]workflows[/\\\\]|\\.husky[/\\\\]|\\.claude[/\\\\](?:settings(?:\\.local)?\\.json|hooks(?:[/\\\\]|\\.json))|\\.cursor[/\\\\]hooks\\.json|\\.codex[/\\\\]hooks\\.json|\\.agents[/\\\\]hooks\\.json|\\.gemini[/\\\\]settings\\.json|\\.pre-commit-config\\.ya?ml|lefthook\\.ya?ml)",
+    "(?i)(?:^|[/\\\\])(?:CODEFREEZE|\\.freeze|FREEZE|\\.codefreeze|RELEASE-FREEZE)(?:\\.md|\\.txt)?$",
+    "(?i)(?:^|[/\\\\])godmode\\-settings\\.json$",
+    "(?i)(?:^|[/\\\\])\\.godmode[^/\\\\]*$",
+    "(?i)(?:^|[/\\\\])\\.git(?:[/\\\\]|$)",
+    "(?i)^(?:\\.claude/)?skills/"
+  ]
 }

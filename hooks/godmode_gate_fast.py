@@ -631,6 +631,306 @@ def brief_pending(start: Path) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Edit clearance: an ordinary in-tree edit decided without the full hook.
+# ---------------------------------------------------------------------------
+#
+# Every Write/Edit used to start a second interpreter that loaded the whole
+# runtime (R11, 2026-09-23). The checks that can refuse an edit - the
+# classifier's protected paths and pinned evaluators, the design boundary,
+# the scope fence, frozen regions, repeated reversal, plan-first, pinned
+# skills, declared tool gates, observe mode, run ceilings, the watchdog and
+# the required-sources ask - read the archive or project settings, so this
+# module cannot run them. It does not try to. The full hook, after running
+# every one of them on an edit of file F and allowing it silently, records
+# a clearance for F: the session, the archive head it judged, and the state
+# of every project setting those checks read. The next edit of F in the same
+# session is allowed here only when that clearance still describes the
+# project exactly:
+#   - same session and project, F inside the tree, F an existing file and
+#     not a protected path (`protected_edit_paths` in gate_table.json);
+#   - F carries no frozen-region marker (the frozen-region check reads the
+#     file, so a marker added since would change its answer);
+#   - every setting file (policy, ceilings, boundaries, roles, the operator
+#     stop flag) and git's HEAD unchanged;
+#   - the archive head unchanged, or moved only by records that cannot change
+#     any of those answers (an edit's own bookkeeping, an operator request),
+#     chained record by record from the head the clearance saw.
+# The full hook grants a clearance only when no answer can move without one
+# of those changing: no run ceiling counts calls, no check has two red
+# retests (the repeated-reversal precondition), and plan-first allowed F for
+# a standing reason (gate off, throwaway branch, approved plan, or F already
+# part of the change). Anything else - a first edit, a new file, a setting
+# or record this module cannot vouch for, any doubt at all - escalates
+# exactly as before.
+
+CLEARANCE_NAME = "godmode-edit-clearance.json"
+CLEARANCE_VERSION = 1
+# Claude-shaped edit tools whose one target is `tool_input.file_path`.
+_CLEARABLE_TOOLS = frozenset({"Edit", "Write", "MultiEdit"})
+# Project settings the edit checks read, by file; the operator stop flag
+# counts by its presence.
+CLEARANCE_SETTINGS = (".godmode-authorization-policy.json", ".godmode-ceilings.json",
+                      ".godmode-boundaries.json", ".godmode-roles.json", ".godmode-stop")
+# Records that may land between a clearance and the next edit without
+# voiding it: an edit's own bookkeeping, and what an operator's prompt
+# records. None is read by any edit check (see the module block above).
+_NEUTRAL_ACTIONS = frozenset({"edit-recorded", "prompt-shape-nudge", "agent-relay-seen"})
+_MAX_TAIL = 32
+_MAX_CLEARED_TARGETS = 256
+_MAX_TARGET_BYTES = 4 * 1024 * 1024
+_FROZEN_MARKER = b"godmode-editable-"
+
+
+def _fingerprint(path: str) -> list[int] | None:
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return [stat.st_mtime_ns, stat.st_size]
+
+
+def clearance_settings(root: str) -> dict[str, Any]:
+    """The state of every project setting an edit check reads, plus git's
+    HEAD (the branch decides a throwaway-branch pass)."""
+    state: dict[str, Any] = {name: _fingerprint(os.path.join(root, name))
+                             for name in CLEARANCE_SETTINGS}
+    state["HEAD"] = _fingerprint(os.path.join(root, ".git", "HEAD"))
+    return state
+
+
+def read_head(path: str) -> dict[str, Any] | None:
+    """The archive head hint as `{sequence, record_hash}`, or None."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(value, dict) or not isinstance(value.get("sequence"), int):
+        return None
+    return {"sequence": value["sequence"], "record_hash": value.get("record_hash")}
+
+
+def tree_relative(target: str, root: str) -> str | None:
+    """`target`'s path inside `root` (posix), resolved through links; None
+    when it is not an absolute path inside the tree."""
+    if not isinstance(target, str) or not target or "\0" in target or not os.path.isabs(target):
+        return None
+    real = os.path.realpath(target)
+    base = os.path.realpath(root)
+    try:
+        if os.path.commonpath([os.path.normcase(real), os.path.normcase(base)]) != os.path.normcase(base):
+            return None
+    except ValueError:
+        return None
+    relative = os.path.relpath(real, base).replace("\\", "/")
+    if relative in (".", "") or relative.startswith("../"):
+        return None
+    return relative
+
+
+def _neutral(record: dict[str, Any]) -> bool:
+    kind = record.get("kind")
+    subject = str(record.get("subject") or "")
+    if kind == "action":
+        return subject in _NEUTRAL_ACTIONS
+    return kind == "request" and subject.startswith("ask:")
+
+
+def _head_still_clear(cleared: dict[str, Any], head_path: str) -> bool:
+    """Whether the archive head is the one the clearance saw, or moved from
+    it only through neutral records, each chained to the one before."""
+    head = read_head(head_path)
+    if head is None or not isinstance(cleared, dict):
+        return False
+    start = cleared.get("sequence")
+    if not isinstance(start, int):
+        return False
+    if head == {"sequence": start, "record_hash": cleared.get("record_hash")}:
+        return True
+    if not start < head["sequence"] <= start + _MAX_TAIL:
+        return False
+    events = os.path.join(os.path.dirname(head_path), "godmode-events")
+    wanted = {f"{sequence:012d}-": sequence
+              for sequence in range(start + 1, head["sequence"] + 1)}
+    found: dict[int, str] = {}
+    with os.scandir(events) as entries:
+        for entry in entries:
+            sequence = wanted.get(entry.name[:13])
+            if sequence is None:
+                continue
+            if sequence in found:
+                return False
+            found[sequence] = entry.path
+    previous = cleared.get("record_hash")
+    for sequence in range(start + 1, head["sequence"] + 1):
+        path = found.get(sequence)
+        if path is None:
+            return False
+        with open(path, encoding="utf-8") as handle:
+            record = json.load(handle)
+        if (not isinstance(record, dict) or record.get("sequence") != sequence
+                or record.get("previous_hash") != previous or not _neutral(record)):
+            return False
+        previous = record.get("record_hash")
+    return previous == head["record_hash"]
+
+
+def _clearance_path(common: str) -> str:
+    return os.path.join(common, CLEARANCE_NAME)
+
+
+def _load_clearance(common: str) -> dict[str, Any] | None:
+    try:
+        with open(_clearance_path(common), encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(value, dict) or value.get("version") != CLEARANCE_VERSION:
+        return None
+    return value
+
+
+def _save_clearance(common: str, value: dict[str, Any]) -> None:
+    path = _clearance_path(common)
+    temporary = f"{path}.{os.getpid()}.tmp"
+    try:
+        with open(temporary, "w", encoding="utf-8") as handle:
+            json.dump(value, handle)
+        os.replace(temporary, path)
+    except OSError:  # godmode: swallow-ok: a clearance that cannot be saved only means the next edit escalates
+        try:
+            os.remove(temporary)
+        except OSError:  # godmode: swallow-ok: nothing left to clean up
+            pass
+
+
+def drop_edit_clearance(common: str) -> None:
+    try:
+        os.remove(_clearance_path(common))
+    except OSError:  # godmode: swallow-ok: no clearance is the state asked for
+        pass
+
+
+def _session_of(payload: dict[str, Any]) -> str:
+    value = payload.get("session_id") or payload.get("sessionId")
+    return value if isinstance(value, str) else ""
+
+
+def _git_root(start: str) -> tuple[str, str] | None:
+    """(project root, git dir) for a plain checkout; None otherwise."""
+    if str(HOOKS_DIR) not in sys.path:
+        sys.path.insert(0, str(HOOKS_DIR))
+    from godmode_initstate import _git_location, canonical
+    located = _git_location(canonical(start))
+    if located is None:
+        return None
+    root, common = located
+    if not os.path.isdir(os.path.join(root, ".git")):
+        return None
+    return root, common
+
+
+def grant_edit_clearance(payload: dict[str, Any], start: str, target: str,
+                         head_path: str) -> bool:
+    """Called by the full hook after it ran every edit check on `target`
+    and allowed it silently, with nothing left that could change those
+    answers but the state recorded here (see the block comment above)."""
+    session = _session_of(payload)
+    located = _git_root(start)
+    if not session or located is None:
+        return False
+    root, common = located
+    relative = tree_relative(target, root)
+    head = read_head(head_path)
+    if relative is None or head is None:
+        return False
+    settings = clearance_settings(root)
+    current = _load_clearance(common)
+    targets: list[str] = []
+    if (current is not None and current.get("session") == session
+            and current.get("root") == root and current.get("head_path") == head_path
+            and current.get("head") == head and current.get("settings") == settings):
+        targets = [t for t in current.get("targets") or [] if isinstance(t, str)]
+    if relative not in targets:
+        targets.append(relative)
+    _save_clearance(common, {
+        "version": CLEARANCE_VERSION, "session": session, "root": root,
+        "head_path": head_path, "head": head, "settings": settings,
+        "targets": targets[-_MAX_CLEARED_TARGETS:],
+    })
+    return True
+
+
+def advance_edit_clearance(start: str, record: dict[str, Any]) -> None:
+    """Called by the post-edit hook with the bookkeeping record it just
+    appended: when that record sits directly on the head a clearance saw,
+    the clearance moves with it. Anything else leaves the clearance alone,
+    and the gate reads the moved head itself."""
+    try:
+        located = _git_root(start)
+        if located is None or not _neutral(record):
+            return
+        _root, common = located
+        current = _load_clearance(common)
+        if current is None:
+            return
+        head = current.get("head") or {}
+        if (record.get("sequence") != (head.get("sequence") or 0) + 1
+                or record.get("previous_hash") != head.get("record_hash")):
+            return
+        current["head"] = {"sequence": record["sequence"], "record_hash": record.get("record_hash")}
+        _save_clearance(common, current)
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: a clearance left behind only costs one escalation
+        pass
+
+
+def edit_cleared(payload: dict[str, Any], start: Path, table: dict[str, Any] | None) -> bool:
+    """True only when this edit is the ordinary re-edit a standing
+    clearance covers; any doubt is False (escalate)."""
+    try:
+        if not isinstance(table, dict) or not isinstance(payload, dict):
+            return False
+        tool = payload.get("toolName", payload.get("tool_name"))
+        tool_input = payload.get("toolInput", payload.get("tool_input"))
+        if tool not in _CLEARABLE_TOOLS or not isinstance(tool_input, dict):
+            return False
+        target = tool_input.get("file_path")
+        session = _session_of(payload)
+        if not isinstance(target, str) or not session or _hears_no_session_start(payload):
+            return False
+        protected = table.get("protected_edit_paths")
+        if not isinstance(protected, list) or not protected:
+            return False
+        located = _git_root(str(start))
+        if located is None:
+            return False
+        root, common = located
+        cleared = _load_clearance(common)
+        if cleared is None or cleared.get("session") != session or cleared.get("root") != root:
+            return False
+        relative = tree_relative(target, root)
+        if relative is None or relative not in (cleared.get("targets") or []):
+            return False
+        for pattern in protected:
+            if not isinstance(pattern, str) or re.search(pattern, target) or re.search(pattern, relative):
+                return False
+        real = os.path.realpath(target)
+        if not os.path.isfile(real) or os.path.getsize(real) > _MAX_TARGET_BYTES:
+            return False
+        with open(real, "rb") as handle:
+            if _FROZEN_MARKER in handle.read().lower():
+                return False
+        if cleared.get("settings") != clearance_settings(root):
+            return False
+        head_path = cleared.get("head_path")
+        if not isinstance(head_path, str) or os.path.basename(head_path) != "godmode-head.json":
+            return False
+        return _head_still_clear(cleared.get("head"), head_path)
+    except Exception:  # noqa: BLE001 - doubt escalates
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Uninitialized projects: the harm guard.
 # ---------------------------------------------------------------------------
 
@@ -1060,6 +1360,11 @@ def main() -> int:
     start = Path(cwd) if cwd else Path.cwd()
     if (fast_verdict(payload, table) == "allow" and not brief_pending(start)
             and not uninitialized_notice_due(payload, start)):
+        spoken_allow(payload)
+        return 0
+    # An ordinary re-edit the full hook already cleared, with nothing it
+    # judged having moved since (see "Edit clearance" above).
+    if edit_cleared(payload, start, table):
         spoken_allow(payload)
         return 0
     # The full hook reads a non-string `cwd` as `str(cwd)`, not as the

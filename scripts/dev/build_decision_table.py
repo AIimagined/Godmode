@@ -75,8 +75,12 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from godmode_runtime.godmode_sentinel import (  # noqa: E402
     DB_CLIENTS,
+    MACHINE_SETTINGS_FILENAME,
     _FIND_MUTATION,
+    _FREEZE_FILE,
+    _HOOK_AS_CODE,
     _OUTPUT_FLAGS_BY_HEAD,
+    _SENSITIVE_EDIT,
     classify_action,
 )
 # The runtime owns the digest this table's freshness check is compared
@@ -348,6 +352,34 @@ def _build_mutation_heads() -> dict[str, list[str]]:
     return result
 
 
+# Edit targets the fast gate never clears on its own, whatever a clearance
+# says: the classifier's own protected-path patterns, exported verbatim, and
+# the paths the full hook guards past the classifier - every project-level
+# Godmode setting (policy, ceilings, boundaries, roles, the stop flag),
+# git's own directory, and the pinned project skills. Matched against the
+# target as the host sent it and against its path inside the project.
+_PROTECTED_EDIT_EXTRA = [
+    r"(?i)(?:^|[/\\])" + re.escape(MACHINE_SETTINGS_FILENAME) + r"$",
+    r"(?i)(?:^|[/\\])\.godmode[^/\\]*$",
+    r"(?i)(?:^|[/\\])\.git(?:[/\\]|$)",
+    r"(?i)^(?:\.claude/)?skills/",
+]
+# Samples the classifier must refuse or ask about, one per exported pattern.
+_PROTECTED_EDIT_SAMPLES = ["write file .env", "write file .github/workflows/ci.yml",
+                           "write file CODEFREEZE"]
+
+
+def _build_protected_edit_paths() -> list[str]:
+    for sample in _PROTECTED_EDIT_SAMPLES:
+        verdict = classify_action(sample)
+        assert verdict["protected"], f"protected-edit sample is not protected: {sample!r}"
+    patterns = [_SENSITIVE_EDIT.pattern, _HOOK_AS_CODE.pattern, _FREEZE_FILE.pattern,
+                *_PROTECTED_EDIT_EXTRA]
+    for pattern in patterns:
+        re.compile(pattern)
+    return patterns
+
+
 def build_table() -> dict[str, object]:
     git_ask, git_refuse = _build_git_ask_refuse()
     return {
@@ -362,6 +394,7 @@ def build_table() -> dict[str, object]:
         "find_mutation_flags": _build_find_mutation_flags(),
         "flag_denylist": _build_flag_denylist(),
         "output_flags_by_head": _build_output_flags_by_head(),
+        "protected_edit_paths": _build_protected_edit_paths(),
     }
 
 

@@ -2855,6 +2855,45 @@ def _checkpoint_pressure(archive: Chronicle, anchor: Any) -> str | None:
     return None
 
 
+_CLEARED_PREVIEW_FLAGS = ("capability_consumed", "silenced_by", "cleared_by",
+                          "observe_advisory", "authorized_by", "forced_decision")
+
+
+def _grant_edit_clearance(archive: Chronicle, anchor: Any, submitted: dict[str, Any],
+                          event: Any, preview: dict[str, Any], *,
+                          clear_policy: bool, ceilings: dict[str, Any],
+                          spent: dict[str, Any]) -> None:
+    """R11: after every edit check allowed this edit silently, record the
+    clearance that lets the fast gate allow the next edit of the same file
+    without this hook - only when nothing but the state the clearance
+    records could change those answers (`godmode_gate_fast`, "Edit
+    clearance"). Best-effort: no clearance only means the next edit
+    escalates as before."""
+    try:
+        if (event.tool not in ("Edit", "Write", "MultiEdit") or len(event.targets or []) != 1
+                or event.approval_context or current_host() in ("grok", "antigravity")):
+            return
+        if (not clear_policy or not preview.get("allow") or preview.get("protected")
+                or preview.get("category") != "worktree-file-mutation"
+                or any(preview.get(flag) for flag in _CLEARED_PREVIEW_FLAGS)):
+            return
+        # A ceiling that counts calls must see every call.
+        if any(limit and name in spent
+               for name, limit in (ceilings.get("ceilings") or {}).items()):
+            return
+        from godmode_runtime.godmode_guardrails import checkpoint_trigger_policy
+        from godmode_runtime.godmode_reversals import reversal_armed
+        if checkpoint_trigger_policy(Path(anchor.project_root))[1]:
+            return
+        if reversal_armed(archive):
+            return
+        from godmode_gate_fast import grant_edit_clearance
+        grant_edit_clearance(submitted, str(anchor.project_root), str(event.targets[0]),
+                             str(archive.head))
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: no clearance only means the next edit escalates
+        pass
+
+
 def _broker(archive: Chronicle) -> Any:
     # Deferred: CapabilityBroker drags secrets/hmac/getpass into the import
     # graph, which only the two consume branches below ever need - the
@@ -5002,6 +5041,9 @@ def main(argv: list[str] | None = None) -> int:
         # both checks are binary allow/deny, so there is no "worst of" to
         # rank, only the first target that is not allowed.
         target_checks_ran = bool(preview.get("allow") and event.targets)
+        # Set only when plan-first allowed for a reason more edits cannot
+        # undo; the fast gate's edit clearance needs it (below).
+        plan_standing = False
         if target_checks_ran:
             # Deferred: only fenced tool calls pay for the fence module - the
             # far more common read-only and R0-R2 tool calls never reach
@@ -5090,6 +5132,7 @@ def main(argv: list[str] | None = None) -> int:
                     archive, list(event.targets), project_root=Path(anchor.project_root),
                     tool_input=tool_input if isinstance(tool_input, dict) else None,
                     policy=policy, branch=anchor.branch)
+                plan_standing = bool(first["allowed"] and first.get("standing"))
                 if not first["allowed"]:
                     preview["allow"] = False
                     preview["tier"] = preview.get("tier") or first["tier"]
@@ -5293,6 +5336,11 @@ def main(argv: list[str] | None = None) -> int:
                     body.update(note)
                 if body:
                     print(json.dumps(body, ensure_ascii=False))
+                elif plan_standing:
+                    _grant_edit_clearance(
+                        archive, anchor, submitted, event, preview,
+                        clear_policy=not observe and policy_unreadable_detail is None,
+                        ceilings=ceiling, spent=spent)
                 return 0
             if not preview["allow"]:
                 body, _code = render_decision(

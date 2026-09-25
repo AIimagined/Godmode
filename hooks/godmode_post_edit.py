@@ -314,11 +314,20 @@ def _record_edit(archive: Any | None, project: Path, target: Path, tool_name: st
         if resolved is None:
             return
         relative = resolved.relative_to(project.resolve()).as_posix()
-        archive.append("action", "edit-recorded", {
+        record = archive.append("action", "edit-recorded", {
             "path": relative,
             "operation": "edit:" + hashlib.sha256(relative.encode("utf-8")).hexdigest()[:12],
         }, evidence=[])
     except Exception:  # noqa: BLE001  # godmode: swallow-ok: best-effort read: the failure is the non-event here
+        return
+    # The fast gate's edit clearance saw the head this record now sits on;
+    # it moves with its own bookkeeping (`godmode_gate_fast`).
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from godmode_gate_fast import advance_edit_clearance
+        if isinstance(record, dict):
+            advance_edit_clearance(str(project), record)
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: a clearance left behind only costs one escalation
         pass
 
 

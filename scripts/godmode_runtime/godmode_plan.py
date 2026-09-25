@@ -314,6 +314,11 @@ def plan_first_verdict(archive: Chronicle, targets: list[str], *, project_root: 
     than one file; at least one target is new to the change; and the edit
     is larger than `PLAN_FIRST_SMALL_EDIT_LINES`. A single-file change is
     never refused. The hook only reaches this in an initialized project.
+
+    `standing: True` marks an allow more edits cannot undo on their own -
+    the gate is off, the branch is throwaway, a plan is approved, or every
+    target is already part of the change - the one kind the fast gate's
+    edit clearance may carry forward.
     """
     from pathlib import Path
 
@@ -321,13 +326,16 @@ def plan_first_verdict(archive: Chronicle, targets: list[str], *, project_root: 
     from .godmode_paths import contain
 
     if (policy or {}).get("plan_first") == "off":
-        return {"allowed": True, "reason": "plan_first is off in the authorization policy"}
+        return {"allowed": True, "standing": True,
+                "reason": "plan_first is off in the authorization policy"}
     role = branch_role(archive, branch)
     if role["role"] == THROWAWAY:
-        return {"allowed": True, "reason": f"branch {branch} is throwaway ({role['source']})"}
+        return {"allowed": True, "standing": True,
+                "reason": f"branch {branch} is throwaway ({role['source']})"}
     plan = active_plan(archive)
     if plan is not None and plan["state"] == APPROVED:
-        return {"allowed": True, "reason": f"plan {plan['id']} approved", "plan": plan["id"]}
+        return {"allowed": True, "standing": True,
+                "reason": f"plan {plan['id']} approved", "plan": plan["id"]}
     root = Path(project_root)
     current: set[str] = set()
     for target in targets:
@@ -339,10 +347,14 @@ def plan_first_verdict(archive: Chronicle, targets: list[str], *, project_root: 
     earlier = _change_since_boundary(archive)
     touched = earlier | current
     if len(touched) <= 1:
-        return {"allowed": True, "reason": "single-file change"}
+        # Standing once the file is already part of the change: more edits
+        # only add files beside it, and it is never new to the change again.
+        return {"allowed": True, "standing": current <= earlier,
+                "reason": "single-file change"}
     new_files = sorted(current - earlier)
     if not new_files:
-        return {"allowed": True, "reason": "every target is already part of this change"}
+        return {"allowed": True, "standing": True,
+                "reason": "every target is already part of this change"}
     size = edit_size_lines(tool_input)
     if size is not None and size <= PLAN_FIRST_SMALL_EDIT_LINES:
         return {"allowed": True, "exempt_files": new_files,

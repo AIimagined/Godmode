@@ -216,6 +216,13 @@ def _loop_anchor(seqs: list[int], lifting_incidents: list[int]) -> int:
     return anchor
 
 
+def reversal_armed(archive: Any) -> bool:
+    """Whether any check has the two red retests every repeated-reversal
+    refusal needs. False means no edit, however many, can be refused by
+    that check until another red retest lands."""
+    return _any_check_has_two_blocked_runs(archive.read_events())
+
+
 def third_edit_without_incident(
     archive: Any, path: str, now: Any = None,
 ) -> dict[str, Any] | None:
