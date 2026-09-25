@@ -60,6 +60,25 @@ class EvidencePipeTests(unittest.TestCase):
         self.assertIsNone(evidence_pipe_advisory(
             "python -m unittest discover -s tests 2>&1 > full.log"))
 
+    def test_capture_then_filter_the_file_is_clean(self):
+        # The remedy itself, in the shapes agents actually write: the run's
+        # output lands in a file, the run ends, then the file is filtered.
+        for command in (
+                'python -m pytest -q tests > "$TEMP/t.log" 2>&1; echo exit=$?; tail -3 "$TEMP/t.log"',
+                "pytest -q > out.log 2>&1 && grep -E 'FAILED|passed' out.log",
+                "npx vitest run &> run.txt; tail -20 run.txt",
+                "python -m unittest > log.txt\ngrep FAIL log.txt"):
+            with self.subTest(command=command):
+                self.assertIsNone(evidence_pipe_advisory(command))
+
+    def test_output_thrown_away_or_piped_still_warns(self):
+        for command in (
+                "pytest -q > /dev/null; grep FAIL old.log | tail -3",
+                "pytest -q 2> err.txt | tail -5",
+                "pytest -q > out.log | tail -5"):
+            with self.subTest(command=command):
+                self.assertIsNotNone(evidence_pipe_advisory(command))
+
     def test_plain_run_is_clean(self):
         self.assertIsNone(evidence_pipe_advisory("pytest -q"))
 

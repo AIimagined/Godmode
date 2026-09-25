@@ -3211,6 +3211,16 @@ def evidence_pipe_advisory(command: str) -> str | None:
     between = command[runner.end():truncator.start()]
     if re.search(r"\btee\b", between) or re.search(r"pipefail|PIPESTATUS", command):
         return None
+    # The advisory's own remedy: the run's stdout went to a file (`> f`,
+    # `>> f`, `1> f`, `&> f`, `*> f`; a bare `2>&1`/`2> f` is not stdout)
+    # and a command separator ends the run before the filter reads the
+    # file. Nothing was dropped and the run finished on its own exit code.
+    # A redirect to the null device discards the output instead.
+    captured = re.search(
+        r"(?:^|[\s;])(?:[1&*]?>>?)\s*[\"']?(?!(?:/dev/null|\$null|nul)\b)[^\s&|;>]",
+        between, re.IGNORECASE)
+    if captured and re.search(r";|&&|\|\||\n", between[captured.end():]):
+        return None
     return (
         "evidence-pipe: a verdict-bearing command is piped through a filter "
         "before its outcome is known - the exit code becomes the filter's and "
