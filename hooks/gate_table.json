@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_from": "fd158030805b",
+  "generated_from": "13c944b82854",
   "floor": {
     "claude-code": [
       "git status",
@@ -43,7 +43,8 @@
     "dirname",
     "realpath",
     "nl",
-    "column"
+    "column",
+    "cd"
   ],
   "mutation_heads": {
     "filesystem-mutation": [

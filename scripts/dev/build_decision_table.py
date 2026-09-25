@@ -167,6 +167,10 @@ _READ_HEADS = [
     # Pipeline filters with no output-file flag. `tee` (writes the files it
     # names) and `xargs` (runs a command) are deliberately not here.
     "nl", "column",
+    # 2026-09-25: `cd <dir> && git log` escalated every time and, under
+    # load, ran past the host's timeout. `cd` changes no file; every other
+    # segment of the command is still judged on its own.
+    "cd",
 ]
 
 # --- git_ask / git_refuse: curated candidates, bucketed by the sentinel's

@@ -816,6 +816,19 @@ class KnownShapes(unittest.TestCase):
         self.assertIn("tr", TABLE["read_heads"])
         self.assertEqual(fast.fast_verdict(payload("tr a b"), TABLE), "allow")
 
+    def test_a_directory_change_before_a_read_stays_on_the_fast_path(self) -> None:
+        """2026-09-25: `cd <dir> && git log` escalated every time and ran
+        past the host's timeout under load. `cd` changes no file; the rest
+        of the command is still judged segment by segment."""
+        for command in ("cd src && git log --oneline -5", "cd .. && git status",
+                        "cd sub; ls -la"):
+            with self.subTest(command=command):
+                self.assertEqual(fast.fast_verdict(payload(command), TABLE), "allow")
+        for command in ("cd src && rm -rf build", "cd src && git push",
+                        "cd src > out.txt", "cd $(rm -rf x)"):
+            with self.subTest(command=command):
+                self.assertEqual(fast.fast_verdict(payload(command), TABLE), "escalate")
+
 
 class Adversarial(unittest.TestCase):
     """Final whole-branch review (final-review.md), two Critical findings.
