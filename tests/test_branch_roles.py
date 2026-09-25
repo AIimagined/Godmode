@@ -94,6 +94,22 @@ class DeclaredRoles(unittest.TestCase):
         self.assertEqual(roles.branch_role(self.project.archive, "feature/parser")["role"],
                          "maintained")
 
+    def test_a_declaration_survives_500_later_topology_records(self) -> None:
+        """Row 1 (2026-09-25 carried-items triage): declared_role used to
+        read archive.select(kind="branch", subject="git-topology",
+        limit=500), which keeps only the newest 500 matching records - a
+        role declared early in a long-lived archive silently reverted to
+        the branch's default once 500 later topology records (for OTHER
+        branches) had piled up."""
+        operator_declares(self.project.archive, "feature/parser", "throwaway")
+        for _ in range(500):
+            self.project.archive.append(
+                "branch", "git-topology",
+                {"branch": "some-other-branch", "role": "maintained"}, evidence=[])
+        self.assertEqual(
+            roles.branch_role(self.project.archive, "feature/parser")["role"],
+            "throwaway")
+
     def test_a_declaration_for_another_branch_does_not_leak(self) -> None:
         operator_declares(self.project.archive, "feature/parser", "throwaway")
         self.assertEqual(roles.branch_role(self.project.archive, "main")["role"], "maintained")

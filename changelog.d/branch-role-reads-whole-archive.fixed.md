@@ -1,0 +1,1 @@
+- A branch's declared role (`godmode branches --record --role ...`) now stays in effect for the life of the archive. It used to be read through a bounded window (the newest 500 matching records), so a role declared early in a long-lived project could silently revert to the branch's name-based default once 500 later branch-topology records had accumulated.
