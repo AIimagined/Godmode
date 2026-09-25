@@ -168,6 +168,11 @@ Outside one, call the installed copy directly:
 $ python ~/.claude/plugins/cache/aiimagined/godmode/<version>/scripts/godmode.py init
 ```
 
+**PATH.** A plugin install does not put a bare `godmode` on PATH. The shim
+lives at `<plugin root>/bin/godmode.cmd` on Windows or `<plugin root>/bin/godmode`
+on macOS/Linux - call it by that path, or add its `bin` directory to PATH
+yourself for a bare `godmode` command.
+
 ## First five minutes
 
 Start with nothing blocked. In observe mode every gate that would deny or ask
