@@ -7385,7 +7385,7 @@ def _day_one_text(parser: argparse.ArgumentParser) -> str:
     from .godmode_anchor import current_host
     from .godmode_hostevent import HOSTS_WITH_ASK
 
-    total = len(_subparser_action(parser).choices)
+    total = len(_subparser_action(parser).choices) - len(DEPRECATED_ALIASES)
     host = current_host()
     if host in HOSTS_WITH_ASK or host == "unknown":
         posture = ("risky operations ask first; irreversible ones need the "
@@ -7421,10 +7421,17 @@ def _all_verbs_text(parser: argparse.ArgumentParser) -> str:
     helps = {ca.dest: (ca.help or "") for ca in action._choices_actions}
     lines = ["GODMODE - EVERY VERB", ""]
     for name in sorted(action.choices):
+        if name in DEPRECATED_ALIASES:
+            continue
         blurb = helps.get(name, "")
         entry = f"  {name:<18} {blurb}"
         lines.append(entry[:100])
     lines += ["", "  `godmode <verb> --help` documents any of them.", ""]
+    if DEPRECATED_ALIASES:
+        lines += ["  Deprecated (still work, kept one release):", ""]
+        for old, new in sorted(DEPRECATED_ALIASES.items()):
+            lines.append(f"  {old:<18} -> godmode {new}")
+        lines.append("")
     return "\n".join(lines)
 
 
@@ -7476,6 +7483,31 @@ def _cli_error_text(exc: GodmodeError, brief: bool) -> str:
     if brief:
         return f"{payload['error']}: {payload['message']}"
     return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
+# Verb consolidation (0.3.31, task 14): the OLD top-level name on the left
+# still runs during this release - it prints a one-line deprecation note to
+# stderr naming the form on the right, then delegates to that form's own
+# handler unchanged. Kept for exactly one release, then the old name and
+# its subparser are deleted outright.
+DEPRECATED_ALIASES: dict[str, str] = {
+    "explain-context": "context why",
+}
+
+
+def _deprecated_alias_handler(old_name: str, new_name: str, handler):
+    """Wrap `handler` so the retired top-level verb `old_name` still runs
+    exactly what it always ran (`handler` is the live command's own
+    handler, called with the SAME parsed args - no behavior change), after
+    naming its replacement on stderr once per invocation."""
+
+    def _run(args: argparse.Namespace, runtime: "Runtime") -> "CommandResult":
+        print(f"godmode: '{old_name}' is deprecated; use '{new_name}' instead",
+              file=sys.stderr)
+        return handler(args, runtime)
+
+    _run.__name__ = f"cmd_{old_name.replace('-', '_')}_deprecated"
+    return _run
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -9636,7 +9668,12 @@ def _build_parser() -> argparse.ArgumentParser:
     export.add_argument("--token-budget", type=int, default=700)
     export.set_defaults(handler=cmd_export)
 
-    sub.add_parser("explain-context", help="Explain included and excluded continuity data").set_defaults(handler=cmd_context_why)
+    sub.add_parser(
+        "explain-context",
+        help="Deprecated: use `context why` instead (alias kept through one release)",
+    ).set_defaults(
+        handler=_deprecated_alias_handler("explain-context", "context why", cmd_context_why)
+    )
     parity = sub.add_parser("parity", help="Compare neutral structure with an explicit local reference")
     parity.add_argument("--reference", default=None,
                         help="Required unless --sources is given")
