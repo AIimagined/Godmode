@@ -80,8 +80,9 @@ _MODELS_SETTINGS_FILE = ".godmode-evals.json"
 # that would never actually produce the category in question.
 #
 # "unclassified-mutation": appears in `godmode_sentinel.py` only in
-# comments and in the tier table's own row (`:3276`); no return site in
-# `_categorize` or `classify_action` assigns it. `hooks/godmode_session_
+# comments; no return site in `_categorize` or `classify_action` assigns
+# it, and its tier-table row was removed as unobservable (it takes the
+# fallback tier). `hooks/godmode_session_
 # hook.py`'s "no operation described" path still constructs
 # `{"category": "unclassified-mutation", ...}` directly, so it is live at
 # the hook layer - but no command-shaped fixture can reach it through

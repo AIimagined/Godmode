@@ -3214,9 +3214,19 @@ def evidence_pipe_advisory(command: str) -> str | None:
     )
 
 
-# mutation) are reserved for categories the classifier does not yet emit;
-# every unmapped category resolves to R3 so an unknown can never rank below
-# history mutation.
+# The tier each category is floored at. A category with no row here
+# (`unknown-command`, anything a later rule starts emitting) takes
+# `_FALLBACK_TIER`, so an unknown can never rank below history mutation.
+#
+# Every row is load-bearing and each is pinned by a test that swaps the
+# fallback for a different tier and checks the row still decides
+# (`tests/test_meta_gate.py`, `tests/test_gate_tier_floors.py`). A row whose
+# tier merely equalled the fallback used to be unobservable: deleting it
+# changed nothing a test could see. Named rather than inlined as a literal
+# at each lookup for the same reason - the fallback has to be swappable for
+# the pin to mean anything.
+_FALLBACK_TIER = "R3"
+
 _TIER_BY_CATEGORY = {
     "read-only-inspection": "R0",
     "local-compute-or-state": "R1",
@@ -3260,7 +3270,6 @@ _TIER_BY_CATEGORY = {
     "scripted-source-edit": "R3",
     "process-control": "R3",
     "database-mutation": "R3",
-    "unclassified-mutation": "R3",
     # C7 (security review): a `$(...)`/backtick substitution this module's
     # own balanced scan could not close before the text ended - a parse
     # failure, judged the same as any other real thing it cannot read.
@@ -4110,9 +4119,9 @@ def _without_git_global_options(command: str) -> str:
 def _risk_tier(category: str, normalized: str) -> tuple[str, bool]:
     """§9.2 tier for a classified operation, and whether it is destructive
     enough (R5) to demand a second confirmation before any capability is
-    spent. Escalations run first so a force form cannot keep its base tier."""
-    if category == "read-only-inspection":
-        return "R0", False
+    spent. Escalations run first so a force form cannot keep its base tier.
+    Every escalation is scoped to a protected category, so a read-only
+    inspection reaches its own row (R0) below like any other category."""
     # The same text the category was decided on, or a global option demotes a
     # forced push to an ordinary one by moving the word it is anchored to.
     canonical = _without_git_global_options(normalized)
@@ -4121,7 +4130,7 @@ def _risk_tier(category: str, normalized: str) -> tuple[str, bool]:
             return "R5", True
     if category == "git-history-or-remote" and _GIT_PUSH.search(canonical):
         return "R4", False
-    return _TIER_BY_CATEGORY.get(category, "R3"), False
+    return _TIER_BY_CATEGORY.get(category, _FALLBACK_TIER), False
 
 
 # B4-9: heads that can EXECUTE or re-dispatch whatever a pipeline hands
@@ -4497,17 +4506,18 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     # outright - the flag exists for a file or a secret manager, and the
     # prompt exists for a person at a terminal.
     if _PASSWORD_PIPED_LITERAL.search(normalized):
+        password_tier = _TIER_BY_CATEGORY.get("password-in-transcript", _FALLBACK_TIER)
         return {
             "protected": True,
             "category": "password-in-transcript",
             "operation_digest": hashlib.sha256(normalized.encode()).hexdigest(),
             "impact": ["pipes a typed password into --password-stdin; the transcript "
                        "would keep it. Type it at the prompt in a separate terminal window"],
-            "tier": "R5",
+            "tier": password_tier,
             "second_confirmation_required": True,
             "external_repo_ref": None,
             "components": [{"text": normalized, "category": "password-in-transcript",
-                            "tier": "R5", "protected": True}],
+                            "tier": password_tier, "protected": True}],
         }
 
     # B3-5 detection: a repository outside this project entering the work,
@@ -4582,7 +4592,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # parse FAILURE, not "no substitution was found here". Fails
         # closed rather than falling through to whatever the rest of this
         # function would make of the raw, un-recursed text.
-        unparsed_tier = _TIER_BY_CATEGORY.get("unparsed-substitution", "R3")
+        unparsed_tier = _TIER_BY_CATEGORY.get("unparsed-substitution", _FALLBACK_TIER)
         return {
             "protected": True,
             "category": "unparsed-substitution",
