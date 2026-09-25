@@ -85,8 +85,9 @@ operator is presumed present to answer an `ask`:
 A project skill changes in either row; an unattended change is reported once per
 session and listed by `godmode status`. To lock a skill, list `skills/<name>/**` in
 `.godmode-boundaries.json`'s `ui.declared`: edits, `skill forge`, `retire` and
-`restore` are then refused in every session; run the skill command `--as-operator`
-(it asks for the password) or make the edit yourself.
+`restore` are then refused in every session; stage the one change with the password
+as the refusal shows (`authorize stage --operation "edit file <path>"`), run the skill
+command `--as-operator` (it asks for the password), or make the edit yourself.
 
 `godmode operator --policy` prints both rows and names which one is
 active. `godmode_sentinel.attended()` decides which row applies, in this

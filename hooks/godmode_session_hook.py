@@ -2905,6 +2905,15 @@ def _broker(archive: Chronicle) -> Any:
     return CapabilityBroker(archive)
 
 
+def _design_edit_staged(archive: Chronicle, relative: str) -> bool:
+    """Whether the operator staged the edit of this design-surface path, and
+    it was spent now. The same operation text `authorize stage` was given
+    in the refusal's remedy, whichever writer reaches the path."""
+    from godmode_runtime.godmode_sentinel import design_edit_operation
+    spent = _broker(archive).consume_staged(design_edit_operation(relative))
+    return bool(spent and spent.get("protected"))
+
+
 def _sources_gate_reason(archive: Chronicle, anchor: Any,
                          session: str | None,
                          transcript_path: str | None = None) -> str | None:
@@ -5170,7 +5179,12 @@ def main(argv: list[str] | None = None) -> int:
                 # middle of a long run is the same keystroke as every other
                 # confirmation that session, which is not permission.
                 design = design_verdict(Path(anchor.project_root), target)
-                if not design["allowed"]:
+                if not design["allowed"] and _design_edit_staged(archive, design["path"]):
+                    # The operator staged this exact edit with the password;
+                    # it is spent here, once. Every later check still runs.
+                    preview["capability_consumed"] = True
+                    preview["authorized_by"] = "staged capability"
+                elif not design["allowed"]:
                     preview["allow"] = False
                     preview["design_block"] = True
                     preview["boundary"] = design["boundary"]

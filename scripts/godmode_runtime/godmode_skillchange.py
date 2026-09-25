@@ -72,24 +72,35 @@ def unattended_changes(archive: Any, session: str | None) -> list[dict[str, Any]
 
 
 def skill_boundary_refusal(project_root: Path, skill_dir: Path, action: str, *,
-                           operator_verified: bool = False) -> str | None:
+                           operator_verified: bool = False, archive: Any = None,
+                           primary: str = "SKILL.md") -> str | None:
     """The refusal for a skill writer whose skill a declared design
     boundary covers, or None. The same `design_verdict` the pre-tool hook
     applies to an Edit/Write is asked of the skill's own files, in every
-    session. Only the operator moves it: a write made `--as-operator` whose
-    password was verified passes."""
-    from .godmode_fence import design_verdict
+    session, `primary` (the file this action writes) first. Only the
+    operator moves it, the same two ways as the hook's refusal: an approval
+    staged with the password for the first locked file (spent here, once),
+    or the command run `--as-operator` with the password verified."""
+    from .godmode_fence import _PLUGIN_ROOT, design_verdict
+    from .godmode_sentinel import CapabilityBroker, design_edit_operation, stage_operation_hint
 
     if operator_verified:
         return None
     root = Path(project_root)
-    candidates = [skill_dir / "SKILL.md", skill_dir / "godmode-evals.json"]
+    candidates = [skill_dir / primary, skill_dir / "SKILL.md", skill_dir / "godmode-evals.json"]
     if skill_dir.is_dir():
         candidates += sorted(path for path in skill_dir.rglob("*") if path.is_file())
     for path in candidates:
         verdict = design_verdict(root, str(path))
-        if not verdict["allowed"]:
-            return (f"Refusing to {action} skill '{skill_dir.name}': {verdict['detail']}. "
-                    "The operator runs it themselves with `--as-operator`, which asks "
-                    "for the password from `godmode authorize setup`")
+        if verdict["allowed"]:
+            continue
+        operation = design_edit_operation(str(verdict["path"]))
+        if archive is not None:
+            spent = CapabilityBroker(archive).consume_staged(operation)
+            if spent and spent.get("protected"):
+                return None
+        return (f"Refusing to {action} skill '{skill_dir.name}': {verdict['detail']}. "
+                "The operator stages it with the password from `godmode authorize setup`: "
+                f"{stage_operation_hint(_PLUGIN_ROOT, operation)}, or runs the skill "
+                "command themselves with `--as-operator`")
     return None

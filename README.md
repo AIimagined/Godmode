@@ -254,7 +254,9 @@ sequence. `godmode forget --dry-run` reports a pass without recording one.
 watching is reported once and listed by `godmode status`; list a skill in
 `.godmode-boundaries.json` (`"ui": {"declared": ["skills/<name>/**"]}`) and every
 writer - an edit, `skill forge`, `retire`, `restore` - is refused in every session
-unless you make the change yourself or run the skill command `--as-operator`.
+unless you make the change yourself, stage it with the password as the refusal
+shows (`authorize stage --operation "edit file <path>"`), or run the skill command
+`--as-operator`.
 
 Every verb, its purpose, and a command that verifies it:
 [docs/COMMAND-REFERENCE.md](docs/COMMAND-REFERENCE.md), generated from the CLI's
