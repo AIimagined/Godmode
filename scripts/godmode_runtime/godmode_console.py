@@ -5125,6 +5125,18 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             },
             exit_code=1,
         )
+    fork_repair = None
+    if getattr(args, "repair_fork", False):
+        # An explicit operator decision: undo a same-sequence fork at the
+        # tip (keep the sibling the chain anchor names, quarantine the
+        # rest, chronicle the repair). Any other shape is refused as-is.
+        try:
+            fork_repair = runtime.archive.repair_fork()
+        except ArchiveError as exc:
+            return CommandResult(
+                {"project": project, "fork_repair": {"repaired": False, "reason": str(exc)}},
+                exit_code=1,
+            )
     # verify=False: doctor's own forced full walk just below is the
     # verification. A default read_events() call verifies internally too
     # (accelerated, `use_checkpoint` defaulting True there) and RAISES on
@@ -5325,6 +5337,7 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             "design_boundary": (
                 "declared" if declared_design(runtime.anchor.project_root) else "unconfigured"
             ),
+            **({"fork_repair": fork_repair} if fork_repair is not None else {}),
         },
         exit_code=0 if healthy else 1,
     )
@@ -8882,6 +8895,10 @@ def _build_parser() -> argparse.ArgumentParser:
     digest_parser.set_defaults(handler=cmd_digest)
     doctor = sub.add_parser("doctor", help="Verify archive and continuity health")
     doctor.add_argument("--deep", action="store_true")
+    doctor.add_argument(
+        "--repair-fork", action="store_true",
+        help="Repair a same-sequence fork at the chain's tip: keep the record the "
+             "chain anchor names, move the others to a quarantine folder, record it")
     doctor.add_argument(
         "--host", help="Check one host's wiring instead: hook artifact present and "
                        "parsing, interpreter on PATH, archive writable, interception grade")

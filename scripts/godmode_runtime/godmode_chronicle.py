@@ -3364,6 +3364,121 @@ class Chronicle:
             "record": f"seq:{record['sequence']}",
         }
 
+    def repair_fork(self) -> dict[str, Any]:
+        """Undo a same-sequence fork at the chain's tip, as an explicit
+        operator decision (`godmode doctor --repair-fork`).
+
+        Accepts exactly one shape: the highest sequence is held by two or
+        more record files, every one of them intact (its own hash checks),
+        all naming the same `previous_hash`, which is the record before
+        them - and nothing else in the hot tier is duplicated. Anything
+        else is refused unchanged. The sibling the chain anchor names is
+        kept (no anchor at that sequence: the earliest recorded); the
+        others are moved - never deleted - into `godmode-quarantine/`
+        beside the events directory. The repair is chronicled as its own
+        record, and the chain is re-verified.
+        """
+        with self.write_lock():
+            by_sequence: dict[int, list[Path]] = {}
+            for path in self.event_paths():
+                try:
+                    number = int(path.name[:12])
+                except ValueError as exc:
+                    raise ArchiveError(
+                        f"Refusing to repair: {path.name} carries no sequence") from exc
+                by_sequence.setdefault(number, []).append(path)
+            forked = sorted(s for s, paths in by_sequence.items() if len(paths) > 1)
+            if not forked:
+                raise ArchiveError("No fork to repair: every sequence is held by one record.")
+            tip = max(by_sequence)
+            if forked != [tip]:
+                raise ArchiveError(
+                    f"Refusing to repair: sequence(s) {forked} are duplicated, and only a "
+                    f"single fork at the tip (sequence {tip}) has a safe repair.")
+            siblings = [(path, self._read_json(path)) for path in by_sequence[tip]]
+            previous_hashes = {record.get("previous_hash") for _path, record in siblings}
+            for path, record in siblings:
+                if (record.get("sequence") != tip
+                        or record.get("record_hash") != _record_hash(record)):
+                    raise ArchiveError(
+                        f"Refusing to repair: {path.name} is not an intact record "
+                        f"at sequence {tip}.")
+            if len(previous_hashes) != 1:
+                raise ArchiveError(
+                    f"Refusing to repair: the records at sequence {tip} do not share "
+                    "one previous record - that is not a fork of one chain.")
+            (previous_hash,) = previous_hashes
+            if tip > 1:
+                before = by_sequence.get(tip - 1)
+                predecessor = self._read_json(before[0]) if before else None
+                expected = predecessor.get("record_hash") if predecessor else None
+                if expected is None:
+                    registry = self._read_cold_registry()
+                    expected = registry["hash_by_sequence"].get(tip - 1) if registry else None
+                if expected is None or expected != previous_hash:
+                    raise ArchiveError(
+                        f"Refusing to repair: the records at sequence {tip} do not link "
+                        f"to the record at sequence {tip - 1}.")
+            elif previous_hash is not None:
+                raise ArchiveError("Refusing to repair: a first record names a predecessor.")
+            anchor_state = self._read_chain_anchor()
+            keeper: tuple[Path, dict[str, Any]] | None = None
+            kept_by = "earliest"
+            if anchor_state is not None and anchor_state["length"] > tip:
+                raise ArchiveError(
+                    f"Refusing to repair: the chain anchor records {anchor_state['length']} "
+                    f"records but the chain ends at {tip} - that is a truncation, not a fork.")
+            if anchor_state is not None and anchor_state["length"] == tip:
+                named = [item for item in siblings
+                         if item[1].get("record_hash") == anchor_state["head_hash"]]
+                if len(named) != 1:
+                    raise ArchiveError(
+                        f"Refusing to repair: the chain anchor names no single record at "
+                        f"sequence {tip}.")
+                keeper, kept_by = named[0], "anchor"
+            if keeper is None:
+                keeper = min(siblings, key=lambda item: (
+                    str(item[1].get("recorded_at") or ""), item[0].name))
+            quarantine = self.root / "godmode-quarantine" / (
+                f"fork-{tip:012d}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}")
+            quarantine.mkdir(parents=True, exist_ok=True)
+            moved: list[str] = []
+            for path, _record in siblings:
+                if path == keeper[0]:
+                    continue
+                os.replace(_syscall_path(path), _syscall_path(quarantine / path.name))
+                moved.append(path.name)
+            self._write_chain_anchor(tip, keeper[1]["record_hash"])
+            self._write_head(tip, keeper[1]["record_hash"])
+            self._drop_events_cache(rewrite=True)
+            outcome = self.verify([self._read_json(path) for path in self.event_paths()])
+            if not outcome["ok"]:
+                raise ArchiveError(
+                    f"Fork moved to {quarantine}, but the chain still does not verify: "
+                    f"{outcome['message']}")
+        record = self.append(
+            "action", "chain-fork-repaired",
+            {
+                "sequence": tip,
+                "kept": keeper[0].name,
+                "kept_by": kept_by,
+                "quarantined": moved,
+                "quarantine": str(quarantine.relative_to(self.root)).replace("\\", "/"),
+            },
+            evidence=[],
+        )
+        verified = self.verify(self.read_events(verify=False))
+        return {
+            "repaired": True,
+            "sequence": tip,
+            "kept": keeper[0].name,
+            "kept_by": kept_by,
+            "quarantined": moved,
+            "quarantine": str(quarantine),
+            "record": f"seq:{record['sequence']}",
+            "chain": verified,
+        }
+
     def expunge(self, sequence: int, reason: str) -> dict[str, Any]:
         """Erase a record's payload after a secret slipped past the scanner.
 
