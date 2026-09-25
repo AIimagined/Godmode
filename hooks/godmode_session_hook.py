@@ -4180,6 +4180,18 @@ def main(argv: list[str] | None = None) -> int:
                         # Advisory only: the reason the main stop would block on
                         # becomes the note, and the parked echo carries it to
                         # the next prompt boundary.
+                        try:
+                            echo = archive.root / "godmode-claim-echo.json"
+                            parked = {}
+                            if echo.exists():
+                                parked = json.loads(echo.read_text(encoding="utf-8"))
+                            parked["sentences"] = [
+                                _ascii_echo(s)[:200] for s in done_shaped[:3]]
+                            parked["session"] = _session_key(submitted)
+                            echo.write_text(json.dumps(parked, ensure_ascii=False),
+                                            encoding="utf-8")
+                        except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
+                            pass
                         print(json.dumps({"systemMessage": block_body["reason"]},
                                          ensure_ascii=False))
                     elif cursor_stop:
