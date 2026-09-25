@@ -14,9 +14,14 @@ import subprocess
 import sys
 import unittest
 
+if str(Path(__file__).parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).parent))
+from _slow import slow  # noqa: E402
+
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 
 
+@slow
 class PolyglotLauncherTests(unittest.TestCase):
     def test_every_hook_routes_through_the_launcher(self) -> None:
         manifest = json.loads((PLUGIN_ROOT / "hooks" / "hooks.json")
@@ -121,6 +126,7 @@ class PolyglotLauncherTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
 
+@slow
 class SharedCommandStringTests(unittest.TestCase):
     """Eighth field report 2026-09-05 (Grok 1.0.13, Windows): Grok runs a
     plugin hook's command string in PowerShell, and the shipped

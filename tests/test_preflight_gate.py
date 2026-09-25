@@ -11,6 +11,9 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 for extra in (PLUGIN_ROOT / "scripts", PLUGIN_ROOT / "tests"):
     if str(extra) not in sys.path:
         sys.path.insert(0, str(extra))
+if str(Path(__file__).parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).parent))
+from _slow import slow  # noqa: E402
 
 from godmode_runtime.godmode_preflight import (preflight_gate, shard_modules,  # noqa: E402
                                               suite_growth_finding,
@@ -32,6 +35,7 @@ jobs:
 """
 
 
+@slow
 class WorkflowGateTests(unittest.TestCase):
     def test_the_verify_job_gates_are_read_in_order_without_the_suite(self) -> None:
         with isolated_project() as (project, _s, _a, _archive):
@@ -55,6 +59,7 @@ class WorkflowGateTests(unittest.TestCase):
         self.assertIn("tests.test_preflight_gate", flat)
 
 
+@slow
 class StageGateTests(unittest.TestCase):
     def test_a_push_needs_a_green_preflight_at_head(self) -> None:
         with isolated_project() as (project, _s, _a, archive):
@@ -92,6 +97,7 @@ class StageGateTests(unittest.TestCase):
             self.assertIsNotNone(preflight_gate(archive, project, "git push origin main"))
 
 
+@slow
 class CiVerifiedBranchTests(unittest.TestCase):
     def test_a_plain_push_to_a_branch_ci_runs_on_needs_no_local_preflight(self) -> None:
         with isolated_project() as (project, _s, _a, archive):
@@ -109,6 +115,7 @@ class CiVerifiedBranchTests(unittest.TestCase):
                 self.assertIsNotNone(preflight_gate(archive, project, held), held)
 
 
+@slow
 class RemoteRefTests(unittest.TestCase):
     def test_origin_branch_stands_in_for_a_missing_upstream(self) -> None:
         from godmode_runtime.godmode_preflight import _remote_ref
@@ -134,6 +141,7 @@ def _commit(project: Path, message: str) -> None:
                    cwd=project, check=True, capture_output=True)
 
 
+@slow
 class SuiteGrowthFindingTests(unittest.TestCase):
     """Release check: how much `tests/test_*.py` grew (modules, `def
     test_` functions) since `git describe --tags --abbrev=0` .. HEAD.
@@ -188,6 +196,7 @@ class SuiteGrowthFindingTests(unittest.TestCase):
             self.assertIsNotNone(finding)
 
 
+@slow
 class SuiteGrowthProjectModeTests(unittest.TestCase):
     """R1 "enforce harm, advise on quality" as it lands on the suite-growth
     check: past-10% growth is informational in the default advise mode
@@ -252,6 +261,7 @@ class SuiteGrowthProjectModeTests(unittest.TestCase):
             self.assertEqual(findings, [])
 
 
+@slow
 class AttestationSemanticsTests(unittest.TestCase):
     def test_judgment_findings_ride_a_ran_attestation_and_mechanical_ones_fail_it(self) -> None:
         import inspect

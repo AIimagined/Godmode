@@ -20,6 +20,7 @@ PROBE = "godmode_gate_fast.py"
 
 if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
+from _slow import slow  # noqa: E402
 from _host_env import scrubbed_env  # noqa: E402
 
 # Every interpreter starts isolated, writing byte-code only to the private
@@ -71,6 +72,7 @@ _SELF_REPORTING_SH = ("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{log}\"\n"
                       "case \"$1\" in -c) printf '%s' \"{self}\" ;; esac\nexit 0\n")
 
 
+@slow
 class LauncherTests(unittest.TestCase):
     def _env(self) -> dict:
         # Fix round 2 (NS-10k, task-14-rereview.md B1): this was
@@ -360,6 +362,7 @@ class LauncherTests(unittest.TestCase):
         self.assertFalse(args.startswith("-3"), args)
 
 
+@slow
 class ShLauncherTests(unittest.TestCase):
     """R-3a extension: `hooks/run-hook.sh`'s root resolution and interpreter
     probe survive the identical corpus rows the `.cmd` half is pinned
@@ -600,6 +603,7 @@ class ShLauncherTests(unittest.TestCase):
         self.assertTrue(args.rstrip().endswith(PROBE), args)
 
 
+@slow
 class BackslashRootGuardTests(unittest.TestCase):
     """B1 (task-3-review.md): `hooks/run-hook.sh`'s root-resolution `case`
     must strip a backslash-separated `$0` - the shape a host wiring this

@@ -35,6 +35,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
+from _slow import slow  # noqa: E402
 
 from godmode_runtime.godmode_attest import latest_session  # noqa: E402
 from godmode_runtime.godmode_projectmode import set_project_mode  # noqa: E402
@@ -57,6 +58,7 @@ def _open_session(archive) -> str:
     return latest_session(archive) or ""
 
 
+@slow
 class CheckTableTests(unittest.TestCase):
     def test_the_interface_names_exactly_these_six_checks(self) -> None:
         self.assertEqual(DONE_BAR_CHECKS, {
@@ -89,6 +91,7 @@ class CheckTableTests(unittest.TestCase):
         })
 
 
+@slow
 class EscalationGuardrailTests(unittest.TestCase):
     def test_a_reviewer_check_cannot_be_escalated(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
@@ -134,6 +137,7 @@ class EscalationGuardrailTests(unittest.TestCase):
             self.assertIsNone(active_escalation(archive, "uncited-claim"))
 
 
+@slow
 class EscalationLifecycleTests(unittest.TestCase):
     def test_a_builder_escalation_is_active_for_the_current_session(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
@@ -237,6 +241,7 @@ def _run_cli(project: Path, *args: str) -> subprocess.CompletedProcess:
         capture_output=True, text=True, cwd=project, env=env)
 
 
+@slow
 class GovernanceCliTests(unittest.TestCase):
     def setUp(self) -> None:
         self.project = Path(tempfile.mkdtemp())
@@ -285,6 +290,7 @@ def run_hook(event: str, payload: dict, project: Path) -> subprocess.CompletedPr
                          text=True, cwd=project, env=env)
 
 
+@slow
 class StopHookEscalationTests(unittest.TestCase):
     """Mirrors `test_subagent_scope.py`'s own setup: an open ask minted
     through `user-prompt`, then a Stop reply whose wording trips the
@@ -364,6 +370,7 @@ def _escalate_cli(project: Path, check: str, reason: str) -> subprocess.Complete
     return _cli(project, "governance", "escalate", check, "--reason", reason)
 
 
+@slow
 class OpenOperatorAsksStopHookTests(unittest.TestCase):
     """S3 (fix round 1): escalating `open-operator-asks` must SKIP the
     check, not defer its nag by one turn and quietly spend the
@@ -424,6 +431,7 @@ class OpenOperatorAsksStopHookTests(unittest.TestCase):
             self.assertIn("already triaged, tracked elsewhere", proc.stdout)
 
 
+@slow
 class DoneBarTurnRegressionTests(unittest.TestCase):
     """S2 (fix round 1): the done-bar's own per-Stop turn tick must be
     inert to every detector that reasons about repeated or unattested

@@ -27,9 +27,11 @@ from godmode_runtime import godmode_launchers as launchers  # noqa: E402
 from godmode_runtime import godmode_bindings as bindings  # noqa: E402
 if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
+from _slow import slow  # noqa: E402
 from _host_env import scrubbed_env  # noqa: E402
 
 
+@slow
 class LauncherTemplateByteIdentityTests(unittest.TestCase):
     """Generate -> compare bytes, for both templates, against the tree."""
 
@@ -94,6 +96,7 @@ class LauncherTemplateByteIdentityTests(unittest.TestCase):
         self.assertEqual(cmd_code, sh_code)
 
 
+@slow
 class PolyglotShHalfParsesTests(unittest.TestCase):
     """Every sh line of the polyglot carries a `:; ` prefix, which a
     multi-line `case` cannot take (`:;   /*) ;;` is a syntax error) - found
@@ -113,6 +116,7 @@ class PolyglotShHalfParsesTests(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
 
 
+@slow
 class LauncherRegenerationTests(unittest.TestCase):
     """`godmode bindings --write`/`--check` regenerate both from one source."""
 
@@ -177,6 +181,7 @@ class LauncherRegenerationTests(unittest.TestCase):
         self.assertTrue(all(row["state"] == "current" for row in launcher_rows), launcher_rows)
 
 
+@slow
 class ShLauncherRunsEndToEndTests(unittest.TestCase):
     """The generated `.sh` actually dispatches a hook, the way a host would
     invoke it - not just a byte comparison against the template."""
