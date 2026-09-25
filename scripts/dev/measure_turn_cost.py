@@ -7,10 +7,12 @@ interpreter per event - against a throwaway governed project whose archive
 lives under a throwaway state home. Nothing on this machine's real archives
 is read or written.
 
-The turn is: a prompt, a floor read (`git log`), a script run
+The first turn is: a prompt, a floor read (`git log`), a script run
 (`python script.py`), two edits of one tracked file, the post-edit hook for
 each, and a Stop whose reply makes an unbacked claim; then the next prompt,
-which is where parked notices come back. The session brief is measured
+which is where parked notices come back. A second turn in the same
+session (a read, an edit, a Stop, a prompt) shows the steady-state cost once
+the once-per-session lines are spent. The session brief is measured
 separately (once per session, not per turn).
 
 Tokens are estimated as characters / 4 over every text field a hook prints
@@ -161,6 +163,15 @@ def _steps(project: Path, transcript: Path) -> list[tuple[str, str, list[str], d
          {**common, "hook_event_name": "Stop", "stop_hook_active": False}),
         ("next user-prompt", "godmode_session_hook.py", ["user-prompt"],
          {**common, "hook_event_name": "UserPromptSubmit", "prompt": "thanks, continue"}),
+        # A second, steady-state turn in the same session: what every later
+        # turn costs once the once-per-session lines are spent.
+        ("turn 2: pre-tool git log", "godmode_gate_fast.py", [], bash("git log --oneline -5")),
+        ("turn 2: pre-tool Edit", "godmode_gate_fast.py", [], edit),
+        ("turn 2: post-edit", "godmode_post_edit.py", [], post),
+        ("turn 2: stop", "godmode_session_hook.py", ["stop"],
+         {**common, "hook_event_name": "Stop", "stop_hook_active": False}),
+        ("turn 2: next user-prompt", "godmode_session_hook.py", ["user-prompt"],
+         {**common, "hook_event_name": "UserPromptSubmit", "prompt": "thanks, continue"}),
     ]
 
 
@@ -215,7 +226,9 @@ def measure(runs: int, flagsets: list[list[str]]) -> list[dict]:
                              "max_s": round(max(timings[which][name]), 3),
                              "model_tokens": _tokens(model), "operator_tokens": _tokens(operator),
                              "model_text": model[:300]})
-            turn = [r for r in rows if r["step"] != "session-start"]
+            turn = [r for r in rows if r["step"] != "session-start"
+                    and not r["step"].startswith("turn 2:")]
+            steady = [r for r in rows if r["step"].startswith("turn 2:")]
             reports.append({
                 "flags": flags,
                 "rows": rows,
@@ -223,6 +236,9 @@ def measure(runs: int, flagsets: list[list[str]]) -> list[dict]:
                 "turn_model_tokens": sum(r["model_tokens"] for r in turn),
                 "turn_operator_tokens": sum(r["operator_tokens"] for r in turn),
                 "turn_hook_seconds": round(sum(r["median_s"] for r in turn), 3),
+                "steady_turn_model_tokens": sum(r["model_tokens"] for r in steady),
+                "steady_turn_operator_tokens": sum(r["operator_tokens"] for r in steady),
+                "steady_turn_hook_seconds": round(sum(r["median_s"] for r in steady), 3),
             })
         return reports
     finally:
@@ -256,6 +272,9 @@ def main() -> int:
         print(f"session brief (model tokens, once per session): {report['brief_tokens']}")
         print(f"ordinary turn: model tokens {report['turn_model_tokens']}, operator tokens "
               f"{report['turn_operator_tokens']}, hook seconds {report['turn_hook_seconds']}")
+        print(f"steady turn (same session): model tokens {report['steady_turn_model_tokens']}, "
+              f"operator tokens {report['steady_turn_operator_tokens']}, hook seconds "
+              f"{report['steady_turn_hook_seconds']}")
         print()
     return 0
 

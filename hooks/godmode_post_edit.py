@@ -331,6 +331,38 @@ def _record_edit(archive: Any | None, project: Path, target: Path, tool_name: st
         pass
 
 
+def _strict(archive: Any | None) -> bool:
+    if archive is None:
+        return False
+    try:
+        from godmode_runtime.godmode_projectmode import project_mode
+        return project_mode(archive) == "strict"
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable mode is the default mode
+        return False
+
+
+def _first_quality_summary(archive: Any | None, session: str) -> bool:
+    """True the first time this session's edits have quality findings;
+    without an archive every edit counts as the first."""
+    if archive is None:
+        return True
+    marker = archive.root / "godmode-quality-seen.json"
+    try:
+        seen = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        seen = {}
+    if not isinstance(seen, dict):
+        seen = {}
+    if seen.get(session):
+        return False
+    seen[session] = True
+    try:
+        marker.write_text(json.dumps(seen), encoding="utf-8")
+    except OSError:  # godmode: swallow-ok: an unwritten marker only repeats the summary
+        pass
+    return True
+
+
 def _impact_brief(archive: Any | None, project: Path, target: Path, session: str) -> str | None:
     """The recorded neighbors of an edited file, pushed at the edit moment.
 
@@ -465,7 +497,15 @@ def main() -> int:
         messages.append(impact)
     if _enabled(project):
         lines = _findings(project, Path(str(file_path)))
-        if lines:
+        if lines and not _strict(archive):
+            # R11: one summary per session outside strict mode; the details
+            # stay on demand.
+            if _first_quality_summary(archive, session):
+                messages.append(
+                    f"godmode quality (post-edit, advisory, once per session): "
+                    f"{lines[0][:100]} ({len(lines)} total; `godmode quality "
+                    "--format editor` lists all)")
+        elif lines:
             shown = lines[:CAP]
             if len(lines) > CAP:
                 shown.append(f"... {len(lines) - CAP} more; `godmode quality "

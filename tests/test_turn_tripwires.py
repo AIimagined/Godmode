@@ -34,6 +34,7 @@ if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
+from godmode_runtime.godmode_projectmode import set_project_mode  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from _host_env import scrubbed_env  # noqa: E402
 
@@ -63,6 +64,7 @@ def _project():
         with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(state)}, clear=False):
             archive = Chronicle(resolve_anchor(root))
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             yield root, state, archive
 
 

@@ -27,6 +27,7 @@ if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 
 from test_godmode_runtime import isolated_project  # noqa: E402
+from godmode_runtime.godmode_projectmode import set_project_mode  # noqa: E402
 
 observe = importlib.import_module("test_observe_mode")
 
@@ -51,6 +52,7 @@ class InterruptionIsCaptured(unittest.TestCase):
     def test_a_session_ending_with_open_next_actions_records_the_intent(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             archive.append("checkpoint", "midway through the fence work",
                            {"status": "active",
                             "next": ["finish the fence tests", "run the suite"]},
@@ -69,6 +71,7 @@ class InterruptionIsCaptured(unittest.TestCase):
     def test_a_clean_session_end_records_nothing(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             archive.append("checkpoint", "all done",
                            {"status": "complete", "next": []}, evidence=[])
             _lifecycle(project, "session-end", {"summary": ""})
@@ -77,6 +80,7 @@ class InterruptionIsCaptured(unittest.TestCase):
     def test_pre_compact_captures_too(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             archive.append("checkpoint", "mid-task",
                            {"status": "active", "next": ["keep going"]},
                            evidence=[])
@@ -99,6 +103,7 @@ class ResumeDigestInTheBrief(unittest.TestCase):
     def test_the_digest_carries_the_resume_counts(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             archive.append("checkpoint", "midway",
                            {"status": "active", "next": ["a", "b"]},
                            evidence=[])
@@ -112,6 +117,7 @@ class ResumeDigestInTheBrief(unittest.TestCase):
     def test_an_interruption_is_surfaced_on_the_next_start(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             archive.append("checkpoint", "mid-task",
                            {"status": "active", "next": ["keep going"]},
                            evidence=[])
@@ -123,6 +129,7 @@ class ResumeDigestInTheBrief(unittest.TestCase):
     def test_a_checkpoint_resolved_since_does_not_resurface_the_interruption(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             archive.append("checkpoint", "mid-task",
                            {"status": "active", "next": ["keep going"]},
                            evidence=[])
@@ -136,6 +143,7 @@ class ResumeDigestInTheBrief(unittest.TestCase):
     def test_a_missing_file_ref_marks_the_checkpoint_stale(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             (project / "notes.txt").write_text("here", encoding="utf-8")
             archive.append("checkpoint", "anchored to files",
                            {"status": "active", "next": ["x"]},
@@ -148,6 +156,7 @@ class ResumeDigestInTheBrief(unittest.TestCase):
     def test_a_fresh_archive_has_no_digest_noise(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             brief = self._brief(project)
             digest = brief.get("resume", {})
             self.assertNotIn("last_checkpoint", digest)

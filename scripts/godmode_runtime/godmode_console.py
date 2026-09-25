@@ -3792,6 +3792,25 @@ def cmd_resume(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         }
     except Exception:  # noqa: BLE001  # godmode: swallow-ok: the brief still prints when the scalars cannot be derived
         pass
+    # The session brief leaves the ledger, laws and next actions here, on
+    # demand, outside strict mode.
+    try:
+        brief.setdefault("ledger", ledger_block(runtime.archive))
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: the brief still prints without the ledger
+        pass
+    try:
+        from .godmode_law import top_laws
+        laws = top_laws(runtime.archive, 3)
+        brief["laws"] = laws or {"compiled_rules": 0}
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: the brief still prints without the laws
+        pass
+    try:
+        from .godmode_metrics import next_actions
+        demanded = next_actions(runtime.archive, Path(runtime.anchor.project_root))
+        if demanded:
+            brief["next_actions"] = demanded
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: the brief still prints without next actions
+        pass
     return CommandResult(brief)
 
 

@@ -53,6 +53,7 @@ def _project():
                              clear=False):
             archive = Chronicle(resolve_anchor(root))
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             yield root, state, archive
 
 
@@ -262,6 +263,7 @@ class TripwireTests(unittest.TestCase):
                                      clear=False):
                     archive = Chronicle(resolve_anchor(proj))
                     archive.initialize()
+                    set_project_mode(archive, "strict")  # pins the full Stop and brief output
                     yield archive
         return ctx()
 

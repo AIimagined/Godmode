@@ -37,6 +37,7 @@ if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 
 from godmode_runtime.godmode_attest import latest_session  # noqa: E402
+from godmode_runtime.godmode_projectmode import set_project_mode  # noqa: E402
 from godmode_runtime.godmode_errors import ArchiveError  # noqa: E402
 from godmode_runtime.godmode_donebar import (  # noqa: E402
     BUILDER,
@@ -92,6 +93,7 @@ class EscalationGuardrailTests(unittest.TestCase):
     def test_a_reviewer_check_cannot_be_escalated(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             _open_session(archive)
             for check in ("uncited-claim", "unattested-hard-rule", "reworded-done"):
                 with self.subTest(check=check):
@@ -104,6 +106,7 @@ class EscalationGuardrailTests(unittest.TestCase):
     def test_an_unknown_check_is_refused(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             _open_session(archive)
             with self.assertRaises(ArchiveError):
                 escalate(archive, "not-a-real-check", reason="operator agreed")
@@ -111,6 +114,7 @@ class EscalationGuardrailTests(unittest.TestCase):
     def test_escalation_needs_a_reason(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             _open_session(archive)
             with self.assertRaises(ArchiveError):
                 escalate(archive, "scope-still-open", reason="   ")
@@ -122,6 +126,7 @@ class EscalationGuardrailTests(unittest.TestCase):
         # never even looks past the role for a reviewer check.
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             session = _open_session(archive)
             archive.append("decision", "escalate:uncited-claim",
                            {"reason": "operator agreed", "session": session,
@@ -133,6 +138,7 @@ class EscalationLifecycleTests(unittest.TestCase):
     def test_a_builder_escalation_is_active_for_the_current_session(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             _open_session(archive)
             escalate(archive, "scope-still-open", reason="operator agreed to defer")
             self.assertEqual(
@@ -149,6 +155,7 @@ class EscalationLifecycleTests(unittest.TestCase):
         # unrelated three-turn grace, not extend it indefinitely.
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             _open_session(archive)
             escalate(archive, "scope-still-open", reason="operator agreed to defer")
             _open_session(archive)  # a new session anchor
@@ -157,6 +164,7 @@ class EscalationLifecycleTests(unittest.TestCase):
     def test_an_escalation_expires_after_three_turns(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             session = _open_session(archive)
             escalate(archive, "open-operator-asks", reason="already triaged")
             # Turns 1 and 2: still active.
@@ -184,6 +192,7 @@ class EscalationLifecycleTests(unittest.TestCase):
         # escalation on record, turn count only) still applies.
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             escalate(archive, "scope-still-open", reason="operator agreed to defer")
             self.assertEqual(
                 active_escalation(archive, "scope-still-open"),
@@ -192,6 +201,7 @@ class EscalationLifecycleTests(unittest.TestCase):
     def test_live_escalations_answers_several_checks_in_one_pass(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             _open_session(archive)
             escalate(archive, "scope-still-open", reason="deferred to next release")
             self.assertEqual(
@@ -209,6 +219,7 @@ class EscalationLifecycleTests(unittest.TestCase):
         # this same table; nothing here refuses "style" as a name.
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             _open_session(archive)
             record = escalate(archive, "style", reason="known trailing whitespace, filed")
             self.assertEqual(record["data"]["reason"],
@@ -368,6 +379,9 @@ class OpenOperatorAsksStopHookTests(unittest.TestCase):
         subprocess.run(["git", "init", "-q"], cwd=self.project, check=True,
                        capture_output=True)
         out = _cli(self.project, "init")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        # Pins the full Stop output: outside strict mode this check is on demand.
+        out = _cli(self.project, "config", "mode", "strict")
         self.assertEqual(out.returncode, 0, out.stderr)
         run_hook("session-start",
                  {"hook_event_name": "SessionStart", "cwd": str(self.project)},

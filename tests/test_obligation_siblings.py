@@ -25,6 +25,7 @@ for entry in (PLUGIN_ROOT / "scripts", PLUGIN_ROOT / "hooks", PLUGIN_ROOT):
         sys.path.insert(0, str(entry))
 
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
+from godmode_runtime.godmode_projectmode import set_project_mode  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_session_hook import _open_obligations_touched  # noqa: E402
 
@@ -40,6 +41,7 @@ def _archive():
                              clear=False):
             archive = Chronicle(resolve_anchor(root))
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             yield archive
 
 
@@ -304,6 +306,7 @@ class RequestRenderingTests(unittest.TestCase):
         from godmode_runtime.godmode_requests import record_request
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             record_request(archive,
                            "document the brand axis ahead of the b-39 work")
             notices = hook._open_obligations_touched(
@@ -333,6 +336,7 @@ class ReinventionTests(unittest.TestCase):
         from godmode_runtime.godmode_mistakes import reinvention_advisory
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             archive.append("version", "exporter",
                            {"value": "1.2", "status": "cut",
                             "note": "shipped the csv export writer for the "
@@ -349,6 +353,7 @@ class ReinventionTests(unittest.TestCase):
         from godmode_runtime.godmode_mistakes import reinvention_advisory
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             archive.append("version", "exporter",
                            {"value": "1.2", "status": "cut",
                             "note": "shipped the csv export writer for the "
@@ -364,6 +369,7 @@ class ReinventionTests(unittest.TestCase):
         from godmode_runtime.godmode_mistakes import reinvention_advisory
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             archive.append("version", "exporter",
                            {"value": "1.2", "status": "cut",
                             "note": "shipped the csv export writer for the "

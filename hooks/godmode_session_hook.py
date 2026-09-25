@@ -2312,11 +2312,13 @@ def _record_usage_observed(archive: Any, submitted: dict[str, Any], event_name: 
         _report_ancillary_failure(archive)
 
 
-def _iteration_notices(archive: Any, project: Path, submitted: dict[str, Any]) -> tuple[list[str], str | None]:
+def _iteration_notices(archive: Any, project: Path, submitted: dict[str, Any],
+                       *, lean: bool = False) -> tuple[list[str], str | None]:
     """Stop-time data from the iteration controls: a measured token spend
     over a declared ceiling, a commit-score plateau, and the stall streak.
     Returns (notices, block_reason); only a stall at the halt threshold
-    blocks."""
+    blocks. `lean` (R11, outside strict mode) computes the loop and stall
+    checks only."""
     notices: list[str] = []
     block: str | None = None
     try:
@@ -2343,6 +2345,11 @@ def _iteration_notices(archive: Any, project: Path, submitted: dict[str, Any]) -
                     "files": episode["files"][:8], "profile": profile}, evidence=[])
             except Exception:  # noqa: BLE001  # godmode: swallow-ok: the observe receipt is best-effort
                 pass
+        if lean:
+            for finding in stall_escalation(archive.select(limit=600)):
+                if finding.get("detector") == "stall-escalation":
+                    block = f"godmode: {finding.get('detail', '')}"
+            return notices, block
         try:
             from godmode_runtime.godmode_oracle import unread_truncated_outputs
             unread = unread_truncated_outputs(transcript)
@@ -3232,6 +3239,22 @@ def _advise_block_kind(reason: str) -> str | None:
 _STOP_NOTICES: list[str] = []
 
 
+def _park_echo_notices(archive: Chronicle, submitted: dict[str, Any], notices: list[str]) -> None:
+    """Park Stop notices beside the claim echo for the next prompt (or, on
+    Grok, the next allowed tool call) - the one channel they take outside
+    strict mode. Best-effort."""
+    try:
+        echo = archive.root / "godmode-claim-echo.json"
+        parked = {}
+        if echo.exists():
+            parked = json.loads(echo.read_text(encoding="utf-8"))
+        parked["notices"] = [_ascii_echo(n)[:400] for n in notices[:3]]
+        parked["session"] = _session_key(submitted)
+        echo.write_text(json.dumps(parked, ensure_ascii=False), encoding="utf-8")
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: a notice that cannot be parked is dropped, never raised into the host
+        pass
+
+
 def _park_stop_notices(notices: list[str]) -> str:
     _STOP_NOTICES[:] = notices
     return "\n".join(notices)
@@ -3509,6 +3532,11 @@ def main(argv: list[str] | None = None) -> int:
                     }
             except Exception:  # noqa: BLE001  # godmode: swallow-ok: the brief opens even when the sweep cannot read the tree
                 pass
+            # R11: outside strict mode the resume digest, ledger, laws and
+            # next actions are on demand (`godmode resume`); the brief keeps
+            # one count line for open obligations.
+            from godmode_runtime.godmode_projectmode import project_mode
+            lean_brief = project_mode(archive) != "strict"
             # B4-4: the resume digest, counts only, inside the same budget -
             # best-effort like every other section, never a blocked session.
             try:
@@ -3519,57 +3547,63 @@ def main(argv: list[str] | None = None) -> int:
                 # "nothing to resume", which is a claim. This says the
                 # digest could not be built and why.
                 brief["resume"] = {"unavailable": str(exc)[:160]}
-            # Compaction playbook (2026-09-10): the ledger fields that die in a
-            # summary, rebuilt from records on every start - including the
-            # start after a compact, which is where the chat lost them.
-            try:
-                brief["ledger"] = _ledger_block(archive)
-            except Exception as exc:  # noqa: BLE001  # godmode: swallow-ok: stated, not skipped - see the value written
-                brief["ledger"] = {"unavailable": str(exc)[:120]}
-            # Sprint L1 (decision 4114): the top laws ride the brief so the
-            # Code of Law fires without being fetched. Bounded, and stated
-            # rather than skipped on failure - an absent `laws` block would
-            # read as "no laws", which is a claim.
-            try:
-                from godmode_runtime.godmode_law import (
-                    debrief_status, record_delivery, top_laws)
-                laws = top_laws(archive, 3)
-                if laws:
-                    brief["laws"] = laws
-                    # S11-A: the meta-loop's staleness gauge, three bounded
-                    # fields - the first live debrief had nothing prompting
-                    # a second.
-                    brief["law_debrief"] = debrief_status(archive)
-                    # L2: the delivery receipt - the denominator without
-                    # which "violated 0" cannot be told from "never seen".
-                    record_delivery(
-                        archive, laws,
-                        session=str(submitted.get("session_id") or "") or None)
-                else:
-                    # Field report 2026-09-03: an empty charter surfaced only
-                    # at session close ("0 compiled rules - nothing could
-                    # have blocked"), after the work it could not govern.
-                    # Said at the OPEN instead, where it can still change
-                    # the session.
-                    brief["laws"] = {
-                        "compiled_rules": 0,
-                        "note": ("0 compiled rules - nothing can block; add "
-                                 "a GODMODE.md or Code of Law so substantive "
-                                 "work has something enforceable behind it")}
-            except Exception as exc:  # noqa: BLE001
-                brief["laws"] = {"unavailable": str(exc)[:120]}
-            # The brief's closing section is commands, not inventory: each
-            # open loop names the verb that closes it (unresolved scored
-            # claims, dormant-with-demand census families). Best-effort -
-            # an empty list is omitted, and a failure never blocks the open.
-            try:
-                from godmode_runtime.godmode_metrics import next_actions
-                demanded = next_actions(
-                    archive, Path(anchor.project_root))
-                if demanded:
-                    brief["next_actions"] = demanded
-            except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
-                pass
+            if lean_brief:
+                digest = brief.get("resume") if isinstance(brief.get("resume"), dict) else {}
+                brief["resume"] = {
+                    "open_obligations": digest.get("open_obligations", 0),
+                    "more": "`godmode resume` shows the ledger, laws and next actions"}
+            if not lean_brief:
+                # Compaction playbook (2026-09-10): the ledger fields that die in a
+                # summary, rebuilt from records on every start - including the
+                # start after a compact, which is where the chat lost them.
+                try:
+                    brief["ledger"] = _ledger_block(archive)
+                except Exception as exc:  # noqa: BLE001  # godmode: swallow-ok: stated, not skipped - see the value written
+                    brief["ledger"] = {"unavailable": str(exc)[:120]}
+                # Sprint L1 (decision 4114): the top laws ride the brief so the
+                # Code of Law fires without being fetched. Bounded, and stated
+                # rather than skipped on failure - an absent `laws` block would
+                # read as "no laws", which is a claim.
+                try:
+                    from godmode_runtime.godmode_law import (
+                        debrief_status, record_delivery, top_laws)
+                    laws = top_laws(archive, 3)
+                    if laws:
+                        brief["laws"] = laws
+                        # S11-A: the meta-loop's staleness gauge, three bounded
+                        # fields - the first live debrief had nothing prompting
+                        # a second.
+                        brief["law_debrief"] = debrief_status(archive)
+                        # L2: the delivery receipt - the denominator without
+                        # which "violated 0" cannot be told from "never seen".
+                        record_delivery(
+                            archive, laws,
+                            session=str(submitted.get("session_id") or "") or None)
+                    else:
+                        # Field report 2026-09-03: an empty charter surfaced only
+                        # at session close ("0 compiled rules - nothing could
+                        # have blocked"), after the work it could not govern.
+                        # Said at the OPEN instead, where it can still change
+                        # the session.
+                        brief["laws"] = {
+                            "compiled_rules": 0,
+                            "note": ("0 compiled rules - nothing can block; add "
+                                     "a GODMODE.md or Code of Law so substantive "
+                                     "work has something enforceable behind it")}
+                except Exception as exc:  # noqa: BLE001
+                    brief["laws"] = {"unavailable": str(exc)[:120]}
+                # The brief's closing section is commands, not inventory: each
+                # open loop names the verb that closes it (unresolved scored
+                # claims, dormant-with-demand census families). Best-effort -
+                # an empty list is omitted, and a failure never blocks the open.
+                try:
+                    from godmode_runtime.godmode_metrics import next_actions
+                    demanded = next_actions(
+                        archive, Path(anchor.project_root))
+                    if demanded:
+                        brief["next_actions"] = demanded
+                except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
+                    pass
             # The calibration advisory rides too, only when it is live: a
             # session that opens knowing its confidence runs hot claims
             # differently from one that finds out at the next doctor run.
@@ -3593,13 +3627,24 @@ def main(argv: list[str] | None = None) -> int:
             # text; the brief's dynamic sections carry the live state.
             # One canonical source (S19 item 4): the same constants the
             # rules emitter renders into per-host instruction files.
-            from godmode_runtime.godmode_constants import (
-                DOCTRINE_TEXT, RED_FLAGS_TEXT)
-            brief["doctrine"] = DOCTRINE_TEXT
-            # Red flags (S19 item 1): rationalization detection as a
-            # lookup, not willpower; rows sourced from recorded field
-            # lessons first (the guard on record demands it).
-            brief["red_flags"] = RED_FLAGS_TEXT
+            # R11: outside strict mode, doctrine and red flags ride the first
+            # brief a project opens with, then stay on demand.
+            doctrine_seen = archive.root / "godmode-doctrine-shown"
+            if lean_brief and doctrine_seen.exists():
+                brief["doctrine"] = ("shown once for this project; `godmode docs "
+                                     "--emit-rules` writes it with the red flags")
+            else:
+                from godmode_runtime.godmode_constants import (
+                    DOCTRINE_TEXT, RED_FLAGS_TEXT)
+                brief["doctrine"] = DOCTRINE_TEXT
+                # Red flags (S19 item 1): rationalization detection as a
+                # lookup, not willpower; rows sourced from recorded field
+                # lessons first (the guard on record demands it).
+                brief["red_flags"] = RED_FLAGS_TEXT
+                try:
+                    doctrine_seen.write_text("", encoding="utf-8")
+                except OSError:  # godmode: swallow-ok: an unwritten marker only repeats the doctrine next session
+                    pass
             # Statusline cache (S20, operator ask): the badge row is the
             # host's statusLine command, which needs milliseconds - so the
             # session-start hook (already running, already knowing the
@@ -3809,7 +3854,11 @@ def main(argv: list[str] | None = None) -> int:
                 # found.
                 scope_escalation = None
                 asks_escalation = None
-                if not subagent:
+                # R11: outside strict mode Stop computes only the loop/stall
+                # and unsupported-claim checks; the rest run on demand under
+                # `godmode config mode strict`.
+                lean = project_mode(archive) != "strict"
+                if not subagent and not lean:
                     try:
                         from godmode_runtime.godmode_donebar import live_escalations
                         live = live_escalations(
@@ -3848,7 +3897,7 @@ def main(argv: list[str] | None = None) -> int:
                 # on 34 of 42 real replies; only this session's own asks are a
                 # turn-boundary matter (0 of 42). Older asks stay reviewable
                 # at handover (`checkpoint --review`, session close).
-                touched = _open_obligations_touched(
+                touched = [] if lean else _open_obligations_touched(
                     archive, reply_text,
                     session_id=str(submitted.get("session_id") or "") or None)
                 # S3 (fix round 1): open-operator-asks escalated means SKIPPED
@@ -3893,7 +3942,7 @@ def main(argv: list[str] | None = None) -> int:
                 # above (fix round 1, S1-2) - each named once, then quiet for a
                 # cooldown. Quiet posture drops this advisory too (S19 item 2).
                 resurfaced: list[str] = []
-                if not quiet:
+                if not quiet and not lean:
                     try:
                         cooldown_session = latest_session(archive) or ""
                         now_turn, cooldown_state = _advance_cooldown_turn(
@@ -3931,15 +3980,21 @@ def main(argv: list[str] | None = None) -> int:
                 # Obligation 10116: a failed tool run this turn names the RCA
                 # verbs once per session, read from the turn's tool output.
                 try:
-                    from godmode_runtime.godmode_attest import latest_session as _ls
-                    from godmode_runtime.godmode_precheck import failure_nudge
-                    failed_line = failure_nudge(archive, observed, _ls(archive) or "",
-                                                project=Path(anchor.project_root))
+                    failed_line = None
+                    if not lean:
+                        from godmode_runtime.godmode_attest import latest_session as _ls
+                        from godmode_runtime.godmode_precheck import failure_nudge
+                        failed_line = failure_nudge(archive, observed, _ls(archive) or "",
+                                                    project=Path(anchor.project_root))
                     if failed_line:
                         notices.append(failed_line)
                 except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                     pass
-                if not quiet:
+                if not quiet and lean and not subagent:
+                    iteration_notes, stall_block = _iteration_notices(
+                        archive, Path(anchor.project_root), submitted, lean=True)
+                    notices.extend(iteration_notes)
+                elif not quiet:
                     notices.extend(_marginal_return_nudges(
                         archive, submitted, _session_key(submitted)))
                     notices.extend(_tripwire_nudges(
@@ -3983,7 +4038,7 @@ def main(argv: list[str] | None = None) -> int:
                     notices.insert(0,
                         "godmode: idle and worth another look - "
                         + "; ".join(resurfaced))
-                if unsupported:
+                if unsupported and not lean:
                     shown = "; ".join(
                         f"'{_ascii_echo(s)[:160]}'" for s in unsupported[:2])
                     if len(unsupported) > 2:
@@ -4039,7 +4094,7 @@ def main(argv: list[str] | None = None) -> int:
                 # over an ask the PARENT session, not it, had made. A subagent's
                 # scope is its own dispatch prompt; the parent's open asks are
                 # context for it, never a gate on it.
-                scope_reason = None if subagent else _scope_block_reason(
+                scope_reason = None if (subagent or lean) else _scope_block_reason(
                     archive, reply_text, str(submitted.get("session_id") or "") or None)
                 if scope_reason and scope_escalation:
                     # scope-still-open skipped: the block never fires while
@@ -4049,6 +4104,12 @@ def main(argv: list[str] | None = None) -> int:
                         "godmode: scope-still-open escalated for this "
                         f"session - {scope_escalation}")
                     scope_reason = None
+                if lean and notices:
+                    # R11: one channel. Outside strict mode the notices are
+                    # parked for the model's next prompt (on Grok, its next
+                    # allowed tool call) and never also printed here.
+                    _park_echo_notices(archive, submitted, notices)
+                    notices = []
                 if scope_reason and not done_shaped:
                     block_body = {
                         "decision": "continue" if current_host() == "antigravity" else "block",
