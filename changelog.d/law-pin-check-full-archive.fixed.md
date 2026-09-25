@@ -1,0 +1,1 @@
+- The lesson-pin check that caps a claim from grading `verified` while an active lesson pins its surface now reads every lesson in the archive, instead of only the newest 200. A pin recorded early in a long-lived project used to stop capping claims silently once enough newer, unrelated lessons had accumulated past that window.

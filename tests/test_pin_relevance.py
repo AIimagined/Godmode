@@ -48,6 +48,12 @@ class FakeArchive:
         assert kind == "lesson"
         return list(self._lessons)
 
+    def read_events(self):
+        # `guard_pin_reason` reads the archive directly now (row 88,
+        # 2026-09-25): `select(limit=200)` used to silently drop any pin
+        # older than the newest 200 lessons.
+        return list(self._lessons)
+
 
 def lesson(seq, subject, guard):
     return {"kind": "lesson", "sequence": seq, "subject": subject,
@@ -129,6 +135,25 @@ class PinRelevanceTests(unittest.TestCase):
             "the working tree is clean per git status --short",
             ["cmd:git status --short"])
         self.assertNotIn("a pin already names this surface", out)
+
+    def test_a_pin_older_than_the_newest_200_lessons_still_caps(self) -> None:
+        """Row 88: the check used to call archive.select(limit=200), which
+        silently dropped any lesson older than the newest 200 - a pin
+        recorded early in a long-lived archive stopped capping claims once
+        300 newer, unrelated lessons had accumulated. It must still cap."""
+        old_pin = lesson(
+            1, "installed cache was built from the cut",
+            "the version bump must be the final commit before the tag; "
+            "verified by check_cache.sh before any claim")
+        filler = [lesson(n, f"unrelated subject {n}", f"unrelated guard {n}")
+                  for n in range(2, 302)]
+        archive = FakeArchive([old_pin, *filler])
+        out = self._pin(
+            archive,
+            "origin/main is 1d51f87 and the installed cache carries the "
+            "post-bump fix",
+            ["cmd:sh check_cache.sh"])
+        self.assertTrue(out.startswith("a pin already names this surface"), out)
 
     def test_a_cited_file_stem_caps_a_lesson_naming_it(self) -> None:
         """A `file:` citation's basename is still a real surface - unlike

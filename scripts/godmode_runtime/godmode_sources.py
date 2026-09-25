@@ -322,8 +322,10 @@ def guard_pin_reason(project: Path, archive: Any, text: str,
     active lesson merely shares the claim's vocabulary with no cited stem
     in common - this is informational only and the caller must NOT
     downgrade on it (it may still be worth surfacing as a note). Bounded:
-    first matching test file wins, lessons scanned via the archive's own
-    bounded select.
+    first matching test file wins. Lessons are scanned in full: a
+    `select(limit=200)` here used to read only the newest 200 `lesson`
+    records, so a pin recorded before that window silently stopped
+    capping claims once the archive grew past it.
     """
     cited_norm = {_fold(str(c)[len("file:"):]) for c in citations
                   if str(c).startswith("file:")}
@@ -356,7 +358,11 @@ def guard_pin_reason(project: Path, archive: Any, text: str,
         try:
             cite_stems = (set().union(*(_citation_stems(c) for c in citations))
                           if citations else set())
-            records = list(archive.select(kind="lesson", limit=200))
+            # Not archive.select(kind="lesson", limit=...): select's own
+            # cap tops out at 500 regardless of the limit passed, and a pin
+            # is a standing fact about a subject - one recorded on lesson
+            # #12 of a 900-lesson archive must still cap a claim today.
+            records = [r for r in archive.read_events() if r.get("kind") == "lesson"]
             # The newest record for a subject decides its status, the same
             # supersession every other kind in this archive relies on. Reading
             # each record's own status made retirement unreachable: records are
