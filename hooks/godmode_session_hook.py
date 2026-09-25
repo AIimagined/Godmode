@@ -1675,7 +1675,16 @@ def _strip_quoted(sentence: str) -> str:
     return _QUOTED_SPAN.sub(" ", sentence)
 
 
-_QUOTED_SENTENCE = re.compile(r"[\"\u201c\u2018']\s*(?:\S+\s+){3,}\S+\s*[\"\u201d\u2019']")
+# A quoted run of four or more words is someone else's sentence. The quote
+# marks must stand at word edges, so an apostrophe inside "it's ... don't"
+# never opens or closes one.
+_QUOTED_SENTENCE = re.compile(
+    r"(?<!\w)[\"\u201c\u2018']\s*(?:\S+\s+){3,}\S+\s*[\"\u201d\u2019'](?!\w)")
+# Emphasis around a quotation (`*"..."*`, `_"..."_`) is how a reply styles
+# its own proposed wording; it stays this reply's text, not a quotation.
+# The opening marker decides: sentence splitting can cut the closing one off.
+_EMPHASIZED_QUOTE = re.compile(
+    r"([*_]{1,2})\s*[\"\u201c]([^\"\u201d]+)[\"\u201d]\s*[*_]{0,2}")
 _PROCESS_SENTENCE = re.compile(
     r"(?i)^(?:the\s+)?(?:checkpoint|claim|attestation|record|ledger|session|obligation|"
     r"plan|handoff|handover)s?\b[^.]{0,60}\b(?:complete[d]?|recorded|written|closed|"
@@ -1703,7 +1712,7 @@ def _unrecorded_done_claims(archive: Any, reply_text: str,
         return []
     found: list[str] = []
     for sentence in _reply_sentences(reply_text):
-        judged = _strip_quoted(sentence)
+        judged = _strip_quoted(_EMPHASIZED_QUOTE.sub(r"\2", sentence))
         # A sentence that opens on a condition offers the OPERATOR a
         # choice; it cannot declare this agent's work finished
         # (self-observed 2026-09-02: "If you'd rather X, that works too"
@@ -1726,9 +1735,12 @@ def _unrecorded_done_claims(archive: Any, reply_text: str,
         # A sentence about the ledger's own bookkeeping ("Checkpoint
         # complete", "Claim recorded") is process, not a claim about the
         # work (field report 28, 2026-09-10).
-        if _QUOTED_SENTENCE.search(judged):
-            # Part 4, 4.2: a quotation of the operator ("everything strictly
-            # 100% perfect") is someone else's sentence, not this reply's claim.
+        # Part 4, 4.2: a quotation of the operator ("everything strictly
+        # 100% perfect") is someone else's sentence, not this reply's claim.
+        # Only the quoted words leave the judgement; the reply's own words
+        # around them are still judged.
+        judged = _QUOTED_SENTENCE.sub(" ", judged)
+        if not judged.strip():
             continue
         if _PROCESS_SENTENCE.match(judged.strip()):
             continue

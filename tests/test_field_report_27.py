@@ -178,6 +178,21 @@ class Report28Tests(unittest.TestCase):
             self.assertEqual(hook._unrecorded_done_claims(archive, "Checkpoint complete. Claim recorded on the ledger."), [])
             self.assertEqual(len(hook._unrecorded_done_claims(archive, "The migration is complete.")), 1)
 
+    def test_quotations_leave_only_their_own_words_out(self) -> None:
+        sys.path.insert(0, str(PLUGIN_ROOT / "hooks"))
+        import godmode_session_hook as hook
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            done = hook._unrecorded_done_claims
+            # Someone else's words: the completion word sits inside the quote.
+            self.assertEqual(done(archive, 'The owner said "the whole migration is complete now" earlier.'), [])
+            # The reply's own emphasized wording is still judged.
+            self.assertEqual(len(done(archive, 'Suggested reason: *"The whole migration is complete now."*')), 1)
+            # A quotation beside the reply's own completion claim does not hide it.
+            self.assertEqual(len(done(archive, 'The migration is complete, as "the owner asked for last week" said.')), 1)
+            # Apostrophes inside words never open a quotation.
+            self.assertEqual(len(done(archive, "It's complete and it's what we'd planned.")), 1)
+
     def test_a_lesson_takes_its_guard_as_the_value(self) -> None:
         with isolated_project() as (project, _s, _a, archive):
             archive.initialize()

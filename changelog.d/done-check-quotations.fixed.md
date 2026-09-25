@@ -1,0 +1,1 @@
+- The end-of-turn completion check no longer skips a whole sentence because it contains a quotation: only the quoted words are set aside, wording a reply styles as its own proposal (`*"..."*`) is still checked, and apostrophes inside words are never mistaken for quote marks.
