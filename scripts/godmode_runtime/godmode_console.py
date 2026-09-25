@@ -7199,18 +7199,16 @@ class _JSONErrorArgumentParser(argparse.ArgumentParser):
         super().error(message)
 
 
-def _emit_cli_error(exc: GodmodeError, brief: bool) -> int:
+def _cli_error_text(exc: GodmodeError, brief: bool) -> str:
     """The one formatting the console uses for a failure that never ran a
     handler - `_dispatch`'s own `except GodmodeError` and `main`'s bad
-    command line both fall through here, so a `--json` caller sees the
-    same `{"error": <class name>, "message": ...}` shape on stderr with
-    exit 2 whichever one refused."""
+    command line both print this on stderr and exit 2, so a `--json`
+    caller sees the same `{"error": <class name>, "message": ...}` shape
+    whichever one refused."""
     payload = {"error": exc.__class__.__name__, "message": str(exc)}
     if brief:
-        print(f"{payload['error']}: {payload['message']}", file=sys.stderr)
-    else:
-        print(json.dumps(payload, ensure_ascii=False, sort_keys=True), file=sys.stderr)
-    return 2
+        return f"{payload['error']}: {payload['message']}"
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -9525,7 +9523,8 @@ def main(argv: list[str] | None = None) -> int:
             if hasattr(args, "token_budget") and not 200 <= args.token_budget <= 10_000:
                 parser.error("--token-budget must be between 200 and 10000")
     except UsageError as exc:
-        return _emit_cli_error(exc, "--brief" in lifted)
+        print(_cli_error_text(exc, "--brief" in lifted), file=sys.stderr)
+        return 2
     # S21-01: mode changes exposure, never enforcement. `guided` explains a
     # refusal in plain language; `expert` reports one line; gates are identical.
     mode = os.environ.get("GODMODE_MODE", "standard")
@@ -9594,7 +9593,8 @@ def _dispatch(args: argparse.Namespace, mode: str = "standard") -> int:
         )
         return result.exit_code
     except GodmodeError as exc:
-        return _emit_cli_error(exc, getattr(args, "brief", False))
+        print(_cli_error_text(exc, getattr(args, "brief", False)), file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
