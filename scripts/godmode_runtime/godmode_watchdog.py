@@ -169,7 +169,9 @@ def run_with_memory_cap(
                 try:
                     proc.kill()
                 except OSError:
-                    pass
+                    # The child exited on its own between the sample and
+                    # the kill: it was not stopped for memory.
+                    state["memory_killed"] = proc.poll() is None
                 return
 
     monitor = threading.Thread(target=_poll, daemon=True)
