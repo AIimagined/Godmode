@@ -198,7 +198,7 @@ def merge_fragments(project: Path, version: str, date: str) -> dict[str, Any]:
             body = body[: match.start()] + section + "\n" + body[match.start():]
         else:
             body = body.rstrip("\n") + "\n\n" + section + "\n"
-    changelog.write_text(body, encoding="utf-8")
+    changelog.write_text(body, encoding="utf-8", newline="\n")
 
     for fragment in fragments:
         fragment.unlink()

@@ -1,0 +1,1 @@
+- `godmode changelog merge` now writes CHANGELOG.md with LF line endings on every platform, instead of CRLF on Windows.
