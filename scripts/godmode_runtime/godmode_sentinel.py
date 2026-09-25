@@ -468,6 +468,91 @@ _NETWORK_FETCH_HEADS = re.compile(
 # shape reaching here already failed that check on purpose.
 _NAMED_BY_OWN_RULES = re.compile(r"(?i)^\s*(?:git|gh|export|unset)\b")
 
+# Godmode's own protection switches. `godmode config set uninitialized off`
+# silences the guard in every uninitialized project on the machine (or, with
+# `--repo`, in this repository), and `godmode config mode advise` relaxes this
+# project's quality gates. Both read as an unrecognised command with no
+# write evidence - R0 - so a session could turn its own gate down without
+# anyone being asked. Weakening is now the operator's call, asked the same
+# way a push or a release is (R4); moving a switch to its stricter value
+# (`guard`, `strict`) and every read (`config mode` with no value, `config
+# check`) stay free. The same holds for the settings file and the per-
+# repository git config key the switch writes to, reached any other way.
+_GODMODE_TOKEN = re.compile(r"(?i)godmode")
+_GODMODE_GIT_KEY = re.compile(r"(?i)^godmode(?:\.|$)")
+# The stricter value of each switch; any other value (including one the
+# classifier cannot read, like an unexpanded `$VALUE`) is treated as weakening.
+_STRICT_SETTING_VALUES = {("set", "uninitialized"): "guard", ("mode",): "strict"}
+_GIT_CONFIG_READ_FLAGS = frozenset({
+    "--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l",
+    "--get-color", "--get-colorbool"})
+_GIT_CONFIG_WRITE_FLAGS = frozenset({
+    "--unset", "--unset-all", "--add", "--replace-all", "--remove-section",
+    "--rename-section", "--edit", "-e"})
+_GIT_CONFIG_VALUE_FLAGS = frozenset({
+    "-f", "--file", "--blob", "--type", "--default", "--comment"})
+
+
+def _positionals(tokens: list[str], value_flags: frozenset[str] = frozenset()) -> list[str]:
+    """`tokens` with flags (and the argument a value-taking flag consumes)
+    removed, so `--json`/`--repo`/`--project x` can sit anywhere."""
+    kept: list[str] = []
+    skip = False
+    for token in tokens:
+        if skip:
+            skip = False
+            continue
+        if token.startswith("-"):
+            skip = token in value_flags or token == "--project"
+            continue
+        kept.append(token)
+    return kept
+
+
+def _protection_weakening(normalized: str, argv: list[str] | None,
+                          write_target: str | None) -> str | None:
+    """What this segment would weaken of Godmode's own protection, or None."""
+    settings = MACHINE_SETTINGS_FILENAME.lower()
+    if write_target and settings in write_target.lower():
+        return f"a write to the machine-wide Godmode settings: {write_target[:80]}"
+    if not argv:
+        return None
+    lowered = [token.lower() for token in argv]
+    head = lowered[0].replace("\\", "/").rsplit("/", 1)[-1]
+    reads_only = bool(_SAFE_SHELL_READS.match(normalized) or _POWERSHELL_READS.match(normalized)
+                      or any(pattern.search(normalized) for pattern in _SAFE_INSPECTION_PATTERNS))
+    if not reads_only and any(settings in token for token in lowered[1:]):
+        return "the machine-wide Godmode settings file"
+    if head in ("git", "git.exe") and len(lowered) > 1 and lowered[1] == "config":
+        rest = lowered[2:]
+        if not any(_GODMODE_GIT_KEY.match(token) for token in rest):
+            return None
+        positionals = _positionals(rest, _GIT_CONFIG_VALUE_FLAGS)
+        if positionals and positionals[0] in ("set", "unset", "rename-section",
+                                              "remove-section", "edit"):
+            return "a Godmode setting in this repository's git config"
+        if positionals and positionals[0] in ("get", "list"):
+            return None
+        if any(token in _GIT_CONFIG_WRITE_FLAGS for token in rest):
+            return "a Godmode setting in this repository's git config"
+        if any(token in _GIT_CONFIG_READ_FLAGS for token in rest):
+            return None
+        return ("a Godmode setting in this repository's git config"
+                if len(positionals) >= 2 else None)
+    if reads_only:
+        return None
+    for index, token in enumerate(lowered):
+        if token != "config" or not any(_GODMODE_TOKEN.search(t) for t in lowered[:index]):
+            continue
+        positionals = _positionals(lowered[index + 1:])
+        for key, strict in _STRICT_SETTING_VALUES.items():
+            if tuple(positionals[:len(key)]) != key or len(positionals) <= len(key):
+                continue
+            value = positionals[len(key)]
+            if value != strict:
+                return f"Godmode's own `{' '.join(key)}` switch, set to `{value}`"
+    return None
+
 # Per-command flags that name an output-file argument on a command this
 # module otherwise reads as ordinary inspection: `git log --output=file` and
 # `sort -o file` write a file exactly like a `>` redirect does, without
@@ -3182,6 +3267,11 @@ _TIER_BY_CATEGORY = {
     "unparsed-substitution": "R3",
     "release-or-external-write": "R4",
     "filesystem-mutation": "R4",
+    # Turning Godmode's own gate down (`config set uninitialized off`,
+    # `config mode advise`, the settings file or git key behind them): asked
+    # like a push when someone is there, refused with a staged-capability
+    # remedy when nobody is.
+    "protection-weakening": "R4",
     # U-B2: a pinned evaluator's own protection, and the edit a pin exists to
     # stop, are both damage a later command does not undo - the numbers a
     # change was judged against are gone the moment either happens. R5, the
@@ -3502,6 +3592,10 @@ def _categorize(normalized: str, project_root: Path | None = None,
         if _FREEZE_FILE.search(path):
             return ("release-freeze-mutation", True,
                     [f"a release-freeze marker: {_shown_path(path, project_root)}"])
+        if MACHINE_SETTINGS_FILENAME in path.replace("\\", "/").rsplit("/", 1)[-1].lower():
+            return ("protection-weakening", True,
+                    ["weakens Godmode's own protection: the machine-wide Godmode "
+                     "settings file", "only the operator should change it"])
         if _SENSITIVE_EDIT.search(path):
             return ("worktree-file-mutation", True,
                     [f"not an ordinary working file: {_shown_path(path, project_root)}"])
@@ -3597,6 +3691,12 @@ def _categorize(normalized: str, project_root: Path | None = None,
     if write_target is None:
         write_target = _output_flag_target(segment)
         from_output_flag = write_target is not None
+
+    weakened = _protection_weakening(normalized, _argv_tokens(normalized), write_target)
+    if weakened is not None:
+        return ("protection-weakening", True,
+                [f"weakens Godmode's own protection: {weakened}",
+                 "only the operator should change it"])
 
     if _GIT_BRANCH_MUTATION.search(command_position):
         impact = ["branch refs", "possibly unmerged local work"]

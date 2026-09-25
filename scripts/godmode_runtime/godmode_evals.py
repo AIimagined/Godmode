@@ -189,6 +189,9 @@ META_FIXTURES: dict[str, list[dict[str, Any]]] = {
     "filesystem-mutation": [
         {"command": "rm -rf build", "tier": "R4", "protected": True},
     ],
+    "protection-weakening": [
+        {"command": "godmode config set uninitialized off", "tier": "R4", "protected": True},
+    ],
     "pinned-evaluator-mutation": [
         {"command": "Edit file docs/pinned-evaluator.md", "tier": "R5", "protected": True},
     ],
