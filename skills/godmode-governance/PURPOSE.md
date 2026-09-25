@@ -6,19 +6,19 @@ alone.
 
 ## Gap evidence
 
-- seq:4562 — a correction cluster established that any multi-file removal,
-  untracking, or destructive filesystem change needs a preview first; reading the
-  files involved was not, by itself, a safety net.
-- seq:12197 — the operation classifier over-refused a safe, index-only restore form
-  by conflating it with the genuinely destructive one; a preview must distinguish
-  the two, not just flag the command name.
-- seq:12342 — a standing operator constraint was recorded but nothing checked a
-  proposed action against it before that action was recommended and left stored
-  and inert.
+- A multi-file removal, untracking, or other destructive filesystem change
+  was carried out without a preview, because reading the files involved was
+  mistaken for a safety net.
+- A safe, index-only restore was refused by an operation classifier that
+  conflated it with a genuinely destructive one instead of distinguishing
+  the two.
+- A standing operator constraint was recorded but nothing checked a
+  proposed action against it before that action was recommended, leaving
+  the constraint stored and inert.
 
 ## Promise
 
 A requested protected action is classified, checked against any recorded operator
 constraint, and previewed as an explicit contract before anything runs.
 
-Future edits to this skill append their own seq: citation above.
+Future edits to this skill append their own plain-language evidence above.

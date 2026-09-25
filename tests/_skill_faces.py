@@ -4,7 +4,8 @@ Every skill face is a thin routing face over verbs that already exist. The
 checks here are the ones every face owes, whatever its flow:
 
 - the bundle validates, lints on all four facets, and passes the
-  frontmatter lint (negative-scope clause, PURPOSE.md with a `seq:` cite);
+  frontmatter lint (negative-scope clause, PURPOSE.md stating the problem
+  it solves in plain public language);
 - `agents/openai.yaml` is hand-finished, not the forge's generated stub;
 - every `godmode ...` command the Deterministic Execution Flow names
   resolves to a real verb path, and every `--flag` it passes is declared by
@@ -53,7 +54,6 @@ _READ_ONLY_ASSERTION = re.compile(
     r"^python scripts/godmode\.py (--project \. )?"
     r"(([a-z-]+ )+--help|skill (validate|lint) --path skills/[a-z-]+)$"
 )
-_SEQ_CITE = re.compile(r"seq:(\d+)")
 
 
 def skill_dir(name: str) -> Path:
@@ -129,7 +129,9 @@ def assert_bundle(case, directory: Path) -> None:
     for heading in ("Use", "Do Not Use", "Deterministic Execution Flow", "Must Not"):
         case.assertTrue(_section(text, heading).strip(), f"missing section {heading}")
     purpose = (directory / "PURPOSE.md").read_text(encoding="utf-8")
-    case.assertGreaterEqual(len(set(_SEQ_CITE.findall(purpose))), 2, "PURPOSE cites two records")
+    case.assertIn("## Gap evidence", purpose, "PURPOSE states the problem it solves")
+    case.assertNotIn("seq:", purpose,
+                     "PURPOSE states the problem in public language, not a private archive citation")
 
 
 def assert_openai_yaml_hand_finished(case, directory: Path) -> None:

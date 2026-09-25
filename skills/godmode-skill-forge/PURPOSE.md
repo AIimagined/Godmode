@@ -5,21 +5,21 @@ capability gap is proven, instead of after one request or a vague preference.
 
 ## Gap evidence
 
-- seq:4027 — the operator asked directly whether the project's own skill-creation
-  workflow was actually being used, and how it should improve; at the time there was
-  no answer grounded in observed use.
-- seq:7998 — a structural lint pass found nothing caught two project skills sharing
-  the same name, a collision a host resolves silently rather than one this project
-  refuses.
-- seq:10272 — an internal study of real skill trials found that adding skills without
-  proven, repeated demand made selection accuracy worse, not better, which is the
-  direct case for gating creation on at least two observed uses.
+- When asked directly whether the project's own skill-creation workflow
+  was actually being used, and how it should improve, there was no answer
+  grounded in observed use.
+- Nothing caught two skills sharing the same name — a collision a host
+  resolves silently, picking one and discarding the other without
+  warning, rather than one this project refuses outright.
+- Adding skills without proven, repeated demand made routing accuracy
+  worse, not better — the direct case for gating creation on multiple
+  observed uses rather than a single request.
 
 ## Promise
 
 A skill is proposed only after searching the installed set for an adequate
 capability and recording at least three concrete, observed reusable uses of the
-gap, each cited by the archive record that proves it (NS-11d, tightened from
-two); the result carries explicit routing and an observable acceptance check.
+gap, each cited by the local record that proves it (raised from two); the
+result carries explicit routing and an observable acceptance check.
 
-Future edits to this skill append their own seq: citation above.
+Future edits to this skill append their own plain-language evidence above.

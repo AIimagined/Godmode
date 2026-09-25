@@ -3,7 +3,7 @@
 Plan 7 Task 13 (NS-9): this skill routes to `skill validate`, `skill lint`,
 and `evals --ratchet|--determinism|--write-baseline` - verbs that already
 exist and already carry their own test suites. This module proves the skill
-bundle is well-formed (frontmatter, PURPOSE.md citing a real seq:, both
+bundle is well-formed (frontmatter, PURPOSE.md stating the problem it solves, both
 companion files), and that every preflight command its Deterministic
 Execution Flow names actually runs and exits the way the flow says it does.
 
@@ -69,9 +69,10 @@ class SkillBundleTests(unittest.TestCase):
         self.assertTrue(result["passed"], result)
         self.assertEqual(result["findings"], [])
 
-    def test_purpose_cites_a_real_seq(self) -> None:
+    def test_purpose_states_the_gap_in_public_language(self) -> None:
         text = (SKILL_DIR / "PURPOSE.md").read_text(encoding="utf-8")
-        self.assertIn("seq:", text)
+        self.assertIn("## Gap evidence", text)
+        self.assertNotIn("seq:", text)
 
     def test_description_carries_a_negative_scope_clause(self) -> None:
         text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
