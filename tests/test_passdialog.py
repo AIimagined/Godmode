@@ -236,6 +236,63 @@ class StageThroughTheDialogTests(unittest.TestCase):
             self.assertIn("authorize setup", out + err)
             self.assertEqual(messages, [])
 
+    def test_from_last_refusal_through_a_real_pipe_dialog_leaks_the_password_nowhere(self) -> None:
+        """The chat flow end to end: the gate refuses, `--from-last-refusal`
+        opens the dialog, the operator types the password. Every child
+        process started meanwhile is watched: none gets the password in its
+        argv or environment, and no archive file holds it in plain text."""
+        force_push = "git push --force origin main"
+        with isolated_project() as (project, state, _anchor, archive):
+            archive.initialize()
+            broker = CapabilityBroker(archive)
+            broker.configure(PASSWORD)
+            hook = PLUGIN_ROOT / "hooks" / "godmode_session_hook.py"
+            payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                       "tool_input": {"command": force_push}, "cwd": str(project)}
+            done = subprocess.run(
+                [sys.executable, str(hook), "pre-action", "--project", str(project)],
+                input=json.dumps(payload), capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=180, cwd=str(project))
+            reason = json.loads(done.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+            self.assertIn("authorize stage --from-last-refusal", reason)
+            self.assertNotIn(PASSWORD, reason)
+
+            launched: list[tuple[object, object]] = []
+            real_popen = subprocess.Popen
+
+            def spy(args, *rest, **kwargs):
+                launched.append((args, kwargs.get("env")))
+                if isinstance(args, list) and args and args[0] == "/usr/bin/zenity":
+                    shown = " ".join(args)
+                    self.assertIn(force_push, shown)
+                    self.assertIn("one use", shown)
+                    return _FakeProcess((PASSWORD + "\n").encode(), 0)
+                return real_popen(args, *rest, **kwargs)
+
+            with mock.patch.object(sentinel, "_stdin_is_interactive", return_value=False), \
+                    mock.patch.object(sentinel, "attended", return_value=True), \
+                    mock.patch.object(passdialog, "select_backend",
+                                      return_value=("zenity", "/usr/bin/zenity")), \
+                    mock.patch.object(subprocess, "Popen", side_effect=spy):
+                code, out, err = _stage(project, "--from-last-refusal",
+                                        "--without-preflight", "dialog test")
+            self.assertEqual(code, 0, out + err)
+            self.assertTrue(launched)
+            for args, env in launched:
+                self.assertNotIn(PASSWORD, json.dumps(args, default=str))
+                self.assertNotIn(PASSWORD, json.dumps(dict(env or {})))
+            self.assertNotIn(PASSWORD, "".join(os.environ.values()))
+            self.assertNotIn(PASSWORD, out + err)
+            staged = _staged(broker)
+            self.assertEqual(len(staged), 1)
+            self.assertEqual(staged[0]["operation_digest"],
+                             classify_action(force_push)["operation_digest"])
+            for path in state.rglob("*"):
+                if path.is_file():
+                    self.assertNotIn(PASSWORD.encode(), path.read_bytes(), path)
+            self.assertTrue(broker.consume_staged(force_push))
+            self.assertIsNone(broker.consume_staged(force_push))
+
     def test_the_refusal_hint_says_the_command_opens_a_dialog(self) -> None:
         hint = sentinel.stage_hint(PLUGIN_ROOT)
         self.assertIn("authorize stage --from-last-refusal", hint)
