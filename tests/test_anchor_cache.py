@@ -25,6 +25,9 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = PLUGIN_ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
+if str(Path(__file__).parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).parent))
+from _slow import slow  # noqa: E402
 
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 
@@ -48,6 +51,7 @@ def _isolated_git_repo():
             yield root
 
 
+@slow
 class AnchorCacheTests(unittest.TestCase):
     def test_second_call_is_fast(self) -> None:
         # Six subprocess spawns cost 270ms+; a cache hit must not spawn any.
@@ -162,6 +166,7 @@ class AnchorCacheTests(unittest.TestCase):
         self.assertNotEqual(before.branch, after.branch)
 
 
+@slow
 class SubdirectoryAnchorTests(unittest.TestCase):
     def test_a_subdirectory_resolves_the_same_archive_as_the_root(self) -> None:
         """Field walk 2026-09-05: `git rev-parse --git-common-dir` answers
