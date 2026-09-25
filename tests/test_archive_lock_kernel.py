@@ -254,5 +254,95 @@ class KernelLockUnusableFallbackTests(unittest.TestCase):
                 self.assertEqual(archive.event_paths(), [])
 
 
+class LockOwnerVersionTests(unittest.TestCase):
+    """Row 39 (limits-0.3.29.md #15): two Godmode runtime versions writing
+    the same archive surfaced a version mismatch as plain "archive is busy"
+    contention, sampled 197 times in the field with nothing to name what
+    was actually different. The lock sidecar's diagnostic payload now
+    carries the owning runtime version as a third line, and a timed-out
+    acquire reads it back to tell "a different version holds this, by
+    name" apart from ordinary same-version contention."""
+
+    def test_the_payload_round_trips_the_current_runtime_version(self) -> None:
+        from godmode_runtime import godmode_chronicle as C
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lock"
+            path.write_text(C._lock_owner_payload(4242, 1234.5), encoding="utf-8")
+            self.assertEqual(C._lock_owner_version(path), C.RUNTIME_VERSION)
+
+    def test_a_two_line_payload_from_before_this_field_existed_reads_as_unknown(self) -> None:
+        from godmode_runtime import godmode_chronicle as C
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lock"
+            path.write_text("123\n456.0\n", encoding="utf-8")  # pre-row-39 shape
+            self.assertIsNone(C._lock_owner_version(path))
+            self.assertEqual(
+                C._busy_message(path),
+                "Godmode archive is busy; retry after the active write")
+
+    def test_a_matching_version_gets_the_generic_busy_message(self) -> None:
+        from godmode_runtime import godmode_chronicle as C
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lock"
+            path.write_text(C._lock_owner_payload(1, 2.0), encoding="utf-8")
+            self.assertEqual(
+                C._busy_message(path),
+                "Godmode archive is busy; retry after the active write")
+
+    def test_a_differing_version_is_named_not_reported_as_plain_busy(self) -> None:
+        from godmode_runtime import godmode_chronicle as C
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lock"
+            path.write_text("1\n2.0\n0.0.1-not-real\n", encoding="utf-8")
+            message = C._busy_message(path)
+            self.assertIn("0.0.1-not-real", message)
+            self.assertIn(C.RUNTIME_VERSION, message)
+            self.assertNotIn("archive is busy", message)
+
+    def test_a_lock_held_by_a_different_runtime_version_is_named_end_to_end(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="godmode-lock-root-") as root, \
+                tempfile.TemporaryDirectory(prefix="godmode-lock-state-") as state:
+            env = dict(os.environ, GODMODE_STATE_HOME=state)
+            code = (
+                "import sys\n"
+                f"sys.path.insert(0, {str(PLUGIN_ROOT / 'scripts')!r})\n"
+                f"sys.path.insert(0, {str(PLUGIN_ROOT)!r})\n"
+                "import time\n"
+                "from pathlib import Path\n"
+                "from godmode_runtime.godmode_anchor import resolve_anchor\n"
+                "from godmode_runtime import godmode_chronicle as C\n"
+                "C.RUNTIME_VERSION = '0.0.1-simulated-old'\n"
+                f"archive = C.Chronicle(resolve_anchor(Path({root!r})))\n"
+                "archive.initialize()\n"
+                "lock = archive.write_lock()\n"
+                "lock.__enter__()\n"
+                "print('held', flush=True)\n"
+                "time.sleep(60)\n"
+            )
+            holder = subprocess.Popen(
+                [sys.executable, "-c", code], stdout=subprocess.PIPE, text=True, env=env,
+            )
+            try:
+                self.assertEqual(holder.stdout.readline().strip(), "held")
+
+                from godmode_runtime import godmode_chronicle as C
+                with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": state}, clear=False):
+                    archive = C.Chronicle(resolve_anchor(Path(root)))
+                    with self.assertRaises(ArchiveError) as ctx:
+                        with archive.write_lock(timeout_seconds=1.0):
+                            pass
+                    message = str(ctx.exception)
+                    self.assertIn("0.0.1-simulated-old", message)
+                    self.assertIn(C.RUNTIME_VERSION, message)
+            finally:
+                holder.kill()
+                holder.wait(timeout=10)
+                holder.stdout.close()
+
+
 if __name__ == "__main__":
     unittest.main()

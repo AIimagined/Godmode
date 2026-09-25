@@ -476,6 +476,51 @@ del _errno_name
 _EXCLUSIVE_CREATE_SWEEP_SECONDS = 120
 
 
+# Row 39 (limits-0.3.29.md #15): two different Godmode runtime versions
+# writing the same project's archive disagreed about the lock's own shape,
+# so a version mismatch surfaced as plain contention - "archive is busy",
+# sampled 197 times in the field, never naming what was actually different.
+# Every lock sidecar already carried a diagnostic pid/timestamp payload
+# (never fsynced - a lock a crash releases by age-out does not need one);
+# the payload now carries the owning runtime version as a third line, so a
+# timed-out acquire can tell "a different version holds this, by name"
+# apart from "the same version is legitimately still writing".
+def _lock_owner_payload(pid: int, when: float) -> str:
+    return f"{pid}\n{when}\n{RUNTIME_VERSION}\n"
+
+
+def _lock_owner_version(path: Path) -> str | None:
+    """The runtime version recorded in a lock sidecar by
+    `_lock_owner_payload`, or None when the file is absent, unreadable, or
+    predates this field (a lock from a runtime older than this fix) - a
+    caller that gets None knows only "no version to compare", never treats
+    it as "same version"."""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    if len(lines) < 3:
+        return None
+    version = lines[2].strip()
+    return version or None
+
+
+def _busy_message(path: Path) -> str:
+    """The message a timed-out lock acquire raises: named by runtime
+    version when the current holder's sidecar proves it is a different
+    Godmode version, the previous generic wording otherwise (same version,
+    ordinary contention - or a sidecar with nothing to compare)."""
+    owner_version = _lock_owner_version(path)
+    if owner_version is not None and owner_version != RUNTIME_VERSION:
+        return (
+            f"Godmode archive lock is held by runtime {owner_version}; this "
+            f"process is runtime {RUNTIME_VERSION}. This is a version "
+            "mismatch, not ordinary contention - run the same Godmode "
+            "version everywhere that writes this archive, then retry."
+        )
+    return "Godmode archive is busy; retry after the active write"
+
+
 def _kernel_lock(fd: int) -> None:
     """Take a non-blocking exclusive kernel lock on `fd`'s open file.
 
@@ -695,6 +740,18 @@ class Chronicle:
         # "someone holds this", spinning the fallback's full timeout on
         # every single append for a problem retrying can never fix.
         self.excl_lock_path = self.root / "godmode-write.excl.lock"
+        # Row 39: the kernel lock's owner metadata (pid/time/runtime
+        # version) cannot live inside `self.lock_path` itself - on Windows,
+        # `msvcrt.locking()`'s byte-range lock is MANDATORY, so a second
+        # process's plain read of that same file (byte 0 onward) while the
+        # lock is held fails with a sharing violation instead of returning
+        # the content, exactly when a timed-out acquirer most needs to read
+        # it. A separate, never-locked sidecar keeps the diagnostic
+        # readable by a contending process throughout the hold - the
+        # exclusive-create fallback below needs no equivalent: its own
+        # sidecar's exclusivity comes from O_EXCL creation, not a byte
+        # lock, so its content was always plainly readable.
+        self.lock_owner_path = self.root / "godmode-write.lock.owner"
         self.head = self.root / "godmode-head.json"
         # B4-1: the tail-truncation anchor. The hash chain is tamper-evident
         # mid-chain but silent on tail truncation (deleting the newest
@@ -980,7 +1037,7 @@ class Chronicle:
                 except OSError as exc:
                     if exc.errno in _LOCK_CONTENTION_ERRNOS:
                         if time.monotonic() >= deadline:
-                            raise ArchiveError("Godmode archive is busy; retry after the active write")
+                            raise ArchiveError(_busy_message(self.lock_owner_path))
                         # Field feedback 2026-09-11 (Part 10): "busy; retry"
                         # twice in one pass with a hook and a CLI call
                         # writing together. A 20 s deadline with a growing,
@@ -1023,8 +1080,18 @@ class Chronicle:
             return
 
         try:
-            os.lseek(descriptor, 0, os.SEEK_SET)
-            os.write(descriptor, f"{os.getpid()}\n{time.time()}\n".encode())
+            # Row 39: written to the SEPARATE sidecar (`lock_owner_path`),
+            # never into `descriptor` itself - that file's byte 0 is what
+            # `_kernel_lock` just locked, and on Windows a locked byte
+            # range refuses even a read from another process, which is
+            # exactly the moment a contending acquirer needs this content.
+            # Best-effort like the payload always was ("diagnostic only");
+            # a write that fails here must not cost the lock itself.
+            try:
+                self.lock_owner_path.write_text(
+                    _lock_owner_payload(os.getpid(), time.time()), encoding="utf-8")
+            except OSError:  # godmode: swallow-ok: diagnostic only, never the lock's own business
+                pass
             yield
         finally:
             try:
@@ -1110,9 +1177,9 @@ class Chronicle:
                 )
                 # No fsync: mutual exclusion comes from O_EXCL creation, which
                 # is durable enough for a lock that a crash releases by age-out;
-                # the pid/time content is diagnostic only. The flush cost was
-                # measurable on every single append.
-                os.write(descriptor, f"{os.getpid()}\n{time.time()}\n".encode())
+                # the pid/time/version content is diagnostic only. The flush
+                # cost was measurable on every single append.
+                os.write(descriptor, _lock_owner_payload(os.getpid(), time.time()).encode())
             except FileExistsError:
                 try:
                     age = time.time() - self.excl_lock_path.stat().st_mtime
@@ -1122,7 +1189,7 @@ class Chronicle:
                 except OSError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
                     pass
                 if time.monotonic() >= deadline:
-                    raise ArchiveError("Godmode archive is busy; retry after the active write")
+                    raise ArchiveError(_busy_message(self.excl_lock_path))
                 waited = timeout_seconds - (deadline - time.monotonic())
                 time.sleep(min(0.25, 0.05 + waited * 0.02) + (os.getpid() % 7) * 0.003)
         try:
