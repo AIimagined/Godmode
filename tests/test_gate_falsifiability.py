@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -251,6 +252,18 @@ class GateFalsifiabilityTests(unittest.TestCase):
         subprocess.run(
             ["git", "clone", "--quiet", str(PLUGIN_ROOT), str(cls.project)],
             check=True, timeout=120)
+        # Godmode's own archive for this checkout lives at `.git/godmode-state`
+        # - deliberately inside `.git` so it is never a tracked file, but a
+        # real `git clone` does not carry it either (clone replicates the
+        # object database and refs, not arbitrary extra files another tool
+        # left inside `.git`). Several `evals` assertions exercise commands
+        # that require an initialized project (`guard --operation`,
+        # `planmode specify`), so that one directory - and only it, never the
+        # rest of the working tree's ignored files - is copied across by
+        # hand.
+        source_state = PLUGIN_ROOT / ".git" / "godmode-state"
+        if source_state.is_dir():
+            shutil.copytree(source_state, cls.project / ".git" / "godmode-state")
 
     @classmethod
     def tearDownClass(cls) -> None:
