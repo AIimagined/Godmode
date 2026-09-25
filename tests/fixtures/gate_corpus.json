@@ -1464,5 +1464,33 @@
     "class": "by-design",
     "tool": "Bash",
     "note": "near-miss: a wrapper around ordinary work"
+  },
+  {
+    "operation": "ls && time -f %e ./frobnicate.sh",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a prefix runner's option value is peeled with its flag; the command it runs is judged"
+  },
+  {
+    "operation": "ls && time --format \"%e s\" ./frobnicate.sh",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a prefix runner's quoted option value is peeled with its flag"
+  },
+  {
+    "operation": "time -o /etc/passwd ls",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "GNU time -o writes its report to a file"
+  },
+  {
+    "operation": "ls && time -f %e git status",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: a timed read stays a read"
   }
 ]

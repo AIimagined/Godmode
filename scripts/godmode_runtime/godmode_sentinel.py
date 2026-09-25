@@ -568,6 +568,8 @@ def _protection_weakening(normalized: str, argv: list[str] | None,
 _OUTPUT_FLAGS_BY_HEAD: dict[str, tuple[str, ...]] = {
     "git": ("--output",),
     "sort": ("-o", "--output"),
+    # GNU `time -o FILE` writes its timing report to FILE.
+    "time": ("-o", "--output"),
 }
 
 
@@ -4330,6 +4332,13 @@ _PREFIX_RUNNER_LOCATION_FAILED = _PrefixRunnerLocationFailed()
 # (stdin/"this file", never an option) is left alone and stops it too.
 _LEADING_OPTION_TOKEN = re.compile(r"^(--|-\S+)(?:\s+|$)")
 
+# Options of a prefix runner that take the next word as their value: GNU
+# `time -f FORMAT` / `-o FILE`. Peeling only the flag left the value as the
+# remainder's head (`%e`), which the plain-name test rejects, so `ls && time
+# -f %e ./frobnicate.sh` was allowed. The value goes with its flag.
+_VALUED_RUNNER_OPTIONS = frozenset({"-f", "-o", "--format", "--output"})
+_OPTION_VALUE_TOKEN = re.compile(r"^(?:\"[^\"]*\"|'[^']*'|\S+)(?:\s+|$)")
+
 
 def _strip_leading_option_tokens(remainder: str) -> str:
     """`remainder` with every leading `-`/`--`-led option token removed, so
@@ -4345,6 +4354,10 @@ def _strip_leading_option_tokens(remainder: str) -> str:
         text = text[match.end():]
         if match.group(1) == "--":
             return text
+        if match.group(1) in _VALUED_RUNNER_OPTIONS:
+            value = _OPTION_VALUE_TOKEN.match(text)
+            if value:
+                text = text[value.end():]
 
 
 def _prefix_runner_remainder(

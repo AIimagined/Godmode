@@ -124,6 +124,18 @@ class PrefixRunnerTests(unittest.TestCase):
         self.assertTrue(preview["protected"])
         self.assertEqual(preview["category"], "unknown-command")
 
+    def test_an_option_value_goes_with_its_flag(self) -> None:
+        """`-f %e` is one option: peeling `-f` alone left `%e` as the head."""
+        for command in ("ls && time -f %e ./frobnicate.sh",
+                        "ls && time -o t.txt ./frobnicate.sh",
+                        'ls && time --format "%e s" ./frobnicate.sh'):
+            with self.subTest(command=command):
+                preview = classify_action(command, project_root=PLUGIN_ROOT)
+                self.assertTrue(preview["protected"], preview)
+                self.assertEqual(preview["category"], "unknown-command")
+        self.assertFalse(classify_action("ls && time -f %e git status",
+                                         project_root=PLUGIN_ROOT)["protected"])
+
     def test_a_stripped_control_keyword_does_not_launder_an_unrecognised_command(self) -> None:
         # `do` is not in `_PREFIX_RUNNER_HEADS` at all - `_categorize`'s own
         # `_CONTROL_PREFIX` strips it before a head is ever resolved, so
