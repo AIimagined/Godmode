@@ -26,6 +26,7 @@ those paths are, and those stay outside the repository.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import subprocess
@@ -34,6 +35,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = ROOT / "quality" / "publication.json"
+
+#: How many findings each group prints by default. `--all` lifts this; the
+#: report line always names the true count either way, so a truncated
+#: listing is never silently mistaken for the full one.
+_DEFAULT_SHOWN = 10
 
 #: Markers of external scholarship. Deliberately narrow: a preprint identifier
 #: and the author-and-others form are unambiguous, where a bare word like
@@ -145,7 +151,40 @@ def surface_name_findings() -> list[str]:
     return out
 
 
-def main() -> int:
+def load_baseline(path: Path) -> dict[str, list[str]]:
+    """Findings already accepted, per group. Missing file reads as empty -
+    a `--baseline` pointed at a path that doesn't exist yet accepts
+    nothing, rather than the check silently reporting nothing to diff."""
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {str(k): [str(v) for v in vs] for k, vs in raw.items()} if isinstance(raw, dict) else {}
+
+
+def write_baseline(path: Path, groups: dict[str, list[str]]) -> None:
+    path.write_text(json.dumps(groups, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--all", action="store_true",
+                        help="print every finding per group, not just the first "
+                             f"{_DEFAULT_SHOWN}")
+    parser.add_argument("--baseline", type=Path, default=None,
+                        help="diff mode: only findings absent from this JSON file "
+                             "(per-group finding lists) count toward the exit code")
+    parser.add_argument("--write-baseline", action="store_true",
+                        help="with --baseline, write the current findings to that "
+                             "path as the new accepted baseline, instead of grading "
+                             "against it")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     policy = load_policy()
     tracked = _tracked()
 
@@ -156,19 +195,46 @@ def main() -> int:
         "link-rot": link_findings(tracked),
     }
 
+    if args.baseline and args.write_baseline:
+        write_baseline(args.baseline, groups)
+        total = sum(len(v) for v in groups.values())
+        print(f"baseline written to {args.baseline}: {total} finding(s) accepted")
+        return 0
+
+    baseline = load_baseline(args.baseline) if args.baseline else {}
+
     print(f"prepublication check over {len(tracked)} tracked files")
     failed = False
+    truncated = False
     for label, findings in groups.items():
-        if findings:
-            failed = True
-            print(f"  {label}: {len(findings)} finding(s)")
-            for finding in findings[:10]:
-                print(f"    FAIL: {finding}", file=sys.stderr)
-        else:
-            print(f"  {label}: clean")
+        accepted = set(baseline.get(label, [])) if args.baseline else set()
+        new_findings = [f for f in findings if f not in accepted]
+        suppressed = len(findings) - len(new_findings)
+
+        if not new_findings:
+            note = f" ({suppressed} accepted by baseline)" if suppressed else ""
+            print(f"  {label}: clean{note}")
+            continue
+
+        failed = True
+        shown = new_findings if args.all else new_findings[:_DEFAULT_SHOWN]
+        group_truncated = len(shown) < len(new_findings)
+        truncated = truncated or group_truncated
+        summary = f"  {label}: {len(new_findings)} finding(s)"
+        if suppressed:
+            summary += f" ({suppressed} accepted by baseline)"
+        if group_truncated:
+            summary += f" - showing {len(shown)} of {len(new_findings)}, pass --all for the rest"
+        print(summary)
+        for finding in shown:
+            print(f"    FAIL: {finding}", file=sys.stderr)
 
     if failed:
-        print("\nnot ready to publish", file=sys.stderr)
+        if truncated:
+            print("\nnot ready to publish (some findings were not shown above - "
+                  "re-run with --all to see every one)", file=sys.stderr)
+        else:
+            print("\nnot ready to publish", file=sys.stderr)
         return 1
     print("\nready to publish by the declared policy")
     return 0
