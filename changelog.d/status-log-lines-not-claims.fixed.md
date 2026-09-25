@@ -1,0 +1,1 @@
+- Progress-log lines that open with a status label (`Done:`, `Landed:`, `In progress:`, `Pending:`, `Status:`) no longer draw the "claim-shaped statement" note at the end of a turn; a measured claim in ordinary prose still does, and the completion check still judges every line.

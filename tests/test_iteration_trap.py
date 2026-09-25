@@ -157,6 +157,16 @@ class PendingListTests(unittest.TestCase):
             self.assertEqual(hook._unrecorded_claims(archive, "Pending from you: 555345 for the 10-file commit, and the push word."), [])
             self.assertEqual(len(hook._unrecorded_claims(archive, "The commit carries 10 files and 3384 tests passed.")), 1)
 
+    def test_a_status_log_line_is_not_a_fresh_claim(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            for line in ("- Done: tasks 1, 2 (80072eb6, 21 tests pass in 9 s)",
+                         "**Landed:** 4 commits, 237 tests pass",
+                         "In progress: the suite audit, 406 modules to 390"):
+                self.assertEqual(hook._unrecorded_claims(archive, line), [], line)
+            # The label must open the line: a measured claim mid-prose still counts.
+            self.assertEqual(len(hook._unrecorded_claims(archive, "The audit is done: 237 tests pass in 9 s.")), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

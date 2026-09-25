@@ -1576,6 +1576,11 @@ def _swallowed_script_nudge(transcript_path: str | None) -> str | None:
             "before any number from it is reported")
 
 
+_STATUS_LABEL = re.compile(
+    r"(?i)^\**\s*(?:done|landed|completed|in progress|running|pending|status|next)"
+    r"\s*\**\s*:")
+
+
 def _unrecorded_claims(archive: Any, reply_text: str,
                        observed: str = "") -> list[str]:
     """Claim-shaped sentences in the reply with no claim record behind them.
@@ -1597,6 +1602,12 @@ def _unrecorded_claims(archive: Any, reply_text: str,
         # from you: 555345 for the 10-file commit" was flagged).
         if re.search(r"(?i)\b(?:pending|awaiting|owed|owner-owed|blocked on|still open|"
                      r"outstanding|to-?do|next up)\b", _strip_quoted(sentence)):
+            continue
+        # A progress-log line ("Done: tasks 1, 2 (21/21 tests)", "Landed:
+        # ...") is a status report that points at its own commits, not a
+        # fresh measured claim; the numbers on it are an index, not a boast.
+        # Only this advisory skips it - the done bar still judges it.
+        if _STATUS_LABEL.match(sentence.strip()):
             continue
         # A quoted span is a mention, not this reply's assertion (field
         # report 24: a reviewer's quoted numbers were flagged as claims) -
