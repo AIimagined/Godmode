@@ -536,6 +536,14 @@ def _append(
     operator_verified: bool | None = None,
 ) -> dict[str, Any]:
     _require_archive(runtime)
+    if kind == "lesson":
+        # A pinned (standing) lesson: refused unattended, shown as a diff
+        # when an attended actor replaces it.
+        from .godmode_lessons import guard_pinned_lesson
+        diff = guard_pinned_lesson(runtime.archive, subject=subject, new_data=data,
+                                   attended_flag=attended())
+        if diff:
+            print("\n".join(diff), file=sys.stderr)
     return _event_view(
         runtime.archive.append(
             kind, subject, data, evidence=evidence or [],
@@ -2437,7 +2445,13 @@ def cmd_law_show(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 def cmd_law_amend(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     from .godmode_law import amend_law
+    from .godmode_lessons import guard_pinned_lesson
 
+    diff = guard_pinned_lesson(runtime.archive, sequence=args.law,
+                               new_data={"generalized_guard": args.guard},
+                               attended_flag=attended(), action="amend")
+    if diff:
+        print("\n".join(diff), file=sys.stderr)
     record = amend_law(
         runtime.archive, args.law, args.guard,
         as_operator=getattr(args, "as_operator", False),
@@ -6065,6 +6079,9 @@ def cmd_upstream(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
 
 def cmd_expunge(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
+    from .godmode_lessons import guard_pinned_lesson
+    guard_pinned_lesson(runtime.archive, sequence=args.sequence,
+                        attended_flag=attended(), action="expunge")
     return CommandResult(runtime.archive.expunge(args.sequence, args.reason))
 
 
@@ -6769,15 +6786,80 @@ def cmd_skill_retire(args: argparse.Namespace, runtime: Runtime) -> CommandResul
     evals = project / "skills" / args.name / "godmode-evals.json"
     if not evals.is_file():
         raise ArchiveError(f"No skill '{args.name}' with a godmode-evals.json")
-    payload = json.loads(evals.read_text(encoding="utf-8"))
+    _refuse_unattended_skill_change(args.name, "retire")
+    before_text = evals.read_text(encoding="utf-8")
+    payload = json.loads(before_text)
+    previous = {"lifecycle": payload.get("lifecycle", "active"),
+                "lifecycle_reason": payload.get("lifecycle_reason", "")}
     payload["lifecycle"] = "deprecated"
     payload["lifecycle_reason"] = args.reason
-    evals.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    _append(runtime, "decision", f"skill-retired:{args.name}",
-            {"value": args.reason, "status": "deprecated"}, [f"file:skills/{args.name}"],
-            as_operator=getattr(args, "as_operator", False),
-            operator_verified=_resolve_operator_verified(runtime, args))
-    return CommandResult({"skill": args.name, "lifecycle": "deprecated", "reason": args.reason})
+    after_text = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+    evals.write_text(after_text, encoding="utf-8")
+    # Retirement archives, never deletes: the skill's files stay where they
+    # are, and the record keeps what the lifecycle was, so `skill restore
+    # --seq` can put it back.
+    record = _append(runtime, "decision", f"skill-retired:{args.name}",
+                     {"value": args.reason, "status": "deprecated", "previous": previous},
+                     [f"file:skills/{args.name}"],
+                     as_operator=getattr(args, "as_operator", False),
+                     operator_verified=_resolve_operator_verified(runtime, args))
+    return CommandResult({"skill": args.name, "lifecycle": "deprecated", "reason": args.reason,
+                          "sequence": record.get("sequence"),
+                          "diff": _text_diff(before_text, after_text, evals.name)})
+
+
+def _refuse_unattended_skill_change(name: str, action: str) -> None:
+    """A project skill is pinned: an actor nobody is watching may not edit,
+    retire or restore one."""
+    if not attended():
+        raise ArchiveError(
+            f"Refusing to {action} skill '{name}': a project skill is pinned, and "
+            "an actor nobody is watching may not change one - run it from an "
+            "attended session, or set GODMODE_ATTENDED=1 if one truly is one")
+
+
+def _text_diff(before: str, after: str, label: str) -> list[str]:
+    import difflib
+    return list(difflib.unified_diff(before.splitlines(), after.splitlines(),
+                                     f"{label} (before)", f"{label} (after)", lineterm=""))
+
+
+def cmd_skill_restore(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    """Put a retired skill back from its retirement record, named by seq."""
+    _require_archive(runtime)
+    retirement = None
+    for record in runtime.archive.read_events(verify=False):
+        if int(record.get("sequence", 0)) == int(args.seq):
+            retirement = record
+            break
+    subject = str((retirement or {}).get("subject", ""))
+    if (retirement is None or retirement.get("kind") != "decision"
+            or not subject.startswith("skill-retired:")):
+        raise ArchiveError(f"No skill retirement record at seq {args.seq}")
+    name = subject.split(":", 1)[1]
+    _refuse_unattended_skill_change(name, "restore")
+    evals = Path(runtime.anchor.project_root) / "skills" / name / "godmode-evals.json"
+    if not evals.is_file():
+        raise ArchiveError(f"No skill '{name}' with a godmode-evals.json to restore")
+    previous = (retirement.get("data") or {}).get("previous") or {}
+    before_text = evals.read_text(encoding="utf-8")
+    payload = json.loads(before_text)
+    payload["lifecycle"] = str(previous.get("lifecycle") or "active")
+    if previous.get("lifecycle_reason"):
+        payload["lifecycle_reason"] = str(previous["lifecycle_reason"])
+    else:
+        payload.pop("lifecycle_reason", None)
+    after_text = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+    evals.write_text(after_text, encoding="utf-8")
+    record = _append(runtime, "decision", f"skill-restored:{name}",
+                     {"value": f"restored from seq {int(args.seq)}",
+                      "status": payload["lifecycle"]},
+                     [f"seq:{int(args.seq)}", f"file:skills/{name}"],
+                     as_operator=getattr(args, "as_operator", False),
+                     operator_verified=_resolve_operator_verified(runtime, args))
+    return CommandResult({"skill": name, "lifecycle": payload["lifecycle"],
+                          "restored_from": int(args.seq), "sequence": record.get("sequence"),
+                          "diff": _text_diff(before_text, after_text, evals.name)})
 
 
 def cmd_lessons(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -9483,6 +9565,12 @@ def _build_parser() -> argparse.ArgumentParser:
     skill_retire.add_argument("--reason", required=True)
     _operator_flags(skill_retire)
     skill_retire.set_defaults(handler=cmd_skill_retire)
+    skill_restore = skill_sub.add_parser(
+        "restore", help="Put a retired skill back from its retirement record")
+    skill_restore.add_argument("--seq", type=int, required=True,
+                               help="The skill retirement record's own sequence number")
+    _operator_flags(skill_restore)
+    skill_restore.set_defaults(handler=cmd_skill_restore)
     skill_validate = skill_sub.add_parser("validate")
     skill_validate.add_argument("--path", required=True)
     skill_validate.set_defaults(handler=cmd_skill_validate)

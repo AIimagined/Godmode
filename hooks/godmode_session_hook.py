@@ -2575,10 +2575,19 @@ def _take_parked_context(archive: Chronicle, anchor: Any, submitted: dict[str, A
     return " ".join(pieces)
 
 
-def _silenced_by_ask_only(policy: dict[str, Any], preview: dict[str, Any]) -> bool:
+def _silenced_by_ask_only(policy: dict[str, Any], preview: dict[str, Any],
+                          attended_flag: bool = True) -> bool:
     """True when the policy names `ask_only`, this call would have asked,
     its tier is R2/R3, and its category is not on the list. R4 and R5 are
-    never silenced: the list narrows attention, it never lowers the ceiling."""
+    never silenced: the list narrows attention, it never lowers the ceiling.
+
+    Never while unattended: the list narrows what an operator is asked
+    about, and with no operator presumed present there is no attention to
+    narrow. An unattended R2/R3 call follows the same rules as every other
+    unattended path, so the one posture that turns an ask into an allow is
+    not the one path the unattended tier leaves open."""
+    if not attended_flag:
+        return False
     listed = policy.get("ask_only")
     if not listed:
         return False
@@ -2587,6 +2596,28 @@ def _silenced_by_ask_only(policy: dict[str, Any], preview: dict[str, Any]) -> bo
     if str(preview.get("tier") or "") not in ("R2", "R3"):
         return False
     return str(preview.get("category") or "") not in set(listed)
+
+
+_PINNED_SKILL_ROOTS: tuple[tuple[str, ...], ...] = (("skills",), (".claude", "skills"))
+
+
+def _pinned_skill_of(project_root: Path, target: Any) -> str | None:
+    """The project skill a write target falls inside, or None. Every project
+    skill is pinned - there is no per-skill pin to consult, so the stricter
+    reading holds: `skills/<name>/...` and `.claude/skills/<name>/...`."""
+    try:
+        path = Path(str(target))
+        if not path.is_absolute():
+            path = project_root / path
+        parts = path.resolve().relative_to(project_root.resolve()).parts
+    except (OSError, ValueError, RuntimeError):
+        return None
+    lowered = tuple(part.lower() for part in parts)
+    for root in _PINNED_SKILL_ROOTS:
+        depth = len(root)
+        if len(parts) > depth + 1 and lowered[:depth] == root:
+            return parts[depth]
+    return None
 
 
 def _session_counts(archive: Chronicle) -> dict[str, int]:
@@ -4692,7 +4723,9 @@ def main(argv: list[str] | None = None) -> int:
             _broker(archive).consume(operation, str(submitted["capability"]))
             preview["allow"] = True
             preview["capability_consumed"] = True
-        elif _silenced_by_ask_only(policy, preview):
+        elif _silenced_by_ask_only(policy, preview, attended(
+                host_field(submitted, "session_type"),
+                str(host_field(submitted, "permission_mode") or ""))):
             # The focused posture (field report 2026-08-27): an R2/R3 ask
             # for a category the operator did not list is an allow - with
             # a record, never silently. R4 and R5 never reach here.
@@ -4986,6 +5019,23 @@ def main(argv: list[str] | None = None) -> int:
                     preview["design_block"] = True
                     preview["boundary"] = design["boundary"]
                     preview["reason"] = f"{design['detail']}. {design['remedy']}"
+                    break
+                # A project skill is pinned: an actor nobody is watching may
+                # not edit or delete one. Attended, the edit proceeds and the
+                # host shows its own diff.
+                pinned_skill = _pinned_skill_of(Path(anchor.project_root), target)
+                if pinned_skill is not None and not attended(
+                        host_field(submitted, "session_type"),
+                        str(host_field(submitted, "permission_mode") or "")):
+                    preview["allow"] = False
+                    preview["tier"] = preview.get("tier") or "R3"
+                    preview["category"] = "pinned-skill-unattended"
+                    preview["decision_override"] = "deny"
+                    preview["reason"] = (
+                        f"refused: skills/{pinned_skill} is a pinned project skill, and "
+                        "an actor nobody is watching may not edit or delete one. Run "
+                        "this from an attended session, or set GODMODE_ATTENDED=1 if "
+                        "one truly is one.")
                     break
                 fenced = fence_verdict(archive, target,
                                        project_root=Path(anchor.project_root))

@@ -48,6 +48,8 @@ never the ladder's own promotion, can approve.
 """
 from __future__ import annotations
 
+import difflib
+import json
 import re
 from typing import Any
 
@@ -139,6 +141,51 @@ def _newest_lesson_for_subject(archive: Chronicle, subject: str) -> dict[str, An
         if newest is None or int(record.get("sequence", 0)) > int(newest.get("sequence", 0)):
             newest = record
     return newest
+
+
+_UNATTENDED_PINNED_REMEDY = (
+    "run it from an attended session, or set GODMODE_ATTENDED=1 if one truly is one"
+)
+
+
+def guard_pinned_lesson(
+    archive: Chronicle, *, attended_flag: bool, subject: str | None = None,
+    sequence: int | None = None, new_data: dict[str, Any] | None = None,
+    action: str = "edit",
+) -> list[str]:
+    """A pinned lesson - one whose current record is `standing`, the flag
+    that pins it ahead of every other law in the brief - is stricter for an
+    actor nobody is watching. Unattended, any write that would edit or
+    remove it is refused. Attended, it proceeds and this returns the
+    unified diff between the pinned record and what replaces it, for the
+    caller to show; an empty list means the subject is not pinned.
+
+    The lesson is named by `subject`, or by `sequence` (any record of the
+    subject). Removal is never a delete here: retiring a lesson appends a
+    record, and the pinned one stays in the archive, restorable by seq."""
+    if subject is None and sequence is not None:
+        named = _record_by_seq(archive, "lesson", int(sequence))
+        if named is None:
+            return []
+        subject = str(named.get("subject", ""))
+    if subject is None:
+        return []
+    current = _newest_lesson_for_subject(archive, subject)
+    if current is None or not bool((current.get("data") or {}).get("standing")):
+        return []
+    if not attended_flag:
+        raise ArchiveError(
+            f"Refusing to {action} pinned lesson {subject[:60]!r} (seq "
+            f"{current.get('sequence')}): a standing lesson is not edited or "
+            "removed by an actor nobody is watching - "
+            + _UNATTENDED_PINNED_REMEDY
+        )
+    before = json.dumps(current.get("data") or {}, indent=2, sort_keys=True,
+                        ensure_ascii=False).splitlines()
+    after = json.dumps(new_data or {}, indent=2, sort_keys=True,
+                       ensure_ascii=False).splitlines() if new_data is not None else []
+    return list(difflib.unified_diff(
+        before, after, f"seq:{current.get('sequence')}", f"{action}", lineterm=""))
 
 
 def _existing_approval(archive: Chronicle, promotion_seq: int) -> dict[str, Any] | None:

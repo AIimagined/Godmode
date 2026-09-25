@@ -516,5 +516,102 @@ class WithoutPreflightRefusedUnattendedTests(unittest.TestCase):
             self.assertNotIn("unattended tier", str(ctx.exception))
 
 
+class PinnedArtifactTests(unittest.TestCase):
+    """Pinned artifacts are stricter for an actor nobody is watching: a
+    standing lesson or a project skill is not edited or removed unattended;
+    attended, the change proceeds with its diff shown; a retired skill is
+    restorable by the retirement record's seq."""
+
+    def test_a_skill_path_is_pinned_and_nothing_else_is(self) -> None:
+        root = PLUGIN_ROOT
+        self.assertEqual(hook._pinned_skill_of(root, "skills/demo/SKILL.md"), "demo")
+        self.assertEqual(hook._pinned_skill_of(root, root / ".claude" / "skills" / "x" / "a.md"), "x")
+        self.assertIsNone(hook._pinned_skill_of(root, "skills/README.md"))
+        self.assertIsNone(hook._pinned_skill_of(root, "scripts/godmode.py"))
+
+    def test_an_unattended_write_to_a_skill_is_refused_and_an_attended_one_is_not(self) -> None:
+        from test_ask_only_hook import _decide, _project
+        with _project() as (root, _archive):
+            target = root / "skills" / "demo" / "SKILL.md"
+            target.parent.mkdir(parents=True)
+            target.write_text("# demo\n", encoding="utf-8")
+            call = {"file_path": str(target), "content": "# changed\n"}
+            with mock.patch.dict(os.environ, {_ATTENDED_ENV: "0"}, clear=False):
+                os.environ.pop("CI", None)
+                unattended_decision = _decide(root, "Write", call)
+            with mock.patch.dict(os.environ, {_ATTENDED_ENV: "1"}, clear=False):
+                os.environ.pop("CI", None)
+                attended_decision = _decide(root, "Write", call)
+        self.assertEqual(unattended_decision, "deny")
+        self.assertNotEqual(attended_decision, "deny")
+
+    def _standing(self, archive, subject: str = "pinned subject") -> dict:
+        archive.initialize()
+        return archive.append("lesson", subject, {
+            "value": "observed", "generalized_guard": "check first", "standing": True,
+        }, evidence=[])
+
+    def test_an_unattended_edit_of_a_standing_lesson_is_refused(self) -> None:
+        from godmode_runtime.godmode_lessons import guard_pinned_lesson
+        with isolated_project() as (_project, _state, anchor, archive):
+            record = self._standing(archive)
+            runtime = console.Runtime(anchor=anchor, archive=archive)
+            with mock.patch.dict(os.environ, {_ATTENDED_ENV: "0"}, clear=False):
+                with self.assertRaises(ArchiveError) as ctx:
+                    console._append(runtime, "lesson", "pinned subject",  # noqa: SLF001
+                                    {"value": "rewritten", "status": "retired"})
+                with self.assertRaises(ArchiveError):
+                    guard_pinned_lesson(archive, sequence=record["sequence"],
+                                        attended_flag=False, action="expunge")
+            self.assertIn("pinned lesson", str(ctx.exception))
+            self.assertIn("GODMODE_ATTENDED=1", str(ctx.exception))
+            # Nothing was written by the refused call.
+            lessons = [r for r in archive.read_events(verify=False) if r["kind"] == "lesson"]
+            self.assertEqual(len(lessons), 1)
+
+    def test_an_attended_edit_of_a_standing_lesson_shows_its_diff(self) -> None:
+        from godmode_runtime.godmode_lessons import guard_pinned_lesson
+        with isolated_project() as (_project, _state, _anchor, archive):
+            self._standing(archive)
+            diff = guard_pinned_lesson(archive, subject="pinned subject", attended_flag=True,
+                                       new_data={"value": "rewritten"})
+            unpinned = guard_pinned_lesson(archive, subject="another subject",
+                                           attended_flag=False, new_data={"value": "x"})
+        self.assertTrue(any(line.startswith("+") and "rewritten" in line for line in diff), diff)
+        self.assertTrue(any(line.startswith("-") and "check first" in line for line in diff), diff)
+        self.assertEqual(unpinned, [])
+
+    def _skill_args(self, **fields):
+        from types import SimpleNamespace
+        return SimpleNamespace(as_operator=False, password_stdin=False, **fields)
+
+    def test_skill_retire_is_refused_unattended_and_restorable_by_seq(self) -> None:
+        with isolated_project() as (project, _state, anchor, archive):
+            archive.initialize()
+            evals = project / "skills" / "demo" / "godmode-evals.json"
+            evals.parent.mkdir(parents=True)
+            evals.write_text('{"lifecycle": "active"}\n', encoding="utf-8")
+            runtime = console.Runtime(anchor=anchor, archive=archive)
+            with mock.patch.dict(os.environ, {_ATTENDED_ENV: "0"}, clear=False):
+                with self.assertRaises(ArchiveError):
+                    console.cmd_skill_retire(self._skill_args(name="demo", reason="stale"), runtime)
+            self.assertIn('"active"', evals.read_text(encoding="utf-8"))
+            with mock.patch.dict(os.environ, {_ATTENDED_ENV: "1"}, clear=False):
+                retired = console.cmd_skill_retire(
+                    self._skill_args(name="demo", reason="stale"), runtime).payload
+                self.assertIn('"deprecated"', evals.read_text(encoding="utf-8"))
+                self.assertTrue(retired["diff"])
+                restored = console.cmd_skill_restore(
+                    self._skill_args(seq=retired["sequence"]), runtime).payload
+            self.assertEqual(restored["lifecycle"], "active")
+            self.assertEqual(json_load(evals)["lifecycle"], "active")
+            self.assertNotIn("lifecycle_reason", json_load(evals))
+
+
+def json_load(path: Path) -> dict:
+    import json
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()
