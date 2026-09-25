@@ -33,6 +33,7 @@ if str(SCRIPTS) not in sys.path:
 from godmode_runtime.godmode_anchor import host_capabilities, resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_attest import open_session  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
+from godmode_runtime.godmode_constants import RUNTIME_VERSION  # noqa: E402
 from godmode_runtime.godmode_console import Runtime, cmd_hooks  # noqa: E402
 from godmode_runtime.godmode_errors import ArchiveError  # noqa: E402
 from godmode_runtime import godmode_hookproof as hookproof  # noqa: E402
@@ -497,7 +498,9 @@ class CLIHooksTests(unittest.TestCase):
         for field in ("plugin_installed", "session_hook_seen", "pretool_hook_seen",
                       "host_registration", "last_proof", "verdict",
                       "matched", "invoked", "honored", "version", "degraded_reason",
-                      "latency", "fail_open_host"):
+                      "latency", "fail_open_host",
+                      # Task 3: the truthful-first summary fields.
+                      "initialized", "wired", "last_deny", "next_action"):
             self.assertIn(field, payload)
         self.assertEqual(payload["verdict"], "PARTIAL")
         self.assertIsNone(payload["last_proof"])
@@ -507,10 +510,19 @@ class CLIHooksTests(unittest.TestCase):
         self.assertTrue(payload["matched"])
         self.assertFalse(payload["invoked"])
         self.assertEqual(payload["honored"], "unknown")
-        self.assertEqual(payload["version"], "unknown")
+        # Task 3: `version` is always the running CLI's own version - never
+        # the honest-but-useless "unknown" - even before any proof exists.
+        self.assertEqual(payload["version"], RUNTIME_VERSION)
         self.assertIsNone(payload["degraded_reason"])
         self.assertIsNone(payload["latency"])
         self.assertFalse(payload["fail_open_host"])
+        # `godmode init` already ran in setUp: initialized and structurally
+        # wired, just never invoked yet - the middle rung of the ladder.
+        self.assertTrue(payload["initialized"])
+        self.assertTrue(payload["wired"])
+        self.assertIsNone(payload["last_deny"])
+        self.assertEqual(
+            payload["next_action"], "wired, never invoked: start a session in this host")
 
     def test_probe_flips_status_to_hard_and_exits_zero(self) -> None:
         probe = self._cli("hooks", "probe")
@@ -525,6 +537,28 @@ class CLIHooksTests(unittest.TestCase):
         status_payload = json.loads(status.stdout)
         self.assertEqual(status_payload["verdict"], "HARD")
         self.assertIsNotNone(status_payload["last_proof"])
+        # Task 3: a deny is now on record, so the ladder's last rung names
+        # when it happened rather than asking for another step.
+        self.assertIsNotNone(status_payload["last_deny"])
+        self.assertEqual(status_payload["last_deny"]["version"], RUNTIME_VERSION)
+        self.assertTrue(status_payload["next_action"].startswith("deny on record"))
+
+    def test_status_on_an_uninitialized_project_says_so_first(self) -> None:
+        # Task 3: an uninitialized project must read "not initialized: run
+        # godmode init" - never a silent PARTIAL/UNAVAILABLE that leaves the
+        # operator guessing why nothing is proven, and never the honest-but-
+        # useless "unknown" for `version`, which this CLI always knows.
+        with tempfile.TemporaryDirectory() as raw:
+            fresh = Path(raw)
+            done = subprocess.run(
+                [sys.executable, str(GODMODE_CLI), "--project", str(fresh), "--json",
+                 "hooks", "status"],
+                capture_output=True, text=True, env=os.environ)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            payload = json.loads(done.stdout)
+            self.assertFalse(payload["initialized"])
+            self.assertEqual(payload["next_action"], "not initialized: run godmode init")
+            self.assertEqual(payload["version"], RUNTIME_VERSION)
 
     def test_probe_on_an_uninitialized_project_fails_honestly(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

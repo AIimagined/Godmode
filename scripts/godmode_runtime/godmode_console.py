@@ -2747,9 +2747,34 @@ def cmd_capabilities(args: argparse.Namespace, runtime: Runtime) -> CommandResul
     })
 
 
+def _enforcement_next_action(
+    initialized: bool, host: str, wired: Any, invoked: bool, last_deny: dict[str, str] | None,
+) -> str:
+    """Task 3: the one command that advances this host's enforcement state.
+
+    A ladder, cheapest-to-fix first - an operator reading `hooks status`
+    should never have to infer what to try next from a pile of booleans:
+    not initialized beats everything else (nothing below it can even be
+    trusted yet); then not wired; then wired-but-never-invoked; then
+    invoked-but-no-deny-on-record; and only once a deny is actually on
+    record does this say the boundary is proven, naming when.
+    """
+    if not initialized:
+        return "not initialized: run godmode init"
+    if wired is not True:
+        return f"not wired: run `godmode hooks wire --host {host}`"
+    if not invoked:
+        return "wired, never invoked: start a session in this host"
+    if last_deny is None:
+        return "no deny on record: run a harmless protected command to prove it"
+    return (f"deny on record {last_deny['date']} (version {last_deny['version']}); "
+            "re-run `godmode hooks probe` for a fresh check")
+
+
 def _hooks_health_fields(archive: Any, host: str, level: str) -> dict[str, Any]:
     """CX-5: `hooks status`'s `matched`/`invoked`/`honored`/`version`/
-    `degraded_reason`/`latency`/`fail_open_host` fields.
+    `degraded_reason`/`latency`/`fail_open_host` fields, plus (Task 3) the
+    truthful-first summary: `initialized`/`wired`/`last_deny`/`next_action`.
 
     `matched` - does the SHIPPED manifest declare a matcher/event that would
     reach this host's boundary at all (structural, never live). `invoked` -
@@ -2758,35 +2783,55 @@ def _hooks_health_fields(archive: Any, host: str, level: str) -> dict[str, Any]:
     hook rendered, per the last proof's own `observed_decision` (every
     probe this codebase writes denies, so `honored` is really "did the host
     demonstrably see and record that denial" - `"unknown"` when no proof
-    exists at all to answer from, never a guessed `True`). `version` - the
-    godmode version string the last proof was minted under. Every field is
-    the honest string `"unknown"`, never `None`, where the underlying fact
-    is not inspectable - matching the plan's own wording for this contract
-    point.
+    exists at all to answer from, never a guessed `True`).
+
+    `version` (Task 3) - the running CLI's own version, always
+    `RUNTIME_VERSION`, never the honest-but-useless string `"unknown"`: a
+    status report about the tool that is running right now always knows
+    what it is. The version the *last proof* was minted under (which CAN
+    genuinely be unknown, for an old or malformed record) lives in
+    `last_deny["version"]` instead, only when a deny is actually on record.
+
+    `initialized` - whether godmode has an archive for this project at all;
+    `wired` - `matched`, named for the operator-facing ladder `next_action`
+    walks; `last_deny` - `{"date", "version"}` from the newest proof this
+    host actually denied, or `None` when no deny is on record; `next_action`
+    - the one command that advances the next state (also read by
+    `--terse`/`--brief`, which already surface any `next_action` field
+    first).
     """
     manifest = hook_manifest_status()
     proof = last_proof(archive, host)
+    initialized = archive.initialized()
     if host == "claude":
         matched: Any = manifest["pretool_hook_seen"]
     else:
         entry = hooks_registration_report().get(host)
         matched = bool(entry.get("manifest_present")) if isinstance(entry, dict) else "unknown"
     invoked = proof is not None
+    last_deny: dict[str, str] | None = None
     if proof is None:
         honored: Any = "unknown"
-        version: Any = "unknown"
     else:
         honored = proof["data"].get("observed_decision") == "deny"
-        version = proof["data"].get("hook_version") or "unknown"
+        if honored:
+            last_deny = {
+                "date": str(proof.get("recorded_at") or "")[:10],
+                "version": proof["data"].get("hook_version") or RUNTIME_VERSION,
+            }
     latency = last_latency_check(archive, host)
     return {
         "matched": matched,
         "invoked": invoked,
         "honored": honored,
-        "version": version,
+        "version": RUNTIME_VERSION,
         "degraded_reason": degraded_reason(archive, host) if level == "DEGRADED" else None,
         "latency": latency,
         "fail_open_host": host in FAIL_OPEN_HOSTS,
+        "initialized": initialized,
+        "wired": matched,
+        "last_deny": last_deny,
+        "next_action": _enforcement_next_action(initialized, host, matched, invoked, last_deny),
     }
 
 
