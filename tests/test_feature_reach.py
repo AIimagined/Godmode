@@ -126,17 +126,14 @@ class GrokAskAndPostToolUseReachTests(unittest.TestCase):
         cell = reach.reach_table()["grok"]["post-edit-findings"]
         self.assertEqual(cell["status"], "partial")
 
-    def test_ask_decision_still_reads_no_until_the_channel_is_declared(self) -> None:
-        # Known, named gap (not this task's file to fix): `reach_table()`'s
-        # channel gate downgrades this cell to "no" until
-        # `godmode_host_manifests.HOST_CAPABILITIES["grok"]["stdout"]` also
-        # declares "ask" - a one-line change outside this task's fence.
-        # This test pins today's honest, if incomplete, state and will
-        # need updating (to "partial") the same day that line lands.
+    def test_ask_decision_reads_partial_once_the_channel_is_declared(self) -> None:
+        # `HOST_CAPABILITIES["grok"]["stdout"]` declares "ask" (Grok 1.0.41
+        # guide), so `reach_table()`'s channel gate no longer downgrades the
+        # authored `partial`; it stays partial until a live proof lands.
         cell = reach.reach_table()["grok"]["ask-decision"]
-        self.assertEqual(cell["status"], "no")
+        self.assertEqual(cell["status"], "partial")
         self.assertIn("Grok 1.0.41 guide", cell["reason"])
-        self.assertIn("does not declare the ask channel", cell["reason"])
+        self.assertNotIn("does not declare the ask channel", cell["reason"])
 
     def test_neither_cell_claims_a_proof_date_or_version(self) -> None:
         # The proof date/version live on `REACH[...]["live_proof"]` (a

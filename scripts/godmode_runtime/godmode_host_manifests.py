@@ -1545,7 +1545,7 @@ HOST_CAPABILITIES: dict[str, dict[str, Any]] = {
     # states per cell, this dict only says the CHANNEL exists somewhere in
     # its dialect). No documented `systemMessage` field.
     "grok": {"events": GROK_HOOK_EVENTS,
-             "stdout": frozenset({"deny", "additionalContext"}),
+             "stdout": frozenset({"deny", "ask", "additionalContext"}),
              "tier": "hook", "os": _ALL_OS},
     # Cursor: `HOSTS_WITH_ASK` names it; its own `cursor_keys` dialect carries
     # `agent_message` (this module's additionalContext) and `user_message`
