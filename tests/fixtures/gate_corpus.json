@@ -1275,5 +1275,194 @@
     "class": "by-design",
     "tool": "PowerShell",
     "note": "G-5 synthetic dialect pin: a quoted path to a command is still that command; the head resolves to its base name (review round 2, F3)"
+  },
+  {
+    "operation": "g\u0456t push --force origin main",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a non-ASCII lookalike command name is an unknown command, never a read"
+  },
+  {
+    "operation": "g\u0456t status",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a non-ASCII lookalike command name is an unknown command, never a read"
+  },
+  {
+    "operation": "echo \"h\u00e9llo w\u00f6rld\"",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: non-ASCII data is not a command name"
+  },
+  {
+    "operation": "./donn\u00e9es/run.sh",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: a non-ASCII directory on the way to an ASCII program name"
+  },
+  {
+    "operation": "& $g push --force",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "PowerShell's call operator on a variable runs a program the text does not name: opaque"
+  },
+  {
+    "operation": "$g = 'git'; & $g push --force",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "the call operator survives the segment split"
+  },
+  {
+    "operation": "$files = Get-ChildItem; $files | Select-Object Name",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "near-miss: a PowerShell variable used as a value runs nothing"
+  },
+  {
+    "operation": "Start-Process git -ArgumentList 'push','--force'",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "Start-Process is read as the command it launches"
+  },
+  {
+    "operation": "Start-Process $exe",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "Start-Process on a variable: opaque"
+  },
+  {
+    "operation": "Start-Process notepad",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "near-miss: launching an ordinary program stays free"
+  },
+  {
+    "operation": "$'git' push --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "an ANSI-C quoted command name is read as the name it spells"
+  },
+  {
+    "operation": "$'git' status",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: the same spelling of a read stays a read"
+  },
+  {
+    "operation": "${x:-git} push --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a parameter-expansion default is read as the command it names, and the expansion itself is opaque"
+  },
+  {
+    "operation": "$x push --force",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a variable command word: opaque"
+  },
+  {
+    "operation": "& (Get-Command git) push --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "the call operator on Get-Command is read as the named command"
+  },
+  {
+    "operation": "& (Get-Command git) status",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "near-miss: the same form around a read"
+  },
+  {
+    "operation": ". $profileScript",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "dot-sourcing a variable: opaque"
+  },
+  {
+    "operation": "git \"push\" --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a quoted subcommand never lowers a tier"
+  },
+  {
+    "operation": "git push \"--force\"",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a quoted flag never lowers a tier"
+  },
+  {
+    "operation": "git reset \"--hard\"",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a quoted flag never lowers a tier"
+  },
+  {
+    "operation": "git commit -m \"push --force\"",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: a quoted message stays data"
+  },
+  {
+    "operation": "grep -rn \"release\" docs",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: a quoted search pattern stays data"
+  },
+  {
+    "operation": "script -qc \"git push --force\" /dev/null",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a pseudo-terminal wrapper is read as the command it runs"
+  },
+  {
+    "operation": "script -qc \"ls -la\" /dev/null",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: the wrapper around a read"
+  },
+  {
+    "operation": "winpty godmode branches --record --role throwaway --as-operator",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "an operator-only verb under a pseudo-terminal wrapper weakens protection"
+  },
+  {
+    "operation": "godmode authorize grant --as-operator",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: without a wrapper the verb's own prompt still needs the operator's terminal"
+  },
+  {
+    "operation": "winpty python app.py",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: a wrapper around ordinary work"
   }
 ]

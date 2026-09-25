@@ -197,8 +197,20 @@ _UNDECLARED_SHELL_TOOLS = frozenset({"shell_command", "run_terminal_command",
 
 
 def _may_be_powershell(tool: str) -> bool:
-    return tool in _POWERSHELL_TOOLS or (
-        tool in _UNDECLARED_SHELL_TOOLS and sys.platform == "win32")
+    return tool in _POWERSHELL_TOOLS or _may_be_cmd(tool)
+
+
+def _may_be_cmd(tool: str) -> bool:
+    """An undeclared shell on Windows may be cmd.exe, which the full hook
+    reads as a third dialect (`godmode_parseview.DIALECT_EITHER`)."""
+    return tool in _UNDECLARED_SHELL_TOOLS and sys.platform == "win32"
+
+
+# cmd.exe reads a single quote as an ordinary character (so `'a & b'` runs
+# `b`), `^` as its escape, and expands `%VAR%` / `!VAR!` before it splits
+# the line, so an expansion can carry a separator. A command that may run
+# under cmd and carries any of these escalates.
+_CMD_DIVERGENT = re.compile(r"['^%!]")
 
 
 # The characters after which a `#` starts a new word, and so a comment -
@@ -510,8 +522,15 @@ def fast_verdict(payload: dict[str, Any], table: dict[str, Any] | None) -> str:
         # hides, is the full hook's question to answer.
         if "\n" in command or "\r" in command or "#" in command:
             return "escalate"
-        if _may_be_powershell(tool) and (not command.isascii()
-                                         or _PWSH_DIVERGENT.search(command)):
+        # A non-ASCII character escalates in every dialect: a lookalike
+        # letter makes a different command name that reads as a known one,
+        # and a non-ASCII space splits words here that the shell keeps
+        # whole. The full hook judges the name.
+        if not command.isascii():
+            return "escalate"
+        if _may_be_powershell(tool) and _PWSH_DIVERGENT.search(command):
+            return "escalate"
+        if _may_be_cmd(tool) and _CMD_DIVERGENT.search(command):
             return "escalate"
 
         read_heads_raw = table.get("read_heads")

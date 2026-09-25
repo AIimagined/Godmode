@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import ast
 import base64
+import contextvars
 from dataclasses import dataclass
 import hashlib
 import json
@@ -29,6 +30,8 @@ from .godmode_parseview import (
     BASH as _BASH_DIALECT, dialect_for_tool as _dialect_for_tool,
     dialects_to_read as _dialects_to_read, lower as _lower_dialect,
     head_readings as _head_readings, resolved_head as _resolved_head,
+    command_readings as _command_readings, opaque_head as _opaque_head,
+    lookalike_head as _lookalike_head, pty_wrapped as _pty_wrapped,
     _SEPARATORS, _HEREDOC, _without_heredoc_bodies, _blank_quoted_heredoc_bodies,
     _COMMENT_WORD_START, _walk_segments,
 )
@@ -4397,6 +4400,68 @@ def _component_boundaries(command: str) -> list[tuple[str, str | None]]:
     return list(_walk_segments(command))
 
 
+# Whether the text being classified is certainly Bash. False while a
+# PowerShell text (or a text that may be either) is read in its Bash
+# spelling, where a bare `$x` is a value rather than a command.
+_CERTAINLY_BASH: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "godmode_certainly_bash", default=True)
+
+# How many times a command-word reading is itself read again.
+_MAX_HEAD_DEPTH = 3
+
+# An operator-only verb's own flag. Its confirmation prompt needs a
+# terminal, which is what a pseudo-terminal wrapper supplies.
+_AS_OPERATOR = re.compile(r"(?<![\w-])--as-operator(?![\w-])")
+
+
+def _command_words(normalized: str) -> str:
+    """`normalized` with leading `VAR=value` assignments and control
+    keywords removed - the text `_categorize` finds the command word in."""
+    text = normalized
+    while True:
+        trimmed = _ASSIGNMENT_PREFIX.sub("", text, count=1)
+        trimmed = _CONTROL_PREFIX.sub("", trimmed, count=1)
+        if trimmed == text or not trimmed.strip():
+            return text
+        text = trimmed
+
+
+def _head_form_verdicts(command: str, normalized: str,
+                        external_repo_ref: Any) -> list[dict[str, Any]]:
+    """Verdicts decided by the command word's form alone: a lookalike
+    name, a name nobody can read from the text, and an operator-only verb
+    run under a pseudo-terminal wrapper."""
+    found: list[tuple[str, list[str]]] = []
+    lookalike = _lookalike_head(command)
+    if lookalike is not None:
+        found.append(("unknown-command", [
+            f"a command name with non-ASCII characters: {lookalike[:60]}",
+            "a name that reads like a known command can run a different program"]))
+    opaque = _opaque_head(command, strict=_CERTAINLY_BASH.get())
+    if opaque is not None:
+        category, _protected, impact = _opaque_inline_verdict(normalized)
+        found.append((category, [opaque, *impact]))
+    wrapped = _pty_wrapped(command)
+    if wrapped is not None and _AS_OPERATOR.search(wrapped):
+        found.append(("protection-weakening", [
+            "runs an operator-only verb under a pseudo-terminal wrapper, where "
+            "its confirmation prompt can be answered without the operator",
+            "only the operator should run it, at their own terminal"]))
+    verdicts = []
+    for category, impact in found:
+        tier, second = _risk_tier(category, normalized)
+        verdicts.append({
+            "protected": True, "category": category,
+            "operation_digest": hashlib.sha256(normalized.encode()).hexdigest(),
+            "impact": impact, "tier": tier,
+            "second_confirmation_required": second,
+            "external_repo_ref": external_repo_ref,
+            "components": [{"text": normalized, "category": category,
+                            "tier": tier, "protected": True}],
+        })
+    return verdicts
+
+
 def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                     project_root: Path | None = None,
                     archive: Any = None,
@@ -4422,7 +4487,9 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                     # derives it from `tool_name` (no tool name = bash).
                     dialect: str | None = None,
                     # G-5 private: False while classifying a head reading.
-                    _read_heads: bool = True) -> dict[str, Any]:
+                    _read_heads: bool = True,
+                    # Private: how many command-word readings deep this call is.
+                    _head_depth: int = 0) -> dict[str, Any]:
     """Deterministic preview of what an operation would touch.
 
     A compound command is classified part by part and takes the risk of its
@@ -4488,14 +4555,20 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     if dialect is None:
         dialect = _dialect_for_tool(tool_name)
     if dialect != _BASH_DIALECT:
-        readings = [
-            classify_action(
-                _lower_dialect(normalized, one), extra_protected, project_root,
-                archive, require_approval,
-                _allow_standalone_fetch=_allow_standalone_fetch,
-                inline_scan=inline_scan, _script_depth=_script_depth,
-                dialect=_BASH_DIALECT)
-            for one in _dialects_to_read(dialect)]
+        # The text may be PowerShell, which runs a variable only through
+        # its call operator; `_opaque_head` reads a bare `$x` accordingly.
+        token = _CERTAINLY_BASH.set(False)
+        try:
+            readings = [
+                classify_action(
+                    _lower_dialect(normalized, one), extra_protected, project_root,
+                    archive, require_approval,
+                    _allow_standalone_fetch=_allow_standalone_fetch,
+                    inline_scan=inline_scan, _script_depth=_script_depth,
+                    dialect=_BASH_DIALECT)
+                for one in _dialects_to_read(dialect)]
+        finally:
+            _CERTAINLY_BASH.reset(token)
         worst = dict(max(readings, key=lambda v: (v["protected"], v["tier"])))
         worst["operation_digest"] = hashlib.sha256(normalized.encode()).hexdigest()
         return worst
@@ -4682,6 +4755,13 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # it names, at the exact head position; `worst["segments"]` still
         # counts the real, unresolved segment count below.
         resolved_segments = _resolve_head_variables(segments)
+        if not _CERTAINLY_BASH.get():
+            # `$g = 'git'; & $g push`: the segment walk takes the `&` for a
+            # separator, and PowerShell's call operator went with it. Kept
+            # on its segment so the call is read as a call.
+            resolved_segments = [
+                f"& {text}" if operator == "&" else text
+                for text, operator in zip(resolved_segments, operators)]
         verdicts = [classify_action(segment, extra_protected, project_root, archive,
                                     require_approval, _allow_standalone_fetch=False,
                                     inline_scan=inline_scan)
@@ -4840,15 +4920,34 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     # `& "C:/Program Files/git.exe" push`) is also read by its program
     # name, and the stricter reading wins. `_read_heads` stops the readings
     # themselves from being read again.
-    readings = _head_readings(normalized) if _read_heads else []
-    if readings:
+    #
+    # The command-word forms `godmode_parseview.command_readings` normalises
+    # (an expansion with a known value, `& (Get-Command git)`, dot-sourcing,
+    # `Start-Process`, a pseudo-terminal wrapper, quoted flags) join the
+    # readings the same way. A command word no reading can name - a variable,
+    # an expression - is judged opaque, like an interpreter's inline payload;
+    # a non-ASCII command name is an unknown command, never a read. Those
+    # readings are read again up to `_MAX_HEAD_DEPTH` deep, so
+    # `winpty $'git' push` still reaches `git push`.
+    readings: list[str] = []
+    extra: list[str] = []
+    judged: list[dict[str, Any]] = []
+    if _read_heads:
+        readings = list(_head_readings(normalized))
+        command = _command_words(normalized)
+        extra = [text for text in _command_readings(command)
+                 if text not in readings and text != normalized]
+        judged = _head_form_verdicts(command, normalized, external_repo_ref)
+    if readings or extra or judged:
         texts = readings if _resolved_head(normalized) is not None else [normalized, *readings]
+        deeper = _head_depth + 1 < _MAX_HEAD_DEPTH
         verdicts = [
             classify_action(
                 text, extra_protected, project_root, archive, require_approval,
                 _allow_standalone_fetch=_allow_standalone_fetch, inline_scan=inline_scan,
-                _script_depth=_script_depth, dialect=_BASH_DIALECT, _read_heads=False)
-            for text in texts]
+                _script_depth=_script_depth, dialect=_BASH_DIALECT,
+                _read_heads=deeper and text in extra, _head_depth=_head_depth + 1)
+            for text in texts + extra] + judged
         verdict = dict(max(verdicts, key=lambda v: (v["protected"], v["tier"])))
         verdict["operation_digest"] = hashlib.sha256(normalized.encode()).hexdigest()
         return verdict

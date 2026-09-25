@@ -319,9 +319,10 @@ class FastPathEscalates(unittest.TestCase):
             self.assertIn(tool, pv.SHELL_TOOL_DIALECTS, tool)
             for platform in ("win32", "linux"):
                 with mock.patch.object(fast.sys, "platform", platform):
-                    may_be_pwsh = pv.POWERSHELL in pv.dialects_to_read(
-                        pv.dialect_for_tool(tool, platform))
-                    self.assertEqual(fast._may_be_powershell(tool), may_be_pwsh,
+                    read = pv.dialects_to_read(pv.dialect_for_tool(tool, platform))
+                    self.assertEqual(fast._may_be_powershell(tool), pv.POWERSHELL in read,
+                                     (tool, platform))
+                    self.assertEqual(fast._may_be_cmd(tool), pv.CMD in read,
                                      (tool, platform))
 
 
