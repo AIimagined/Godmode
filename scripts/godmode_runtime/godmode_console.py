@@ -691,6 +691,19 @@ def cmd_adopt(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         runtime.archive.initialize()
         return CommandResult(
             adopt_from_docs(runtime.archive, Path(runtime.anchor.project_root)))
+    drift = None if args.source else runtime.archive.identity_drift()
+    if drift is not None:
+        # A moved or copied checkout: its archive travelled with it, under
+        # the identity it was born with. Relinking it in place is an
+        # operator decision - preview without --confirm, as below.
+        if not args.confirm:
+            return CommandResult(
+                {"preview": {**drift, "reason": "this archive was recorded under a "
+                             "different identity than this checkout resolves"},
+                 "confirm_with": "--confirm"},
+                exit_code=1,
+            )
+        return CommandResult(runtime.archive.adopt_moved_identity())
     orphaned = runtime.archive.orphaned()
     source = args.source or (orphaned or {}).get("source")
     if not source:

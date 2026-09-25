@@ -163,5 +163,97 @@ class AppendAcceptsTheBornIdentityTests(unittest.TestCase):
             self.assertIn("f" * 24, message)
 
 
+
+class MovedCheckoutSelfAdoptTests(unittest.TestCase):
+    """Row 12 residual: a moved or copied checkout could not relink its own
+    archive - `adopt()` refuses a destination that holds records, and the
+    console called `initialize()` (which refuses the drifted key) before
+    it. `godmode adopt --confirm` now relinks in place: operator-confirmed,
+    chronicled, the old key kept in `adopted_keys`. Nothing else about the
+    append identity check moves."""
+
+    def test_the_moved_archive_relinks_in_place_and_appends_again(self) -> None:
+        with isolated_project() as (_project, anchor, archive):
+            archive.initialize()
+            for index in range(3):
+                archive.append("decision", f"subject-{index}", {"value": index}, evidence=[])
+            moved = Chronicle(dataclasses.replace(anchor, project_key="0" * 24))
+            drift = moved.identity_drift()
+            self.assertEqual(drift["recorded_key"], anchor.project_key)
+            self.assertEqual(drift["current_key"], "0" * 24)
+            result = moved.adopt_moved_identity()
+            self.assertEqual(result["previous_key"], anchor.project_key)
+            self.assertTrue(result["chain"]["ok"], result["chain"])
+            config = json.loads(moved.config.read_text(encoding="utf-8"))
+            self.assertEqual(config["project_key"], "0" * 24)
+            self.assertIn(anchor.project_key, config["adopted_keys"])
+            records = moved.read_events()
+            self.assertEqual(records[-1]["subject"], "archive-identity-adopted")
+            self.assertEqual(records[-1]["data"]["previous_key"], anchor.project_key)
+            moved.append("decision", "after", {"value": 9}, evidence=[])
+            self.assertTrue(moved.verify()["ok"])
+            self.assertIsNone(moved.identity_drift())
+            with self.assertRaises(ArchiveError):
+                moved.adopt_moved_identity()
+
+    def test_a_broken_chain_is_not_adopted(self) -> None:
+        with isolated_project() as (_project, anchor, archive):
+            archive.initialize()
+            archive.append("decision", "subject-0", {"value": 0}, evidence=[])
+            archive.append("decision", "subject-1", {"value": 1}, evidence=[])
+            first = archive.event_paths()[0]
+            record = json.loads(first.read_text(encoding="utf-8"))
+            record["data"] = {"value": "edited"}
+            first.write_text(json.dumps(record), encoding="utf-8")
+            moved = Chronicle(dataclasses.replace(anchor, project_key="0" * 24))
+            before = moved.config.read_text(encoding="utf-8")
+            with self.assertRaises(ArchiveError):
+                moved.adopt_moved_identity()
+            self.assertEqual(moved.config.read_text(encoding="utf-8"), before)
+
+    def test_adopt_confirm_relinks_a_moved_git_checkout_end_to_end(self) -> None:
+        import io
+        import shutil
+        import subprocess
+        from godmode_runtime import godmode_console as console
+
+        def run(project: Path, *args: str) -> tuple[int, dict]:
+            out = io.StringIO()
+            with mock.patch.object(sys, "stdout", out),                     mock.patch.object(sys, "stderr", io.StringIO()):
+                code = console.main(["--project", str(project), *args])
+            return code, json.loads(out.getvalue())
+
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            original = base / "original"
+            original.mkdir()
+            subprocess.run(["git", "init", "-q", str(original)], check=True)
+            with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(base / "state")},
+                                 clear=False):
+                archive = Chronicle(resolve_anchor(original))
+                archive.initialize()
+                archive.append("decision", "before-move", {"value": 1}, evidence=[])
+                moved = base / "moved"
+                shutil.move(str(original), str(moved))
+                moved_archive = Chronicle(resolve_anchor(moved))
+                self.assertIsNotNone(moved_archive.identity_drift())
+                with self.assertRaises(ArchiveError):
+                    moved_archive.append("decision", "refused", {"value": 2}, evidence=[])
+
+                code, preview = run(moved, "adopt")
+                self.assertEqual(code, 1, preview)
+                self.assertEqual(preview["confirm_with"], "--confirm")
+                code, adopted = run(moved, "adopt", "--confirm")
+                self.assertEqual(code, 0, adopted)
+                self.assertEqual(adopted["adopted"], "moved-checkout")
+
+                after = Chronicle(resolve_anchor(moved))
+                after.append("decision", "after-move", {"value": 3}, evidence=[])
+                subjects = [r["subject"] for r in after.read_events()]
+                self.assertEqual(subjects, ["before-move", "archive-identity-adopted",
+                                            "after-move"])
+                self.assertTrue(after.verify()["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()

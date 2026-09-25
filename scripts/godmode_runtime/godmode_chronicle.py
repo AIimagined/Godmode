@@ -1000,6 +1000,78 @@ class Chronicle:
             raise ArchiveError(verified["message"])
         return {"adopted": copied, "source": str(source), "chain": verified}
 
+    def identity_drift(self) -> dict[str, Any] | None:
+        """The recorded and resolved keys when this archive was born under
+        a different identity than this checkout now resolves - a moved or
+        copied checkout whose archive travelled with it - and no adopt has
+        recorded the current one yet; None otherwise."""
+        if not self.config.is_file():
+            return None
+        try:
+            existing = self._read_json(self.config)
+        except ArchiveError:
+            return None
+        recorded = existing.get("project_key")
+        current = self.anchor.project_key
+        adopted = existing.get("adopted_keys")
+        if recorded == current or (isinstance(adopted, list) and current in adopted):
+            return None
+        return {"recorded_key": recorded, "current_key": current,
+                "records": len(self.event_paths()), "archive": str(self.root)}
+
+    def adopt_moved_identity(self) -> dict[str, Any]:
+        """Relink THIS archive to the identity this checkout now resolves,
+        as an operator-confirmed decision (`godmode adopt --confirm`).
+
+        `adopt()` refuses here by design - the destination already holds
+        records, and it exists to copy a separate, stranded archive in.
+        A moved checkout needs no copy: the chain must still verify under
+        the identities it already accepts, then the config's key becomes
+        the current one and the old key is kept in `adopted_keys`, so every
+        record it wrote still verifies. `initialize()`'s exact-match check
+        is untouched: it passes afterwards only because the recorded key
+        now IS the current one. The relink is chronicled."""
+        with self.write_lock():
+            drift = self.identity_drift()
+            if drift is None:
+                raise ArchiveError(
+                    "This archive already carries this checkout's identity; "
+                    "nothing to adopt.")
+            existing = self._read_json(self.config)
+            previous = existing.get("project_key")
+            if not isinstance(previous, str) or not previous:
+                raise ArchiveError("The archive config names no identity to adopt from.")
+            if existing.get("schema_version") != SCHEMA_VERSION:
+                raise ArchiveError("Archive schema requires an explicit migration")
+            records = [self._read_json(path) for path in self.event_paths()]
+            outcome = self.verify(records)
+            if not outcome["ok"]:
+                raise ArchiveError(
+                    f"Refusing to adopt: the chain does not verify ({outcome['message']}).")
+            current = self.anchor.project_key
+            payload = dict(existing)
+            adopted = {key for key in (existing.get("adopted_keys") or [])
+                       if isinstance(key, str)}
+            adopted.add(previous)
+            adopted.discard(current)
+            payload["project_key"] = current
+            payload["adopted_keys"] = sorted(adopted)
+            payload["adopted_from"] = "moved-checkout"
+            payload["last_anchor"] = asdict(self.anchor)
+            payload["last_anchor_fingerprint"] = anchor_fingerprint(self.anchor)
+            _atomic_json(self.config, payload)
+        record = self.append(
+            "action", "archive-identity-adopted",
+            {"previous_key": previous, "current_key": current, "records": len(records)},
+            evidence=[],
+        )
+        verified = self.verify(self.read_events(verify=False))
+        if not verified["ok"]:
+            raise ArchiveError(verified["message"])
+        return {"adopted": "moved-checkout", "previous_key": previous,
+                "current_key": current, "records": len(records),
+                "record": f"seq:{record['sequence']}", "chain": verified}
+
     def initialize(self) -> None:
         # initialize() runs on every append, but creating and re-permissioning
         # directories only matters the first time; four syscalls per write for
@@ -1038,10 +1110,10 @@ class Chronicle:
                         f"checkout resolves {self.anchor.project_key!r}. If "
                         "this checkout was moved or copied together with its "
                         "archive, that is the born identity drifting, not "
-                        "tampering - `godmode doctor` names what this "
-                        "project currently resolves to; `godmode adopt "
-                        "--confirm` relinks a separate, stranded archive "
-                        "from a previous identity, not this same one."
+                        "tampering - `godmode adopt` previews relinking this "
+                        "archive to this checkout's identity, and `godmode "
+                        "adopt --confirm` performs it (recorded, and the old "
+                        "identity stays accepted for the records it wrote)."
                     )
             if existing.get("schema_version") != SCHEMA_VERSION:
                 raise ArchiveError("Archive schema requires an explicit migration")
