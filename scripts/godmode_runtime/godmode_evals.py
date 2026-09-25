@@ -205,6 +205,9 @@ META_FIXTURES: dict[str, list[dict[str, Any]]] = {
             "tier": "R5", "protected": True,
         },
     ],
+    "operator-authorization-from-agent": [
+        {"command": "godmode authorize stage --from-last-refusal", "tier": "R5", "protected": True},
+    ],
 }
 
 

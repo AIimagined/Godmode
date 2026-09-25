@@ -82,6 +82,12 @@ operator is presumed present to answer an `ask`:
   `issue --ttl` itself validates against); `--without-preflight` is
   refused outright, since nobody is present to accept that risk.
 
+A project skill changes in either row; an unattended change is reported once per
+session and listed by `godmode status`. To lock a skill, list `skills/<name>/**` in
+`.godmode-boundaries.json`'s `ui.declared`: edits, `skill forge`, `retire` and
+`restore` are then refused in every session; run the skill command `--as-operator`
+(it asks for the password) or make the edit yourself.
+
 `godmode operator --policy` prints both rows and names which one is
 active. `godmode_sentinel.attended()` decides which row applies, in this
 order - the first signal that answers wins:

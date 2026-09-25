@@ -356,7 +356,8 @@ def _build_mutation_heads() -> dict[str, list[str]]:
 # says: the classifier's own protected-path patterns, exported verbatim, and
 # the paths the full hook guards past the classifier - every project-level
 # Godmode setting (policy, ceilings, boundaries, roles, the stop flag),
-# git's own directory, and the pinned project skills. Matched against the
+# git's own directory, and the project skills (every skill edit reaches the
+# full hook, which reports one made unattended). Matched against the
 # target as the host sent it and against its path inside the project.
 _PROTECTED_EDIT_EXTRA = [
     r"(?i)(?:^|[/\\])" + re.escape(MACHINE_SETTINGS_FILENAME) + r"$",
