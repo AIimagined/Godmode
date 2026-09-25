@@ -75,10 +75,13 @@ _CMD_SH_PREFACE = """\
 # `exec`/`exit` ends the sh half before cmd's section is reached. The
 # cmd half is label-free on purpose: this file is committed LF-only
 # for the sh half, and cmd `goto` over LF endings is a known flake.
-# Every interpreter starts with -I -B (sweep 2026-09-07, obligation 9866):
-# isolated from PYTHONPATH, PYTHON* variables and the user site, and
-# writing no byte-code into the plugin cache. The hooks put the plugin's
-# own directories on sys.path themselves.
+# Every interpreter starts with -I (sweep 2026-09-07, obligation 9866):
+# isolated from PYTHONPATH, PYTHON* variables and the user site. Byte-code
+# never lands in the plugin cache: it goes to a private cache under the
+# Godmode application home (-X pycache_prefix, one flag that -I does not
+# strip), so a hook stops recompiling the runtime on every firing; with no
+# application home to name, -B writes none at all. The hooks put the
+# plugin's own directories on sys.path themselves.
 """
 
 # ---------------------------------------------------------------------------
@@ -137,17 +140,9 @@ case "$dir" in /*) ;; .) dir=$PWD ;; *) dir=$(CDPATH= cd -- "$dir" && pwd) ;; es
 # with no Godmode state before the 5,000-line session hook is compiled
 # (2026-09-23); it runs the real hook itself for every other project.
 [ "$hook" = godmode_session_hook.py ] && [ -f "$dir/godmode_session_entry.py" ] && hook=godmode_session_entry.py
-if [ -n "${GODMODE_PYTHON:-}" ]; then exec "$GODMODE_PYTHON" -I -B "$dir/$hook" "$@"; fi
-# Resolved-interpreter cache (field report 2026-09-23: every hook started
-# an interpreter twice - the probe below, then the real run - and on
-# Windows the first candidate was the Store alias, whose activation is
-# slow and very slow under load, until a host timed the hooks out). The
-# first call that finds a working interpreter records its absolute path
-# in the Godmode application home - GODMODE_STATE_HOME, else LOCALAPPDATA
-# on Windows, else XDG_STATE_HOME, else ~/.local/state, the same order the
-# runtime uses - and every later call execs it with no probe. A cached
-# path that no longer names a file falls through to the probe, which
-# rewrites it. Environment variables only: nothing external runs here.
+# The Godmode application home - GODMODE_STATE_HOME, else LOCALAPPDATA on
+# Windows, else XDG_STATE_HOME, else ~/.local/state, the same order the
+# runtime uses. Environment variables only: nothing external runs here.
 win=
 [ "${OS:-}" = Windows_NT ] && win=1
 [ -n "${MSYSTEM:-}" ] && win=1
@@ -157,6 +152,20 @@ elif [ -n "$win" ] && [ -n "${LOCALAPPDATA:-}" ]; then home=$LOCALAPPDATA/Godmod
 elif [ -n "${XDG_STATE_HOME:-}" ]; then home=$XDG_STATE_HOME/godmode
 elif [ -n "${HOME:-}" ]; then home=$HOME/.local/state/godmode
 fi
+# Byte-code goes to a private cache in that home, never beside the plugin
+# (2026-09-25: with -B every firing recompiled the runtime it imports);
+# with no home to name, none is written at all.
+bc=-B
+[ -n "$home" ] && bc="-Xpycache_prefix=$home/pycache"
+if [ -n "${GODMODE_PYTHON:-}" ]; then exec "$GODMODE_PYTHON" -I "$bc" "$dir/$hook" "$@"; fi
+# Resolved-interpreter cache (field report 2026-09-23: every hook started
+# an interpreter twice - the probe below, then the real run - and on
+# Windows the first candidate was the Store alias, whose activation is
+# slow and very slow under load, until a host timed the hooks out). The
+# first call that finds a working interpreter records its absolute path
+# in the application home and every later call execs it with no probe. A
+# cached path that no longer names a file falls through to the probe,
+# which rewrites it.
 cache=
 [ -n "$home" ] && cache=$home/launcher-python-sh
 if [ -n "$cache" ] && [ -f "$cache" ]; then
@@ -167,7 +176,7 @@ if [ -n "$cache" ] && [ -f "$cache" ]; then
   # (One line: the polyglot's `:;` prefix cannot sit inside a `case`.)
   case "${cached##*[/\\\\]}" in python|python.exe|pythonw|pythonw.exe|py|py.exe|python[0-9]|python[0-9].exe|python[0-9].[0-9]*) ;; *) cached= ;; esac
   if [ -n "$cached" ] && [ -f "$cached" ] && [ -x "$cached" ]; then
-    exec "$cached" -I -B "$dir/$hook" "$@"
+    exec "$cached" -I "$bc" "$dir/$hook" "$@"
   fi
 fi
 # The probe runs a candidate once and has it print its own absolute path,
@@ -193,10 +202,10 @@ for py in $order; do
   if [ -n "$win" ]; then
     case "$(command -v "$py")" in *[/\\\\]WindowsApps[/\\\\]*) aliased="$aliased $py"; continue ;; esac
   fi
-  if probe "$py"; then exec "$py" -I -B "$dir/$hook" "$@"; fi
+  if probe "$py"; then exec "$py" -I "$bc" "$dir/$hook" "$@"; fi
 done
 for py in $aliased; do
-  if probe "$py"; then exec "$py" -I -B "$dir/$hook" "$@"; fi
+  if probe "$py"; then exec "$py" -I "$bc" "$dir/$hook" "$@"; fi
 done
 # Off-PATH fallbacks (2026-09-10): a host launched from the Dock or a
 # login item runs hooks under a PATH without Homebrew, MacPorts, pyenv
@@ -206,7 +215,7 @@ done
 # resolve with a full login PATH.
 for py in /opt/homebrew/bin/python3 /usr/local/bin/python3 /opt/local/bin/python3 "$HOME/.pyenv/shims/python3" /Library/Frameworks/Python.framework/Versions/Current/bin/python3 "$HOME/.local/bin/python3" /usr/bin/python3; do
   if [ -x "$py" ] && probe "$py"; then
-    exec "$py" -I -B "$dir/$hook" "$@"
+    exec "$py" -I "$bc" "$dir/$hook" "$@"
   fi
 done
 echo "{\\"systemMessage\\": \\"godmode: no working python interpreter found (tried python3, python, py; python, py, python3 on Windows) - set GODMODE_PYTHON to the interpreter path; every godmode hook is inert until then\\"}"
@@ -277,6 +286,10 @@ if defined GODMODE_PYTHON set "gm_py=%GODMODE_PYTHON%"
 if defined GODMODE_STATE_HOME set "gm_home=%GODMODE_STATE_HOME%"
 if not defined gm_home if defined LOCALAPPDATA set "gm_home=%LOCALAPPDATA%\\Godmode"
 if defined gm_home set "gm_cache=!gm_home!\\launcher-python-cmd"
+rem Byte-code goes to a private cache in the application home, never
+rem beside the plugin; with no home to name, -B writes none at all.
+set "gm_bc=-B"
+if defined gm_home set "gm_bc=-Xpycache_prefix=!gm_home!\\pycache"
 if not defined gm_py if defined gm_cache if exist "!gm_cache!" set /p gm_hit=<"!gm_cache!"
 if defined gm_hit if /i "!gm_hit:~-4!"==".exe" if exist "!gm_hit!" set "gm_py=!gm_hit!"
 rem A cache entry `@python`, `@py` or `@python3` names the command that
@@ -316,7 +329,7 @@ if not defined gm_py (
   echo {"systemMessage": "godmode: no working python interpreter found (tried python, py -3, python3) - set GODMODE_PYTHON to the interpreter path; every godmode hook is inert until then"}
   exit /b 0
 )
-call "!gm_py!"!gm_flag! -I -B "%~dp0!gm_hook!" %2 %3 %4 %5 %6
+call "!gm_py!"!gm_flag! -I "!gm_bc!" "%~dp0!gm_hook!" %2 %3 %4 %5 %6
 exit /b !ERRORLEVEL!
 """
 

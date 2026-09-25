@@ -1028,6 +1028,23 @@ def spoken_allow(payload: dict[str, Any]) -> None:
         sys.stdout.write('{"decision": "allow"}\n')
 
 
+# The escalation's second interpreter runs the full hook through the session
+# entry's loader, so its 5,000 lines come from the private byte-code cache
+# instead of being compiled on every escalated call. argv: hooks directory,
+# hook path, event.
+_RUN_FULL_HOOK = ("import sys;sys.path.insert(0,sys.argv.pop(1));"
+                  "import godmode_session_entry as e;raise SystemExit(e.run_hook(sys.argv.pop(1)))")
+
+
+def _bytecode_flags() -> list[str]:
+    """The launcher's byte-code choice, carried into the escalation (flags
+    do not inherit): its private cache when it named one, else -B."""
+    prefix = getattr(sys, "pycache_prefix", None)
+    if prefix and not sys.dont_write_bytecode:
+        return [f"-Xpycache_prefix={prefix}"]
+    return ["-B"]
+
+
 def main() -> int:
     # Obligation 9863: the first complete JSON object, never EOF (a Windows
     # host's pipe close can lag past the hook timeout). The reader is a
@@ -1072,8 +1089,9 @@ def main() -> int:
     # Escalate: re-feed the exact bytes read from stdin to the full hook and
     # mirror its stdout/stderr/exit code verbatim - the fast gate must be
     # invisible to the host on every path except the one it actually skips.
-    # `-I -B` again (obligation 9866): interpreter flags do not inherit, and
-    # an isolation that ends at the first escalation is none.
+    # `-I` and the byte-code choice again (obligation 9866): interpreter
+    # flags do not inherit, and an isolation that ends at the first
+    # escalation is none.
     #
     # Deferred here, not module scope (fix round 2): `subprocess`'s own
     # import cost (~5.3ms measured, `python -X importtime`; the overall
@@ -1090,7 +1108,8 @@ def main() -> int:
     # host's and refuses when the full check has not answered by then.
     try:
         result = subprocess.run(
-            [sys.executable, "-I", "-B", str(FULL_HOOK), "pre-action"],
+            [sys.executable, "-I", *_bytecode_flags(), "-c", _RUN_FULL_HOOK,
+             str(HOOKS_DIR), str(FULL_HOOK), "pre-action"],
             input=raw,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
