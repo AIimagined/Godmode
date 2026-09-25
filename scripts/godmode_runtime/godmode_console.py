@@ -2328,6 +2328,10 @@ def session_digest(runtime: Runtime, session: str | None, transcript: str | None
 def cmd_status_survey(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     report = survey(runtime.archive, Path(runtime.anchor.project_root))
+    from .godmode_skillchange import unattended_changes
+    changed = unattended_changes(runtime.archive, latest_session(runtime.archive))
+    if changed:
+        report["skills_changed_unattended"] = [row["line"] for row in changed]
     return CommandResult(report, exit_code=1 if report["verdict"] == "competing-authority" else 0)
 
 
@@ -6885,7 +6889,8 @@ def cmd_skill_retire(args: argparse.Namespace, runtime: Runtime) -> CommandResul
     evals = project / "skills" / args.name / "godmode-evals.json"
     if not evals.is_file():
         raise ArchiveError(f"No skill '{args.name}' with a godmode-evals.json")
-    _refuse_unattended_skill_change(args.name, "retire")
+    verified = _resolve_operator_verified(runtime, args)
+    _refuse_locked_skill(runtime, evals.parent, "retire", verified)
     before_text = evals.read_text(encoding="utf-8")
     payload = json.loads(before_text)
     previous = {"lifecycle": payload.get("lifecycle", "active"),
@@ -6901,20 +6906,37 @@ def cmd_skill_retire(args: argparse.Namespace, runtime: Runtime) -> CommandResul
                      {"value": args.reason, "status": "deprecated", "previous": previous},
                      [f"file:skills/{args.name}"],
                      as_operator=getattr(args, "as_operator", False),
-                     operator_verified=_resolve_operator_verified(runtime, args))
-    return CommandResult({"skill": args.name, "lifecycle": "deprecated", "reason": args.reason,
-                          "sequence": record.get("sequence"),
-                          "diff": _text_diff(before_text, after_text, evals.name)})
+                     operator_verified=verified)
+    result = {"skill": args.name, "lifecycle": "deprecated", "reason": args.reason,
+              "sequence": record.get("sequence"),
+              "diff": _text_diff(before_text, after_text, evals.name)}
+    _note_unattended_skill_change(runtime, args.name, "retire", result)
+    return CommandResult(result)
 
 
-def _refuse_unattended_skill_change(name: str, action: str) -> None:
-    """A project skill is pinned: an actor nobody is watching may not edit,
-    retire or restore one."""
-    if not attended():
-        raise ArchiveError(
-            f"Refusing to {action} skill '{name}': a project skill is pinned, and "
-            "an actor nobody is watching may not change one - run it from an "
-            "attended session, or set GODMODE_ATTENDED=1 if one truly is one")
+def _refuse_locked_skill(runtime: Runtime, skill_dir: Path, action: str,
+                        operator_verified: bool) -> None:
+    """A skill a declared design boundary covers is refused to every writer,
+    in every session - the same `design_verdict` the pre-tool hook applies to
+    an Edit/Write of its files. Any other skill changes freely."""
+    from .godmode_skillchange import skill_boundary_refusal
+    refusal = skill_boundary_refusal(Path(runtime.anchor.project_root), skill_dir, action,
+                                     operator_verified=operator_verified)
+    if refusal:
+        raise ArchiveError(refusal)
+
+
+def _note_unattended_skill_change(runtime: Runtime, name: str, how: str,
+                                  result: dict[str, Any]) -> None:
+    """With nobody presumed watching, a skill change is recorded and
+    reported once per session, and `godmode status` lists it."""
+    if attended():
+        return
+    from .godmode_skillchange import record_unattended_change
+    line = record_unattended_change(runtime.archive, latest_session(runtime.archive), name, how)
+    if line:
+        result["unattended"] = line
+        print(line, file=sys.stderr)
 
 
 def _text_diff(before: str, after: str, label: str) -> list[str]:
@@ -6936,10 +6958,11 @@ def cmd_skill_restore(args: argparse.Namespace, runtime: Runtime) -> CommandResu
             or not subject.startswith("skill-retired:")):
         raise ArchiveError(f"No skill retirement record at seq {args.seq}")
     name = subject.split(":", 1)[1]
-    _refuse_unattended_skill_change(name, "restore")
     evals = Path(runtime.anchor.project_root) / "skills" / name / "godmode-evals.json"
     if not evals.is_file():
         raise ArchiveError(f"No skill '{name}' with a godmode-evals.json to restore")
+    verified = _resolve_operator_verified(runtime, args)
+    _refuse_locked_skill(runtime, evals.parent, "restore", verified)
     previous = (retirement.get("data") or {}).get("previous") or {}
     before_text = evals.read_text(encoding="utf-8")
     payload = json.loads(before_text)
@@ -6955,10 +6978,12 @@ def cmd_skill_restore(args: argparse.Namespace, runtime: Runtime) -> CommandResu
                       "status": payload["lifecycle"]},
                      [f"seq:{int(args.seq)}", f"file:skills/{name}"],
                      as_operator=getattr(args, "as_operator", False),
-                     operator_verified=_resolve_operator_verified(runtime, args))
-    return CommandResult({"skill": name, "lifecycle": payload["lifecycle"],
-                          "restored_from": int(args.seq), "sequence": record.get("sequence"),
-                          "diff": _text_diff(before_text, after_text, evals.name)})
+                     operator_verified=verified)
+    result = {"skill": name, "lifecycle": payload["lifecycle"],
+              "restored_from": int(args.seq), "sequence": record.get("sequence"),
+              "diff": _text_diff(before_text, after_text, evals.name)}
+    _note_unattended_skill_change(runtime, name, "restore", result)
+    return CommandResult(result)
 
 
 def cmd_lessons(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -7181,6 +7206,9 @@ def cmd_skill_forge(args: argparse.Namespace, runtime: Runtime) -> CommandResult
             destination = str(project_root / ".grok" / "skills")
         else:
             destination = str(project_root / "skills")
+    # A boundary-listed skill is refused to the forge as to every other writer.
+    _refuse_locked_skill(runtime, Path(destination).expanduser() / args.name, "forge",
+                         _resolve_operator_verified(runtime, args))
     created = forge_skill(destination, proposal)
     # NS-12a + NS-12d (Task 9): a forged skill is scored against the eval
     # harness before it is kept - `evaluate_forged_skill` removes it and
@@ -7215,10 +7243,12 @@ def cmd_skill_forge(args: argparse.Namespace, runtime: Runtime) -> CommandResult
         },
         evidence=success_evidence,
     )
-    return CommandResult({
+    result = {
         "created": True, "path": str(created), "validation": validate_skill(created),
         "skill_impact": impact,
-    })
+    }
+    _note_unattended_skill_change(runtime, args.name, "forge", result)
+    return CommandResult(result)
 
 
 def _evidence(parser: argparse.ArgumentParser) -> None:
@@ -9710,6 +9740,7 @@ def _build_parser() -> argparse.ArgumentParser:
              "DISTINCT sequences that each name a record that exists. That "
              "the records are successes of this task type is your judgement "
              "- no record shape here carries a task type to check it against")
+    _operator_flags(skill_forge)
     skill_forge.add_argument("--positive", action="append", default=[])
     skill_forge.add_argument("--negative", action="append", default=[])
     skill_forge.add_argument("--assertion", action="append", default=[])

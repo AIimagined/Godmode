@@ -2605,26 +2605,21 @@ def _silenced_by_ask_only(policy: dict[str, Any], preview: dict[str, Any],
     return str(preview.get("category") or "") not in set(listed)
 
 
-_PINNED_SKILL_ROOTS: tuple[tuple[str, ...], ...] = (("skills",), (".claude", "skills"))
-
-
-def _pinned_skill_of(project_root: Path, target: Any) -> str | None:
-    """The project skill a write target falls inside, or None. Every project
-    skill is pinned - there is no per-skill pin to consult, so the stricter
-    reading holds: `skills/<name>/...` and `.claude/skills/<name>/...`."""
+def _unattended_skill_note(archive: Chronicle, session: str | None,
+                           changed: list[tuple[str, str]]) -> str | None:
+    """Record each unattended skill change this call makes; the report line
+    for the ones this session has not reported yet. Best-effort: an
+    unwritable record never fails the edit it rides."""
+    lines = []
     try:
-        path = Path(str(target))
-        if not path.is_absolute():
-            path = project_root / path
-        parts = path.resolve().relative_to(project_root.resolve()).parts
-    except (OSError, ValueError, RuntimeError):
-        return None
-    lowered = tuple(part.lower() for part in parts)
-    for root in _PINNED_SKILL_ROOTS:
-        depth = len(root)
-        if len(parts) > depth + 1 and lowered[:depth] == root:
-            return parts[depth]
-    return None
+        from godmode_runtime.godmode_skillchange import record_unattended_change
+        for skill, how in changed:
+            line = record_unattended_change(archive, session, skill, how)
+            if line:
+                lines.append(line)
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: an advisory never fails the call it rides
+        _report_ancillary_failure(archive)
+    return "; ".join(lines) or None
 
 
 def _session_counts(archive: Chronicle) -> dict[str, int]:
@@ -5144,6 +5139,7 @@ def main(argv: list[str] | None = None) -> int:
         # both checks are binary allow/deny, so there is no "worst of" to
         # rank, only the first target that is not allowed.
         target_checks_ran = bool(preview.get("allow") and event.targets)
+        unattended_skills: list[tuple[str, str]] = []
         # Set only when plan-first allowed for a reason more edits cannot
         # undo; the fast gate's edit clearance needs it (below).
         plan_standing = False
@@ -5152,6 +5148,9 @@ def main(argv: list[str] | None = None) -> int:
             # far more common read-only and R0-R2 tool calls never reach
             # this branch.
             from godmode_runtime.godmode_fence import design_verdict, fence_verdict
+            from godmode_runtime.godmode_skillchange import project_skill_of
+            skill_attended = attended(host_field(submitted, "session_type"),
+                                      str(host_field(submitted, "permission_mode") or ""))
             for target in event.targets:
                 # The design boundary is checked first and denies outright. It
                 # is project state rather than task state, and the operator
@@ -5165,23 +5164,14 @@ def main(argv: list[str] | None = None) -> int:
                     preview["boundary"] = design["boundary"]
                     preview["reason"] = f"{design['detail']}. {design['remedy']}"
                     break
-                # A project skill is pinned: an actor nobody is watching may
-                # not edit or delete one. Attended, the edit proceeds and the
-                # host shows its own diff.
-                pinned_skill = _pinned_skill_of(Path(anchor.project_root), target)
-                if pinned_skill is not None and not attended(
-                        host_field(submitted, "session_type"),
-                        str(host_field(submitted, "permission_mode") or "")):
-                    preview["allow"] = False
-                    preview["tier"] = preview.get("tier") or "R3"
-                    preview["category"] = "pinned-skill-unattended"
-                    preview["decision_override"] = "deny"
-                    preview["reason"] = (
-                        f"refused: skills/{pinned_skill} is a pinned project skill, and "
-                        "an actor nobody is watching may not edit or delete one. Run "
-                        "this from an attended session, or set GODMODE_ATTENDED=1 if "
-                        "one truly is one.")
-                    break
+                # A project skill changes freely; the design boundary above is
+                # what locks one. Unattended, the change is noted for a
+                # once-per-session report once every check below has passed.
+                skill = project_skill_of(Path(anchor.project_root), target)
+                if skill is not None and not skill_attended:
+                    how = "write" if tool in ("Write", "write") else "edit"
+                    if (skill, how) not in unattended_skills:
+                        unattended_skills.append((skill, how))
                 fenced = fence_verdict(archive, target,
                                        project_root=Path(anchor.project_root))
                 if not fenced["allowed"]:
@@ -5392,7 +5382,10 @@ def main(argv: list[str] | None = None) -> int:
                         Path(anchor.project_root))
                 except Exception:  # noqa: BLE001  # godmode: swallow-ok: an advisory never fails the call it rides
                     blind_write = None
-                advisory = (blind_write
+                skill_note = (_unattended_skill_note(archive, session, unattended_skills)
+                              if unattended_skills else None)
+                advisory = (skill_note
+                            or blind_write
                             or _observe_advisory_once(
                                 archive, _session_key(submitted),
                                 str(preview.get("category", "")),

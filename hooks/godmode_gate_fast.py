@@ -637,8 +637,8 @@ def brief_pending(start: Path) -> bool:
 # Every Write/Edit used to start a second interpreter that loaded the whole
 # runtime (R11, 2026-09-23). The checks that can refuse an edit - the
 # classifier's protected paths and pinned evaluators, the design boundary,
-# the scope fence, frozen regions, repeated reversal, plan-first, pinned
-# skills, declared tool gates, observe mode, run ceilings, the watchdog and
+# the scope fence, frozen regions, repeated reversal, plan-first, the
+# unattended skill-change report, declared tool gates, observe mode, run ceilings, the watchdog and
 # the required-sources ask - read the archive or project settings, so this
 # module cannot run them. It does not try to. The full hook, after running
 # every one of them on an edit of file F and allowing it silently, records

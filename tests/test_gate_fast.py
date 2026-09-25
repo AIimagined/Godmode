@@ -484,14 +484,17 @@ class EditClearance(unittest.TestCase):
                          ".github/workflows/ci.yml", "CODEFREEZE"):
             with self.subTest(path=relative):
                 self.assertFalse(self._cleared(self._payload(str(self.project / relative))))
-        # Secret-shaped and pinned-skill targets reach the full hook, which
-        # still stops them (unattended, for the skill). The placeholder policy
-        # and freeze files would otherwise decide first.
+        # Secret-shaped and skill targets reach the full hook: it still stops
+        # the secret, and it sees every skill edit so an unattended one is
+        # reported. The placeholder policy and freeze files would otherwise
+        # decide first.
         for relative in (".godmode-authorization-policy.json", "CODEFREEZE"):
             (self.project / relative).unlink()
         self.assertNotEqual(self._gate(self._payload(str(self.project / ".env"))), "allow")
-        self.assertEqual(self._gate(self._payload(str(self.project / "skills/x/SKILL.md")),
-                                    GODMODE_ATTENDED="0"), "deny")
+        skill_edit = self._hook("godmode_gate_fast.py",
+                                self._payload(str(self.project / "skills/x/SKILL.md")),
+                                GODMODE_ATTENDED="0")
+        self.assertIn("skills/x changed (", skill_edit.stdout.decode("utf-8"))
 
     def test_the_design_boundary_still_denies(self) -> None:
         self._clear()

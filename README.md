@@ -250,6 +250,12 @@ attestations after ninety - while anything a live claim, checkpoint, law guard o
 pin still cites never expires, and history can still reach a cold record by
 sequence. `godmode forget --dry-run` reports a pass without recording one.
 
+**Locking a skill.** Project skills change freely, and a change made with nobody
+watching is reported once and listed by `godmode status`; list a skill in
+`.godmode-boundaries.json` (`"ui": {"declared": ["skills/<name>/**"]}`) and every
+writer - an edit, `skill forge`, `retire`, `restore` - is refused in every session
+unless you make the change yourself or run the skill command `--as-operator`.
+
 Every verb, its purpose, and a command that verifies it:
 [docs/COMMAND-REFERENCE.md](docs/COMMAND-REFERENCE.md), generated from the CLI's
 own parser and guarded against drift. Two-minute walk-through:
