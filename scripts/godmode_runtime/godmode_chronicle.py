@@ -521,6 +521,57 @@ def _busy_message(path: Path) -> str:
     return "Godmode archive is busy; retry after the active write"
 
 
+def _pid_alive(pid: int) -> bool:
+    """Whether process `pid` is still running. Anything this cannot answer
+    for certain reads as alive: the callers use "dead" as permission to
+    take over a lock or a sequence claim, so a wrong "dead" is the only
+    answer that can do harm.
+
+    Never `os.kill(pid, 0)` on Windows - there, signal 0 is CTRL_C_EVENT
+    and would interrupt the process being asked about."""
+    if pid <= 0:
+        return True
+    if pid == os.getpid():
+        return True
+    if os.name == "nt":
+        try:
+            import ctypes
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
+            if not handle:
+                # 87 = ERROR_INVALID_PARAMETER: no process has this id.
+                # Anything else (access denied, ...) means it exists.
+                return ctypes.get_last_error() != 87
+            try:
+                code = ctypes.c_ulong()
+                if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                    return True
+                return code.value == 259  # STILL_ACTIVE
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: unanswerable reads as alive (fail closed)
+            return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def _payload_pid(text: str) -> int | None:
+    """The pid on the first line of a lock or claim payload, or None."""
+    first = text.split("\n", 1)[0].strip()
+    return int(first) if first.isdigit() else None
+
+
+class _SequenceTaken(ArchiveError):
+    """Another writer already holds, or already sealed, the sequence this
+    write was about to take. `append` re-derives the tail from disk and
+    retries; any other caller surfaces it as an ordinary archive error."""
+
+
 def _kernel_lock(fd: int) -> None:
     """Take a non-blocking exclusive kernel lock on `fd`'s open file.
 
@@ -753,6 +804,15 @@ class Chronicle:
         # lock, so its content was always plainly readable.
         self.lock_owner_path = self.root / "godmode-write.lock.owner"
         self.head = self.root / "godmode-head.json"
+        # Sequence claims: before a record file is written, its sequence is
+        # claimed by creating `<sequence>.claim` here with O_EXCL. Record
+        # names carry a random id, so the record file itself can never be
+        # the exclusive object; the claim is. Two writers that ever derive
+        # the same sequence (a stale view, or two lock holders at once)
+        # cannot both claim it - the second re-derives the tail from disk
+        # and retries instead of forking the chain. Only the newest claim
+        # or two are kept; older ones are pruned after each seal.
+        self.sequence_claims = self.root / "godmode-sequence-claims"
         # B4-1: the tail-truncation anchor. The hash chain is tamper-evident
         # mid-chain but silent on tail truncation (deleting the newest
         # record(s) leaves a shorter, internally valid chain), and the head
@@ -1177,11 +1237,7 @@ class Chronicle:
 
         if not self.excl_lock_path.exists():
             return False
-        try:
-            age = time.time() - self.excl_lock_path.stat().st_mtime
-        except OSError:
-            return False
-        return age <= _EXCLUSIVE_CREATE_SWEEP_SECONDS
+        return not self._exclusive_lock_abandoned()
 
     def _write_lock_exclusive_create(self, timeout_seconds: float) -> Iterator[None]:
         """Fallback lock, on its own sidecar (`self.excl_lock_path`).
@@ -1197,24 +1253,24 @@ class Chronicle:
         """
         deadline = time.monotonic() + timeout_seconds
         descriptor: int | None = None
+        token = b""
         while descriptor is None:
             try:
                 descriptor = os.open(
-                    self.excl_lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+                    self.excl_lock_path,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0),
+                    0o600,
                 )
-                # No fsync: mutual exclusion comes from O_EXCL creation, which
-                # is durable enough for a lock that a crash releases by age-out;
-                # the pid/time/version content is diagnostic only. The flush
-                # cost was measurable on every single append.
-                os.write(descriptor, _lock_owner_payload(os.getpid(), time.time()).encode())
+                # No fsync: mutual exclusion comes from O_EXCL creation; the
+                # content names the holder (pid, a unique time, version) so a
+                # takeover can prove the holder is dead, and so release can
+                # prove the sidecar is still its own.
+                token = _lock_owner_payload(os.getpid(), time.time()).encode()
+                os.write(descriptor, token)
             except FileExistsError:
-                try:
-                    age = time.time() - self.excl_lock_path.stat().st_mtime
-                    if age > _EXCLUSIVE_CREATE_SWEEP_SECONDS:
-                        self.excl_lock_path.unlink(missing_ok=True)
-                        continue
-                except OSError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
-                    pass
+                if self._exclusive_lock_abandoned():
+                    self.excl_lock_path.unlink(missing_ok=True)
+                    continue
                 if time.monotonic() >= deadline:
                     raise ArchiveError(_busy_message(self.excl_lock_path))
                 waited = timeout_seconds - (deadline - time.monotonic())
@@ -1224,7 +1280,34 @@ class Chronicle:
         finally:
             if descriptor is not None:
                 os.close(descriptor)
-            self.excl_lock_path.unlink(missing_ok=True)
+            # Release only a sidecar that is still this holder's own: one a
+            # takeover replaced belongs to the new holder, and unlinking it
+            # would let a third writer in beside them.
+            try:
+                still_ours = self.excl_lock_path.read_bytes() == token
+            except OSError:
+                still_ours = False
+            if still_ours:
+                self.excl_lock_path.unlink(missing_ok=True)
+
+    def _exclusive_lock_abandoned(self) -> bool:
+        """Whether the exclusive-create sidecar's holder is provably gone.
+
+        Age alone is never enough: a holder that is merely slow (a large
+        archive, a loaded machine) past the sweep window was taken over
+        before, and two writers then overlapped. A sidecar naming a pid is
+        abandoned only when that process is dead; one with no readable pid
+        (a crash between create and write) only once it is older than the
+        sweep window."""
+        try:
+            text = self.excl_lock_path.read_text(encoding="utf-8", errors="replace")
+            age = time.time() - self.excl_lock_path.stat().st_mtime
+        except OSError:
+            return False
+        pid = _payload_pid(text)
+        if pid is not None:
+            return not _pid_alive(pid)
+        return age > _EXCLUSIVE_CREATE_SWEEP_SECONDS
 
     def event_paths(self) -> list[Path]:
         if not self.events.exists():
@@ -2383,7 +2466,7 @@ class Chronicle:
         rotated_below = sum(1 for s in registry["rotated"] if s <= tail_sequence)
         return count + rotated_below == tail_sequence
 
-    def _chain_tail(self) -> tuple[int, str | None]:
+    def _chain_tail(self, *, fresh: bool = False) -> tuple[int, str | None]:
         """Locate the chain tail without re-reading history. Caller holds the lock.
 
         Re-verifying the whole chain on every append made writes O(history), so a
@@ -2393,10 +2476,14 @@ class Chronicle:
         hash); any mismatch falls back to the full verified scan and rebuilds the
         cache. Tamper detection is not weakened: verify()/doctor still walk the
         entire chain.
+
+        Every answer comes from disk as it stands under the lock, never from
+        this process's own memory. `fresh=True` skips the head hint entirely
+        (a retry after a sequence claim was refused).
         """
         count, last_path = self._tail_entry()
         tail_sequence = self._tail_sequence_of(last_path)
-        head = self._read_head()
+        head = None if fresh else self._read_head()
         # Review A, B2: BOTH halves, or the fast path is refused. The head must
         # name the tail's own sequence, AND the files present must account for
         # every sequence below it (directly, or through the cold registry's own
@@ -2436,6 +2523,15 @@ class Chronicle:
                             and last.get("record_hash") != anchor_state["head_hash"]):
                         self._raise_truncated(anchor_state["length"], tail_sequence)
                 return head["sequence"], head["record_hash"]
+        # A pinned identity (a hook process) is the directory as it stood
+        # when the pin was taken; other processes may have sealed records
+        # since. Reading the tail through it handed a hook its own stale
+        # list the moment the head hint failed to validate (a writer killed
+        # between its record and its hint, say): the next record reused a
+        # sequence already on disk, with the same previous_hash - a fork.
+        # Re-scan first, so the read below reflects the directory now.
+        if self._pinned_identity is not None:
+            self._pinned_identity = (True, self._events_identity())
         records = self.read_events(verify=True)
         # NS-11g: the true tail is the highest sequence ever sealed, which is
         # not always the last HOT record - `self.events` holds only what no
@@ -2460,6 +2556,115 @@ class Chronicle:
             tail_sequence, tail_hash = 0, None
         self._write_head(tail_sequence, tail_hash)
         return tail_sequence, tail_hash
+
+    def _sequence_sealed(self, sequence: int) -> bool:
+        """Whether a record file for `sequence` is on disk (hot tier) or the
+        cold registry says one was sealed and rotated."""
+        prefix = f"{sequence:012d}-"
+        try:
+            names = os.listdir(self.events)
+        except OSError:
+            names = []
+        if any(name.startswith(prefix) and _is_record_name(name) for name in names):
+            return True
+        registry = self._read_cold_registry()
+        return bool(registry and sequence in registry["rotated"])
+
+    def _claim_abandoned(self, path: Path, sequence: int) -> bool:
+        """A claim left by a writer that died before sealing: no record
+        carries its sequence and its holder is not running. A claim whose
+        record exists is never abandoned - that sequence is taken."""
+        if self._sequence_sealed(sequence):
+            return False
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+            age = time.time() - path.stat().st_mtime
+        except OSError:
+            return False
+        pid = _payload_pid(text)
+        if pid is not None:
+            return not _pid_alive(pid)
+        # Created but never written: the holder died in between, or is
+        # writing right now. Only age tells those apart.
+        return age > 10
+
+    def _claim_sequence(self, sequence: int) -> Path:
+        """Take `sequence` exclusively before its record is written.
+
+        O_EXCL on `<sequence>.claim`: of any two writers that derived the
+        same sequence, exactly one creates it. The loser raises
+        `_SequenceTaken`. A claim ABOVE this one means a writer already
+        sealed past this sequence (claims below the newest are pruned only
+        after a later record lands), so this writer's view of the tail is
+        stale and it is refused too. Abandoned claims (holder dead, nothing
+        sealed) are cleared rather than wedging the archive."""
+        claims = self.sequence_claims
+        try:
+            claims.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise ArchiveError(f"cannot create {claims} ({exc.strerror or exc})") from exc
+        path = claims / f"{sequence:012d}.claim"
+        for attempt in (1, 2):
+            try:
+                descriptor = os.open(
+                    _syscall_path(path),
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+            except FileExistsError:
+                if attempt == 1 and self._claim_abandoned(path, sequence):
+                    path.unlink(missing_ok=True)
+                    continue
+                raise _SequenceTaken(
+                    f"sequence {sequence} is already claimed by another writer")
+            try:
+                os.write(descriptor, f"{os.getpid()}\n{uuid.uuid4().hex}\n".encode())
+            finally:
+                os.close(descriptor)
+            break
+        try:
+            others = os.listdir(claims)
+        except OSError:
+            others = []
+        for name in others:
+            head, _, suffix = name.partition(".")
+            if suffix != "claim" or not head.isdigit() or int(head) <= sequence:
+                continue
+            higher = claims / name
+            if self._claim_abandoned(higher, int(head)):
+                higher.unlink(missing_ok=True)
+                continue
+            path.unlink(missing_ok=True)
+            raise _SequenceTaken(
+                f"sequence {int(head)} is already claimed, above {sequence}")
+        return path
+
+    def _clear_claims_above(self, tail: int) -> None:
+        """Drop every claim above `tail` - only for an explicit operator
+        decision that the chain ends at `tail` (reanchor, fork repair)."""
+        try:
+            names = os.listdir(self.sequence_claims)
+        except OSError:
+            return
+        for name in names:
+            head, _, suffix = name.partition(".")
+            if suffix == "claim" and head.isdigit() and int(head) > tail:
+                (self.sequence_claims / name).unlink(missing_ok=True)
+
+    def _prune_claims(self, sealed: int) -> None:
+        """Drop claims below the one just sealed (best-effort). Pruning only
+        BELOW a sealed record keeps the refusal sound: any sequence whose
+        claim is gone already has its record on disk and a higher claim
+        standing, which a stale writer's claim check sees."""
+        try:
+            names = os.listdir(self.sequence_claims)
+        except OSError:
+            return
+        for name in names:
+            head, _, suffix = name.partition(".")
+            if suffix == "claim" and head.isdigit() and int(head) < sealed:
+                try:
+                    (self.sequence_claims / name).unlink()
+                except OSError:  # godmode: swallow-ok: a leftover claim below the tail is inert
+                    pass
 
     def _write_record(
         self,
@@ -2509,7 +2714,15 @@ class Chronicle:
         }
         record["record_hash"] = _record_hash(record)
         destination = self.events / f"{sequence:012d}-{identifier}.godmode.json"
-        _atomic_json(destination, record)
+        claim = self._claim_sequence(sequence)
+        try:
+            _atomic_json(destination, record)
+        except BaseException:
+            # Nothing sealed: give the sequence back, or the next writer
+            # would have to wait for this process to exit to take it.
+            claim.unlink(missing_ok=True)
+            raise
+        self._prune_claims(sequence)
         # B4-1 ordering: record first, anchor second, hint last. A crash
         # after the record leaves the anchor lagging by one (legal, repaired
         # by the next append); an anchor ahead of the files can only mean
@@ -3047,30 +3260,51 @@ class Chronicle:
             # tail draws no sequence number by itself (only `_write_record`
             # below does, from `count + 1`), so a refused write still never
             # consumes one, exactly as before.
-            count, tail_hash = self._chain_tail()
-            if kind == "lesson":
-                self._refuse_incomplete_supersession(subject, data, count)
-            matched = self._enforced_refusal(kind, subject, data, writer, count)
-            if matched is not None:
-                raise ArchiveError(
-                    f"Refusing to write {kind} {subject!r}: matches enforce "
-                    f"lesson seq:{matched['sequence']} - {matched['guard']}"
-                )
-            if kind == "checkpoint":
-                # C-8: a checkpoint is itself a chain entry that later lets
-                # verify() bound its work to the tail after it. `chain_head`
-                # and `record_count` are the head hash and length as they
-                # stood immediately BEFORE this append - captured here,
-                # under the lock, from the same `_chain_tail()` call the
-                # write itself uses, so they can never disagree with the
-                # sequence/previous_hash this record is actually sealed
-                # with.
-                data = {**data, "chain_head": tail_hash, "record_count": count}
-            return self._write_record(
-                kind, subject, data, evidence,
-                sequence=count + 1, previous_hash=tail_hash,
-                writer=writer,
-            )
+            base_data = data
+            attempts = 5
+            for attempt in range(1, attempts + 1):
+                # A refused sequence claim means this view of the tail was
+                # not the directory's: re-derive it from disk (no head
+                # hint, no cached list) and try again.
+                count, tail_hash = self._chain_tail(fresh=attempt > 1)
+                if kind == "lesson":
+                    self._refuse_incomplete_supersession(subject, base_data, count)
+                matched = self._enforced_refusal(kind, subject, base_data, writer, count)
+                if matched is not None:
+                    raise ArchiveError(
+                        f"Refusing to write {kind} {subject!r}: matches enforce "
+                        f"lesson seq:{matched['sequence']} - {matched['guard']}"
+                    )
+                data = base_data
+                if kind == "checkpoint":
+                    # C-8: a checkpoint is itself a chain entry that later lets
+                    # verify() bound its work to the tail after it. `chain_head`
+                    # and `record_count` are the head hash and length as they
+                    # stood immediately BEFORE this append - captured here,
+                    # under the lock, from the same `_chain_tail()` call the
+                    # write itself uses, so they can never disagree with the
+                    # sequence/previous_hash this record is actually sealed
+                    # with.
+                    data = {**base_data, "chain_head": tail_hash, "record_count": count}
+                try:
+                    return self._write_record(
+                        kind, subject, data, evidence,
+                        sequence=count + 1, previous_hash=tail_hash,
+                        writer=writer,
+                    )
+                except _SequenceTaken as exc:
+                    if attempt == attempts:
+                        raise ArchiveError(
+                            f"Refusing to write {kind} {subject!r}: {exc}, and the "
+                            "tail read from disk kept naming it. Another writer is "
+                            "sealing at the same time outside the archive lock, or "
+                            f"a claim in {self.sequence_claims} belongs to a process "
+                            "that is still running. Retry; `godmode doctor` checks "
+                            "the chain."
+                        ) from exc
+                    self._drop_events_cache()
+                    time.sleep(0.02 * attempt)
+            raise AssertionError("unreachable")
 
     def reanchor(self) -> dict[str, Any]:
         """B4-1's explicit recovery: accept the chain that remains as the
@@ -3111,6 +3345,9 @@ class Chronicle:
             anchored = _sequence_of(records[-1]) if records else 0
             self._write_chain_anchor(
                 anchored, records[-1]["record_hash"] if records else None)
+            # Claims above the accepted tail belong to records this decision
+            # just gave up; left standing they would refuse every next write.
+            self._clear_claims_above(anchored)
         record = self.append(
             "action", "chain-reanchored",
             {
