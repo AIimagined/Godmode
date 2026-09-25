@@ -375,6 +375,56 @@ class AntigravityArtifactTests(unittest.TestCase):
                 PLUGIN_ROOT, project, force=True)
             self.assertTrue(forced["written"])
 
+    def test_wire_updates_across_a_version_bump_without_force(self) -> None:
+        """Row 86: `hooks wire --host antigravity` used to refuse an ordinary
+        version update (a different plugin root renders a different entry)
+        the same way it refuses a hand edit - it must now recognize its own
+        prior render (via the write-digest side-car) and update cleanly."""
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            other_root = PLUGIN_ROOT.parent / (PLUGIN_ROOT.name + "-v2")
+
+            first = host_manifests.write_antigravity_project_hooks(
+                PLUGIN_ROOT, project)
+            self.assertTrue(first["written"], first)
+
+            second = host_manifests.write_antigravity_project_hooks(
+                other_root, project)
+            self.assertTrue(second["written"], second)
+
+            merged = json.loads((project / ".agents" / "hooks.json")
+                                 .read_text(encoding="utf-8"))
+            rendered = json.dumps(merged["godmode"])
+            self.assertIn(other_root.as_posix() + "/hooks/", rendered)
+            self.assertNotIn(PLUGIN_ROOT.as_posix() + "/hooks/", rendered)
+
+    def test_a_hand_edit_after_a_real_install_still_needs_force(self) -> None:
+        """The version-bump leniency above must not blur into "any content
+        is ours": a hand edit after a real write stays a conflict."""
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            first = host_manifests.write_antigravity_project_hooks(
+                PLUGIN_ROOT, project)
+            self.assertTrue(first["written"], first)
+
+            target = project / ".agents" / "hooks.json"
+            doc = json.loads(target.read_text(encoding="utf-8"))
+            doc["godmode"]["enabled"] = False
+            target.write_text(json.dumps(doc), encoding="utf-8")
+
+            refused = host_manifests.write_antigravity_project_hooks(
+                PLUGIN_ROOT, project)
+            self.assertFalse(refused["written"], refused)
+            forced = host_manifests.write_antigravity_project_hooks(
+                PLUGIN_ROOT, project, force=True)
+            self.assertTrue(forced["written"], forced)
+
 
 class HostCapabilitiesEnumTests(unittest.TestCase):
     """NS-10b: `HOST_CAPABILITIES` declares channels as a closed enum, not

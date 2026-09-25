@@ -43,12 +43,97 @@ they keep a dedicated file under their own host directory.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
 from . import godmode_hostevent as hostevent
 from .godmode_paths import contained_or_refuse
+
+# Row 86: `hooks wire --host <h>` (single host, no --all) used to refuse ANY
+# content difference from what today's renderer would produce, without
+# telling "this is our own prior write, a version bump" apart from "someone
+# else changed this file" - so an ordinary version update needed --force
+# while `hooks wire --all` (godmode_wire.wire(), which tracks a digest of
+# the region it owns) already updated cleanly.
+#
+# The digest that recognition needs is kept OUTSIDE the written file, in a
+# side-car next to the install manifest - not a field inside the JSON (or a
+# header line in the OpenCode shim) the way `godmode_wire.py` tracks its own
+# region, on purpose: these legacy writers render a DIFFERENT shape than
+# `godmode_wire.wire()` does for the same target (Codex's blocks go out
+# untagged here, tagged there; `wire()`'s own B1/B4 adoption already depends
+# on recognizing that untagged, digest-less shape as legacy content).
+# Stamping a same-named digest field into the file itself would collide with
+# that recognition - a legacy write would look digest-tracked to `wire()`
+# under a digest computed over the wrong payload shape, turning an adoptable
+# legacy install into a false conflict. A side-car never touches the file
+# these writers hand a host, so the two mechanisms stay independent.
+_WRITE_DIGESTS_FILENAME = "write-digests.json"
+
+
+def _content_digest(payload: Any) -> str:
+    """A short, stable fingerprint of a payload - a string body hashed as
+    text, anything else canonicalized through JSON first so key order never
+    changes the digest of two renders of the same logical content."""
+    if isinstance(payload, str):
+        data = payload.encode("utf-8")
+    else:
+        data = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(data).hexdigest()[:16]
+
+
+def _write_digests_path(project) -> Path:
+    from .godmode_installmanifest import sanitize_plugin_name, state_root
+    return state_root(project) / sanitize_plugin_name("godmode") / _WRITE_DIGESTS_FILENAME
+
+
+def _recall_write_digest(project, group: str) -> str | None:
+    """The digest recorded the last time this writer group wrote its target,
+    or None when nothing was ever recorded (a fresh project, an install
+    predating this mechanism, or a side-car wiped by hand) - callers treat
+    None the same as a mismatch: unverified, still a conflict without force.
+    """
+    path = _write_digests_path(project)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    value = data.get(group) if isinstance(data, dict) else None
+    return value if isinstance(value, str) else None
+
+
+def _remember_write_digest(project, group: str, region: Any) -> None:
+    """Record a digest of the region this writer just wrote, keyed by writer
+    group. Bookkeeping only, like `_record_installed`: never raises, because
+    a write that already reached disk must not be reported as failed over a
+    note about it."""
+    try:
+        path = _write_digests_path(project)
+        data: dict = {}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    data = loaded
+            except (OSError, ValueError):
+                data = {}
+        data[group] = _content_digest(region)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: bookkeeping only, like _record_installed
+        pass
+
+
+def _writer_verified(project, group: str, existing_region: Any) -> bool:
+    """True when `existing_region` (already known to differ from today's
+    fresh render) is exactly what THIS writer group last left behind - proof
+    of a version bump, not evidence of a hand edit or a foreign write."""
+    recorded = _recall_write_digest(project, group)
+    return recorded is not None and recorded == _content_digest(existing_region)
 
 # ---------------------------------------------------------------------------
 # Event-name allowlists. ONE constant per host, each an exhaustive list of
@@ -475,11 +560,17 @@ def write_codex_project_hooks(plugin_root, project, *, force: bool = False) -> d
     target = contained_or_refuse(_Path(project) / ".codex" / "hooks.json",
                                   [_Path(project)], "codex hooks path")
     rendered = _json.dumps(codex_project_hooks(plugin_root), indent=2) + "\n"
-    if target.exists() and target.read_text(encoding="utf-8") != rendered and not force:
-        return {"written": False, "path": str(target),
-                "reason": "exists with different content; pass --force to overwrite"}
+    if target.exists():
+        existing_text = target.read_text(encoding="utf-8")
+        if existing_text != rendered and not force:
+            # A prior write of ours, unmodified since (row 86: a version
+            # bump renders different content, but is not a conflict).
+            if not _writer_verified(project, "codex-hooks", existing_text):
+                return {"written": False, "path": str(target),
+                        "reason": "exists with different content; pass --force to overwrite"}
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(rendered, encoding="utf-8")
+    _remember_write_digest(project, "codex-hooks", rendered)
     _record_installed(project, "codex-hooks", target)
     return {"written": True, "path": str(target),
             "events": sorted(codex_project_hooks(plugin_root)["hooks"]),
@@ -591,8 +682,10 @@ def write_antigravity_project_hooks(plugin_root, project, *,
     The file maps hook names to configs, so foreign hooks are preserved and
     only the `godmode` key is owned here. Same overwrite contract as the
     Codex fallback: an existing `godmode` key with different content is
-    refused without force. Interpreter is machine-PATH `python` on Windows
-    (law 12: a sandboxed host account sees only the machine PATH).
+    refused without force - unless it verifies as this writer's own prior
+    render (row 86: an ordinary version update must not need --force).
+    Interpreter is machine-PATH `python` on Windows (law 12: a sandboxed
+    host account sees only the machine PATH).
     """
     import json as _json
     import os as _os
@@ -614,12 +707,15 @@ def write_antigravity_project_hooks(plugin_root, project, *,
         if not isinstance(existing, dict):
             return {"written": False, "path": str(target),
                     "reason": "exists but is not a JSON object; fix or remove it first"}
-        if existing.get("godmode") not in (None, entry) and not force:
+        prior = existing.get("godmode")
+        if (prior not in (None, entry) and not force
+                and not _writer_verified(project, "antigravity-hooks", prior)):
             return {"written": False, "path": str(target),
                     "reason": "a different godmode entry exists; pass --force to overwrite"}
     existing["godmode"] = entry
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(_json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+    _remember_write_digest(project, "antigravity-hooks", entry)
     _record_installed(project, "antigravity-hooks", target)
     return {"written": True, "path": str(target),
             "events": sorted(antigravity_emitted_events(fragment)),
@@ -636,7 +732,9 @@ def write_opencode_project_shim(plugin_root, project, *, force: bool = False) ->
     thing it cannot know is where this install lives, so the note names the
     exact GODMODE_PLUGIN_ROOT to export (and GODMODE_PYTHON for a
     non-default interpreter). Same overwrite contract as the Codex fallback:
-    a differing existing file is refused without force.
+    a differing existing file is refused without force - unless it verifies
+    as this writer's own prior render (row 86: an ordinary version update
+    must not need --force).
     """
     from pathlib import Path as _Path
 
@@ -645,11 +743,15 @@ def write_opencode_project_shim(plugin_root, project, *, force: bool = False) ->
     body = source.read_text(encoding="utf-8")
     target = contained_or_refuse(_Path(project) / ".opencode" / "plugins" / "godmode.js",
                                   [_Path(project)], "opencode shim path")
-    if target.exists() and target.read_text(encoding="utf-8") != body and not force:
-        return {"written": False, "path": str(target),
-                "reason": "exists with different content; pass --force to overwrite"}
+    if target.exists():
+        existing_text = target.read_text(encoding="utf-8")
+        if existing_text != body and not force:
+            if not _writer_verified(project, "opencode-shim", existing_text):
+                return {"written": False, "path": str(target),
+                        "reason": "exists with different content; pass --force to overwrite"}
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(body, encoding="utf-8")
+    _remember_write_digest(project, "opencode-shim", body)
     _record_installed(project, "opencode-shim", target)
     return {"written": True, "path": str(target),
             "env": {"GODMODE_PLUGIN_ROOT": str(root),
