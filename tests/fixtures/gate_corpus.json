@@ -1821,5 +1821,117 @@
     "class": "by-design",
     "tool": "Bash",
     "note": "near-miss: a read after `cd .git` writes nothing"
+  },
+  {
+    "operation": "cd -- .git && printf x >> config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a write after `cd -- .git` lands in the repository config"
+  },
+  {
+    "operation": "cd -P .git && printf x >> config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a write after `cd -P .git` lands in the repository config"
+  },
+  {
+    "operation": "cd -LP .git && printf x >> config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a write after `cd -LP .git` lands in the repository config"
+  },
+  {
+    "operation": "Set-Location -Path .git; Add-Content config x",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "a write after `Set-Location -Path .git` lands in the repository config"
+  },
+  {
+    "operation": "Set-Location -LiteralPath .git; Add-Content config x",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "a write after `Set-Location -LiteralPath .git` lands in the repository config"
+  },
+  {
+    "operation": "Set-Location -Path:.git; Add-Content config x",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "a write after `Set-Location -Path:.git` lands in the repository config"
+  },
+  {
+    "operation": "cd .git && cd .. && echo x >> config",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: `cd ..` returns to the project root before the write"
+  },
+  {
+    "operation": "pushd .git && popd && echo x >> config",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: `popd` returns to the project root before a write to the tree's own config"
+  },
+  {
+    "operation": "cd .git; false && cd ..; echo x >> config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a skipped `cd ..` leaves the write in the repository config"
+  },
+  {
+    "operation": "ln -s .. up && cd up/project/.git && echo x >> config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a directory reached through a link made in the same command cannot be placed, so the write is asked about"
+  },
+  {
+    "operation": "x=sh; git pu$x -f",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a git verb completed by a variable set earlier in the command"
+  },
+  {
+    "operation": "git pu$@sh -f",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "an empty `$@` spliced into the git verb"
+  },
+  {
+    "operation": "git pu$*sh -f",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "an empty `$*` spliced into the git verb"
+  },
+  {
+    "operation": "g''it p${_}ush -f",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a quoted program name and a push verb completed by `${_}`"
+  },
+  {
+    "operation": "git reset --ha$@rd HEAD~3",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "an empty `$@` spliced into `--hard`"
+  },
+  {
+    "operation": "gh rel$@ease create v1",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "an empty `$@` spliced into the release verb"
   }
 ]

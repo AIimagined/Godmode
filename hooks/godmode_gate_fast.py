@@ -945,7 +945,10 @@ _HARM_HINT = re.compile(
     r"erase|unlink|remove|rmtree|move-item|new-item|set-content|add-content|out-file|"
     r"clear-content|rename-item|find|deploy|publish|release|upload|send|post|create|"
     r"eval|vssadmin|wmic|wbadmin|tmutil|password|godmode|uninitialized|config)"
-    r"(?=[^a-z0-9_]|$)|shadowcopy|computerrestore")
+    r"(?=[^a-z0-9_]|$)|shadowcopy|computerrestore"
+    # Godmode's own modules (`godmode_console`, `godmode_runtime`): `_` joins
+    # words above, so the plain name inside one never matched.
+    r"|godmode_")
 # Quote, escape and caret characters a shell removes before it runs a word:
 # `r"m"`, `p\ush` and `pu^sh` all run the word the screen must see.
 _FLATTEN = re.compile(r"[\"'\\^`]")
@@ -954,8 +957,13 @@ _FLATTEN = re.compile(r"[\"'\\^`]")
 # the word runs, so `git "pu"$'sh'` is read as `git push`.
 _QUOTE_JOINS = re.compile(r"\$(?=[\"'])|(?<=[\"'])\s*\+\s*(?=[\"'])")
 # An expansion the shell performs before the word runs: its result is not
-# in the text, so no keyword screen can clear it.
-_EXPANSION = re.compile(r"\$[({'\"]")
+# in the text, so no keyword screen can clear it. Any `$` that expands
+# (`$x`, `$@`, `$*`, `${x}`, `$(...)`, `$'..'`), a backtick substitution,
+# a cmd `%x%`, and a brace or glob spliced into a word (`pu{s,}h`,
+# `pu?h`): `git pu$@sh -f` runs `git push -f`.
+_EXPANSION = re.compile(
+    r"\$[\w@*#?!$({'\"-]|`|%\w+%|[a-z]\{[^}\s]*[,.][^}\s]*\}|\{[^}\s]*,[^}\s]*\}[a-z]"
+    r"|[a-z][?*\[]|[?*\]][a-z]")
 # `godmode_sentinel._SCRIPT_HEADS` (copied; the drift guard compares them):
 # the classifier reads a script these run, so the screen reads it too.
 _SCRIPT_HEADS = frozenset({
@@ -1000,9 +1008,15 @@ def _hint_strings(payload: dict[str, Any]) -> list[str] | None:
     return found
 
 
-def _names_harm(text: str) -> bool:
+# A script body is code, not a command line: only the substitutions a
+# shell script runs count there, so indexing and globs in ordinary source
+# keep `python tool.py` on the stat-only path.
+_BODY_EXPANSION = re.compile(r"\$[({'\"]")
+
+
+def _names_harm(text: str, script: bool = False) -> bool:
     lowered = text.lower()
-    if _EXPANSION.search(lowered):
+    if (_BODY_EXPANSION if script else _EXPANSION).search(lowered):
         return True
     joined = _FLATTEN.sub("", _QUOTE_JOINS.sub("", lowered))
     return bool(_HARM_HINT.search(lowered) or _HARM_HINT.search(_FLATTEN.sub("", lowered))
@@ -1052,24 +1066,94 @@ def harm_candidate(payload: dict[str, Any], roots: list[str]) -> bool:
         if _names_harm(text):
             return True
         bodies = _script_bodies(text, roots)
-        if bodies is None or any(_names_harm(body) for body in bodies):
+        if bodies is None or any(_names_harm(body, script=True) for body in bodies):
             return True
     # A path that resolves to the guard's own setting names no keyword at
     # all when it is spelled with a glob (`.gi?/conf*`).
     try:
-        return _writes_guard_setting(strings, roots[0] if roots else None)
+        return _writes_guard_setting(strings, roots[0] if roots else None,
+                                     roots[1] if len(roots) > 1 else None)
     except Exception:  # noqa: BLE001 - an unresolvable path is doubt, and doubt is a candidate
         return True
 
 
-# Words that change the directory a later relative path resolves against.
-_CD_HEADS = frozenset({"cd", "pushd", "chdir", "set-location", "sl", "push-location"})
+# Words that change the directory a later relative path resolves against,
+# and the ones that return to a directory a `pushd` saved.
+_CHDIR_HEADS = frozenset({"cd", "chdir", "set-location", "sl"})
+_PUSHD_HEADS = frozenset({"pushd", "push-location"})
+_POPD_HEADS = frozenset({"popd", "pop-location"})
+_CD_HEADS = _CHDIR_HEADS | _PUSHD_HEADS
+_DIRECTORY_HEADS = _CD_HEADS | _POPD_HEADS
+# Words that may stand before the command word of a segment.
+_LEAD_WORDS = frozenset({"then", "do", "else", "elif", "if", "while", "until", "!",
+                         "builtin", "command", "time", "noglob"})
+_ASSIGNMENT_WORD = re.compile(r"^[A-Za-z_]\w*=")
+# Operators between the segments of one command text. After a pipe, a
+# background `&` or a group bracket a directory change may run in a
+# subshell, so it may or may not persist.
+_SEGMENT_OPERATORS = ("&&", "||", ";", "\n", "|", "&", "(", ")", "{", "}")
+_LOOSE_OPERATORS = frozenset({"|", "&", "(", ")", "{", "}"})
+# Past this many possible directories the text is not followed any further.
+_MAX_DIRECTORY_STATES = 64
+# A command that makes a link, a junction or a drive letter: a path through
+# it names whatever it points at, which the text does not show until it
+# exists, so any word that could name the setting file counts.
+_LINK_MAKER = re.compile(
+    r"(?i)(?:^|[\s;&|(){}'\"`])(?:ln|link|mklink|subst|mount|new-psdrive|ndr)(?:\.exe)?"
+    r"(?=[\s;&|(){}'\"`]|$)|symbolic|junction|hardlink|\bcp\b[^;&|\n]*\s-[a-z]*s")
 # Where one path-shaped word ends: whitespace and the shell's own operators,
 # plus the `=`/`,` a `dd of=...` or a `-Path:...` style argument joins on.
 _PATH_WORD_SPLIT = re.compile(r"[\s;&|()<>=,{}]+")
 # A word the shell expands before it is a path: its value is not in the text.
 _DYNAMIC_WORD = re.compile(r"[$`%]")
 _GLOB_CHARS = re.compile(r"[*?\[]")
+# `Set-Location`'s parameters whose value is the directory, matched by any
+# prefix PowerShell accepts (`-Pat`, `-Lit`) or their alias.
+_CD_PATH_FLAGS = ("-path", "-literalpath", "-pspath")
+# A word that is no directory: a flag, `--`, or cmd's `/d`.
+_UNREAD_TARGET = object()
+
+
+def _directory_target(rest: list[str]) -> tuple[Any, bool]:
+    """The directory a `cd`/`pushd`/`Set-Location` whose words after the
+    head are `rest` names, and whether the change is certain to happen.
+    The target is `""` when none is named (a bare `cd`), `"-"` for the
+    previous directory, and `_UNREAD_TARGET` when a flag this cannot read
+    makes it unknowable. Mirrors `godmode_sentinel._directory_change`:
+    flags are skipped (`-P`, `-LP`, `--`, `/d`), `-Path x`, `-LiteralPath
+    x` and `-Path:x` name `x`. A short switch one shell takes and another
+    refuses (`-P` is bash's physical switch, an ambiguous prefix to
+    PowerShell) may leave the directory unchanged, so it is not certain."""
+    certain = True
+    index = 0
+    while index < len(rest):
+        word = rest[index]
+        lowered = word.lower()
+        if word == "--":
+            return (rest[index + 1] if index + 1 < len(rest) else "", certain)
+        if word == "-":
+            return ("-", certain)
+        if lowered == "/d":
+            index += 1
+            continue
+        if not word.startswith("-"):
+            return (word, certain)
+        name, joined, value = word.partition(":")
+        name = name.lower()
+        if name == "-lp" or (len(name) >= 4 and any(flag.startswith(name) for flag in _CD_PATH_FLAGS)):
+            if joined and value:
+                return (value, certain)
+            return ((rest[index + 1], certain) if index + 1 < len(rest)
+                    else (_UNREAD_TARGET, False))
+        if not joined and re.fullmatch(r"-[LPe@]+", word):
+            certain = False
+            index += 1
+            continue
+        if not joined and len(name) >= 4 and "-passthru".startswith(name):
+            index += 1
+            continue
+        return (_UNREAD_TARGET, False)
+    return ("", certain)
 
 
 def _guard_setting_files(root: str | None) -> list[str]:
@@ -1090,49 +1174,248 @@ def _guard_setting_files(root: str | None) -> list[str]:
     return [os.path.normcase(os.path.normpath(os.path.abspath(path))) for path in files]
 
 
-def _writes_guard_setting(texts: list[str], root: str | None) -> bool:
+def _command_segments(text: str) -> list[tuple[frozenset[str], str]]:
+    """`text` cut at the shell's command operators outside quotes, each
+    segment with the operators that stood before it. A `#` starting a word
+    comments out the rest of its line. A quote the text never closes keeps
+    the rest in one segment, whose directory words are then read as
+    unknown (see `_directory_states`)."""
+    segments: list[tuple[frozenset[str], str]] = []
+    buffer: list[str] = []
+    operators: set[str] = {";"}
+    quote = ""
+    index = 0
+
+    def flush() -> None:
+        piece = "".join(buffer).strip()
+        buffer.clear()
+        if piece:
+            segments.append((frozenset(operators), piece))
+            operators.clear()
+
+    while index < len(text):
+        char = text[index]
+        if quote:
+            buffer.append(char)
+            if char == quote:
+                quote = ""
+            elif char == "\\" and quote == '"' and index + 1 < len(text):
+                buffer.append(text[index + 1])
+                index += 1
+            index += 1
+            continue
+        if char in "'\"":
+            quote = char
+            buffer.append(char)
+            index += 1
+            continue
+        if char == "\\" and index + 1 < len(text):
+            buffer.append(text[index:index + 2])
+            index += 2
+            continue
+        if char == "#" and (not buffer or buffer[-1].isspace()):
+            while index < len(text) and text[index] != "\n":
+                index += 1
+            continue
+        operator = next((op for op in _SEGMENT_OPERATORS if text.startswith(op, index)), None)
+        if operator is None:
+            buffer.append(char)
+            index += 1
+            continue
+        flush()
+        operators.add(operator)
+        index += len(operator)
+    flush()
+    return segments
+
+
+def _segment_words(segment: str) -> list[list[str]]:
+    """The whitespace words of one segment in both readings: quotes
+    dropped (a backslash is a Windows separator) and flattened the way
+    the shell removes escapes."""
+    return [[word for word in reading.split() if word]
+            for reading in (re.sub(r"[\"']", "", segment), _FLATTEN.sub("", segment))]
+
+
+def _head_index(words: list[str]) -> int:
+    index = 0
+    while index < len(words) and (words[index].lower() in _LEAD_WORDS
+                                   or _ASSIGNMENT_WORD.match(words[index])):
+        index += 1
+    return index
+
+
+def _head_name(word: str) -> str:
+    head = word.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return head[:-4] if head.endswith(".exe") else head
+
+
+# One possible shell state: the current directory (None when the text
+# cannot say), the previous one (`cd -`), the `pushd` stack, and whether
+# the last command succeeded (which `&&` and `||` read). Annotations only:
+# `_State` is `tuple[str | None, str | None, tuple, bool]`.
+
+
+def _changed_states(state: _State, kind: str, rest: list[str], home: str,
+                    cdpath: bool) -> set[_State]:
+    """The states one `cd`/`pushd`/`popd` whose words after the head are
+    `rest` can leave `state` in. A change that may fail keeps the
+    unchanged state beside the moved one, marked as failed."""
+    current, previous, stack, _ok = state
+    failed = (current, previous, stack, False)
+    unknown = (None, current, (), True)
+    if kind == "popd":
+        if rest:
+            return {unknown, failed}
+        if stack:
+            return {(stack[-1], current, stack[:-1], True)}
+        # The host shell's own stack is not in the text.
+        return {unknown, failed}
+    target, certain = _directory_target(rest)
+    if kind == "pushd" and target == "":
+        if stack:
+            return {(stack[-1], current, (*stack[:-1], current), True)}
+        return {unknown, failed}
+    if target == "":
+        moved = home
+    elif target == "-":
+        moved = previous
+    elif (target is _UNREAD_TARGET or _DYNAMIC_WORD.search(target) or _GLOB_CHARS.search(target)
+          or (kind == "pushd" and re.fullmatch(r"[+-]\d+", target))):
+        moved = None
+    else:
+        if target.startswith("~"):
+            target = home + target[1:]
+        if os.path.isabs(target) or re.match(r"^[A-Za-z]:", target):
+            moved = os.path.normpath(target)
+        elif current is None or (cdpath and not target.startswith(".")):
+            # `CDPATH` can send a bare name anywhere.
+            moved = None
+        else:
+            moved = os.path.normpath(os.path.join(current, target))
+    if moved is not None and not os.path.isdir(moved):
+        # A directory that is not there yet (made earlier in the same
+        # text, or found through `CDPATH`) is not known to be this one.
+        certain, moved = False, None
+    after = (moved, current, (*stack, current) if kind == "pushd" else stack, True)
+    return {after} if certain and moved is not None else {after, failed}
+
+
+def _directory_states(text: str, starts: list[str], home: str):
+    """Each segment of `text` with the directories it may run in: one
+    current directory per possible state, followed through every `cd`,
+    `cd -`, `pushd`, `popd` and `Set-Location` the way the shell runs
+    them - `&&` runs the next segment only where the last succeeded, `||`
+    only where it failed. A directory the text cannot resolve is None."""
+    cdpath = "cdpath" in text.lower() or bool(os.environ.get("CDPATH"))
+    states: set[_State] = {(start, None, (), True) for start in starts}
+    after_heredoc = False
+    for operators, segment in _command_segments(text):
+        loose = after_heredoc or bool(operators & _LOOSE_OPERATORS)
+        if loose or operators & {";", "\n"}:
+            running = set(states)
+        elif "&&" in operators:
+            running = {state for state in states if state[3]}
+        else:
+            running = {state for state in states if not state[3]}
+        idle = states if loose else states - running
+        yield segment, {state[0] for state in running}
+        moved: set[_State] = set()
+        readings = _segment_words(segment)
+        for state in running:
+            changed: set[_State] = set()
+            for words in readings:
+                head = _head_index(words)
+                name = _head_name(words[head]) if head < len(words) else ""
+                if name in _POPD_HEADS:
+                    changed |= _changed_states(state, "popd", words[head + 1:], home, cdpath)
+                elif name in _CD_HEADS:
+                    kind = "pushd" if name in _PUSHD_HEADS else "chdir"
+                    changed |= _changed_states(state, kind, words[head + 1:], home, cdpath)
+                elif any(_head_name(word) in _DIRECTORY_HEADS
+                         for word in _PATH_WORD_SPLIT.split(" ".join(words)) if word):
+                    # A directory change this cannot place (quoted, wrapped
+                    # in `eval`, an `sh -c` argument): anywhere at all.
+                    changed |= {(None, None, (), True), (None, None, (), False)}
+            if not changed:
+                current, previous, stack, _ok = state
+                changed = {(current, previous, stack, True), (current, previous, stack, False)}
+            moved |= changed
+        if loose:
+            moved |= {(state[0], state[1], state[2], ok) for state in running for ok in (True, False)}
+        states = set(idle) | moved
+        if len(states) > _MAX_DIRECTORY_STATES:
+            states = {(None, None, (), True), (None, None, (), False)}
+        if "<<" in segment:
+            after_heredoc = True
+
+
+def _writes_guard_setting(texts: list[str], root: str | None, cwd: str | None = None) -> bool:
     """Whether any path-shaped word in `texts` resolves to a file the
     guard's setting lives in - read from what the path resolves to, not
-    how it is spelled: `.` and `..` are normalised, a `cd`/`pushd`/
+    how it is spelled: `.` and `..` are normalised, a `cd`/`pushd`/`popd`/
     `Set-Location` earlier in the call moves the directory relative words
-    resolve against, and a glob matches when it could name the file. A
-    directory change the text cannot resolve (`cd $x`) makes any word that
-    could name `config` count."""
-    files = _guard_setting_files(root)
-    base = os.path.abspath(root) if root else os.getcwd()
+    resolve against (`_directory_states`), and a glob matches when it
+    could name the file. A directory the text cannot resolve (`cd $x`)
+    makes any word that could name `config` count. Relative words start
+    from both the project root and the call's own directory (`cwd`): a
+    host shell that kept an earlier `cd .git` runs the call from there."""
+    spelled = _guard_setting_files(root)
+    # Each file as spelled and as the filesystem resolves it (a symlinked
+    # home or checkout), and its identity, which a hard link shares.
+    files = list(dict.fromkeys(
+        [*spelled, *(os.path.normcase(os.path.realpath(path)) for path in spelled)]))
+    identities = set()
+    for path in spelled:
+        try:
+            stat = os.stat(path)
+        except OSError:
+            continue
+        if stat.st_ino:
+            identities.add((stat.st_dev, stat.st_ino))
+    starts = list(dict.fromkeys(
+        os.path.abspath(start) for start in (root, cwd) if start)) or [os.getcwd()]
     home = os.path.expanduser("~")
-    # Each text is read twice: with quotes dropped (a backslash is a
-    # Windows separator) and flattened the way the shell removes escapes.
-    readings = [reading for text in texts
-                for reading in (re.sub(r"[\"']", "", text), _FLATTEN.sub("", text))]
-    for text in readings:
-        words = [word for word in _PATH_WORD_SPLIT.split(text) if word]
-        bases = [base]
-        dynamic_base = False
-        for index, word in enumerate(words):
-            if word.lower() in _CD_HEADS:
-                bases.append(home)
-            if word.lower() in _CD_HEADS and index + 1 < len(words):
-                target = words[index + 1]
-                if _DYNAMIC_WORD.search(target) or _GLOB_CHARS.search(target):
-                    dynamic_base = True
-                elif target not in ("-", "--"):
-                    if target.startswith("~"):
-                        target = home + target[1:]
-                    bases.extend(os.path.join(known, target) for known in list(bases))
-        for word in words:
-            if word.startswith("~"):
-                word = home + word[1:]
-            leaf = word.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].lower()
-            if leaf and (dynamic_base or _DYNAMIC_WORD.search(word)) and any(
-                    _fnmatch(os.path.basename(path), leaf) for path in files):
+    linking = any(_LINK_MAKER.search(text) for text in texts)
+    for text in texts:
+        for segment, directories in _directory_states(text, starts, home):
+            if linking:
+                directories = {*directories, None}
+            for words in _segment_words(segment):
+                for word in (piece for word in words
+                             for piece in _PATH_WORD_SPLIT.split(word) if piece):
+                    if _names_setting_file(word, directories, files, identities, home):
+                        return True
+    return False
+
+
+def _names_setting_file(word: str, directories: set[Any], files: list[str],
+                        identities: set[Any], home: str) -> bool:
+    """Whether `word`, read from any of `directories`, is one of `files`:
+    `.` and `..` normalised, the longest existing prefix resolved through
+    symlinks and junctions (`g/config` after `ln -s .git g`), and an
+    existing file compared by identity (a hard link)."""
+    if word.startswith("~"):
+        word = home + word[1:]
+    leaf = word.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].lower()
+    dynamic = bool(_DYNAMIC_WORD.search(word))
+    if leaf and (dynamic or None in directories) and any(
+            _fnmatch(os.path.basename(path), leaf) for path in files):
+        return True
+    if dynamic:
+        return False
+    for known in directories:
+        if known is None:
+            continue
+        joined = os.path.join(known, word)
+        for shown in {os.path.normcase(os.path.normpath(joined)),
+                      os.path.normcase(os.path.realpath(joined))}:
+            if any(_fnmatch(path, shown) for path in files):
                 return True
-            if _DYNAMIC_WORD.search(word):
-                continue
-            for known in bases:
-                shown = os.path.normcase(os.path.normpath(os.path.join(known, word)))
-                if any(_fnmatch(path, shown) for path in files):
-                    return True
+        if identities and not _GLOB_CHARS.search(word) and os.path.isfile(joined):
+            stat = os.stat(joined)
+            if (stat.st_dev, stat.st_ino) in identities:
+                return True
     return False
 
 
@@ -1143,7 +1426,8 @@ def _fnmatch(name: str, pattern: str) -> bool:
     return fnmatch.fnmatchcase(os.path.normcase(name), os.path.normcase(pattern))
 
 
-def _disables_guard(operation: str, targets: list[str], root: str | None = None) -> bool:
+def _disables_guard(operation: str, targets: list[str], root: str | None = None,
+                    cwd: str | None = None) -> bool:
     """Whether this call would change the guard's own setting: the
     machine-wide file, `godmode config set uninitialized`, or a
     repository's `godmode.uninitialized` key. Changing it is the operator's
@@ -1162,7 +1446,7 @@ def _disables_guard(operation: str, targets: list[str], root: str | None = None)
                 or shown.endswith("godmode-settings.json")):
             return True
     try:
-        return _writes_guard_setting([operation, *targets], root)
+        return _writes_guard_setting([operation, *targets], root, cwd)
     except Exception:  # noqa: BLE001 - a path this cannot resolve is doubt, and doubt asks
         return True
 

@@ -1,0 +1,1 @@
+- In a project where `godmode init` was never run, a command that runs one of Godmode's own modules by name (`python -m godmode_runtime.godmode_console authorize stage`) is now handed to the classifier instead of passing the keyword screen.

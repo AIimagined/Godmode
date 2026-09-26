@@ -703,6 +703,27 @@ class UninitializedGuard(unittest.TestCase):
                 self.assertEqual(self._decision(self._run(command, tool=tool)), "ask")
         self.assertIsNone(self._run("echo $(date) && git status"))
 
+    def test_a_push_spelled_through_a_variable_asks(self) -> None:
+        for command in ("x=sh; git pu$x -f", "git pu$@sh -f", "git pu$*sh -f"):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(self._run(command)), "ask")
+
+    def test_a_harm_class_word_completed_by_an_expansion_asks(self) -> None:
+        # The expansion sits in the verb, a flag or the program itself, and
+        # the classifier cannot read what runs; an empty `$@` leaves the
+        # plain harm-class spelling.
+        for command in ("g''it p${_}ush -f", "git reset --ha$@rd HEAD~3",
+                        "gh rel$@ease create v1", "r$@m -rf /tmp/x", "npm pub$@lish",
+                        "git pu`printf s`h -f", "git pu{s,}h -f", "git pu?h -f",
+                        "git reset $x HEAD~3"):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(self._run(command)), "ask")
+        # A variable standing for a whole ordinary argument stays ordinary.
+        for command in ("echo $HOME", 'git commit -m "$msg"', "git add $f", "make $t",
+                        "curl $url", "git log $REV", "LD=a$B make", "date +%Y%m%d"):
+            with self.subTest(command=command):
+                self.assertIsNone(self._run(command))
+
     def test_releases_and_history_rewrites_ask(self) -> None:
         for command in ("npm publish", "gh release create v1", "git reset --hard HEAD~3",
                         "git branch -D topic", "git push origin v1.0"):
@@ -743,18 +764,104 @@ class UninitializedGuard(unittest.TestCase):
 
     def test_a_write_resolving_to_the_setting_is_asked_about_however_spelled(self) -> None:
         # The file a write lands in decides, not how its path is spelled:
-        # `.`/`..`, a directory change earlier in the call, a glob.
+        # `.`/`..`, a directory change earlier in the call (behind a flag,
+        # or already made by the host shell: the call's own `cwd`), a glob.
         settings_glob = (self.home / "godmode-setting?.json").as_posix()
-        for command in (r"printf '[\x67odmode]\n\tuninitialize\x64 = off\n' >> .git/./config",
-                        r"cd .git && printf '[\x67odmode]\n\tuninitialize\x64 = off\n' >> config",
-                        "echo x >> .gi?/conf*",
-                        f"echo {{}} > {settings_glob}"):
-            with self.subTest(command=command):
-                self.assertEqual(self._decision(self._run(command)), "ask")
-                self.assertEqual(self._decision(self._no_ask(command, session=command)), "deny")
-        for command in ("echo x > docs/config", "cd docs && echo x > notes"):
+        write = r"printf '[\x67odmode]\n\tuninitialize\x64 = off\n' >> config"
+        git_dir = self.project / ".git"
+        for command, tool, cwd in (
+                (r"printf '[\x67odmode]\n\tuninitialize\x64 = off\n' >> .git/./config",
+                 "Bash", None),
+                (f"cd .git && {write}", "Bash", None),
+                ("echo x >> .gi?/conf*", "Bash", None),
+                (f"echo {{}} > {settings_glob}", "Bash", None),
+                (write, "Bash", git_dir),
+                ("Add-Content config x", "PowerShell", git_dir),
+                (f"cd -- .git && {write}", "Bash", None),
+                (f"cd -P .git && {write}", "Bash", None),
+                (f"cd -LP .git && {write}", "Bash", None),
+                ("Set-Location -Path .git; Add-Content config x", "PowerShell", None),
+                ("Set-Location -LiteralPath .git; Add-Content config x", "PowerShell", None),
+                ("Set-Location -Path:.git; Add-Content config x", "PowerShell", None)):
+            with self.subTest(command=command, cwd=cwd):
+                self.assertEqual(self._decision(self._run(command, tool=tool, cwd=cwd)), "ask")
+                self.assertEqual(self._decision(
+                    self._no_ask(command, cwd=cwd, session=command)), "deny")
+        for command in ("echo x > docs/config", "cd docs && echo x > notes",
+                        "cd .git && cd .. && echo x >> config"):
             with self.subTest(command=command):
                 self.assertIsNone(self._run(command))
+
+    def test_a_directory_change_behind_a_flag_still_moves_the_write(self) -> None:
+        # The directory is the first word that is not a flag, in either shell.
+        write = r"printf '[godmode]\n\tuninit%s = off\n' ialized >> config"
+        for command, tool in ((f"cd -- .git && {write}", "Bash"),
+                              (f"cd -P .git && {write}", "Bash"),
+                              (f"cd -LP .git && {write}", "Bash"),
+                              ("Set-Location -Path .git; Add-Content config x", "PowerShell"),
+                              ("Set-Location -LiteralPath .git; Add-Content config x", "PowerShell"),
+                              ("Set-Location -Path:.git; Add-Content config x", "PowerShell"),
+                              ("Set-Location -ErrorAction Stop .git; Add-Content config x",
+                               "PowerShell")):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(self._run(command, tool=tool)), "ask")
+
+    def test_a_write_is_judged_from_the_one_directory_the_shell_is_in(self) -> None:
+        # One current directory, followed through `cd`, `cd -`, `pushd` and
+        # `popd`: returning to the project root first stays allowed.
+        for command, tool in (("cd .git && cd .. && echo x >> config", "Bash"),
+                              ("pushd .git && popd && echo x >> config", "Bash"),
+                              ("cd .git && cd - && echo x >> config", "Bash"),
+                              ("Push-Location .git; Pop-Location; Add-Content config x",
+                               "PowerShell")):
+            with self.subTest(command=command):
+                self.assertIsNone(self._run(command, tool=tool))
+        # A change that may not have happened, or that the text cannot
+        # place, keeps the directory it would have left.
+        for command in ("cd .git && echo x >> config",
+                        "cd .git && cd - && cd - && echo x >> config",
+                        "cd .git; false && cd ..; echo x >> config",
+                        "cd .git || cd ..; echo x >> config",
+                        "cd .git; cd missing; echo x >> config",
+                        'cd .git; echo "x; cd .."; echo x >> config',
+                        "cd .git # ; cd ..\necho x >> config",
+                        "cd .git; cat <<EOF\ncd ..\nEOF\necho x >> config",
+                        "cd .git; (cd ..); echo x >> config",
+                        "cd .git; eval cd ..; echo x >> config",
+                        "if true; then cd .git; fi; echo x >> config"):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(self._run(command)), "ask")
+
+    def test_a_write_through_a_link_to_the_setting_asks(self) -> None:
+        # A path is judged by what the filesystem resolves it to.
+        try:
+            os.symlink(self.project / ".git", self.project / "g", target_is_directory=True)
+        except OSError as error:
+            self.skipTest(f"symlinks need a privilege here: {error}")
+        for command in ("printf x >> g/config", "cd g && echo x >> config"):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(self._run(command)), "ask")
+        self.assertIsNone(self._run("echo x > docs/config"))
+
+    def test_a_write_through_a_hard_link_or_a_link_made_in_the_same_call_asks(self) -> None:
+        try:
+            os.link(self.project / ".git" / "config", self.project / "c")
+        except OSError as error:
+            self.skipTest(f"hard links are not available here: {error}")
+        self.assertEqual(self._decision(self._run("printf x >> c")), "ask")
+        for command in ("ln -s .git g && printf x >> g/config",
+                        "ln -s .. up && cd up/project/.git && echo x >> config",
+                        "cmd /c mklink /J g .git & echo x >> g\\config"):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(self._run(command)), "ask")
+
+    def test_a_write_from_a_call_already_inside_the_git_directory_asks(self) -> None:
+        # The host shell kept an earlier `cd .git`: the call's own `cwd`
+        # is where a bare `config` lands.
+        command = r"printf '[godmode]\n\tuninit%s = off\n' ialized >> config"
+        self.assertEqual(self._decision(self._run(command, cwd=self.project / ".git")), "ask")
+        self.assertEqual(self._decision(
+            self._no_ask(command, cwd=self.project / ".git", session="n")), "deny")
 
     def test_an_edit_of_the_repository_config_is_asked_about(self) -> None:
         body = {"hook_event_name": "PreToolUse", "tool_name": "Write",
@@ -851,6 +958,18 @@ class UninitializedGuardScreen(unittest.TestCase):
             if harmful and not fast.harm_candidate(payload(command), [str(PLUGIN_ROOT)]):
                 missed.append((command, harmful))
         self.assertEqual(missed, [])
+
+    def test_an_expansion_spliced_into_a_word_is_a_candidate(self) -> None:
+        # `$@` and `$*` expand to nothing and `$x` to what an earlier
+        # assignment set: the word that runs is not the word in the text.
+        for command in ("x=sh; git pu$x -f", "git pu$@sh -f", "git pu$*sh -f",
+                        "r$@m -rf /tmp/x", "npm pub$@lish", "git $x -f",
+                        "git pu`printf s`h -f", "git pu{s,}h -f", "git pu?h -f",
+                        "set x=s&& git pu%x%h -f", 'tmux new -d "$C"',
+                        "python -m godmode_runtime.godmode_console authorize stage x",
+                        "python scripts/godmode_runtime/godmode_console.py authorize stage x"):
+            with self.subTest(command=command):
+                self.assertTrue(fast.harm_candidate(payload(command), ["."]))
 
     def test_a_script_the_classifier_reads_is_read_by_the_screen(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

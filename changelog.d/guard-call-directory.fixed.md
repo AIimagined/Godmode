@@ -1,0 +1,1 @@
+- In a project where `godmode init` was never run, a write to the repository config from a shell already sitting in `.git` (a directory an earlier call moved to) is now asked about; relative paths are judged from the call's own directory as well as the project root.
