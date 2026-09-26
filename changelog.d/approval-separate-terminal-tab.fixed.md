@@ -1,0 +1,1 @@
+- `lessons approve` no longer refuses an operator who approves from another tab of the same terminal or IDE the agent runs in: terminal emulators, IDEs, multiplexers and remote-login daemons are treated like the desktop shell, shared by separate actors, while an ancestor such as the agent host itself still ties the two.

@@ -77,14 +77,30 @@ _PASS_THROUGH = frozenset({
     "nodejs", "bun", "deno", "php", "git", "make", "gmake", "find", "awk",
     "gawk", "setsid", "nice", "stdbuf", "npx", "npm",
 })
-# Ancestors every process of a desktop or login session shares: the system
-# init and the desktop shell. Sharing one of these says nothing about who
-# the actor is, so the ancestor comparison skips them; sharing any other
-# ancestor is one actor.
+# Ancestors that processes of different actors routinely share: the system
+# init, the desktop shell, and the terminal emulators, IDEs, multiplexers
+# and remote-login daemons an operator opens a tab or pane in. An agent host
+# and the operator's own tab of the same terminal or IDE both descend from
+# it, so sharing one of these says nothing about who the actor is: the
+# ancestor comparison skips them and none is taken as the driving program.
+# Sharing any other ancestor - the agent host itself, or an interpreter it
+# started - is one actor.
 _SYSTEM_ROOTS = frozenset({
     "init", "systemd", "launchd", "kernel_task", "explorer", "wininit",
     "winlogon", "services", "svchost", "smss", "csrss", "userinit", "sihost",
+    # Terminal emulators and console hosts.
+    "windowsterminal", "wt", "openconsole", "conhost", "cmd", "powershell",
+    "pwsh", "iterm2", "terminal", "gnome-terminal", "gnome-terminal-server",
+    "gnome-terminal-", "konsole", "xterm", "alacritty", "kitty", "wezterm-gui",
+    # IDEs whose integrated terminal hosts both.
+    "code", "code - insiders", "code-insiders", "cursor",
+    # Multiplexers and remote login.
+    "tmux", "tmux: server", "screen", "sshd",
 })
+
+
+def _is_system_root(name: str) -> bool:
+    return _base_name(name) in _SYSTEM_ROOTS
 
 
 def _base_name(name: str) -> str:
@@ -186,7 +202,9 @@ def process_binding() -> dict[str, Any]:
     lineage = _process_lineage()
     driver = None
     if lineage and all(entry.get("name") for entry in lineage):
-        driver = next((entry for entry in lineage if not _passes_through(entry["name"])), None)
+        driver = next((entry for entry in lineage
+                       if not _passes_through(entry["name"])
+                       and not _is_system_root(entry["name"])), None)
     return {
         "pid": os.getpid(),
         "platform": sys.platform,
@@ -222,11 +240,13 @@ def shared_actor(promoter: dict[str, Any] | None, approver: dict[str, Any]) -> s
         return "the promoting process started the approving one"
     if promoter_lineage and approver_lineage and _same_process(promoter_lineage[0], approver_lineage[0]):
         return f"the same parent process (pid {approver_lineage[0].get('pid')})"
-    if _same_process(promoter.get("driver"), approver.get("driver")):
+    driver_name = str((approver.get("driver") or {}).get("name") or "")
+    if (not _is_system_root(driver_name)
+            and _same_process(promoter.get("driver"), approver.get("driver"))):
         driver = approver["driver"]
         return f"the same driving process ({driver.get('name')}, pid {driver.get('pid')})"
     for entry in approver_lineage:
-        if _base_name(str(entry.get("name") or "")) in _SYSTEM_ROOTS:
+        if _is_system_root(str(entry.get("name") or "")):
             continue
         if any(_same_process(entry, other) for other in promoter_lineage):
             return (f"a shared ancestor process ({entry.get('name') or 'unnamed'}, "

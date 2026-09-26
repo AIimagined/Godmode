@@ -232,6 +232,34 @@ class SameProcessApprovalTests(unittest.TestCase):
                     "lineage": binding_for_agent("b")["lineage"] + [root]}
         self.assertIsNone(godmode_lessons.shared_actor(promoter, approver))
 
+    def _bound(self, lineage: list, pid: int) -> dict:
+        with mock.patch.object(godmode_lessons, "_process_lineage", return_value=lineage):
+            binding = _REAL_BINDING()
+        return {**binding, "pid": pid, "session": ""}
+
+    def test_an_operator_tab_of_the_same_terminal_or_ide_is_a_separate_actor(self) -> None:
+        # An npm-installed host runs as node inside a terminal or IDE; the
+        # operator approves from another tab of that same terminal or IDE.
+        for terminal in ("WindowsTerminal.exe", "Code.exe", "iTerm2", "gnome-terminal-",
+                         "konsole", "tmux: server", "sshd"):
+            with self.subTest(terminal=terminal):
+                top = {"pid": 5, "name": terminal}
+                promoter = self._bound([{"pid": 40, "name": "bash"},
+                                        {"pid": 30, "name": "node.exe"},
+                                        {"pid": 20, "name": "pwsh.exe"}, top], 50)
+                approver = self._bound([{"pid": 21, "name": "pwsh.exe"}, top], 51)
+                self.assertIsNone(godmode_lessons.shared_actor(promoter, approver))
+
+    def test_a_shared_interpreter_host_inside_a_terminal_is_one_actor(self) -> None:
+        top = {"pid": 5, "name": "WindowsTerminal.exe"}
+        host = {"pid": 30, "name": "node.exe"}
+        promoter = self._bound([{"pid": 40, "name": "bash"}, host,
+                                {"pid": 20, "name": "pwsh.exe"}, top], 50)
+        approver = self._bound([{"pid": 41, "name": "bash"}, host,
+                                {"pid": 20, "name": "pwsh.exe"}, top], 51)
+        self.assertIn("shared ancestor process (node.exe",
+                      godmode_lessons.shared_actor(promoter, approver) or "")
+
     def test_interpreters_pass_through_to_the_driving_program(self) -> None:
         lineage = [{"pid": 21, "name": "perl"}, {"pid": 22, "name": "ruby.exe"},
                    {"pid": 23, "name": "node"}, {"pid": 24, "name": "git"},
