@@ -88,16 +88,6 @@ _TABLE: dict[str, dict[str, tuple[str, str]]] = {
         # cell (this module's `REACH[...]["live_proof"]`, a different, per-
         # host field from these per-feature cells) stays empty until that
         # session happens.
-        #
-        # `ask-decision`'s cell here says `partial`, but `reach_table()`'s
-        # OWN channel-gate (`_capability_unreachable`, driven by
-        # `godmode_host_manifests.HOST_CAPABILITIES["grok"]["stdout"]`,
-        # which still declares only `{"deny", "additionalContext"}`, not
-        # `"ask"`) downgrades the rendered cell back to `no` until that one
-        # dict value also gains `"ask"` - a one-line, purely-additive
-        # change this task deliberately left to the file's own owner rather
-        # than editing it here. `post-edit-findings` needs no such
-        # companion change: `additionalContext` was already declared.
         "pre-tool-gate": (_Y, "PreToolUse wired; pinned live on 1.0.13 Windows via project-scope hooks"),
         "advisories": (_Y, "PreToolUse additionalContext delivered after the call"),
         "continuity-brief": (_Y, "SessionStart stdout ignored by Grok; the brief rides the first allowed call, pinned live"),
