@@ -8,6 +8,8 @@ exercises the actual stdlib resolution path these tests claim to cover.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import sys
@@ -486,9 +488,16 @@ class ConsoleWiringTests(unittest.TestCase):
                 from godmode_runtime.godmode_console import main
 
                 main(["--project", str(project), "init"])
-                with self.assertRaises(SystemExit):
-                    main(["--project", str(project), "upstream",
-                          "--diff", "x", "--path", str(project)])
+                err = io.StringIO()
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                    code = main(["--project", str(project), "upstream",
+                                 "--diff", "x", "--path", str(project)])
+                # argparse's mutual exclusion still refuses the pair; `main`
+                # reports it as the console's usage error with exit code 2.
+                self.assertEqual(code, 2)
+                payload = json.loads(err.getvalue())
+                self.assertEqual(payload["error"], "UsageError")
+                self.assertIn("--diff", payload["message"])
 
 
 class _MockStateHome:
