@@ -119,6 +119,22 @@ class WrapperTests(unittest.TestCase):
         self.assertEqual(decision("script -q /dev/null godmode adopt --confirm --as-operator"),
                          "ask")
 
+    def test_a_split_or_nested_operator_flag_under_a_wrapper_asks(self) -> None:
+        for command in ("script -qc 'godmode adopt --confirm --as-\"\"operator' /dev/null",
+                        "script -qc 'godmode adopt --confirm --as-\\operator' /dev/null",
+                        'timeout 60 script -qc "godmode adopt --confirm --as-operator" /dev/null',
+                        'env script -qc "godmode adopt --confirm --as-operator" /dev/null',
+                        'nohup script -qc "godmode adopt --confirm --as-operator" /dev/null',
+                        'nice -n 5 stdbuf -oL unbuffer godmode adopt --confirm --as-operator',
+                        'tmux new -d "$C"',
+                        'timeout 5 tmux new -d "$C"',
+                        "script -qc \"$(cat cmd.txt)\" /dev/null"):
+            with self.subTest(command=command):
+                self.assertEqual(decision(command), "ask")
+        self.assertEqual(pv.pty_wrapped("timeout -s KILL 60 env A=1 winpty git status"),
+                         "git status")
+        self.assertEqual(decision("winpty git status"), "allow")
+
     def test_an_abbreviated_operator_flag_under_a_wrapper_asks(self) -> None:
         for command in ('script -qc "godmode lesson add x --as-op" /dev/null',
                         "unbuffer godmode skill retire --name x --as-o"):

@@ -4885,6 +4885,19 @@ _MAX_HEAD_DEPTH = 3
 _AS_OPERATOR = re.compile(r"(?<![\w-])--as-o(?:p(?:e(?:r(?:a(?:t(?:o(?:r)?)?)?)?)?)?)?(?![\w-])")
 
 
+# Text the shell builds when the line runs: a variable, a `${...}`
+# expansion, a `$(...)` or backtick substitution (never `$'...'`, which is
+# quoting).
+_DYNAMIC_COMMAND_TEXT = re.compile(r"\$(?:[A-Za-z_{(@*#?!0-9-])|`")
+
+
+def _flattened(text: str) -> str:
+    """`text` with its quoting and escapes taken away, the way the shell
+    joins the pieces of one word: `--as-""operator`, `--as-\\operator`
+    and `--as-$'o'perator` all read `--as-operator`."""
+    return re.sub(r"[\"'`\\]", "", re.sub(r"\$(?=['\"])", "", text))
+
+
 def _command_words(normalized: str) -> str:
     """`normalized` with leading `VAR=value` assignments and control
     keywords removed - the text `_categorize` finds the command word in."""
@@ -4913,10 +4926,16 @@ def _head_form_verdicts(command: str, normalized: str,
         category, _protected, impact = _opaque_inline_verdict(normalized)
         found.append((category, [opaque, *impact]))
     wrapped = _pty_wrapped(command)
-    if wrapped is not None and _AS_OPERATOR.search(wrapped):
+    if wrapped is not None and _AS_OPERATOR.search(_flattened(wrapped)):
         found.append(("protection-weakening", [
             "runs an operator-only verb under a pseudo-terminal wrapper, where "
             "its confirmation prompt can be answered without the operator",
+            "only the operator should run it, at their own terminal"]))
+    elif wrapped is not None and _DYNAMIC_COMMAND_TEXT.search(wrapped):
+        found.append(("protection-weakening", [
+            "runs a command built when the line runs under a pseudo-terminal "
+            "wrapper, where an operator-only verb's confirmation can be "
+            "answered without the operator",
             "only the operator should run it, at their own terminal"]))
     verdicts = []
     for category, impact in found:
@@ -5206,6 +5225,21 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                 "operation_digest": "", "second_confirmation_required": second,
                 "external_repo_ref": external_repo_ref,
                 "impact": _operator_authorize_impact(operator_verb)})
+        # `script -qc "$(cat cmd)" /dev/null`: blanking leaves the wrapper
+        # an empty command, but it runs whatever the substitution prints.
+        for text, _ in _component_boundaries(
+                _without_heredoc_bodies(_marked_substitutions(sub_blanked, sub_spans))):
+            wrapped = _pty_wrapped(_command_words(text))
+            if wrapped is not None and _DYNAMIC_COMMAND_TEXT.search(wrapped):
+                category = "protection-weakening"
+                tier, second = _risk_tier(category, normalized)
+                parts.append({
+                    "protected": True, "category": category, "tier": tier,
+                    "operation_digest": "", "second_confirmation_required": second,
+                    "external_repo_ref": external_repo_ref,
+                    "impact": ["runs a command built when the line runs under a "
+                               "pseudo-terminal wrapper, where an operator-only verb's "
+                               "confirmation can be answered without the operator"]})
         # `cd "$(printf .git)" && echo x >> config`: the blanked line reads
         # `cd " "`, a directory inside the tree. Where a substitution stood
         # the directory is whatever it prints, so the directory walk reads
