@@ -479,6 +479,9 @@ _EXCLUSIVE_CREATE_SWEEP_SECONDS = 120
 # unrelated process) would otherwise wedge the archive for good, and no
 # legitimate write holds the lock this long.
 _EXCLUSIVE_CREATE_CEILING_SECONDS = 30 * 60
+# A takeover claim is held only for one read and one unlink; one older than
+# this was left by a writer that died holding it.
+_TAKEOVER_CLAIM_STALE_SECONDS = 10
 
 
 # Two different Godmode runtime versions writing the same project's
@@ -1500,8 +1503,7 @@ class Chronicle:
                 token = _lock_owner_payload(os.getpid(), time.time()).encode()
                 os.write(descriptor, token)
             except FileExistsError:
-                if self._exclusive_lock_abandoned():
-                    self.excl_lock_path.unlink(missing_ok=True)
+                if self._take_over_abandoned_exclusive_lock():
                     continue
                 if time.monotonic() >= deadline:
                     raise ArchiveError(_busy_message(self.excl_lock_path))
@@ -1521,6 +1523,59 @@ class Chronicle:
                 still_ours = False
             if still_ours:
                 self.excl_lock_path.unlink(missing_ok=True)
+
+    def _take_over_abandoned_exclusive_lock(self) -> bool:
+        """Remove the exclusive-create sidecar when its holder is gone, as
+        one writer only.
+
+        Judging and removing are two steps, so two waiters can both judge
+        the same abandoned sidecar: the first removes it and creates its
+        own, and a second that then removed "the" sidecar would remove the
+        first one's fresh lock and create another beside it. The removal is
+        therefore made under a short claim of its own (an exclusive-create
+        `.takeover` file), and only once the sidecar still holds exactly
+        the bytes that were judged abandoned; a sidecar that changed since
+        belongs to a new holder and is left alone. Returns whether this
+        writer removed it."""
+        try:
+            judged = self.excl_lock_path.read_bytes()
+        except OSError:
+            return False
+        if not self._exclusive_lock_abandoned():
+            return False
+        claim_path = self.excl_lock_path.with_name(self.excl_lock_path.name + ".takeover")
+        try:
+            claim = os.open(claim_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                            | getattr(os, "O_BINARY", 0), 0o600)
+        except FileExistsError:
+            # Another waiter is taking over right now. A claim is held only
+            # for a read and an unlink, so one left by a writer that died
+            # mid-claim is cleared once it is clearly older than that.
+            try:
+                if time.time() - claim_path.stat().st_mtime > _TAKEOVER_CLAIM_STALE_SECONDS:
+                    claim_path.unlink(missing_ok=True)
+            except OSError:  # godmode: swallow-ok: the next wait round looks again
+                pass
+            return False
+        except OSError:
+            return False
+        try:
+            try:
+                current = self.excl_lock_path.read_bytes()
+            except OSError:
+                return False
+            if current != judged or not self._exclusive_lock_abandoned():
+                return False
+            try:
+                self.excl_lock_path.unlink(missing_ok=True)
+            except OSError:
+                # Windows refuses to remove a file a live process still has
+                # open; the holder is not gone after all, so keep waiting.
+                return False
+            return True
+        finally:
+            os.close(claim)
+            claim_path.unlink(missing_ok=True)
 
     def _exclusive_lock_abandoned(self) -> bool:
         """Whether the exclusive-create sidecar's holder is provably gone.
