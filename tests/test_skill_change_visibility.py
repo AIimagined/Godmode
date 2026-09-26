@@ -196,6 +196,24 @@ class UnattendedCliTests(unittest.TestCase):
         self.assertNotIn("skills_changed_unattended", status)
 
 
+class LongArchiveTests(unittest.TestCase):
+    def test_a_change_older_than_five_hundred_records_is_still_seen(self) -> None:
+        from godmode_runtime.godmode_skillchange import (
+            SUBJECT, record_unattended_change, unattended_changes)
+        with isolated_project() as (_project, _s, _a, archive):
+            archive.initialize()
+            first = record_unattended_change(archive, "S-early", "demo", "edit")
+            for index in range(510):
+                archive.append("action", SUBJECT,
+                               {"session": "S-other", "skill": f"s{index}", "how": "edit"})
+            again = record_unattended_change(archive, "S-early", "demo", "retire")
+            rows = unattended_changes(archive, "S-early")
+        self.assertIsNotNone(first)
+        self.assertIsNone(again, "the skill already changed in this session")
+        self.assertEqual([(row["skill"], row["how"]) for row in rows],
+                         [("demo", ["edit", "retire"])])
+
+
 class BoundaryLockTests(unittest.TestCase):
     def _retired(self, project: Path) -> int:
         """A retirement record made before the lock was declared."""
@@ -309,6 +327,31 @@ class StagedApprovalTests(unittest.TestCase):
         self.assertEqual(lifecycle, "deprecated")
         self.assertNotEqual(again[0], 0, again[1])
 
+
+    def test_a_later_refusal_leaves_the_staged_approval_unspent(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            CapabilityBroker(archive).configure(PASSWORD)
+            target = _skill(project).parent / "SKILL.md"
+            target.write_text("# frozen title\n<!-- GODMODE-EDITABLE-START -->\nbody\n"
+                              "<!-- GODMODE-EDITABLE-END -->\n", encoding="utf-8")
+            _lock(project)
+            code, staged, err = _run(project, "authorize", "stage", "--operation",
+                                     "edit file skills/demo/SKILL.md", "--password-stdin",
+                                     stdin=PASSWORD + "\n")
+            self.assertEqual(code, 0, (staged, err))
+            with _attended(True):
+                frozen = _hook(project, "Edit", {"file_path": str(target),
+                                                 "old_string": "# frozen title",
+                                                 "new_string": "# new title"})
+                allowed = _hook(project, "Edit", {"file_path": str(target),
+                                                  "old_string": "body", "new_string": "text"})
+                spent = _hook(project, "Edit", {"file_path": str(target),
+                                                "old_string": "body", "new_string": "text"})
+        self.assertNotEqual(frozen[0], "allow", frozen)
+        self.assertIn("editable region", frozen[1])
+        self.assertEqual(allowed[0], "allow", allowed)
+        self.assertEqual(spent[0], "deny", spent)
 
 if __name__ == "__main__":
     unittest.main()

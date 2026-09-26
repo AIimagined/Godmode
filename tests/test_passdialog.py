@@ -161,6 +161,40 @@ def _staged(broker: CapabilityBroker) -> list[dict]:
     return broker._load().get("staged", [])  # noqa: SLF001
 
 
+class DisplayableOperationTests(unittest.TestCase):
+    def test_control_and_bidi_characters_are_shown_escaped(self) -> None:
+        operation = "echo safe\n\x1b[2Jrm -rf x \u202egnp.exe\u200b"
+        message = passdialog.approval_message(operation, 300)
+        self.assertIn("echo safe\\n\\u001b[2Jrm -rf x \\u202egnp.exe\\u200b", message)
+        for char in ("\x1b", "\u202e", "\u200b"):
+            self.assertNotIn(char, message)
+        self.assertEqual(message.count("\n"), passdialog.approval_message("x", 300).count("\n"))
+
+    def test_an_operation_longer_than_the_dialog_shows_is_refused_not_cut(self) -> None:
+        limit = passdialog.OPERATION_DISPLAY_LIMIT
+        passdialog.approval_message("a" * limit, 300)
+        with self.assertRaises(passdialog.OperationNotDisplayable) as ctx:
+            passdialog.approval_message("a" * (limit + 1), 300)
+        self.assertIn(str(limit), str(ctx.exception))
+        # Escaping counts: a short command full of control characters that
+        # would overflow the dialog once shown escaped is refused too.
+        with self.assertRaises(passdialog.OperationNotDisplayable):
+            passdialog.approval_message("\x1b" * (limit // 2), 300)
+
+    def test_staging_an_undisplayable_operation_stages_nothing(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            broker = CapabilityBroker(archive)
+            broker.configure(PASSWORD)
+            operation = "git reset --hard HEAD~1 " + "#" * passdialog.OPERATION_DISPLAY_LIMIT
+            with _no_terminal(PASSWORD) as messages:
+                code, out, err = _stage(project, "--operation", operation)
+            self.assertNotEqual(code, 0)
+            self.assertIn(str(passdialog.OPERATION_DISPLAY_LIMIT), out + err)
+            self.assertEqual(messages, [])
+            self.assertEqual(_staged(broker), [])
+
+
 class StageThroughTheDialogTests(unittest.TestCase):
     def test_the_right_password_stages_exactly_one_use_of_the_right_digest(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):

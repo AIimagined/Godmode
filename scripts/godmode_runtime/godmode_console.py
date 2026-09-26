@@ -441,7 +441,7 @@ def _require_archive(runtime: Runtime) -> None:
         raise ArchiveError(
             f"Godmode is not initialized at {project}'s current identity, but "
             f"{orphaned['records']} records exist under its previous one "
-            f"({orphaned['reason']}). Run `adopt --confirm` to relink them, or `init` "
+            f"({orphaned['reason']}). Run `adopt --confirm --as-operator` to relink them, or `init` "
             f"to start a separate archive and leave them unreachable."
         )
     raise ArchiveError(
@@ -523,6 +523,47 @@ def _resolve_operator_verified(runtime: Runtime, args: argparse.Namespace) -> bo
             password = getpass.getpass("Godmode authorization password: ")
         return broker.confirm_operator(password)
     return _confirm_operator_interactively()
+
+
+def _operator_decision_refusal(runtime: Runtime, args: argparse.Namespace,
+                               command: str) -> CommandResult | None:
+    """None when the operator made this decision, else the refusal to return.
+
+    `adopt --confirm` and `doctor --repair-fork` rewrite what the archive
+    trusts (its identity, which of two sealed records survives), so they are
+    the operator's to run, not an agent's: `--as-operator`, verified by the
+    password from `authorize setup` (via --password-stdin or a prompt), or
+    an interactive y/N when no password is configured - the same check
+    `skill retire --as-operator` uses. Unlike `_resolve_operator_verified`,
+    no initialized archive is required: adopt runs precisely when the
+    archive under this identity is missing."""
+    reason = f"`godmode {command}` is an operator decision"
+    if getattr(args, "as_operator", False):
+        from .godmode_sentinel import _require_tty
+
+        broker = CapabilityBroker(runtime.archive)
+        if broker.configured():
+            password = read_password_stdin() if getattr(args, "password_stdin", False) else None
+            if password is None:
+                _require_tty()
+                import getpass
+
+                password = getpass.getpass("Godmode authorization password: ")
+            if broker.confirm_operator(password):
+                return None
+            reason += "; the operator password did not verify"
+        elif _confirm_operator_interactively():
+            return None
+        else:
+            reason += "; it was not confirmed at an interactive prompt"
+    return CommandResult(
+        {"refused": True,
+         "reason": reason + ". Run it yourself with `--as-operator` (it asks for the "
+                            "password from `godmode authorize setup`, or reads it with "
+                            "--password-stdin).",
+         "confirm_with": f"godmode {command} --as-operator"},
+        exit_code=1,
+    )
 
 
 def _append(
@@ -654,7 +695,7 @@ def cmd_init(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         payload["orphaned_archive"] = orphaned
         payload["next_action"] = (
             "Records exist under this project's previous identity and this archive already "
-            "holds records of its own. Run `adopt --confirm` to relink them, or continue and "
+            "holds records of its own. Run `adopt --confirm --as-operator` to relink them, or continue and "
             "they stay unreachable."
         )
     if args.roles:
@@ -700,9 +741,12 @@ def cmd_adopt(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             return CommandResult(
                 {"preview": {**drift, "reason": "this archive was recorded under a "
                              "different identity than this checkout resolves"},
-                 "confirm_with": "--confirm"},
+                 "confirm_with": "--confirm --as-operator"},
                 exit_code=1,
             )
+        refusal = _operator_decision_refusal(runtime, args, "adopt --confirm")
+        if refusal is not None:
+            return refusal
         return CommandResult(runtime.archive.adopt_moved_identity())
     orphaned = runtime.archive.orphaned()
     source = args.source or (orphaned or {}).get("source")
@@ -710,9 +754,12 @@ def cmd_adopt(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         return CommandResult({"adopted": 0, "reason": "no stranded archive found for this project"})
     if not args.confirm:
         return CommandResult(
-            {"preview": orphaned or {"source": source}, "confirm_with": "--confirm"},
+            {"preview": orphaned or {"source": source}, "confirm_with": "--confirm --as-operator"},
             exit_code=1,
         )
+    refusal = _operator_decision_refusal(runtime, args, "adopt --confirm")
+    if refusal is not None:
+        return refusal
     runtime.archive.initialize()
     return CommandResult(runtime.archive.adopt(Path(source)))
 
@@ -5166,6 +5213,12 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         # An explicit operator decision: undo a same-sequence fork at the
         # tip (keep the sibling the chain anchor names, quarantine the
         # rest, chronicle the repair). Any other shape is refused as-is.
+        refusal = _operator_decision_refusal(runtime, args, "doctor --repair-fork")
+        if refusal is not None:
+            return CommandResult(
+                {"project": project,
+                 "fork_repair": {"repaired": False, **refusal.payload}},
+                exit_code=1)
         try:
             fork_repair = runtime.archive.repair_fork()
         except ArchiveError as exc:
@@ -5299,7 +5352,7 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
                        "detail": f"{stranded['records']} records exist under this project's previous "
                                  f"identity ({stranded['reason']}); "
                                  + ("`godmode init` relinks them" if stranded.get("adoptable")
-                                    else "`godmode adopt --confirm` relinks them")})
+                                    else "`godmode adopt --confirm --as-operator` relinks them")})
     common_dir = getattr(runtime.anchor, "git_common_dir", None)
     if common_dir and not str(runtime.archive.root).startswith(str(common_dir)):
         issues.append({"code": "archive-in-application-data", "severity": "info",
@@ -7558,7 +7611,9 @@ def _build_parser() -> argparse.ArgumentParser:
     init_parser.set_defaults(handler=cmd_init)
     adopt = sub.add_parser("adopt", help="Relink records stranded by an identity change (e.g. git init)")
     adopt.add_argument("--source", help="Archive root to adopt; defaults to the detected one")
-    adopt.add_argument("--confirm", action="store_true", help="Perform the relink, not just preview it")
+    adopt.add_argument("--confirm", action="store_true",
+                       help="Perform the relink, not just preview it (with --as-operator)")
+    _operator_flags(adopt)
     adopt.add_argument(
         "--from-docs", action="store_true",
         help="Seed a late install: counts-only adoption records citing each "
@@ -9018,7 +9073,9 @@ def _build_parser() -> argparse.ArgumentParser:
     doctor.add_argument(
         "--repair-fork", action="store_true",
         help="Repair a same-sequence fork at the chain's tip: keep the record the "
-             "chain anchor names, move the others to a quarantine folder, record it")
+             "chain anchor names, move the others to a quarantine folder, record it "
+             "(with --as-operator)")
+    _operator_flags(doctor)
     doctor.add_argument(
         "--host", help="Check one host's wiring instead: hook artifact present and "
                        "parsing, interpreter on PATH, archive writable, interception grade")

@@ -637,6 +637,99 @@ def project_resume_doc(project_root: Path) -> str | None:
 
 
 
+# The claim echo (`godmode-claim-echo.json`) is shared by every Stop and
+# SubagentStop of every session on this archive. Each park is a read-modify-
+# write under the archive's write lock, so two writers never lose each
+# other's items: a park for another session is kept aside under `others`
+# (bounded by age) instead of being overwritten, and sentences parked by the
+# same session accumulate instead of replacing each other.
+_ECHO_FIELDS = ("sentences", "obligations", "notices")
+_ECHO_MAX_SENTENCES = 6
+_ECHO_KEEP_SECONDS = 24 * 3600
+
+
+def _echo_entry(payload: dict[str, Any]) -> dict[str, Any]:
+    return {field: payload[field] for field in _ECHO_FIELDS if payload.get(field)}
+
+
+def _echo_others(parked: dict[str, Any], now: float) -> dict[str, Any]:
+    others = parked.get("others")
+    if not isinstance(others, dict):
+        return {}
+    return {str(key): value for key, value in others.items()
+            if isinstance(value, dict)
+            and now - float(value.get("at", 0) or 0) < _ECHO_KEEP_SECONDS}
+
+
+def _park_echo(archive: Chronicle, submitted: dict[str, Any], *,
+               sentences: list[str] | None = None,
+               obligations: list[str] | None = None,
+               notices: list[str] | None = None) -> None:
+    """Park items for this session's next prompt boundary. Sentences are
+    appended (deduplicated, bounded); obligations and notices replace this
+    session's earlier ones. Raises on failure; callers swallow."""
+    import time as _time
+    key = _session_key(submitted)
+    echo = archive.root / "godmode-claim-echo.json"
+    with archive.write_lock():
+        parked = json.loads(echo.read_text(encoding="utf-8")) if echo.exists() else {}
+        if not isinstance(parked, dict):
+            parked = {}
+        now = _time.time()
+        others = _echo_others(parked, now)
+        own = _echo_entry(parked)
+        if parked.get("session") != key:
+            if own and parked.get("session") is not None:
+                others[str(parked["session"])] = dict(own, at=parked.get("at") or now)
+            own = _echo_entry(others.pop(str(key), {})) if key is not None else {}
+        if sentences:
+            merged = list(own.get("sentences") or [])
+            merged += [item for item in sentences if item not in merged]
+            own["sentences"] = merged[-_ECHO_MAX_SENTENCES:]
+        if obligations:
+            own["obligations"] = list(obligations)
+        if notices:
+            own["notices"] = list(notices)
+        payload: dict[str, Any] = dict(own, session=key, at=now)
+        if others:
+            payload["others"] = others
+        echo.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def _take_echo(archive: Chronicle, current: str | None) -> dict[str, Any]:
+    """This session's parked items, removed from the echo; every other
+    session's parks stay for it, within the keep window. A park with no
+    time stamp, or past the window, stamped for a different session than
+    the prompt's own (a restart) is dropped undelivered; a prompt that
+    carries no identity takes the latest park."""
+    import time as _time
+    echo = archive.root / "godmode-claim-echo.json"
+    with archive.write_lock():
+        if not echo.exists():
+            return {}
+        parked = json.loads(echo.read_text(encoding="utf-8"))
+        if not isinstance(parked, dict):
+            parked = {}
+        now = _time.time()
+        others = _echo_others(parked, now)
+        if current is None or parked.get("session") == current:
+            taken = _echo_entry(parked)
+        else:
+            taken = _echo_entry(others.pop(str(current), {}))
+            # Another live session's park stays for that session; one with
+            # no stamp or past the keep window is dropped undelivered.
+            own = _echo_entry(parked)
+            fresh = bool(parked.get("at")) and now - float(parked["at"]) < _ECHO_KEEP_SECONDS
+            if own and parked.get("session") is not None and fresh:
+                others[str(parked["session"])] = dict(own, at=parked["at"])
+        if others:
+            echo.write_text(json.dumps({"others": others}, ensure_ascii=False),
+                            encoding="utf-8")
+        else:
+            echo.unlink()
+        return taken
+
+
 def _session_key(submitted: dict[str, Any]) -> str | None:
     """A stable per-session receipt key, from the host's own fields.
 
@@ -2506,7 +2599,7 @@ def _echo_contexts(parked: dict[str, Any], archive: Chronicle | None = None,
     omitting it (or strict mode) is today's behaviour, every time.
     """
     contexts: list[str] = []
-    sentences = [str(s)[:200] for s in (parked.get("sentences") or [])][:3]
+    sentences = [str(s)[:200] for s in (parked.get("sentences") or [])][:_ECHO_MAX_SENTENCES]
     touched = [str(s)[:120] for s in (parked.get("obligations") or [])][:2]
     notices = [str(s)[:400] for s in (parked.get("notices") or [])][:3]
 
@@ -2558,19 +2651,16 @@ def _take_parked_context(archive: Chronicle, anchor: Any, submitted: dict[str, A
                     "until current inspection confirms them): " + rendered)
     except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
         pass
-    echo = archive.root / "godmode-claim-echo.json"
     try:
-        if echo.exists():
-            payload = json.loads(echo.read_text(encoding="utf-8"))
-            echo.unlink()
-            current = _session_key(submitted)
-            if current is None or payload.get("session") == current:
-                # A nag parked at Stop for an ask closed since is dropped
-                # here, the turn it was closed (field report file 2026-09-10,
-                # finding 3: closed asks rode 3-5 more prompts).
-                payload["obligations"] = _still_open_obligation_lines(
-                    archive, list(payload.get("obligations") or []))
-                pieces.extend(_echo_contexts(payload, archive, current))
+        current = _session_key(submitted)
+        payload = _take_echo(archive, current)
+        if payload:
+            # A nag parked at Stop for an ask closed since is dropped
+            # here, the turn it was closed (field report file 2026-09-10,
+            # finding 3: closed asks rode 3-5 more prompts).
+            payload["obligations"] = _still_open_obligation_lines(
+                archive, list(payload.get("obligations") or []))
+            pieces.extend(_echo_contexts(payload, archive, current))
     except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
         pass
     try:
@@ -2912,6 +3002,28 @@ def _design_edit_staged(archive: Chronicle, relative: str) -> bool:
     from godmode_runtime.godmode_sentinel import design_edit_operation
     spent = _broker(archive).consume_staged(design_edit_operation(relative))
     return bool(spent and spent.get("protected"))
+
+
+def _design_edit_staged_present(archive: Chronicle, relative: str) -> bool:
+    """Whether an unexpired approval is staged for this design-surface edit,
+    without spending it: the edit's other checks run first, and only an
+    edit every check allows spends it (`_design_edit_staged`)."""
+    try:
+        from godmode_runtime.godmode_sentinel import design_edit_operation
+        broker = _broker(archive)
+        if not broker.configured():
+            return False
+        classification = broker._classify(design_edit_operation(relative))
+        if not classification.get("protected"):
+            return False
+        digest = classification.get("operation_digest")
+        import time as _time
+        now = int(_time.time())
+        return any(entry.get("operation_digest") == digest
+                   and int(entry.get("expires_at", 0)) >= now
+                   for entry in broker._load().get("staged", []))
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable store means nothing staged, so the edit is refused
+        return False
 
 
 def _sources_gate_reason(archive: Chronicle, anchor: Any,
@@ -3270,13 +3382,7 @@ def _park_echo_notices(archive: Chronicle, submitted: dict[str, Any], notices: l
     Grok, the next allowed tool call) - the one channel they take outside
     strict mode. Best-effort."""
     try:
-        echo = archive.root / "godmode-claim-echo.json"
-        parked = {}
-        if echo.exists():
-            parked = json.loads(echo.read_text(encoding="utf-8"))
-        parked["notices"] = [_ascii_echo(n)[:400] for n in notices[:3]]
-        parked["session"] = _session_key(submitted)
-        echo.write_text(json.dumps(parked, ensure_ascii=False), encoding="utf-8")
+        _park_echo(archive, submitted, notices=[_ascii_echo(n)[:400] for n in notices[:3]])
     except Exception:  # noqa: BLE001  # godmode: swallow-ok: a notice that cannot be parked is dropped, never raised into the host
         pass
 
@@ -3456,7 +3562,7 @@ def main(argv: list[str] | None = None) -> int:
                     "project": resolved_root,
                     "records": stranded["records"],
                     "reason": stranded["reason"],
-                    "next_action": "run `godmode adopt --confirm` to relink this project's history",
+                    "next_action": "run `godmode adopt --confirm --as-operator` to relink this project's history",
                 }
                 if claude_session:
                     _emit_claude_context(notice)
@@ -4086,18 +4192,8 @@ def main(argv: list[str] | None = None) -> int:
                     # deleted the moment the next prompt boundary delivers
                     # them back.
                     try:
-                        echo = archive.root / "godmode-claim-echo.json"
-                        parked = {}
-                        if echo.exists():
-                            parked = json.loads(echo.read_text(encoding="utf-8"))
-                        if touched:
-                            parked["obligations"] = touched
-                        if unsupported:
-                            parked["sentences"] = [
-                                _ascii_echo(s)[:200] for s in unsupported[:3]]
-                        parked["session"] = _session_key(submitted)
-                        echo.write_text(json.dumps(parked, ensure_ascii=False),
-                                        encoding="utf-8")
+                        _park_echo(archive, submitted, obligations=touched or None,
+                                   sentences=[_ascii_echo(s)[:200] for s in unsupported[:3]])
                     except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                         pass
                 # The completion gate: a DONE-shaped sentence among the
@@ -4207,15 +4303,8 @@ def main(argv: list[str] | None = None) -> int:
                         # becomes the note, and the parked echo carries it to
                         # the next prompt boundary.
                         try:
-                            echo = archive.root / "godmode-claim-echo.json"
-                            parked = {}
-                            if echo.exists():
-                                parked = json.loads(echo.read_text(encoding="utf-8"))
-                            parked["sentences"] = [
-                                _ascii_echo(s)[:200] for s in done_shaped[:3]]
-                            parked["session"] = _session_key(submitted)
-                            echo.write_text(json.dumps(parked, ensure_ascii=False),
-                                            encoding="utf-8")
+                            _park_echo(archive, submitted, sentences=[
+                                _ascii_echo(s)[:200] for s in done_shaped[:3]])
                         except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                             pass
                         print(json.dumps({"systemMessage": block_body["reason"]},
@@ -4244,14 +4333,8 @@ def main(argv: list[str] | None = None) -> int:
                     # model at the next prompt boundary (or, on Grok, on the
                     # first allowed tool call).
                     try:
-                        echo = archive.root / "godmode-claim-echo.json"
-                        parked = {}
-                        if echo.exists():
-                            parked = json.loads(echo.read_text(encoding="utf-8"))
-                        parked["notices"] = [_ascii_echo(n)[:400] for n in shown_notices]
-                        parked["session"] = _session_key(submitted)
-                        echo.write_text(json.dumps(parked, ensure_ascii=False),
-                                        encoding="utf-8")
+                        _park_echo(archive, submitted,
+                                   notices=[_ascii_echo(n)[:400] for n in shown_notices])
                     except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                         pass
                 return 0
@@ -4293,8 +4376,6 @@ def main(argv: list[str] | None = None) -> int:
                 # there, so the echo waits for the first allowed tool call
                 # (`_take_parked_context`) instead of dying here unread.
                 if echo_path.exists() and current_host() != "grok":
-                    parked = json.loads(echo_path.read_text(encoding="utf-8"))
-                    echo_path.unlink()
                     # Field report #4 (2026-09-01): after a restart the echo
                     # nagged a session about a reply it never wrote. The
                     # correction belongs to the session that owns the
@@ -4307,8 +4388,7 @@ def main(argv: list[str] | None = None) -> int:
                     # more than the rare stale echo; a stamped park meeting
                     # a differently-stamped prompt (the field case: restart
                     # on a host that states identity) still dies unread.
-                    if current is not None and parked.get("session") != current:
-                        parked = {}
+                    parked = _take_echo(archive, current)
                     contexts.extend(_echo_contexts(parked, archive, current))
             except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
@@ -5161,6 +5241,7 @@ def main(argv: list[str] | None = None) -> int:
         # rank, only the first target that is not allowed.
         target_checks_ran = bool(preview.get("allow") and event.targets)
         unattended_skills: list[tuple[str, str]] = []
+        staged_designs: list[dict[str, Any]] = []
         # Set only when plan-first allowed for a reason more edits cannot
         # undo; the fast gate's edit clearance needs it (below).
         plan_standing = False
@@ -5179,11 +5260,11 @@ def main(argv: list[str] | None = None) -> int:
                 # middle of a long run is the same keystroke as every other
                 # confirmation that session, which is not permission.
                 design = design_verdict(Path(anchor.project_root), target)
-                if not design["allowed"] and _design_edit_staged(archive, design["path"]):
-                    # The operator staged this exact edit with the password;
-                    # it is spent here, once. Every later check still runs.
-                    preview["capability_consumed"] = True
-                    preview["authorized_by"] = "staged capability"
+                if not design["allowed"] and _design_edit_staged_present(archive, design["path"]):
+                    # The operator staged this exact edit with the password.
+                    # It is spent only once every later check has allowed the
+                    # edit, so a refusal below leaves it staged.
+                    staged_designs.append(design)
                 elif not design["allowed"]:
                     preview["allow"] = False
                     preview["design_block"] = True
@@ -5272,6 +5353,21 @@ def main(argv: list[str] | None = None) -> int:
                         preview["reason"] = (
                             "the plan-first small-edit exemption could not be recorded "
                             f"({type(exc).__name__}); approve this edit or record a plan")
+
+            # Every check allowed the edit: only now is each staged design
+            # approval it needs spent, once. One that cannot be spent (taken
+            # or expired meanwhile) refuses the edit as the boundary would.
+            if preview.get("allow"):
+                for design in staged_designs:
+                    if _design_edit_staged(archive, design["path"]):
+                        preview["capability_consumed"] = True
+                        preview["authorized_by"] = "staged capability"
+                        continue
+                    preview["allow"] = False
+                    preview["design_block"] = True
+                    preview["boundary"] = design["boundary"]
+                    preview["reason"] = f"{design['detail']}. {design['remedy']}"
+                    break
 
         # The per-target checks above (design boundary, fence, frozen region,
         # repeated reversal, plan-first) run after the classifier's refusal

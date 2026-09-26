@@ -1,0 +1,1 @@
+- The approval password dialog now shows control, bidirectional and zero-width characters in a staged command as visible escapes, so the command shown is the command approved. A command too long for the dialog to show in full (600 characters as shown) is refused with that limit named, instead of being cut off.

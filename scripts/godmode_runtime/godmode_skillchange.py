@@ -40,6 +40,14 @@ def report_line(skill: str, how: str) -> str:
     return f"skills/{skill} changed ({how}) in an unattended session - review the diff"
 
 
+def _changes(archive: Any) -> list[dict[str, Any]]:
+    """Every unattended-change record, oldest first - read off the whole
+    archive, not `select(limit=...)`, which keeps only the newest matches
+    and so forgot a change once enough later ones accumulated."""
+    return [record for record in archive.read_events()
+            if record.get("kind") == "action" and record.get("subject") == SUBJECT]
+
+
 def record_unattended_change(archive: Any, session: str | None, skill: str,
                              how: str) -> str | None:
     """Record one unattended change; the report line the first time this
@@ -48,7 +56,7 @@ def record_unattended_change(archive: Any, session: str | None, skill: str,
     seen = any(
         (record.get("data") or {}).get("session") == key
         and (record.get("data") or {}).get("skill") == skill
-        for record in archive.select(kind="action", subject=SUBJECT, limit=500))
+        for record in _changes(archive))
     archive.append("action", SUBJECT, {"session": key, "skill": skill, "how": how})
     return None if seen else report_line(skill, how)
 
@@ -58,7 +66,7 @@ def unattended_changes(archive: Any, session: str | None) -> list[dict[str, Any]
     changed, oldest first."""
     key = session or "unsessioned"
     rows: dict[str, dict[str, Any]] = {}
-    for record in archive.select(kind="action", subject=SUBJECT, limit=500):
+    for record in _changes(archive):
         data = record.get("data") or {}
         if data.get("session") != key:
             continue

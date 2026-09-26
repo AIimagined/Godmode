@@ -1,0 +1,1 @@
+- An approval staged for an edit the design boundary refuses is now spent only when every other check allows the edit. Before, a later refusal (a scope fence, a frozen region, plan-first) spent the approval with no edit made.

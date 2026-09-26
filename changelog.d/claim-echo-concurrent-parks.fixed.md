@@ -1,0 +1,1 @@
+- Unrecorded claims parked for the next prompt are no longer lost when a subagent and its parent session, or two sessions on one project, finish at the same time. Each park is written under the archive lock, sentences from the same session accumulate, and another session's park is kept for that session.

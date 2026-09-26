@@ -30,11 +30,24 @@ from godmode_runtime.godmode_errors import ArchiveError  # noqa: E402
 from test_godmode_runtime import isolated_project  # noqa: E402
 
 
-def _doctor(project: Path, *args: str) -> tuple[int, dict]:
+PASSWORD = "fork repair operator"
+
+
+def _doctor(project: Path, *args: str, stdin: str = "") -> tuple[int, dict]:
     out = io.StringIO()
-    with mock.patch.object(sys, "stdout", out), mock.patch.object(sys, "stderr", io.StringIO()):
+    with mock.patch.object(sys, "stdout", out), mock.patch.object(sys, "stderr", io.StringIO()), \
+            mock.patch.object(sys, "stdin", io.StringIO(stdin)):
         code = console.main(["--project", str(project), "doctor", *args])
     return code, json.loads(out.getvalue())
+
+
+def _as_operator(project: Path, archive) -> tuple[int, dict]:
+    """`doctor --repair-fork` run by the operator: password verified."""
+    from godmode_runtime.godmode_sentinel import CapabilityBroker
+
+    CapabilityBroker(archive).configure(PASSWORD)
+    return _doctor(project, "--repair-fork", "--as-operator", "--password-stdin",
+                   stdin=PASSWORD + "\n")
 
 
 def _sibling(archive, of: dict, *, recorded_at: str, anchor: str,
@@ -73,7 +86,7 @@ class ForkRepairTests(unittest.TestCase):
             archive._write_chain_anchor(3, later["record_hash"])
             self.assertFalse(archive.verify(
                 [archive._read_json(p) for p in archive.event_paths()])["ok"])
-            code, report = _doctor(project, "--repair-fork")
+            code, report = _as_operator(project, archive)
             repair = report["fork_repair"]
             self.assertTrue(repair["repaired"], report)
             self.assertEqual(repair["kept_by"], "anchor")
@@ -93,6 +106,24 @@ class ForkRepairTests(unittest.TestCase):
             archive.append("claim", "after", {"text": "z"})
             self.assertTrue(archive.verify()["ok"])
 
+    def test_a_repair_not_run_as_the_operator_is_refused_and_leaves_the_fork(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            self._forked(archive)
+            before = _names(archive)
+            code, report = _doctor(project, "--repair-fork")
+            self.assertEqual(code, 1)
+            self.assertFalse(report["fork_repair"]["repaired"])
+            self.assertIn("--as-operator", report["fork_repair"]["reason"])
+            self.assertEqual(_names(archive), before)
+            from godmode_runtime.godmode_sentinel import CapabilityBroker
+
+            CapabilityBroker(archive).configure(PASSWORD)
+            code, report = _doctor(project, "--repair-fork", "--as-operator",
+                                   "--password-stdin", stdin="wrong\n")
+            self.assertEqual(code, 1)
+            self.assertIn("did not verify", report["fork_repair"]["reason"])
+            self.assertEqual(_names(archive), before)
+
     def test_without_an_anchor_at_the_fork_the_earliest_is_kept(self) -> None:
         with isolated_project() as (_project, _state, _anchor, archive):
             earlier, _later_path, _later = self._forked(archive)
@@ -106,7 +137,7 @@ class ForkRepairTests(unittest.TestCase):
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
             archive.append("claim", "one", {"text": "x"})
-            code, report = _doctor(project, "--repair-fork")
+            code, report = _as_operator(project, archive)
             self.assertEqual(code, 1)
             self.assertFalse(report["fork_repair"]["repaired"])
             self.assertIn("No fork", report["fork_repair"]["reason"])
