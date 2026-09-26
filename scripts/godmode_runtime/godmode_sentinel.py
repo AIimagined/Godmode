@@ -4550,7 +4550,9 @@ _MAX_HEAD_DEPTH = 3
 
 # An operator-only verb's own flag. Its confirmation prompt needs a
 # terminal, which is what a pseudo-terminal wrapper supplies.
-_AS_OPERATOR = re.compile(r"(?<![\w-])--as-operator(?![\w-])")
+# Any prefix of it counts: a parser that accepts abbreviations reads
+# `--as-op` as the full flag.
+_AS_OPERATOR = re.compile(r"(?<![\w-])--as-o(?:p(?:e(?:r(?:a(?:t(?:o(?:r)?)?)?)?)?)?)?(?![\w-])")
 
 
 def _command_words(normalized: str) -> str:
