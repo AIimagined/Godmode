@@ -101,5 +101,33 @@ class SubagentStopTests(unittest.TestCase):
             self.assertTrue(parked.get("sentences") or parked.get("notices"), parked)
 
 
+    def test_parks_from_two_sessions_and_a_parent_are_all_kept(self) -> None:
+        with _project() as (project, state, archive):
+            echo = archive.root / "godmode-claim-echo.json"
+            # The parent session's own Stop already parked a sentence.
+            echo.write_text(json.dumps({"sentences": ["parent probe-1111"],
+                                        "session": "S-a"}), encoding="utf-8")
+            transcript = _transcript(project.parent, DONE_TEXT)
+            for session in ("S-b", "S-a"):
+                sub = _fire("subagent-stop", project, state, {
+                    "hook_event_name": "SubagentStop", "session_id": session,
+                    "agent_id": "a-1", "agent_type": "general-purpose",
+                    "agent_transcript_path": str(transcript), "cwd": str(project)})
+                self.assertEqual(sub.returncode, 0, sub.stderr)
+            parked = json.loads(echo.read_text(encoding="utf-8"))
+            prompt = _fire("user-prompt", project, state, {
+                "hook_event_name": "UserPromptSubmit", "prompt": "go on",
+                "session_id": "S-b", "cwd": str(project)})
+            left = json.loads(echo.read_text(encoding="utf-8"))
+        self.assertEqual(parked.get("session"), "S-a", parked)
+        own = " ".join(parked.get("sentences") or [])
+        self.assertIn("probe-1111", own)
+        self.assertIn("migration", own)
+        self.assertIn("migration", " ".join(parked["others"]["S-b"]["sentences"]))
+        self.assertIn("migration", prompt.stdout)
+        self.assertNotIn("probe-1111", prompt.stdout)
+        self.assertIn("probe-1111", json.dumps(left))
+
+
 if __name__ == "__main__":
     unittest.main()
