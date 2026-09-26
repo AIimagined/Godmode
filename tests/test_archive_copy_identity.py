@@ -217,10 +217,11 @@ class MovedCheckoutSelfAdoptTests(unittest.TestCase):
         import subprocess
         from godmode_runtime import godmode_console as console
 
-        def run(project: Path, *args: str) -> tuple[int, dict]:
+        def run(project: Path, *args: str, stdin: str = "") -> tuple[int, dict]:
             out = io.StringIO()
             with mock.patch.object(sys, "stdout", out),                     mock.patch.object(sys, "stderr", io.StringIO()):
-                code = console.main(["--project", str(project), *args])
+                with mock.patch.object(sys, "stdin", io.StringIO(stdin)):
+                    code = console.main(["--project", str(project), *args])
             return code, json.loads(out.getvalue())
 
         with tempfile.TemporaryDirectory() as temporary:
@@ -242,8 +243,18 @@ class MovedCheckoutSelfAdoptTests(unittest.TestCase):
 
                 code, preview = run(moved, "adopt")
                 self.assertEqual(code, 1, preview)
-                self.assertEqual(preview["confirm_with"], "--confirm")
-                code, adopted = run(moved, "adopt", "--confirm")
+                self.assertEqual(preview["confirm_with"], "--confirm --as-operator")
+                # An operator decision: not run as the operator, it is refused
+                # and nothing is relinked.
+                code, refused = run(moved, "adopt", "--confirm")
+                self.assertEqual(code, 1, refused)
+                self.assertIn("--as-operator", refused["reason"])
+                self.assertIsNotNone(Chronicle(resolve_anchor(moved)).identity_drift())
+                from godmode_runtime.godmode_sentinel import CapabilityBroker
+
+                CapabilityBroker(moved_archive).configure("relink operator")
+                code, adopted = run(moved, "adopt", "--confirm", "--as-operator",
+                                    "--password-stdin", stdin="relink operator\n")
                 self.assertEqual(code, 0, adopted)
                 self.assertEqual(adopted["adopted"], "moved-checkout")
 

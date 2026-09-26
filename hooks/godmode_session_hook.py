@@ -3562,7 +3562,7 @@ def main(argv: list[str] | None = None) -> int:
                     "project": resolved_root,
                     "records": stranded["records"],
                     "reason": stranded["reason"],
-                    "next_action": "run `godmode adopt --confirm` to relink this project's history",
+                    "next_action": "run `godmode adopt --confirm --as-operator` to relink this project's history",
                 }
                 if claude_session:
                     _emit_claude_context(notice)

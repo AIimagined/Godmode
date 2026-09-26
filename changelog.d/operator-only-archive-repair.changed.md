@@ -1,0 +1,1 @@
+- `godmode adopt --confirm` and `godmode doctor --repair-fork` now refuse unless run with `--as-operator`: relinking an archive to a new identity and choosing which of two forked records survives are the operator's decisions, verified by the password from `authorize setup` (via `--password-stdin` or a prompt), or an interactive confirmation where no password is configured.

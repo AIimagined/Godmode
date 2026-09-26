@@ -1153,7 +1153,7 @@ class Chronicle:
                         "archive, that is the born identity drifting, not "
                         "tampering - `godmode adopt` previews relinking this "
                         "archive to this checkout's identity, and `godmode "
-                        "adopt --confirm` performs it (recorded, and the old "
+                        "adopt --confirm --as-operator` performs it (recorded, and the old "
                         "identity stays accepted for the records it wrote)."
                     )
             if existing.get("schema_version") != SCHEMA_VERSION:
