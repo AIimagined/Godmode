@@ -61,7 +61,11 @@ def console_verbs() -> list[str]:
     import importlib
 
     console = importlib.import_module("godmode_runtime.godmode_console")
-    return parser_verbs(console._build_parser())  # noqa: SLF001
+    # A deprecated alias is kept for one release so old scripts still run;
+    # it is not a verb anyone is asked to reach for, so it is not counted.
+    retired = getattr(console, "DEPRECATED_ALIASES", {})
+    return [v for v in parser_verbs(console._build_parser())  # noqa: SLF001
+            if v not in retired]
 
 
 def _read(path: Path) -> str:

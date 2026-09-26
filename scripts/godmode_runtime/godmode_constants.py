@@ -246,7 +246,8 @@ ACTION_SUBJECTS = frozenset(
         # arrived, never minted as a request the operator is waited on to
         # close.
         "agent-relay-seen",
-        "atlas-query", "capability-consumed", "capability-issued", "chain-reanchored",
+        "archive-identity-adopted",
+        "atlas-query", "chain-fork-repaired", "capability-consumed", "capability-issued", "chain-reanchored",
         # A compaction is a context eviction that destroys the evidence it
         # happened. Without a record, a session cannot say it compacted at all,
         # and every later "what I have seen so far" rests on an invisible gap.
