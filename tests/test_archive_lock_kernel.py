@@ -686,6 +686,15 @@ class SlowHolderTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(peak[0], 1, "two writers held the fallback lock at once")
 
+    def test_the_threat_model_states_when_the_fallback_lock_is_taken_over(self) -> None:
+        from godmode_runtime import godmode_chronicle as C
+
+        text = (PLUGIN_ROOT / "THREAT-MODEL.md").read_text(encoding="utf-8")
+        row = next(line for line in text.splitlines() if line.startswith("| Archive fork"))
+        self.assertNotIn("only from a holder whose process is gone", row)
+        self.assertIn(f"{C._EXCLUSIVE_CREATE_CEILING_SECONDS // 60} minutes old", row)
+        self.assertIn("another host", row)
+
     def test_release_leaves_a_sidecar_that_is_no_longer_its_own(self) -> None:
         with tempfile.TemporaryDirectory(prefix="godmode-lock-root-") as root, \
                 tempfile.TemporaryDirectory(prefix="godmode-lock-state-") as state:
