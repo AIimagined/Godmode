@@ -988,6 +988,10 @@ def _script_command(tokens: list[str]) -> str | None:
             continue
         positional.append(token)
         index += 1
+        # BSD: every word after the typescript file is the command, its
+        # own options included - option parsing stops at the file.
+        if index < len(tokens) and not tokens[index].startswith("-"):
+            return shlex.join(tokens[index:])
     if len(positional) >= 2:
         return shlex.join(positional[1:])
     return None

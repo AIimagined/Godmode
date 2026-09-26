@@ -112,6 +112,13 @@ class WrapperTests(unittest.TestCase):
                 self.assertTrue(verdict["protected"], verdict)
                 self.assertGreaterEqual(verdict["tier"], "R4")
 
+    def test_the_bsd_script_form_runs_every_word_after_the_file(self) -> None:
+        self.assertEqual(pv.pty_wrapped("script -q /dev/null godmode adopt --confirm --as-operator"),
+                         "godmode adopt --confirm --as-operator")
+        self.assertEqual(pv.pty_wrapped("script /dev/null -qc 'godmode status'"), "godmode status")
+        self.assertEqual(decision("script -q /dev/null godmode adopt --confirm --as-operator"),
+                         "ask")
+
     def test_an_abbreviated_operator_flag_under_a_wrapper_asks(self) -> None:
         for command in ('script -qc "godmode lesson add x --as-op" /dev/null',
                         "unbuffer godmode skill retire --name x --as-o"):

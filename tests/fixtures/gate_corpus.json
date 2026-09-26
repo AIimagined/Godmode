@@ -1933,5 +1933,12 @@
     "class": "by-design",
     "tool": "Bash",
     "note": "near-miss: the agent's own request verb through the console module"
+  },
+  {
+    "operation": "script -q /dev/null godmode adopt --confirm --as-operator",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "BSD `script`: every word after the typescript file is the command, its flags included"
   }
 ]
