@@ -553,7 +553,11 @@ _LITERAL_FLAG = re.compile(r"^--?[a-z][a-z0-9-]*(?:=[^$`@(%{]*)?$")
 # Heads that feed words from their input onto the command they run, so the
 # verb after `authorize` is not in the text at all.
 _ARGUMENT_FEEDERS = frozenset({"xargs", "xargs.exe", "parallel"})
-_GODMODE_LAUNCHER = re.compile(r"(?i)^godmode(?:\.(?:py|pyw|cmd|bat|exe|ps1|sh))?$")
+# The launcher, or the console module it runs, by file (`godmode_console.py`)
+# or by module name (`-m godmode_runtime.godmode_console`, any package prefix).
+_GODMODE_LAUNCHER = re.compile(
+    r"(?i)^(?:godmode(?:\.(?:py|pyw|cmd|bat|exe|ps1|sh))?"
+    r"|(?:[\w.]+\.)?godmode_console(?:\.pyw?)?)$")
 
 
 def _operator_authorize_verb(normalized: str, argv: list[str] | None) -> str | None:

@@ -1912,5 +1912,26 @@
     "class": "by-design",
     "tool": "Bash",
     "note": "near-miss: a read after a substituted directory change writes nothing"
+  },
+  {
+    "operation": "cd scripts && python -m godmode_runtime.godmode_console authorize stage x",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "the console module by module name opens the operator's password prompt"
+  },
+  {
+    "operation": "python scripts/godmode_runtime/godmode_console.py authorize stage x",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "the console module by file opens the operator's password prompt"
+  },
+  {
+    "operation": "python -m godmode_runtime.godmode_console authorize request --operation x",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: the agent's own request verb through the console module"
   }
 ]
