@@ -322,10 +322,28 @@ class StagedApprovalTests(unittest.TestCase):
                                           "--reason", "x")
                 again = _run(project, "skill", "restore", "--seq", str(retired.get("sequence")))
             lifecycle = json.loads(evals.read_text(encoding="utf-8"))["lifecycle"]
-        self.assertEqual(operation, "edit file skills/demo/godmode-evals.json")
+        self.assertEqual(operation, "retire skill demo")
         self.assertEqual(code, 0, (retired, err))
         self.assertEqual(lifecycle, "deprecated")
         self.assertNotEqual(again[0], 0, again[1])
+
+    def test_an_edit_approval_is_not_spent_by_a_whole_skill_command(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            CapabilityBroker(archive).configure(PASSWORD)
+            evals = _skill(project)
+            _lock(project)
+            code, staged, err = _run(project, "authorize", "stage", "--operation",
+                                     "edit file skills/demo/godmode-evals.json", "--password-stdin",
+                                     stdin=PASSWORD + "\n")
+            self.assertEqual(code, 0, (staged, err))
+            with _attended(False):
+                code, retired, err = _run(project, "skill", "retire", "--name", "demo",
+                                          "--reason", "x")
+            lifecycle = json.loads(evals.read_text(encoding="utf-8")).get("lifecycle")
+        self.assertNotEqual(code, 0, retired)
+        self.assertIn('retire skill demo', json.loads(err)["message"])
+        self.assertNotEqual(lifecycle, "deprecated")
 
 
     def test_a_later_refusal_leaves_the_staged_approval_unspent(self) -> None:

@@ -79,6 +79,12 @@ def unattended_changes(archive: Any, session: str | None) -> list[dict[str, Any]
             for row in rows.values()]
 
 
+def skill_operation(action: str, skill: str) -> str:
+    """The operation text a locked skill's `action` is staged and spent
+    under: one action on one whole skill."""
+    return f"{action} skill {skill}"
+
+
 def skill_boundary_refusal(project_root: Path, skill_dir: Path, action: str, *,
                            operator_verified: bool = False, archive: Any = None,
                            primary: str = "SKILL.md") -> str | None:
@@ -86,11 +92,12 @@ def skill_boundary_refusal(project_root: Path, skill_dir: Path, action: str, *,
     boundary covers, or None. The same `design_verdict` the pre-tool hook
     applies to an Edit/Write is asked of the skill's own files, in every
     session, `primary` (the file this action writes) first. Only the
-    operator moves it, the same two ways as the hook's refusal: an approval
-    staged with the password for the first locked file (spent here, once),
-    or the command run `--as-operator` with the password verified."""
+    operator moves it: an approval staged with the password for this action
+    on this skill (`retire skill <name>`, spent here, once) - never one
+    staged for editing a single file, which unlocks that file alone - or
+    the command run `--as-operator` with the password verified."""
     from .godmode_fence import _PLUGIN_ROOT, design_verdict
-    from .godmode_sentinel import CapabilityBroker, design_edit_operation, stage_operation_hint
+    from .godmode_sentinel import CapabilityBroker, stage_operation_hint
 
     if operator_verified:
         return None
@@ -102,7 +109,7 @@ def skill_boundary_refusal(project_root: Path, skill_dir: Path, action: str, *,
         verdict = design_verdict(root, str(path))
         if verdict["allowed"]:
             continue
-        operation = design_edit_operation(str(verdict["path"]))
+        operation = skill_operation(action, skill_dir.name)
         if archive is not None:
             spent = CapabilityBroker(archive).consume_staged(operation)
             if spent and spent.get("protected"):

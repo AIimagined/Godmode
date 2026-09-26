@@ -1276,6 +1276,9 @@ _REDIRECT = re.compile(r"(?<![<>])>{1,2}(?!&)\s*(?P<target>[^\s;&|<>]*)")
 # scan - a per-write capability prompt only teaches the operator to switch the
 # gate off. Paths that are not ordinary working files are excluded below.
 _TOOL_FILE_EDIT = re.compile(r"(?i)^(?:write|edit) file\s+(?P<path>.+)$")
+# A whole-skill command on a locked skill (`retire skill <name>`): staged and
+# spent under its own action, never under one file's edit approval.
+_SKILL_ACTION = re.compile(r"(?i)^(?:retire|restore|forge) skill\s+(?P<name>[A-Za-z0-9][\w.-]*)$")
 
 # The file that switches this module's own enforcement between "enforce" and
 # "observe" (`CapabilityBroker._policy()`, below). Defined here, ahead of
@@ -6561,11 +6564,18 @@ def design_surface_of(operation: str, project_root: Path) -> str | None:
     operation lands on when `.godmode-boundaries.json` declares it a design
     surface, else None. The hook refuses such an edit outright; this is what
     lets the operator's staged approval for it exist and be spent."""
+    from .godmode_designsurface import design_surface
+
+    skill = _SKILL_ACTION.match(operation.strip())
+    if skill:
+        for root in ("skills", ".claude/skills"):
+            surface = design_surface(project_root, f"{root}/{skill.group('name')}/SKILL.md")
+            if surface is not None:
+                return surface
+        return None
     edit = _TOOL_FILE_EDIT.match(operation.strip())
     if not edit:
         return None
-    from .godmode_designsurface import design_surface
-
     return design_surface(project_root, edit.group("path").strip().strip("\"'"))
 
 

@@ -255,7 +255,8 @@ watching is reported once and listed by `godmode status`; list a skill in
 `.godmode-boundaries.json` (`"ui": {"declared": ["skills/<name>/**"]}`) and every
 writer - an edit, `skill forge`, `retire`, `restore` - is refused in every session
 unless you make the change yourself, stage it with the password as the refusal
-shows (`authorize stage --operation "edit file <path>"`), or run the skill command
+shows (`authorize stage --operation "edit file <path>"` for one edit, `"retire skill <name>"`,
+`"restore skill <name>"` or `"forge skill <name>"` for a skill command), or run the skill command
 `--as-operator`.
 
 Every verb, its purpose, and a command that verifies it:

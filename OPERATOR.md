@@ -86,7 +86,9 @@ A project skill changes in either row; an unattended change is reported once per
 session and listed by `godmode status`. To lock a skill, list `skills/<name>/**` in
 `.godmode-boundaries.json`'s `ui.declared`: edits, `skill forge`, `retire` and
 `restore` are then refused in every session; stage the one change with the password
-as the refusal shows (`authorize stage --operation "edit file <path>"`), run the skill
+as the refusal shows (`authorize stage --operation "edit file <path>"` for an edit,
+`"retire skill <name>"`, `"restore skill <name>"` or `"forge skill <name>"` for a skill
+command; an edit approval never unlocks a skill command), run the skill
 command `--as-operator` (it asks for the password), or make the edit yourself.
 
 `godmode operator --policy` prints both rows and names which one is
