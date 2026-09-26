@@ -1,0 +1,1 @@
+- `cd -` is now followed back to the directory the previous change left, so `cd sub && cd - && echo x >> notes.txt` is judged as a write in the project root instead of asking.

@@ -203,6 +203,12 @@ class DirectoryChangeTests(unittest.TestCase):
                 self.assertEqual(decision(command), "ask")
         self.assertEqual(decision("cd docs && echo x>>notes.txt"), "allow")
 
+    def test_cd_dash_returns_to_the_directory_before_the_last_change(self) -> None:
+        self.assertEqual(decision("cd sub && cd - && echo x >> notes.txt"), "allow")
+        self.assertEqual(decision("cd .git && cd - && echo x >> config"), "allow")
+        self.assertEqual(decision("cd .git && cd - && cd - && echo x >> config"), "ask")
+        self.assertEqual(decision("cd - && echo x >> config"), "ask")
+
     def test_an_unresolvable_directory_change_asks(self) -> None:
         self.assertEqual(decision("cd $x && echo x >> config"), "ask")
         self.assertEqual(decision("cd .. && echo x > notes.txt"), "ask")

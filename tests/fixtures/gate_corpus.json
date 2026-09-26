@@ -1856,5 +1856,33 @@
     "class": "by-design",
     "tool": "Bash",
     "note": "near-miss: a glued redirect inside an ordinary subdirectory"
+  },
+  {
+    "operation": "cd sub && cd - && echo x >> notes.txt",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: `cd -` returns to the project root before the write"
+  },
+  {
+    "operation": "cd .git && cd - && echo x >> config",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: `cd -` leaves `.git` before the write"
+  },
+  {
+    "operation": "cd .git && cd - && cd - && echo x >> config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a second `cd -` goes back into `.git`"
+  },
+  {
+    "operation": "cd - && echo x >> config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "`cd -` first goes to a directory the command never named"
   }
 ]

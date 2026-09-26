@@ -4666,6 +4666,9 @@ def _segment_directories(segments: list[str], root: Path) -> list[str | None]:
     None where the move names a directory the text cannot resolve."""
     start = os.path.normpath(os.path.abspath(str(root)))
     current: str | None = start
+    # `cd -` returns to the directory the last change left (OLDPWD); the
+    # one the command started from was set before it, so it is unknown.
+    previous: str | None = None
     stack: list[str | None] = []
     directories: list[str | None] = []
     for text in segments:
@@ -4675,11 +4678,14 @@ def _segment_directories(segments: list[str], root: Path) -> list[str | None]:
             continue
         kind, target = change
         if kind == "popd":
-            current = stack.pop() if stack else None
+            previous, current = current, (stack.pop() if stack else None)
             continue
         if kind == "pushd":
             stack.append(current)
-        current = _changed_directory(current, target, kind)
+        if kind == "chdir" and target == "-":
+            previous, current = current, previous
+            continue
+        previous, current = current, _changed_directory(current, target, kind)
     return directories
 
 
