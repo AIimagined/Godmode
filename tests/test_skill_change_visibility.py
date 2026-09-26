@@ -327,6 +327,41 @@ class StagedApprovalTests(unittest.TestCase):
         self.assertEqual(lifecycle, "deprecated")
         self.assertNotEqual(again[0], 0, again[1])
 
+    def test_a_scripts_only_boundary_stages_the_retire_it_refuses(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            CapabilityBroker(archive).configure(PASSWORD)
+            evals = _skill(project)
+            script = evals.parent / "scripts" / "run.sh"
+            script.parent.mkdir()
+            script.write_text("echo run\n", encoding="utf-8")
+            _lock(project, "skills/*/scripts/**")
+            with _attended(False):
+                code, refused, err = _run(project, "skill", "retire", "--name", "demo",
+                                          "--reason", "x")
+                self.assertNotEqual(code, 0, refused)
+                operation = _stage_as_printed(self, project, json.loads(err)["message"])
+                code, retired, err = _run(project, "skill", "retire", "--name", "demo",
+                                          "--reason", "x")
+            lifecycle = json.loads(evals.read_text(encoding="utf-8"))["lifecycle"]
+        self.assertEqual(operation, "retire skill demo")
+        self.assertEqual(code, 0, (retired, err))
+        self.assertEqual(lifecycle, "deprecated")
+
+    def test_every_skill_root_is_a_design_surface_for_a_skill_action(self) -> None:
+        from godmode_runtime.godmode_sentinel import design_surface_of
+        with isolated_project() as (project, _s, _a, _archive):
+            grok = project / ".grok" / "skills" / "demo"
+            grok.mkdir(parents=True)
+            (grok / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+            _lock(project, ".grok/skills/**")
+            self.assertEqual(design_surface_of("forge skill demo", project),
+                             ".grok/skills/demo/SKILL.md")
+            self.assertEqual(design_surface_of("forge skill fresh", project),
+                             ".grok/skills/fresh/SKILL.md")
+            _lock(project, "skills/*/scripts/**")
+            self.assertIsNone(design_surface_of("retire skill demo", project))
+
     def test_an_edit_approval_is_not_spent_by_a_whole_skill_command(self) -> None:
         with isolated_project() as (project, _s, _a, archive):
             archive.initialize()

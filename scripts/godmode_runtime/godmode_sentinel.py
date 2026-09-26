@@ -6741,10 +6741,21 @@ def design_surface_of(operation: str, project_root: Path) -> str | None:
 
     skill = _SKILL_ACTION.match(operation.strip())
     if skill:
-        for root in ("skills", ".claude/skills"):
-            surface = design_surface(project_root, f"{root}/{skill.group('name')}/SKILL.md")
-            if surface is not None:
-                return surface
+        # The files `skill_boundary_refusal` asks about, so an action it
+        # refuses can be staged: the skill's own files, then every file
+        # under its directory, in every skill root a skill command writes.
+        name = skill.group("name")
+        root = Path(project_root)
+        for skills in ("skills", ".claude/skills", ".grok/skills"):
+            skill_dir = root / skills / name
+            candidates = [f"{skills}/{name}/SKILL.md", f"{skills}/{name}/godmode-evals.json"]
+            if skill_dir.is_dir():
+                candidates += [path.relative_to(root).as_posix()
+                               for path in sorted(skill_dir.rglob("*")) if path.is_file()]
+            for candidate in candidates:
+                surface = design_surface(project_root, candidate)
+                if surface is not None:
+                    return surface
         return None
     edit = _TOOL_FILE_EDIT.match(operation.strip())
     if not edit:
