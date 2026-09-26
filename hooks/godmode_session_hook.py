@@ -3005,11 +3005,20 @@ def _design_edit_staged(archive: Chronicle, relative: str) -> bool:
 
 
 def _design_edit_staged_present(archive: Chronicle, relative: str) -> bool:
-    """Whether an unexpired approval is staged for this design-surface edit,
-    without spending it: the edit's other checks run first, and only an
-    edit every check allows spends it (`_design_edit_staged`)."""
+    """Whether an approval staged for this design-surface edit would be
+    spent, without spending it: the edit's other checks run first, and only
+    an edit every check allows spends its approvals (`_design_edit_staged`).
+
+    The approval is judged the way spending it would judge it - signature,
+    operation, expiry, the repository, worktree, HEAD and branch it was
+    minted for, and whether it was already used - so an edit with several
+    locked targets is refused before any of its approvals is spent, rather
+    than spending the first and then failing on a later one."""
     try:
-        from godmode_runtime.godmode_sentinel import design_edit_operation
+        import hmac
+        import time as _time
+
+        from godmode_runtime.godmode_sentinel import _decode, design_edit_operation
         broker = _broker(archive)
         if not broker.configured():
             return False
@@ -3017,11 +3026,32 @@ def _design_edit_staged_present(archive: Chronicle, relative: str) -> bool:
         if not classification.get("protected"):
             return False
         digest = classification.get("operation_digest")
-        import time as _time
+        data = broker._load()
         now = int(_time.time())
-        return any(entry.get("operation_digest") == digest
-                   and int(entry.get("expires_at", 0)) >= now
-                   for entry in broker._load().get("staged", []))
+        # Spending takes the first staged entry for this operation, so that
+        # is the one judged here.
+        entry = next((e for e in data.get("staged", [])
+                      if e.get("operation_digest") == digest), None)
+        if entry is None or int(entry.get("expires_at", 0)) < now:
+            return False
+        parts = str(entry.get("token", "")).split(".")
+        if len(parts) != 3 or parts[0] != "gm1":
+            return False
+        expected = hmac.new(_decode(data["signing_key"]), parts[1].encode(),
+                            hashlib.sha256).digest()
+        if not hmac.compare_digest(expected, _decode(parts[2])):
+            return False
+        body = json.loads(_decode(parts[1]).decode("utf-8"))
+        if body.get("operation_digest") != digest or int(body.get("expires_at", 0)) < now:
+            return False
+        minted = body.get("context")
+        if minted:
+            current = broker._mint_context()
+            if any(str(minted.get(field, "")) != str(current.get(field, ""))
+                   for field in ("project_key", "worktree", "head", "branch")):
+                return False
+        nonce = hashlib.sha256(str(body.get("nonce", "")).encode()).hexdigest()
+        return nonce not in data.get("consumed", [])
     except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable store means nothing staged, so the edit is refused
         return False
 
@@ -5354,21 +5384,6 @@ def main(argv: list[str] | None = None) -> int:
                             "the plan-first small-edit exemption could not be recorded "
                             f"({type(exc).__name__}); approve this edit or record a plan")
 
-            # Every check allowed the edit: only now is each staged design
-            # approval it needs spent, once. One that cannot be spent (taken
-            # or expired meanwhile) refuses the edit as the boundary would.
-            if preview.get("allow"):
-                for design in staged_designs:
-                    if _design_edit_staged(archive, design["path"]):
-                        preview["capability_consumed"] = True
-                        preview["authorized_by"] = "staged capability"
-                        continue
-                    preview["allow"] = False
-                    preview["design_block"] = True
-                    preview["boundary"] = design["boundary"]
-                    preview["reason"] = f"{design['detail']}. {design['remedy']}"
-                    break
-
         # The per-target checks above (design boundary, fence, frozen region,
         # repeated reversal, plan-first) run after the classifier's refusal
         # was recorded, so a denial born here needs its own record - exactly
@@ -5420,6 +5435,23 @@ def main(argv: list[str] | None = None) -> int:
                         "remove the entry or approve to proceed")
             except Exception:  # noqa: BLE001  # godmode: swallow-ok: deliberate broad handler: this boundary never raises into the host
                 pass
+
+        # Every check, the declared tool gate included, allowed the edit, and
+        # each staged design approval it needs was judged spendable above:
+        # only now are they spent, together. An edit any check stops keeps
+        # every one of its approvals staged for the retry. One taken by
+        # another process in between refuses the edit as the boundary would.
+        if staged_designs and preview.get("allow"):
+            for design in staged_designs:
+                if _design_edit_staged(archive, design["path"]):
+                    preview["capability_consumed"] = True
+                    preview["authorized_by"] = "staged capability"
+                    continue
+                preview["allow"] = False
+                preview["design_block"] = True
+                preview["boundary"] = design["boundary"]
+                preview["reason"] = f"{design['detail']}. {design['remedy']}"
+                break
 
         # U-E7 observe mode: the single point every check above converges at.
         # Ceilings, the watchdog, the classifier's ask/deny split, the design
