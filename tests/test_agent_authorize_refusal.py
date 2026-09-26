@@ -55,6 +55,21 @@ REFUSED = (
     ("python scripts\\godmode.py authorize stage --from-last-refusal", "PowerShell"),
     ('powershell -Command "godmode authorize stage --operation x"', "PowerShell"),
     ("cd x; godmode authorize setup", "PowerShell"),
+    # A verb the shell builds when the line runs can be any verb: only a
+    # literal `request`, `requests` or `deny` is an agent's.
+    ("godmode authorize $(echo stage)", "Bash"),
+    ("godmode authorize ${v:-stage}", "Bash"),
+    ("v=stage; godmode authorize $v", "Bash"),
+    ("godmode authorize `echo stage`", "Bash"),
+    ("godmode authorize --$(echo x) request", "Bash"),
+    ("godmode authorize ('st'+'age')", "PowerShell"),
+    ("godmode authorize @a", "PowerShell"),
+    ("bash -c 'godmode authorize $(echo stage)'", "Bash"),
+    # xargs feeds the verb from its input, so it is never in the text.
+    ("echo stage | xargs godmode authorize", "Bash"),
+    ("echo stage | xargs -0 godmode authorize", "Bash"),
+    ("xargs -a verbs.txt godmode authorize", "Bash"),
+    ("echo x | xargs godmode authorize request", "Bash"),
 )
 
 FREE = (
@@ -62,6 +77,8 @@ FREE = (
     "godmode authorize requests",
     "python scripts/godmode.py authorize requests --state requested",
     "echo godmode authorize stage",
+    "godmode authorize deny --request R-1 --reason 'not now'",
+    "godmode --json authorize requests",
 )
 
 _HOST_ENV = None
@@ -132,6 +149,8 @@ class HookTests(unittest.TestCase):
             self.assert_refused(_decide(project, STAGE))
             self.assert_refused(_decide(project, "python scripts\\godmode.py authorize setup",
                                         tool="PowerShell"))
+            self.assert_refused(_decide(project, "godmode authorize $(echo stage)"))
+            self.assert_refused(_decide(project, "echo stage | xargs godmode authorize"))
 
     def test_refused_under_auto_mode_and_unattended(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):

@@ -1632,5 +1632,68 @@
     "class": "by-design",
     "tool": "Bash",
     "note": "git's verb is built by a substitution"
+  },
+  {
+    "operation": "godmode authorize $(echo stage)",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "an authorize verb not written out literally"
+  },
+  {
+    "operation": "godmode authorize ${v:-stage}",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "an authorize verb not written out literally"
+  },
+  {
+    "operation": "v=stage; godmode authorize $v",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "an authorize verb not written out literally"
+  },
+  {
+    "operation": "godmode authorize ('st'+'age')",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "an authorize verb not written out literally"
+  },
+  {
+    "operation": "godmode authorize @a",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "an authorize verb not written out literally"
+  },
+  {
+    "operation": "echo stage | xargs godmode authorize",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "an authorize verb not written out literally"
+  },
+  {
+    "operation": "echo stage | xargs -0 godmode authorize",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "an authorize verb not written out literally"
+  },
+  {
+    "operation": "xargs -a verbs.txt godmode authorize",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "an authorize verb not written out literally"
+  },
+  {
+    "operation": "godmode authorize deny --request R-1 --reason 'not now'",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: deny is an agent's verb"
   }
 ]

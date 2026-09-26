@@ -543,6 +543,16 @@ def _positionals(tokens: list[str], value_flags: frozenset[str] = frozenset()) -
 # behalf - and an agent that can raise the prompt can ask for it to be
 # answered. `request`/`requests` are the verbs meant for agents and stay free.
 _OPERATOR_AUTHORIZE_VERBS = frozenset({"stage", "setup", "grant", "issue"})
+# The only `authorize` verbs an agent's call may run, and only when written
+# out literally: a verb the shell builds when the line runs (`$(echo stage)`,
+# `${v:-stage}`, PowerShell's `('st'+'age')` or `@args`) can be any verb.
+_AGENT_AUTHORIZE_VERBS = frozenset({"request", "requests", "deny"})
+# A flag written out literally; anything else before the verb could expand
+# into the verb itself.
+_LITERAL_FLAG = re.compile(r"^--?[a-z][a-z0-9-]*(?:=[^$`@(%{]*)?$")
+# Heads that feed words from their input onto the command they run, so the
+# verb after `authorize` is not in the text at all.
+_ARGUMENT_FEEDERS = frozenset({"xargs", "xargs.exe", "parallel"})
 _GODMODE_LAUNCHER = re.compile(r"(?i)^godmode(?:\.(?:py|pyw|cmd|bat|exe|ps1|sh))?$")
 
 
@@ -561,13 +571,34 @@ def _operator_authorize_verb(normalized: str, argv: list[str] | None) -> str | N
     for index, token in enumerate(lowered):
         if token != "authorize":
             continue
-        heads = (t.lstrip("({").replace("\\", "/").rsplit("/", 1)[-1] for t in lowered[:index])
+        heads = [t.lstrip("({").replace("\\", "/").rsplit("/", 1)[-1] for t in lowered[:index]]
         if not any(_GODMODE_LAUNCHER.match(head) for head in heads):
             continue
-        positionals = _positionals(lowered[index + 1:])
-        if positionals and positionals[0] in _OPERATOR_AUTHORIZE_VERBS:
-            return positionals[0]
+        if any(head in _ARGUMENT_FEEDERS for head in heads):
+            return "<verb from xargs input>"
+        rest = lowered[index + 1:]
+        dynamic_flag = next((t for t in rest if t.startswith("-") and not _LITERAL_FLAG.match(t)),
+                            None)
+        if dynamic_flag is not None:
+            return dynamic_flag
+        positionals = _positionals(rest)
+        if not positionals or positionals[0] in _AGENT_AUTHORIZE_VERBS:
+            continue
+        return positionals[0]
     return None
+
+
+def _operator_authorize_impact(verb: str) -> list[str]:
+    if verb in _OPERATOR_AUTHORIZE_VERBS:
+        return [f"`authorize {verb}` opens the operator's password prompt, "
+                "and an agent's tool call must never raise it",
+                f"the operator types `! godmode authorize {verb} ...` "
+                "themselves; an agent records `godmode authorize request` instead"]
+    return [f"`authorize {verb[:40]}` is not a literal `request`, `requests` or `deny`, "
+            "so it may open the operator's password prompt, and an agent's tool call "
+            "must never raise it",
+            "the operator types `! godmode authorize ...` themselves; an agent "
+            "records `godmode authorize request` instead"]
 
 
 def _protection_weakening(normalized: str, argv: list[str] | None,
@@ -1847,7 +1878,7 @@ _OPAQUE_POLICY_WRITE_EVIDENCE = re.compile(re.escape(POLICY_FILENAME))
 # wrapper deeper, judged the same as the bare command.
 _OPAQUE_OPERATOR_AUTHORIZE = re.compile(
     r"(?i)godmode(?:\.(?:py|pyw|cmd|bat|exe|ps1|sh))?[\"']?\s+(?:\S+\s+){0,3}?"
-    r"authorize\s+(?:stage|setup|grant|issue)\b")
+    r"authorize\s+(?!(?:request|requests|deny)(?![\w$`(@%{-]))[^\s;&|)]")
 
 
 def _opaque_inline_verdict(payload: str) -> tuple[str, bool, list[str]]:
@@ -3796,10 +3827,7 @@ def _categorize(normalized: str, project_root: Path | None = None,
     operator_verb = _operator_authorize_verb(normalized, argv)
     if operator_verb is not None:
         return ("operator-authorization-from-agent", True,
-                [f"`authorize {operator_verb}` opens the operator's password prompt, "
-                 "and an agent's tool call must never raise it",
-                 f"the operator types `! godmode authorize {operator_verb} ...` "
-                 "themselves; an agent records `godmode authorize request` instead"])
+                _operator_authorize_impact(operator_verb))
 
     weakened = _protection_weakening(normalized, argv, write_target)
     if weakened is not None:
@@ -4834,6 +4862,18 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                 "external_repo_ref": external_repo_ref,
                 "impact": ["the command NAME is produced by a substitution; what "
                            "this line runs cannot be read from the text", *impact]})
+        # Blanking the substitution also blanks an `authorize` verb it builds
+        # (`godmode authorize $(echo stage)`): the verb is read on the whole
+        # line, where a verb that is not in the text is refused.
+        operator_verb = _operator_authorize_verb(normalized, _argv_tokens(normalized))
+        if operator_verb is not None:
+            category = "operator-authorization-from-agent"
+            tier, second = _risk_tier(category, normalized)
+            parts.append({
+                "protected": True, "category": category, "tier": tier,
+                "operation_digest": "", "second_confirmation_required": second,
+                "external_repo_ref": external_repo_ref,
+                "impact": _operator_authorize_impact(operator_verb)})
         worst = max(parts, key=lambda v: (v["protected"], v["tier"]))
         worst["impact"] = sorted({item for v in parts for item in v["impact"]})
         worst["operation_digest"] = hashlib.sha256(normalized.encode()).hexdigest()
