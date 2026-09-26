@@ -949,6 +949,13 @@ _HARM_HINT = re.compile(
 # Quote, escape and caret characters a shell removes before it runs a word:
 # `r"m"`, `p\ush` and `pu^sh` all run the word the screen must see.
 _FLATTEN = re.compile(r"[\"'\\^`]")
+# The `$` of Bash's ANSI-C and locale quoting (`$'sh'`, `$"sh"`) and the `+`
+# joining two quoted PowerShell strings (`'pu'+'sh'`): both vanish before
+# the word runs, so `git "pu"$'sh'` is read as `git push`.
+_QUOTE_JOINS = re.compile(r"\$(?=[\"'])|(?<=[\"'])\s*\+\s*(?=[\"'])")
+# An expansion the shell performs before the word runs: its result is not
+# in the text, so no keyword screen can clear it.
+_EXPANSION = re.compile(r"\$[({'\"]")
 # `godmode_sentinel._SCRIPT_HEADS` (copied; the drift guard compares them):
 # the classifier reads a script these run, so the screen reads it too.
 _SCRIPT_HEADS = frozenset({
@@ -995,7 +1002,11 @@ def _hint_strings(payload: dict[str, Any]) -> list[str] | None:
 
 def _names_harm(text: str) -> bool:
     lowered = text.lower()
-    return bool(_HARM_HINT.search(lowered) or _HARM_HINT.search(_FLATTEN.sub("", lowered)))
+    if _EXPANSION.search(lowered):
+        return True
+    joined = _FLATTEN.sub("", _QUOTE_JOINS.sub("", lowered))
+    return bool(_HARM_HINT.search(lowered) or _HARM_HINT.search(_FLATTEN.sub("", lowered))
+                or _HARM_HINT.search(joined))
 
 
 def _script_bodies(text: str, roots: list[str]) -> list[str] | None:
@@ -1043,15 +1054,103 @@ def harm_candidate(payload: dict[str, Any], roots: list[str]) -> bool:
         bodies = _script_bodies(text, roots)
         if bodies is None or any(_names_harm(body) for body in bodies):
             return True
+    # A path that resolves to the guard's own setting names no keyword at
+    # all when it is spelled with a glob (`.gi?/conf*`).
+    try:
+        return _writes_guard_setting(strings, roots[0] if roots else None)
+    except Exception:  # noqa: BLE001 - an unresolvable path is doubt, and doubt is a candidate
+        return True
+
+
+# Words that change the directory a later relative path resolves against.
+_CD_HEADS = frozenset({"cd", "pushd", "chdir", "set-location", "sl", "push-location"})
+# Where one path-shaped word ends: whitespace and the shell's own operators,
+# plus the `=`/`,` a `dd of=...` or a `-Path:...` style argument joins on.
+_PATH_WORD_SPLIT = re.compile(r"[\s;&|()<>=,{}]+")
+# A word the shell expands before it is a path: its value is not in the text.
+_DYNAMIC_WORD = re.compile(r"[$`%]")
+_GLOB_CHARS = re.compile(r"[*?\[]")
+
+
+def _guard_setting_files(root: str | None) -> list[str]:
+    """The files the guard's setting lives in, as absolute paths: the
+    machine-wide settings file and, for a repository, `<git common dir>/
+    config` (the file `godmode.uninitialized` is read from)."""
+    if str(HOOKS_DIR) not in sys.path:
+        sys.path.insert(0, str(HOOKS_DIR))
+    from godmode_initstate import _git_location, canonical, machine_settings_path
+    files = [machine_settings_path()]
+    if root:
+        try:
+            located = _git_location(canonical(root))
+        except (OSError, ValueError):
+            located = None
+        if located is not None:
+            files.append(os.path.join(located[1], "config"))
+    return [os.path.normcase(os.path.normpath(os.path.abspath(path))) for path in files]
+
+
+def _writes_guard_setting(texts: list[str], root: str | None) -> bool:
+    """Whether any path-shaped word in `texts` resolves to a file the
+    guard's setting lives in - read from what the path resolves to, not
+    how it is spelled: `.` and `..` are normalised, a `cd`/`pushd`/
+    `Set-Location` earlier in the call moves the directory relative words
+    resolve against, and a glob matches when it could name the file. A
+    directory change the text cannot resolve (`cd $x`) makes any word that
+    could name `config` count."""
+    files = _guard_setting_files(root)
+    base = os.path.abspath(root) if root else os.getcwd()
+    home = os.path.expanduser("~")
+    # Each text is read twice: with quotes dropped (a backslash is a
+    # Windows separator) and flattened the way the shell removes escapes.
+    readings = [reading for text in texts
+                for reading in (re.sub(r"[\"']", "", text), _FLATTEN.sub("", text))]
+    for text in readings:
+        words = [word for word in _PATH_WORD_SPLIT.split(text) if word]
+        bases = [base]
+        dynamic_base = False
+        for index, word in enumerate(words):
+            if word.lower() in _CD_HEADS:
+                bases.append(home)
+            if word.lower() in _CD_HEADS and index + 1 < len(words):
+                target = words[index + 1]
+                if _DYNAMIC_WORD.search(target) or _GLOB_CHARS.search(target):
+                    dynamic_base = True
+                elif target not in ("-", "--"):
+                    if target.startswith("~"):
+                        target = home + target[1:]
+                    bases.extend(os.path.join(known, target) for known in list(bases))
+        for word in words:
+            if word.startswith("~"):
+                word = home + word[1:]
+            leaf = word.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].lower()
+            if leaf and (dynamic_base or _DYNAMIC_WORD.search(word)) and any(
+                    _fnmatch(os.path.basename(path), leaf) for path in files):
+                return True
+            if _DYNAMIC_WORD.search(word):
+                continue
+            for known in bases:
+                shown = os.path.normcase(os.path.normpath(os.path.join(known, word)))
+                if any(_fnmatch(path, shown) for path in files):
+                    return True
     return False
 
 
-def _disables_guard(operation: str, targets: list[str]) -> bool:
+def _fnmatch(name: str, pattern: str) -> bool:
+    import fnmatch
+    if not _GLOB_CHARS.search(pattern):
+        return os.path.normcase(name) == os.path.normcase(pattern)
+    return fnmatch.fnmatchcase(os.path.normcase(name), os.path.normcase(pattern))
+
+
+def _disables_guard(operation: str, targets: list[str], root: str | None = None) -> bool:
     """Whether this call would change the guard's own setting: the
     machine-wide file, `godmode config set uninitialized`, or a
     repository's `godmode.uninitialized` key. Changing it is the operator's
     decision, so it is asked about like a harm-class command, and never
-    rides silently beside one in the same compound command."""
+    rides silently beside one in the same compound command. A write is
+    judged by the file it resolves to (`_writes_guard_setting`), however
+    the path to it is spelled."""
     for text in (operation, _FLATTEN.sub("", operation)):
         if _GUARD_SETTING_TEXT.search(text):
             return True
@@ -1062,7 +1161,10 @@ def _disables_guard(operation: str, targets: list[str]) -> bool:
         if (shown == ".git/config" or shown.endswith("/.git/config")
                 or shown.endswith("godmode-settings.json")):
             return True
-    return False
+    try:
+        return _writes_guard_setting([operation, *targets], root)
+    except Exception:  # noqa: BLE001 - a path this cannot resolve is doubt, and doubt asks
+        return True
 
 
 def _inside_tree(text: str, root: str, contained: Any) -> bool:

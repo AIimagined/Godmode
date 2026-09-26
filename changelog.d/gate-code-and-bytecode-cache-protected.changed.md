@@ -1,0 +1,1 @@
+- A write into Godmode's own install directory or into the private bytecode cache its hook launchers use now needs your approval the same way a change to Godmode's settings does, since a file planted there runs inside the gate.

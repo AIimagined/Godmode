@@ -1,0 +1,1 @@
+- `godmode authorize` run from an agent's tool call is now refused unless its verb is written out literally as `request`, `requests` or `deny`: a verb built when the line runs (`$(echo stage)`, `${v:-stage}`, `$v`, PowerShell's `('st'+'age')` or `@args`) and any `xargs ... godmode authorize` can open the operator's password prompt and no longer pass.

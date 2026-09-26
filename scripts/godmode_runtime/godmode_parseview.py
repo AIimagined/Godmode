@@ -744,7 +744,10 @@ _START_PROCESS_VALUED = ("filepath", "argumentlist", "args", "workingdirectory",
 # Wrappers that run a command under a pseudo-terminal. A terminal is what
 # an operator-only prompt checks for, so running one of those verbs under a
 # wrapper is not the operator at a keyboard.
-_PTY_WRAPPERS = frozenset({"script", "winpty", "unbuffer", "expect", "pty", "ptyrun"})
+# `tmux`, `screen`, `socat`, `ssh -t` and `setsid` hand the command a
+# terminal (or a new session) of their own the same way.
+_PTY_WRAPPERS = frozenset({"script", "winpty", "unbuffer", "expect", "pty", "ptyrun",
+                           "tmux", "screen", "socat", "ssh", "setsid"})
 
 
 def _call_operator(segment: str) -> tuple[str | None, str]:

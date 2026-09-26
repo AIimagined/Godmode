@@ -7466,7 +7466,15 @@ class _JSONErrorArgumentParser(argparse.ArgumentParser):
     defaults its `parser_class` to the parser's own class, so every
     subparser (`sub = parser.add_subparsers(...)`, `sub.add_parser(
     "remember", ...)`, ...) inherits this without being named
-    individually."""
+    individually.
+
+    Abbreviated long options are refused (`allow_abbrev=False`), and every
+    subparser inherits that the same way: `--as-op` must never parse as
+    `--as-operator`, since the gate matches the flag as it is written."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        kwargs["allow_abbrev"] = False
+        super().__init__(*args, **kwargs)
 
     def error(self, message: str) -> None:  # type: ignore[override]
         if _JSON_ARGPARSE_ERRORS:

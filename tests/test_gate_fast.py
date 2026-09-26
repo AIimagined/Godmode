@@ -685,6 +685,24 @@ class UninitializedGuard(unittest.TestCase):
                 self.assertEqual(self._decision(self._run(command)), "ask")
                 self.assertEqual(self._decision(self._no_ask(command, session=command)), "deny")
 
+    def test_a_push_spelled_through_shell_quoting_asks(self) -> None:
+        # ANSI-C and locale quoting leave no `push` word in the text; the
+        # screen must still hand them to the classifier.
+        for command in ("git \"pu\"$'sh' -f", "git pu$\"sh\" --force"):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(self._run(command)), "ask")
+
+    def test_a_program_or_git_verb_built_at_run_time_asks(self) -> None:
+        # The classifier cannot name the program (an expression or a
+        # variable as the command word, a substitution as git's verb); on
+        # a call that already named a harm-class word that is not cleared.
+        for command, tool in (("& ('gi'+'t') push -f", "PowerShell"),
+                              ("$g push --force", "Bash"),
+                              ("git $(printf pu)sh -f", "Bash")):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(self._run(command, tool=tool)), "ask")
+        self.assertIsNone(self._run("echo $(date) && git status"))
+
     def test_releases_and_history_rewrites_ask(self) -> None:
         for command in ("npm publish", "gh release create v1", "git reset --hard HEAD~3",
                         "git branch -D topic", "git push origin v1.0"):
@@ -722,6 +740,21 @@ class UninitializedGuard(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self._decision(self._run(command)), "ask")
                 self.assertEqual(self._decision(self._no_ask(command, session=command)), "deny")
+
+    def test_a_write_resolving_to_the_setting_is_asked_about_however_spelled(self) -> None:
+        # The file a write lands in decides, not how its path is spelled:
+        # `.`/`..`, a directory change earlier in the call, a glob.
+        settings_glob = (self.home / "godmode-setting?.json").as_posix()
+        for command in (r"printf '[\x67odmode]\n\tuninitialize\x64 = off\n' >> .git/./config",
+                        r"cd .git && printf '[\x67odmode]\n\tuninitialize\x64 = off\n' >> config",
+                        "echo x >> .gi?/conf*",
+                        f"echo {{}} > {settings_glob}"):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(self._run(command)), "ask")
+                self.assertEqual(self._decision(self._no_ask(command, session=command)), "deny")
+        for command in ("echo x > docs/config", "cd docs && echo x > notes"):
+            with self.subTest(command=command):
+                self.assertIsNone(self._run(command))
 
     def test_an_edit_of_the_repository_config_is_asked_about(self) -> None:
         body = {"hook_event_name": "PreToolUse", "tool_name": "Write",
@@ -808,6 +841,8 @@ class UninitializedGuardScreen(unittest.TestCase):
             "bash -c 'git push --force'", "python -c \"import os; os.system('rm -rf /')\"",
             "echo pw | godmode authorize stage --password-stdin",
             "g\"i\"t pu''sh --force", "git p\\ush --force", "r^m -rf ..\\x",
+            "git \"pu\"$'sh' -f", "git pu$\"sh\" -f", "git $(printf pu)sh -f",
+            "git ${x:-push} -f",
         ]
         missed = []
         for command in samples:

@@ -112,6 +112,35 @@ class WrapperTests(unittest.TestCase):
                 self.assertTrue(verdict["protected"], verdict)
                 self.assertGreaterEqual(verdict["tier"], "R4")
 
+    def test_an_abbreviated_operator_flag_under_a_wrapper_asks(self) -> None:
+        for command in ('script -qc "godmode lesson add x --as-op" /dev/null',
+                        "unbuffer godmode skill retire --name x --as-o"):
+            with self.subTest(command=command):
+                verdict = classify_action(command, project_root=PLUGIN_ROOT)
+                self.assertTrue(verdict["protected"], verdict)
+                self.assertGreaterEqual(verdict["tier"], "R4")
+
+    def test_session_and_socket_wrappers_around_an_operator_verb_ask(self) -> None:
+        for command in ('tmux new -d "godmode lesson add x --as-operator"',
+                        "screen -dm godmode lesson add x --as-operator",
+                        "socat - EXEC:'godmode lesson add x --as-operator',pty",
+                        "ssh -t host godmode lesson add x --as-operator",
+                        "setsid godmode lesson add x --as-operator"):
+            with self.subTest(command=command):
+                verdict = classify_action(command, project_root=PLUGIN_ROOT)
+                self.assertTrue(verdict["protected"], verdict)
+                self.assertGreaterEqual(verdict["tier"], "R4")
+
+    def test_the_cli_refuses_an_abbreviated_long_option(self) -> None:
+        from godmode_runtime.godmode_console import _build_parser
+        parser = _build_parser()
+        self.assertFalse(parser.allow_abbrev)
+        with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+            parser.parse_args(["skill", "retire", "--name", "x", "--reason", "y", "--as-op"])
+        args = parser.parse_args(["skill", "retire", "--name", "x", "--reason", "y",
+                                  "--as-operator"])
+        self.assertTrue(args.as_operator)
+
     def test_dot_sourcing_a_script_runs_it_as_a_script(self) -> None:
         self.assertIn("bash ./x.sh", pv.command_readings(". ./x.sh"))
         self.assertIn("pwsh ./x.ps1", pv.command_readings(". ./x.ps1"))

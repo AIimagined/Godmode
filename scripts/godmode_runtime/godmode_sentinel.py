@@ -543,6 +543,16 @@ def _positionals(tokens: list[str], value_flags: frozenset[str] = frozenset()) -
 # behalf - and an agent that can raise the prompt can ask for it to be
 # answered. `request`/`requests` are the verbs meant for agents and stay free.
 _OPERATOR_AUTHORIZE_VERBS = frozenset({"stage", "setup", "grant", "issue"})
+# The only `authorize` verbs an agent's call may run, and only when written
+# out literally: a verb the shell builds when the line runs (`$(echo stage)`,
+# `${v:-stage}`, PowerShell's `('st'+'age')` or `@args`) can be any verb.
+_AGENT_AUTHORIZE_VERBS = frozenset({"request", "requests", "deny"})
+# A flag written out literally; anything else before the verb could expand
+# into the verb itself.
+_LITERAL_FLAG = re.compile(r"^--?[a-z][a-z0-9-]*(?:=[^$`@(%{]*)?$")
+# Heads that feed words from their input onto the command they run, so the
+# verb after `authorize` is not in the text at all.
+_ARGUMENT_FEEDERS = frozenset({"xargs", "xargs.exe", "parallel"})
 _GODMODE_LAUNCHER = re.compile(r"(?i)^godmode(?:\.(?:py|pyw|cmd|bat|exe|ps1|sh))?$")
 
 
@@ -561,21 +571,89 @@ def _operator_authorize_verb(normalized: str, argv: list[str] | None) -> str | N
     for index, token in enumerate(lowered):
         if token != "authorize":
             continue
-        heads = (t.lstrip("({").replace("\\", "/").rsplit("/", 1)[-1] for t in lowered[:index])
+        heads = [t.lstrip("({").replace("\\", "/").rsplit("/", 1)[-1] for t in lowered[:index]]
         if not any(_GODMODE_LAUNCHER.match(head) for head in heads):
             continue
-        positionals = _positionals(lowered[index + 1:])
-        if positionals and positionals[0] in _OPERATOR_AUTHORIZE_VERBS:
-            return positionals[0]
+        if any(head in _ARGUMENT_FEEDERS for head in heads):
+            return "<verb from xargs input>"
+        rest = lowered[index + 1:]
+        dynamic_flag = next((t for t in rest if t.startswith("-") and not _LITERAL_FLAG.match(t)),
+                            None)
+        if dynamic_flag is not None:
+            return dynamic_flag
+        positionals = _positionals(rest)
+        if not positionals or positionals[0] in _AGENT_AUTHORIZE_VERBS:
+            continue
+        return positionals[0]
     return None
 
 
+def _operator_authorize_impact(verb: str) -> list[str]:
+    if verb in _OPERATOR_AUTHORIZE_VERBS:
+        return [f"`authorize {verb}` opens the operator's password prompt, "
+                "and an agent's tool call must never raise it",
+                f"the operator types `! godmode authorize {verb} ...` "
+                "themselves; an agent records `godmode authorize request` instead"]
+    return [f"`authorize {verb[:40]}` is not a literal `request`, `requests` or `deny`, "
+            "so it may open the operator's password prompt, and an agent's tool call "
+            "must never raise it",
+            "the operator types `! godmode authorize ...` themselves; an agent "
+            "records `godmode authorize request` instead"]
+
+
+# A host's plugin install tree holding Godmode (`~/.claude/plugins/cache/
+# <marketplace>/godmode/<version>/...`): code the gate itself runs.
+_PLUGIN_INSTALL_TREE = re.compile(r"(?i)[/\\]\.[^/\\]+[/\\]plugins[/\\](?:[^/\\]+[/\\])*?godmode(?:[/\\]|$)")
+
+
+def _godmode_code_dirs(project_root: Path | None) -> list[str]:
+    """Directories whose files run inside the gate: the private bytecode
+    cache the hook launchers point Python at (`<application home>/pycache`)
+    and the plugin's own install directory - unless the project being
+    worked on is that directory (Godmode's own repository)."""
+    dirs: list[str] = []
+    try:
+        from .godmode_anchor import application_home
+        dirs.append(str(application_home() / "pycache"))
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: no home means no cache is written
+        pass
+    plugin = Path(__file__).resolve().parents[2]
+    try:
+        root = Path(project_root).resolve() if project_root is not None else None
+    except (OSError, ValueError):
+        root = None
+    if root is None or not (root == plugin or plugin in root.parents or root in plugin.parents):
+        dirs.append(str(plugin))
+    return [os.path.normcase(os.path.abspath(entry)).lower().rstrip("\\/") for entry in dirs]
+
+
+def _lands_in_godmode_code(target: str, project_root: Path | None) -> bool:
+    """Whether a write to `target` lands where Godmode's own gate code or
+    its bytecode lives: a planted `.pyc` there runs inside the gate."""
+    cleaned = os.path.expanduser(os.path.expandvars(target.strip().strip("\"'")))
+    if _PLUGIN_INSTALL_TREE.search(cleaned):
+        return True
+    # A relative path lands in the project, and the project is excluded
+    # only when it is Godmode's own repository.
+    if not os.path.isabs(cleaned):
+        return False
+    try:
+        shown = os.path.normcase(os.path.abspath(cleaned)).lower()
+    except (OSError, ValueError):
+        return False
+    return any(shown == entry or shown.startswith(entry + os.sep)
+               for entry in _godmode_code_dirs(project_root))
+
+
 def _protection_weakening(normalized: str, argv: list[str] | None,
-                          write_target: str | None) -> str | None:
+                          write_target: str | None,
+                          project_root: Path | None = None) -> str | None:
     """What this segment would weaken of Godmode's own protection, or None."""
     settings = MACHINE_SETTINGS_FILENAME.lower()
     if write_target and settings in write_target.lower():
         return f"a write to the machine-wide Godmode settings: {write_target[:80]}"
+    if write_target and _lands_in_godmode_code(write_target, project_root):
+        return f"a write to Godmode's own code or bytecode cache: {write_target[:80]}"
     if not argv:
         return None
     lowered = [token.lower() for token in argv]
@@ -584,6 +662,9 @@ def _protection_weakening(normalized: str, argv: list[str] | None,
                       or any(pattern.search(normalized) for pattern in _SAFE_INSPECTION_PATTERNS))
     if not reads_only and any(settings in token for token in lowered[1:]):
         return "the machine-wide Godmode settings file"
+    if not reads_only and any(_lands_in_godmode_code(token, project_root)
+                              for token in argv[1:] if not token.startswith("-")):
+        return "Godmode's own code or bytecode cache"
     if head in ("git", "git.exe") and len(lowered) > 1 and lowered[1] == "config":
         rest = lowered[2:]
         if not any(_GODMODE_GIT_KEY.match(token) for token in rest):
@@ -1226,6 +1307,7 @@ _POLICY_READ_BACKOFF_SECONDS = 0.02
 # session (their own editor/terminal), which stays the intended declaration
 # path; nor `apply_profile`'s/`init`'s own direct filesystem writes, which
 # never go through `classify_action` at all.
+_GLOB_TARGET = re.compile(r"[*?\[]")
 _SENSITIVE_EDIT = re.compile(
     r"(?i)(?:^|[/\\])\.git[/\\]|(?:^|[/\\])\.env\b|credential|\bid_rsa\b|"
     r"\.pem$|\.key$|(?:^|[/\\])" + re.escape(POLICY_FILENAME) + r"$"
@@ -1846,7 +1928,7 @@ _OPAQUE_POLICY_WRITE_EVIDENCE = re.compile(re.escape(POLICY_FILENAME))
 # wrapper deeper, judged the same as the bare command.
 _OPAQUE_OPERATOR_AUTHORIZE = re.compile(
     r"(?i)godmode(?:\.(?:py|pyw|cmd|bat|exe|ps1|sh))?[\"']?\s+(?:\S+\s+){0,3}?"
-    r"authorize\s+(?:stage|setup|grant|issue)\b")
+    r"authorize\s+(?!(?:request|requests|deny)(?![\w$`(@%{-]))[^\s;&|)]")
 
 
 def _opaque_inline_verdict(payload: str) -> tuple[str, bool, list[str]]:
@@ -3695,6 +3777,10 @@ def _categorize(normalized: str, project_root: Path | None = None,
             return ("protection-weakening", True,
                     ["weakens Godmode's own protection: the machine-wide Godmode "
                      "settings file", "only the operator should change it"])
+        if _lands_in_godmode_code(path, project_root):
+            return ("protection-weakening", True,
+                    ["weakens Godmode's own protection: Godmode's own code or "
+                     f"bytecode cache: {path[:80]}", "only the operator should change it"])
         if _SENSITIVE_EDIT.search(path):
             return ("worktree-file-mutation", True,
                     [f"not an ordinary working file: {_shown_path(path, project_root)}"])
@@ -3795,12 +3881,9 @@ def _categorize(normalized: str, project_root: Path | None = None,
     operator_verb = _operator_authorize_verb(normalized, argv)
     if operator_verb is not None:
         return ("operator-authorization-from-agent", True,
-                [f"`authorize {operator_verb}` opens the operator's password prompt, "
-                 "and an agent's tool call must never raise it",
-                 f"the operator types `! godmode authorize {operator_verb} ...` "
-                 "themselves; an agent records `godmode authorize request` instead"])
+                _operator_authorize_impact(operator_verb))
 
-    weakened = _protection_weakening(normalized, argv, write_target)
+    weakened = _protection_weakening(normalized, argv, write_target, project_root)
     if weakened is not None:
         return ("protection-weakening", True,
                 [f"weakens Godmode's own protection: {weakened}",
@@ -4028,8 +4111,11 @@ def _categorize(normalized: str, project_root: Path | None = None,
         if write_target and _FREEZE_FILE.search(write_target):
             return ("release-freeze-mutation", True,
                     [f"{kind} write to a release-freeze marker: {write_target[:80]}"])
+        # A glob target names whatever it matches when it runs (`.gi?/conf*`
+        # is `.git/config`), so, like a variable, it is not known to stay
+        # among ordinary working files.
         if (not write_target or not _contained(write_target, project_root)
-                or _SENSITIVE_EDIT.search(write_target)):
+                or _SENSITIVE_EDIT.search(write_target) or _GLOB_TARGET.search(write_target)):
             return ("worktree-file-mutation", True,
                     [f"{kind} write outside ordinary working files: {write_target[:80]}"])
         return "worktree-file-mutation", False, [f"{kind} write inside the working tree"]
@@ -4518,7 +4604,9 @@ _MAX_HEAD_DEPTH = 3
 
 # An operator-only verb's own flag. Its confirmation prompt needs a
 # terminal, which is what a pseudo-terminal wrapper supplies.
-_AS_OPERATOR = re.compile(r"(?<![\w-])--as-operator(?![\w-])")
+# Any prefix of it counts: a parser that accepts abbreviations reads
+# `--as-op` as the full flag.
+_AS_OPERATOR = re.compile(r"(?<![\w-])--as-o(?:p(?:e(?:r(?:a(?:t(?:o(?:r)?)?)?)?)?)?)?(?![\w-])")
 
 
 def _command_words(normalized: str) -> str:
@@ -4830,6 +4918,18 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                 "external_repo_ref": external_repo_ref,
                 "impact": ["the command NAME is produced by a substitution; what "
                            "this line runs cannot be read from the text", *impact]})
+        # Blanking the substitution also blanks an `authorize` verb it builds
+        # (`godmode authorize $(echo stage)`): the verb is read on the whole
+        # line, where a verb that is not in the text is refused.
+        operator_verb = _operator_authorize_verb(normalized, _argv_tokens(normalized))
+        if operator_verb is not None:
+            category = "operator-authorization-from-agent"
+            tier, second = _risk_tier(category, normalized)
+            parts.append({
+                "protected": True, "category": category, "tier": tier,
+                "operation_digest": "", "second_confirmation_required": second,
+                "external_repo_ref": external_repo_ref,
+                "impact": _operator_authorize_impact(operator_verb)})
         worst = max(parts, key=lambda v: (v["protected"], v["tier"]))
         worst["impact"] = sorted({item for v in parts for item in v["impact"]})
         worst["operation_digest"] = hashlib.sha256(normalized.encode()).hexdigest()
