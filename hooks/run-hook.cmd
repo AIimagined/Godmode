@@ -20,7 +20,7 @@
 :; # plugin's own directories on sys.path themselves.
 :; hook="$1"; shift
 :; # No external commands before the interpreter is found: the gate runs
-:; # under a reduced PATH where `dirname` may be missing (2026-09-08).
+:; # under a reduced PATH where `dirname` may be missing.
 :; dir=$0
 :; case "$dir" in *\\*) dir=${dir%\\*} ;; esac
 :; case "$dir" in */*) dir=${dir%/*} ;; esac
@@ -118,7 +118,7 @@
 :; exit 0
 @echo off
 setlocal enabledelayedexpansion
-rem Field walk 2026-09-05: with no `python` on PATH and only the `py`
+rem With no `python` on PATH and only the `py`
 rem launcher present, `if errorlevel 9009 ( py ... & exit /b %ERRORLEVEL% )`
 rem returned 9009 (49 through a cmd /c wrapper) - the block expanded
 rem %ERRORLEVEL% at parse time, so a gate's exit 2 vanished, and the Store

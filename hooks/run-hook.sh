@@ -14,7 +14,7 @@
 # even `dirname` may be missing.
 hook="$1"; shift
 # No external commands before the interpreter is found: the gate runs
-# under a reduced PATH where `dirname` may be missing (2026-09-08).
+# under a reduced PATH where `dirname` may be missing.
 dir=$0
 case "$dir" in *\\*) dir=${dir%\\*} ;; esac
 case "$dir" in */*) dir=${dir%/*} ;; esac

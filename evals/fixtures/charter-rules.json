@@ -149,15 +149,21 @@
       "text_hash": "9da1de908466b152",
       "trigger": "before_completion",
       "verify": "attestation_present"
+    },
+    "R-f2005df709": {
+      "enforcement": "ADVISORY",
+      "text_hash": "006b1f8f21f09e3e",
+      "trigger": "always",
+      "verify": "none"
     }
   },
   "schema": "godmode-charter-snapshot-v1",
   "summary": {
     "enforcement": {
-      "ADVISORY": 15,
+      "ADVISORY": 16,
       "HARD": 10,
       "SOFT": 0
     },
-    "rules": 25
+    "rules": 26
   }
 }

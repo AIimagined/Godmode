@@ -63,7 +63,7 @@ def _polyglot(raw: str) -> str:
 # ---------------------------------------------------------------------------
 _CMD_SH_PREFACE = """\
 # Polyglot hook launcher: one file, valid under POSIX sh AND cmd.exe.
-# Field report 2026-09-03: every hook declared bare `python`, and stock
+# Every hook once declared bare `python`, and stock
 # macOS ships only python3 - all eight hooks died silently at
 # `/bin/sh: python: command not found`. This launcher resolves the
 # interpreter per platform (python3 first on POSIX; python, py -3, then
@@ -75,7 +75,7 @@ _CMD_SH_PREFACE = """\
 # `exec`/`exit` ends the sh half before cmd's section is reached. The
 # cmd half is label-free on purpose: this file is committed LF-only
 # for the sh half, and cmd `goto` over LF endings is a known flake.
-# Every interpreter starts with -I (sweep 2026-09-07, obligation 9866):
+# Every interpreter starts with -I:
 # isolated from PYTHONPATH, PYTHON* variables and the user site. Byte-code
 # never lands in the plugin cache: it goes to a private cache under the
 # Godmode application home (-X pycache_prefix, one flag that -I does not
@@ -98,8 +98,8 @@ _SH_PREFACE = """\
 # Root resolution, the GODMODE_PYTHON override, the interpreter probe order
 # and the off-PATH fallbacks below are rendered from the exact same _SH_BODY
 # constant as run-hook.cmd's sh half (see that file's own header for the
-# field reports that shaped every probe order and fallback: 2026-09-03 bare
-# `python`, 2026-09-08 reduced PATH, 2026-09-10 Dock/login-item PATH) - so a
+# cases that shaped every probe order and fallback: bare `python`, a
+# reduced PATH, a Dock/login-item PATH) - so a
 # host that reads either launcher gets byte-identical logic, not merely
 # logic that was meant to match.
 # GODMODE_PYTHON overrides everything. No external commands run before the
@@ -124,7 +124,7 @@ _SH_PREFACE = """\
 _SH_BODY = """\
 hook="$1"; shift
 # No external commands before the interpreter is found: the gate runs
-# under a reduced PATH where `dirname` may be missing (2026-09-08).
+# under a reduced PATH where `dirname` may be missing.
 dir=$0
 case "$dir" in *\\\\*) dir=${dir%\\\\*} ;; esac
 case "$dir" in */*) dir=${dir%/*} ;; esac
@@ -158,7 +158,7 @@ fi
 bc=-B
 [ -n "$home" ] && bc="-Xpycache_prefix=$home/pycache"
 if [ -n "${GODMODE_PYTHON:-}" ]; then exec "$GODMODE_PYTHON" -I "$bc" "$dir/$hook" "$@"; fi
-# Resolved-interpreter cache (field report 2026-09-23: every hook started
+# Resolved-interpreter cache (every hook used to start
 # an interpreter twice - the probe below, then the real run - and on
 # Windows the first candidate was the Store alias, whose activation is
 # slow and very slow under load, until a host timed the hooks out). The
@@ -233,7 +233,7 @@ exit 0
 _CMD_BATCH = """\
 @echo off
 setlocal enabledelayedexpansion
-rem Field walk 2026-09-05: with no `python` on PATH and only the `py`
+rem With no `python` on PATH and only the `py`
 rem launcher present, `if errorlevel 9009 ( py ... & exit /b %ERRORLEVEL% )`
 rem returned 9009 (49 through a cmd /c wrapper) - the block expanded
 rem %ERRORLEVEL% at parse time, so a gate's exit 2 vanished, and the Store
@@ -257,7 +257,7 @@ rem silently end right there, never reaching the real dispatch line, with
 rem exit code 0 (found live while building the `py -3`-preference test:
 rem a fake `py.cmd` probe target vanished the rest of this script until
 rem `call` was added). `call` is always safe for a real .exe too.
-rem Field report 2026-09-23: hooks timed out under load because every call
+rem Hooks timed out under load because every call
 rem started an interpreter twice (probe, then run). The first call that
 rem finds a working interpreter records its absolute python.exe path in
 rem the Godmode application home (GODMODE_STATE_HOME, else

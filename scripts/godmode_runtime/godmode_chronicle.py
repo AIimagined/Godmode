@@ -496,9 +496,9 @@ _TAKEOVER_CLAIM_STALE_SECONDS = 10
 def _lock_host() -> str:
     """This machine's name, as a lock sidecar records it: a pid means
     nothing on another host or in another pid namespace."""
-    import socket
+    import platform
     try:
-        return socket.gethostname().strip() or "unknown"
+        return platform.node().strip() or "unknown"
     except OSError:
         return "unknown"
 
