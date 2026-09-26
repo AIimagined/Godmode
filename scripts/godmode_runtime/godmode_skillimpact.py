@@ -1,9 +1,9 @@
-"""NS-12a + NS-12d (0.3.28 Plan 5 Task 9): the skill-impact ledger and the
-strict-improvement gate.
+"""The skill-impact ledger and the strict-improvement gate, added in 0.3.28.
 
 The ablation this gate follows is the whole argument: gate a skill change
 on validation score, or the loop rubber-stamps itself the same way a
-checker that can never fail proves nothing (NS-4's falsification bonds, the
+checker that can never fail proves nothing (the same falsification-bonds
+discipline the law-ratification gate applies, the
 sibling gate this one composes with). Two record-writers -
 `atlas law ratify` (`godmode_bonds.ratify`) and `skill forge`
 (`godmode_forge.forge_skill` via `cmd_skill_forge`) - are the only paths
@@ -92,7 +92,7 @@ def skill_name_from_target(target: str) -> str | None:
     """`skills/<name>/...` (or `.grok/skills/<name>/...`) -> `<name>`;
     anything with no `skills/<name>` segment -> None, meaning "not a skill
     change" - the strict-improvement gate applies only when this resolves,
-    so a law or guard proposal is untouched by NS-12.
+    so a law or guard proposal is untouched by it.
     """
     parts = Path(str(target).replace("\\", "/")).parts
     for index, part in enumerate(parts):
@@ -106,7 +106,7 @@ def skill_name_from_target(target: str) -> str | None:
 def canonical_target(target: str) -> str:
     """One spelling per target, computed from the string alone.
 
-    Both NS-12 rules key on `target`, and both are defeated by a respelling
+    Both rules above key on `target`, and both are defeated by a respelling
     when the key is the raw string: the filesystem effect goes through
     `_contained_skill_path`, which folds separators, `.` components,
     doubled separators and trailing separators, so four different strings
@@ -128,7 +128,7 @@ def canonical_target(target: str) -> str:
 
 
 def canonical_skill_target(target: str, project: Path | None = None) -> str:
-    """The one key both NS-12 rules use, as canonical as the caller's reach
+    """The one key both rules above use, as canonical as the caller's reach
     allows: the string-only fold always, plus the filesystem fold (which is
     what makes `skills/demo/STATE.PY` and `skills/demo/state.py` one key on
     Windows) whenever a project root is in reach and the target really does
@@ -172,7 +172,7 @@ def validate_pattern_seqs(patterns: list[int] | None) -> list[int]:
 
 
 def skill_score(project: Path, skill: str) -> float:
-    """The validation score NS-12d gates on - see the module docstring for
+    """The validation score the strict-improvement gate gates on - see the module docstring for
     the exact formula. Every failure mode (no suites at all, this skill
     absent from the suites) reads as `0.0`, never a raised error: a score
     is being computed to compare against a baseline, and "nothing to
@@ -200,11 +200,12 @@ def skill_score(project: Path, skill: str) -> float:
 def scan_impacts(
     archive: Chronicle, target: str, diff_hash: str | None = None,
 ) -> tuple[float | None, dict[str, Any] | None]:
-    """ONE pass over `read_events` answering both NS-12 questions at once:
+    """ONE pass over `read_events` answering both the ledger's questions at once:
     the highest `score_after` any ACCEPTED `skill_impact` for `target` ever
-    recorded (the floor NS-12d's gate compares against, `None` when this
+    recorded (the floor the strict-improvement gate compares against, `None` when this
     target has never been accepted), and the most recent REJECTED
-    `skill_impact` for `(target, diff_hash)` (NS-12a's refusal, `None` when
+    `skill_impact` for `(target, diff_hash)` (what the previously-rejected-diff
+    refusal above reads, `None` when
     `diff_hash` is `None` or nothing matches).
 
     Both comparisons run on `canonical_target` of BOTH sides, so a
@@ -248,7 +249,7 @@ def scan_impacts(
 
 
 def best_recorded_score(archive: Chronicle, target: str) -> float | None:
-    """The floor NS-12d's gate compares the next change against - see
+    """The floor the strict-improvement gate compares the next change against - see
     `scan_impacts`, which this is the one-answer spelling of."""
     return scan_impacts(archive, target)[0]
 
@@ -283,7 +284,7 @@ def accepted_impact_for_skill(archive: Chronicle, skill: str) -> dict[str, Any] 
 
 
 def refuse_if_diff_previously_rejected(archive: Chronicle, diff_hash: str, target: str) -> None:
-    """NS-12a's acceptance test, verbatim: refused, naming the prior seq.
+    """The previously-rejected-diff acceptance test, verbatim: refused, naming the prior seq.
 
     The message names the CANONICAL target, not the spelling the caller
     happened to use, so a proposer who respelled the path is told which
@@ -295,7 +296,7 @@ def refuse_if_diff_previously_rejected(archive: Chronicle, diff_hash: str, targe
 def _refuse_prior_rejection(
     diff_hash: str, target: str, prior: dict[str, Any] | None,
 ) -> None:
-    """NS-12a's refusal message, shared by the standalone check above and
+    """The previously-rejected-diff refusal message, shared by the standalone check above and
     by `apply_skill_diff`'s own folded scan so the two cannot drift."""
     if prior is not None:
         raise ArchiveError(
@@ -528,14 +529,14 @@ def apply_skill_diff(
     patterns: list[int] | None = None,
 ) -> dict[str, Any]:
     """Apply a proposed skill change, score it, and gate it - called by
-    `atlas law ratify` once NS-4's falsification-bond checks already
+    `atlas law ratify` once its falsification-bond checks already
     passed. `target` must resolve to a `skills/<name>/...` path (checked
     by the caller via `skill_name_from_target`).
 
     Godmode's proposal diffs are hashed opaquely at `propose` time
     (`godmode_bonds.propose` reads `--diff <file>` only to hash it, never
     to parse it - there is no unified-diff engine in this stdlib-only
-    codebase, and NS-4 never asked for one). This carries that same
+    codebase, and the falsification-bond gate never asked for one). This carries that same
     convention forward: the diff artifact IS the target file's proposed
     new full contents, written verbatim over `project / target` (contained
     to a `skills/...` path under `project` - see `_contained_skill_path`,
@@ -677,9 +678,9 @@ def evaluate_forged_skill(
     skill_dir: Path,
     patterns: list[int] | None = None,
 ) -> dict[str, Any]:
-    """NS-12a + NS-12d for `skill forge`: the skill did not exist before
+    """The ledger and the strict-improvement gate for `skill forge`: the skill did not exist before
     this call, so `score_before` is fixed at `0.0` by definition. Forge has
-    no separate `propose` step of its own, so NS-12a's previously-rejected
+    no separate `propose` step of its own, so the previously-rejected-diff
     check is applied here instead, against the hash of the tree forge just
     wrote; a match removes the just-created directory and refuses, naming
     the prior seq, exactly like a re-proposal would be refused.
