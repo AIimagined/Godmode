@@ -139,7 +139,10 @@ def build_notes(project: Path, version: str, force: bool = False) -> dict[str, A
     target.parent.mkdir(parents=True, exist_ok=True)
     baseline = _benchmark_baseline(project, version)
     benchmark_line = _benchmark_line(baseline) if baseline is not None else None
-    target.write_text(render_notes(version, entries, benchmark_line=benchmark_line), encoding="utf-8")
+    # LF on every platform, so the committed note never flips line endings.
+    with target.open("w", encoding="utf-8", newline="
+") as handle:
+        handle.write(render_notes(version, entries, benchmark_line=benchmark_line))
     return {"version": version, "written": True, "path": str(target.relative_to(project)),
             "sections": {k: len(v) for k, v in entries.items()}}
 
