@@ -1,1 +1,0 @@
-- The release check (`godmode precheck --preflight`) now reports test-suite growth since the previous release tag - how many `tests/test_*.py` modules and `def test_` functions were added. Growth over 10% is an informational note in the default advise mode, and a real finding in strict mode; with no previous tag, it reports nothing.

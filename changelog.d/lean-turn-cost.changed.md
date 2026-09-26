@@ -1,7 +1,0 @@
-- Godmode adds far less text to an ordinary turn. Outside strict mode:
-  - Stop runs only the loop, stall and unsupported-claim checks. The other end-of-turn checks run under `godmode config mode strict`.
-  - Stop notices reach the model once, at the next prompt (on Grok, the next allowed tool call), instead of also appearing as an operator message.
-  - The doctrine and red-flags text rides a project's first session brief only. After that, `godmode docs --emit-rules` writes it on demand.
-  - The session brief keeps a single open-obligations count. `godmode resume` now also shows the ledger, laws and next actions.
-  - Post-edit quality findings give one summary line per session. `godmode quality --format editor` lists them all.
-- Strict mode keeps the full output.

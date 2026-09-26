@@ -1,1 +1,0 @@
-- On platforms without kernel file locking, the archive write lock can no longer be wedged for good by a holder that is alive but hung: a lock older than 30 minutes is taken over. The lock now records its host, and a lock written on another host is not taken over on the strength of a local process lookup before then.

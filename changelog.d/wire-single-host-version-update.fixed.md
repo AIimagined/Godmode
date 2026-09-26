@@ -1,1 +1,0 @@
-- `hooks wire --host codex|opencode|antigravity` no longer needs `--force` for an ordinary version update. It now recognizes its own prior write (a digest recorded alongside it) and updates in place, the same leniency `hooks wire --all` already gave these files; a real conflict - a hand edit, or content from something other than this writer - still needs `--force`.

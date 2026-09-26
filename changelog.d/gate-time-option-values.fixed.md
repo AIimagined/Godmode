@@ -1,1 +1,0 @@
-- `time -f FORMAT` and `time -o FILE` in front of an unrecognised command after `&&`, `;` or `||` no longer hide that command: the option's value is read with its flag, so `ls && time -f %e ./script.sh` asks like `ls && ./script.sh` does. `time -o FILE` is also read as a write to FILE.

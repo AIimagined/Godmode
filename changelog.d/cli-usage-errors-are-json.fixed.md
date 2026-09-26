@@ -1,1 +1,0 @@
-- A malformed command line (an unrecognized value, a missing required flag, an out-of-range option) now reports `{"error": "UsageError", "message": ...}` on stderr with exit 2, the same shape and stream every other CLI failure uses - instead of plain usage text that ignored `--json`.

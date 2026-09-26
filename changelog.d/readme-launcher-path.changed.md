@@ -1,1 +1,0 @@
-- README now states where the plugin's `godmode` launcher lives (`bin/godmode.cmd` on Windows, `bin/godmode` on macOS/Linux) and how to call it or add it to PATH, since a plugin install does not put it there itself.

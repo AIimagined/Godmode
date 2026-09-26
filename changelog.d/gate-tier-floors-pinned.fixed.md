@@ -1,1 +1,0 @@
-- Every category floor in the gate's tier table is now pinned by a test that proves the floor, not the fallback tier, decides the verdict. Twelve floors used to equal the fallback, so removing one changed nothing a test could see; the one floor no command could reach has been removed and now takes the fallback, with no change in any verdict.

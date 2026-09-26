@@ -1,1 +1,0 @@
-- `godmode status` and the once-per-session report no longer forget a project skill changed in an unattended session once more than 500 later skill changes are recorded; the whole archive is read.

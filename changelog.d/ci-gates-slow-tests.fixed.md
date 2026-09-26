@@ -1,1 +1,0 @@
-- The subprocess-heavy test modules were never actually running in the checks that gate `main` - the workflow enabled them by convention but never set the environment variable that turns them on, so they silently skipped on every push and pull request. Both jobs that gate `main` now run them.

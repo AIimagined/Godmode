@@ -1,1 +1,0 @@
-- `godmode status remaining --digest` (and any digest built from `session_digest`) now refuses a `--session` id that matches no session in the archive, instead of silently falling back to lifetime spend and counts as though no session had been given.

@@ -1,1 +1,0 @@
-- In a project where `godmode init` was never run, a write that lands in the repository's git config or the machine-wide settings file is now asked about however its path is spelled: a `.` or `..` segment, a `cd` earlier in the same command, or a glob. A redirect whose target is a glob is no longer treated as an ordinary working-file write.

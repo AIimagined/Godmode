@@ -1,1 +1,0 @@
-- The routing-stability eval snapshot now always writes plain LF line endings and skips the write entirely when its content has not changed, so simply running the eval suite no longer dirties a clean checkout with a line-ending-only change.

@@ -1,1 +1,0 @@
-- The `godmode` command line no longer accepts abbreviated long options (`--as-op` for `--as-operator`); write each option in full. An operator-only verb run under `tmux`, `screen`, `socat`, `ssh -t` or `setsid`, or with an abbreviated `--as-operator`, now needs your approval like one run under `script` or `winpty`.

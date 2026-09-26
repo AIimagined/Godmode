@@ -1,1 +1,0 @@
-- The evidence-pipe note no longer fires on a run whose output was saved to a file first and filtered afterwards (`cmd > run.log 2>&1; grep ... run.log | tail`), which is the very remedy the note recommends; output sent to the null device, or piped straight into a filter, still draws it.

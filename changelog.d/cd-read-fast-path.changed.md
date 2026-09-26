@@ -1,1 +1,0 @@
-- A command that changes directory before a read, such as `cd src && git log`, is now decided on the fast path instead of starting the full gate. Every other part of the command is still judged on its own.

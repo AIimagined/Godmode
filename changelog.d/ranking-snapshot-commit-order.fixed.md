@@ -1,1 +1,0 @@
-- The ranking eval snapshot no longer depends on git commit time or commit order: the same project content always produces the identical fixture, no matter how it was committed.

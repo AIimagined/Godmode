@@ -1,1 +1,0 @@
-- `lessons approve` now refuses an approval whose process shares any ancestor with the promoting process below the system init or desktop shell, not only its parent, and skips perl, ruby, node, git, make and find when finding the driving program. The threat model now states plainly that on macOS only the parent process is compared.

@@ -1,1 +1,0 @@
-- In a project where `godmode init` was never run, a command whose program or git verb is only built when it runs (PowerShell's `& ('gi'+'t') push -f`, `$cmd push`, `git $(printf pu)sh`) is now asked about instead of allowed silently.

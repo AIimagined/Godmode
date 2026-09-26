@@ -1,1 +1,0 @@
-- Uninstalling from a project no longer wipes out another tool's entries in a shared hooks file. Antigravity's `.agents/hooks.json` holds one key per tool; removal now strips only Godmode's own key and leaves the rest of the file - and the file itself - in place, deleting it only when Godmode's key was the last one there.

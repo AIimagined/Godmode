@@ -1,1 +1,0 @@
-- In a project where `godmode init` was never run, a harm-class command spelled through shell quoting (`git "pu"$'sh' -f`) or through an expansion is now checked like its plain spelling instead of passing silently.

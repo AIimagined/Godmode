@@ -1,1 +1,0 @@
-- A relative path is now judged from the directory an earlier `cd`, `pushd`, `popd` or `Set-Location` in the same command moved to. `cd .git && echo x >> config` is asked about as a write to the repository config, a write after a directory change the command cannot resolve is asked about, and returning to the project root first stays allowed.
