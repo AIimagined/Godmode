@@ -601,12 +601,59 @@ def _operator_authorize_impact(verb: str) -> list[str]:
             "records `godmode authorize request` instead"]
 
 
+# A host's plugin install tree holding Godmode (`~/.claude/plugins/cache/
+# <marketplace>/godmode/<version>/...`): code the gate itself runs.
+_PLUGIN_INSTALL_TREE = re.compile(r"(?i)[/\\]\.[^/\\]+[/\\]plugins[/\\](?:[^/\\]+[/\\])*?godmode(?:[/\\]|$)")
+
+
+def _godmode_code_dirs(project_root: Path | None) -> list[str]:
+    """Directories whose files run inside the gate: the private bytecode
+    cache the hook launchers point Python at (`<application home>/pycache`)
+    and the plugin's own install directory - unless the project being
+    worked on is that directory (Godmode's own repository)."""
+    dirs: list[str] = []
+    try:
+        from .godmode_anchor import application_home
+        dirs.append(str(application_home() / "pycache"))
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: no home means no cache is written
+        pass
+    plugin = Path(__file__).resolve().parents[2]
+    try:
+        root = Path(project_root).resolve() if project_root is not None else None
+    except (OSError, ValueError):
+        root = None
+    if root is None or not (root == plugin or plugin in root.parents or root in plugin.parents):
+        dirs.append(str(plugin))
+    return [os.path.normcase(os.path.abspath(entry)).lower().rstrip("\\/") for entry in dirs]
+
+
+def _lands_in_godmode_code(target: str, project_root: Path | None) -> bool:
+    """Whether a write to `target` lands where Godmode's own gate code or
+    its bytecode lives: a planted `.pyc` there runs inside the gate."""
+    cleaned = os.path.expanduser(os.path.expandvars(target.strip().strip("\"'")))
+    if _PLUGIN_INSTALL_TREE.search(cleaned):
+        return True
+    # A relative path lands in the project, and the project is excluded
+    # only when it is Godmode's own repository.
+    if not os.path.isabs(cleaned):
+        return False
+    try:
+        shown = os.path.normcase(os.path.abspath(cleaned)).lower()
+    except (OSError, ValueError):
+        return False
+    return any(shown == entry or shown.startswith(entry + os.sep)
+               for entry in _godmode_code_dirs(project_root))
+
+
 def _protection_weakening(normalized: str, argv: list[str] | None,
-                          write_target: str | None) -> str | None:
+                          write_target: str | None,
+                          project_root: Path | None = None) -> str | None:
     """What this segment would weaken of Godmode's own protection, or None."""
     settings = MACHINE_SETTINGS_FILENAME.lower()
     if write_target and settings in write_target.lower():
         return f"a write to the machine-wide Godmode settings: {write_target[:80]}"
+    if write_target and _lands_in_godmode_code(write_target, project_root):
+        return f"a write to Godmode's own code or bytecode cache: {write_target[:80]}"
     if not argv:
         return None
     lowered = [token.lower() for token in argv]
@@ -615,6 +662,9 @@ def _protection_weakening(normalized: str, argv: list[str] | None,
                       or any(pattern.search(normalized) for pattern in _SAFE_INSPECTION_PATTERNS))
     if not reads_only and any(settings in token for token in lowered[1:]):
         return "the machine-wide Godmode settings file"
+    if not reads_only and any(_lands_in_godmode_code(token, project_root)
+                              for token in argv[1:] if not token.startswith("-")):
+        return "Godmode's own code or bytecode cache"
     if head in ("git", "git.exe") and len(lowered) > 1 and lowered[1] == "config":
         rest = lowered[2:]
         if not any(_GODMODE_GIT_KEY.match(token) for token in rest):
@@ -3727,6 +3777,10 @@ def _categorize(normalized: str, project_root: Path | None = None,
             return ("protection-weakening", True,
                     ["weakens Godmode's own protection: the machine-wide Godmode "
                      "settings file", "only the operator should change it"])
+        if _lands_in_godmode_code(path, project_root):
+            return ("protection-weakening", True,
+                    ["weakens Godmode's own protection: Godmode's own code or "
+                     f"bytecode cache: {path[:80]}", "only the operator should change it"])
         if _SENSITIVE_EDIT.search(path):
             return ("worktree-file-mutation", True,
                     [f"not an ordinary working file: {_shown_path(path, project_root)}"])
@@ -3829,7 +3883,7 @@ def _categorize(normalized: str, project_root: Path | None = None,
         return ("operator-authorization-from-agent", True,
                 _operator_authorize_impact(operator_verb))
 
-    weakened = _protection_weakening(normalized, argv, write_target)
+    weakened = _protection_weakening(normalized, argv, write_target, project_root)
     if weakened is not None:
         return ("protection-weakening", True,
                 [f"weakens Godmode's own protection: {weakened}",

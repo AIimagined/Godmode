@@ -265,6 +265,25 @@ class ProtectionWeakeningTests(GateCase):
                 self.assertEqual(verdict["category"], "protection-weakening", command)
                 self.assertEqual(verdict["tier"], "R4", command)
 
+    def test_a_write_into_godmodes_own_code_or_bytecode_cache_is_weakening(self) -> None:
+        # A `.pyc` planted in the launchers' bytecode cache, or a file in
+        # the plugin's install directory, runs inside the gate itself.
+        import os
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as home:
+            cache = Path(home, "pycache", "hooks", "godmode_gate_fast.cpython-314.pyc").as_posix()
+            plugin = "C:/Users/u/.claude/plugins/cache/market/godmode/0.3.30/hooks/x.py"
+            with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": home}):
+                for command in (f"echo x > {cache}", f"cp evil.pyc {cache}",
+                                f"echo x > {plugin}", f"write file {cache}"):
+                    with self.subTest(command=command):
+                        verdict = classify_action(command, project_root=PROJECT)
+                        self.assertEqual(verdict["category"], "protection-weakening", verdict)
+                        self.assertEqual(verdict["tier"], "R4", command)
+                self.allowed(f"cat {cache}")
+                self.allowed("echo x > notes.txt")
+
     def test_the_governed_gate_asks_attended_and_refuses_unattended(self) -> None:
         hooks = str(PLUGIN_ROOT / "hooks")
         if hooks not in sys.path:

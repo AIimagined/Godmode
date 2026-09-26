@@ -1716,5 +1716,12 @@
     "class": "by-design",
     "tool": "Bash",
     "note": "an operator verb in a detached terminal session"
+  },
+  {
+    "operation": "echo x > C:/Users/u/.claude/plugins/cache/market/godmode/0.3.30/hooks/x.py",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a write into the plugin's install directory weakens the gate"
   }
 ]
