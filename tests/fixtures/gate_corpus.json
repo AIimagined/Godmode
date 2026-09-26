@@ -1821,5 +1821,40 @@
     "class": "by-design",
     "tool": "Bash",
     "note": "near-miss: a read after `cd .git` writes nothing"
+  },
+  {
+    "operation": "cd .git; echo x>>config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a redirect glued to the word before it still writes where the directory change points"
+  },
+  {
+    "operation": "cd .git; echo x>\"config\"",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a glued redirect to a quoted target after `cd .git`"
+  },
+  {
+    "operation": "cd .git; echo \"x\">>config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a redirect glued to a quoted argument after `cd .git`"
+  },
+  {
+    "operation": "cd .git; echo x>>'con'fig",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a glued redirect to a partly quoted target after `cd .git`"
+  },
+  {
+    "operation": "cd docs && echo x>>notes.txt",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: a glued redirect inside an ordinary subdirectory"
   }
 ]

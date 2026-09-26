@@ -193,6 +193,16 @@ class DirectoryChangeTests(unittest.TestCase):
                 self.assertTrue(moved["protected"], command)
                 self.assertEqual(moved["category"], direct["category"], command)
 
+    def test_a_redirect_glued_to_the_word_before_it_is_a_write(self) -> None:
+        for command in ("cd .git; echo x>>config",
+                        'cd .git; echo x>"config"',
+                        'cd .git; echo "x">>config',
+                        "cd .git; echo x>>'con'fig",
+                        "cd .git; echo x 2>>config"):
+            with self.subTest(command=command):
+                self.assertEqual(decision(command), "ask")
+        self.assertEqual(decision("cd docs && echo x>>notes.txt"), "allow")
+
     def test_an_unresolvable_directory_change_asks(self) -> None:
         self.assertEqual(decision("cd $x && echo x >> config"), "ask")
         self.assertEqual(decision("cd .. && echo x > notes.txt"), "ask")

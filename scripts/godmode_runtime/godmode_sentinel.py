@@ -4709,19 +4709,67 @@ def _relocated_word(value: str, directory: str | None, root: str, write: bool) -
     return None
 
 
+def _unquoted_redirect_starts(word: str) -> list[int]:
+    """Where a redirect glued to the text before it starts inside `word`:
+    each unquoted `>`/`>>` (with the `&` of `&>`, or the descriptor digits
+    that stand alone before it), never the word's own first character."""
+    starts: list[int] = []
+    quote: str | None = None
+    index = 0
+    while index < len(word):
+        char = word[index]
+        if quote:
+            if char == quote:
+                quote = None
+        elif char == "\\":
+            index += 2
+            continue
+        elif char in "\"'":
+            quote = char
+        elif char == ">":
+            start = index
+            if start and word[start - 1] == "&":
+                start -= 1
+            else:
+                digits = start
+                while digits and word[digits - 1].isdigit():
+                    digits -= 1
+                if digits == 0 or (starts and digits == starts[-1]):
+                    start = digits
+            if start and (not starts or start > starts[-1]):
+                starts.append(start)
+            index += 2 if word[index + 1:index + 2] == ">" else 1
+            continue
+        index += 1
+    return starts
+
+
+def _segment_words(text: str) -> list[tuple[int, int, str]]:
+    """Each word of `text` as `(start, end, word)`, a redirect glued to the
+    word before it (`x>>config`, `"x">>config`) split off as its own word
+    so the target it names is read as a write."""
+    words: list[tuple[int, int, str]] = []
+    for match in _SEGMENT_WORD.finditer(text):
+        word, offset = match.group(0), match.start()
+        cuts = [0, *_unquoted_redirect_starts(word), len(word)]
+        for begin, end in zip(cuts, cuts[1:]):
+            if begin < end:
+                words.append((offset + begin, offset + end, word[begin:end]))
+    return words
+
+
 def _relocated_segment(text: str, directory: str | None, root: Path) -> str | None:
     """`text` with each relative path argument and write target spelled
     as it resolves after an earlier directory change, or None when no
     word moves. The head word is the command, never an argument."""
     base = os.path.normpath(os.path.abspath(str(root)))
-    words = list(_SEGMENT_WORD.finditer(text))
+    words = _segment_words(text)
     pieces: list[str] = []
     last = 0
     write_next = False
     changed = False
-    for index, match in enumerate(words):
-        word = match.group(0)
-        if index == 0 or (index == 1 and words[0].group(0) in ("(", "{")):
+    for index, (start, end, word) in enumerate(words):
+        if index == 0 or (index == 1 and words[0][2] in ("(", "{")):
             continue
         prefix, value, write = "", word, write_next
         write_next = False
@@ -4743,9 +4791,9 @@ def _relocated_segment(text: str, directory: str | None, root: Path) -> str | No
         if moved is None:
             continue
         quoted = f'"{moved}"' if re.search(r"\s", moved) else moved
-        pieces.append(text[last:match.start()])
+        pieces.append(text[last:start])
         pieces.append(prefix + quoted)
-        last = match.end()
+        last = end
         changed = True
     if not changed:
         return None
