@@ -532,30 +532,36 @@ def _operator_decision_refusal(runtime: Runtime, args: argparse.Namespace,
     `adopt --confirm` and `doctor --repair-fork` rewrite what the archive
     trusts (its identity, which of two sealed records survives), so they are
     the operator's to run, not an agent's: `--as-operator`, verified by the
-    password from `authorize setup` (via --password-stdin or a prompt), or
-    an interactive y/N when no password is configured - the same check
-    `skill retire --as-operator` uses. Unlike `_resolve_operator_verified`,
-    no initialized archive is required: adopt runs precisely when the
-    archive under this identity is missing."""
+    password from `authorize setup` (via --password-stdin or a prompt).
+    There is no y/N fallback: a pseudo-terminal answers a y/N prompt as
+    readily as a person, so without a configured password the command is
+    refused with the setup remedy. Unlike `_resolve_operator_verified`, no
+    initialized archive is required: adopt runs precisely when the archive
+    under this identity is missing."""
     reason = f"`godmode {command}` is an operator decision"
     if getattr(args, "as_operator", False):
         from .godmode_sentinel import _require_tty
 
         broker = CapabilityBroker(runtime.archive)
-        if broker.configured():
-            password = read_password_stdin() if getattr(args, "password_stdin", False) else None
-            if password is None:
-                _require_tty()
-                import getpass
+        if not broker.configured():
+            return CommandResult(
+                {"refused": True,
+                 "reason": reason + "; it needs the operator password, and none is set. "
+                                    "Run `godmode authorize setup` yourself to set one, then "
+                                    f"run `godmode {command} --as-operator` yourself.",
+                 "remedy": "godmode authorize setup",
+                 "confirm_with": f"godmode {command} --as-operator"},
+                exit_code=1,
+            )
+        password = read_password_stdin() if getattr(args, "password_stdin", False) else None
+        if password is None:
+            _require_tty()
+            import getpass
 
-                password = getpass.getpass("Godmode authorization password: ")
-            if broker.confirm_operator(password):
-                return None
-            reason += "; the operator password did not verify"
-        elif _confirm_operator_interactively():
+            password = getpass.getpass("Godmode authorization password: ")
+        if broker.confirm_operator(password):
             return None
-        else:
-            reason += "; it was not confirmed at an interactive prompt"
+        reason += "; the operator password did not verify"
     return CommandResult(
         {"refused": True,
          "reason": reason + ". Run it yourself with `--as-operator` (it asks for the "

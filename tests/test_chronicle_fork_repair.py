@@ -124,6 +124,29 @@ class ForkRepairTests(unittest.TestCase):
             self.assertIn("did not verify", report["fork_repair"]["reason"])
             self.assertEqual(_names(archive), before)
 
+    def test_without_a_password_a_terminal_yes_is_not_the_operator(self) -> None:
+        """A pseudo-terminal answers a y/N prompt as readily as a person, so
+        with no password set the repair is refused with the setup remedy."""
+        class _Terminal(io.StringIO):
+            def isatty(self) -> bool:
+                return True
+
+        with isolated_project() as (project, _state, _anchor, archive):
+            self._forked(archive)
+            before = _names(archive)
+            out = io.StringIO()
+            with mock.patch.object(sys, "stdout", out), \
+                    mock.patch.object(sys, "stderr", io.StringIO()), \
+                    mock.patch.object(sys, "stdin", _Terminal("y\n")):
+                code = console.main(["--project", str(project), "doctor", "--repair-fork",
+                                     "--as-operator"])
+            report = json.loads(out.getvalue())
+            self.assertEqual(code, 1, report)
+            self.assertFalse(report["fork_repair"]["repaired"])
+            self.assertIn("godmode authorize setup", report["fork_repair"]["reason"])
+            self.assertEqual(report["fork_repair"]["remedy"], "godmode authorize setup")
+            self.assertEqual(_names(archive), before)
+
     def test_without_an_anchor_at_the_fork_the_earliest_is_kept(self) -> None:
         with isolated_project() as (_project, _state, _anchor, archive):
             earlier, _later_path, _later = self._forked(archive)

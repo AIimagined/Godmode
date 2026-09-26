@@ -135,6 +135,23 @@ class WrapperTests(unittest.TestCase):
                          "git status")
         self.assertEqual(decision("winpty git status"), "allow")
 
+    def test_an_agent_call_passing_the_operator_flag_asks(self) -> None:
+        for command in ("godmode adopt --confirm --as-operator",
+                        "godmode doctor --repair-fork --as-operator",
+                        'godmode adopt --confirm --as-""operator',
+                        "python scripts/godmode.py skill retire --name x --as-\\operator",
+                        "git status && godmode adopt --confirm --as-op"):
+            with self.subTest(command=command):
+                verdict = classify_action(command, project_root=PLUGIN_ROOT)
+                self.assertTrue(verdict["protected"], verdict)
+                self.assertEqual(verdict["category"], "protection-weakening")
+        for command in ("grep -rn -- --as-operator scripts",
+                        'rg "--as-operator" docs',
+                        "git grep -n as-operator",
+                        "godmode adopt"):
+            with self.subTest(command=command):
+                self.assertEqual(decision(command), "allow")
+
     def test_an_abbreviated_operator_flag_under_a_wrapper_asks(self) -> None:
         for command in ('script -qc "godmode lesson add x --as-op" /dev/null',
                         "unbuffer godmode skill retire --name x --as-o"):

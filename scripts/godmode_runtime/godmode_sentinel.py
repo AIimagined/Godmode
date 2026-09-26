@@ -4898,6 +4898,31 @@ def _flattened(text: str) -> str:
     return re.sub(r"[\"'`\\]", "", re.sub(r"\$(?=['\"])", "", text))
 
 
+# Heads that search text, where `--as-operator` is a pattern rather than a
+# flag passed to anything.
+_TEXT_SEARCH_HEADS = frozenset({"grep", "egrep", "fgrep", "rg", "ag", "ack", "findstr",
+                                "select-string", "sls"})
+
+
+def _carries_operator_flag(segment: str) -> bool:
+    """Whether `segment` passes `--as-operator` (or a prefix of it) to
+    anything it runs, however the flag is quoted or escaped. A search for
+    the text (`grep -- --as-operator`, `git grep`, `git log --grep`) passes
+    it to nothing."""
+    flat = _flattened(segment)
+    if not _AS_OPERATOR.search(flat):
+        return False
+    words = flat.split()
+    while words and words[0] in ("(", "{", "!"):
+        words = words[1:]
+    head = words[0].replace("\\", "/").rsplit("/", 1)[-1].lower() if words else ""
+    if head.endswith(".exe"):
+        head = head[:-4]
+    if head in _TEXT_SEARCH_HEADS:
+        return False
+    return not (head == "git" and len(words) > 1 and words[1] in ("grep", "log"))
+
+
 def _command_words(normalized: str) -> str:
     """`normalized` with leading `VAR=value` assignments and control
     keywords removed - the text `_categorize` finds the command word in."""
@@ -4936,6 +4961,11 @@ def _head_form_verdicts(command: str, normalized: str,
             "runs a command built when the line runs under a pseudo-terminal "
             "wrapper, where an operator-only verb's confirmation can be "
             "answered without the operator",
+            "only the operator should run it, at their own terminal"]))
+    elif _carries_operator_flag(command):
+        found.append(("protection-weakening", [
+            "passes `--as-operator`, which claims the operator is at the keyboard; "
+            "an agent's tool call is not the operator",
             "only the operator should run it, at their own terminal"]))
     verdicts = []
     for category, impact in found:

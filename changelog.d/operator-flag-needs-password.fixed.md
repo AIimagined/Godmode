@@ -1,0 +1,1 @@
+- An agent's command that passes `--as-operator` (however it is quoted or escaped) now needs your approval, and `godmode adopt --confirm` and `godmode doctor --repair-fork` run `--as-operator` now require the password from `godmode authorize setup`: with none set they are refused with that remedy instead of falling back to a y/N prompt a pseudo-terminal could answer.

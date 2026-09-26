@@ -1989,5 +1989,40 @@
     "class": "by-design",
     "tool": "Bash",
     "note": "near-miss: a literal read under a pseudo-terminal wrapper"
+  },
+  {
+    "operation": "godmode adopt --confirm --as-operator",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "an agent's call claiming the operator: the operator runs it at their own terminal"
+  },
+  {
+    "operation": "godmode doctor --repair-fork --as-operator",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "an agent's call claiming the operator: the operator runs it at their own terminal"
+  },
+  {
+    "operation": "godmode adopt --confirm --as-\"\"operator",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "an operator flag split by quotes is the same flag"
+  },
+  {
+    "operation": "grep -rn -- --as-operator scripts",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: searching for the flag passes it to nothing"
+  },
+  {
+    "operation": "godmode adopt",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: the adopt preview changes nothing"
   }
 ]
