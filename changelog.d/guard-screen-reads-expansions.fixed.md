@@ -1,0 +1,1 @@
+- In a project where `godmode init` was never run, a command whose words are completed by a variable or a special parameter (`git pu$x -f`, `git pu$@sh -f`), a backtick substitution, a cmd `%x%`, or a brace or glob spliced into a word is now handed to the classifier instead of passing the keyword screen.

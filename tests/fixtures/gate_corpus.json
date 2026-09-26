@@ -1891,5 +1891,26 @@
     "class": "by-design",
     "tool": "Bash",
     "note": "a directory reached through a link made in the same command cannot be placed, so the write is asked about"
+  },
+  {
+    "operation": "x=sh; git pu$x -f",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a git verb completed by a variable set earlier in the command"
+  },
+  {
+    "operation": "git pu$@sh -f",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "an empty `$@` spliced into the git verb"
+  },
+  {
+    "operation": "git pu$*sh -f",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "an empty `$*` spliced into the git verb"
   }
 ]

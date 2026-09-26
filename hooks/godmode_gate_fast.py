@@ -954,8 +954,13 @@ _FLATTEN = re.compile(r"[\"'\\^`]")
 # the word runs, so `git "pu"$'sh'` is read as `git push`.
 _QUOTE_JOINS = re.compile(r"\$(?=[\"'])|(?<=[\"'])\s*\+\s*(?=[\"'])")
 # An expansion the shell performs before the word runs: its result is not
-# in the text, so no keyword screen can clear it.
-_EXPANSION = re.compile(r"\$[({'\"]")
+# in the text, so no keyword screen can clear it. Any `$` that expands
+# (`$x`, `$@`, `$*`, `${x}`, `$(...)`, `$'..'`), a backtick substitution,
+# a cmd `%x%`, and a brace or glob spliced into a word (`pu{s,}h`,
+# `pu?h`): `git pu$@sh -f` runs `git push -f`.
+_EXPANSION = re.compile(
+    r"\$[\w@*#?!$({'\"-]|`|%\w+%|[a-z]\{[^}\s]*[,.][^}\s]*\}|\{[^}\s]*,[^}\s]*\}[a-z]"
+    r"|[a-z][?*\[]|[?*\]][a-z]")
 # `godmode_sentinel._SCRIPT_HEADS` (copied; the drift guard compares them):
 # the classifier reads a script these run, so the screen reads it too.
 _SCRIPT_HEADS = frozenset({
@@ -1000,9 +1005,15 @@ def _hint_strings(payload: dict[str, Any]) -> list[str] | None:
     return found
 
 
-def _names_harm(text: str) -> bool:
+# A script body is code, not a command line: only the substitutions a
+# shell script runs count there, so indexing and globs in ordinary source
+# keep `python tool.py` on the stat-only path.
+_BODY_EXPANSION = re.compile(r"\$[({'\"]")
+
+
+def _names_harm(text: str, script: bool = False) -> bool:
     lowered = text.lower()
-    if _EXPANSION.search(lowered):
+    if (_BODY_EXPANSION if script else _EXPANSION).search(lowered):
         return True
     joined = _FLATTEN.sub("", _QUOTE_JOINS.sub("", lowered))
     return bool(_HARM_HINT.search(lowered) or _HARM_HINT.search(_FLATTEN.sub("", lowered))
@@ -1052,7 +1063,7 @@ def harm_candidate(payload: dict[str, Any], roots: list[str]) -> bool:
         if _names_harm(text):
             return True
         bodies = _script_bodies(text, roots)
-        if bodies is None or any(_names_harm(body) for body in bodies):
+        if bodies is None or any(_names_harm(body, script=True) for body in bodies):
             return True
     # A path that resolves to the guard's own setting names no keyword at
     # all when it is spelled with a glob (`.gi?/conf*`).

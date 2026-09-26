@@ -703,6 +703,11 @@ class UninitializedGuard(unittest.TestCase):
                 self.assertEqual(self._decision(self._run(command, tool=tool)), "ask")
         self.assertIsNone(self._run("echo $(date) && git status"))
 
+    def test_a_push_spelled_through_a_variable_asks(self) -> None:
+        for command in ("x=sh; git pu$x -f", "git pu$@sh -f", "git pu$*sh -f"):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(self._run(command)), "ask")
+
     def test_releases_and_history_rewrites_ask(self) -> None:
         for command in ("npm publish", "gh release create v1", "git reset --hard HEAD~3",
                         "git branch -D topic", "git push origin v1.0"):
@@ -922,6 +927,16 @@ class UninitializedGuardScreen(unittest.TestCase):
             if harmful and not fast.harm_candidate(payload(command), [str(PLUGIN_ROOT)]):
                 missed.append((command, harmful))
         self.assertEqual(missed, [])
+
+    def test_an_expansion_spliced_into_a_word_is_a_candidate(self) -> None:
+        # `$@` and `$*` expand to nothing and `$x` to what an earlier
+        # assignment set: the word that runs is not the word in the text.
+        for command in ("x=sh; git pu$x -f", "git pu$@sh -f", "git pu$*sh -f",
+                        "r$@m -rf /tmp/x", "npm pub$@lish", "git $x -f",
+                        "git pu`printf s`h -f", "git pu{s,}h -f", "git pu?h -f",
+                        "set x=s&& git pu%x%h -f"):
+            with self.subTest(command=command):
+                self.assertTrue(fast.harm_candidate(payload(command), ["."]))
 
     def test_a_script_the_classifier_reads_is_read_by_the_screen(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
