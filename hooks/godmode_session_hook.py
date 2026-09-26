@@ -2914,6 +2914,28 @@ def _design_edit_staged(archive: Chronicle, relative: str) -> bool:
     return bool(spent and spent.get("protected"))
 
 
+def _design_edit_staged_present(archive: Chronicle, relative: str) -> bool:
+    """Whether an unexpired approval is staged for this design-surface edit,
+    without spending it: the edit's other checks run first, and only an
+    edit every check allows spends it (`_design_edit_staged`)."""
+    try:
+        from godmode_runtime.godmode_sentinel import design_edit_operation
+        broker = _broker(archive)
+        if not broker.configured():
+            return False
+        classification = broker._classify(design_edit_operation(relative))
+        if not classification.get("protected"):
+            return False
+        digest = classification.get("operation_digest")
+        import time as _time
+        now = int(_time.time())
+        return any(entry.get("operation_digest") == digest
+                   and int(entry.get("expires_at", 0)) >= now
+                   for entry in broker._load().get("staged", []))
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unreadable store means nothing staged, so the edit is refused
+        return False
+
+
 def _sources_gate_reason(archive: Chronicle, anchor: Any,
                          session: str | None,
                          transcript_path: str | None = None) -> str | None:
@@ -5161,6 +5183,7 @@ def main(argv: list[str] | None = None) -> int:
         # rank, only the first target that is not allowed.
         target_checks_ran = bool(preview.get("allow") and event.targets)
         unattended_skills: list[tuple[str, str]] = []
+        staged_designs: list[dict[str, Any]] = []
         # Set only when plan-first allowed for a reason more edits cannot
         # undo; the fast gate's edit clearance needs it (below).
         plan_standing = False
@@ -5179,11 +5202,11 @@ def main(argv: list[str] | None = None) -> int:
                 # middle of a long run is the same keystroke as every other
                 # confirmation that session, which is not permission.
                 design = design_verdict(Path(anchor.project_root), target)
-                if not design["allowed"] and _design_edit_staged(archive, design["path"]):
-                    # The operator staged this exact edit with the password;
-                    # it is spent here, once. Every later check still runs.
-                    preview["capability_consumed"] = True
-                    preview["authorized_by"] = "staged capability"
+                if not design["allowed"] and _design_edit_staged_present(archive, design["path"]):
+                    # The operator staged this exact edit with the password.
+                    # It is spent only once every later check has allowed the
+                    # edit, so a refusal below leaves it staged.
+                    staged_designs.append(design)
                 elif not design["allowed"]:
                     preview["allow"] = False
                     preview["design_block"] = True
@@ -5272,6 +5295,21 @@ def main(argv: list[str] | None = None) -> int:
                         preview["reason"] = (
                             "the plan-first small-edit exemption could not be recorded "
                             f"({type(exc).__name__}); approve this edit or record a plan")
+
+            # Every check allowed the edit: only now is each staged design
+            # approval it needs spent, once. One that cannot be spent (taken
+            # or expired meanwhile) refuses the edit as the boundary would.
+            if preview.get("allow"):
+                for design in staged_designs:
+                    if _design_edit_staged(archive, design["path"]):
+                        preview["capability_consumed"] = True
+                        preview["authorized_by"] = "staged capability"
+                        continue
+                    preview["allow"] = False
+                    preview["design_block"] = True
+                    preview["boundary"] = design["boundary"]
+                    preview["reason"] = f"{design['detail']}. {design['remedy']}"
+                    break
 
         # The per-target checks above (design boundary, fence, frozen region,
         # repeated reversal, plan-first) run after the classifier's refusal
