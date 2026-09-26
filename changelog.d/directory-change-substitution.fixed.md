@@ -1,0 +1,1 @@
+- A directory change whose target comes from a command substitution (`cd "$(printf .git)"`, `cd "$(pwd)/.git"`) is now read as a directory the command cannot resolve, so a write after it asks instead of passing as a write inside the project.

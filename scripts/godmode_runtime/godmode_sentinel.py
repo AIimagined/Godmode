@@ -4807,6 +4807,51 @@ def _relocated_segment(text: str, directory: str | None, root: Path) -> str | No
     return "".join(pieces)
 
 
+# What stands in for a substitution when the directory walk reads a line:
+# a word the shell expands, so a directory it names cannot be resolved.
+_SUBSTITUTED_WORD = "$GODMODE_SUBSTITUTION"
+
+
+def _marked_substitutions(blanked: str, spans: tuple[tuple[int, int], ...]) -> str:
+    """`blanked` with each substitution span holding `_SUBSTITUTED_WORD`
+    instead of spaces."""
+    pieces: list[str] = []
+    last = 0
+    for start, end in sorted(spans):
+        if start < last:
+            continue
+        pieces += [blanked[last:start], _SUBSTITUTED_WORD]
+        last = end
+    pieces.append(blanked[last:])
+    return "".join(pieces)
+
+
+def _relocate_verdicts(segments: list[str], directories: list[str | None],
+                       verdicts: list[Any], root: Path,
+                       classify: Any) -> None:
+    """Judge each segment a second time with its paths spelled from the
+    root, where an earlier directory change moved it, and keep the stricter
+    verdict in `verdicts`. A `None` verdict is classified here first."""
+    start = os.path.normpath(os.path.abspath(str(root)))
+    for position, (segment, directory) in enumerate(zip(segments, directories)):
+        if directory == start:
+            continue
+        verdict = verdicts[position]
+        if verdict is None:
+            verdict = classify(segment)
+        if not verdict["protected"] and verdict["category"] == "read-only-inspection":
+            continue
+        moved = _relocated_segment(segment, directory, root)
+        if moved is None:
+            continue
+        relocated = classify(moved)
+        if (relocated["protected"], relocated["tier"]) > (verdict["protected"], verdict["tier"]):
+            relocated["impact"] = [*relocated["impact"],
+                                   "judged where an earlier directory change "
+                                   f"points it: {moved[:80]}"]
+            verdicts[position] = relocated
+
+
 def _component_boundaries(command: str) -> list[tuple[str, str | None]]:
     """`command` split the same way `_raw_segments` splits it, paired with
     the operator text that introduced each segment (`None` for the first).
@@ -5157,6 +5202,24 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                 "operation_digest": "", "second_confirmation_required": second,
                 "external_repo_ref": external_repo_ref,
                 "impact": _operator_authorize_impact(operator_verb)})
+        # `cd "$(printf .git)" && echo x >> config`: the blanked line reads
+        # `cd " "`, a directory inside the tree. Where a substitution stood
+        # the directory is whatever it prints, so the directory walk reads
+        # it as a word it cannot resolve and a later write is judged there.
+        if project_root is not None:
+            outer = [text for text, _ in _component_boundaries(
+                _without_heredoc_bodies(sub_blanked))]
+            marked = [text for text, _ in _component_boundaries(
+                _without_heredoc_bodies(_marked_substitutions(sub_blanked, sub_spans)))]
+            if len(outer) > 1 and len(outer) == len(marked):
+                classify_outer = (
+                    lambda text: classify_action(text, extra_protected, project_root, archive,
+                                                 require_approval, _allow_standalone_fetch=False,
+                                                 inline_scan=inline_scan))
+                outer_verdicts: list[dict[str, Any] | None] = [None] * len(outer)
+                _relocate_verdicts(outer, _segment_directories(marked, Path(project_root)),
+                                   outer_verdicts, Path(project_root), classify_outer)
+                parts += [verdict for verdict in outer_verdicts if verdict is not None]
         worst = max(parts, key=lambda v: (v["protected"], v["tier"]))
         worst["impact"] = sorted({item for v in parts for item in v["impact"]})
         worst["operation_digest"] = hashlib.sha256(normalized.encode()).hexdigest()
@@ -5207,23 +5270,11 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # its paths spelled from the root, and the stricter verdict holds.
         if project_root is not None:
             directories = _segment_directories(resolved_segments, Path(project_root))
-            start = os.path.normpath(os.path.abspath(str(project_root)))
-            for position, (segment, directory) in enumerate(zip(resolved_segments, directories)):
-                verdict = verdicts[position]
-                if directory == start or (not verdict["protected"]
-                                          and verdict["category"] == "read-only-inspection"):
-                    continue
-                moved = _relocated_segment(segment, directory, Path(project_root))
-                if moved is None:
-                    continue
-                relocated = classify_action(moved, extra_protected, project_root, archive,
-                                            require_approval, _allow_standalone_fetch=False,
-                                            inline_scan=inline_scan)
-                if (relocated["protected"], relocated["tier"]) > (verdict["protected"], verdict["tier"]):
-                    relocated["impact"] = [*relocated["impact"],
-                                           "judged where an earlier directory change "
-                                           f"points it: {moved[:80]}"]
-                    verdicts[position] = relocated
+            _relocate_verdicts(
+                resolved_segments, directories, verdicts, Path(project_root),
+                lambda text: classify_action(text, extra_protected, project_root, archive,
+                                             require_approval, _allow_standalone_fetch=False,
+                                             inline_scan=inline_scan))
         # B4-9 pipeline post-pass: a literal-URL read-only fetch whose ask
         # is the ONLY thing protecting the line is downgraded when every
         # consumer beside it is a KNOWN local read - and never when any

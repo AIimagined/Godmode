@@ -1884,5 +1884,33 @@
     "class": "by-design",
     "tool": "Bash",
     "note": "`cd -` first goes to a directory the command never named"
+  },
+  {
+    "operation": "cd \"$(printf .git)\" && echo x >> config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a directory named by a quoted substitution cannot be read from the text"
+  },
+  {
+    "operation": "cd \"$(pwd)/.git\"; echo x >> config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a directory built from a substitution cannot be read from the text"
+  },
+  {
+    "operation": "cd \"`printf .git`\"; echo x >> config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a directory named by a quoted backtick substitution cannot be read from the text"
+  },
+  {
+    "operation": "cd \"$(git rev-parse --show-toplevel)\" && git status",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: a read after a substituted directory change writes nothing"
   }
 ]

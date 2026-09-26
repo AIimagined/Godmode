@@ -209,6 +209,16 @@ class DirectoryChangeTests(unittest.TestCase):
         self.assertEqual(decision("cd .git && cd - && cd - && echo x >> config"), "ask")
         self.assertEqual(decision("cd - && echo x >> config"), "ask")
 
+    def test_a_directory_named_by_a_quoted_substitution_asks(self) -> None:
+        for command in ('cd "$(printf .git)" && echo x >> config',
+                        'cd "$(pwd)/.git"; echo x >> config',
+                        'cd "`printf .git`"; echo x >> config',
+                        'pushd "$(printf .git)" && echo x>>config'):
+            with self.subTest(command=command):
+                self.assertEqual(decision(command), "ask")
+        self.assertEqual(decision('cd "$(git rev-parse --show-toplevel)" && git status'),
+                         "allow")
+
     def test_an_unresolvable_directory_change_asks(self) -> None:
         self.assertEqual(decision("cd $x && echo x >> config"), "ask")
         self.assertEqual(decision("cd .. && echo x > notes.txt"), "ask")
