@@ -23,23 +23,60 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import unicodedata
+
+from .godmode_errors import AuthorizationError
 
 
 class DialogUnavailable(RuntimeError):
     """No native dialog can be shown here (no desktop, no dialog program)."""
 
 
+class OperationNotDisplayable(AuthorizationError):
+    """The operation, as the dialog would show it, does not fit the dialog."""
+
+
 TITLE = "Godmode approval"
-_OPERATION_SHOWN = 600
+OPERATION_DISPLAY_LIMIT = 600
 _SYSTEM_BIN = ("/usr/bin", "/bin")
 _READ_LIMIT = 4096
+# Characters that reorder, hide or break the text around them: bidirectional
+# controls and marks, and zero-width characters. Shown escaped, so the
+# operator reads the command's characters in the order they will run.
+_INVISIBLE = frozenset(
+    [0x061C, 0x200B, 0x200C, 0x200D, 0x200E, 0x200F, 0x2060, 0xFEFF]
+    + list(range(0x202A, 0x202F)) + list(range(0x2066, 0x206A)))
+_NAMED_ESCAPES = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
+
+
+def displayable(operation: str) -> str:
+    """`operation` with every control, bidirectional and zero-width
+    character written as a visible escape (`\\n`, `\\u202e`), so a
+    newline cannot push text out of view and a reordering mark cannot make
+    the dialog show a different command from the one staged."""
+    shown: list[str] = []
+    for char in operation:
+        code = ord(char)
+        if char in _NAMED_ESCAPES:
+            shown.append(_NAMED_ESCAPES[char])
+        elif code in _INVISIBLE or unicodedata.category(char) in ("Cc", "Cf", "Zl", "Zp"):
+            shown.append(f"\\u{code:04x}" if code <= 0xFFFF else f"\\U{code:08x}")
+        else:
+            shown.append(char)
+    return "".join(shown)
 
 
 def approval_message(operation: str, ttl_seconds: int, digest: str | None = None) -> str:
-    """The text every dialog shows: the exact command and what approving spends."""
-    shown = operation
-    if len(shown) > _OPERATION_SHOWN:
-        shown = f"{shown[:_OPERATION_SHOWN]}... ({len(operation) - _OPERATION_SHOWN} more characters)"
+    """The text every dialog shows: the exact command and what approving
+    spends. An operation that does not fit is refused, never cut: approving
+    text the operator could not see is not an approval."""
+    shown = displayable(operation)
+    if len(shown) > OPERATION_DISPLAY_LIMIT:
+        raise OperationNotDisplayable(
+            f"This operation is {len(shown)} characters as the approval dialog would show it; "
+            f"the dialog shows at most {OPERATION_DISPLAY_LIMIT}, so it cannot be approved "
+            "there. Stage a shorter command, or run it from a terminal where it can be read "
+            "in full.")
     lines = [
         "Approve this exact command:",
         "",
