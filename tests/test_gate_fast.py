@@ -756,6 +756,20 @@ class UninitializedGuard(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertIsNone(self._run(command))
 
+    def test_a_directory_change_behind_a_flag_still_moves_the_write(self) -> None:
+        # The directory is the first word that is not a flag, in either shell.
+        write = r"printf '[godmode]\n\tuninit%s = off\n' ialized >> config"
+        for command, tool in ((f"cd -- .git && {write}", "Bash"),
+                              (f"cd -P .git && {write}", "Bash"),
+                              (f"cd -LP .git && {write}", "Bash"),
+                              ("Set-Location -Path .git; Add-Content config x", "PowerShell"),
+                              ("Set-Location -LiteralPath .git; Add-Content config x", "PowerShell"),
+                              ("Set-Location -Path:.git; Add-Content config x", "PowerShell"),
+                              ("Set-Location -ErrorAction Stop .git; Add-Content config x",
+                               "PowerShell")):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(self._run(command, tool=tool)), "ask")
+
     def test_a_write_from_a_call_already_inside_the_git_directory_asks(self) -> None:
         # The host shell kept an earlier `cd .git`: the call's own `cwd`
         # is where a bare `config` lands.

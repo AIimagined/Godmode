@@ -1821,5 +1821,47 @@
     "class": "by-design",
     "tool": "Bash",
     "note": "near-miss: a read after `cd .git` writes nothing"
+  },
+  {
+    "operation": "cd -- .git && printf x >> config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a write after `cd -- .git` lands in the repository config"
+  },
+  {
+    "operation": "cd -P .git && printf x >> config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a write after `cd -P .git` lands in the repository config"
+  },
+  {
+    "operation": "cd -LP .git && printf x >> config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a write after `cd -LP .git` lands in the repository config"
+  },
+  {
+    "operation": "Set-Location -Path .git; Add-Content config x",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "a write after `Set-Location -Path .git` lands in the repository config"
+  },
+  {
+    "operation": "Set-Location -LiteralPath .git; Add-Content config x",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "a write after `Set-Location -LiteralPath .git` lands in the repository config"
+  },
+  {
+    "operation": "Set-Location -Path:.git; Add-Content config x",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "a write after `Set-Location -Path:.git` lands in the repository config"
   }
 ]

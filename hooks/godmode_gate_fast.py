@@ -1071,6 +1071,53 @@ _PATH_WORD_SPLIT = re.compile(r"[\s;&|()<>=,{}]+")
 # A word the shell expands before it is a path: its value is not in the text.
 _DYNAMIC_WORD = re.compile(r"[$`%]")
 _GLOB_CHARS = re.compile(r"[*?\[]")
+# `Set-Location`'s parameters whose value is the directory, matched by any
+# prefix PowerShell accepts (`-Pat`, `-Lit`) or their alias.
+_CD_PATH_FLAGS = ("-path", "-literalpath", "-pspath")
+# A word that is no directory: a flag, `--`, or cmd's `/d`.
+_UNREAD_TARGET = object()
+
+
+def _directory_target(rest: list[str]) -> tuple[Any, bool]:
+    """The directory a `cd`/`pushd`/`Set-Location` whose words after the
+    head are `rest` names, and whether the change is certain to happen.
+    The target is `""` when none is named (a bare `cd`), `"-"` for the
+    previous directory, and `_UNREAD_TARGET` when a flag this cannot read
+    makes it unknowable. Mirrors `godmode_sentinel._directory_change`:
+    flags are skipped (`-P`, `-LP`, `--`, `/d`), `-Path x`, `-LiteralPath
+    x` and `-Path:x` name `x`. A short switch one shell takes and another
+    refuses (`-P` is bash's physical switch, an ambiguous prefix to
+    PowerShell) may leave the directory unchanged, so it is not certain."""
+    certain = True
+    index = 0
+    while index < len(rest):
+        word = rest[index]
+        lowered = word.lower()
+        if word == "--":
+            return (rest[index + 1] if index + 1 < len(rest) else "", certain)
+        if word == "-":
+            return ("-", certain)
+        if lowered == "/d":
+            index += 1
+            continue
+        if not word.startswith("-"):
+            return (word, certain)
+        name, joined, value = word.partition(":")
+        name = name.lower()
+        if name == "-lp" or (len(name) >= 4 and any(flag.startswith(name) for flag in _CD_PATH_FLAGS)):
+            if joined and value:
+                return (value, certain)
+            return ((rest[index + 1], certain) if index + 1 < len(rest)
+                    else (_UNREAD_TARGET, False))
+        if not joined and re.fullmatch(r"-[LPe@]+", word):
+            certain = False
+            index += 1
+            continue
+        if not joined and len(name) >= 4 and "-passthru".startswith(name):
+            index += 1
+            continue
+        return (_UNREAD_TARGET, False)
+    return ("", certain)
 
 
 def _guard_setting_files(root: str | None) -> list[str]:
@@ -1113,16 +1160,17 @@ def _writes_guard_setting(texts: list[str], root: str | None, cwd: str | None = 
         bases = list(dict.fromkeys(starts))
         dynamic_base = False
         for index, word in enumerate(words):
-            if word.lower() in _CD_HEADS:
-                bases.append(home)
-            if word.lower() in _CD_HEADS and index + 1 < len(words):
-                target = words[index + 1]
-                if _DYNAMIC_WORD.search(target) or _GLOB_CHARS.search(target):
-                    dynamic_base = True
-                elif target not in ("-", "--"):
-                    if target.startswith("~"):
-                        target = home + target[1:]
-                    bases.extend(os.path.join(known, target) for known in list(bases))
+            if word.lower() not in _CD_HEADS:
+                continue
+            bases.append(home)
+            target, _certain = _directory_target(words[index + 1:])
+            if (target is _UNREAD_TARGET or target == "-" or _DYNAMIC_WORD.search(target)
+                    or _GLOB_CHARS.search(target)):
+                dynamic_base = True
+            elif target:
+                if target.startswith("~"):
+                    target = home + target[1:]
+                bases.extend(os.path.join(known, target) for known in list(bases))
         for word in words:
             if word.startswith("~"):
                 word = home + word[1:]
