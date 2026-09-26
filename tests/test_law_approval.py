@@ -214,6 +214,33 @@ class SameProcessApprovalTests(unittest.TestCase):
                     "lineage": [{"pid": approver["pid"], "name": "b-shell"}]}
         self.assertIn("started the promoting one", self._refused_with(promoter, approver))
 
+    def test_a_shared_grand_ancestor_under_different_interpreters_is_refused(self) -> None:
+        # Promotion under `perl -e 'system(...)'`, approval under `ruby -e ...`,
+        # both started from one host: different parents, one actor.
+        host = {"pid": 424_242, "name": "agent-host"}
+        promoter = {**binding_for_agent("a"),
+                    "lineage": [{"pid": 11, "name": "perl"}, host], "driver": None}
+        approver = {**binding_for_agent("b"),
+                    "lineage": [{"pid": 12, "name": "ruby"}, host], "driver": None}
+        self.assertIn("shared ancestor process (agent-host", self._refused_with(promoter, approver))
+
+    def test_a_shared_system_root_alone_does_not_tie_two_actors(self) -> None:
+        root = {"pid": 900, "name": "explorer.exe"}
+        promoter = {**binding_for_agent("a"),
+                    "lineage": binding_for_agent("a")["lineage"] + [root]}
+        approver = {**binding_for_agent("b"),
+                    "lineage": binding_for_agent("b")["lineage"] + [root]}
+        self.assertIsNone(godmode_lessons.shared_actor(promoter, approver))
+
+    def test_interpreters_pass_through_to_the_driving_program(self) -> None:
+        lineage = [{"pid": 21, "name": "perl"}, {"pid": 22, "name": "ruby.exe"},
+                   {"pid": 23, "name": "node"}, {"pid": 24, "name": "git"},
+                   {"pid": 25, "name": "make"}, {"pid": 26, "name": "find"},
+                   {"pid": 27, "name": "agent-host"}]
+        with mock.patch.object(godmode_lessons, "_process_lineage", return_value=lineage):
+            binding = _REAL_BINDING()
+        self.assertEqual(binding["driver"], {"pid": 27, "name": "agent-host"})
+
     def test_a_promotion_with_no_binding_is_refused(self) -> None:
         with _project() as (_root, archive):
             lesson = _structured_lesson(archive, "flush-before-export")

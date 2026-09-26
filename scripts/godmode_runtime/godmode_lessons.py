@@ -66,14 +66,24 @@ from .godmode_errors import ArchiveError
 # own pid, its ancestor chain, the first ancestor that is not a shell,
 # launcher or interpreter (the program driving it: an agent host, a
 # terminal), and the session it declared - and `approve` refuses when the
-# two bindings share a process, a session, a parent, or a driver. Read
-# from the operating system, not from the environment, so renaming an id
-# changes none of it.
+# two bindings share a process, a session, any ancestor below the system
+# roots, or a driver. Read from the operating system, not from the
+# environment, so renaming an id changes none of it.
 _LINEAGE_DEPTH = 8
 _PASS_THROUGH = frozenset({
     "bash", "sh", "zsh", "dash", "fish", "ksh", "tcsh", "csh", "busybox",
     "cmd", "conhost", "pwsh", "powershell", "wsl", "env", "sudo", "nohup",
-    "timeout", "py", "pyw", "uv", "time", "xargs",
+    "timeout", "py", "pyw", "uv", "time", "xargs", "perl", "ruby", "node",
+    "nodejs", "bun", "deno", "php", "git", "make", "gmake", "find", "awk",
+    "gawk", "setsid", "nice", "stdbuf", "npx", "npm",
+})
+# Ancestors every process of a desktop or login session shares: the system
+# init and the desktop shell. Sharing one of these says nothing about who
+# the actor is, so the ancestor comparison skips them; sharing any other
+# ancestor is one actor.
+_SYSTEM_ROOTS = frozenset({
+    "init", "systemd", "launchd", "kernel_task", "explorer", "wininit",
+    "winlogon", "services", "svchost", "smss", "csrss", "userinit", "sihost",
 })
 
 
@@ -215,6 +225,12 @@ def shared_actor(promoter: dict[str, Any] | None, approver: dict[str, Any]) -> s
     if _same_process(promoter.get("driver"), approver.get("driver")):
         driver = approver["driver"]
         return f"the same driving process ({driver.get('name')}, pid {driver.get('pid')})"
+    for entry in approver_lineage:
+        if _base_name(str(entry.get("name") or "")) in _SYSTEM_ROOTS:
+            continue
+        if any(_same_process(entry, other) for other in promoter_lineage):
+            return (f"a shared ancestor process ({entry.get('name') or 'unnamed'}, "
+                    f"pid {entry.get('pid')})")
     return None
 
 # NS-10j's five fields, in the archive's own canonical keys. `guard` and
