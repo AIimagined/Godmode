@@ -1226,6 +1226,7 @@ _POLICY_READ_BACKOFF_SECONDS = 0.02
 # session (their own editor/terminal), which stays the intended declaration
 # path; nor `apply_profile`'s/`init`'s own direct filesystem writes, which
 # never go through `classify_action` at all.
+_GLOB_TARGET = re.compile(r"[*?\[]")
 _SENSITIVE_EDIT = re.compile(
     r"(?i)(?:^|[/\\])\.git[/\\]|(?:^|[/\\])\.env\b|credential|\bid_rsa\b|"
     r"\.pem$|\.key$|(?:^|[/\\])" + re.escape(POLICY_FILENAME) + r"$"
@@ -4028,8 +4029,11 @@ def _categorize(normalized: str, project_root: Path | None = None,
         if write_target and _FREEZE_FILE.search(write_target):
             return ("release-freeze-mutation", True,
                     [f"{kind} write to a release-freeze marker: {write_target[:80]}"])
+        # A glob target names whatever it matches when it runs (`.gi?/conf*`
+        # is `.git/config`), so, like a variable, it is not known to stay
+        # among ordinary working files.
         if (not write_target or not _contained(write_target, project_root)
-                or _SENSITIVE_EDIT.search(write_target)):
+                or _SENSITIVE_EDIT.search(write_target) or _GLOB_TARGET.search(write_target)):
             return ("worktree-file-mutation", True,
                     [f"{kind} write outside ordinary working files: {write_target[:80]}"])
         return "worktree-file-mutation", False, [f"{kind} write inside the working tree"]

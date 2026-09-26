@@ -1590,5 +1590,26 @@
     "class": "by-design",
     "tool": "Bash",
     "note": "near-miss: listing requests is a read"
+  },
+  {
+    "operation": "printf '[\\x67odmode]\\n\\tuninitialize\\x64 = off\\n' >> .git/./config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a write to the repository config spelled with a dot segment"
+  },
+  {
+    "operation": "echo x >> .gi?/conf*",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a glob redirect target is not known to stay among working files"
+  },
+  {
+    "operation": "echo {} > ~/.godmode/godmode-setting?.json",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a glob naming the machine-wide settings file"
   }
 ]

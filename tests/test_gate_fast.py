@@ -723,6 +723,21 @@ class UninitializedGuard(unittest.TestCase):
                 self.assertEqual(self._decision(self._run(command)), "ask")
                 self.assertEqual(self._decision(self._no_ask(command, session=command)), "deny")
 
+    def test_a_write_resolving_to_the_setting_is_asked_about_however_spelled(self) -> None:
+        # The file a write lands in decides, not how its path is spelled:
+        # `.`/`..`, a directory change earlier in the call, a glob.
+        settings_glob = (self.home / "godmode-setting?.json").as_posix()
+        for command in (r"printf '[\x67odmode]\n\tuninitialize\x64 = off\n' >> .git/./config",
+                        r"cd .git && printf '[\x67odmode]\n\tuninitialize\x64 = off\n' >> config",
+                        "echo x >> .gi?/conf*",
+                        f"echo {{}} > {settings_glob}"):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(self._run(command)), "ask")
+                self.assertEqual(self._decision(self._no_ask(command, session=command)), "deny")
+        for command in ("echo x > docs/config", "cd docs && echo x > notes"):
+            with self.subTest(command=command):
+                self.assertIsNone(self._run(command))
+
     def test_an_edit_of_the_repository_config_is_asked_about(self) -> None:
         body = {"hook_event_name": "PreToolUse", "tool_name": "Write",
                 "tool_input": {"file_path": str(self.project / ".git" / "config"),

@@ -98,7 +98,7 @@ def guard_decision(payload: dict[str, Any], root: str) -> dict[str, Any] | None:
             return body("harm", "a tool call Godmode could not read")
         if not operation.strip():
             return None
-        if _disables_guard(operation, list(event.targets or [])):
+        if _disables_guard(operation, list(event.targets or []), root):
             return body("setting")
         verdict = classify_action(operation, project_root=Path(root), tool_name=event.tool)
         category = _harm_category(verdict, root, _contained)
