@@ -1723,5 +1723,103 @@
     "class": "by-design",
     "tool": "Bash",
     "note": "a write into the plugin's install directory weakens the gate"
+  },
+  {
+    "operation": "cd .git && echo x >> config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a write after `cd .git` lands in the repository config"
+  },
+  {
+    "operation": "cd .git; printf '[core]\\n\\thooksPath = x\\n' >> config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a write after `cd .git;` lands in the repository config"
+  },
+  {
+    "operation": "pushd .git && echo x >> config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a write after `pushd .git` lands in the repository config"
+  },
+  {
+    "operation": "cd .git\necho x >> config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a directory change on its own line moves the next write"
+  },
+  {
+    "operation": "cd .git/hooks && echo x > pre-commit",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a write after `cd .git/hooks` lands in a git hook"
+  },
+  {
+    "operation": "cd .git && cp x config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a copy after `cd .git` lands in the repository config"
+  },
+  {
+    "operation": "Set-Location .git; Add-Content config 'x'",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "a write after `Set-Location .git` lands in the repository config"
+  },
+  {
+    "operation": "cd .git; \"x\" | Out-File config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "a pipeline write after `cd .git` lands in the repository config"
+  },
+  {
+    "operation": "cd $x && echo x >> config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a write after a directory change the text cannot resolve"
+  },
+  {
+    "operation": "cd .. && echo x > notes.txt",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a write after `cd ..` lands outside the working tree"
+  },
+  {
+    "operation": "cd .git && cd .. && echo x >> README.md",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: back at the project root before the write"
+  },
+  {
+    "operation": "pushd .git && popd && echo x >> README.md",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: `popd` returns to the project root before the write"
+  },
+  {
+    "operation": "cd docs && echo x >> notes.txt",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: a write in a subdirectory of the working tree"
+  },
+  {
+    "operation": "cd .git && git status",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: a read after `cd .git` writes nothing"
   }
 ]

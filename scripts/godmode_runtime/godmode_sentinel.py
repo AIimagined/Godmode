@@ -4580,6 +4580,176 @@ _OPERATOR_LABEL = {
 }
 
 
+# Words that move the directory every later relative path in the same
+# command text resolves against, and the ones that return to a saved one.
+_CHDIR_HEADS = frozenset({"cd", "chdir", "set-location", "sl"})
+_PUSHD_HEADS = frozenset({"pushd", "push-location"})
+_POPD_HEADS = frozenset({"popd", "pop-location"})
+# `Set-Location -Path x`: the flags whose value is the directory itself.
+_CHDIR_PATH_FLAGS = frozenset({"-path", "-literalpath", "-lp"})
+# One word of a segment as the shell sees it: quoted spans stay whole.
+_SEGMENT_WORD = re.compile(r"""(?:[^\s"']|"[^"]*"|'[^']*')+""")
+_REDIRECT_WORD = re.compile(r"^(?P<fd>\d*|&)(?P<op>>{1,2}|<)(?P<rest>.*)$")
+_ASSIGNED_VALUE = re.compile(r"^(?P<name>-{0,2}[A-Za-z_][\w-]*[=:])(?P<value>.+)$")
+# The directory an earlier change moved to cannot be read from the text:
+# a later relative path is named under this, so it reads as the variable
+# target it effectively is.
+_UNRESOLVED_DIRECTORY = "$GODMODE_UNRESOLVED_DIRECTORY"
+# A rooted word: `/x`, `\x` or a drive (`C:`), in either shell.
+_ABSOLUTE_WORD = re.compile(r"^(?:[/\\]|[A-Za-z]:)")
+# A word the shell expands before it names a directory.
+_DYNAMIC_WORD_TEXT = re.compile(r"[$`%]")
+
+
+def _directory_change(text: str) -> tuple[str, str | None] | None:
+    """`("chdir"|"pushd"|"popd", target)` when `text` is one directory
+    change, else None. `target` is None when the command names none."""
+    tokens = _argv_tokens(text) or text.split()
+    while tokens and tokens[0] in ("(", "{"):
+        tokens = tokens[1:]
+    if tokens and tokens[0][:1] in ("(", "{"):
+        tokens = [tokens[0][1:], *tokens[1:]]
+    if not tokens:
+        return None
+    head = tokens[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if head.endswith(".exe"):
+        head = head[:-4]
+    if head in _CHDIR_HEADS:
+        kind = "chdir"
+    elif head in _PUSHD_HEADS:
+        kind = "pushd"
+    elif head in _POPD_HEADS:
+        return ("popd", None)
+    else:
+        return None
+    rest = [token.rstrip(")}") for token in tokens[1:]]
+    for index, token in enumerate(rest):
+        lowered = token.lower()
+        if lowered in _CHDIR_PATH_FLAGS:
+            return (kind, rest[index + 1] if index + 1 < len(rest) else None)
+        if lowered.startswith(("-path:", "-literalpath:")):
+            return (kind, token.split(":", 1)[1])
+        if token == "-":
+            return (kind, "-")
+        if token == "--":
+            return (kind, rest[index + 1] if index + 1 < len(rest) else None)
+        if token.startswith("-") or lowered in ("/d",):
+            continue
+        return (kind, token)
+    return (kind, None)
+
+
+def _changed_directory(current: str | None, target: str | None, kind: str) -> str | None:
+    """The absolute directory `target` names from `current`, or None when
+    the text does not say (a variable, a glob, `cd -`, an unknown start)."""
+    if target is None:
+        # A bare `cd` goes home; a bare `pushd` swaps with a directory the
+        # text never named.
+        return os.path.expanduser("~") if kind == "chdir" else None
+    if not target or target == "-" or _DYNAMIC_WORD_TEXT.search(target) or _GLOB_TARGET.search(target):
+        return None
+    if target.startswith("~"):
+        target = os.path.expanduser("~") + target[1:]
+    if _ABSOLUTE_WORD.match(target):
+        return os.path.normpath(target)
+    if current is None:
+        return None
+    return os.path.normpath(os.path.join(current, target))
+
+
+def _segment_directories(segments: list[str], root: Path) -> list[str | None]:
+    """The directory each segment runs in: the project root until a `cd`,
+    `pushd`, `popd` or `Set-Location` earlier in the same text moves it.
+    None where the move names a directory the text cannot resolve."""
+    start = os.path.normpath(os.path.abspath(str(root)))
+    current: str | None = start
+    stack: list[str | None] = []
+    directories: list[str | None] = []
+    for text in segments:
+        directories.append(current)
+        change = _directory_change(text)
+        if change is None:
+            continue
+        kind, target = change
+        if kind == "popd":
+            current = stack.pop() if stack else None
+            continue
+        if kind == "pushd":
+            stack.append(current)
+        current = _changed_directory(current, target, kind)
+    return directories
+
+
+def _relocated_word(value: str, directory: str | None, root: str, write: bool) -> str | None:
+    """`value` spelled from the project root as seen from `directory`, or
+    None when that changes nothing a verdict reads. A write target is
+    always relocated; any other argument only when it resolves somewhere
+    that is not an ordinary working path (outside the tree, or under a
+    dot-directory such as `.git`)."""
+    if (not value or value.startswith("-") or _DYNAMIC_WORD_TEXT.search(value)
+            or _NULL_DEVICE.match(value) or value.startswith("~")
+            or _ABSOLUTE_WORD.match(value)):
+        return None
+    if directory is None:
+        return f"{_UNRESOLVED_DIRECTORY}/{value}"
+    resolved = os.path.normpath(os.path.join(directory, value))
+    try:
+        relative = os.path.relpath(resolved, root)
+    except ValueError:  # another drive
+        relative = ".."
+    inside = not (relative == ".." or relative.startswith(".." + os.sep) or os.path.isabs(relative))
+    if not inside:
+        return resolved.replace(os.sep, "/")
+    shown = relative.replace(os.sep, "/")
+    if write or any(part.startswith(".") for part in shown.split("/")):
+        return shown
+    return None
+
+
+def _relocated_segment(text: str, directory: str | None, root: Path) -> str | None:
+    """`text` with each relative path argument and write target spelled
+    as it resolves after an earlier directory change, or None when no
+    word moves. The head word is the command, never an argument."""
+    base = os.path.normpath(os.path.abspath(str(root)))
+    words = list(_SEGMENT_WORD.finditer(text))
+    pieces: list[str] = []
+    last = 0
+    write_next = False
+    changed = False
+    for index, match in enumerate(words):
+        word = match.group(0)
+        if index == 0 or (index == 1 and words[0].group(0) in ("(", "{")):
+            continue
+        prefix, value, write = "", word, write_next
+        write_next = False
+        redirect = _REDIRECT_WORD.match(word)
+        if redirect:
+            if redirect.group("op") == "<" or redirect.group("rest").startswith("&"):
+                continue
+            if not redirect.group("rest"):
+                write_next = True
+                continue
+            prefix = word[:len(word) - len(redirect.group("rest"))]
+            value, write = redirect.group("rest"), True
+        else:
+            assigned = _ASSIGNED_VALUE.match(word)
+            if assigned:
+                prefix, value = assigned.group("name"), assigned.group("value")
+        bare = value.replace('"', "").replace("'", "")
+        moved = _relocated_word(bare, directory, base, write)
+        if moved is None:
+            continue
+        quoted = f'"{moved}"' if re.search(r"\s", moved) else moved
+        pieces.append(text[last:match.start()])
+        pieces.append(prefix + quoted)
+        last = match.end()
+        changed = True
+    if not changed:
+        return None
+    pieces.append(text[last:])
+    return "".join(pieces)
+
+
 def _component_boundaries(command: str) -> list[tuple[str, str | None]]:
     """`command` split the same way `_raw_segments` splits it, paired with
     the operator text that introduced each segment (`None` for the first).
@@ -4973,6 +5143,30 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                                     require_approval, _allow_standalone_fetch=False,
                                     inline_scan=inline_scan)
                     for segment in resolved_segments]
+        # `cd .git && echo x >> config` writes `.git/config`: a relative
+        # path is judged from the directory an earlier `cd`/`pushd`/
+        # `Set-Location` in the same text moved to, never only from the
+        # project root. A segment that writes is judged a second time with
+        # its paths spelled from the root, and the stricter verdict holds.
+        if project_root is not None:
+            directories = _segment_directories(resolved_segments, Path(project_root))
+            start = os.path.normpath(os.path.abspath(str(project_root)))
+            for position, (segment, directory) in enumerate(zip(resolved_segments, directories)):
+                verdict = verdicts[position]
+                if directory == start or (not verdict["protected"]
+                                          and verdict["category"] == "read-only-inspection"):
+                    continue
+                moved = _relocated_segment(segment, directory, Path(project_root))
+                if moved is None:
+                    continue
+                relocated = classify_action(moved, extra_protected, project_root, archive,
+                                            require_approval, _allow_standalone_fetch=False,
+                                            inline_scan=inline_scan)
+                if (relocated["protected"], relocated["tier"]) > (verdict["protected"], verdict["tier"]):
+                    relocated["impact"] = [*relocated["impact"],
+                                           "judged where an earlier directory change "
+                                           f"points it: {moved[:80]}"]
+                    verdicts[position] = relocated
         # B4-9 pipeline post-pass: a literal-URL read-only fetch whose ask
         # is the ONLY thing protecting the line is downgraded when every
         # consumer beside it is a KNOWN local read - and never when any

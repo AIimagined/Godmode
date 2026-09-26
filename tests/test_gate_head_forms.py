@@ -170,5 +170,41 @@ class FastPathTests(unittest.TestCase):
                              "allow")
 
 
+class DirectoryChangeTests(unittest.TestCase):
+    """A relative path is read from the directory an earlier `cd` moved to.
+
+    `cd .git && echo x >> config` writes `.git/config`; judged from the
+    project root, `config` read as an ordinary working file."""
+
+    def test_a_write_after_a_directory_change_is_judged_where_it_lands(self) -> None:
+        for command, tool, full_path in (
+                ("cd .git && echo x >> config", None, "echo x >> .git/config"),
+                ("cd .git; printf x >> config", None, "printf x >> .git/config"),
+                ("pushd .git && echo x >> config", None, "echo x >> .git/config"),
+                ("cd .git\necho x >> config", None, "echo x >> .git/config"),
+                ("cd .git/hooks && echo x > pre-commit", None, "echo x > .git/hooks/pre-commit"),
+                ("sl .git; echo x >> config", "PowerShell", "echo x >> .git/config"),
+                ("Set-Location .git; Add-Content config 'x'", "PowerShell",
+                 "Add-Content .git/config 'x'")):
+            with self.subTest(command=command):
+                kwargs = {"tool_name": tool} if tool else {}
+                moved = classify_action(command, project_root=PLUGIN_ROOT, **kwargs)
+                direct = classify_action(full_path, project_root=PLUGIN_ROOT, **kwargs)
+                self.assertTrue(moved["protected"], command)
+                self.assertEqual(moved["category"], direct["category"], command)
+
+    def test_an_unresolvable_directory_change_asks(self) -> None:
+        self.assertEqual(decision("cd $x && echo x >> config"), "ask")
+        self.assertEqual(decision("cd .. && echo x > notes.txt"), "ask")
+
+    def test_a_return_to_the_root_or_a_move_inside_the_tree_stays_allowed(self) -> None:
+        for command in ("cd .git && cd .. && echo x >> README.md",
+                        "pushd .git && popd && echo x >> README.md",
+                        "cd docs && echo x >> notes.txt",
+                        "cd .git && git status"):
+            with self.subTest(command=command):
+                self.assertEqual(decision(command), "allow")
+
+
 if __name__ == "__main__":
     unittest.main()
