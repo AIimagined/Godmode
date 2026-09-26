@@ -965,7 +965,9 @@ class UninitializedGuardScreen(unittest.TestCase):
         for command in ("x=sh; git pu$x -f", "git pu$@sh -f", "git pu$*sh -f",
                         "r$@m -rf /tmp/x", "npm pub$@lish", "git $x -f",
                         "git pu`printf s`h -f", "git pu{s,}h -f", "git pu?h -f",
-                        "set x=s&& git pu%x%h -f"):
+                        "set x=s&& git pu%x%h -f", 'tmux new -d "$C"',
+                        "python -m godmode_runtime.godmode_console authorize stage x",
+                        "python scripts/godmode_runtime/godmode_console.py authorize stage x"):
             with self.subTest(command=command):
                 self.assertTrue(fast.harm_candidate(payload(command), ["."]))
 

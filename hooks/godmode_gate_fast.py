@@ -945,7 +945,10 @@ _HARM_HINT = re.compile(
     r"erase|unlink|remove|rmtree|move-item|new-item|set-content|add-content|out-file|"
     r"clear-content|rename-item|find|deploy|publish|release|upload|send|post|create|"
     r"eval|vssadmin|wmic|wbadmin|tmutil|password|godmode|uninitialized|config)"
-    r"(?=[^a-z0-9_]|$)|shadowcopy|computerrestore")
+    r"(?=[^a-z0-9_]|$)|shadowcopy|computerrestore"
+    # Godmode's own modules (`godmode_console`, `godmode_runtime`): `_` joins
+    # words above, so the plain name inside one never matched.
+    r"|godmode_")
 # Quote, escape and caret characters a shell removes before it runs a word:
 # `r"m"`, `p\ush` and `pu^sh` all run the word the screen must see.
 _FLATTEN = re.compile(r"[\"'\\^`]")
