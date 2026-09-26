@@ -20,6 +20,7 @@ for entry in (SCRIPTS, TESTS):
     if str(entry) not in sys.path:
         sys.path.insert(0, str(entry))
 
+from _host_env import scrubbed_env  # noqa: E402
 from godmode_runtime import godmode_console as console  # noqa: E402
 from godmode_runtime import godmode_passdialog as passdialog  # noqa: E402
 from godmode_runtime import godmode_sentinel as sentinel  # noqa: E402
@@ -252,7 +253,8 @@ class StageThroughTheDialogTests(unittest.TestCase):
             done = subprocess.run(
                 [sys.executable, str(hook), "pre-action", "--project", str(project)],
                 input=json.dumps(payload), capture_output=True, text=True,
-                encoding="utf-8", errors="replace", timeout=180, cwd=str(project))
+                encoding="utf-8", errors="replace", timeout=180, cwd=str(project),
+                env=scrubbed_env())
             reason = json.loads(done.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
             self.assertIn("authorize stage --from-last-refusal", reason)
             self.assertNotIn(PASSWORD, reason)

@@ -6370,10 +6370,9 @@ def design_surface_of(operation: str, project_root: Path) -> str | None:
     edit = _TOOL_FILE_EDIT.match(operation.strip())
     if not edit:
         return None
-    from .godmode_fence import design_verdict
+    from .godmode_designsurface import design_surface
 
-    verdict = design_verdict(project_root, edit.group("path").strip().strip("\"'"))
-    return None if verdict["allowed"] else str(verdict["path"])
+    return design_surface(project_root, edit.group("path").strip().strip("\"'"))
 
 
 def design_edit_operation(relative: str) -> str:

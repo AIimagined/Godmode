@@ -3165,9 +3165,10 @@ def record_claim(
     # (and therefore `claimed_grade` below) is left alone: the caller
     # asked for `cap_grade`'s better grade and did not get it, which is
     # exactly what `downgraded` exists to say.
+    capped_reason = None
     if cap_grade is not None and _GRADE_RANK.get(effective, 0) > _GRADE_RANK.get(cap_grade, 0):
         if not reason:
-            reason = cap_reason or f"capped at {cap_grade}"
+            reason = capped_reason = cap_reason or f"capped at {cap_grade}"
         effective = cap_grade
     if fix_incident is not None:
         # NS-13e, applied after composition for the same reason as the cap
@@ -3176,9 +3177,11 @@ def record_claim(
         pair_reason = _fix_pair_reason(archive, session, fix_incident, citations)
         if pair_reason and _GRADE_RANK.get(effective, 0) > _GRADE_RANK["observed"]:
             effective, reason = "observed", pair_reason
-        elif pair_reason and not reason:
-            # Already below verified (a red --verify run caps before this
-            # call): still say why the pair is not complete.
+        elif pair_reason and (not reason or reason == capped_reason):
+            # Already below verified (a red --verify run capped it just
+            # above): the incident's own reason is the more specific one -
+            # a red cited check on a fix claim is its reproduction still
+            # failing - so it replaces the generic cap wording.
             reason = pair_reason
         composed["fix_pair"] = "unpaired" if pair_reason else "red-then-green"
     record = archive.append(

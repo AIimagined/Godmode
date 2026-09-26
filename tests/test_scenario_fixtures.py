@@ -98,19 +98,31 @@ class NegativeControlTests(unittest.TestCase):
         import time as _time
         original_tail = Chronicle._chain_tail
 
-        def slow_tail(self):
-            tail = original_tail(self)
+        def slow_tail(self, *args, **kwargs):
+            # Pass the tail read's own arguments through (`fresh=` on a
+            # retry); a stand-in that rejects them fails every write, and an
+            # empty chain reads as intact.
+            tail = original_tail(self, *args, **kwargs)
             _time.sleep(0.05)
             return tail
 
+        # The per-sequence exclusive claim is the second guard: without the
+        # lock, it alone still refuses a writer that derived a taken
+        # sequence. A negative control disables every guard, or it cannot fail.
+        def no_claim(self, sequence):
+            return self.sequence_claims / f"{sequence:012d}.unclaimed"
+
         original_lock = Chronicle.write_lock
+        original_claim = Chronicle._claim_sequence
         Chronicle.write_lock = noop_lock
         Chronicle._chain_tail = slow_tail
+        Chronicle._claim_sequence = no_claim
         try:
             report = scen.run(only="concurrent-agent-collision")
         finally:
             Chronicle.write_lock = original_lock
             Chronicle._chain_tail = original_tail
+            Chronicle._claim_sequence = original_claim
         self.assertFalse(report["scenarios"][0]["caught"])
         self.assertIn("sequence is not contiguous",
                       report["scenarios"][0]["observed"].lower())
