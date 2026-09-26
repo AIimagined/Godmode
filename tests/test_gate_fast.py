@@ -708,6 +708,22 @@ class UninitializedGuard(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self._decision(self._run(command)), "ask")
 
+    def test_a_harm_class_word_completed_by_an_expansion_asks(self) -> None:
+        # The expansion sits in the verb, a flag or the program itself, and
+        # the classifier cannot read what runs; an empty `$@` leaves the
+        # plain harm-class spelling.
+        for command in ("g''it p${_}ush -f", "git reset --ha$@rd HEAD~3",
+                        "gh rel$@ease create v1", "r$@m -rf /tmp/x", "npm pub$@lish",
+                        "git pu`printf s`h -f", "git pu{s,}h -f", "git pu?h -f",
+                        "git reset $x HEAD~3"):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(self._run(command)), "ask")
+        # A variable standing for a whole ordinary argument stays ordinary.
+        for command in ("echo $HOME", 'git commit -m "$msg"', "git add $f", "make $t",
+                        "curl $url", "git log $REV", "LD=a$B make", "date +%Y%m%d"):
+            with self.subTest(command=command):
+                self.assertIsNone(self._run(command))
+
     def test_releases_and_history_rewrites_ask(self) -> None:
         for command in ("npm publish", "gh release create v1", "git reset --hard HEAD~3",
                         "git branch -D topic", "git push origin v1.0"):

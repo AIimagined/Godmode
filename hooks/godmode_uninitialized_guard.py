@@ -41,29 +41,81 @@ _HARM_LABELS = {
 
 # A word the shell builds when the line runs: its value is not in the text.
 _EXPANSION = re.compile(r"[$`]|^[(@]")
+# A word the shell completes when the line runs: an expanding `$`
+# (`$x`, `$@`, `${_}`, `$(..)`), a backtick substitution or a cmd `%x%`.
+_WORD_EXPANSION = re.compile(r"\$[\w@*#?!$({'\"-]|`|%\w+%")
+# A bare word carrying a brace or glob the shell expands (`pu{s,}h`,
+# `pu?h`): no path separator, so it is a verb or flag, not a file.
+_SPLICED_PATTERN = re.compile(r"^[\w,{}?*\[\]-]*[{?*\[][\w,{}?*\[\]-]*$")
+# An expansion spliced onto literal letters in one word (`r$@m`, `p${_}ush`).
+_SPLICED = re.compile(
+    r"\w[\"']*(?:\$|`|%\w+%)|(?:\}|\)|`|\$[@*#?!0-9-]|%\w+%)[\"']*\w")
+# The expansions an unset or empty value removes, for reading what the
+# command runs when they expand to nothing.
+_EMPTY_EXPANSION = re.compile(
+    r"\$\{[^}]*\}|\$\([^)]*\)|`[^`]*`|\$[@*#?!$0-9_-]|\$[A-Za-z_]\w*|%\w+%")
+_FLAT = re.compile(r"[\"'\\^]")
+_HARM_TIERS = ("R3", "R4", "R5")
 
 
-def _unreadable_command(operation: str) -> bool:
-    """Whether a segment runs a program - or a git verb - that is only
-    built when the line runs (`& ('gi'+'t') push`, `$cmd push`,
-    `git $(printf pu)sh`). The call already named a harm-class word, so a
-    program the classifier cannot name is not cleared as harmless."""
+def _unreadable_command(operation: str, verdict: dict[str, Any] | None = None) -> bool:
+    """Whether a segment runs a program - or a git verb, a flag, any word
+    - that is only built when the line runs (`& ('gi'+'t') push`, `$cmd
+    push`, `git $(printf pu)sh`, `git reset --ha$@rd`, `r$@m`). The call
+    already named a harm-class word, so a command the classifier cannot
+    read is not cleared as harmless. In a segment the classifier did not
+    clear (R3 and above), a word with an expansion spliced onto letters
+    (`--ha$@rd`, `p${_}ush`) or a spliced brace or glob is unreadable, and
+    in one it placed in a harm family (history, release, delete) any
+    expanded word is; a command word spliced from an expansion and
+    letters is unreadable whatever the verdict."""
     from godmode_runtime.godmode_parseview import opaque_head
     from godmode_runtime.godmode_sentinel import shell_segments
-    if opaque_head(operation, True) or opaque_head(operation, False):
+    verdict = verdict if verdict is not None else {"protected": True}
+    protected = bool(verdict.get("protected"))
+    if protected and (opaque_head(operation, True) or opaque_head(operation, False)):
         return True
+    uncleared = [(str(part.get("text") or ""), str(part.get("category") or ""))
+                 for part in verdict.get("components") or []
+                 if isinstance(part, dict) and part.get("tier") in _HARM_TIERS]
+    if protected and not verdict.get("components") and verdict.get("tier") in _HARM_TIERS:
+        uncleared = [(operation, str(verdict.get("category") or ""))]
+    for text, category in uncleared:
+        for word in text.split():
+            flat = _FLAT.sub("", word)
+            if (_SPLICED.search(word)
+                    or (_SPLICED_PATTERN.match(flat) and re.search(r"[A-Za-z]", flat))
+                    or (category != "unknown-command" and _WORD_EXPANSION.search(word))):
+                return True
     for segment in shell_segments(operation):
+        words = segment.split()
+        command = next((word for word in words if not re.match(r"^\w+=", word)), "")
+        if _SPLICED.search(command):
+            return True
+        if not protected:
+            continue
         if opaque_head(segment, True) or opaque_head(segment, False):
             return True
-        words = segment.split()
         # The splitter drops PowerShell's call operator: `('gi'+'t') push`
         # is what is left of `& ('gi'+'t') push`.
         if words and _EXPANSION.search(words[0]):
             return True
-        if (len(words) > 1 and words[0].strip("\"'").lower() in ("git", "git.exe")
+        if (len(words) > 1 and _FLAT.sub("", words[0]).lower() in ("git", "git.exe")
                 and _EXPANSION.search(words[1])):
             return True
     return False
+
+
+def _harm_when_empty(operation: str, root: str, tool: str | None) -> str | None:
+    """The harm-class category `operation` has when every expansion in it
+    comes out empty (`npm pub$@lish` runs `npm publish`), or None."""
+    emptied = _EMPTY_EXPANSION.sub("", operation)
+    if emptied == operation:
+        return None
+    from godmode_gate_fast import _harm_category
+    from godmode_runtime.godmode_sentinel import _contained, classify_action
+    verdict = classify_action(emptied, project_root=Path(root), tool_name=tool)
+    return _harm_category(verdict, root, _contained)
 
 
 def _shown(operation: str) -> str:
@@ -131,8 +183,10 @@ def guard_decision(payload: dict[str, Any], root: str) -> dict[str, Any] | None:
             return body("setting")
         verdict = classify_action(operation, project_root=Path(root), tool_name=event.tool)
         category = _harm_category(verdict, root, _contained)
-        if category is None and verdict.get("protected") and _unreadable_command(operation):
+        if category is None and _unreadable_command(operation, verdict):
             category = "unreadable-command"
+        if category is None:
+            category = _harm_when_empty(operation, root, event.tool)
         if category is None:
             return None
         return body("harm", _HARM_LABELS.get(category, category.replace("-", " ")))

@@ -1912,5 +1912,26 @@
     "class": "by-design",
     "tool": "Bash",
     "note": "an empty `$*` spliced into the git verb"
+  },
+  {
+    "operation": "g''it p${_}ush -f",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a quoted program name and a push verb completed by `${_}`"
+  },
+  {
+    "operation": "git reset --ha$@rd HEAD~3",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "an empty `$@` spliced into `--hard`"
+  },
+  {
+    "operation": "gh rel$@ease create v1",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "an empty `$@` spliced into the release verb"
   }
 ]
