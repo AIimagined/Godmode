@@ -59,7 +59,7 @@ def _stdin_is_interactive() -> bool:
 
 def _require_tty() -> None:
     if not _stdin_is_interactive():
-        # S-4: the launcher is named by its resolved path - the running
+        # The launcher is named by its resolved path - the running
         # plugin's own root, the same one `stage_hint` prints - never a
         # `<plugin-root>` placeholder the operator would have to resolve.
         root = Path(__file__).resolve().parents[2]
@@ -177,7 +177,7 @@ _GIT_LOCAL_CHANGE = re.compile(r"(?i)^\s*git\s+(?:add|commit)(?![-\w])(?!.*\s--a
 # as `-b` here, since neither leaves the machine or discards committed work.
 _GIT_BRANCH_CREATE = re.compile(r"(?i)^\s*git\s+checkout\s+-[bB]\b")
 
-# G-1: `git restore --staged <path>` moves a path from the index back to
+# `git restore --staged <path>` moves a path from the index back to
 # HEAD - the exact inverse of `git add`, already unprotected two branches
 # above. Nothing in the working tree is touched unless `--worktree`/`-W`
 # also appears, which is the destructive form `worktree-discard` (in
@@ -188,8 +188,8 @@ _GIT_RESTORE_HEAD = re.compile(r"(?i)^\s*git\s+restore\b")
 _RESTORE_STAGED_FLAG = re.compile(r"(?i)(?<![\w-])(?:--staged|-S)(?![\w-])")
 _RESTORE_WORKTREE_FLAG = re.compile(r"(?i)(?<![\w-])(?:--worktree|-W)(?![\w-])")
 
-# G-1 (fix round 1, controller ruling - supersedes the plan text's initial
-# reading): `claude plugin eval` publishes its report to claude.ai by
+# This corrects an earlier assumption that publishing was opt-in:
+# `claude plugin eval` publishes its report to claude.ai by
 # DEFAULT when the account supports it (`claude plugin eval --help`,
 # v2.1.270) - `--publish-report` only forces that default on, and
 # `--no-publish` is the one flag that turns it off. So a BARE run (no
@@ -203,7 +203,7 @@ _RESTORE_WORKTREE_FLAG = re.compile(r"(?i)(?<![\w-])(?:--worktree|-W)(?![\w-])")
 # `--no-publish` (a hyphen is a non-word boundary) and because a bare run
 # carries no "publish"-shaped word at all for that pattern to catch.
 _CLAUDE_PLUGIN_EVAL_HEAD = re.compile(r"(?i)^\s*claude\s+plugin\s+eval\b")
-# Final review finding 1: `init\b` matched `init/…`, `init.d/…` and
+# `init\b` matched `init/…`, `init.d/…` and
 # `init-foo` too - `\b` only requires a word/non-word transition, and `/`,
 # `.` and `-` are all non-word characters, so a bare (default-publishing)
 # run named against a path that merely starts with `init` was misread as
@@ -370,7 +370,7 @@ _ACTION_PATTERNS: tuple[tuple[str, re.Pattern[str], tuple[str, ...]], ...] = (
     (
         # PowerShell's write cmdlets, named the same way `stop-process` already
         # was: the read-verb list (`_PS_READ_VERBS`) is what usually keeps an
-        # unlisted cmdlet failing closed, but Task 3's unknown-command fallback
+        # unlisted cmdlet failing closed, but the unknown-command fallback
         # (below) now reads a genuinely unrecognised head as a plain command
         # with no evidence of mutation - which these ARE evidence of, by name,
         # so they are named here rather than left to fall through to it.
@@ -440,7 +440,7 @@ _ACTION_PATTERNS: tuple[tuple[str, re.Pattern[str], tuple[str, ...]], ...] = (
         ("a running process", "whatever it was serving"),
     ),
     (
-        # U-B2: unpinning a protected evaluator is the one operation that
+        # Unpinning a protected evaluator is the one operation that
         # can defeat the pin mechanism, so it is capability-gated the same
         # way a forced push is - see `unpin_operation_text` and
         # `_TIER_BY_CATEGORY["evaluator-unpin"]` (R5, refuse outright, only
@@ -756,7 +756,7 @@ def _output_flag_target(segment: Segment) -> str | None:
 # usually-quoted argument. `bash -c "..."`/`sh -c "..."` (and every other
 # POSIX shell + fused-flag form, plus a wrapped/quoted/pathed invocation
 # of any of them) are handled EARLIER now, by `_normalized_interpreter_
-# head`/`_interpreter_opacity` above (C1, round 2 - security review,
+# head`/`_interpreter_opacity` above (a security review finding,
 # 2026-08-17) - moved there rather than left here so a wrapped shell gets
 # the exact same head-resolution every other interpreter now does, instead
 # of a second, narrower copy of "is this bash/sh" that only ever
@@ -1016,10 +1016,10 @@ _SAFE_GODMODE_READ = re.compile(
 #
 # Every head here treats its arguments as DATA, which is what makes this list
 # a shield: `echo python -c "hi"` PRINTS an invocation and runs nothing, so
-# the exec-shape scan (round 3) is deliberately checked AFTER this list and
+# the exec-shape scan is deliberately checked AFTER this list and
 # an interpreter token appearing after one of these heads is text.
 #
-# `env` is therefore NOT here any more (round 3). Its entire purpose is to
+# `env` is therefore NOT here any more. Its entire purpose is to
 # exec its trailing argument with a modified environment - it is a wrapper,
 # not a read - and it being on this list is exactly how `env -u VAR python -c
 # "…"` reached R0: the safe-read return fired on the literal word "env"
@@ -1056,7 +1056,7 @@ _POWERSHELL_READS = re.compile(
     r"gci|gc|gi|gl|gp|gm|gcm|gu|sls|ls|dir|cls|ft|fl|man|help)\b"
 )
 
-# `env` is not a read - round 3 removed it from `_SAFE_SHELL_READS` for
+# `env` is not a read - it was removed from `_SAFE_SHELL_READS` for
 # exactly that reason, because its trailing argument is a command it execs.
 # But it is still a command this module RECOGNISES, and `head_known` asks a
 # different question from "is this a read": whether a detected write should
@@ -1075,7 +1075,7 @@ def _shields_its_arguments(normalized: str) -> bool:
     it would be a false refusal on a command that provably executes no code.
 
     ROUND 4, Critical 4: `_POWERSHELL_READS` was doing what `_SAFE_SHELL_
-    READS` did for `env` before round 3 removed it - shielding an exec.
+    READS` did for `env` before that removal - shielding an exec.
     `Measure-Command { python -c "…" }` RUNS its scriptblock and its verb is
     on the read list, so the whole round-3 mechanism was unreachable behind
     it; `Where-Object`, `Sort-Object` and `Group-Object` take executable
@@ -1346,7 +1346,7 @@ _RECOVERY_POINT_DESTRUCTION = re.compile(
 _DOCKER_SOCKET = re.compile(r"(?i)docker\.sock|/var/run/docker\.sock|npipe:////\./pipe/docker_engine")
 
 # ---------------------------------------------------------------------------
-# C1 (external audit, 2026-08-17): an interpreter handed a whole program as
+# An interpreter handed a whole program as
 # one string argument matched `_LOCAL_COMPUTE` on its bare name alone -
 # `python -c "subprocess.run(['git','push','--force', ...])"` and `python -c
 # "<writes .godmode-authorization-policy.json>"` both classified as R1 local
@@ -1387,7 +1387,7 @@ _DOCKER_SOCKET = re.compile(r"(?i)docker\.sock|/var/run/docker\.sock|npipe:////\
 # cannot read into anything - those, and only those, stay opaque here.
 #
 # ---------------------------------------------------------------------
-# ROUND 2 (independent security review, 2026-08-17): round 1 anchored every
+# Round 1 anchored every
 # check to the interpreter being the LITERAL FIRST TOKEN, spelled one of a
 # few exact ways. `/usr/bin/python -c "…"`, `env python -c "…"`, `"python"
 # -c "…"`, and `sudo timeout 5 python -c "…"` are all ordinary ways to
@@ -1401,7 +1401,7 @@ _DOCKER_SOCKET = re.compile(r"(?i)docker\.sock|/var/run/docker\.sock|npipe:////\
 # against the RESOLVED form instead of learning a second, parallel copy of
 # "what counts as this interpreter."
 #
-# ROUND 3 (second independent security review, 2026-08-17): round 2 located
+# Round 2 located
 # the interpreter by STRIPPING AWAY everything that was not it - a table of
 # wrapper commands (`_WRAPPER_STRIP_STEPS`), each with its own hand-written
 # flag grammar. That table is deleted here. It was wrong about three of its
@@ -1569,7 +1569,7 @@ def _interpreter_basename(token: str) -> str | None:
     basename = _EXECUTABLE_SUFFIX.sub("", re.split(r"[\\/]", stem)[-1])
     if _KNOWN_INTERPRETER_BASENAME.match(basename):
         return basename.lower()
-    # ROUND 4: tokenizing removes the QUOTES of an ANSI-C `$'python'` and
+    # Tokenizing removes the QUOTES of an ANSI-C `$'python'` and
     # leaves the `$` behind, where the raw-text reader saw `$'…'` whole. The
     # `$` is stripped only when what remains is a known interpreter, so this
     # cannot widen anything else; a shell variable that literally expands to
@@ -1578,7 +1578,7 @@ def _interpreter_basename(token: str) -> str | None:
     # population sweep's cases, and this is what keeps them closed.)
     if basename.startswith("$") and _KNOWN_INTERPRETER_BASENAME.match(basename[1:]):
         return basename[1:].lower()
-    # ROUND 4, Critical 3: an INTERIOR backslash is shell quoting, not a path
+    # An INTERIOR backslash is shell quoting, not a path
     # separator - `pyth\on` is `python` to the shell, and the path split
     # above truncates it to `on` instead. Tried only after the path reading
     # fails, so `C:\Python\python.exe` still resolves through its real
@@ -1636,7 +1636,7 @@ def _normalized_interpreter_head(
     return basename, rest
 
 
-# ROUND 4 (third security review): every pattern below used to be searched
+# Every pattern below used to be searched
 # over RAW TEXT anchored `(?:^|\s)-`. Round 3 deleted the trailing `(?:\s|$)`
 # and left that LEADING anchor, so one quote character - which the shell
 # removes before `execve` - walked straight through all of them
@@ -1671,7 +1671,7 @@ _PYTHON_FLAG_TOKEN = re.compile(r"^-[A-LN-Za-ln-z]*c")
 # only long options named here are the two that evaluate.
 _NODE_FLAG_TOKEN = re.compile(r"(?i)^(?:-[a-zA-Z]*[ep]|--eval|--print)")
 
-# ROUND 4, finding I-1: ruby and perl were sharing one pattern that matched
+# Ruby and perl were sharing one pattern that matched
 # `-e` OR `-E`, and `-E` is not ruby's eval flag at all - it is ruby's
 # EXTERNAL ENCODING flag, which is why `ruby -Eutf-8` was a false refusal
 # (round 3 disclosed it as an accepted over-ask; it was a wrong rule, not a
@@ -1836,7 +1836,7 @@ def _deno_eval_subcommand(tokens: list[str]) -> bool:
     return False
 
 
-# C5/C6 (security review): the payload arrives on stdin instead of as a
+# The payload arrives on stdin instead of as a
 # flag argument at all - a pipe from an earlier segment (`echo … | python`,
 # the "rest" of the PIPED segment is bare), a herestring (`<<<`), a stdin
 # redirect (`< file`, `/dev/stdin`), or an explicit bare `-`. Matched
@@ -1965,7 +1965,7 @@ def _opaque_inline_verdict(payload: str) -> tuple[str, bool, list[str]]:
              "code is protected regardless of visible content"])
 
 
-# `inline_interpreter: "scan"` (thirteenth field report: 321 of one archive's
+# `inline_interpreter: "scan"` (321 of one archive's
 # refusals were asks on `python -c`/heredoc blocks the agent itself wrote).
 # Under that posture, and only then, a Python payload at the HEAD of a
 # segment is parsed with `ast` and cleared when everything in it is a read or
@@ -2191,7 +2191,7 @@ def _scanned_inline_verdict(evidence: str, code: str | None,
 # The fix is narrow, deliberately NOT a global fail-closed default: an
 # unrecognised command with no exec evidence (`foobar --version`) must still
 # be R0. A blanket ask-on-unknown needs observe-mode ask-rate visibility
-# (task B4-I, unbuilt) and evidence-derived allowlist synthesis (Sprint 8)
+# (task B4-I, unbuilt) and evidence-derived allowlist synthesis
 # before it is affordable to ship, and the operator already runs with this
 # plugin disabled on every host because friction is the top complaint.
 #
@@ -2968,7 +2968,7 @@ _PS_ASSIGNMENT_ONLY = re.compile(
 # `${VAR}` is excluded: it expands a value rather than running anything. Only
 # `$( )` and backticks execute.
 #
-# C7 (security review, 2026-08-17): a single-level regex (`\$\((?P<paren>
+# A single-level regex (`\$\((?P<paren>
 # [^()]*)\)`) cannot span a parenthesised body, and almost every real
 # interpreter payload IS one - `.run(...)`, `print(...)`, `execSync(...)`.
 # `echo $(python -c "…run(['git','push','--force'])")` matched only up to
@@ -3096,7 +3096,7 @@ def shell_segments(command: str) -> list[str]:
     return _raw_segments(_without_heredoc_bodies(command))
 
 
-# C1 round 2 (security review, 2026-08-17): `P=python; $P -c "…"` - one
+# `P=python; $P -c "…"` - one
 # more layer of indirection the review's own C-1 list names. A simple,
 # bareword-only assignment made EARLIER in the SAME command is resolved
 # when a LATER segment's own head is that exact `$VAR`/`${VAR}` - not
@@ -3364,7 +3364,7 @@ def evidence_pipe_advisory(command: str) -> str | None:
     truncator = _EVIDENCE_TRUNCATOR.search(command, runner.end())
     if not truncator:
         return None
-    # Field report file 2026-09-10, Part 3: the advisory fired on a run
+    # The advisory fired on a run
     # whose full output was already captured. `tee` keeps every line and
     # `pipefail`/PIPESTATUS keep the exit code; neither is a truncation.
     between = command[runner.end():truncator.start()]
@@ -3423,9 +3423,9 @@ _TIER_BY_CATEGORY = {
     # produced by `classify_action` itself (this category names an Edit/Write
     # decision, not a Bash operation), registered here anyway so the tier
     # comes from this one vocabulary rather than being hard-coded a second
-    # time at the call site (fix round 1, review of ac48f2d).
+    # time at the call site.
     "fix-loop-reversal": "R2",
-    # C1 (external audit): an interpreter's opaque inline payload - the
+    # An interpreter's opaque inline payload - the
     # floor is R2 (an ask, never a silent R1 allow) whether or not the
     # scan below finds anything; `_R5_ESCALATIONS` raises it further when
     # the payload shows visible evidence of something worse.
@@ -3444,7 +3444,7 @@ _TIER_BY_CATEGORY = {
     "scripted-source-edit": "R3",
     "process-control": "R3",
     "database-mutation": "R3",
-    # C7 (security review): a `$(...)`/backtick substitution this module's
+    # A `$(...)`/backtick substitution this module's
     # own balanced scan could not close before the text ended - a parse
     # failure, judged the same as any other real thing it cannot read.
     "unparsed-substitution": "R3",
@@ -3455,7 +3455,7 @@ _TIER_BY_CATEGORY = {
     # like a push when someone is there, refused with a staged-capability
     # remedy when nobody is.
     "protection-weakening": "R4",
-    # U-B2: a pinned evaluator's own protection, and the edit a pin exists to
+    # A pinned evaluator's own protection, and the edit a pin exists to
     # stop, are both damage a later command does not undo - the numbers a
     # change was judged against are gone the moment either happens. R5, the
     # same tier a forced push sits at: refused outright, moved only by a
@@ -3525,7 +3525,7 @@ _R5_ESCALATIONS: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"(?:[\\/]?\*?\s*)(?:$|[\s;|&])"
         ),
     ),
-    # C1 (external audit): the same escalation `_opaque_inline_verdict`
+    # The same escalation `_opaque_inline_verdict`
     # already computed for an interpreter's opaque payload, wired through
     # this table so `_risk_tier` (the single place a category becomes a
     # tier) is still the only thing that ever produces R5 - no second,
@@ -3936,7 +3936,7 @@ def _categorize(normalized: str, project_root: Path | None = None,
         # either category is meant to give.
         return ("git-branch-create", False,
                 ["a new local branch; nothing leaves the machine"])
-    # G-1: `--staged` alone unstages; the working tree is untouched. Checked
+    # `--staged` alone unstages; the working tree is untouched. Checked
     # before `_ACTION_PATTERNS`'s `worktree-discard` entry (which still
     # matches bare `git restore` and `--staged --worktree` alike) so the
     # non-destructive form never reaches it.
@@ -3946,7 +3946,7 @@ def _categorize(normalized: str, project_root: Path | None = None,
         if staged and not worktree:
             return ("local-compute-or-state", False,
                     ["unstages a path; the working tree is untouched"])
-    # G-1 (fix round 1 ruling): `init` never publishes; a bare run publishes
+    # `init` never publishes; a bare run publishes
     # by DEFAULT (the account's setting, when it supports publishing) and
     # stays protected; `--no-publish` turns that default off UNLESS
     # `--publish-report` is also present, which forces it back on. Checked
@@ -4128,7 +4128,7 @@ def _categorize(normalized: str, project_root: Path | None = None,
         return "worktree-file-mutation", False, [f"{kind} write inside the working tree"]
     if _find_action_mutates(command_position):
         return "filesystem-mutation", True, ["local files", "recoverability"]
-    # ROUND 4, Critical 1: EVERY check that can find executable code now runs
+    # EVERY check that can find executable code now runs
     # BEFORE the help/version fast-path, not after it. The old ordering put
     # that fast-path here, above all of them, so one appended token returned
     # an unprotected read for a line carrying a payload - see `_HELP_FLAG_
@@ -4137,7 +4137,7 @@ def _categorize(normalized: str, project_root: Path | None = None,
     # independent half, so a future widening of what counts as a help flag
     # cannot reopen the class on its own.
     #
-    # C1: the interpreter this segment invokes in its own HEAD position,
+    # The interpreter this segment invokes in its own HEAD position,
     # however that head is spelled (quoted, escaped, path-prefixed,
     # `.exe`/`.bat`-suffixed). Checked before the read allowances below so a
     # quoted or pathed interpreter cannot reach one of them by accident, and
@@ -4153,13 +4153,13 @@ def _categorize(normalized: str, project_root: Path | None = None,
                          if _interpreter_family(basename) == "pwsh" else None))
         if opacity is not None:
             return opacity
-    # C1 round 3: an unresolved head is all this function has left, and
+    # An unresolved head is all this function has left, and
     # returning R0 for it - identically to matching the safe list - is what
     # made the safe list contribute nothing (findings C-2/C-3/C-5, every one
     # of them an unresolved head landing in the R0 default at the end of this
     # function). Positive evidence of exec shape fails closed here instead.
     #
-    # Shielded by `_shields_its_arguments` rather than by ORDERING (round 4):
+    # Shielded by `_shields_its_arguments` rather than by ORDERING:
     # round 3 put this after the read allowlists so `echo python -c "hi"`
     # would keep printing an invocation harmlessly, which worked for
     # `_SAFE_SHELL_READS` and made `_POWERSHELL_READS` a shield over a real
@@ -4173,7 +4173,7 @@ def _categorize(normalized: str, project_root: Path | None = None,
         if exec_shape is not None:
             return exec_shape
     if _UNKNOWABLE_BODY_HEADS.match(normalized):
-        # C1 (external audit): `bash -c`/`eval`/`ForEach-Object` were
+        # `bash -c`/`eval`/`ForEach-Object` were
         # already protected, but flatly, at whatever `unknown-command`
         # defaults to (R3) - never lower, but never raised either, even
         # when the opaque body plainly names a forced push. Routed through
@@ -4254,7 +4254,7 @@ def _categorize(normalized: str, project_root: Path | None = None,
                 ["a quote in this segment is never closed; the text after "
                  "it cannot be read reliably"])
     if segment.head:
-        # N1 (review round 2): the head `_categorize` actually resolved, AFTER
+        # The head `_categorize` actually resolved, AFTER
         # its own assignment-prefix and control-keyword stripping (both
         # already applied, recursively, above `segment` is ever computed) -
         # `FOO=1 frobnicate` reaches this line as `normalized == "frobnicate"`,
@@ -4275,7 +4275,7 @@ def _categorize(normalized: str, project_root: Path | None = None,
         [f"an unrecognised command: {segment.head}" if segment.head
          else "no recognised command"],
         resolved_head,
-        # Review round 3 (D1): `normalized` itself, the exact text this
+        # `normalized` itself, the exact text this
         # head was resolved FROM (after every one of `_categorize`'s own
         # recursive strips) - carried alongside `resolved_head` so a
         # caller that needs "what comes after the head" (the multi-segment
@@ -4413,8 +4413,8 @@ def _without_path_tokens(text: str) -> str:
                             or re.match(r"^[A-Za-z][\w.]*-[\w.-]+$", token)))
 
 
-# NS-8a: a bareword- or path-shaped head, nothing else - no parenthesis,
-# brace, or quote. Review round 1 (S2): the original form anchored the
+# A bareword- or path-shaped head, nothing else - no parenthesis,
+# brace, or quote. The original form anchored the
 # first character to `[A-Za-z0-9_]`, so every path-spelled invocation -
 # `./frobnicate.sh`, `/usr/local/bin/frobnicate`, `~/frobnicate` - escaped
 # the rule it was written for, and only the bareword form was caught. `~`,
@@ -4430,7 +4430,7 @@ def _without_path_tokens(text: str) -> str:
 # vocabulary review needs, not a silent side effect of this one.
 _PLAIN_COMMAND_HEAD = re.compile(r"^[A-Za-z0-9_~./][\w./~-]*$")
 
-# NS-8a, review round 1 (S1): which separators actually smuggle a second
+# Which separators actually smuggle a second
 # command. `ls && frobnicate` runs `frobnicate` conditionally; `ls ;
 # frobnicate` runs it UNCONDITIONALLY - a strictly easier smuggle, not a
 # safer one - and `ls || frobnicate` runs it whenever the first component
@@ -4468,7 +4468,7 @@ _SEQUENCED_READ_ONLY_HEADS = frozenset({
     "claude", "ffmpeg", "gzip", "nod", "ps", "sleep", "true",
 })
 
-# NS-8a, review round 2 (N2): a subset of the read-only heads above that
+# A subset of the read-only heads above that
 # carry ANOTHER command as their own argument - pinning the runner's name
 # must not also pin whatever it runs. `time ./frobnicate.sh` is not `time
 # node ...`, and this set is exactly the difference between the two.
@@ -4488,7 +4488,7 @@ _SEQUENCED_READ_ONLY_HEADS = frozenset({
 _PREFIX_RUNNER_HEADS = frozenset({"time", "try"})
 
 
-# Review round 3 (D1): distinct from `None` (a real "nothing follows the
+# Distinct from `None` (a real "nothing follows the
 # runner" - a bare `time` alone), returned by `_prefix_runner_remainder`
 # when it could not locate `head` in `resolved_text` at all. The earlier
 # version conflated the two by returning `None` for both, and the
@@ -4578,7 +4578,7 @@ def _prefix_runner_remainder(
     return remainder or None
 
 
-# NS-8a, review round 1 (C5): a human-readable name for each operator this
+# A human-readable name for each operator this
 # module's deny message can name, so the promoted impact string never lies
 # about which separator was actually seen (round 1's shipped state
 # hardcoded `'&&'` even after S1 widened the rule to five operators).
@@ -4999,14 +4999,14 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                     # script does. Depth-guarded so a script that runs an
                     # interpreter cannot recurse without end.
                     _script_depth: int = 0,
-                    # R-2 (one hook contract): provenance only, appended last
+                    # Provenance only, appended last
                     # so no existing positional call site shifts. See the
                     # docstring paragraph below.
                     tool_name: str | None = None,
-                    # G-5: the shell dialect the text is written in; None
+                    # The shell dialect the text is written in; None
                     # derives it from `tool_name` (no tool name = bash).
                     dialect: str | None = None,
-                    # G-5 private: False while classifying a head reading.
+                    # False while classifying a head reading.
                     _read_heads: bool = True,
                     # Private: how many command-word readings deep this call is.
                     _head_depth: int = 0) -> dict[str, Any]:
@@ -5121,7 +5121,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     # it is computed once and carried onto whichever dict this call returns.
     external_repo_ref = detect_external_repo(normalized)
 
-    # C1 (external audit): the heredoc form of an opaque interpreter payload
+    # The heredoc form of an opaque interpreter payload
     # (`python <<EOF` / `node <<'EOF'`) - checked before `shell_segments`
     # ever runs, because that function's own `_without_heredoc_bodies` (by
     # design, for every OTHER command) discards the body unread, and a
@@ -5180,7 +5180,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     inner, sub_unparsed, sub_blanked, sub_spans = _substitution_scan(
         _blank_quoted_heredoc_bodies(normalized))
     if sub_unparsed:
-        # C7 (security review): a `$(` opened and never validly closed (or
+        # A `$(` opened and never validly closed (or
         # a backtick opened and never closed) before the text ended - a
         # parse FAILURE, not "no substitution was found here". Fails
         # closed rather than falling through to whatever the rest of this
@@ -5219,7 +5219,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                                   require_approval, _allow_standalone_fetch=False,
                                   inline_scan=inline_scan)
                   for one in inner]
-        # ROUND 4: blanking the substitution leaves the line headless, so the
+        # Blanking the substitution leaves the line headless, so the
         # help test is given a placeholder head - `$(which python3)
         # --version` asks a substituted binary to print its version and is
         # not a command name this gate can usefully refuse (round-3 review,
@@ -5227,7 +5227,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # help flag and is unaffected.
         if (_substituted_command_name(normalized, sub_spans)
                 and not _is_help_request(["_"] + (_argv_tokens(sub_blanked) or []))):
-            # C1 round 3, evidence form (b): the substitution stood where the
+            # The substitution stood where the
             # command NAME goes, so blanking it leaves the outer line headless
             # (`$(which python) -c "…"` reduces to `-c "…"`, whose head is
             # `-c`) and every inner part reads harmless on its own (`which
@@ -5293,7 +5293,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         worst["operation_digest"] = hashlib.sha256(normalized.encode()).hexdigest()
         worst["substitutions"] = len(inner)
         worst["external_repo_ref"] = external_repo_ref
-        # NS-8a: a substitution mixes the outer line and its inner command(s)
+        # A substitution mixes the outer line and its inner command(s)
         # in a way that isn't a plain `&&`/`||`/`;`/`|` split - reported as
         # one component (the whole line), not decomposed further, so this
         # never disagrees with the worst-of-`parts` decision just made above.
@@ -5301,7 +5301,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                                 "tier": worst["tier"], "protected": worst["protected"]}]
         return worst
 
-    # NS-8a: `_component_boundaries` (built on the same `_walk_segments` scan
+    # `_component_boundaries` (built on the same `_walk_segments` scan
     # `_raw_segments`/`shell_segments` use) read once, for both the segment
     # texts every pre-existing branch below already needed AND the operator
     # that introduced each one - a plain `shell_segments(normalized)` call
@@ -5314,7 +5314,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # The worst part decides, ranked by tier, so `git status && git push
         # --force` is a force push rather than a status call.
         #
-        # C1 round 2: `P=python; $P -c "…"` resolved BEFORE each segment is
+        # `P=python; $P -c "…"` resolved BEFORE each segment is
         # classified independently - `_resolve_head_variables` only ever
         # trades a plain `VAR=value` this loop already reads for the value
         # it names, at the exact head position; `worst["segments"]` still
@@ -5352,7 +5352,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # consumers are visible, which is why this decision lives here and
         # not in `_categorize`.
         #
-        # MERGE (SEC-A round 2 x B4-9): the post-pass is handed the RESOLVED
+        # The post-pass is handed the RESOLVED
         # segments, never the raw ones. It decides by segment TEXT
         # (`_consumes_stdin_dangerously` matches an executor at the head),
         # so a line that assigns `P=sh` and then pipes a literal-URL fetch
@@ -5361,7 +5361,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # handing this function the list the verdicts did NOT come from.
         verdicts = _downgrade_harmless_fetches(resolved_segments, verdicts)
 
-        # NS-8a: component-scoped classification, deny-by-default. A
+        # Component-scoped classification, deny-by-default. A
         # component that names no recognised command, and sits after a real
         # sequencing separator (`_SEQUENCING_OPERATORS`: `&&`, `;`, a
         # newline, `&`, `||` - never `|`, the filter position the corpus
@@ -5370,11 +5370,11 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # evidence, so read" allowance, UNLESS its head is a pinned
         # read-only one (`_SEQUENCED_READ_ONLY_HEADS`).
         #
-        # Review round 2 (N1): the head is read from `verdict["unrecognised_
+        # The head is read from `verdict["unrecognised_
         # head"]` - the structured field `_categorize` itself resolved,
         # AFTER its own assignment-prefix and control-keyword stripping -
         # never `_argv_tokens(text)[0]` on the raw, un-stripped segment
-        # (round 1's own C1 fix, which this replaces: it read `FOO=1` as the
+        # (it read `FOO=1` as the
         # head of `FOO=1 frobnicate` and `_PLAIN_COMMAND_HEAD` correctly
         # rejected that shape, so the deny never fired - a fail-open on a
         # completely ordinary shell spelling). A segment whose own verdict
@@ -5393,7 +5393,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                 head = verdict["unrecognised_head"]
                 if head and _PLAIN_COMMAND_HEAD.match(head):
                     if head in _PREFIX_RUNNER_HEADS:
-                        # N2 (review round 2): a prefix runner carries
+                        # A prefix runner carries
                         # another command as its own argument - `time`,
                         # `try` in this corpus - so pinning the runner's OWN
                         # name read-only must not also pin whatever it runs
@@ -5403,7 +5403,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                         # `_script_depth` 0 like any other segment this
                         # branch already classifies.
                         #
-                        # D1 (review round 3): the remainder is cut from
+                        # The remainder is cut from
                         # `verdict["resolved_text"]` (the exact text `head`
                         # was resolved from). A location FAILURE (the
                         # runner's name could not be found in it) denies
@@ -5417,7 +5417,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                             comp_protected = True
                             comp_tier, _ = _risk_tier(comp_category, text)
                         elif remainder:
-                            # S5 (final review, Task 5 residual): strip the
+                            # Strip the
                             # runner's own leading options (`-p` in `time -p
                             # ./frobnicate.sh`) before the recursive head
                             # test below - left in, `-p` resolves as the
@@ -5444,7 +5444,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                     elif head not in _SEQUENCED_READ_ONLY_HEADS:
                         comp_category = "unknown-command"
                         comp_protected = True
-                        # C3: tiered through `_risk_tier` like every other
+                        # Tiered through `_risk_tier` like every other
                         # `unknown-command` verdict in this module, rather
                         # than a magic `"R3"` default `_TIER_BY_CATEGORY`
                         # does not actually carry a key for.
@@ -5468,7 +5468,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         if worst_component["protected"] and not worst["protected"]:
             worst["protected"] = True
             worst["category"] = worst_component["category"]
-            # C4: tier AND its confirmation flag come from the same
+            # Tier AND its confirmation flag come from the same
             # `_risk_tier` call, rather than leaving `second_confirmation_
             # required` at whatever the unprotected `worst` happened to
             # carry - the one place in this function a category and its
@@ -5477,7 +5477,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                 worst_component["category"], worst_component["text"])
             worst["tier"] = tier
             worst["second_confirmation_required"] = second_confirmation
-            # C5: the operator actually seen, not a hardcoded `'&&'` -
+            # The operator actually seen, not a hardcoded `'&&'` -
             # S1 widened this to five operators, and the message must be
             # able to say which one it was.
             label = _OPERATOR_LABEL.get(operators[worst_index],
@@ -5493,7 +5493,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     # the text and saw a quote where `git` should be - the push was allowed.
     # A quoted or escaped head that resolves to a plain name is classified
     # under that name; the digest stays the submitted text's.
-    # Review round 2 F3: a head that is a path (`'/usr/bin/git' push`,
+    # A head that is a path (`'/usr/bin/git' push`,
     # `& "C:/Program Files/git.exe" push`) is also read by its program
     # name, and the stricter reading wins. `_read_heads` stops the readings
     # themselves from being read again.
@@ -5583,7 +5583,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     # An interpreter-fed heredoc never reaches this line: it is recognised and
     # returned above, body scanned, as R5 requires. Unquoted bodies are left
     # intact here too, because those really do expand.
-    # N1 (review round 2): `_categorize` returns two extra elements,
+    # `_categorize` returns two extra elements,
     # `unrecognised_head` and `resolved_text`, ONLY at its two "unknown
     # command" return sites (the write-evidence branch and the final
     # no-vocabulary fallback) - every other one of its ~50 return
@@ -5594,7 +5594,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     # `_opaque_inline_verdict`/`_exec_shape_opacity` and every other helper
     # `_categorize` passes a result through unexamined.
     #
-    # D1 (review round 3): `resolved_text` is the exact, fully-stripped
+    # `resolved_text` is the exact, fully-stripped
     # text `unrecognised_head` was resolved FROM - carried so the
     # multi-segment promotion loop's prefix-runner check can cut the
     # runner's name off THAT text, never off the raw, un-stripped segment
@@ -5657,11 +5657,11 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         "tier": tier,
         "second_confirmation_required": second_confirmation,
         "external_repo_ref": external_repo_ref,
-        # NS-8a: no `&&`/`||`/`;`/`|` split above this call - it is its own
+        # No `&&`/`||`/`;`/`|` split above this call - it is its own
         # one and only component.
         "components": [{"text": normalized, "category": category,
                         "tier": tier, "protected": protected}],
-        # N1 (review round 2): the structured head `_categorize` resolved,
+        # The structured head `_categorize` resolved,
         # if this verdict came from one of its two "unknown command" sites -
         # `None` otherwise. Read by the multi-segment promotion loop below
         # instead of parsing `impact` or re-tokenizing raw text, so an
@@ -5669,7 +5669,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # (`"frobnicate"`) resolve the same way here as they do inside
         # `_categorize` itself.
         "unrecognised_head": unrecognised_head,
-        # D1 (review round 3): the exact, fully-stripped text
+        # The exact, fully-stripped text
         # `unrecognised_head` came from - `None` whenever the head is.
         # `_prefix_runner_remainder` cuts the runner's name off THIS, never
         # off the raw segment text a caller happened to have lying around.
@@ -5737,7 +5737,7 @@ def _decode(data: str) -> bytes:
 # `POLICY_FILENAME` is defined once, near `_SENSITIVE_EDIT` above, so the
 # classifier and this reader can never drift onto two different literals.
 
-# U-E7: the one `gate_mode` value this file understands. Set here so the
+# The one `gate_mode` value this file understands. Set here so the
 # validating reader (`CapabilityBroker._policy()`) and every consumer of
 # `local_authorization_policy()` (the full hook, `assess`) compare against
 # the same literal rather than a second, independently-spelled copy.
@@ -5759,13 +5759,13 @@ _DEFAULT_TTL_SECONDS = 300
 
 # The bounds `issue()` validates an explicit `--ttl` against. Named so the
 # unattended halving below clamps back to the same floor it validated
-# against, rather than a second, unnamed `10` (fix round 1, N5: an
+# against, rather than a second, unnamed `10` (an
 # unattended `--ttl 10` used to mint a 5-second capability - below the
 # floor this very constant advertises).
 _EXPLICIT_TTL_FLOOR_SECONDS = 10
 _EXPLICIT_TTL_CEILING_SECONDS = 600
 
-# NS-10k: the unattended gating tier. An operator present to answer an "ask"
+# The unattended gating tier. An operator present to answer an "ask"
 # is what makes an ask meaningful at all - a session nobody is watching
 # cannot answer one, so the gate applies a stricter row instead: the tier
 # that stops the call outright (never merely asking) drops by one, a
@@ -5789,7 +5789,7 @@ _ATTENDED_SESSION_TYPES = frozenset({"attended", "interactive", "foreground"})
 # human answers" signal already live in a host payload today (the hook's
 # ask-fold read it for this exact reason before `attended()` ever existed);
 # owned here, once, so the hook imports it rather than keeping its own copy
-# that could drift from this one (fix round 1, N1's sibling: one source for
+# that could drift from this one (one source for
 # this vocabulary too). `default`, `plan` and `acceptEdits` still prompt a
 # person for a shell command and are not in this set.
 _NO_HUMAN_ASK_MODES = frozenset({"auto", "dontAsk", "bypassPermissions"})
@@ -5970,7 +5970,7 @@ class CapabilityBroker:
             # exit the same way if entry was previously chronicled.
             _chronicle_observe_transition(self.archive, False)
             return {}
-        # Two layers, tightest wins (obligation 10274, 2026-09-09): an
+        # Two layers, tightest wins: an
         # operator-level file under the state home is the governance
         # ceiling; the project file may only tighten it. Without an
         # operator file the project policy is exactly what it always was.
@@ -6066,7 +6066,7 @@ class CapabilityBroker:
                 raise AuthorizationError(
                     "nag_posture must be 'quiet', 'standard', or 'strict'")
             policy["nag_posture"] = posture
-        # S16 (E56): declarative per-tool gates - approval demanded at the
+        # Declarative per-tool gates - approval demanded at the
         # tool's DECLARATION. Tighten-only like everything in this file:
         # only "ask" and "deny" survive validation; any other value refuses
         # loudly rather than silently becoming a second allow source.
@@ -6081,7 +6081,7 @@ class CapabilityBroker:
                     "policy file can tighten, never loosen")
             policy["tool_gates"] = {
                 k: str(v).lower() for k, v in tool_gates.items()}
-        # `ask_only` (field report 2026-08-27): the focused posture. The
+        # `ask_only`: the focused posture. The
         # categories that keep asking; every other R2/R3 ask becomes an
         # allow with an `action` record naming the silence. R4 still asks
         # and R5 still denies whatever the list says - the list narrows
@@ -6095,7 +6095,7 @@ class CapabilityBroker:
             ):
                 raise AuthorizationError("ask_only must be a list of category names")
             policy["ask_only"] = tuple(ask_only)
-        # `inline_interpreter` (thirteenth field report): "scan" lets a
+        # `inline_interpreter`: "scan" lets a
         # Python `-c`/heredoc payload the parser reads as reads-only
         # through, with a record; "ask" is the default floor. A loosening,
         # so like observe mode it is validated to its exact spellings.
@@ -6105,7 +6105,7 @@ class CapabilityBroker:
                 raise AuthorizationError(
                     "inline_interpreter must be exactly \"ask\" or \"scan\"")
             policy["inline_interpreter"] = inline
-        # NS-13d: the plan-first gate is on by default in an initialized
+        # The plan-first gate is on by default in an initialized
         # project; "off" switches it off (a spike repository). Exact
         # spellings only, like every loosening here.
         plan_first = raw.get("plan_first")
@@ -6303,10 +6303,10 @@ class CapabilityBroker:
             raise AuthorizationError("Authorization failed")
         if context is None:
             context = self._mint_context()
-        # NS-10k: unattended halves whatever lifetime was resolved above -
+        # Unattended halves whatever lifetime was resolved above -
         # the policy default or an explicit `--ttl` alike - because nobody
         # is present to notice a capability sitting spent-but-unconsumed
-        # for the ordinary duration. Fix round 1, N5: clamped back up to
+        # for the ordinary duration. Clamped back up to
         # the floor this method itself just validated an explicit `--ttl`
         # against, so halving can never mint a capability shorter than the
         # lifetime this same call would have refused to accept outright.
@@ -6513,7 +6513,7 @@ class CapabilityBroker:
         if ttl_seconds is None:
             ttl_seconds = self._policy().get("capability_ttl_seconds", _DEFAULT_TTL_SECONDS)
         if not attended():
-            # NS-10k: mirrors the halving (and, fix round 1 N5, the floor
+            # Mirrors the halving (and, fix round 1 N5, the floor
             # clamp) `issue()` already applied, so the reported lifetime is
             # never a stale, un-halved, or under-floor number.
             ttl_seconds = max(
@@ -6704,7 +6704,7 @@ def explain_policy(archive: Any) -> dict[str, Any]:
         else:
             decided = "project"
         keys.append({"key": key, "value": value, "decided_by": decided})
-    # NS-10k: the two gating-tier rows, and which one this call is actually
+    # The two gating-tier rows, and which one this call is actually
     # under - `operator --policy` is the one place both are named together,
     # so an operator can see the stricter row exists before ever meeting it.
     is_attended = attended()
@@ -6907,7 +6907,7 @@ def _self_check() -> None:
         # opaque-body executors below are the named exceptions that still
         # ask, not the rule.
         "frobnicate --all", "rev docs/notes.txt",
-        # C1 round 3: the exec-shape escalation below is NOT a global
+        # The exec-shape escalation below is NOT a global
         # fail-closed default. A bare `env`, an `env` over a non-interpreter,
         # an unknown wrapper over a non-interpreter, and a safe read that
         # merely PRINTS an interpreter invocation all stay unprotected -
@@ -6964,7 +6964,7 @@ def _self_check() -> None:
         # unrecognised `git` subcommand still asks rather than reading R0.
         'bash -c "rm -rf /"', "psql -c 'drop table users'", "git mv a.txt b.txt",
         "ForEach-Object { Remove-Item x }",
-        # C1 (external audit, 2026-08-17): an interpreter's opaque inline
+        # An interpreter's opaque inline
         # payload is protected unconditionally now - the shape both of the
         # audit's own repros used to walk around every gate through. `-m`
         # is deliberately ABSENT here (coordinator correction) - it names
@@ -7014,7 +7014,7 @@ def _self_check() -> None:
         'su --command="git push --force"', 'builtin eval "python -c 1"',
         "trap 'git push --force' EXIT", 'cmd /c "git push --force"',
         'cmd.exe /k "rm -rf /"',
-        # I-2: the exec-shape scan runs even when the head IS an interpreter
+        # The exec-shape scan runs even when the head IS an interpreter
         # whose own rule did not fire.
         'bun x python -c "print(1)"', 'deno task python -c "print(1)"',
         # Tokenization failure is evidence the parse failed, not evidence of
@@ -7027,7 +7027,7 @@ def _self_check() -> None:
 
     assert classify_action("git push --force origin main")["tier"] == "R5"
     assert classify_action("ls")["tier"] == "R0"
-    # C1: an interpreter's opaque payload is never silently R1 again - `_self_
+    # An interpreter's opaque payload is never silently R1 again - `_self_
     # check` used to pin the OLD, vulnerable reading here (`_UNKNOWABLE_BODY_
     # HEADS`'s own comment named this exact assertion as the reason `bash`/
     # `sh` were never widened to match); the floor is now R2, and the audit's
@@ -7045,7 +7045,7 @@ def _self_check() -> None:
     # on every ordinary test run.
     assert classify_action("python -m unittest discover -s tests")["tier"] == "R1"
     assert not classify_action("python -m unittest discover -s tests")["protected"]
-    # C1 round 3: the fused form reaches the same tier as the spaced form -
+    # The fused form reaches the same tier as the spaced form -
     # the missing space was the whole bypass, so the two must not disagree.
     assert classify_action('python -c"print(1)"')["tier"] == "R2"
     assert classify_action('bash -c"git push --force"')["tier"] == "R5"
@@ -7054,7 +7054,7 @@ def _self_check() -> None:
     # still read, not asked about.
     assert classify_action("foobar --version")["tier"] == "R0"
     assert classify_action("env")["tier"] == "R0"
-    # C1 round 4: the tier equalities the help suffix used to erase. A
+    # The tier equalities the help suffix used to erase. A
     # payload keeps the tier it had, whatever is appended after it.
     assert classify_action('python -c "git push --force" --version')["tier"] == "R5"
     assert classify_action("git push --force origin main --help")["tier"] == "R5"
@@ -7085,7 +7085,7 @@ def _self_check() -> None:
     assert detect_external_repo("ls -la") is None
     assert classify_action("ls -la")["external_repo_ref"] is None
 
-    # U-B2: unpinning is capability-gated no matter which project it names -
+    # Unpinning is capability-gated no matter which project it names -
     # `archive` absent (as it is on every direct `classify_action` call above)
     # never leaves a pinned edit undetected AS "protected", because the
     # category comes from the operation's own shape, not a pin lookup.

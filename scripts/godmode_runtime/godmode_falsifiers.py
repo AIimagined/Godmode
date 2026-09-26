@@ -65,7 +65,7 @@ def due_falsifiers(
     # `archive.select(kind=..., limit=N)` keeps only its most recent N
     # records (`godmode_chronicle.Chronicle.select`), so an old-enough-to-
     # be-due claim or incident is exactly what a bounded window would age
-    # out first - the same loss Task 2's `read_request_window` catches for
+    # out first - the same loss `read_request_window` catches for
     # open asks. This reader is a diagnostic, not a status surface with a
     # human-scale display cap, so it reads unbounded straight off
     # `read_events()`.

@@ -5,8 +5,8 @@
 # Root resolution, the GODMODE_PYTHON override, the interpreter probe order
 # and the off-PATH fallbacks below are rendered from the exact same _SH_BODY
 # constant as run-hook.cmd's sh half (see that file's own header for the
-# field reports that shaped every probe order and fallback: 2026-09-03 bare
-# `python`, 2026-09-08 reduced PATH, 2026-09-10 Dock/login-item PATH) - so a
+# cases that shaped every probe order and fallback: bare `python`, a
+# reduced PATH, a Dock/login-item PATH) - so a
 # host that reads either launcher gets byte-identical logic, not merely
 # logic that was meant to match.
 # GODMODE_PYTHON overrides everything. No external commands run before the
@@ -48,7 +48,7 @@ fi
 bc=-B
 [ -n "$home" ] && bc="-Xpycache_prefix=$home/pycache"
 if [ -n "${GODMODE_PYTHON:-}" ]; then exec "$GODMODE_PYTHON" -I "$bc" "$dir/$hook" "$@"; fi
-# Resolved-interpreter cache (field report 2026-09-23: every hook started
+# Resolved-interpreter cache (every hook used to start
 # an interpreter twice - the probe below, then the real run - and on
 # Windows the first candidate was the Store alias, whose activation is
 # slow and very slow under load, until a host timed the hooks out). The

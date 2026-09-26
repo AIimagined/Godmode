@@ -77,7 +77,7 @@ def _serialize(manifest: dict[str, Any]) -> str:
     return json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
 
 
-# S-7: the root portable manifest. Its shape is its own (the v1 portable
+# The root portable manifest. Its shape is its own (the v1 portable
 # spec, with an `extensions` block no host manifest carries), so it is not a
 # `hosts` entry - but the text a reader sees first, and the version, come
 # from the same identity as every host manifest. Only these fields are
@@ -122,7 +122,7 @@ def _portable_entry(project: Path, source: dict[str, Any]) -> dict[str, Any] | N
 
 
 def _render_hook_artifact(project: Path, host: str, mode: str) -> dict[str, Any]:
-    """CX-3: the hook-manifest counterpart of `render()` above, for the
+    """The hook-manifest counterpart of `render()` above, for the
     second artifact kind `packaging/hosts.json`'s `hook_manifests` section
     declares. `mode` comes from that section, never guessed here.
 
@@ -145,11 +145,11 @@ def _render_hook_artifact(project: Path, host: str, mode: str) -> dict[str, Any]
         return host_manifests.merge_host_tools_into_shared(existing)
     artifact = host_manifests.HOOK_ARTIFACTS[host]
     build = artifact["build"]
-    # N-4: the seconds-dialect builder (`build_cursor_manifest`) now reads
+    # The seconds-dialect builder (`build_cursor_manifest`) now reads
     # the measured latency baseline under `project` for its hook timeouts,
     # so it takes `project`; the millisecond-dialect builders (Antigravity,
-    # Gemini) are untouched by that task and still take none. Fix round 1
-    # (Important finding 2): dispatch by the PARAMETER NAME `project`, not
+    # Gemini) are untouched by that task and still take none.
+    # Dispatch by the PARAMETER NAME `project`, not
     # by arity - a future builder taking some other single argument (not
     # `project`) would otherwise be called with the wrong value silently.
     if "project" in inspect.signature(build).parameters:
@@ -178,13 +178,13 @@ def _hook_manifest_specs(source: dict[str, Any]) -> dict[str, Any]:
 def _mcp_manifest_specs(source: dict[str, Any]) -> dict[str, Any]:
     """`mcp_manifests`, minus any `_comment`-style documentation key - the
     same convention `_hook_manifest_specs` already applies to its own
-    section (NS-10l's own artifact kind, distinct from the hook manifests
+    section (the host-config merge's own artifact kind, distinct from the hook manifests
     above)."""
     return {k: v for k, v in source.get("mcp_manifests", {}).items() if not k.startswith("_")}
 
 
 def _render_mcp_artifact(project: Path, host: str) -> dict[str, Any]:
-    """NS-10l: the MCP-manifest counterpart of `_render_hook_artifact` above,
+    """The MCP-manifest counterpart of `_render_hook_artifact` above,
     for the third artifact kind `packaging/hosts.json`'s `mcp_manifests`
     section declares. `host_manifests.MCP_ARTIFACTS[host]["build"]` takes a
     `plugin_root` positionally (the artifact is portable - it never bakes
@@ -258,7 +258,7 @@ def check(project: Path) -> dict[str, Any]:
     if portable is not None:
         results.append(portable)
 
-    # R-3/R-3a: the launcher template pair (`hooks/run-hook.cmd`, `hooks/
+    # The launcher template pair (`hooks/run-hook.cmd`, `hooks/
     # run-hook.sh`) is not host-specific and is not declared in `packaging/
     # hosts.json` - `godmode_launchers.py` is its own source, checked the
     # same way (generate -> compare bytes) so it can never drift silently.
@@ -278,7 +278,7 @@ def check(project: Path) -> dict[str, Any]:
 def write(project: Path) -> dict[str, Any]:
     """Regenerate every host manifest from the source.
 
-    C-6 (install manifest): every path this function manages is recorded in
+    Every path this function manages is recorded in
     `<project>/.godmode/godmode/install-manifest.json` (`godmode_
     installmanifest.record`, via `host_manifests._record_installed` - the
     SAME helper the project-level host writers already use, not a second
@@ -326,7 +326,7 @@ def write(project: Path) -> dict[str, Any]:
             written.append(PORTABLE_MANIFEST)
         host_manifests._record_installed(project, "bindings", portable_target)
 
-    # R-3/R-3a: regenerate the launcher pair the same run - one code path
+    # Regenerate the launcher pair the same run - one code path
     # (`bindings --write`) for every generated artifact this project ships,
     # launchers included. Recorded the same way as every other managed
     # path above (unconditionally, not only when `written` - the class
@@ -406,7 +406,7 @@ def registration_report(project: Path | None = None) -> dict[str, Any]:
 # `godmode@aiimagined:hooks/hooks.json:session_start:0:0`, has no `enabled`
 # field at all - only `trusted_hash`).
 #
-# Fix round 1 (I1, review Important): the prior revision matched on the
+# The prior revision matched on the
 # `hooks/hooks.json:<event>:<n>:<n>` SUFFIX alone, with no identifier check
 # at all - a DECOY entry from any unrelated plugin that happens to also
 # ship a file at that same conventional relative path, registered under an
@@ -441,7 +441,7 @@ def _read_codex_state(state_path: Path, plugin_name: str) -> dict[str, bool] | N
     understand the file well enough to judge.
 
     A key's own PRESENCE under `hooks.state`, ANCHORED TO THIS PLUGIN'S OWN
-    IDENTITY (`_codex_state_key_pattern`, fix round 1 I1), is read as
+    IDENTITY, is read as
     "Codex discovered and recorded this hook event for godmode" - true
     regardless of whether that entry also carries an explicit `enabled`
     field (this build's own real state shows an entry can exist with
@@ -474,7 +474,7 @@ def _read_codex_state(state_path: Path, plugin_name: str) -> dict[str, bool] | N
         if isinstance(value, dict) and "enabled" in value:
             enabled = bool(value["enabled"])
         registered[event] = registered.get(event, False) or enabled
-    # Fix round 1 (I1): ZERO identity-anchored matches means this file says
+    # ZERO identity-anchored matches means this file says
     # NOTHING about godmode specifically - whether because it is a decoy
     # (the reviewer's repro: only unrelated-plugin entries present) or a
     # genuinely unrelated config - and the caller's job (`install_verify`)

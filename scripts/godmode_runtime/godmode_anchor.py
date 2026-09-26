@@ -344,7 +344,7 @@ def resolve_anchor(project: str | Path) -> ProjectAnchor:
     # directory (identity None) and no environment pointing git elsewhere
     # means git has nothing to find, so the spawn - 100 ms idle, and far
     # more under load, on every hook call in a directory that is not a
-    # repository (field report 2026-09-23) - is skipped.
+    # repository - is skipped.
     if identity is None and not git_marker_above(requested) and not any(
             os.environ.get(name) for name in _GIT_LOCATION_ENV):
         located: list[str] = []
@@ -467,7 +467,7 @@ def current_host() -> str:
     """
     if os.environ.get("GODMODE_HOST"):
         return os.environ["GODMODE_HOST"]
-    # Tenth field report 2026-09-05: the hook's own host label lacked
+    # The hook's own host label lacked
     # Antigravity, so its Stop answer wore Claude's spelling there. Same
     # order as the envelope adapter: Antigravity's markers, then Grok's.
     if os.environ.get("ANTIGRAVITY_AGENT") or os.environ.get("ANTIGRAVITY_CONVERSATION_ID"):

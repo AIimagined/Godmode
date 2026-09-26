@@ -27,7 +27,7 @@ ADVISORY = "ADVISORY"
 # one of them compiles to ADVISORY at most, and `capped_from` says what
 # shape it matched so the cap is visible. The directive-bearing roles - the
 # operating guide, the operator profile, the invariants, the checklist -
-# are untouched. Field report, 2026-08-27: "508 unattested hard rules",
+# are untouched. "508 unattested hard rules",
 # most of them compiled from a project's lessons ledger.
 RECORD_ROLES: frozenset[str] = frozenset(
     {"lessons", "state", "sprint-truth", "decisions", "inventory"})

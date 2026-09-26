@@ -14,12 +14,12 @@ Kind `skill_impact` {target, diff_hash, score_before, score_after,
 outcome in {accepted, rejected}, patterns: [seqs]}. Two rules, both
 mechanical, neither a vibe:
 
-1. NS-12a: a proposal whose diff hash matches a PREVIOUSLY REJECTED
+1. A proposal whose diff hash matches a PREVIOUSLY REJECTED
    `skill_impact` is refused, naming that record's own sequence
    (`refuse_if_diff_previously_rejected`, called from
    `godmode_bonds.propose` and from `evaluate_forged_skill`, forge's own
    entry point since it has no separate propose step to hook into).
-2. NS-12d: a change is `accepted` only when its `score_after` STRICTLY
+2. A change is `accepted` only when its `score_after` STRICTLY
    improves on the best `score_after` any earlier ACCEPTED impact for the
    same `target` ever recorded (or, with no such record, on the change's
    OWN `score_before` - the first change must still beat doing nothing).
@@ -307,7 +307,7 @@ def _refuse_prior_rejection(
 
 
 def gate_outcome(score_before: float, score_after: float, best_so_far: float | None) -> str:
-    """NS-12d: accepted only on STRICT improvement over the higher of
+    """Accepted only on STRICT improvement over the higher of
     `best_so_far` and `score_before` (with no `best_so_far` recorded yet,
     over `score_before` alone); a tie is `rejected` - the spec states
     "neutral -> rejected" verbatim, never a `>=` comparison.
@@ -399,7 +399,7 @@ def _contained_skill_path(project: Path, target: str) -> tuple[Path, str]:
         )
     project_root = project.resolve()
     skills_root = (project_root / "skills").resolve()
-    # N10: without this, a project whose `skills` is a symlink out of the
+    # Without this, a project whose `skills` is a symlink out of the
     # tree reports "target escapes the project" for EVERY target, sending
     # the operator to look at the target instead of at the symlink. The
     # refusal is the same either way - a symlinked `skills` disables this
@@ -489,7 +489,7 @@ def _eval_harness_inputs(project: Path, skill: str) -> set[Path]:
 
 
 def _is_protected(path: Path, protected: set[Path]) -> bool:
-    """N5: membership is "IS one of the protected paths, or is UNDER one".
+    """Membership is "IS one of the protected paths, or is UNDER one".
 
     A `check.command` argv token can name a DIRECTORY - the shipped
     skill-forge suite runs `skill validate --path skills/<name>`, so the
@@ -580,7 +580,7 @@ def apply_skill_diff(
             "separate, independently reviewed change, not through "
             "`atlas law ratify`."
         )
-    # N2: a directory target makes `pre_bytes` None, then raises out of
+    # A directory target makes `pre_bytes` None, then raises out of
     # `write_bytes`, then raises a SECOND time out of the restore's own
     # `unlink` - so the operator is shown the handler's error instead of
     # the real one. Refused up front, next to the eval-harness refusal.
@@ -598,7 +598,7 @@ def apply_skill_diff(
     best_so_far, prior_rejected = scan_impacts(archive, key, diff_hash)
     _refuse_prior_rejection(diff_hash, key, prior_rejected)
     pre_bytes: bytes | None = path.read_bytes() if path.is_file() else None
-    # N1: `mkdir(parents=True)` below can create a whole directory tree for
+    # `mkdir(parents=True)` below can create a whole directory tree for
     # a new-file target. A rejected proposal used to leave that tree behind
     # empty, and because `forge_skill` refuses outright when the directory
     # already exists, one rejected proposal permanently denied
@@ -623,7 +623,7 @@ def apply_skill_diff(
             archive, key, diff_hash, score_before, score_after, outcome, pattern_seqs,
         )
     except Exception as original:
-        # B2: ANY exception once the write has happened - a non-GodmodeError
+        # ANY exception once the write has happened - a non-GodmodeError
         # raise out of `skill_score` (an unbalanced quote in a proposer's own
         # `check.command` failing `shlex.split`, or a non-numeric
         # `expect_exit` failing `int(...)` - see `godmode_evals.py`), or an
@@ -633,7 +633,7 @@ def apply_skill_diff(
         try:
             _restore(path, pre_bytes, created_dirs)
         except Exception as restore_error:
-            # N3: the restore can itself fail (a read-only file, a full
+            # The restore can itself fail (a read-only file, a full
             # disk, a lock). Silently letting THAT exception replace the
             # original tells the operator the wrong story about a file that
             # is now sitting in the proposed state with no record of it.
@@ -705,7 +705,7 @@ def evaluate_forged_skill(
     # not live only in call ordering. A skill name with a prior ACCEPTED
     # `skill_impact` record is, by definition, not a fresh forge: refuse
     # before doing anything destructive rather than trusting the caller.
-    # N9: matched by SKILL NAME, not by the exact `skills/<name>` string -
+    # Matched by SKILL NAME, not by the exact `skills/<name>` string -
     # an established skill's accepted history is keyed
     # `skills/<name>/<file>` (that is what `atlas law ratify` writes), so
     # the exact-string match protected only names with a prior FORGE accept
@@ -730,7 +730,7 @@ def evaluate_forged_skill(
             "before forging it again."
         )
     score_before = 0.0
-    # N8: the own-guard above has already proven there is no accepted
+    # The own-guard above has already proven there is no accepted
     # record for this skill, so the baseline cannot be anything but None -
     # re-walking the archive to be told that again was dead work.
     baseline: float | None = None

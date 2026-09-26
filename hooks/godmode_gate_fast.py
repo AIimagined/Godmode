@@ -42,7 +42,7 @@ rules a governed project uses). No archive is created or opened.
 
 from __future__ import annotations
 
-# Fix round 2 (C-5's honest A/B showed the derived-state cache bought
+# An A/B measurement showed the derived-state cache bought
 # nothing measurable - reverted; the real cost centre this module can
 # actually move is process start and its own top-level imports, per
 # `python -X importtime` evidence: fast_allow p95 +20% mean / +23% median
@@ -86,7 +86,7 @@ _FENCED_TOOLS = frozenset({"Edit", "Write", "NotebookEdit", "apply_patch",
 # Codex's `shell_command` and Grok's `run_terminal_command` (Addendum 6).
 _SHELL_TOOLS = frozenset({"Bash", "PowerShell", "shell_command",
                           "run_terminal_command",
-                          # Antigravity's shell tool (tenth field report).
+                          # Antigravity's shell tool.
                           "run_command"})
 
 # `git branch <name>` (no flag) creates a branch; `git branch -d/-D/-m/-M/
@@ -107,13 +107,13 @@ _EXACT_ONLY_GIT_PHRASES = frozenset({"git branch", "git remote -v"})
 # flag (`--output=<file>` / `--output <file>` / `-o <file>`, inherited from
 # the diff-formatting machinery all three share) that writes a file with no
 # shell redirect operator involved - invisible to `_REDIRECT_PRESENT`.
-# Review round 1 (task-6-review.md, Critical finding 2) reproduced this live:
+# Reproduced live:
 # `classify_action("git log --output=/tmp/x")` is R0 in the full sentinel
 # TODAY too (a real, separately-tracked gap in the full sentinel, being
 # fixed in the sentinel lane per the changelog fragment) - which meant the
 # one-directional equivalence test passed even though this floor entry
 # permits a real, permanent, unrecorded write. Table-driven (not
-# hardcoded) so Task 5's generator can extend or correct it without a code
+# hardcoded) so the table-generator script can extend or correct it without a code
 # change here: `table["flag_denylist"][<phrase>]` names the flags a
 # floor-clean match for that exact phrase must not carry, checked against
 # the part of each trailing token before any `=` (so `--output`,
@@ -153,7 +153,7 @@ _NULL_REDIRECT = re.compile(r"(?:^|(?<=\s))\d?>{1,2}\s*/dev/null(?=$|[\s;&|])")
 
 _SEPARATORS = re.compile(r"[ \t]*(?:\|\||&&|[;|\r\n]|(?<![<>])&)[ \t\r\n]*")
 
-# Final review, Critical finding C1: `$(...)`, backtick, `<(...)`, `>(...)`
+# `$(...)`, backtick, `<(...)`, `>(...)`
 # command/process substitution runs a second, entirely unexamined command
 # with none of this module's checks ever seeing it - it is not a separator
 # `_SEPARATORS` splits on, contains no bare `>` `_REDIRECT_PRESENT` matches
@@ -175,7 +175,7 @@ _SEPARATORS = re.compile(r"[ \t]*(?:\|\||&&|[;|\r\n]|(?<![<>])&)[ \t\r\n]*")
 # never matches, so ordinary text with a dollar sign is unaffected.
 _SUBSTITUTION_MARKERS = ("`", "$(", "<(", ">(")
 
-# G-5: this module splits and blanks with Bash's lexical rules. PowerShell
+# This module splits and blanks with Bash's lexical rules. PowerShell
 # reads some text differently, and three of the differences can hide a
 # second command from a Bash-rules reading: a backslash is literal (so
 # `cat "a\"; git push --force` closes its string and pushes), a here-string
@@ -480,19 +480,19 @@ def fast_verdict(payload: dict[str, Any], table: dict[str, Any] | None) -> str:
             return "escalate"
         if not isinstance(payload, dict):
             return "escalate"
-        # CX-2: a local, independent dual-casing lookup - `toolName`/
+        # A local, independent dual-casing lookup - `toolName`/
         # `tool_name`, `toolInput`/`tool_input` - matching
         # `godmode_hostevent.field()`'s alias table without importing it
         # (this module's zero-import boundary; see the module docstring).
         # First-alias-wins (camelCase before snake_case) is deliberate, not
-        # incidental `dict.get` fallback ordering (fix round 1, I3): it
+        # incidental `dict.get` fallback ordering: it
         # agrees with `godmode_hostevent.field()` and the hook's own
         # `host_field` lookup, so a payload naming a field under both
         # casings with conflicting values can never be read as two
         # different tools by two different checks.
         tool = payload.get("toolName", payload.get("tool_name"))
         tool_input = payload.get("toolInput", payload.get("tool_input"))
-        # Tenth field report 2026-09-05: Antigravity rides the tool on a
+        # Antigravity rides the tool on a
         # nested `toolCall` object - `{"toolCall": {"name": "run_command",
         # "args": {"CommandLine": ...}}}` - so every Antigravity call missed
         # the flat lookup above and escalated. Read that shape too; the
@@ -514,7 +514,7 @@ def fast_verdict(payload: dict[str, Any], table: dict[str, Any] | None) -> str:
         # are ever blanked.
         if any(marker in command for marker in _SUBSTITUTION_MARKERS):
             return "escalate"
-        # Review H1: a multi-line command escalates in every dialect. A line
+        # A multi-line command escalates in every dialect. A line
         # break is where comments, here-strings and continuations change
         # how the rest of the text is read, and one-line reads - the whole
         # reason this path exists - never carry one.
@@ -577,7 +577,7 @@ def _load_table() -> dict[str, Any] | None:
 
 
 def _parse_payload(raw: bytes) -> dict[str, Any]:
-    # G-8: the same decode the full hook's `_input()` now uses on these
+    # The same decode the full hook's `_input()` now uses on these
     # exact bytes (`godmode_stdin.parse_first_json`) - a leading BOM, CRLF,
     # or anything after the first JSON object (trailing data, a second
     # concatenated object) is tolerated here exactly as it is there, so a
@@ -598,7 +598,7 @@ def ungoverned_project(start: Path) -> bool:
     whole runtime. Nothing was ever initialized there and there is nothing
     to gate. Field walk 2026-09-05: the not-initialized notice cost 380-520
     ms per mutating call, more than a governed project pays, because it
-    needed the whole runtime to say so. Field report 2026-09-23: that walk
+    needed the whole runtime to say so. That walk once
     covered only a plain git checkout, so a directory that is not a
     repository (or a linked worktree) still escalated every mutating call
     into a second interpreter, and under machine load those calls ran past
@@ -617,7 +617,7 @@ def ungoverned_project(start: Path) -> bool:
 
 def brief_pending(start: Path) -> bool:
     """Grok only: the session-start hook parked a continuity brief that the
-    first allowed tool call must carry (obligation 8584 - Grok reads no
+    first allowed tool call must carry (Grok reads no
     other hook output). One stat on a marker in the git dir; a worktree's
     `.git` file escalates anyway. Any doubt reads as pending, which costs
     one full-hook run, never a missed delivery."""
@@ -1658,7 +1658,7 @@ def spoken_allow(payload: dict[str, Any]) -> None:
     Antigravity bridge, verified on agy 1.0.15: a bare `{}` refuses every matched
     call), so on that host an allow is spoken. Every other host's contract
     reads silence as allow, and a body there could be read as something
-    else, so this prints nothing for them. Obligation 9862."""
+    else, so this prints nothing for them."""
     if (os.environ.get("ANTIGRAVITY_AGENT") or os.environ.get("ANTIGRAVITY_CONVERSATION_ID")
             or isinstance(payload.get("toolCall"), dict)):
         sys.stdout.write('{"decision": "allow"}\n')
@@ -1682,7 +1682,7 @@ def _bytecode_flags() -> list[str]:
 
 
 def main() -> int:
-    # Obligation 9863: the first complete JSON object, never EOF (a Windows
+    # The first complete JSON object, never EOF (a Windows
     # host's pipe close can lag past the hook timeout). The reader is a
     # sibling module; `-I` keeps this directory off sys.path by design.
     sys.path.insert(0, str(HOOKS_DIR))
@@ -1730,11 +1730,11 @@ def main() -> int:
     # Escalate: re-feed the exact bytes read from stdin to the full hook and
     # mirror its stdout/stderr/exit code verbatim - the fast gate must be
     # invisible to the host on every path except the one it actually skips.
-    # `-I` and the byte-code choice again (obligation 9866): interpreter
+    # `-I` and the byte-code choice again: interpreter
     # flags do not inherit, and an isolation that ends at the first
     # escalation is none.
     #
-    # Deferred here, not module scope (fix round 2): `subprocess`'s own
+    # Deferred here, not module scope: `subprocess`'s own
     # import cost (~5.3ms measured, `python -X importtime`; the overall
     # gain this bought fast_allow is p95 +20% mean / +23% median over 5
     # trials, n=21, against 100-400ms of measurement noise) is paid only on

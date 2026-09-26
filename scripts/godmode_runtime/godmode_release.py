@@ -9,8 +9,8 @@ is said, and no widening of a detector changes that: it would still depend on
 the agent routing its own sentence through a check, which is the failure rather
 than the fix.
 
-So the fact is made computable instead. A handover saying "one tag is
-unpublished" should be reading that, not recalling it.
+So the fact is made computable instead. A release status report saying "one
+tag is unpublished" should be reading that, not recalling it.
 
 **No network here.** Comparison is a pure function over two lists; the caller
 supplies whatever it fetched, and this module has no opinion about how. That
@@ -80,7 +80,7 @@ def compare_releases(
 
 
 def render(report: dict[str, Any]) -> str:
-    """One line a handover can carry instead of a remembered claim."""
+    """One line a status report can carry instead of a remembered claim."""
     if report["verdict"] == "insufficient-data":
         return "release state unknown: " + str(report.get("reason", ""))
     if report["verdict"] == "no-tags":

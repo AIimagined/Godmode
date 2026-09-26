@@ -226,7 +226,7 @@ _REMAP_PREFIX = "anchor:remap:"
 
 # The fingerprint's commit-subject field. Not `subject`: that key inside a
 # `decision` record's data opts the record into the semantic-decision shape
-# (`godmode_invariants._semantic_decision_invariants`, NS-11c), which then
+# (`godmode_invariants._semantic_decision_invariants`), which then
 # demands a `value` and `evidence` the snapshot does not have. A snapshot is
 # not a decision about a subject; it is a fingerprint of a commit - tree,
 # subject line, author date - taken so a later remap can find the commit
@@ -387,7 +387,7 @@ def remap_commit_citations(archive: Chronicle, project: Path, *,
         # Built field by field, never `**fingerprint`: a snapshot written
         # before the field was renamed carries the subject line under the
         # legacy `subject` key, and spreading that into a fresh decision
-        # record trips the semantic-decision invariant (NS-11c). The remap
+        # record trips the semantic-decision invariant. The remap
         # record always carries the current shape whatever shape it read.
         try:
             archive.append(

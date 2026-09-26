@@ -55,9 +55,8 @@ def sessions(archive: Chronicle) -> list[dict[str, Any]]:
 
 def unrouted_steps(transcript_path: str | Path | None, steps: set[str]) -> set[str]:
     """Steps whose command text ran in the host transcript without going
-    through `godmode verify` (field report file 2026-09-10, finding on
-    `drift`: the full suite ran six times and tsc nine, none routed, and
-    the detector called them dropped). A step matches when its name, or a
+    through `godmode verify` (in one session the full suite ran six times
+    and tsc nine, none routed, and the detector called them dropped). A step matches when its name, or a
     `cmd:` it was attested with, appears in a Bash/PowerShell call."""
     if not transcript_path or not steps:
         return set()

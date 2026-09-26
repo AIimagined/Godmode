@@ -48,7 +48,7 @@ def _changed_files(project: Path, base: str) -> dict[str, str]:
     for line in (run_git(project, "status", "--porcelain") or "").splitlines():
         if line.startswith("??"):
             files[line[3:].strip().replace("\\", "/")] = "A"
-    # Field report file 2026-09-10, Part 3: a NEW test file is untracked
+    # A NEW test file is untracked
     # until it is added, and a diff against HEAD cannot see it - so the
     # coverage pairing called three tested routes untested. Untracked
     # files count as added.
@@ -75,7 +75,7 @@ def _diff_lines(project: Path, base: str, path: str) -> tuple[list[str], list[st
 def split_assertion_changes(removed: list[str], added: list[str], pattern: Any = None) -> dict[str, list[str]]:
     """Removed assertions minus the ones that merely changed a number or a
     literal (a widened margin is a change to name, not a removal to block).
-    Field report file 2026-09-10, finding 6."""
+    Seen in practice on 2026-09-10."""
     strip = lambda s: re.sub(r"[\d.]+|['\"][^'\"]*['\"]", "_", s.strip())
     match = (pattern or _ASSERTION).match
     lost = [l.strip() for l in removed if match(l)]
@@ -276,7 +276,7 @@ def unread_truncated_outputs(transcript_path: str | Path | None) -> list[dict[st
 
 
 def created_uncited(transcript_path: str | Path | None, archive: Any, project: Path) -> list[str]:
-    """Field report file 2026-09-10, Part 3: two throwaway specs sat in the
+    """Two throwaway specs sat in the
     tree until the agent happened to delete them. Every path a Write tool
     call created this session that still exists and that no claim
     citation, change record, or checkpoint evidence names."""
@@ -379,7 +379,7 @@ _PERSISTENT_ENV = re.compile(r"(?i)\bsetx\s+\w+|\[Environment\]::SetEnvironmentV
 
 
 def unrestored_temporaries(transcript_path: str | Path | None) -> list[dict[str, str]]:
-    """Field reports Part 3, Part 4 and the RCA pass (2026-09-10): a dev
+    """Seen in practice, confirmed by root-cause analysis (2026-09-10): a dev
     server stopped, a production server started on a port, a role bumped
     with an UPDATE, a stash never popped - restored from memory, or not.
     Every shape below is a temporary state this session created and no

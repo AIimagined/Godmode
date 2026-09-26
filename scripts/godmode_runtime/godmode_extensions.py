@@ -1,4 +1,4 @@
-"""C-52: capabilities install as extensions rather than growing the core.
+"""Capabilities install as extensions rather than growing the core.
 
 An extension is a directory under the private state home,
 `<state-home>/extensions/<name>/`, holding an `extension.json` manifest:

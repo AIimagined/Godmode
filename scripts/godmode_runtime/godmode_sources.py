@@ -1,10 +1,10 @@
 """Required-source accounting, doc adoption, and guard-pin lookup (S5).
 
-Obligation 4094: the attest counter's read/unread view, extended with
+The attest counter's read/unread view, extended with
 on-the-record exemptions, shared by the handshake and the pre-tool gate.
-Obligation 4097: `adopt --from-docs` seeds a late install from the bound
+`adopt --from-docs` seeds a late install from the bound
 authority documents - counts and digests only, never prose.
-Obligation 4166: a state-is-a-gap claim is checked against the tests that
+A state-is-a-gap claim is checked against the tests that
 name its surface and the lessons ledger before it may grade verified.
 """
 from __future__ import annotations
@@ -28,7 +28,7 @@ def _norm(path: Any) -> str:
 
 
 def _fold(path: Any) -> str:
-    """The comparison key. Grok field report 2026-09-10: `Agents.md` and
+    """The comparison key. `Agents.md` and
     `AGENTS.md` are one file on Windows and read as two here; the key folds
     case there while every displayed path keeps the file's own spelling."""
     text = _norm(path)
@@ -139,7 +139,7 @@ def required_sources_view(project: Path, archive: Any,
 
 
 def adopt_from_docs(archive: Any, project: Path) -> dict[str, Any]:
-    """Seed a late install (obligation 4097): one counts-only decision record
+    """Seed a late install: one counts-only decision record
     per bound authority document - headings, bullets, lines, a content digest,
     `file:` evidence - so the brief, the ranking, and the required-sources
     counter start populated on day one instead of blank. Idempotent: an
@@ -217,7 +217,7 @@ def _salient_words(text: str) -> set[str]:
     return words
 
 
-#: Fix round 1 on H5: a bare word-length filter turned every ordinary word
+#: A bare word-length filter turned every ordinary word
 #: in a `cmd:`/prose citation into a "stem" - `cmd:python -m unittest
 #: tests.x` yielded {python, tests, unittest}, capping on lessons that
 #: shared nothing but generic vocabulary. These names never identify a
@@ -308,7 +308,7 @@ PIN_ADVISORY_PREFIX = "advisory:"
 
 def guard_pin_reason(project: Path, archive: Any, text: str,
                      citations: list[str]) -> str:
-    """Obligation 4166 / H5: before a gap claim grades verified, look for
+    """Before a gap claim grades verified, look for
     the pin.
 
     A test that names the cited surface but is not itself cited caps the

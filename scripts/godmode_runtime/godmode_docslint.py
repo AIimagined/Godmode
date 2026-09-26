@@ -616,7 +616,7 @@ def lint_charter_prose(charter: dict[str, Any]) -> dict[str, Any]:
     return {"findings": findings, "checked": len(rules)}
 
 
-# U-E11 doc-freshness advisories. Two shapes absorbed from lessons this
+# Doc-freshness advisories. Two shapes absorbed from lessons this
 # project's own history produced: a plan doc can say "pending" the day it is
 # written and still say "pending" a year later with nobody the wiser, and a
 # living doc can be drafted to replace another without either one saying so,

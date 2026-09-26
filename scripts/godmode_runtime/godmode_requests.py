@@ -110,8 +110,8 @@ def summarise(text: str) -> str:
 
 
 def _tokens(text: str):
-    """Every candidate keyword in the text, in order. Field report
-    2026-09-05 (obligation 9303): a pasted URL rode in as `https` plus one
+    """Every candidate keyword in the text, in order. Seen in practice:
+    a pasted URL rode in as `https` plus one
     dotted host token (`developers.openai.com`), so the ask line read as
     the address, not the request. A dotted token splits into its words -
     the scheme words are stopwords, and a TLD is shorter than the
@@ -134,7 +134,7 @@ def _ordered_keywords(text: str) -> list[str]:
 
 
 def _keywords(text: str) -> frozenset[str]:
-    # Field report 2026-08-29 (obligation 4521): the token regex admits
+    # The token regex admits
     # trailing punctuation, so "continue." and "here." rode into candidate
     # clusters as distinct keywords - noise no promotion could turn into a
     # rule. Trailing ._- is stripped and anything shorter than four chars
@@ -157,7 +157,7 @@ def _reviewable(record: dict[str, Any]) -> str:
 # through that door. A tool-permission prompt, a task-completion
 # notification and a subagent's queued command all arrive prompt-shaped,
 # and on this archive they were most of a 44-entry open list that nobody
-# had reviewed across 34 handovers. A ledger whose count is mostly noise
+# had reviewed across 34 sessions. A ledger whose count is mostly noise
 # is a ledger nobody reads.
 #
 # Narrow and shape-based on purpose: dropping a real ask costs far more
@@ -292,7 +292,7 @@ def record_request(archive: Any, text: str, *, session: str | None = None,
 
     # GODMODE_PRIVACY.md: the store holds no prompts. The ask is reviewable
     # by its digest and keywords - never by the sentence the operator typed
-    # (2026-08-28, obligation 4018, operator chose the digest form).
+    #.
     return archive.append(
         "request",
         f"ask:{identifier[:12]}",
@@ -307,7 +307,7 @@ def record_request(archive: Any, text: str, *, session: str | None = None,
             "source": "inferred" if str(source).lower() == "inferred" else "stated",
             # Appearance order, not sorted: rendered back to a reviewer,
             # ordered keywords read like the ask; a sorted bag reads like
-            # noise (field report, 2026-09-03). Matching still treats
+            # noise. Matching still treats
             # them as a set.
             "keywords": _ordered_keywords(flattened)[:24],
         },
@@ -391,7 +391,7 @@ def open_stated_requests(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     0.3.17 gate, 2026-09-04). `_closed_digests` already holds the fallback;
     this is the one place all readers get it from.
     """
-    # NS-10e: a request some other record has explicitly named as its
+    # A request some other record has explicitly named as its
     # successor (`remember --kind request --supersedes <seq>`) is never
     # "latest" for its own digest, even one restated in different words
     # under a fresh digest that this fold's key-by-digest grouping could
@@ -449,7 +449,7 @@ def open_stated_requests(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(by_subject.values(), key=lambda r: int(r.get("sequence", 0)))
 
 
-# `serve_requests` (obligation 10117) closed an ask when half its keywords
+# `serve_requests` closed an ask when half its keywords
 # appeared in a reply. Replayed on a field session (2026-09-09) it would
 # have closed an ask on 41 of 42 replies - word overlap is not service.
 # Asks close by hand, or age out of the turn boundary with their session.
@@ -584,7 +584,7 @@ def _self_check() -> None:
 
     record_request(archive, "rewrite the author identity")
     # A fresh ask, not the retyped one above: `review_requests` now folds
-    # over `open_stated_requests` (Task 2, 0.3.28), which keeps the LATEST
+    # over `open_stated_requests` (since 0.3.28), which keeps the LATEST
     # record per subject - the retyped "release page" ask above no longer
     # carries its first record's `interrupted_work` flag, by design, so
     # sort-order is proven on an ask nothing has overwritten.

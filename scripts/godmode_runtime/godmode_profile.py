@@ -1,4 +1,4 @@
-"""Graduated starting profiles for `godmode init --profile` (U-E8).
+"""Graduated starting profiles for `godmode init --profile`.
 
 A brand-new project and a mature one want different STARTING points on the
 same tighten-only ratchet the authorization policy already runs
@@ -23,7 +23,7 @@ Three profiles:
   needs a *minted capability*, and doing that before a password is even
   configured (`godmode authorize setup`) could lock a project out of its
   own release path with no way back in. Strict only *suggests* it in the
-  emitted output, the same way U-E6 detection proposes a rule and leaves
+  emitted output, the same way automatic detection proposes a rule and leaves
   promotion to the operator.
 
 Tighten-only, enforced per key: a profile owns `approval_required` as a
@@ -35,7 +35,7 @@ which categories would be lost - the operator still has the whole file to
 hand-edit. `standard` never reaches this check: it does not manage the key,
 so an existing, tighter file survives it untouched.
 
-U-E7 note: this module never reads or writes `gate_mode` (the
+Note: this module never reads or writes `gate_mode` (the
 `.godmode-authorization-policy.json` key that puts the gate into observe
 mode - see `godmode_sentinel.GATE_MODE_OBSERVE`). `init --profile` stays an
 enforcement-only path on purpose: every profile here only ever ADDS to

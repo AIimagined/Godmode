@@ -37,7 +37,7 @@ class UnsafeManifest(Exception):
 # leave any other tool's key (and the file) in place. Maps the manifest group
 # name to the JSON key this plugin's entries live under.
 #
-# Row 87: Antigravity's `.agents/hooks.json` maps hook names to configs, one
+# Antigravity's `.agents/hooks.json` maps hook names to configs, one
 # key per tool (`write_antigravity_project_hooks` merges only the `godmode`
 # key in). Treating the recorded path as a whole-file artifact on removal -
 # the same handling every other host writer gets - moved the entire file into

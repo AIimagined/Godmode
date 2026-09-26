@@ -1,6 +1,6 @@
 """`privacy --repo`: what a tracked tree says about its author and machine.
 
-Field report 27 (2026-09-10): a docs-privacy pass found every leak by hand
+A docs-privacy pass found every leak by hand
 with `git ls-files` and `grep` while the plugin, which reads the repo, said
 nothing. The scan walks the tracked files only (untracked files never
 ship), reads text under a size cap, and names each hit by path, line and

@@ -1,4 +1,4 @@
-"""C-55: a watchdog over the agent's own record, on demand.
+"""A watchdog over the agent's own record, on demand.
 
 No daemon. Godmode is invoked, never resident, and the privacy boundary
 forbids a watcher; "during a run" means between steps, and the report says
@@ -241,13 +241,13 @@ def watchdog_report(archive: Any, *, window: int = WINDOW) -> dict[str, Any]:
     for record in records:
         if record.get("kind") not in ("action", "refusal"):
             continue
-        # Task 7 review (fix round 1, C1; fix round 2, N1): a bookkeeping
+        # A bookkeeping
         # record about a read (`untrusted-content-seen`, `flaky-retry`,
         # `usage-observed` - `RUN_INERT_SUBJECTS`) is not an attempt at a
         # step - three fetches of the same instruction-shaped page must
         # not manufacture a `repeated-operation` anomaly about the agent.
         # `edit-recorded` is deliberately NOT in this skip, unlike the
-        # `unattested-run` counter below: round 1 skipped the whole of
+        # `unattested-run` counter below: an earlier version skipped the whole of
         # `BOOKKEEPING_SUBJECTS` here, which also skipped `edit-recorded`
         # and cost this counter its only way to see that an edit happened
         # between two otherwise-identical command runs - an ordinary
@@ -255,7 +255,7 @@ def watchdog_report(archive: Any, *, window: int = WINDOW) -> dict[str, Any]:
         # run. Letting `edit-recorded` fall through to the ordinary digest
         # check below restores that: its own (distinct-per-path) operation
         # digest differs from whatever command ran before it, so `run`
-        # resets to 1 exactly as it did before round 1's fix.
+        # resets to 1 exactly as it did before that fix.
         if record.get("kind") == "action" and record.get("subject") in RUN_INERT_SUBJECTS:
             continue
         digest = _operation_digest(record)
@@ -283,11 +283,11 @@ def watchdog_report(archive: Any, *, window: int = WINDOW) -> dict[str, Any]:
     for record in records:
         if record.get("kind") == "attestation":
             since_attestation = 0
-        # Fix round 2 (Task 8 review, B3): `edit-recorded` is bookkeeping
+        # `edit-recorded` is bookkeeping
         # about an edit, never a run that wants attesting on its own - the
         # edit it describes is the thing that would be attested, not a
         # step this counter should treat as one more unverified action.
-        # Task 7 (NS-8f): `BOOKKEEPING_SUBJECTS` also excludes
+        # Likewise, `BOOKKEEPING_SUBJECTS` also excludes
         # `untrusted-content-seen` for the same reason - the read it
         # describes is the thing an attestation could speak to, not one
         # more unverified action of its own.

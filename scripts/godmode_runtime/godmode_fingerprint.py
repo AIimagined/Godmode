@@ -105,7 +105,7 @@ def tree_fingerprint(project: Path) -> dict[str, str]:
 def existing_sequences(archive: Chronicle) -> set[int]:
     """Every record sequence currently in `archive` - one full, unbounded read.
 
-    R3 (review): the one scan a caller with MORE THAN ONE `seq:` cite to
+    The one scan a caller with MORE THAN ONE `seq:` cite to
     check in a single run (`record_claim` citing several, or a future
     caller of `seq_cite_resolves` in a loop) should take once and reuse,
     rather than one `archive.read_events()` per citation. Callers with a
@@ -130,7 +130,7 @@ def seq_cite_resolves(
     all - the common case for a fabricated or typo'd `seq:`. Anything
     within range still needs the actual scan, and that scan is UNBOUNDED
     (`archive.read_events()`, not `archive.select(...)`) - review finding
-    N1: `Chronicle.select` clamps its `limit` to the last 500 records
+    `Chronicle.select` clamps its `limit` to the last 500 records
     (`selected[-max(1, min(limit, 500)):]`) regardless of what is asked
     for, so bounding this existence check by any `select(limit=...)` call
     silently narrows it to the newest 500 records - a real, older cite on

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""NS-8e: renders one CI job per host manifest into the marker-delimited
+"""Renders one CI job per host manifest into the marker-delimited
 `# godmode:host-jobs:begin` / `# godmode:host-jobs:end` block of
 `.github/workflows/godmode-verify.yml`, and keeps the `required` job's
 `needs:` list carrying every generated job's name - both read from the
@@ -28,7 +28,7 @@ plugin marketplace install already performs for these paths - copying the
 file into place - so that copy is what this job does too, then greps the
 copy for the launcher reference every one of these manifests carries
 (`run-hook.cmd`, checked while `.claude-plugin`/`.grok-plugin`/etc. name a
-polyglot launcher; `hooks/run-hook.sh`'s own POSIX generation is Task 3's
+polyglot launcher; `hooks/run-hook.sh`'s own POSIX generation is a separate
 concern, not this file's).
 
 **How every job fires and asserts.** Uniform, regardless of install method:

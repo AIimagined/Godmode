@@ -468,7 +468,7 @@ def absorption_check(archive: Chronicle, path: str) -> dict[str, Any]:
 # reimplemented surface while the shared defect stayed live. A behaviour
 # verdict of confirmed-* is a claim about code and needs its proving line;
 # `unverified` is the honest third state and needs nothing but the word.
-# Fix round 1 (coordinator ruling): the write-time gate in godmode_absorb.py
+# The write-time gate in godmode_absorb.py
 # used `exists`/`unread` where this reader had neither - the vocabulary is
 # the union of both sets. `exists` grades like `n-a` (a settled import
 # verdict); `unread` is accepted as a known token but graded below as still

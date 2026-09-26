@@ -148,7 +148,7 @@ def _walk_segments(command: str) -> Iterator[tuple[str, str | None]]:
     segment ends. Yields `(text, operator)` pairs - `operator` is the
     separator that introduced `text`, `None` for the first - so a caller
     that needs to know which `&&`/`||`/`;`/`|`/`&`/newline preceded a
-    component (NS-8a's component-scoped deny-by-default) reads it from the
+    component (the component-scoped deny-by-default rule) reads it from the
     same single scan `_raw_segments` already trusted, rather than a second,
     hand-copied instance of this machine that could quietly drift from it."""
     current: list[str] = []
@@ -683,7 +683,7 @@ def head_readings(segment: str) -> list[str]:
     - the head with its quoting resolved (`'git' push` -> `git push`);
     - a head that is a path, quoted or not, read by its program name
       (`'/usr/bin/git' push`, `& "C:/Program Files/git.exe" push` ->
-      `git push`; review round 2, F3). The base name is cut from the word
+      `git push`). The base name is cut from the word
       as written, so a Windows path's backslashes still separate.
     """
     readings: list[str] = []

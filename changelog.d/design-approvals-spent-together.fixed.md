@@ -1,0 +1,1 @@
+- A staged design approval is no longer spent by an edit a declared tool gate then stops, and a patch that touches several locked files is refused before any of its approvals is spent when one of them could not be; the edit's approvals are spent together only once every check has allowed it.

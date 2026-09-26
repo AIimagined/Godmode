@@ -1,4 +1,4 @@
-"""NS-3: a typed, time-valid evidence graph - a projection of the archive,
+"""A typed, time-valid evidence graph - a projection of the archive,
 never a second store.
 
 `atlas closure` already answers "what depends on this and was not itself
@@ -21,7 +21,7 @@ types, each derived from one existing shape:
   case-insensitively - the same vocabulary `godmode_obligations.py` and
   `godmode_status.TERMINAL` already use); a closed obligation's dependency
   is no longer live, so an impact query must not still traverse it. Fix
-  round 1, S4: the DEPENDENCY LIST ITSELF is the EFFECTIVE one - the
+  The DEPENDENCY LIST ITSELF is the EFFECTIVE one - the
   latest record's own `blocked_by`/`depends_on` if it declares one,
   otherwise the newest EARLIER record for that subject that did (the same
   "effective_*" carry-forward `godmode_status.record_item` already applies
@@ -35,7 +35,7 @@ types, each derived from one existing shape:
   directly (`godmode_closure.py`'s own finding); the module names it
   actually covered are read via `godmode_retest.cited_modules` - the
   structural `data["modules"]` `godmode_attest.run_check` writes when its
-  caller supplies one, or (fix round 1, Q1) a whitespace-tokenised,
+  caller supplies one, or a whitespace-tokenised,
   module-shaped-only reading of its `cmd:` evidence otherwise, so a vitest
   path token or an interpreter path glued to the `cmd:` prefix is filtered
   out rather than minted as a bogus module node. This module takes a
@@ -46,7 +46,7 @@ types, each derived from one existing shape:
   prose** ("retested_by from retest:* attestations citing files"): the
   archive records which MODULES an attestation cites, never which FILES
   they pin - that link is `godmode_retest.retest_module_names`
-  (`pinning_tests`), a project-tree read. Fix round 1, S1 closes the
+  (`pinning_tests`), a project-tree read. This closes the
   practical gap this leaves: `atlas graph query file:<path>` (wired in
   `godmode_console._atlas_graph`, not here) bridges a `file:` node through
   that same shared helper to the `module:` nodes this function minted,
@@ -54,7 +54,7 @@ types, each derived from one existing shape:
 * `supersedes` - a register disposition's own `supersedes` (an int
   sequence, already required and checked at write time by
   `godmode_register.set_state`), a claim resolution's own `resolves` (same
-  shape, `godmode_attest.resolve_claim`), or (NS-10e, 0.3.28 Plan 5 Task 6)
+  shape, `godmode_attest.resolve_claim`), or
   the SAME `supersedes` field `remember --supersedes <seq>` stamps on any
   other kind (console.py's `cmd_remember` validates it at write time:
   the cited sequence exists, shares this record's kind, and is not
@@ -71,7 +71,7 @@ types, each derived from one existing shape:
   the edge's target - resolution is `_citation_resolves`'s job
   (`godmode_attest.py`), never this module's.
 
-Every node also carries a `label` (fix round 1, Q2): the record's OWN
+Every node also carries a `label`: the record's OWN
 `subject` when that record is present in `records` - a superseded/resolved
 node is looked up by its OWN sequence, never borrowed from the superseding
 record's subject (a decision lineage happens to share one subject across
@@ -133,16 +133,16 @@ SNAPSHOT_NAME = "graph-snapshot.json"
 # Obligation/sprint terminal states: once a subject's LATEST record carries
 # one of these, the dependency edges it declared are retired as of that
 # same record's sequence - the same vocabulary `godmode_obligations.py`
-# (obligations, fix round 1 S2 added "superseded" to match it exactly) and
+# and
 # `godmode_status.TERMINAL` (sprint items) already use. Compared
-# case-insensitively (fix round 1, S2) - `godmode_obligations.py` lowers
+# case-insensitively - `godmode_obligations.py` lowers
 # before comparing and this module must agree with it, not with its own
 # separately-typed casing assumption.
 _OBLIGATION_TERMINAL = frozenset({"closed", "done", "retired", "superseded"})
 _SPRINT_TERMINAL = frozenset({"verified", "closed"})
 
 # A module-shaped token: at least one dot, identifier segments only. Used
-# as a FULLMATCH filter (fix round 1, Q1) over the individual whitespace
+# as a FULLMATCH filter over the individual whitespace
 # tokens `godmode_retest.cited_modules` already split out - never a scan
 # over the raw evidence string, which is what let a vitest path
 # (`tests/foo.test.ts`, slash and all) or a glued interpreter path
@@ -180,7 +180,7 @@ def _effective_dependency_edges(
     """`depends_on` edges for every subject of `kind`, carrying `field`
     forward from the newest record that actually declared it.
 
-    Fix round 1, S4: the latest record per subject decides `valid_to` (its
+    The latest record per subject decides `valid_to` (its
     own `status_field`, terminal or not - compared lower-cased so a
     differently-cased write never reads as still-open), but the dependency
     list itself is the EFFECTIVE one - the latest record's own `field` if
@@ -242,7 +242,7 @@ def _retested_by_edges(records: list[dict[str, Any]], nodes: dict[str, dict[str,
         subject = str(record.get("subject", ""))
         if not subject.startswith("check:retest:"):
             continue
-        # Fix round 1, S1/Q1: honest reads only. `cited_modules` returns
+        # Honest reads only. `cited_modules` returns
         # `None` when the citation is truncated (cannot tell what was
         # dropped) - that record contributes no edge rather than a guess.
         cited = cited_modules(record)
@@ -264,7 +264,7 @@ def _retested_by_edges(records: list[dict[str, Any]], nodes: dict[str, dict[str,
 
 
 def _supersedes_edges(records: list[dict[str, Any]], nodes: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    # Scope note (NS-10e round 0, S3): the graph's SUPERSEDES edge is
+    # Scope note: the graph's SUPERSEDES edge is
     # WIDER than what the readers act on. A claim's `resolves` renders as
     # SUPERSEDES here, while `Chronicle.superseded_sequences` - the set
     # every latest-per-subject fold excludes - reads `data["supersedes"]`
@@ -274,7 +274,7 @@ def _supersedes_edges(records: list[dict[str, Any]], nodes: dict[str, dict[str, 
     # latest", and a resolution is not a retraction. Anyone widening the
     # readers to `resolves` must change `superseded_sequences`, not this.
     #
-    # Fix round 1, Q2: label every node from its OWN record's subject,
+    # Label every node from its OWN record's subject,
     # looked up by sequence - never borrowed from whichever OTHER record
     # happened to be the one minting the node first. A register decision's
     # lineage happens to share one subject across its whole history, so
@@ -313,7 +313,7 @@ def _supersedes_edges(records: list[dict[str, Any]], nodes: dict[str, dict[str, 
                 _add_node(nodes, dst, "claim", _label(resolves))
                 edges.append(_edge(SUPERSEDES, src, dst, sequence, None))
                 continue
-        # NS-10e (0.3.28 Plan 5 Task 6): `remember --supersedes <seq>`
+        # `remember --supersedes <seq>`
         # stamps this SAME `supersedes` field on any OTHER kind -
         # register decisions and claim resolutions each already own their
         # specific shape above, so this only fires for a kind neither
@@ -423,7 +423,7 @@ def query(graph: dict[str, Any], node: str, depth: int = 3) -> dict[str, Any]:
     `retested_by` edges from `node` - the retest coverage the archive
     itself has on record for it.
 
-    Fix round 1, Q3: `depth` below 1 is refused (`ValueError`), never
+    `depth` below 1 is refused (`ValueError`), never
     silently promoted to 1 - a caller asking for zero hops asked to
     exclude neighbours entirely, and `_bfs`'s old `max(1, depth)` answered
     with them anyway.
@@ -547,21 +547,21 @@ def _self_check() -> None:
         else:
             raise AssertionError("graph_edge must never be a writable kind")
 
-        # Fix round 1, S4: closing "b" WITHOUT restating `blocked_by` must
+        # Closing "b" WITHOUT restating `blocked_by` must
         # retire the edge, never erase it - the ordinary shape a real
         # closing write takes.
         closing = archive.append("obligation", "b", {"status": "Superseded"})
         retired = [e for e in rebuild(archive)["edges"] if e["type"] == DEPENDS_ON
                    and e["src"] == "obligation:b" and e["dst"] == "obligation:c"]
         assert len(retired) == 1, retired
-        # Fix round 1, S2: "superseded" is terminal too, and compared
+        # "superseded" is terminal too, and compared
         # case-insensitively.
         assert retired[0]["valid_to"] == closing["sequence"], retired
         assert retired[0]["valid_from"] == depends[0]["valid_from"], "valid_from must stay the DECLARING record's own"
         no_longer_impacted = query(rebuild(archive), "obligation:c", depth=3)["impact"]
         assert not any(entry["node"] == "obligation:b" for entry in no_longer_impacted), no_longer_impacted
 
-        # Fix round 1, Q3: a non-positive depth is refused, not promoted.
+        # A non-positive depth is refused, not promoted.
         try:
             query(first, "obligation:c", depth=0)
         except ValueError:  # godmode: swallow-ok: assertRaises shape - the `else` below fails loudly if this call does NOT raise, so nothing here is actually discarded

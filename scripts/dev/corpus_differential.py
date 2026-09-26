@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""G-5: classify every gate-corpus row at two commits and report decision flips.
+"""Classify every gate-corpus row at two commits and report decision flips.
 
     python scripts/dev/corpus_differential.py --base <sha> [--head <sha>] [--json out.json]
 

@@ -147,7 +147,7 @@ an approval undoing a retirement: retirement is the documented way to lift
 a bad guard, and a promotion minted before one may not be approved after
 it. A refused approval writes nothing.
 
-Actor is always Task 5's own `agent_id()`; neither verb accepts an actor
+Actor is always the caller's own `agent_id()`; neither verb accepts an actor
 override. The three-session correction/instruction ladder (`law promote
 --candidate <seq> --guard <g> --subject <s>`) feeds this same pipeline
 instead of writing an active law directly - its five structured fields are

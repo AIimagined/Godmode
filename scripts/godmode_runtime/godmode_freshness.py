@@ -1,4 +1,4 @@
-"""C-10: a source-freshness preflight that says what it could not check.
+"""A source-freshness preflight that says what it could not check.
 
 A standing record cites its sources. Two citation classes can be checked
 locally and already are, by `godmode_reanchor`: a `file:` committed after
@@ -71,7 +71,7 @@ def freshness_report(archive: Any, project: Path | str) -> dict[str, Any]:
             "history to compare against")
         checked = {"file": 0, "commit": 0}
 
-    # Field report 2026-08-28: a run over records with no local citations
+    # A run over records with no local citations
     # returned `fresh` with `checked: {file: 0, commit: 0}` and was nearly
     # quoted as proof that nothing had gone stale. A probe with no reach
     # cannot tell clean from unchecked, so it says which one it is - the

@@ -1,4 +1,4 @@
-"""C-6: ownership map and gate-table freshness (0.3.28 Plan 4, Task 2).
+"""Ownership map and gate-table freshness (0.3.28).
 
 The 0.3.27 miss this closes: `hooks/gate_table.json` can drift from the
 classifier that generated it (`scripts/dev/build_decision_table.py`) with
@@ -81,7 +81,7 @@ from .godmode_sentinel import _ACTION_PATTERNS, _FREEZE_FILE, _HOOK_AS_CODE, _SE
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TABLE_PATH_PARTS = ("hooks", "gate_table.json")
-# Fix round 1 (reviewer finding on 97a2efe): whether `project_root` itself is
+# Whether `project_root` itself is
 # a checkout of the godmode SOURCE - detected by the presence of the sentinel
 # module this task's own digest is computed from, never by identity against
 # this file's own `_REPO_ROOT`. `_REPO_ROOT` is one specific directory (the
@@ -187,7 +187,7 @@ def table_is_stale(project_root: Path) -> dict[str, Any]:
     in decision table's `generated_from` still matches the sentinel's live
     digest.
 
-    Two absence cases are told apart (fix round 1 - a reviewer finding on
+    Two absence cases are told apart (a reviewer finding on
     the first cut of this function, which collapsed both to "not stale"):
 
     - A project with no `hooks/gate_table.json` AND no

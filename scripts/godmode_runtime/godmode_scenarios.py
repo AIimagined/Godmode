@@ -474,7 +474,7 @@ def _concurrent_agent_collision(project: Path, archive: Chronicle) -> tuple[bool
         result = fresh.verify()
         intact = result["valid"]
         detail = f"{result['records']} records landed, chain valid={result['valid']}"
-        # N-9: verify() now reports a broken record (e.g. a non-contiguous
+        # Verify() now reports a broken record (e.g. a non-contiguous
         # sequence from the disabled lock above) instead of raising - the
         # named break still has to reach `detail`, or this control silently
         # stops detecting the corruption it exists to catch.
@@ -785,7 +785,7 @@ def _self_check() -> None:
     assert report["not_reproducible_here"], report
     assert all(entry["why"] for entry in report["not_reproducible_here"])
 
-    # U-S1: every scenario carries a versioned id and a content digest, and
+    # Every scenario carries a versioned id and a content digest, and
     # the shipped registry is clean against the code as it actually reads.
     for entry in report["scenarios"]:
         assert entry["id"] == scenario_id(entry["scenario"]), entry

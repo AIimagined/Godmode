@@ -1,4 +1,4 @@
-"""NS-1: loop records - a chained failure signature per retry attempt.
+"""Loop records - a chained failure signature per retry attempt.
 
 A retry loop never sees itself repeating - each attempt arrives with a
 plausible next idea and the same underlying failure. `loop_step` records
@@ -14,7 +14,7 @@ A halt is not permanent: `resume` reopens a task, but only on evidence
 written by a different actor than whoever hit the halt - the checker
 reading the failure fresh, not the same agent asking again. This mirrors
 the single-writer/writer-trust discipline `godmode_chronicle.py` already
-enforces elsewhere (Task 5): separateness is an actor comparison, never a
+enforces elsewhere: separateness is an actor comparison, never a
 role label taken at its word.
 
 The existing `godmode loop` detector (`godmode_loop.py`, its `.godmode-
@@ -44,7 +44,7 @@ from .godmode_stop import OperatorStop
 _SUBJECT_PREFIX = "loop:"
 
 # The resume marker's subject prefix. An `action` record, not a third
-# loop-owned kind: NS-1 names exactly two kinds (`loop_step`, `loop_halt`)
+# loop-owned kind: this mechanism names exactly two kinds (`loop_step`, `loop_halt`)
 # and a resume is bookkeeping about who reopened a task, not a new fact
 # about an attempt. Built with an f-string (never a bare literal), the
 # same way `godmode_guardrails.EXPERIMENT_CYCLE_PREFIX` mints its own
@@ -54,7 +54,7 @@ _RESUME_SUBJECT_PREFIX = "loop-resume:"
 
 # Budget names, checked in this fixed order - an operator's own stop
 # request outranks every declared ceiling, and among ceilings, steps
-# exhaust before tokens exhaust before wall time (design NS-1 order:
+# exhaust before tokens exhaust before wall time (fixed order:
 # interrupted > steps > tokens > wall-time).
 BUDGET_NAMES = ("steps", "tokens", "wall_time")
 REASON_INTERRUPTED = "operator-interrupted"
@@ -79,7 +79,7 @@ def signature(failing_test_ids: list[str], diff_shape: dict[str, Any]) -> str:
     produced them - never the diff's own bytes, so two runs that touch the
     same files with the same number of hunks compare equal even when the
     exact line content differs run to run (the "normalised failure
-    signature" NS-1 asks for, not raw output).
+    signature" this mechanism asks for, not raw output).
 
     Order-independent in the test ids and file list (both sorted before
     hashing) so a reporter that lists them in a different order each run
@@ -121,7 +121,7 @@ def diff_shape_from_git(project: Path) -> dict[str, Any]:
 
 def loop_ceilings(project: Path) -> dict[str, int]:
     """The declared `.godmode-ceilings.json` ceilings, renamed onto this
-    module's own budget vocabulary - `tool_calls` is what NS-1 calls
+    module's own budget vocabulary - `tool_calls` is what this module calls
     `steps`, `seconds` is what it calls `wall_time`. One declared-ceilings
     file, read the same way `check_ceilings` already reads it, never a
     second config surface."""
@@ -329,7 +329,7 @@ def _record_at_sequence(archive: Chronicle, cite: str) -> dict[str, Any]:
 
 def resume(archive: Chronicle, *, task: str, evidence_cite: str) -> dict[str, Any]:
     """`atlas loop resume`: reopens `task` only when `evidence_cite`'s own
-    writer (its `agent_id` fingerprint - Task 5's `writer_fingerprint`)
+    writer (its `agent_id` fingerprint - `writer_fingerprint`)
     differs from whoever wrote the halt being resumed. The same actor
     citing themselves as "new evidence" is exactly the rubber stamp this
     verb exists to refuse - a different actor (the checker, the operator)

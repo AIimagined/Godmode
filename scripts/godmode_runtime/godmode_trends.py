@@ -39,7 +39,7 @@ _PREFLIGHT_SUBJECT = "preflight"
 
 
 def _findings_by_class(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """N-12: one row per class per preflight attestation, oldest first.
+    """One row per class per preflight attestation, oldest first.
     `recurring` is true when the immediately preceding preflight
     attestation also carried this class - the same failure walking into
     two consecutive rounds, not merely showing up twice ever."""
@@ -64,13 +64,13 @@ def _findings_by_class(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def record_flaky_retry(archive: Any, test_id: str, outcome: str) -> None:
-    """NS-8o: record one isolated rerun of a registered flake. Called by
+    """Record one isolated rerun of a registered flake. Called by
     the retry runner (`scripts/dev/run_with_flaky_retry.py`) after every
     isolated rerun; a no-op with no archive - the runner works outside a
     project too, and its own bookkeeping must never fail a test run."""
     if archive is None:
         return
-    # Final review N9: `evidence=[]` passed explicitly, matching the two
+    # `evidence=[]` passed explicitly, matching the two
     # sibling bookkeeping writers (`godmode_post_edit._scan_untrusted_result`,
     # `godmode_session_hook._record_usage_observed`) - harmless either way
     # today (an omitted `evidence` already defaults to empty), but
@@ -83,7 +83,7 @@ def record_flaky_retry(archive: Any, test_id: str, outcome: str) -> None:
 
 
 def flakes(archive: Chronicle) -> list[dict[str, Any]]:
-    """NS-8o: one row per flaky test id, ranked by retry count descending.
+    """One row per flaky test id, ranked by retry count descending.
 
     `has_lesson` is true when any lesson record's subject or value names
     the id - the id is free text a person chose for the registry entry, so
@@ -92,7 +92,7 @@ def flakes(archive: Chronicle) -> list[dict[str, Any]]:
     """
     retries: dict[str, dict[str, int]] = {}
     order: list[str] = []
-    # S-3: every retry on record. `select` keeps the newest 500, which
+    # Every retry on record. `select` keeps the newest 500, which
     # capped a busy flake's count at 500 and dropped an older flake whole.
     for record in archive.read_events():
         if record["kind"] != "action" or record["subject"] != "flaky-retry":
@@ -108,7 +108,7 @@ def flakes(archive: Chronicle) -> list[dict[str, Any]]:
         if data.get("outcome") == "failed-isolated":
             retries[test_id]["isolated_failures"] += 1
 
-    # Final review S4: UNBOUNDED (`archive.read_events()`, not
+    # UNBOUNDED (`archive.read_events()`, not
     # `archive.select(...)`) - `Chronicle.select` clamps to the newest 500
     # matching records regardless of what is asked for, so a lesson naming
     # this flake more than 500 lessons ago used to read as absent here.
@@ -142,7 +142,7 @@ def flakes(archive: Chronicle) -> list[dict[str, Any]]:
 
 
 def record_flake_parked(archive: Any, test_id: str, reason: str) -> None:
-    """NS-10c: the retry runner records this once - the run where it first
+    """The retry runner records this once - the run where it first
     observes the id's own breaker has tripped, never on every subsequent
     parked run. A park is bookkeeping about the flake, not a step this
     trajectory took, so it joins `BOOKKEEPING_SUBJECTS` beside
@@ -158,7 +158,7 @@ def record_flake_parked(archive: Any, test_id: str, reason: str) -> None:
 
 
 def record_flake_readmitted(archive: Any, test_id: str) -> None:
-    """NS-10c: the retry runner records this once - the run where cooldown
+    """The retry runner records this once - the run where cooldown
     has elapsed and the id is treated as closed again. Bookkeeping about
     the flake, same reasoning as `record_flake_parked` above."""
     if archive is None:
@@ -223,7 +223,7 @@ def breaker_state(
     window_hours: int = 24,
     cooldown_hours: int = 6,
 ) -> dict[str, Any]:
-    """NS-10c: pure trip/cooldown state for one flaky test id, computed
+    """Pure trip/cooldown state for one flaky test id, computed
     only from `flaky-retry` (`outcome == "failed-isolated"`),
     `flake-parked`, and `flake-readmitted` action records - never from the
     wall clock, which is always the caller's explicit `now`, the same
@@ -365,7 +365,7 @@ def trends_report(archive: Chronicle, sessions: int | None = None) -> dict[str, 
         preflight_records = preflight_records[-sessions:]
     findings_by_class = _findings_by_class(preflight_records)
 
-    # NS-13c: the PDCA row - records per phase of the latest cycle, and a
+    # The PDCA row - records per phase of the latest cycle, and a
     # stalled Check named when changes landed with no retest since.
     from .godmode_stages import pdca_cycle
     return {"series": series, "gaps": gaps, "basis": basis, "agentic": agentic,

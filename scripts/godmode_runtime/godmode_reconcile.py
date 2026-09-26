@@ -199,7 +199,7 @@ _MANIFEST_TEXT_REMEDY = (
 
 
 def _manifest_text_findings(project: Path) -> list[dict[str, Any]]:
-    """S-7: identity text (the description and its qualifier) is written in
+    """Identity text (the description and its qualifier) is written in
     one place, `packaging/hosts.json`, and every identity manifest - the
     root portable one included - is generated from it. A manifest whose
     generated fields differ from that source is a finding here, so the
@@ -546,7 +546,7 @@ def reconcile_capabilities(project: Path) -> dict[str, Any]:
 def reconcile_detectors(project: Path) -> dict[str, Any]:
     """Every catalogued mistake-class detector id resolves to its function AND its test.
 
-    This is the fabrication-pattern catalog (Task 13b) held to the same
+    This is the fabrication-pattern catalog held to the same
     discipline as the capability register: an id with no function to call or
     no test guarding it is a label, not a detector.
     """

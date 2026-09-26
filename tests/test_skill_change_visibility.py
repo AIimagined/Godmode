@@ -67,14 +67,15 @@ def _run(project: Path, *argv: str, stdin: str | None = None) -> tuple[int, dict
     return code, (json.loads(text) if text else {}), err.getvalue()
 
 
-def _hook(project: Path, tool: str, tool_input: dict) -> tuple[str, str]:
+def _hook(project: Path, tool: str, tool_input: dict,
+          extra_env: dict | None = None) -> tuple[str, str]:
     payload = {"hook_event_name": "PreToolUse", "tool_name": tool,
                "tool_input": tool_input, "cwd": str(project)}
     done = subprocess.run(
         [sys.executable, str(HOOK), "pre-action", "--project", str(project)],
         input=json.dumps(payload), capture_output=True, text=True,
         encoding="utf-8", errors="replace", timeout=180, cwd=str(project),
-        env=dict(os.environ))
+        env={**os.environ, **(extra_env or {})})
     body = (done.stdout or "").strip()
     if not body:
         return "allow", ""
@@ -405,6 +406,56 @@ class StagedApprovalTests(unittest.TestCase):
         self.assertIn("editable region", frozen[1])
         self.assertEqual(allowed[0], "allow", allowed)
         self.assertEqual(spent[0], "deny", spent)
+
+    def _stage(self, project: Path, operation: str) -> None:
+        code, staged, err = _run(project, "authorize", "stage", "--operation", operation,
+                                 "--password-stdin", stdin=PASSWORD + "\n")
+        self.assertEqual(code, 0, (staged, err))
+
+    def test_a_declared_tool_gate_leaves_the_staged_approval_unspent(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            CapabilityBroker(archive).configure(PASSWORD)
+            target = _skill(project).parent / "SKILL.md"
+            _lock(project)
+            self._stage(project, "edit file skills/demo/SKILL.md")
+            policy = project / ".godmode-authorization-policy.json"
+            policy.write_text(json.dumps({"tool_gates": {"Write": "deny"}}), encoding="utf-8")
+            write = {"file_path": str(target), "content": "# a\n"}
+            with _attended(True):
+                gated = _hook(project, "Write", write)
+                policy.unlink()
+                allowed = _hook(project, "Write", write)
+        self.assertNotEqual(gated[0], "allow", gated)
+        self.assertIn("declared tool gate", gated[1])
+        self.assertEqual(allowed[0], "allow", allowed)
+
+    def test_a_patch_with_one_unspendable_approval_spends_none(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            broker = CapabilityBroker(archive)
+            broker.configure(PASSWORD)
+            first = _skill(project).parent / "SKILL.md"
+            second = first.parent / "notes.md"
+            second.write_text("notes\n", encoding="utf-8")
+            _lock(project)
+            self._stage(project, "edit file skills/demo/SKILL.md")
+            self._stage(project, "edit file skills/demo/notes.md")
+            # The second approval is staged but can no longer be spent: its
+            # signature no longer matches.
+            store = json.loads(broker.path.read_text(encoding="utf-8"))
+            token = store["staged"][-1]["token"]
+            store["staged"][-1]["token"] = token[:-4] + ("AAAA" if token[-4:] != "AAAA" else "BBBB")
+            broker.path.write_text(json.dumps(store), encoding="utf-8")
+            patch = (f"*** Begin Patch\n*** Update File: {first}\n@@\n-# demo\n+# a\n"
+                     f"*** Update File: {second}\n@@\n-notes\n+more\n*** End Patch\n")
+            codex = {"GODMODE_HOST": "codex"}
+            with _attended(True):
+                refused = _hook(project, "apply_patch", {"input": patch}, codex)
+                alone = _hook(project, "Edit", {"file_path": str(first),
+                                                "old_string": "# demo", "new_string": "# a"})
+        self.assertNotEqual(refused[0], "allow", refused)
+        self.assertEqual(alone[0], "allow", alone)
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,7 +8,7 @@ auto-allow set (Claude Code's `readOnlyValidation` matcher) is not reachable
 from this repo - no bundled copy of the CLI's source ships here, and pinning
 this table to an unpinned dependency would be exactly the drift this module
 exists to prevent. Pinned instead to the conservative, documented set the
-gate-v2 plan recorded for this purpose (its Task 5 brief, Step 1), transcribed
+gate-v2 design work recorded for this purpose, transcribed
 here verbatim on 2026-08-14:
     git status|log|diff|show|branch|ls-files|rev-parse|rev-list|remote -v|
     shortlog|describe|blame
@@ -19,7 +19,7 @@ full sentinel did not yet classify a bare `tr` as read-only at the time that
 fixture was hand-built (see `changelog.d/gate-fast-path.added.md`). Verified
 again here, live, against the sentinel this script now imports:
 `classify_action("tr a b")` is R0 today - the stream-tool gap that exclusion
-named was closed by this same plan's Task 3 - so `tr` now belongs on the
+named was closed by a later fix in that same gate work - so `tr` now belongs on the
 floor, and every entry below (git and non-git alike) is re-verified against
 `classify_action` at generation time rather than trusted from this docstring:
 a floor entry that stops being R0 fails the build loudly, not the table

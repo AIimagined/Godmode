@@ -1,4 +1,4 @@
-"""Witness + independent-checker verdicts (U-V1), extended to N-checker panels (U-E4).
+"""Witness + independent-checker verdicts, extended to N-checker panels.
 
 "Agent claims it fixed X" becomes admissible only as: a claimed value stated
 explicitly, a data-only witness sufficient to recompute it, and one or more
@@ -289,7 +289,7 @@ def _append_verdict(
         "claim": claim,
         "claimed_value": claimed_value,
         "witness": {"kind": witness_kind, "ref": witness_value},
-        # NS-8b: a `file:` witness's own content hash at record time (the
+        # A `file:` witness's own content hash at record time (the
         # same shape `godmode_attest.evidence_versions` gives a claim's
         # citation), stored even when unset (no witness, or a non-file
         # witness) - `godmode_attest.stale_claims` compares it against the
@@ -309,7 +309,7 @@ def _append_verdict(
         # needing archive access itself - see that module's docstring.
         "tool_error_findings": tool_error_findings or [],
         "tool_error_ack": tool_error_ack or None,
-        # N-11: what the panel checked vs. what it did not, and named
+        # What the panel checked vs. what it did not, and named
         # per-criterion evidence - stored even when empty, same reasoning
         # as `tool_error_findings` above (a reader never has to guess
         # whether an absent key means "nothing declared" or "not yet this
@@ -373,7 +373,7 @@ def record_verdict(
     `refuted`/`witness-malformed` folds are never gated by this - only a
     `confirmed` claims the checker's output was clean enough to trust.
 
-    N-11: `checked`/`not_checked` name what the panel actually looked at and
+    `checked`/`not_checked` name what the panel actually looked at and
     what it did not, and `criteria` is a name-to-evidence map of what
     "passing" meant. A `confirmed` fold is refused outright while
     `not_checked` is non-empty or any `criteria` value is blank - a PASS may
@@ -414,14 +414,14 @@ def record_verdict(
     else:
         witness_kind, witness_value = "unknown", witness_ref
 
-    # NS-8b: a `seq:` witness naming a record sequence nothing was ever
+    # A `seq:` witness naming a record sequence nothing was ever
     # appended at is a referential-integrity mistake in the citation
     # itself, not a gradeable "could not judge" - refused outright, before
     # `_witness_readable`'s softer existence check ever runs.
     if witness_kind == "seq":
         require_seq_cite(archive, f"seq:{witness_value}")
 
-    # N-11: a checker cannot also be its own witness - that is not "judged
+    # A checker cannot also be its own witness - that is not "judged
     # and found true", it is a command grading itself, which is exactly
     # what the witness/checker split exists to prevent. Checked
     # unconditionally, before any checker ever runs (not gated on the
@@ -446,7 +446,7 @@ def record_verdict(
     declared = declared_error_patterns(archive)
 
     witness_ok = _witness_readable(project, archive, witness_kind, witness_value)
-    # NS-8b: a `file:` witness hashed the same way a claim's `file:`
+    # A `file:` witness hashed the same way a claim's `file:`
     # citation is (`evidence_versions`), stored so `stale_claims` can tell
     # when the witness itself moved since the verdict was recorded.
     witness_version: dict[str, str] = {}
@@ -471,7 +471,7 @@ def record_verdict(
         tool_error_findings.extend(_tool_error_findings(declared, cmd, output))
 
     folded = _fold_panel(checks)
-    # N-11: a PASS names what it did not check, and every criterion it
+    # A PASS names what it did not check, and every criterion it
     # names needs its own evidence - both checked only for the disposition
     # that actually ships as trusted (`confirmed`); `contested`/`refuted`/
     # `witness-malformed` already say plainly that nothing was cleanly

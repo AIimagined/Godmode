@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Small front door for `godmode_session_hook.py`.
 
-Field report 2026-09-23: a host's diagnostics advised uninstalling Godmode
+A host's diagnostics advised uninstalling Godmode
 because its hooks ran past their timeouts in projects nobody had initialized.
 Python compiles a script in full before running its first line, and the
 session hook is about 5,000 lines - measured here at 150-600 ms of compile

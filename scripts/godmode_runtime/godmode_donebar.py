@@ -1,4 +1,4 @@
-"""C-9: reviewer vs builder roles for the done-bar's own checks.
+"""Reviewer vs builder roles for the done-bar's own checks.
 
 The done-bar (the Stop hook's completion gate) runs several checks before
 it lets a reply through as finished. Two of them stand for a fact - a
@@ -17,10 +17,10 @@ for a few turns, printing the reason instead of nagging or blocking.
 
 Expiry is bounded two ways, both state rather than the clock:
 
-- **The session anchor** (fix round 1, S1). `active_escalation` only
+- **The session anchor**. `active_escalation` only
   accepts an `escalate:<check>` record whose own sequence is AFTER
   `godmode_hookproof._session_anchor_sequence` - the same anchor
-  Plan 6 Task 12 built for exactly this shape of question (`godmode_
+  built for exactly this shape of question (`godmode_
   guardrails.py`'s usage-ledger windowing), and for the reason that
   review gave: `latest_session` (a `session open`-only marker) is
   usually `None` on an ordinary hook-driven project, so matching on it
@@ -28,7 +28,7 @@ Expiry is bounded two ways, both state rather than the clock:
   session - before the current anchor - has aged out; only the anchor
   of 0 (no session-start hook installed, `session open` never run
   either) falls back to matching any escalation on record, exactly as
-  Task 12's own D3 documents for its ledger.
+  exactly as documented elsewhere for its ledger.
 - **The turn count**, inside that same window. Each real Stop turn this
   module is consulted for, while some escalation is actually live,
   leaves one `donebar-turn` record behind (`note_turn`); an escalation
@@ -66,7 +66,7 @@ DONE_BAR_CHECKS: dict[str, str] = {
     "style": BUILDER,
 }
 
-# N-style (fix round 1 review): two checks the brief names have no live
+# N-style: two checks the brief names have no live
 # Stop-hook detector in this repository at all - `style` raises no
 # block or notice for anything to skip, and `unattested-hard-rule` is
 # read only at SessionStart, into a count, never at Stop. Escalating
@@ -126,7 +126,7 @@ def escalate(archive: Chronicle, check: str, *, reason: str) -> dict[str, Any]:
 
 
 def _expires_turns_of(data: dict[str, Any]) -> int:
-    """N3: a hand-edited or malformed `expires_turns` must not raise past
+    """A hand-edited or malformed `expires_turns` must not raise past
     this module, and an explicit 0 means "expires now", not "unset" - the
     original `int(x or DEFAULT)` treated 0 as falsy and silently promoted
     it to the default instead."""
@@ -175,10 +175,10 @@ def live_escalations(archive: Chronicle, checks: Iterable[str]) -> dict[str, str
         check = subject[len(_ESCALATE_PREFIX):]
         if check not in wanted:
             continue
-        # S1: an escalation from BEFORE the current session anchor is
+        # An escalation from BEFORE the current session anchor is
         # stale - it belongs to a session that is no longer the live one.
         # An anchor of 0 (no session-start hook, `session open` never
-        # run) falls back to matching regardless, same as Task 12's D3.
+        # run) falls back to matching regardless, same as documented above.
         if anchor and record.get("sequence", 0) <= anchor:
             continue
         latest[check] = record

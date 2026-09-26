@@ -54,7 +54,7 @@ def _is_shipped_skill(skill_dir: Path, root: Path) -> bool:
 
 
 def _purpose_findings(skill_dir: Path) -> list[str]:
-    """NS-12b: a shipped skill's `PURPOSE.md` states, in plain public
+    """A shipped skill's `PURPOSE.md` states, in plain public
     language, the problem the skill solves.
 
     This used to require a `seq:<n>` citation into the local archive - a
@@ -136,7 +136,7 @@ def lint_frontmatter(skill_dir: Path, budget: int = 1024) -> dict[str, Any]:
         if _is_shipped_skill(skill_dir, root):
             findings.append("companions: missing agents/openai.yaml or godmode-evals.json")
 
-    # NS-12b: only a skill this repo actually ships is held to PURPOSE.md - a
+    # Only a skill this repo actually ships is held to PURPOSE.md - a
     # fixture built under a synthetic root (no real `skills/`) is not what
     # this rule protects.
     if _is_shipped_skill(skill_dir, root):

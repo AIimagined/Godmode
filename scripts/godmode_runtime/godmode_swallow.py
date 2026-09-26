@@ -455,7 +455,7 @@ def _is_under_claude_worktrees(parts: tuple[str, ...]) -> bool:
     Only the exact ADJACENT pair - a `.claude` component immediately
     followed by a `worktrees` component - is excluded.
 
-    Fix round 1 (C1, review Critical): `parts` MUST be the path's components
+    `parts` MUST be the path's components
     RELATIVE TO THE SCAN ROOT, never the raw absolute path - the caller
     (`scan_project`) is the one that enforces this, via
     `path.relative_to(project).parts`. Every task in this project runs
@@ -495,7 +495,7 @@ def scan_project(project: Path, limit: int = DEFAULT_SCAN_LIMIT) -> dict[str, An
             continue
         if any(part in IGNORED_DIRECTORY_NAMES for part in path.parts):
             continue
-        # Fix round 1 (C1): relative to the scan root, never the absolute
+        # Relative to the scan root, never the absolute
         # path - see `_is_under_claude_worktrees`'s own docstring for why.
         # `rglob` always yields a `path` under `project`, so `relative_to`
         # never raises here in practice; the `project.rglob` contract is the

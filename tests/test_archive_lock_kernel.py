@@ -633,6 +633,68 @@ class SlowHolderTests(unittest.TestCase):
         payload = C._lock_owner_payload(4242, 1.0)
         self.assertEqual(C._lock_owner_host(payload), C._lock_host())
 
+    def test_two_waiters_racing_an_abandoned_sidecar_yield_one_holder(self) -> None:
+        from godmode_runtime import godmode_chronicle as C
+
+        with tempfile.TemporaryDirectory(prefix="godmode-lock-root-") as root, \
+                tempfile.TemporaryDirectory(prefix="godmode-lock-state-") as state:
+            with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": state}, clear=False):
+                archive, acquire = self._fallback(root, state)
+                dead = subprocess.Popen([sys.executable, "-c", "pass"])
+                dead.wait(timeout=30)
+                archive.excl_lock_path.write_text(
+                    C._lock_owner_payload(dead.pid, 0.0), encoding="utf-8")
+                first_holds = threading.Event()
+                judge = C.Chronicle._exclusive_lock_abandoned
+                delayed: set[str] = set()
+
+                def slow_second_judge(self_) -> bool:
+                    verdict = judge(self_)
+                    name = threading.current_thread().name
+                    if name == "second" and name not in delayed:
+                        # The second waiter judged the stale sidecar and is
+                        # descheduled until the first has taken the lock.
+                        delayed.add(name)
+                        first_holds.wait(timeout=10)
+                    return verdict
+
+                inside, peak, guard = [0], [0], threading.Lock()
+                errors: list[BaseException] = []
+
+                def hold(pause: float) -> None:
+                    try:
+                        with acquire(15.0):
+                            with guard:
+                                inside[0] += 1
+                                peak[0] = max(peak[0], inside[0])
+                            first_holds.set()
+                            time.sleep(pause)
+                            with guard:
+                                inside[0] -= 1
+                    except BaseException as exc:  # noqa: BLE001
+                        errors.append(exc)
+
+                with mock.patch.object(C.Chronicle, "_exclusive_lock_abandoned",
+                                       slow_second_judge):
+                    second = threading.Thread(target=hold, args=(0.0,), name="second")
+                    second.start()
+                    time.sleep(0.2)
+                    first = threading.Thread(target=hold, args=(1.0,), name="first")
+                    first.start()
+                    first.join(timeout=30)
+                    second.join(timeout=30)
+        self.assertEqual(errors, [])
+        self.assertEqual(peak[0], 1, "two writers held the fallback lock at once")
+
+    def test_the_threat_model_states_when_the_fallback_lock_is_taken_over(self) -> None:
+        from godmode_runtime import godmode_chronicle as C
+
+        text = (PLUGIN_ROOT / "THREAT-MODEL.md").read_text(encoding="utf-8")
+        row = next(line for line in text.splitlines() if line.startswith("| Archive fork"))
+        self.assertNotIn("only from a holder whose process is gone", row)
+        self.assertIn(f"{C._EXCLUSIVE_CREATE_CEILING_SECONDS // 60} minutes old", row)
+        self.assertIn("another host", row)
+
     def test_release_leaves_a_sidecar_that_is_no_longer_its_own(self) -> None:
         with tempfile.TemporaryDirectory(prefix="godmode-lock-root-") as root, \
                 tempfile.TemporaryDirectory(prefix="godmode-lock-state-") as state:

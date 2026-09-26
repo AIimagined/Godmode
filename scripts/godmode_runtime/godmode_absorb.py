@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any, Sequence
 
-# Fix round 1 (coordinator ruling): this project's own reader,
+# This project's own reader,
 # `godmode_parity._IMPORT_VERDICTS`, and skills/godmode-governance/SKILL.md
 # already used `n-a` for "confirmed not applicable" where this module used
 # none. The vocabulary is the union of both sets - `n-a` joins here exactly
@@ -82,7 +82,7 @@ def validate_absorb(value: str, evidence: Sequence[str], archive: Any = None) ->
         gaps.append(f"unknown_behaviour_verdict:{raw_beh[4:]}")
     imp, _beh = parse_verdicts(value)
     if imp in ("adopt", "extend") and not any(is_source_cite(e, archive) for e in evidence):
-        # I-2: a decision that cited only `receipt:` evidence and none of it
+        # A decision that cited only `receipt:` evidence and none of it
         # named a source read is refused by its own name - `surface-only` -
         # distinct from citing no receipt or file at all, which is the older
         # and plainer `adopt_or_extend_needs_source_cite`.

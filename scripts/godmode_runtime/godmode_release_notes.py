@@ -41,7 +41,7 @@ def changelog_entries(project: Path, version: str) -> dict[str, list[str]]:
 
 
 def _benchmark_baseline(project: Path, version: str) -> dict | None:
-    """G-9: the committed `benchmarks/gate_latency_baseline.json` under
+    """The committed `benchmarks/gate_latency_baseline.json` under
     `project`, when it names this exact `version` as the runtime it was
     measured against and carries a usable `p95_ms` for both `fast_allow`
     and `escalate`. `None` otherwise (file absent, unparsable, a baseline

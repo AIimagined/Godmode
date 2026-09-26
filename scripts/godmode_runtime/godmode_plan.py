@@ -40,7 +40,7 @@ CONTRACT_FIELDS = (
 # everything. The gap is reported by `fence_verdict`, not inferred.
 OPTIONAL_FIELDS = ("editable",)
 
-# E62: `acceptance` is prose an operator reads; `accept` is its executable
+# `acceptance` is prose an operator reads; `accept` is its executable
 # form - one or more `cmd:<command>` entries that must actually be run and
 # attested before completion (see `unattested_accept_commands`). A list
 # field, so it is kept out of the generic string-coercion loop in `start`.
@@ -211,7 +211,7 @@ def mutation_verdict(archive: Chronicle, session: str) -> dict[str, Any]:
     }
 
 
-# NS-13d: plan-first. A change that touches more than one file needs an
+# Plan-first. A change that touches more than one file needs an
 # approved plan before the edit that makes it multi-file.
 PLAN_FIRST_CATEGORY = "unplanned-multi-file-change"
 PLAN_FIRST_TIER = "R2"
@@ -388,7 +388,7 @@ def bind_execution(archive: Chronicle, session: str, summary: str, files: list[s
 
 
 def unattested_accept_commands(archive: Chronicle, session: str) -> list[str]:
-    """E62: accept commands from the active plan with no this-session attestation.
+    """Accept commands from the active plan with no this-session attestation.
 
     An `accept` entry is a `cmd:<command>` citation. It is "attested" the
     same way any other command citation is: an `attestation` record from
@@ -479,7 +479,7 @@ def _self_check() -> None:
             assert approve(archive, session)["approved"]
             assert mutation_verdict(archive, session)["allowed"]
 
-            # E62: an approved plan's accept command has not run this session yet.
+            # An approved plan's accept command has not run this session yet.
             assert unattested_accept_commands(archive, session) == [
                 "cmd:pytest tests/auth/rotate_test.py"
             ]

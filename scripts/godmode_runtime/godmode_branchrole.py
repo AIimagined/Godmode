@@ -43,8 +43,7 @@ def loosens(branch: str | None, role: str) -> bool:
     throwaway declaration. Such a declaration counts only from a verified
     operator; one that tightens (maintained) counts from anyone.
 
-    Compared with the role, never with the branch name's default (review
-    round 2, F2): on `spike/*` an operator may have declared the branch
+    Compared with the role, never with the branch name's default: on `spike/*` an operator may have declared the branch
     maintained, and an agent restating it as a spike would undo that.
     Restating a spike by name is a no-op the default already gives."""
     return role == THROWAWAY

@@ -15,15 +15,15 @@ record (`edit-recorded`: `path`, plus a distinguishing `operation` digest)
 once per edit-shaped call - the one real per-edit fact
 `godmode_metrics.plan_adherence` checks against the plan's declared fence,
 since no PreToolUse gate writer carries a path on an ordinary mutation.
-Fix round 2 (Task 8 review): it is bookkeeping about an edit, never an
+It is bookkeeping about an edit, never an
 operation - `godmode_loop`, `godmode_watchdog`, and
 `godmode_metrics._action_transparency` all specifically exclude it from
 the detectors that reason about repeated or unattested *operations*.
 
-Task 7 (NS-8f) adds a second, independent write: a fetch/search/read-of-
+A second, independent write: a fetch/search/read-of-
 external tool result whose text scans as instruction-shaped is data, never
 a command, and every occurrence is recorded as `untrusted-content-seen`.
-Fix round 1 (Task 7 review, C1): unlike `edit-recorded`, this subject is
+Unlike `edit-recorded`, this subject is
 never a mutation, so it is never added to `godmode_loop._MUTATION_SUBJECTS`
 - instead `godmode_loop._repeated_actions` and `godmode_watchdog.
 watchdog_report`'s repeat-operation counter each carry their own
@@ -49,7 +49,7 @@ from typing import Any
 POLICY_FILENAME = ".godmode-authorization-policy.json"
 CAP = 5
 
-# NS-8f: tool names read as a fetch/search/read-of-external call - the same
+# Tool names read as a fetch/search/read-of-external call - the same
 # normalized vocabulary the once-per-session "untrusted DATA" notice below
 # already matched, plus Antigravity's `read_url_content` (its own external
 # read, per `godmode_hostevent.py`'s `_ANTIGRAVITY_READONLY_TOOLS`). No host
@@ -59,7 +59,7 @@ CAP = 5
 _EXTERNAL_TOOL_NAMES = frozenset({"webfetch", "websearch", "fetch", "readurlcontent"})
 # The scan below bounds its own cost, never the record: a multi-megabyte
 # fetch still gets one digest and one verdict, over its first 64 KB.
-# Final review S2: this hook cannot import `godmode_runtime` at module
+# This hook cannot import `godmode_runtime` at module
 # level (see the module docstring above - every runtime import here is
 # function-scoped, to keep an opted-out project's interpreter start free
 # of the whole package), so this stays its own literal rather than an
@@ -71,7 +71,7 @@ _EXTERNAL_TOOL_NAMES = frozenset({"webfetch", "websearch", "fetch", "readurlcont
 # `UNTRUSTED_SCAN_CAP_BYTES` so a drift on any side fails the test.
 _TOOL_RESULT_SCAN_CAP = 64 * 1024
 
-# Fix round 2, B5: on Gemini and Antigravity this hook is registered with a
+# On Gemini and Antigravity this hook is registered with a
 # `.*` matcher (`.gemini-plugin/hooks-fragment.json`'s `AfterTool`,
 # `.antigravity-plugin/hooks-fragment.json`'s `PostToolUse`) - EVERY tool
 # call reaches `main()`, including a read (`read_file`, `view_file`, ...),
@@ -138,7 +138,7 @@ def _findings(project: Path, target: Path) -> list[str]:
             out.append(f"{relative}:{f.get('line', 0)}: {f.get('severity', '')}: "
                        f"{f.get('check', '')} - {f.get('why', '')}")
 
-    # R17: a constraint credited to an outside authority is read before it is
+    # A constraint credited to an outside authority is read before it is
     # changed. Not restricted by suffix - an attribution appears in a comment in
     # any language, and this is the moment the edit is happening, which is the
     # only moment the advisory is worth anything.
@@ -149,7 +149,7 @@ def _findings(project: Path, target: Path) -> list[str]:
     return out
 
 
-# Task 7 review (fix round 1, S1): the order a dict is searched for its
+# The order a dict is searched for its
 # text, shared by every level of `_flatten_tool_result` - a WebSearch-style
 # `{"results": [{"title", "snippet"}, ...]}` and an MCP-style
 # `{"content": [{"type": "text", "text": ...}]}` are the same walk, just a
@@ -183,7 +183,7 @@ def _flatten_tool_result(value: Any, budget: int) -> str:
         for item in value:
             if remaining <= 0:
                 break
-            # Round 2 (N5): the `" "` this loop joins with is itself
+            # The `" "` this loop joins with is itself
             # output - charged against `remaining` here, before the next
             # item is even flattened, so `len(parts) - 1` separators can
             # never push the total past `budget`. Before this charge the
@@ -226,7 +226,7 @@ def _tool_result_text(payload: dict[str, Any]) -> str:
 
 
 def _scan_untrusted_result(archive: Any | None, tool_name: str, text: str) -> str | None:
-    """NS-8f: instruction-shaped text in a tool result is data, never a
+    """Instruction-shaped text in a tool result is data, never a
     command. Every occurrence is recorded (never deduped like the
     once-per-session notice above, since each one is a distinct piece of
     content an agent might read as an instruction) as an `action` /
@@ -262,7 +262,7 @@ def _scan_untrusted_result(archive: Any | None, tool_name: str, text: str) -> st
 
 def _open_archive(project: Path) -> Any | None:
     """The one `Chronicle` this hook invocation needs, or `None` when
-    nothing was ever initialized for this project. Fix round 2, B6: this
+    nothing was ever initialized for this project. This
     hook used to open a separate `Chronicle` in `_record_edit` and again
     in `_impact_brief` - two anchor resolutions and two archive-init checks
     per call for what is the same project, the same call. `main()` opens
@@ -292,7 +292,7 @@ def _record_edit(archive: Any | None, project: Path, target: Path, tool_name: st
     with a `.*` matcher - a plain `Read`/`view_file` call carries a path
     too, and must never be recorded as an edit.
 
-    Fix round 2 (Task 8 review, B2): `godmode_watchdog._operation_digest`
+    `godmode_watchdog._operation_digest`
     reads `data["operation"]` first, falling back to `record["subject"]`
     only when it is absent - and every edit shares the one subject
     `edit-recorded`, so edits to different files digested identically and
@@ -423,8 +423,8 @@ def main() -> int:
                     reconfigure(encoding="utf-8", errors="replace")
                 except (ValueError, OSError):  # godmode: swallow-ok: best-effort read: the failure is the non-event here
                     pass
-        # Obligation 9863: first complete JSON object, never EOF.
-        # G-8 fix round 1: the same decode `godmode_session_hook.py` and
+        # First complete JSON object, never EOF.
+        # The same decode `godmode_session_hook.py` and
         # `godmode_gate_fast.py` use on these exact bytes - a leading BOM,
         # CRLF, or anything after the first object (trailing data, a second
         # concatenated object) is tolerated here exactly as it is there,
@@ -449,8 +449,8 @@ def main() -> int:
     tool_name = str(payload.get("tool_name") or payload.get("toolName") or "")
     # Fetch-class output is untrusted CONTENT - data, never instructions
     # (absorbed from an output-policy governance pattern, 2026-09-03).
-    # The session notice below stays once per session; the NS-8f scan
-    # underneath it is per-occurrence - a second fetch that also carries
+    # The session notice below stays once per session; the instruction-shaped-text
+    # scan underneath it is per-occurrence - a second fetch that also carries
     # instruction-shaped text is its own recorded fact, not a repeat of
     # the first.
     if tool_name.lower().replace("_", "") in _EXTERNAL_TOOL_NAMES:
@@ -498,7 +498,7 @@ def main() -> int:
     if _enabled(project):
         lines = _findings(project, Path(str(file_path)))
         if lines and not _strict(archive):
-            # R11: one summary per session outside strict mode; the details
+            # One summary per session outside strict mode; the details
             # stay on demand.
             if _first_quality_summary(archive, session):
                 messages.append(
@@ -514,7 +514,7 @@ def main() -> int:
                             + "\n".join(shown))
     if not messages:
         return 0
-    # Obligation 9860: `systemMessage` reaches the operator only; the model
+    # `systemMessage` reaches the operator only; the model
     # reads `additionalContext`. Both, one object, never a decision.
     text = "\n".join(messages)
     print(json.dumps({
