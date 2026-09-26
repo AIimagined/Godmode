@@ -764,16 +764,31 @@ class UninitializedGuard(unittest.TestCase):
 
     def test_a_write_resolving_to_the_setting_is_asked_about_however_spelled(self) -> None:
         # The file a write lands in decides, not how its path is spelled:
-        # `.`/`..`, a directory change earlier in the call, a glob.
+        # `.`/`..`, a directory change earlier in the call (behind a flag,
+        # or already made by the host shell: the call's own `cwd`), a glob.
         settings_glob = (self.home / "godmode-setting?.json").as_posix()
-        for command in (r"printf '[\x67odmode]\n\tuninitialize\x64 = off\n' >> .git/./config",
-                        r"cd .git && printf '[\x67odmode]\n\tuninitialize\x64 = off\n' >> config",
-                        "echo x >> .gi?/conf*",
-                        f"echo {{}} > {settings_glob}"):
-            with self.subTest(command=command):
-                self.assertEqual(self._decision(self._run(command)), "ask")
-                self.assertEqual(self._decision(self._no_ask(command, session=command)), "deny")
-        for command in ("echo x > docs/config", "cd docs && echo x > notes"):
+        write = r"printf '[\x67odmode]\n\tuninitialize\x64 = off\n' >> config"
+        git_dir = self.project / ".git"
+        for command, tool, cwd in (
+                (r"printf '[\x67odmode]\n\tuninitialize\x64 = off\n' >> .git/./config",
+                 "Bash", None),
+                (f"cd .git && {write}", "Bash", None),
+                ("echo x >> .gi?/conf*", "Bash", None),
+                (f"echo {{}} > {settings_glob}", "Bash", None),
+                (write, "Bash", git_dir),
+                ("Add-Content config x", "PowerShell", git_dir),
+                (f"cd -- .git && {write}", "Bash", None),
+                (f"cd -P .git && {write}", "Bash", None),
+                (f"cd -LP .git && {write}", "Bash", None),
+                ("Set-Location -Path .git; Add-Content config x", "PowerShell", None),
+                ("Set-Location -LiteralPath .git; Add-Content config x", "PowerShell", None),
+                ("Set-Location -Path:.git; Add-Content config x", "PowerShell", None)):
+            with self.subTest(command=command, cwd=cwd):
+                self.assertEqual(self._decision(self._run(command, tool=tool, cwd=cwd)), "ask")
+                self.assertEqual(self._decision(
+                    self._no_ask(command, cwd=cwd, session=command)), "deny")
+        for command in ("echo x > docs/config", "cd docs && echo x > notes",
+                        "cd .git && cd .. && echo x >> config"):
             with self.subTest(command=command):
                 self.assertIsNone(self._run(command))
 
