@@ -553,7 +553,11 @@ _LITERAL_FLAG = re.compile(r"^--?[a-z][a-z0-9-]*(?:=[^$`@(%{]*)?$")
 # Heads that feed words from their input onto the command they run, so the
 # verb after `authorize` is not in the text at all.
 _ARGUMENT_FEEDERS = frozenset({"xargs", "xargs.exe", "parallel"})
-_GODMODE_LAUNCHER = re.compile(r"(?i)^godmode(?:\.(?:py|pyw|cmd|bat|exe|ps1|sh))?$")
+# The launcher, or the console module it runs, by file (`godmode_console.py`)
+# or by module name (`-m godmode_runtime.godmode_console`, any package prefix).
+_GODMODE_LAUNCHER = re.compile(
+    r"(?i)^(?:godmode(?:\.(?:py|pyw|cmd|bat|exe|ps1|sh))?"
+    r"|(?:[\w.]+\.)?godmode_console(?:\.pyw?)?)$")
 
 
 def _operator_authorize_verb(normalized: str, argv: list[str] | None) -> str | None:
@@ -4666,6 +4670,9 @@ def _segment_directories(segments: list[str], root: Path) -> list[str | None]:
     None where the move names a directory the text cannot resolve."""
     start = os.path.normpath(os.path.abspath(str(root)))
     current: str | None = start
+    # `cd -` returns to the directory the last change left (OLDPWD); the
+    # one the command started from was set before it, so it is unknown.
+    previous: str | None = None
     stack: list[str | None] = []
     directories: list[str | None] = []
     for text in segments:
@@ -4675,11 +4682,14 @@ def _segment_directories(segments: list[str], root: Path) -> list[str | None]:
             continue
         kind, target = change
         if kind == "popd":
-            current = stack.pop() if stack else None
+            previous, current = current, (stack.pop() if stack else None)
             continue
         if kind == "pushd":
             stack.append(current)
-        current = _changed_directory(current, target, kind)
+        if kind == "chdir" and target == "-":
+            previous, current = current, previous
+            continue
+        previous, current = current, _changed_directory(current, target, kind)
     return directories
 
 
@@ -4709,19 +4719,67 @@ def _relocated_word(value: str, directory: str | None, root: str, write: bool) -
     return None
 
 
+def _unquoted_redirect_starts(word: str) -> list[int]:
+    """Where a redirect glued to the text before it starts inside `word`:
+    each unquoted `>`/`>>` (with the `&` of `&>`, or the descriptor digits
+    that stand alone before it), never the word's own first character."""
+    starts: list[int] = []
+    quote: str | None = None
+    index = 0
+    while index < len(word):
+        char = word[index]
+        if quote:
+            if char == quote:
+                quote = None
+        elif char == "\\":
+            index += 2
+            continue
+        elif char in "\"'":
+            quote = char
+        elif char == ">":
+            start = index
+            if start and word[start - 1] == "&":
+                start -= 1
+            else:
+                digits = start
+                while digits and word[digits - 1].isdigit():
+                    digits -= 1
+                if digits == 0 or (starts and digits == starts[-1]):
+                    start = digits
+            if start and (not starts or start > starts[-1]):
+                starts.append(start)
+            index += 2 if word[index + 1:index + 2] == ">" else 1
+            continue
+        index += 1
+    return starts
+
+
+def _segment_words(text: str) -> list[tuple[int, int, str]]:
+    """Each word of `text` as `(start, end, word)`, a redirect glued to the
+    word before it (`x>>config`, `"x">>config`) split off as its own word
+    so the target it names is read as a write."""
+    words: list[tuple[int, int, str]] = []
+    for match in _SEGMENT_WORD.finditer(text):
+        word, offset = match.group(0), match.start()
+        cuts = [0, *_unquoted_redirect_starts(word), len(word)]
+        for begin, end in zip(cuts, cuts[1:]):
+            if begin < end:
+                words.append((offset + begin, offset + end, word[begin:end]))
+    return words
+
+
 def _relocated_segment(text: str, directory: str | None, root: Path) -> str | None:
     """`text` with each relative path argument and write target spelled
     as it resolves after an earlier directory change, or None when no
     word moves. The head word is the command, never an argument."""
     base = os.path.normpath(os.path.abspath(str(root)))
-    words = list(_SEGMENT_WORD.finditer(text))
+    words = _segment_words(text)
     pieces: list[str] = []
     last = 0
     write_next = False
     changed = False
-    for index, match in enumerate(words):
-        word = match.group(0)
-        if index == 0 or (index == 1 and words[0].group(0) in ("(", "{")):
+    for index, (start, end, word) in enumerate(words):
+        if index == 0 or (index == 1 and words[0][2] in ("(", "{")):
             continue
         prefix, value, write = "", word, write_next
         write_next = False
@@ -4743,14 +4801,59 @@ def _relocated_segment(text: str, directory: str | None, root: Path) -> str | No
         if moved is None:
             continue
         quoted = f'"{moved}"' if re.search(r"\s", moved) else moved
-        pieces.append(text[last:match.start()])
+        pieces.append(text[last:start])
         pieces.append(prefix + quoted)
-        last = match.end()
+        last = end
         changed = True
     if not changed:
         return None
     pieces.append(text[last:])
     return "".join(pieces)
+
+
+# What stands in for a substitution when the directory walk reads a line:
+# a word the shell expands, so a directory it names cannot be resolved.
+_SUBSTITUTED_WORD = "$GODMODE_SUBSTITUTION"
+
+
+def _marked_substitutions(blanked: str, spans: tuple[tuple[int, int], ...]) -> str:
+    """`blanked` with each substitution span holding `_SUBSTITUTED_WORD`
+    instead of spaces."""
+    pieces: list[str] = []
+    last = 0
+    for start, end in sorted(spans):
+        if start < last:
+            continue
+        pieces += [blanked[last:start], _SUBSTITUTED_WORD]
+        last = end
+    pieces.append(blanked[last:])
+    return "".join(pieces)
+
+
+def _relocate_verdicts(segments: list[str], directories: list[str | None],
+                       verdicts: list[Any], root: Path,
+                       classify: Any) -> None:
+    """Judge each segment a second time with its paths spelled from the
+    root, where an earlier directory change moved it, and keep the stricter
+    verdict in `verdicts`. A `None` verdict is classified here first."""
+    start = os.path.normpath(os.path.abspath(str(root)))
+    for position, (segment, directory) in enumerate(zip(segments, directories)):
+        if directory == start:
+            continue
+        verdict = verdicts[position]
+        if verdict is None:
+            verdict = classify(segment)
+        if not verdict["protected"] and verdict["category"] == "read-only-inspection":
+            continue
+        moved = _relocated_segment(segment, directory, root)
+        if moved is None:
+            continue
+        relocated = classify(moved)
+        if (relocated["protected"], relocated["tier"]) > (verdict["protected"], verdict["tier"]):
+            relocated["impact"] = [*relocated["impact"],
+                                   "judged where an earlier directory change "
+                                   f"points it: {moved[:80]}"]
+            verdicts[position] = relocated
 
 
 def _component_boundaries(command: str) -> list[tuple[str, str | None]]:
@@ -4782,6 +4885,44 @@ _MAX_HEAD_DEPTH = 3
 _AS_OPERATOR = re.compile(r"(?<![\w-])--as-o(?:p(?:e(?:r(?:a(?:t(?:o(?:r)?)?)?)?)?)?)?(?![\w-])")
 
 
+# Text the shell builds when the line runs: a variable, a `${...}`
+# expansion, a `$(...)` or backtick substitution (never `$'...'`, which is
+# quoting).
+_DYNAMIC_COMMAND_TEXT = re.compile(r"\$(?:[A-Za-z_{(@*#?!0-9-])|`")
+
+
+def _flattened(text: str) -> str:
+    """`text` with its quoting and escapes taken away, the way the shell
+    joins the pieces of one word: `--as-""operator`, `--as-\\operator`
+    and `--as-$'o'perator` all read `--as-operator`."""
+    return re.sub(r"[\"'`\\]", "", re.sub(r"\$(?=['\"])", "", text))
+
+
+# Heads that search text, where `--as-operator` is a pattern rather than a
+# flag passed to anything.
+_TEXT_SEARCH_HEADS = frozenset({"grep", "egrep", "fgrep", "rg", "ag", "ack", "findstr",
+                                "select-string", "sls"})
+
+
+def _carries_operator_flag(segment: str) -> bool:
+    """Whether `segment` passes `--as-operator` (or a prefix of it) to
+    anything it runs, however the flag is quoted or escaped. A search for
+    the text (`grep -- --as-operator`, `git grep`, `git log --grep`) passes
+    it to nothing."""
+    flat = _flattened(segment)
+    if not _AS_OPERATOR.search(flat):
+        return False
+    words = flat.split()
+    while words and words[0] in ("(", "{", "!"):
+        words = words[1:]
+    head = words[0].replace("\\", "/").rsplit("/", 1)[-1].lower() if words else ""
+    if head.endswith(".exe"):
+        head = head[:-4]
+    if head in _TEXT_SEARCH_HEADS:
+        return False
+    return not (head == "git" and len(words) > 1 and words[1] in ("grep", "log"))
+
+
 def _command_words(normalized: str) -> str:
     """`normalized` with leading `VAR=value` assignments and control
     keywords removed - the text `_categorize` finds the command word in."""
@@ -4810,10 +4951,21 @@ def _head_form_verdicts(command: str, normalized: str,
         category, _protected, impact = _opaque_inline_verdict(normalized)
         found.append((category, [opaque, *impact]))
     wrapped = _pty_wrapped(command)
-    if wrapped is not None and _AS_OPERATOR.search(wrapped):
+    if wrapped is not None and _AS_OPERATOR.search(_flattened(wrapped)):
         found.append(("protection-weakening", [
             "runs an operator-only verb under a pseudo-terminal wrapper, where "
             "its confirmation prompt can be answered without the operator",
+            "only the operator should run it, at their own terminal"]))
+    elif wrapped is not None and _DYNAMIC_COMMAND_TEXT.search(wrapped):
+        found.append(("protection-weakening", [
+            "runs a command built when the line runs under a pseudo-terminal "
+            "wrapper, where an operator-only verb's confirmation can be "
+            "answered without the operator",
+            "only the operator should run it, at their own terminal"]))
+    elif _carries_operator_flag(command):
+        found.append(("protection-weakening", [
+            "passes `--as-operator`, which claims the operator is at the keyboard; "
+            "an agent's tool call is not the operator",
             "only the operator should run it, at their own terminal"]))
     verdicts = []
     for category, impact in found:
@@ -5103,6 +5255,39 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                 "operation_digest": "", "second_confirmation_required": second,
                 "external_repo_ref": external_repo_ref,
                 "impact": _operator_authorize_impact(operator_verb)})
+        # `script -qc "$(cat cmd)" /dev/null`: blanking leaves the wrapper
+        # an empty command, but it runs whatever the substitution prints.
+        for text, _ in _component_boundaries(
+                _without_heredoc_bodies(_marked_substitutions(sub_blanked, sub_spans))):
+            wrapped = _pty_wrapped(_command_words(text))
+            if wrapped is not None and _DYNAMIC_COMMAND_TEXT.search(wrapped):
+                category = "protection-weakening"
+                tier, second = _risk_tier(category, normalized)
+                parts.append({
+                    "protected": True, "category": category, "tier": tier,
+                    "operation_digest": "", "second_confirmation_required": second,
+                    "external_repo_ref": external_repo_ref,
+                    "impact": ["runs a command built when the line runs under a "
+                               "pseudo-terminal wrapper, where an operator-only verb's "
+                               "confirmation can be answered without the operator"]})
+        # `cd "$(printf .git)" && echo x >> config`: the blanked line reads
+        # `cd " "`, a directory inside the tree. Where a substitution stood
+        # the directory is whatever it prints, so the directory walk reads
+        # it as a word it cannot resolve and a later write is judged there.
+        if project_root is not None:
+            outer = [text for text, _ in _component_boundaries(
+                _without_heredoc_bodies(sub_blanked))]
+            marked = [text for text, _ in _component_boundaries(
+                _without_heredoc_bodies(_marked_substitutions(sub_blanked, sub_spans)))]
+            if len(outer) > 1 and len(outer) == len(marked):
+                classify_outer = (
+                    lambda text: classify_action(text, extra_protected, project_root, archive,
+                                                 require_approval, _allow_standalone_fetch=False,
+                                                 inline_scan=inline_scan))
+                outer_verdicts: list[dict[str, Any] | None] = [None] * len(outer)
+                _relocate_verdicts(outer, _segment_directories(marked, Path(project_root)),
+                                   outer_verdicts, Path(project_root), classify_outer)
+                parts += [verdict for verdict in outer_verdicts if verdict is not None]
         worst = max(parts, key=lambda v: (v["protected"], v["tier"]))
         worst["impact"] = sorted({item for v in parts for item in v["impact"]})
         worst["operation_digest"] = hashlib.sha256(normalized.encode()).hexdigest()
@@ -5153,23 +5338,11 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # its paths spelled from the root, and the stricter verdict holds.
         if project_root is not None:
             directories = _segment_directories(resolved_segments, Path(project_root))
-            start = os.path.normpath(os.path.abspath(str(project_root)))
-            for position, (segment, directory) in enumerate(zip(resolved_segments, directories)):
-                verdict = verdicts[position]
-                if directory == start or (not verdict["protected"]
-                                          and verdict["category"] == "read-only-inspection"):
-                    continue
-                moved = _relocated_segment(segment, directory, Path(project_root))
-                if moved is None:
-                    continue
-                relocated = classify_action(moved, extra_protected, project_root, archive,
-                                            require_approval, _allow_standalone_fetch=False,
-                                            inline_scan=inline_scan)
-                if (relocated["protected"], relocated["tier"]) > (verdict["protected"], verdict["tier"]):
-                    relocated["impact"] = [*relocated["impact"],
-                                           "judged where an earlier directory change "
-                                           f"points it: {moved[:80]}"]
-                    verdicts[position] = relocated
+            _relocate_verdicts(
+                resolved_segments, directories, verdicts, Path(project_root),
+                lambda text: classify_action(text, extra_protected, project_root, archive,
+                                             require_approval, _allow_standalone_fetch=False,
+                                             inline_scan=inline_scan))
         # B4-9 pipeline post-pass: a literal-URL read-only fetch whose ask
         # is the ONLY thing protecting the line is downgraded when every
         # consumer beside it is a KNOWN local read - and never when any
@@ -6568,10 +6741,21 @@ def design_surface_of(operation: str, project_root: Path) -> str | None:
 
     skill = _SKILL_ACTION.match(operation.strip())
     if skill:
-        for root in ("skills", ".claude/skills"):
-            surface = design_surface(project_root, f"{root}/{skill.group('name')}/SKILL.md")
-            if surface is not None:
-                return surface
+        # The files `skill_boundary_refusal` asks about, so an action it
+        # refuses can be staged: the skill's own files, then every file
+        # under its directory, in every skill root a skill command writes.
+        name = skill.group("name")
+        root = Path(project_root)
+        for skills in ("skills", ".claude/skills", ".grok/skills"):
+            skill_dir = root / skills / name
+            candidates = [f"{skills}/{name}/SKILL.md", f"{skills}/{name}/godmode-evals.json"]
+            if skill_dir.is_dir():
+                candidates += [path.relative_to(root).as_posix()
+                               for path in sorted(skill_dir.rglob("*")) if path.is_file()]
+            for candidate in candidates:
+                surface = design_surface(project_root, candidate)
+                if surface is not None:
+                    return surface
         return None
     edit = _TOOL_FILE_EDIT.match(operation.strip())
     if not edit:

@@ -1,0 +1,1 @@
+- A skill locked by a boundary that covers only some of its files (`skills/*/scripts/**`) or that lives under `.grok/skills` can now be unlocked the way its refusal says: `authorize stage --operation "retire skill <name>"` (and forge or restore) is accepted for it instead of being refused as a read.

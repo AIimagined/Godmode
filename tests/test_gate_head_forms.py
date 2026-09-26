@@ -112,6 +112,46 @@ class WrapperTests(unittest.TestCase):
                 self.assertTrue(verdict["protected"], verdict)
                 self.assertGreaterEqual(verdict["tier"], "R4")
 
+    def test_the_bsd_script_form_runs_every_word_after_the_file(self) -> None:
+        self.assertEqual(pv.pty_wrapped("script -q /dev/null godmode adopt --confirm --as-operator"),
+                         "godmode adopt --confirm --as-operator")
+        self.assertEqual(pv.pty_wrapped("script /dev/null -qc 'godmode status'"), "godmode status")
+        self.assertEqual(decision("script -q /dev/null godmode adopt --confirm --as-operator"),
+                         "ask")
+
+    def test_a_split_or_nested_operator_flag_under_a_wrapper_asks(self) -> None:
+        for command in ("script -qc 'godmode adopt --confirm --as-\"\"operator' /dev/null",
+                        "script -qc 'godmode adopt --confirm --as-\\operator' /dev/null",
+                        'timeout 60 script -qc "godmode adopt --confirm --as-operator" /dev/null',
+                        'env script -qc "godmode adopt --confirm --as-operator" /dev/null',
+                        'nohup script -qc "godmode adopt --confirm --as-operator" /dev/null',
+                        'nice -n 5 stdbuf -oL unbuffer godmode adopt --confirm --as-operator',
+                        'tmux new -d "$C"',
+                        'timeout 5 tmux new -d "$C"',
+                        "script -qc \"$(cat cmd.txt)\" /dev/null"):
+            with self.subTest(command=command):
+                self.assertEqual(decision(command), "ask")
+        self.assertEqual(pv.pty_wrapped("timeout -s KILL 60 env A=1 winpty git status"),
+                         "git status")
+        self.assertEqual(decision("winpty git status"), "allow")
+
+    def test_an_agent_call_passing_the_operator_flag_asks(self) -> None:
+        for command in ("godmode adopt --confirm --as-operator",
+                        "godmode doctor --repair-fork --as-operator",
+                        'godmode adopt --confirm --as-""operator',
+                        "python scripts/godmode.py skill retire --name x --as-\\operator",
+                        "git status && godmode adopt --confirm --as-op"):
+            with self.subTest(command=command):
+                verdict = classify_action(command, project_root=PLUGIN_ROOT)
+                self.assertTrue(verdict["protected"], verdict)
+                self.assertEqual(verdict["category"], "protection-weakening")
+        for command in ("grep -rn -- --as-operator scripts",
+                        'rg "--as-operator" docs',
+                        "git grep -n as-operator",
+                        "godmode adopt"):
+            with self.subTest(command=command):
+                self.assertEqual(decision(command), "allow")
+
     def test_an_abbreviated_operator_flag_under_a_wrapper_asks(self) -> None:
         for command in ('script -qc "godmode lesson add x --as-op" /dev/null',
                         "unbuffer godmode skill retire --name x --as-o"):
@@ -192,6 +232,32 @@ class DirectoryChangeTests(unittest.TestCase):
                 direct = classify_action(full_path, project_root=PLUGIN_ROOT, **kwargs)
                 self.assertTrue(moved["protected"], command)
                 self.assertEqual(moved["category"], direct["category"], command)
+
+    def test_a_redirect_glued_to_the_word_before_it_is_a_write(self) -> None:
+        for command in ("cd .git; echo x>>config",
+                        'cd .git; echo x>"config"',
+                        'cd .git; echo "x">>config',
+                        "cd .git; echo x>>'con'fig",
+                        "cd .git; echo x 2>>config"):
+            with self.subTest(command=command):
+                self.assertEqual(decision(command), "ask")
+        self.assertEqual(decision("cd docs && echo x>>notes.txt"), "allow")
+
+    def test_cd_dash_returns_to_the_directory_before_the_last_change(self) -> None:
+        self.assertEqual(decision("cd sub && cd - && echo x >> notes.txt"), "allow")
+        self.assertEqual(decision("cd .git && cd - && echo x >> config"), "allow")
+        self.assertEqual(decision("cd .git && cd - && cd - && echo x >> config"), "ask")
+        self.assertEqual(decision("cd - && echo x >> config"), "ask")
+
+    def test_a_directory_named_by_a_quoted_substitution_asks(self) -> None:
+        for command in ('cd "$(printf .git)" && echo x >> config',
+                        'cd "$(pwd)/.git"; echo x >> config',
+                        'cd "`printf .git`"; echo x >> config',
+                        'pushd "$(printf .git)" && echo x>>config'):
+            with self.subTest(command=command):
+                self.assertEqual(decision(command), "ask")
+        self.assertEqual(decision('cd "$(git rev-parse --show-toplevel)" && git status'),
+                         "allow")
 
     def test_an_unresolvable_directory_change_asks(self) -> None:
         self.assertEqual(decision("cd $x && echo x >> config"), "ask")

@@ -988,16 +988,78 @@ def _script_command(tokens: list[str]) -> str | None:
             continue
         positional.append(token)
         index += 1
+        # BSD: every word after the typescript file is the command, its
+        # own options included - option parsing stops at the file.
+        if index < len(tokens) and not tokens[index].startswith("-"):
+            return shlex.join(tokens[index:])
     if len(positional) >= 2:
         return shlex.join(positional[1:])
     return None
 
 
+# Commands that run the rest of their line as a command of its own, after
+# their options: `(positional words before the command, options that take a
+# value)`. `timeout 60 script ...` runs `script ...`.
+_PREFIX_RUNNERS: dict[str, tuple[int, frozenset[str]]] = {
+    "timeout": (1, frozenset({"-s", "--signal", "-k", "--kill-after"})),
+    "env": (0, frozenset({"-u", "--unset", "-C", "--chdir"})),
+    "nohup": (0, frozenset()),
+    "nice": (0, frozenset({"-n", "--adjustment"})),
+    "stdbuf": (0, frozenset({"-i", "-o", "-e", "--input", "--output", "--error"})),
+    "ionice": (0, frozenset({"-c", "-n", "-p", "--class", "--classdata"})),
+    "time": (0, frozenset({"-f", "--format", "-o", "--output"})),
+    "command": (0, frozenset()),
+    "exec": (0, frozenset({"-a"})),
+    "sudo": (0, frozenset({"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-U"})),
+    "doas": (0, frozenset({"-u", "-C"})),
+}
+_ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _without_prefix_runners(text: str) -> str:
+    """`text` with each leading `timeout`, `env`, `nohup`, `nice`, `stdbuf`
+    (and the like) removed along with its own options and values, as
+    written, so the command they run is at the head."""
+    remaining = text.lstrip()
+    while True:
+        word, after = _leading_word(remaining)
+        runner = _PREFIX_RUNNERS.get(_program_name(word.strip("\"'")).lower()) if word else None
+        if runner is None:
+            return remaining
+        positionals, valued = runner
+        rest = after.lstrip()
+        while True:
+            token, following = _leading_word(rest)
+            bare = token.strip("\"'")
+            if not token:
+                return ""
+            if bare == "--":
+                rest = following.lstrip()
+                break
+            if bare.startswith("-") and len(bare) > 1:
+                rest = following.lstrip()
+                if bare in valued:
+                    _value, rest = _leading_word(rest)
+                    rest = rest.lstrip()
+                continue
+            if _ENV_ASSIGNMENT.match(bare):
+                rest = following.lstrip()
+                continue
+            break
+        for _ in range(positionals):
+            _value, rest = _leading_word(rest)
+            rest = rest.lstrip()
+        remaining = rest
+
+
 def pty_wrapped(segment: str) -> str | None:
     """The command a pseudo-terminal wrapper at the head of `segment` runs,
     or None. `winpty git status` runs `git status`; `script -qc "..."
-    /dev/null` runs its `-c` string; `expect -c '...'` runs its script."""
+    /dev/null` runs its `-c` string; `expect -c '...'` runs its script.
+    A `timeout`, `env`, `nohup`, `nice` or `stdbuf` in front of the wrapper
+    is read through."""
     _operator, text = _call_operator(segment)
+    text = _without_prefix_runners(text)
     try:
         tokens = shlex.split(text, posix=True)
     except ValueError:

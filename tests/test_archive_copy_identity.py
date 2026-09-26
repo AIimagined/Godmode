@@ -250,6 +250,24 @@ class MovedCheckoutSelfAdoptTests(unittest.TestCase):
                 self.assertEqual(code, 1, refused)
                 self.assertIn("--as-operator", refused["reason"])
                 self.assertIsNotNone(Chronicle(resolve_anchor(moved)).identity_drift())
+                # No password set: a terminal answering "y" is not the
+                # operator (a pseudo-terminal answers as readily), so it is
+                # refused with the setup remedy and nothing is relinked.
+                class _Terminal(io.StringIO):
+                    def isatty(self) -> bool:
+                        return True
+
+                out = io.StringIO()
+                with mock.patch.object(sys, "stdout", out), \
+                        mock.patch.object(sys, "stderr", io.StringIO()), \
+                        mock.patch.object(sys, "stdin", _Terminal("y\n")):
+                    code = console.main(["--project", str(moved), "adopt", "--confirm",
+                                         "--as-operator"])
+                unset = json.loads(out.getvalue())
+                self.assertEqual(code, 1, unset)
+                self.assertIn("godmode authorize setup", unset["reason"])
+                self.assertEqual(unset["remedy"], "godmode authorize setup")
+                self.assertIsNotNone(Chronicle(resolve_anchor(moved)).identity_drift())
                 from godmode_runtime.godmode_sentinel import CapabilityBroker
 
                 CapabilityBroker(moved_archive).configure("relink operator")

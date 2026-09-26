@@ -55,6 +55,12 @@ REFUSED = (
     ("python scripts\\godmode.py authorize stage --from-last-refusal", "PowerShell"),
     ('powershell -Command "godmode authorize stage --operation x"', "PowerShell"),
     ("cd x; godmode authorize setup", "PowerShell"),
+    # The console module the launcher runs, by module name or by file.
+    ("cd scripts && python -m godmode_runtime.godmode_console authorize stage x", "Bash"),
+    ("python -m scripts.godmode_runtime.godmode_console authorize setup", "Bash"),
+    ("python scripts/godmode_runtime/godmode_console.py authorize stage x", "Bash"),
+    ("py scripts\godmode_runtime\godmode_console.py authorize grant --request R-1",
+     "PowerShell"),
     # A verb the shell builds when the line runs can be any verb: only a
     # literal `request`, `requests` or `deny` is an agent's.
     ("godmode authorize $(echo stage)", "Bash"),
@@ -79,6 +85,7 @@ FREE = (
     "echo godmode authorize stage",
     "godmode authorize deny --request R-1 --reason 'not now'",
     "godmode --json authorize requests",
+    "python -m godmode_runtime.godmode_console authorize request --operation x",
 )
 
 _HOST_ENV = None
