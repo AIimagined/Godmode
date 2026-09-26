@@ -1,1 +1,0 @@
-- Running the console module directly (`python -m godmode_runtime.godmode_console authorize stage ...` or `python .../godmode_console.py authorize ...`) is now refused to an agent exactly like the `godmode` launcher, so it cannot open the operator's password dialog.

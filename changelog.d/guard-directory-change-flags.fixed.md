@@ -1,1 +1,0 @@
-- In a project where `godmode init` was never run, a write to the repository config after a directory change written with flags (`cd -P .git`, `cd -- .git`, `Set-Location -Path .git`, `Set-Location -Path:.git`) is now asked about; the directory is read from the first word that is not a flag, and a flag that cannot be read makes the directory unknown.

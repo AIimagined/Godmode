@@ -1,1 +1,0 @@
-- In a project where `godmode init` was never run, a harm-class verb, flag or program completed by an expansion (`git reset --ha$@rd`, `g''it p${_}ush`, `gh rel$@ease`, `r$@m -rf`) is now asked about, and a command that reads as harm-class once its expansions come out empty (`npm pub$@lish`) is judged as that command.

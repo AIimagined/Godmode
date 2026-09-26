@@ -1,1 +1,0 @@
-- The BSD `script` form (`script -q /dev/null godmode adopt --confirm --as-operator`) is now read with every word after the typescript file as the command it runs, so an operator-only verb under it asks like the `-c` form.

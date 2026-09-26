@@ -1,1 +1,0 @@
-- A redirect written without a space before it (`echo x>>config`, `echo "x">>config`) is now read as a write when an earlier `cd` in the same command moved the directory, so `cd .git; echo x>>config` asks like its spaced spelling.

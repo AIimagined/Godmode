@@ -1,1 +1,0 @@
-- Two writers waiting on an abandoned fallback archive lock can no longer both take it over: the takeover is made by one writer at a time and only while the lock file is still the one judged abandoned, so a waiter that arrives late leaves the new holder's lock in place.
