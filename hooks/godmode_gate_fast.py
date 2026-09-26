@@ -949,6 +949,13 @@ _HARM_HINT = re.compile(
 # Quote, escape and caret characters a shell removes before it runs a word:
 # `r"m"`, `p\ush` and `pu^sh` all run the word the screen must see.
 _FLATTEN = re.compile(r"[\"'\\^`]")
+# The `$` of Bash's ANSI-C and locale quoting (`$'sh'`, `$"sh"`) and the `+`
+# joining two quoted PowerShell strings (`'pu'+'sh'`): both vanish before
+# the word runs, so `git "pu"$'sh'` is read as `git push`.
+_QUOTE_JOINS = re.compile(r"\$(?=[\"'])|(?<=[\"'])\s*\+\s*(?=[\"'])")
+# An expansion the shell performs before the word runs: its result is not
+# in the text, so no keyword screen can clear it.
+_EXPANSION = re.compile(r"\$[({'\"]")
 # `godmode_sentinel._SCRIPT_HEADS` (copied; the drift guard compares them):
 # the classifier reads a script these run, so the screen reads it too.
 _SCRIPT_HEADS = frozenset({
@@ -995,7 +1002,11 @@ def _hint_strings(payload: dict[str, Any]) -> list[str] | None:
 
 def _names_harm(text: str) -> bool:
     lowered = text.lower()
-    return bool(_HARM_HINT.search(lowered) or _HARM_HINT.search(_FLATTEN.sub("", lowered)))
+    if _EXPANSION.search(lowered):
+        return True
+    joined = _FLATTEN.sub("", _QUOTE_JOINS.sub("", lowered))
+    return bool(_HARM_HINT.search(lowered) or _HARM_HINT.search(_FLATTEN.sub("", lowered))
+                or _HARM_HINT.search(joined))
 
 
 def _script_bodies(text: str, roots: list[str]) -> list[str] | None:

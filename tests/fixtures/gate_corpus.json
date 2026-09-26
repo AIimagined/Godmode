@@ -1611,5 +1611,12 @@
     "class": "by-design",
     "tool": "Bash",
     "note": "a glob naming the machine-wide settings file"
+  },
+  {
+    "operation": "git \"pu\"$'sh' -f",
+    "expected": "refuse",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a force push spelled through ANSI-C quoting"
   }
 ]

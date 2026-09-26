@@ -685,6 +685,13 @@ class UninitializedGuard(unittest.TestCase):
                 self.assertEqual(self._decision(self._run(command)), "ask")
                 self.assertEqual(self._decision(self._no_ask(command, session=command)), "deny")
 
+    def test_a_push_spelled_through_shell_quoting_asks(self) -> None:
+        # ANSI-C and locale quoting leave no `push` word in the text; the
+        # screen must still hand them to the classifier.
+        for command in ("git \"pu\"$'sh' -f", "git pu$\"sh\" --force"):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(self._run(command)), "ask")
+
     def test_releases_and_history_rewrites_ask(self) -> None:
         for command in ("npm publish", "gh release create v1", "git reset --hard HEAD~3",
                         "git branch -D topic", "git push origin v1.0"):
@@ -823,6 +830,8 @@ class UninitializedGuardScreen(unittest.TestCase):
             "bash -c 'git push --force'", "python -c \"import os; os.system('rm -rf /')\"",
             "echo pw | godmode authorize stage --password-stdin",
             "g\"i\"t pu''sh --force", "git p\\ush --force", "r^m -rf ..\\x",
+            "git \"pu\"$'sh' -f", "git pu$\"sh\" -f", "git $(printf pu)sh -f",
+            "git ${x:-push} -f",
         ]
         missed = []
         for command in samples:
