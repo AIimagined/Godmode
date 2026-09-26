@@ -196,6 +196,24 @@ class UnattendedCliTests(unittest.TestCase):
         self.assertNotIn("skills_changed_unattended", status)
 
 
+class LongArchiveTests(unittest.TestCase):
+    def test_a_change_older_than_five_hundred_records_is_still_seen(self) -> None:
+        from godmode_runtime.godmode_skillchange import (
+            SUBJECT, record_unattended_change, unattended_changes)
+        with isolated_project() as (_project, _s, _a, archive):
+            archive.initialize()
+            first = record_unattended_change(archive, "S-early", "demo", "edit")
+            for index in range(510):
+                archive.append("action", SUBJECT,
+                               {"session": "S-other", "skill": f"s{index}", "how": "edit"})
+            again = record_unattended_change(archive, "S-early", "demo", "retire")
+            rows = unattended_changes(archive, "S-early")
+        self.assertIsNotNone(first)
+        self.assertIsNone(again, "the skill already changed in this session")
+        self.assertEqual([(row["skill"], row["how"]) for row in rows],
+                         [("demo", ["edit", "retire"])])
+
+
 class BoundaryLockTests(unittest.TestCase):
     def _retired(self, project: Path) -> int:
         """A retirement record made before the lock was declared."""
