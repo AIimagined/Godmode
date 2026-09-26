@@ -1884,5 +1884,12 @@
     "class": "by-design",
     "tool": "Bash",
     "note": "a skipped `cd ..` leaves the write in the repository config"
+  },
+  {
+    "operation": "ln -s .. up && cd up/project/.git && echo x >> config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a directory reached through a link made in the same command cannot be placed, so the write is asked about"
   }
 ]

@@ -796,6 +796,29 @@ class UninitializedGuard(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self._decision(self._run(command)), "ask")
 
+    def test_a_write_through_a_link_to_the_setting_asks(self) -> None:
+        # A path is judged by what the filesystem resolves it to.
+        try:
+            os.symlink(self.project / ".git", self.project / "g", target_is_directory=True)
+        except OSError as error:
+            self.skipTest(f"symlinks need a privilege here: {error}")
+        for command in ("printf x >> g/config", "cd g && echo x >> config"):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(self._run(command)), "ask")
+        self.assertIsNone(self._run("echo x > docs/config"))
+
+    def test_a_write_through_a_hard_link_or_a_link_made_in_the_same_call_asks(self) -> None:
+        try:
+            os.link(self.project / ".git" / "config", self.project / "c")
+        except OSError as error:
+            self.skipTest(f"hard links are not available here: {error}")
+        self.assertEqual(self._decision(self._run("printf x >> c")), "ask")
+        for command in ("ln -s .git g && printf x >> g/config",
+                        "ln -s .. up && cd up/project/.git && echo x >> config",
+                        "cmd /c mklink /J g .git & echo x >> g\\config"):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(self._run(command)), "ask")
+
     def test_a_write_from_a_call_already_inside_the_git_directory_asks(self) -> None:
         # The host shell kept an earlier `cd .git`: the call's own `cwd`
         # is where a bare `config` lands.

@@ -1081,6 +1081,12 @@ _SEGMENT_OPERATORS = ("&&", "||", ";", "\n", "|", "&", "(", ")", "{", "}")
 _LOOSE_OPERATORS = frozenset({"|", "&", "(", ")", "{", "}"})
 # Past this many possible directories the text is not followed any further.
 _MAX_DIRECTORY_STATES = 64
+# A command that makes a link, a junction or a drive letter: a path through
+# it names whatever it points at, which the text does not show until it
+# exists, so any word that could name the setting file counts.
+_LINK_MAKER = re.compile(
+    r"(?i)(?:^|[\s;&|(){}'\"`])(?:ln|link|mklink|subst|mount|new-psdrive|ndr)(?:\.exe)?"
+    r"(?=[\s;&|(){}'\"`]|$)|symbolic|junction|hardlink|\bcp\b[^;&|\n]*\s-[a-z]*s")
 # Where one path-shaped word ends: whitespace and the shell's own operators,
 # plus the `=`/`,` a `dd of=...` or a `-Path:...` style argument joins on.
 _PATH_WORD_SPLIT = re.compile(r"[\s;&|()<>=,{}]+")
@@ -1340,21 +1346,41 @@ def _writes_guard_setting(texts: list[str], root: str | None, cwd: str | None = 
     makes any word that could name `config` count. Relative words start
     from both the project root and the call's own directory (`cwd`): a
     host shell that kept an earlier `cd .git` runs the call from there."""
-    files = _guard_setting_files(root)
+    spelled = _guard_setting_files(root)
+    # Each file as spelled and as the filesystem resolves it (a symlinked
+    # home or checkout), and its identity, which a hard link shares.
+    files = list(dict.fromkeys(
+        [*spelled, *(os.path.normcase(os.path.realpath(path)) for path in spelled)]))
+    identities = set()
+    for path in spelled:
+        try:
+            stat = os.stat(path)
+        except OSError:
+            continue
+        if stat.st_ino:
+            identities.add((stat.st_dev, stat.st_ino))
     starts = list(dict.fromkeys(
         os.path.abspath(start) for start in (root, cwd) if start)) or [os.getcwd()]
     home = os.path.expanduser("~")
+    linking = any(_LINK_MAKER.search(text) for text in texts)
     for text in texts:
         for segment, directories in _directory_states(text, starts, home):
+            if linking:
+                directories = {*directories, None}
             for words in _segment_words(segment):
                 for word in (piece for word in words
                              for piece in _PATH_WORD_SPLIT.split(word) if piece):
-                    if _names_setting_file(word, directories, files, home):
+                    if _names_setting_file(word, directories, files, identities, home):
                         return True
     return False
 
 
-def _names_setting_file(word: str, directories: set[Any], files: list[str], home: str) -> bool:
+def _names_setting_file(word: str, directories: set[Any], files: list[str],
+                        identities: set[Any], home: str) -> bool:
+    """Whether `word`, read from any of `directories`, is one of `files`:
+    `.` and `..` normalised, the longest existing prefix resolved through
+    symlinks and junctions (`g/config` after `ln -s .git g`), and an
+    existing file compared by identity (a hard link)."""
     if word.startswith("~"):
         word = home + word[1:]
     leaf = word.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].lower()
@@ -1367,9 +1393,15 @@ def _names_setting_file(word: str, directories: set[Any], files: list[str], home
     for known in directories:
         if known is None:
             continue
-        shown = os.path.normcase(os.path.normpath(os.path.join(known, word)))
-        if any(_fnmatch(path, shown) for path in files):
-            return True
+        joined = os.path.join(known, word)
+        for shown in {os.path.normcase(os.path.normpath(joined)),
+                      os.path.normcase(os.path.realpath(joined))}:
+            if any(_fnmatch(path, shown) for path in files):
+                return True
+        if identities and not _GLOB_CHARS.search(word) and os.path.isfile(joined):
+            stat = os.stat(joined)
+            if (stat.st_dev, stat.st_ino) in identities:
+                return True
     return False
 
 

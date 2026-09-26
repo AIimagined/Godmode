@@ -1,0 +1,1 @@
+- In a project where `godmode init` was never run, a write to the repository config through a symlink, a junction or a hard link (`ln -s .git g` then `printf x >> g/config`) is now asked about; a path is judged by what the filesystem resolves it to, and a link made in the same command makes any path that could name the file count.
