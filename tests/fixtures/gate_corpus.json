@@ -1863,5 +1863,26 @@
     "class": "by-design",
     "tool": "PowerShell",
     "note": "a write after `Set-Location -Path:.git` lands in the repository config"
+  },
+  {
+    "operation": "cd .git && cd .. && echo x >> config",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: `cd ..` returns to the project root before the write"
+  },
+  {
+    "operation": "pushd .git && popd && echo x >> config",
+    "expected": "allow",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "near-miss: `popd` returns to the project root before a write to the tree's own config"
+  },
+  {
+    "operation": "cd .git; false && cd ..; echo x >> config",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "a skipped `cd ..` leaves the write in the repository config"
   }
 ]

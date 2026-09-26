@@ -770,6 +770,32 @@ class UninitializedGuard(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self._decision(self._run(command, tool=tool)), "ask")
 
+    def test_a_write_is_judged_from_the_one_directory_the_shell_is_in(self) -> None:
+        # One current directory, followed through `cd`, `cd -`, `pushd` and
+        # `popd`: returning to the project root first stays allowed.
+        for command, tool in (("cd .git && cd .. && echo x >> config", "Bash"),
+                              ("pushd .git && popd && echo x >> config", "Bash"),
+                              ("cd .git && cd - && echo x >> config", "Bash"),
+                              ("Push-Location .git; Pop-Location; Add-Content config x",
+                               "PowerShell")):
+            with self.subTest(command=command):
+                self.assertIsNone(self._run(command, tool=tool))
+        # A change that may not have happened, or that the text cannot
+        # place, keeps the directory it would have left.
+        for command in ("cd .git && echo x >> config",
+                        "cd .git && cd - && cd - && echo x >> config",
+                        "cd .git; false && cd ..; echo x >> config",
+                        "cd .git || cd ..; echo x >> config",
+                        "cd .git; cd missing; echo x >> config",
+                        'cd .git; echo "x; cd .."; echo x >> config',
+                        "cd .git # ; cd ..\necho x >> config",
+                        "cd .git; cat <<EOF\ncd ..\nEOF\necho x >> config",
+                        "cd .git; (cd ..); echo x >> config",
+                        "cd .git; eval cd ..; echo x >> config",
+                        "if true; then cd .git; fi; echo x >> config"):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(self._run(command)), "ask")
+
     def test_a_write_from_a_call_already_inside_the_git_directory_asks(self) -> None:
         # The host shell kept an earlier `cd .git`: the call's own `cwd`
         # is where a bare `config` lands.
