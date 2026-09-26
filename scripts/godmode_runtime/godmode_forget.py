@@ -1,4 +1,4 @@
-"""Forgetting engine (NS-11e + NS-11g, 0.3.28 Plan 5 Task 7): the fifth
+"""Forgetting engine: the fifth
 memory layer the archive lacked. `expunge` stays the retraction for a
 secret that slipped past the scanner; this is routine memory hygiene -
 three operations, run together every time `godmode forget` is invoked:
@@ -10,7 +10,7 @@ three operations, run together every time `godmode forget` is invoked:
   anyway - see `Chronicle.rotate_to_cold`'s own docstring.
 - **supersede**: writes nothing. A read-only report of every supersession
   chain currently on record, through the same `superseded_sequences`
-  helper (NS-10e, Task 6) every latest-per-subject reader routes through -
+  helper every latest-per-subject reader routes through -
   never a second, independently-derived notion of "superseded".
 - **flag contradictions**: among ACTIVE records (excluded exactly the way
   `latest_by_subject` excludes a superseded one), two or more sharing a
@@ -48,7 +48,7 @@ TTL_DAYS: dict[str, int] = {
     "action": 30,
     "refusal": 30,
     "attestation": 90,
-    # NS-13f: a hypothesis belongs to one investigation. A killed or
+    # A hypothesis belongs to one investigation. A killed or
     # abandoned one expires like the attestations of the runs that tested
     # it; one a live fix claim cites (`hyp:<seq>`) stays hot with its kill
     # result - see `protected_sequences`.
@@ -59,7 +59,7 @@ EPISODIC_KINDS = frozenset(TTL_DAYS)
 
 # Kinds `flag_contradictions` compares for a same-subject value conflict -
 # the two kinds that actually carry `data["value"]` as their own recorded
-# fact (NS-11c's decision invariant; a lesson's own generalisation, the
+# fact (a decision's invariant; a lesson's own generalisation, the
 # same pairing `godmode_hygiene.hygiene` already reads for its own,
 # fuzzier near-duplicate/contradiction pass). `pattern` and `metric` are
 # deliberately excluded - neither carries a `value` to disagree over.
@@ -81,7 +81,7 @@ _INACTIVE_STATUSES = frozenset({"closed", "retired", "superseded", "withdrawn", 
 # files, any cold segment, and the cold registry - is exactly what
 # `--dry-run` promises never to touch.
 #
-# Fix round 1 (review A, B8): all six live in the archive ROOT, and
+# All six live in the archive ROOT, and
 # `_digest_paths` below now globs the record directory and the two cold
 # files by name rather than walking the root, so none of them can be
 # reached in the first place. The set stays as the named guard for a
@@ -103,7 +103,7 @@ def _parse_now(now: str | None) -> datetime:
     ever calls `datetime.now()` itself. `None` (the CLI's default) falls
     back to the real time, exactly once, at this one boundary.
 
-    Fix round 1 (review B, B1): unparseable input raises `ArchiveError`,
+    Unparseable input raises `ArchiveError`,
     which `main()` renders as the verb's own JSON refusal. A bare
     `ValueError` escaped that handler entirely and `godmode forget --now
     not-a-date` exited on a Python traceback.
@@ -146,12 +146,12 @@ def age_days(record: dict[str, Any], *, now: datetime) -> float | None:
     return (now - recorded).total_seconds() / 86400.0
 
 
-# `hyp:N` (NS-13f) names a hypothesis a fix rests on, by sequence, the same
+# `hyp:N` names a hypothesis a fix rests on, by sequence, the same
 # way the other three forms name their records.
 _SEQ_CITE = re.compile(r"^(?:seq|verdict|diff|hyp):(\d+)$")
 
 # The same three citation forms found anywhere INSIDE a string rather than
-# as the whole of one (fix round 2, R2-B6): a `seq:` cite written into a
+# as the whole of one: a `seq:` cite written into a
 # record's own `value`, `summary` or `reason` is a live reference to that
 # record exactly as an `evidence` entry is, and `require_seq_cite` will
 # refuse a later write against it either way. Bounded by a word boundary so
@@ -168,7 +168,7 @@ _SETTLING_OUTCOMES = frozenset({"failed", "superseded"})
 def _collect_citations(record: dict[str, Any], into: set[int]) -> None:
     """Add every record sequence this record points at to `into`.
 
-    Three citation forms, not one (fix round 2, R2-B6): `seq:N`, `verdict:N`
+    Three citation forms, not one: `seq:N`, `verdict:N`
     (`godmode_attest._VERDICT_CITE`) and `diff:N` (`_DIFF_CITE`) all name a
     record by sequence and all resolve through the same hot-only
     `seq_cite_resolves`, so rotating what any of them names dangles the
@@ -218,8 +218,7 @@ def _collect_citations(record: dict[str, Any], into: set[int]) -> None:
 
 
 def protected_sequences(records: list[dict[str, Any]]) -> set[int]:
-    """Sequences that stay hot however old they are (NS-11e fix round 1,
-    review A B6): every sequence cited by a record that is still load-bearing.
+    """Sequences that stay hot however old they are: every sequence cited by a record that is still load-bearing.
 
     Four sources, built once per pass from the records already in hand:
 
@@ -236,7 +235,7 @@ def protected_sequences(records: list[dict[str, Any]]) -> set[int]:
     anything: `pin` is not an episodic kind, so the kind filter excluded it
     already and `rotate_to_cold`'s refusal never fired from this path.
 
-    Fix round 2 (R2-B6): the four sources above are now the four with EXTRA
+    The four sources above are now the four with EXTRA
     rules, not the only kinds scanned. The allow-list has become a
     deny-list - every record's citations count unless the citing record is
     itself episodic (one past its own TTL protects nothing; it is the thing
@@ -289,7 +288,7 @@ def protected_sequences(records: list[dict[str, Any]]) -> set[int]:
             # reads it.
             protected.add(sequence)
         _collect_citations(record, protected)
-    # NS-13f: a protected hypothesis keeps its kill results hot too - its
+    # A protected hypothesis keeps its kill results hot too - its
     # status is the newest record whose `of` names it, and rotating that
     # away would silently reopen a hypothesis a fix already rests on.
     # The runner attestation a kill result names (`kills.check_seq`) is what
@@ -311,7 +310,7 @@ def eligible_for_expiry(records: list[dict[str, Any]], *, now: datetime) -> list
     `recorded_at` (older than this field, or hand-edited) is never
     eligible - an unmeasurable age is not evidence of staleness."""
     protected = protected_sequences(records)
-    # NS-11g fix round 1 (review A, N4): the newest record is never eligible.
+    # The newest record is never eligible.
     # `Chronicle._chain_tail` reads the tail off the last HOT record, so a
     # rotation that moved the true tail away would hand the next append a
     # sequence number already sealed. `rotate_to_cold` refuses it outright as
@@ -336,7 +335,7 @@ def _digest_paths(root: Path) -> list[Path]:
     """Exactly the files a forgetting pass can change: the record files, the
     cold segments, and the cold registry.
 
-    Fix round 1 (review A, B8): three targeted globs, never `root.rglob("*")`
+    Three targeted globs, never `root.rglob("*")`
     over the whole archive. Measured on this project's live archive, the
     whole-root walk stat'd 19,363 paths and cost 10-17 s - a per-call price
     on a read-only report. Everything the old walk covered that these globs
@@ -399,10 +398,10 @@ def _expire(archive: Chronicle, records: list[dict[str, Any]], *,
 
 def _supersede_report(records: list[dict[str, Any]]) -> dict[str, Any]:
     """Writes nothing - a pure function of the records handed in (fix round
-    1, review A N6: this used to take its own `read_events()` pass, a third
+    This used to take its own `read_events()` pass, a third
     walk of the same archive `forget()` had already read and verified).
     Every chain currently on record, through `superseded_sequences` alone -
-    the ONE place that rule lives (NS-10e)."""
+    the ONE place that rule lives."""
     superseded = superseded_sequences(records)
     chains = []
     for record in records:
@@ -430,7 +429,7 @@ def _canonical_value(record: dict[str, Any]) -> str:
 
 def _reviews_on_record(records: list[dict[str, Any]]) -> dict[tuple[str, tuple[int, ...]], str]:
     """Every `review` already on record, keyed by (subject, its exact
-    sequence set) -> status (fix round 1, review B B4).
+    sequence set) -> status.
 
     ANY review for that subject and that sequence set counts, not just the
     newest one: `append(..., dedupe=True)` compares only the most recent
@@ -471,8 +470,7 @@ def _flag_contradictions(archive: Chronicle, records: list[dict[str, Any]], *,
     down to one winner per subject; it groups them and flags a group only
     when its members do not all agree.
 
-    Idempotent, and durable across an operator's decision (fix round 1,
-    review B B4): a subject whose exact sequence set already has a review on
+    Idempotent, and durable across an operator's decision: a subject whose exact sequence set already has a review on
     record - open, acknowledged or dismissed, and at ANY point in the
     archive rather than only as the newest one - is reported with that
     review's status and written again never. `append(..., dedupe=True)`
@@ -529,7 +527,7 @@ def _findings(expire: dict[str, Any], contradictions: dict[str, Any], *,
               dry_run: bool) -> tuple[list[dict[str, Any]], str]:
     """The pass's findings and its next action, in the shapes `--brief` and
     `--terse` already read (`_FINDING_LISTS`, `_ACTIONS`, `_COUNTS` in
-    `godmode_console`) - fix round 1, review B B2. Before this, every count
+    `godmode_console`). Before this, every count
     sat one level down inside `expire`/`contradictions`, so `--terse` read a
     payload carrying real findings and printed "next: nothing - no findings
     reported".
@@ -575,21 +573,21 @@ def _findings(expire: dict[str, Any], contradictions: dict[str, Any], *,
 
 def _record_pass(archive: Chronicle, expire: dict[str, Any],
                  contradictions: dict[str, Any], *, when: datetime) -> int:
-    """Record that a pass ran, as a record (fix round 1, review B cadence /
-    N9). Before this a pass left no trace of itself unless it happened to
+    """Record that a pass ran, as a record. Before this a pass left no trace of itself unless it happened to
     rotate something, so nothing could say when one last ran - `recurring`
-    had to re-derive it with a full dry run on every call, and NS-11f's
+    had to re-derive it with a full dry run on every call, and a
     "scheduled (forget pass ran)" test had no evidence to assert on.
 
     Counts and outcomes only, never a narration - the same shape every other
     bookkeeping `action` in this archive carries.
 
-    Worth naming once (fix round 2, N7): this record is itself an `action`,
+    Worth naming once: this record is itself an `action`,
     one of the three episodic kinds, so the record proving a pass ran is
     eligible for expiry by a later pass. That is harmless in the steady
     state - every real pass writes a fresh one, and the newest record is
     never eligible anyway - but anything that comes to depend on a LONG
-    history of passes (a cadence report, Task 8's scheduling evidence) must
+    history of passes (a cadence report, scheduling evidence built up over
+    many passes) must
     read the latest one, not expect a series.
     """
     record = archive.append(
@@ -609,8 +607,7 @@ def _record_pass(archive: Chronicle, expire: dict[str, Any],
 
 def forget(archive: Chronicle, *, now: str | None = None, dry_run: bool = False) -> dict[str, Any]:
     """`godmode forget`'s three operations, run together every call:
-    expire, supersede (report only), flag contradictions. NS-11e + NS-11g
-    (0.3.28 Plan 5 Task 7). `--dry-run` runs every read exactly as a real
+    expire, supersede (report only), flag contradictions. `--dry-run` runs every read exactly as a real
     pass would (so the report is the same report a real run would have
     given) but performs neither write - proved, not merely claimed, by
     `archive_digest` over the record files, the cold segments and the cold
@@ -623,7 +620,7 @@ def forget(archive: Chronicle, *, now: str | None = None, dry_run: bool = False)
         raise ArchiveError("Godmode is not initialized; run `init` first")
     when = _parse_now(now)
     digest_before = archive_digest(archive.root) if dry_run else None
-    # Fix round 1 (review A, N6): ONE verified read for the whole pass,
+    # ONE verified read for the whole pass,
     # handed down to all three operations. Expire is the only one that can
     # change what the others would see, and it can only ever REMOVE episodic
     # records from the hot tier - never a `decision`, `lesson`, `claim` or
@@ -646,7 +643,7 @@ def forget(archive: Chronicle, *, now: str | None = None, dry_run: bool = False)
     if dry_run:
         report["digest_unchanged"] = digest_before == archive_digest(archive.root)
         if not report["digest_unchanged"]:
-            # Fix round 1 (review B, N2): advisory was the wrong register. A
+            # Advisory was the wrong register. A
             # dry run that changed the archive is either a concurrent writer
             # or a bug in this module, and either way the operator must hear
             # it as a refusal, not as a boolean nobody branches on.

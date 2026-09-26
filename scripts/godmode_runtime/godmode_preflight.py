@@ -87,7 +87,7 @@ from .godmode_watchdog import run_with_memory_cap
 
 def swallow_ratchet_finding(project: Path | str) -> dict[str, str] | None:
     """A file whose silent-handler count rose above its committed ceiling
-    (obligation 10273). None when the tree holds the ratchet."""
+    . None when the tree holds the ratchet."""
     from .godmode_swallow import BASELINE_FILENAME, scan_project
 
     try:
@@ -111,7 +111,7 @@ def swallow_ratchet_finding(project: Path | str) -> dict[str, str] | None:
 def malformed_findings(findings: list[dict[str, Any]]) -> list[dict[str, str]]:
     """A finding whose `class` field is present-and-blank, or names
     something outside `FAILURE_CLASSES`, is itself a mechanical finding
-    (N-12): a class that does not name a real class looks classified and
+    A class that does not name a real class looks classified and
     is not - worse than carrying none. A finding with no `class` key at
     all is untouched; `class` stays optional."""
     from .godmode_mistakes import FAILURE_CLASSES
@@ -132,7 +132,7 @@ def malformed_findings(findings: list[dict[str, Any]]) -> list[dict[str, str]]:
 
 
 def pattern_workaround_findings(findings: list[dict[str, Any]], archive: Any) -> None:
-    """NS-12e: a finding whose `class` names a recorded pattern's `subject`
+    """A finding whose `class` names a recorded pattern's `subject`
     gets that pattern's workaround folded into its detail, in place.
 
     The vocabulary a preflight finding's `class` is drawn from
@@ -166,7 +166,7 @@ def pattern_workaround_findings(findings: list[dict[str, Any]], archive: Any) ->
 
 
 def flake_findings(archive: Any) -> list[dict[str, str]]:
-    """NS-8o: a registered flake retried three or more times with no lesson
+    """A registered flake retried three or more times with no lesson
     naming it is a judgment finding - the registry entry must then either
     gain a lesson cite or be removed. `retries < 3` or a matching lesson is
     silent: a lesson-or-leave rule, not a quota on retries themselves."""
@@ -612,7 +612,7 @@ def push_preflight(project: Path | str,
     status = _git(repo, "status", "--porcelain=v1")
     if status.returncode != 0:
         raise ArchiveError("preflight needs a git repository")
-    # Field report 22 (2026-09-09): "preflight only runs on a committed
+    # "preflight only runs on a committed
     # tree, so here it can only run after the owner's gated commit". With
     # `dirty=True` the gate validates a snapshot of the working tree's
     # tracked changes (`git stash create`, which leaves the tree untouched)
@@ -719,7 +719,7 @@ def push_preflight(project: Path | str,
                                   "private list; run the scrub before staging "
                                   "the push",
                     })
-        # The swallow ratchet (obligation 10273): a file whose count of
+        # The swallow ratchet: a file whose count of
         # silent exception handlers rose above its committed ceiling is a
         # mechanical finding. The scanner and its baseline existed; nothing
         # at this gate read them.
@@ -836,8 +836,8 @@ def push_preflight(project: Path | str,
                 run = run_with_memory_cap(suite, cwd=worktree, capture_output=True,
                                           check=False, timeout=SUITE_TIMEOUT_SECONDS)
             except subprocess.TimeoutExpired as expired:
-                # A timeout kill is a verdict, not a crash: round 7 of the
-                # 0.3.18 gate died here as a bare traceback and the hour of
+                # A timeout kill is a verdict, not a crash: an earlier 0.3.18
+                # gate run died here as a bare traceback and the hour of
                 # suite output behind it was lost with the process. The
                 # partial output rides the exception; its tail is the only
                 # witness to where the suite was when the clock ran out.
@@ -847,7 +847,7 @@ def push_preflight(project: Path | str,
                 text = partial.decode("utf-8", errors="replace")
                 tail = text[-600:].strip()
                 # unittest's quiet stream is one mark per test; the count
-                # says how far the suite got before the clock did (round 8
+                # says how far the suite got before the clock did (one run
                 # reported 300 dots and nothing else - a tail with no
                 # position in it).
                 completed = sum(len(m) for m in re.findall(r"[.FEsx]{5,}", text))
@@ -1014,7 +1014,7 @@ def push_preflight(project: Path | str,
     if archive is not None:
         try:
             # Closure honouring lives in one place (open_stated_requests),
-            # read through the one shared window (Task 2, 0.3.28): this
+            # read through the one shared window (since 0.3.28): this
             # gate used to ask for its own, shorter tail of request
             # records than the other readers did, so a busy session could
             # already have this ask fall out of the gate's view while it
@@ -1040,7 +1040,7 @@ def push_preflight(project: Path | str,
                 })
         except Exception:  # noqa: BLE001
             skipped.append("open-asks scan: unavailable")
-        # Feature reach (2026-09-09, obligation 10119): a declared hook host
+        # Feature reach: a declared hook host
         # with no interception proof on this archive is a finding, not
         # silence - "unverifiable" was green over the host-reach gap for
         # twenty releases.
@@ -1052,13 +1052,13 @@ def push_preflight(project: Path | str,
                 judgment.append(finding)
         except Exception:  # noqa: BLE001  # godmode: swallow-ok: a scan that cannot run is named in skipped, never a gate crash
             skipped.append("host-reach scan: unavailable")
-        # Grounded claims (obligation 10248): a claim whose cited evidence
+        # Grounded claims: a claim whose cited evidence
         # changed or vanished since it was recorded is a judgment finding.
         try:
             from .godmode_attest import stale_claims
             stale = stale_claims(archive, Path(project))
             if stale:
-                # Q6 (review): a `tree-changed` entry's `citation` is empty
+                # A `tree-changed` entry's `citation` is empty
                 # (no single citation is at fault, the whole tree moved) -
                 # rendered bare, never with the stray leading space an
                 # unconditional `f"{citation} {reason}"` left behind.
@@ -1075,13 +1075,13 @@ def push_preflight(project: Path | str,
                 })
         except Exception:  # noqa: BLE001  # godmode: swallow-ok: a scan that cannot run is named in skipped, never a gate crash
             skipped.append("stale-claims scan: unavailable")
-        # NS-8o: a registered flake retried three or more times with no
+        # A registered flake retried three or more times with no
         # lesson naming it - the lesson-or-leave rule for the registry.
         try:
             judgment.extend(flake_findings(archive))
         except Exception:  # noqa: BLE001  # godmode: swallow-ok: a scan that cannot run is named in skipped, never a gate crash
             skipped.append("flake-ranking scan: unavailable")
-        # I-3: a hypothesis claim's or an incident's falsifier aged past
+        # A hypothesis claim's or an incident's falsifier aged past
         # two days with nothing run behind it - the theory stands on
         # exactly as much today as the day it was written.
         try:
@@ -1099,7 +1099,7 @@ def push_preflight(project: Path | str,
                 judgment.append(growth)
         except Exception:  # noqa: BLE001  # godmode: swallow-ok: a scan that cannot run is named in skipped, never a gate crash
             skipped.append("suite-growth scan: unavailable")
-        # NS-12e: a finding's class matched against a recorded pattern's
+        # A finding's class matched against a recorded pattern's
         # subject - the workaround named the last time this class fired,
         # so a recurring failure is not rediscovered from scratch.
         try:
@@ -1113,7 +1113,7 @@ def push_preflight(project: Path | str,
         if project_mode(archive) == "advise":
             for _finding in judgment[_archive_scan_start:]:
                 _finding.setdefault("severity", "advisory")
-    # N-12: a class that does not name a real class (blank, or outside
+    # A class that does not name a real class (blank, or outside
     # FAILURE_CLASSES) is itself a mechanical finding - checked over both
     # buckets before the fold below, so a malformed class in a judgment
     # finding still turns the verdict.

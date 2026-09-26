@@ -1,6 +1,6 @@
 """Checklist templates: a ritual written down as items a record can be read against.
 
-The RCA ritual (NS-13g) is six steps, in order: what failed (expected,
+The RCA ritual is six steps, in order: what failed (expected,
 actual, and a reproduction), when it started (a bisect or the last green
 run), where it lives (the smallest failing unit), why (a method record whose
 contract is complete), the fix at the root, and the lock (a test, and an

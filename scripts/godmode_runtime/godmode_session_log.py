@@ -184,7 +184,7 @@ def measure(transcript_path: Path) -> dict[str, Any]:
 
 
 # Tools that change project files, for the red-before-green mutation anchor
-# (U-T2): a fix-vocabulary claim is checked against a test run seen failing
+# A fix-vocabulary claim is checked against a test run seen failing
 # before the last of these and passing after. `NotebookEdit` is included
 # alongside `Edit`/`Write` for the same reason it is tracked separately in
 # `_KNOWN_TOOLS` above - it mutates project content just as they do.

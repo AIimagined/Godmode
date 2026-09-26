@@ -1,5 +1,5 @@
 """Verb reach: what names each console verb, so the census counts the unit
-that matters (obligation 10121).
+that matters.
 
 Measured by hand on 2026-09-08: 120 verbs; a shipped skill named 5, a hook
 nudge 26, docs only 34, nothing 57. The utilization census counts record

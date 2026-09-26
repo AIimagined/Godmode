@@ -1,4 +1,4 @@
-"""Recurring-ask mining (U-E10): what gets asked for, across sessions, more
+"""Recurring-ask mining: what gets asked for, across sessions, more
 than once.
 
 `godmode_requests` records every prompt as it arrives, because it is the one

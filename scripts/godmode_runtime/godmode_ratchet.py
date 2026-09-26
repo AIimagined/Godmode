@@ -1,4 +1,4 @@
-"""Project ratchets (2026-09-10, field report file Part 4, 4.8): the
+"""Project ratchets: the
 repository's own debt counters - a lint-debt total, a memoization-bailout
 count, a bundle size - declared in `.godmode-ratchets.json` as
 `{"<name>": "<command>"}`. `run` executes each, reads the first integer

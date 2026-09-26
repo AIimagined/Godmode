@@ -1,4 +1,4 @@
-"""CX-3: native per-host hook manifests, generated from one mechanism.
+"""Native per-host hook manifests, generated from one mechanism.
 
 CX-2 taught the runtime to *read* five hosts' dialects through one adapter
 (`godmode_hostevent.py`). CX-3 is the other half: teaching the *package* to
@@ -25,7 +25,7 @@ in common with the flat identity-field copy `godmode_bindings.render()`
 already does, so it gets its own builder functions here - called BY
 `godmode_bindings.write()`/`check()`, not a second, parallel entry point.
 
-**File-layout decision (revisited 2026-08-28 on two field reports):** Codex's
+**File-layout decision:** Codex's
 build doc and Grok's own 09-plugins.md both name `hooks/hooks.json` as the
 one hooks file a plugin carries - the SAME default path Claude loads. Both
 hosts fire the shared CamelCase events, so neither gets keys of its own;
@@ -51,7 +51,7 @@ from typing import Any
 from . import godmode_hostevent as hostevent
 from .godmode_paths import contained_or_refuse
 
-# Row 86: `hooks wire --host <h>` (single host, no --all) used to refuse ANY
+# `hooks wire --host <h>` (single host, no --all) used to refuse ANY
 # content difference from what today's renderer would produce, without
 # telling "this is our own prior write, a version bump" apart from "someone
 # else changed this file" - so an ordinary version update needed --force
@@ -188,11 +188,11 @@ CODEX_PROJECT_EVENTS = CODEX_HOOK_EVENTS | {"PermissionRequest"}
 # `hookEventName` VALUE is snake_case, never the hooks.json KEY.
 GROK_HOOK_EVENTS = frozenset({
     "SessionStart", "UserPromptSubmit", "PreToolUse", "PreCompact", "SessionEnd",
-    # Field report 2026-08-29: the shipped shared file carries Stop and
+    # The shipped shared file carries Stop and
     # PostToolUse, and `hooks status` said Grok declared neither - the list
     # lagged the manifest it describes.
     "Stop", "PostToolUse",
-    # Sweep 2026-09-07 (obligation 9867): the shared file carries
+    # The shared file carries
     # SubagentStop; Grok's own discovery log counts subagent_stop hooks.
     "SubagentStop",
 })
@@ -202,7 +202,7 @@ GROK_HOOK_EVENTS = frozenset({
 # documented event list.
 CURSOR_HOOK_EVENTS = frozenset({
     "sessionStart", "preToolUse", "beforeShellExecution", "stop",
-    # 2026-09-09 (obligation 10120): Cursor's own documented prompt, edit,
+    # Cursor's own documented prompt, edit,
     # compact, session-end and subagent events, each routed to the hook
     # branch that serves the same feature on Claude. Payload field names
     # and channels are unverified until a probe inside Cursor chronicles
@@ -219,7 +219,7 @@ CURSOR_HOOK_EVENTS = frozenset({
 # "declare it, never call it" honesty gap CX-1 exists to prevent elsewhere.
 GEMINI_HOOK_EVENTS = frozenset({
     "SessionStart", "BeforeTool",
-    # 2026-09-09 (obligation 10120): AfterTool carries the edit findings,
+    # AfterTool carries the edit findings,
     # AfterAgent the stop notices as text (Gemini's hooks cannot block a
     # reply, so the done-bar itself cannot fire there). Channel unverified.
     "AfterTool", "AfterAgent",
@@ -233,7 +233,7 @@ GEMINI_HOOK_EVENTS = frozenset({
 # gap named on the artifact registry entry.
 ANTIGRAVITY_HOOK_EVENTS = frozenset({
     "PreToolUse", "Stop",
-    # 2026-09-09 (obligation 10120): PreInvocation is Antigravity's prompt
+    # PreInvocation is Antigravity's prompt
     # boundary (nudges, claim echo, request recording); PostToolUse carries
     # the edit findings. Both from its documented five-event list; channel
     # unverified until a live probe.
@@ -246,7 +246,7 @@ ANTIGRAVITY_HOOK_EVENTS = frozenset({
 # gate at all - built FROM `hostevent.CODEX_TOOLS`, never re-typed.
 CODEX_MATCHER = "|".join(sorted(hostevent.CODEX_TOOLS))
 
-# Fix round 1 (C2, review Critical): Addendum 5's own documented tool-type
+# Addendum 5's own documented tool-type
 # vocabulary for Cursor matchers is a CLOSED list - "Matchers by tool type
 # (Shell, Read, Write, Grep, Delete, Task, MCP:<name>)", verbatim - and
 # `"Edit"` is not in it (the prior revision emitted it anyway, untraceable
@@ -278,7 +278,7 @@ def cursor_pretooluse_matcher_tools() -> frozenset[str]:
     on `|` - what a test checks against `CURSOR_DOCUMENTED_TOOL_TYPES`
     (traceability: every emitted name must be documented) and against the
     deliberately narrowed mutating subset this module actually emits
-    (fix round 1, C2's own binding instruction: `Shell|Write|Delete`).
+    (`Shell|Write|Delete`).
     """
     return frozenset(CURSOR_PRETOOLUSE_MATCHER.split("|"))
 
@@ -334,7 +334,7 @@ SESSION_HOOK = "hooks/godmode_session_hook.py"
 GATE_FAST_HOOK = "hooks/godmode_gate_fast.py"
 POST_EDIT_HOOK = "hooks/godmode_post_edit.py"
 
-# N-4: the seconds-dialect defaults every dedicated seconds-based builder
+# The seconds-dialect defaults every dedicated seconds-based builder
 # used as bare literals before this task. `hook_timeouts()` overlays the
 # committed gate-latency baseline's `recommended_timeouts` (benchmarks/
 # gate_latency_baseline.json, Task N-3) on these when the baseline exists,
@@ -353,7 +353,7 @@ def hook_timeouts(project: Path) -> dict[str, int]:
     when that file exists, parses as JSON, and its overrides are known keys
     with plausible (1..120s) int values.
 
-    Fix round 1 ruling: a recommendation may only RAISE a default, never
+    A recommendation may only RAISE a default, never
     lower it, until that hook path is itself measured directly - today's
     `user_prompt` recommendation is derived from the fast-gate proxy, not
     from a measurement of the prompt hook, so a low proxy reading must not
@@ -392,12 +392,12 @@ def _shell_entry(root_var: str, script: str, *args: str, timeout: int) -> dict[s
     string, `${CLAUDE_PLUGIN_ROOT}` honoured as a compatibility alias.
     Grok's 10-hooks.md: `command` is "Path to executable (relative to the
     JSON file) or inline shell command", `${VAR}` expanded, the
-    `CLAUDE_PLUGIN_ROOT` alias set. The 2026-08-28 field reports are why
+    `CLAUDE_PLUGIN_ROOT` alias set. Observed host behavior from 2026-08-28 is why
     this is the only builder left: Grok took a bare `"python"` token as a
     path beside the file and failed every hook open; Codex refused the
     `args` shape and listed zero hooks.
 
-    Eighth field report 2026-09-05 (Grok 1.0.13, Windows) retired the
+    Testing on 2026-09-05 (Grok 1.0.13, Windows) retired the
     claim that used to sit here ("forward slashes are fine on PowerShell,
     so there is no per-OS variant"): Grok runs a plugin hook's command in
     PowerShell on Windows, where a quoted path in statement position is a
@@ -408,7 +408,7 @@ def _shell_entry(root_var: str, script: str, *args: str, timeout: int) -> dict[s
     whose loader and shell are unverified.
     """
     tail = " ".join(args)
-    # Field report 2026-09-03 (stock macOS): bare `python` does not exist
+    # Bare `python` does not exist
     # there, so every hook died silently. The polyglot launcher resolves
     # python3/python/py per platform and execs, preserving the exit codes
     # that carry gate blocks.
@@ -451,7 +451,7 @@ def merge_host_tools_into_shared(existing: dict[str, Any]) -> dict[str, Any]:
     for block in pre_tool_use:
         if "matcher" not in block:
             continue
-        # Field report 2026-08-28: the matcher is a REGEX to Claude-family
+        # The matcher is a REGEX to Claude-family
         # hosts, so a dotted tool name must ship escaped (`functions\.exec`);
         # identity is compared on the unescaped name so regeneration stays
         # idempotent.
@@ -608,7 +608,7 @@ def build_antigravity_fragment() -> dict:
             "fresh probe proof; Stop hooks not firing on Windows (IDE "
             "1.107.0) is field-confirmed, 2026-08-29."
         ),
-        # Tenth field report 2026-09-05: Antigravity's loader expects each
+        # Antigravity's loader expects each
         # matcher group to carry its handlers in a `hooks` array
         # (`{matcher, hooks: [{type, command, timeout}]}`); a handler laid
         # directly beside the matcher was never found, so the gate was
@@ -641,7 +641,7 @@ def build_antigravity_fragment() -> dict:
                     ],
                 },
             ],
-            # 2026-09-09 (obligation 10120): the prompt boundary and the
+            # The prompt boundary and the
             # edit findings, on Antigravity's own documented events.
             "PreInvocation": [
                 {
@@ -765,7 +765,7 @@ def write_opencode_project_shim(plugin_root, project, *, force: bool = False) ->
 def runtime_census(home=None) -> list:
     """Every godmode install held by this machine's known plugin caches.
 
-    S6 (obligation 4436, field report 2026-08-28): three runtimes shared one
+    Three runtimes shared one
     archive across processes and raced its chain, and the stale 0.3.0 cache
     was still being loaded by something. Stat-and-regex only, bounded."""
     import re as _re
@@ -840,7 +840,7 @@ def build_cursor_manifest(project: Path) -> dict[str, Any]:
     extra cost" - but the spec explicitly excludes hooks from v1
     ("V1 HAS NO HOOKS"), so whether Cursor's OWN hook loader expands this
     placeholder is UNVERIFIED. This exact gap is also carried on
-    `HOOK_ARTIFACTS["cursor"]["gap"]` (fix round 1, I2) so `hooks status`'s
+    `HOOK_ARTIFACTS["cursor"]["gap"]` so `hooks status`'s
     structured `gap` field surfaces it the same way it already does for
     Gemini's fragment-only gap - never only in a docstring a status read
     cannot see.
@@ -868,7 +868,7 @@ def build_cursor_manifest(project: Path) -> dict[str, Any]:
                     "hooks": [_shell_entry(root, GATE_FAST_HOOK, timeout=timeouts["pre_tool_use"])],
                 },
             ],
-            # Sweep 2026-09-07 (obligation 9869): Cursor's stop contract is a
+            # Cursor's stop contract is a
             # `followup_message` under a manifest `loop_limit` (a first-party
             # Cursor plugin in the research ledger ships exactly this shape);
             # without a stop hook the done-bar never fired on Cursor.
@@ -879,7 +879,7 @@ def build_cursor_manifest(project: Path) -> dict[str, Any]:
                     "hooks": [_shell_entry(root, SESSION_HOOK, "stop", timeout=timeouts["stop"])],
                 },
             ],
-            # 2026-09-09 (obligation 10120): the prompt boundary, the edit
+            # The prompt boundary, the edit
             # findings, the compaction brief, the session-end checkpoint and
             # the subagent done-bar ride Cursor's own events.
             "beforeSubmitPrompt": [
@@ -910,7 +910,7 @@ def cursor_emitted_events(manifest: dict[str, Any]) -> frozenset[str]:
 
 
 # ---------------------------------------------------------------------------
-# NS-10l: Cursor's MCP config (`mcp.json`) - the second host the host-generic
+# Cursor's MCP config (`mcp.json`) - the second host the host-generic
 # stdio adapter (`scripts/godmode_mcp_server.py`) serves. Distinct artifact
 # kind from the hook manifest above: an `mcpServers` map, not an event/matcher
 # tree, and per-request/no-port/no-daemon by the same decision (seq 11) the
@@ -933,8 +933,8 @@ def build_cursor_mcp_manifest(plugin_root: Path) -> dict[str, Any]:
     {"command", "args"}}}`. Wires the host-generic stdio adapter
     (`scripts/godmode_mcp_server.py`) for Cursor - `--host cursor` selects
     only the server's `serverInfo.name` suffix, never a second
-    implementation (NS-10l's own acceptance line: "one adapter, two hosts,
-    stdio only" - per-request, no port, no daemon, decision seq 11).
+    implementation ("one adapter, two hosts,
+    stdio only" - per-request, no port, no daemon).
 
     GAP, documented rather than guessed: unlike `.cursor-plugin/hooks.json`,
     Cursor does not auto-discover a plugin-bundled `mcp.json` at a fixed
@@ -1087,7 +1087,7 @@ def build_gemini_fragment() -> dict[str, Any]:
                     ],
                 },
             ],
-            # 2026-09-09 (obligation 10120): Gemini's documented AfterTool and
+            # Gemini's documented AfterTool and
             # AfterAgent, milliseconds like the rest of this fragment.
             "AfterTool": [
                 {
@@ -1126,9 +1126,9 @@ def gemini_emitted_events(fragment: dict[str, Any]) -> frozenset[str]:
 
 
 # ---------------------------------------------------------------------------
-# NS-6: GitHub Copilot - dedicated `.github/hooks/godmode.json`, plus a
+# GitHub Copilot - dedicated `.github/hooks/godmode.json`, plus a
 # marker-delimited block in `.github/copilot-instructions.md` (merged via
-# `godmode_wire.merge_text_block`, NS-10a's text primitive).
+# `godmode_wire.merge_text_block`, the shared text-block primitive).
 #
 # Shape, read from the private R-1 hook-mechanism table (never named here -
 # `godmode_reach.REACH["copilot"]["reference"]` cites it as `ledger:3`):
@@ -1146,9 +1146,9 @@ def gemini_emitted_events(fragment: dict[str, Any]) -> frozenset[str]:
 # Copilot-shaped hosts" (not Claude's nested
 # `hookSpecificOutput.additionalContext`) - carried below as a documented
 # GAP, since `godmode_hostevent.render_decision` has no dedicated `copilot`
-# branch yet (Task 6's own file list is `godmode_host_manifests.py`/
-# `packaging/hosts.json`/tests only - wiring that runtime branch is a
-# separate task's job, never silently claimed done here).
+# branch yet (this change only touches `godmode_host_manifests.py`/
+# `packaging/hosts.json`/tests - wiring that runtime branch is
+# separate work, never silently claimed done here).
 COPILOT_HOOK_EVENTS = CODEX_HOOK_EVENTS
 
 # No plugin-root variable is documented for Copilot's own hook loader (the
@@ -1184,7 +1184,7 @@ def build_copilot_hooks(plugin_root: Path | str | None = None) -> dict[str, Any]
     root = Path(plugin_root).as_posix() if plugin_root is not None else COPILOT_ROOT_TOKEN
     timeouts = DEFAULT_TIMEOUTS
     return {
-        # N6 (Task 6 fix round 1): this file ships committed at
+        # This file ships committed at
         # `.github/hooks/godmode.json`, a path ledger:3 says a real Copilot
         # discovers - so the portable `${godmodePluginRoot}` token baked
         # into the bundled reference render is otherwise an unexplained,
@@ -1256,7 +1256,7 @@ def copilot_instructions_block() -> str:
 
 
 # ---------------------------------------------------------------------------
-# NS-6: Kiro - dedicated `.kiro/hooks.json`, routed through the launcher.
+# Kiro - dedicated `.kiro/hooks.json`, routed through the launcher.
 #
 # Shape, read from the private R-1 hook-mechanism table's own row 1
 # (`ledger:92`, cited by `godmode_reach.REACH["kiro"]["reference"]`):
@@ -1300,7 +1300,7 @@ def build_kiro_hooks(plugin_root: Path | str | None = None) -> dict[str, Any]:
     root = Path(plugin_root).as_posix() if plugin_root is not None else KIRO_ROOT_TOKEN
     timeouts = DEFAULT_TIMEOUTS
     return {
-        # N6 (Task 6 fix round 1): same reasoning as `build_copilot_hooks`'s
+        # Same reasoning as `build_copilot_hooks`'s
         # own `_note` - this file ships committed at `.kiro/hooks.json`, so
         # the un-substituted `${godmodePluginRoot}` token needs an
         # explanation in the live discovery location, not just in this
@@ -1381,7 +1381,7 @@ HOOK_ARTIFACTS: dict[str, dict[str, Any]] = {
         "build": build_cursor_manifest,
         "emitted": cursor_emitted_events,
         "allowed_events": CURSOR_HOOK_EVENTS,
-        # Fix round 1, I2 (review Important): this gap was previously only
+        # This gap was previously only
         # documented in `build_cursor_manifest`'s own docstring, invisible
         # to `hooks status`'s structured `gap` field - asymmetric with
         # Gemini's entry below, and a live violation of this module's own
@@ -1419,7 +1419,7 @@ HOOK_ARTIFACTS: dict[str, dict[str, Any]] = {
         "build": build_copilot_hooks,
         "emitted": copilot_emitted_events,
         "allowed_events": COPILOT_HOOK_EVENTS,
-        # N3/N4 (Task 6 fix round 1): the prior wording said the top-level
+        # The prior wording said the top-level
         # additionalContext dialect "is not yet what this runtime emits" -
         # wrong in the conservative direction. `hooks/godmode_session_hook.py`
         # already prints it, unconditionally, beside the nested Claude-
@@ -1480,7 +1480,7 @@ HOOK_ARTIFACTS: dict[str, dict[str, Any]] = {
 
 
 # ---------------------------------------------------------------------------
-# NS-10b: typed per-host capability declaration. `hooks status` and the R-4
+# Typed per-host capability declaration. `hooks status` and the R-4
 # matrix (`godmode_reach.py`) read this dict instead of prose, so "a feature
 # that needs a channel the host does not declare" is a computable fact, not
 # a claim someone has to keep a paragraph in sync with by hand.
@@ -1507,7 +1507,7 @@ HOOK_ARTIFACTS: dict[str, dict[str, Any]] = {
 STDOUT_CHANNELS: frozenset[str] = frozenset(
     {"deny", "ask", "additionalContext", "systemMessage"})
 
-# Every OS this plugin ships a launcher for (R-3/R-3a: the polyglot `.cmd`
+# Every OS this plugin ships a launcher for (the polyglot `.cmd`
 # and the generated `.sh` together cover all three) - a host's own `os` set
 # names which of these its manifest/wiring targets, never a platform this
 # module has no launcher path for at all.
@@ -1615,9 +1615,9 @@ def validate_host_capabilities() -> list[str]:
     Returns the offending host names, sorted; empty means every declared
     manifest's channels resolve inside the enum. This is what `tests/
     test_host_manifests.py` calls to fail a manifest whose declared channels
-    fall outside the closed set, per NS-10b's own acceptance line.
+    fall outside the closed set.
 
-    Fix round 1, nit 3: the prior `capability.get("stdout", frozenset())`
+    The prior `capability.get("stdout", frozenset())`
     let an entry that OMITS `stdout`/`os` pass this guard clean (an empty
     set is trivially a subset of any set) - only a separate test's direct
     `capability["stdout"]` indexing ever caught that, and `events` had no

@@ -312,7 +312,7 @@ def duplicate_authority_findings(project: Path, threshold: float = 0.6) -> dict[
 
 
 # ---------------------------------------------------------------------------
-# C-04: a pressure gate on layer-adding work.
+# A pressure gate on layer-adding work.
 #
 # The report above has always counted duplicated authority, speculative
 # seams and orphans. A number nobody compares against anything is a number

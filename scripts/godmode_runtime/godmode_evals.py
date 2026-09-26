@@ -28,7 +28,7 @@ edit is visible without duplicating the prose into a second file), and the
 ranking snapshot freezes which segments the context brief selects, in order, for
 a fixed set of tasks - the spec's own test for whether retrieval still behaves.
 
-Every runner here has a second mode, `withhold_memory` (NS-12c). A score taken
+Every runner here has a second mode, `withhold_memory`. A score taken
 with this project's lessons and compiled law in the subject's brief measures the
 skill PLUS everything the project has already been corrected about; withhold
 that layer and what is left is the skill. The two are different measurements of
@@ -62,17 +62,17 @@ RANKING_SNAPSHOT_SCHEMA = "godmode-ranking-snapshot-v1"
 COMPARISON_SCHEMA = "godmode-eval-comparison-v1"
 CROSS_MODEL_SCHEMA = "godmode-cross-model-matrix-v1"
 
-# NS-12f: the label a matrix row carries when the operator has declared no
+# The label a matrix row carries when the operator has declared no
 # model at all. Never a real model's name - this constant ships in source,
 # and the privacy bar (no external names in shipped text) applies to source
 # exactly as it applies to docs.
 DEFAULT_MODEL = "current"
 
-# NS-12f: the project-root settings file's expected key, read only when
+# The project-root settings file's expected key, read only when
 # `GODMODE_EVAL_MODELS` is absent.
 _MODELS_SETTINGS_FILE = ".godmode-evals.json"
 
-# NS-8i: categories `_TIER_BY_CATEGORY` carries as a numeric floor but that
+# Categories `_TIER_BY_CATEGORY` carries as a numeric floor but that
 # `classify_action` itself never returns - confirmed by source scan, not by
 # a single test case, for each member below. Neither is dead code overall:
 # each is live at a DIFFERENT layer than the one this suite's fixtures can
@@ -88,8 +88,8 @@ _MODELS_SETTINGS_FILE = ".godmode-evals.json"
 # the hook layer - but no command-shaped fixture can reach it through
 # `classify_action`, which is the only entry point this suite calls.
 #
-# "fix-loop-reversal" (I-4, `godmode_reversals.third_edit_without_incident`,
-# fix round 1 review of ac48f2d): registered in `_TIER_BY_CATEGORY` so the
+# "fix-loop-reversal" (`godmode_reversals.third_edit_without_incident`):
+# registered in `_TIER_BY_CATEGORY` so the
 # tier comes from one vocabulary rather than a literal repeated at its call
 # site, but it is set directly by `hooks/godmode_session_hook.py`'s
 # Edit/Write target loop from ARCHIVE STATE (two red retests, a bracketed
@@ -119,7 +119,7 @@ class _PinnedFixtureArchive:
         return [{"data": {"path": self._pinned_path, "action": "pin", "sha256": "0" * 64}}]
 
 
-# NS-8i: one command per protected category (R2-R5) that `classify_action`
+# One command per protected category (R2-R5) that `classify_action`
 # names by that category TODAY, each paired with the literal tier and
 # `protected` value it must come back as - each hand-verified against the
 # live classifier while this table was written, and re-verified on every
@@ -325,7 +325,7 @@ def load_suites(project: Path) -> dict[str, dict[str, Any]]:
     return suites
 
 
-# NS-12c: the environment variable a memory-withheld eval run exports to
+# The environment variable a memory-withheld eval run exports to
 # every behaviour probe it spawns, so a subject command that builds a brief
 # of its own builds it without the lessons-and-law layer too. A probe that
 # never asks for a brief is simply unaffected - the variable is a statement
@@ -1467,7 +1467,7 @@ def adversarial_grid() -> dict[str, Any]:
             cell("absence-claims", "absence-without-any-search",
                  "an uncited absence claim is downgraded", absence_without_search)
 
-            # NS-8i: the meta-gate suite - a guaranteed-deny fixture for
+            # The meta-gate suite - a guaranteed-deny fixture for
             # every protected class the gate names, run against this same
             # disposable project so a starved rule shows up here too. Counted
             # separately from the hand-written adversarial attacks above: the
@@ -1532,7 +1532,7 @@ def _self_check() -> None:
     # added or lost and the test that pins the fixture table must move too.
     assert grid["cells"] == 35, grid["cells"]
 
-    # U-S1: grader vocabulary is reachable from a behaviour-assertion check,
+    # Grader vocabulary is reachable from a behaviour-assertion check,
     # and two result records compare only when their ids agree.
     with tempfile.TemporaryDirectory() as raw:
         root = Path(raw)
@@ -1640,7 +1640,7 @@ def _declared_models(project: Path) -> list[str]:
     """The models the operator wants the eval matrix run under, in the order
     they were declared, deduplicated - or a single default row when the
     operator declared none, so nothing changes for the operator who never
-    heard of this feature (NS-12f).
+    heard of this feature.
 
     `GODMODE_EVAL_MODELS` (a comma-separated list) is checked first; when it
     is absent or empty, `.godmode-evals.json`'s `models` list at the project
@@ -1674,7 +1674,7 @@ def _declared_models(project: Path) -> list[str]:
 
 
 def _authoring_model(skill_dir: Path, declared_models: list[str]) -> str:
-    """The model a skill counts as authored under (NS-12f).
+    """The model a skill counts as authored under.
 
     Read order, each an explicit statement about THIS skill rather than an
     inference from the matrix as a whole:
@@ -1682,8 +1682,8 @@ def _authoring_model(skill_dir: Path, declared_models: list[str]) -> str:
     1. A `model:` line in the skill's `SKILL.md` frontmatter, scanned the
        same way `_description_line` already scans for `description:` - a
        simple `key:` line prefix, not a YAML parse.
-    2. An `authoring_model:` line in the skill's `PURPOSE.md` (NS-12b,
-       Task 10's per-skill provenance file), read the same way.
+    2. An `authoring_model:` line in the skill's `PURPOSE.md` (the
+       per-skill provenance file), read the same way.
     3. The first declared model, in declaration order - chosen last because
        it says something about the operator's list, not about this
        particular skill; it is the fallback every shipped skill uses today,
@@ -1740,7 +1740,7 @@ def cross_model_matrix(
     authoring_models: dict[str, str] | None = None,
     withhold_memory: bool = False,
 ) -> dict[str, Any]:
-    """NS-12f: one row per skill per declared model, and the `model-specific`
+    """One row per skill per declared model, and the `model-specific`
     flag for a skill that only passes under its own authoring model.
 
     `models` defaults to `_declared_models(project)` - the single default
@@ -1752,7 +1752,7 @@ def cross_model_matrix(
     all came from one measurement). The flag can fire only against a
     caller-supplied `results_by_model` that actually disagrees across
     models - exactly the fabricated-fixture path `tests/test_evals_models.py`
-    exercises, and exactly the "no model calls in tests" bound NS-12f sets.
+    exercises, and exactly the "no model calls in tests" bound.
 
     `withhold_memory` reaches the replayed measurement only: it changes what
     the rows say each skill did, never how a row is judged.

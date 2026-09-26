@@ -1,4 +1,4 @@
-"""NS-4 (0.3.28 Plan 5 Task 3): falsification bonds gate `atlas law ratify`.
+"""Falsification bonds gate `atlas law ratify`.
 
 The falsification bond: a checker's pass counts only after it has, in the
 SAME session, correctly failed on an injected guaranteed-bad artifact.
@@ -31,10 +31,10 @@ Three record kinds, three verbs:
   for `writer`, never reimplemented here); no bond in that exact session
   was itself both written by that same actor and sealed `writer ==
   "checker"`; the bond that did run targeted a different file than the
-  proposal (fix round 1, S6); the bond that did run did not fail as
+  proposal; the bond that did run did not fail as
   expected (a rubber stamp); every bond that did fail as expected there
-  already ratified a different proposal (fix round 1, S4 - one bond, one
-  verdict); the proposal already has a verdict (fix round 1, N5); or the
+  already ratified a different proposal (one bond, one
+  verdict); the proposal already has a verdict; or the
   proposal's own `actor` equals the ratifying caller's own `agent_id()` -
   compared as FINGERPRINTS, never as role labels, so a proposer who also
   holds an operator-granted checker session still cannot ratify their own
@@ -45,8 +45,7 @@ Session identity for all of this is `GODMODE_SESSION` read directly (never
 different question - "which session's records should this label carry" -
 and could name a session this process never actually opened). This is the
 one env var `Chronicle._chronicled_session_role` itself trusts. A bond's
-stored `session` string alone is not enough to borrow it, though (fix
-round 1, B1): the bond's own `actor` must also equal the ratifying
+stored `session` string alone is not enough to borrow it, though: the bond's own `actor` must also equal the ratifying
 caller's `agent_id()`, so naming a session id someone else's grant opened -
 the id is not a secret and the grant never expires, per
 `_chronicled_session_role`'s own docstring - no longer lets a third party
@@ -56,7 +55,7 @@ With `GODMODE_AGENT_ID` undeclared, every process in the project shares one
 default fingerprint (`godmode_constants.agent_id()`), so `proposal.actor ==
 agent_id()` is trivially true for every caller and `ratify` can never
 succeed until distinct per-agent ids are declared - the same condition
-Task 5's own checker-session grant is inert under.
+a checker-session grant is inert under.
 """
 
 from __future__ import annotations
@@ -87,7 +86,7 @@ MAX_PROPOSALS_PER_SPRINT = 12
 def proposals_this_sprint(archive: Chronicle) -> int:
     """How many `improvement_proposal` records count against the running
     cap: proposals still OPEN, i.e. with no `improvement_verdict` citing
-    their own sequence as `proposal_seq` (fix round 1, B2).
+    their own sequence as `proposal_seq`.
 
     NOT scoped by the `sprint` kind - that kind is `godmode sprint`'s and
     `godmode status set`'s shared per-work-item state record, not a sprint
@@ -129,7 +128,7 @@ def _current_session() -> str:
 
 
 def _record_by_sequence(archive: Chronicle, kind: str, sequence: int) -> dict[str, Any] | None:
-    """Fix round 1, S5: `archive.select(kind=..., limit=2000)` reads as "scan
+    """`archive.select(kind=..., limit=2000)` reads as "scan
     everything" but `Chronicle.select` silently clamps any limit to 500
     (`godmode_chronicle.py`), so a proposal older than the most recent 500
     records of its kind resolved as "No improvement_proposal at sequence N"
@@ -171,7 +170,7 @@ def propose(
             "proposal is a request, not a claim"
         )
     diff_hash = diff_hash_of(diff_path)
-    # NS-12a keys its refusal on `(diff_hash, target)`, and `ratify` keys
+    # The ratify refusal keys on `(diff_hash, target)`, and `ratify` keys
     # the record it writes on the CANONICAL spelling of the same target -
     # the one `_contained_skill_path` derives from the write itself. A
     # target stored here in whatever spelling the proposer typed would put
@@ -232,7 +231,7 @@ def bond_test(
         archive, session, project, name, command, target,
         replace=replace, with_text=with_text, append=append, rule_ids=rule_ids,
     )
-    # Fix round 1, S6: the command is folded in too - two bonds proving
+    # The command is folded in too - two bonds proving
     # entirely different checkers must not hash identically - and `target`
     # is also carried as its own field (not just inside the hash) so
     # `ratify` can bind a bond to the SAME file the proposal names, never a
@@ -275,14 +274,14 @@ def ratify(
     """`atlas law ratify <proposal-seq>`: refused (never a downgrade) when
     the proposal already has a verdict; the caller's own current session is
     not an operator-granted checker session belonging to the caller
-    (fix round 1, B1); no bond in that session was written by that same
+    ; no bond in that session was written by that same
     caller and sealed `writer == "checker"`; none of those bonds targeted
-    the proposal's own file (fix round 1, S6); none that did failed as
+    the proposal's own file; none that did failed as
     expected (rubber stamp); every bond that did fail as expected here has
-    already ratified a different proposal (fix round 1, S4 - one bond, one
+    already ratified a different proposal (one bond, one
     verdict); or the proposer and the checker are the same actor.
 
-    NS-12d (Task 9): when the proposal's own `target` is a
+    When the proposal's own `target` is a
     `skills/<name>/...` path, ratifying it ALSO requires `project` and
     `diff_path` (the same diff `propose` hashed, re-verified against the
     proposal's own `diff_hash`) so the change can be applied and scored
@@ -311,7 +310,7 @@ def ratify(
             "ratify is one verdict per proposal - propose a new change "
             "instead of ratifying the same proposal twice."
         )
-    # Fix round 1, S4: a bond already cited by an earlier verdict's own
+    # A bond already cited by an earlier verdict's own
     # `bond_seq` cannot ratify a second time - "fresh" (the CLI's own help
     # text, `atlas law ratify`) means once per verdict, not once per
     # session.
@@ -319,7 +318,7 @@ def ratify(
 
     session = _current_session()
     checker_actor = agent_id()
-    # Fix round 1, B1: the caller must ITSELF currently hold an
+    # The caller must ITSELF currently hold an
     # operator-granted checker session under its own agent id - the exact
     # derivation `Chronicle.append` uses for `writer`, reused (never
     # reimplemented) through the public wrapper `chronicled_session_role`.
@@ -337,7 +336,7 @@ def ratify(
         for record in archive.read_events(verify=False)
         if record.get("kind") == "checker_bond"
         and (record.get("data") or {}).get("session") == session
-        # Fix round 1, B1: the bond's own `actor` must equal the ratifying
+        # The bond's own `actor` must equal the ratifying
         # caller's own agent id - a session id alone is not a secret
         # (`godmode history --kind session --json` prints it, and the
         # grant never expires), so matching only the session string let a
@@ -402,7 +401,7 @@ def ratify(
             "checker always compare equal and ratify can never succeed."
         )
 
-    # NS-12d: a skill target is gated on strict improvement before any
+    # A skill target is gated on strict improvement before any
     # verdict is written - see this function's own docstring above.
     impact: dict[str, Any] | None = None
     skill = skill_name_from_target(proposal_target) if proposal_target else None

@@ -1,4 +1,4 @@
-"""NS-10h: surface an idle anchor once, then hold silence for a cooldown.
+"""Surface an idle anchor once, then hold silence for a cooldown.
 
 An anchor (an open obligation's subject, an operator ask's subject - any
 string a caller wants tracked) that has gone untouched for several turns is
@@ -8,9 +8,9 @@ given the anchor's last-touched turn and the current one, is this the turn
 to say something - and `record_resurfaced` is the one write that starts
 the cooldown clock.
 
-One primitive, two callers: NS-10h (the Stop hook's idle-obligation/ask
-surface, this task) uses it first; NS-14e's bounded verify nudges call the
-same two functions later against their own anchor names (a verify finding
+One primitive, several callers: the Stop hook's idle-obligation/ask
+surface uses it first; bounded verify nudges can call the
+same two functions against their own anchor names (a verify finding
 repeated four times running becomes a `cooldown` record on the fourth,
 per that spec item) rather than inventing a second cooldown design. Both
 share one `COOLDOWN_SUBJECT` record shape; a reader in either module has
@@ -113,7 +113,7 @@ def record_resurfaced(
     """Commit one resurface: `anchor` stays quiet until `now_turn +
     cooldown_turns`. Raises like any other archive write; Stop-path callers
     wrap this and degrade through `_report_ancillary_failure` on failure
-    rather than let it escape (C-3/NS-10i)."""
+    rather than let it escape."""
     return archive.append("action", COOLDOWN_SUBJECT, {
         "anchor": anchor,
         "surfaced_at_turn": now_turn,

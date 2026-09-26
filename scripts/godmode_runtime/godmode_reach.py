@@ -226,7 +226,7 @@ _TABLE: dict[str, dict[str, tuple[str, str]]] = {
 # our own launcher; `next_probe` is the date a live confirmation is
 # scheduled. Empty strings mean "not yet".
 #
-# `live_proof` (Task 5 fix round 1, B1): a citation to the host's own newest
+# `live_proof`: a citation to the host's own newest
 # `hook-interception-proof` chronicle record - the exact record `last_proof()`
 # (`godmode_hookproof.py`) would read for this host, and therefore the exact
 # evidence `unverifiable_hosts()`/`reach_finding()` already treat as "this
@@ -246,7 +246,7 @@ _TABLE: dict[str, dict[str, tuple[str, str]]] = {
 # it just falls back to the reference/replication_test citation requirement
 # `MATRIX_CITATION_HOSTS` still enforces for it.
 #
-# R-0 correction (Task 5, 2026-09-17): the private R-1 hook-mechanism table
+# Correction made 2026-09-17: the private R-1 hook-mechanism table
 # is the only place these ids are checked against, and two of the three
 # below were wrong. `ledger:103` (gemini's prior reference) is the R-1
 # table's own excluded entry - not hook-bearing at all, no hooks manifest of
@@ -275,11 +275,11 @@ REACH: dict[str, dict[str, str]] = {
                "live_proof": ""},
     "antigravity": {"reference": "ledger:158", "replication_test": "", "next_probe": "",
                     "live_proof": ""},
-    # NS-6 (Task 6): both replicated from the private R-1 table's own rows
+    # Both replicated from the private R-1 table's own rows
     # against this module's manifest builders - `replication_test` names
     # the dotted unittest id that feeds the reference's own input shape and
     # asserts Godmode's manifest against it.
-    # N9 (Task 6 fix round 1): two ids, not one - the row's `pre-tool-gate`
+    # Two ids, not one - the row's `pre-tool-gate`
     # shape rests on `ledger:3` (Copilot's `.github/hooks/` grouping), but
     # its `advisories`/`continuity-brief` reason cells above and
     # `HOOK_ARTIFACTS["copilot"]["gap"]` both also cite `ledger:15` for the
@@ -296,7 +296,7 @@ REACH: dict[str, dict[str, str]] = {
 }
 
 
-# R-3a: a named fallback tier instead of "unverifiable" for a host with no
+# A named fallback tier instead of "unverifiable" for a host with no
 # hook dispatch. Closed set - a host missing from this dict, or carrying a
 # value outside `TIERS`, fails `validate_tiers()` (the matrix test this
 # guards; R-4's generated matrix, once it lands, refuses the same way for
@@ -347,7 +347,7 @@ def reach_metadata() -> dict[str, dict[str, str]]:
     return {host: dict(fields) for host, fields in REACH.items()}
 
 
-# NS-10b: which `godmode_host_manifests.STDOUT_CHANNELS` member a feature
+# Which `godmode_host_manifests.STDOUT_CHANNELS` member a feature
 # needs to reach the model or the operator at all - a tuple means "any one
 # of these", `None` means the feature needs no output channel (it fires
 # because its EVENT fires; the archive write/checkpoint/recording IS the
@@ -375,13 +375,13 @@ FEATURE_CHANNELS: dict[str, tuple[str, ...] | None] = {
 
 def _capability_unreachable(host: str, feature: str) -> bool:
     """True when `feature` needs a channel `host_manifests.HOST_CAPABILITIES`
-    does not declare for `host` - NS-10b's own acceptance line: "a feature
+    does not declare for `host` - the rule is: "a feature
     that needs a channel the host does not declare is reported as
     unreachable before any probe." An unmapped feature is never flagged
     unreachable by this alone - only a declared, missing channel is.
 
     `host` MUST already be a `HOST_CAPABILITIES` key - a plain `[...]`
-    lookup, deliberately not `.get(host, {})` (fix round 1, nit 2/3): a host
+    lookup, deliberately not `.get(host, {})`: a host
     declared in `HOSTS`/`_TABLE` but missing from `HOST_CAPABILITIES` is a
     defect in this module, and defaulting to "declares nothing" would hide
     it behind a row that silently reads all-`no` instead of raising loudly
@@ -495,7 +495,7 @@ def reach_finding(archive: Any) -> dict[str, str] | None:
 MATRIX_BEGIN = "<!-- godmode:matrix:begin -->"
 MATRIX_END = "<!-- godmode:matrix:end -->"
 
-# Fix round 1, B1: a host is excluded from the static citation requirement
+# A host is excluded from the static citation requirement
 # below when, and only when, its own `REACH` row carries a `live_proof`
 # citation - never a hardcoded name tuple. Claude and Grok qualify today
 # because both carry a dated `hook-interception-proof` record this project's
@@ -512,19 +512,19 @@ MATRIX_CITATION_HOSTS: tuple[str, ...] = tuple(
 
 
 class MatrixGuardError(Exception):
-    """R-0: the matrix generator refuses a host row that cites neither a
+    """The matrix generator refuses a host row that cites neither a
     reference read nor a replicating test."""
 
 
-# Fix round 1, nit 4: `reference` is a private ledger entry id and nothing
+# `reference` is a private ledger entry id and nothing
 # else - the whole shape is `ledger:<digits>`. A bare truthy check (any
 # nonempty string) let an empty-but-truthy typo or a name slip through
-# uncaught; it would not by itself have caught the wrong-ID bug this task's
-# R-0 correction fixed (a wrongly-numbered but still shape-valid id), but it
+# uncaught; it would not by itself have caught the wrong-ID bug an earlier
+# correction fixed (a wrongly-numbered but still shape-valid id), but it
 # closes the cheaper, more likely failure mode in the same guard, at the
 # same cost.
 #
-# Task 6 fix round 1 (N9): widened to allow more than one citation
+# Widened to allow more than one citation
 # (`"ledger:3, ledger:15"`) for a row whose shape rests on more than one
 # ledger entry - each still bare `ledger:<digits>`, comma-joined, never a
 # name or free text; the privacy shape this regex exists to enforce is
@@ -556,7 +556,7 @@ def _capabilities_table() -> str:
     lines = ["| Host | Tier | Declared events | Declared stdout channels | OS |",
              "|---|---|---|---|---|"]
     for host in HOSTS:
-        # Fix round 1, nit 2/3: a plain `[...]` lookup, not `.get(host, {})`
+        # A plain `[...]` lookup, not `.get(host, {})`
         # - a host declared here with no `HOST_CAPABILITIES` entry is a
         # defect in that module, and must fail loudly (`KeyError`) rather
         # than silently render as "none | none | none", which reads exactly
@@ -638,7 +638,7 @@ def _feature_reach_grid() -> str:
 
 
 def _feature_reach_reasons_table() -> str:
-    """Fix round 1, B2: every non-`yes` cell's stated reason, the half of
+    """Every non-`yes` cell's stated reason, the half of
     `reach_table()`'s own data model the status grid alone throws away -
     including the enum-derived "unreachable: <host> does not declare the
     <channel> channel" text `reach_table()` computes for a capability
@@ -659,7 +659,7 @@ def _feature_reach_reasons_table() -> str:
 
 def render_matrix_tables() -> str:
     """The generated content for the marker pair - four tables, none
-    hand-typed: declared capabilities (NS-10b's enum), each hook host's
+    hand-typed: declared capabilities (the closed capability enum), each hook host's
     replication provenance (R-0, including its own live-proof citation),
     the feature-reach grid (`_TABLE`, with `reach_table()`'s own
     channel-derived downgrades already applied), and the reason behind

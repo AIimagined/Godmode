@@ -57,7 +57,7 @@ DEFAULT_ROLES: dict[str, list[str]] = {
 
 UNWEIGHTED_ROLE_WEIGHT = 0.5
 
-# NS-12c: the two roles that carry what this project has LEARNED - the
+# The two roles that carry what this project has LEARNED - the
 # lessons it recorded and the law compiled from them - as opposed to the
 # roles that describe how it is built. Named here, beside the role table
 # itself, because withholding them is a property of the brief rather than
@@ -428,7 +428,7 @@ def _freshness_stamp(project: Path, path: str, is_git: bool) -> int:
         stamp = run_git(project, "log", "-1", "--format=%ct", "--", path)
         if stamp is None:
             # None is git FAILING (a 5 s timeout on a machine just woken
-            # from sleep, at the 0.3.18 gate's round 13), not an untracked
+            # from sleep), not an untracked
             # path (that is ""). Falling straight to mtime on a failure
             # made the checkout time the file's freshness and flipped the
             # ranking snapshot for one run out of four. One retry; the
@@ -570,7 +570,7 @@ def build_brief(
     The contract other stages depend on: identical project state plus identical task
     yields an identical brief, whichever model asks for it.
 
-    `withhold_memory=True` (NS-12c) builds the brief without the `MEMORY_ROLES`
+    `withhold_memory=True` builds the brief without the `MEMORY_ROLES`
     documents, so the reader gets the project as it is described rather than as
     it has been corrected. The dropped roles are named in `withheld_roles`: a
     brief that is missing a layer must say which layer, or a score taken under

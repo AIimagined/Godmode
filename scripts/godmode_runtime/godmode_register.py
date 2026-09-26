@@ -103,7 +103,7 @@ DELTAS = ("added", "modified", "removed")
 
 _SUBJECT_PREFIX = "reg:"
 
-# U-E2 cross-project precedent exchange: a SEPARATE subject namespace for
+# Cross-project precedent exchange: a SEPARATE subject namespace for
 # imported records, never `reg:<domain>:<key>` itself. Keeping it a distinct
 # prefix is what makes "foreign never joins conflict detection against local
 # records" true for free - `_domain_records()`/`conflict_findings()` only
@@ -378,7 +378,7 @@ def rejected_precedents(archive: Chronicle) -> list[dict[str, Any]]:
 
 
 # --------------------------------------------------------------------------
-# U-E2: cross-project precedent exchange (opt-in, file-carried).
+# Cross-project precedent exchange (opt-in, file-carried).
 #
 # The transport is the file itself, carried by the operator - no network, no
 # daemon, no shared mutable state. `export_precedents()` turns one project's
@@ -436,7 +436,7 @@ def _genesis_hash(archive: Chronicle) -> str:
 
 
 def origin_fingerprint(archive: Chronicle) -> str:
-    """sha256(project-root basename + archive genesis hash)[:16] - U-E2's origin id.
+    """sha256(project-root basename + archive genesis hash)[:16] - the cross-project origin id.
 
     Two ingredients on purpose: the basename alone collides across projects
     with the same folder name (every fresh checkout named the same way), and

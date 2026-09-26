@@ -21,7 +21,7 @@ R-3a's fallback tiers (`godmode_reach.TIER`) are a separate, non-launcher
 concern recorded in `godmode_reach.py` next to `HOSTS`; nothing here reads
 or writes them.
 
-Task-3 review round 1 (task-3-review.md, B1/B2): the two sh-shaped halves
+The two sh-shaped halves
 used to be two independent `repr()`-embedded one-liners, and they had
 already diverged - `hooks/run-hook.sh`'s root-resolution `case` carried an
 escaped *asterisk* (`*\\*`, a no-op against a backslash path) where the
@@ -59,7 +59,7 @@ def _polyglot(raw: str) -> str:
 # `_SH_PREFACE` below - the two files need different framing here, not the
 # same words - only the executable logic in `_SH_BODY` is required to match.
 # Reproduced byte-for-byte from `hooks/run-hook.cmd` as it existed before
-# this module existed; see that file's own header for the field reports.
+# this module existed; see that file's own header for the history behind it.
 # ---------------------------------------------------------------------------
 _CMD_SH_PREFACE = """\
 # Polyglot hook launcher: one file, valid under POSIX sh AND cmd.exe.

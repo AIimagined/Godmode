@@ -1,6 +1,6 @@
 """Does this project have Godmode state at all? Answered with stats alone.
 
-Field report 2026-09-23: in a project nobody ran `godmode init` in, the
+In a project nobody ran `godmode init` in, the
 hooks still loaded the whole runtime (the archive, the classifier, the
 anchor and its git calls) only to find nothing there, and under machine
 load that pushed them past the host's timeouts until the host's own

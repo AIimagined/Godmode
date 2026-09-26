@@ -1,9 +1,9 @@
-"""NS-2 + NS-10j (0.3.28 Plan 5 Task 2): structured lessons that graduate
+"""Structured lessons that graduate
 through approval.
 
 A lesson's data schema names five fields: `root_cause`, `correction`,
 `reflection`, `guard` (stored under the archive's own long-standing
-`generalized_guard` key), `falsifier` (stored under `refuted_by`). NS-10j's
+`generalized_guard` key), `falsifier` (stored under `refuted_by`). This schema's
 rule is deliberately permissive at write time - a lesson missing any of the
 five is `status: candidate`, never refused (`normalize_lesson_write`, called
 by `remember --kind lesson` only when the caller is authoring the structured
@@ -11,8 +11,8 @@ schema at all, i.e. gave at least one of `--root-cause`/`--correction`/
 `--reflection`/`--falsifier`; a plain `--guard`-only lesson is the
 pre-existing advisory shape and is untouched by this rule).
 
-NS-10j's write-time rule STAYS opt-in, and fix round 1 (M1) is the reason
-it can: with NS-2's compile gate in place
+This schema's write-time rule STAYS opt-in, and an earlier fix is the reason
+it can: with the compile gate in place
 (`godmode_law.lesson_carries_authority`), an agent's guard never reaches
 the law without an approval, and `promote` refuses to mint that approval
 for a lesson missing any of the five fields - naming them. So the schema is
@@ -20,16 +20,16 @@ mandatory exactly where it decides something. Making it mandatory at WRITE
 time as well would force `status: candidate` onto every `--guard`-only
 enforce lesson, and `candidate` is in `LESSON_DORMANT_STATUSES`, which is
 what `Chronicle._enforced_refusal` reads - it would silently switch off
-Task 4's guards-that-execute for every lesson that predates this schema.
+the guards-that-execute mechanism for every lesson that predates this schema.
 The two divergences the review found compounded only while B1 was open;
 with B1 closed, this one is an ergonomic carve-out with a named cost.
 
 Graduating a candidate into the compiled law is a SEPARATE act, and it is
-where NS-2's refusal lives: `promote` refuses a lesson that is not fully
+where the compile gate's refusal lives: `promote` refuses a lesson that is not fully
 structured, naming exactly which fields it lacks - "never refused at
 candidate stage" describes the WRITE, not the promotion. `approve` refuses
 a promotion approved by its own promoter (actor compared by fingerprint,
-never by role label - Task 5's `agent_id()`, the same identity
+never by role label - the promoter's `agent_id()`, the same identity
 `godmode_bonds.py`'s proposer/checker separateness already compares by) or
 re-cited with the promoter's own rerun_hash (the checker merely re-cited
 the author's re-run instead of running its own). Once a promotion carries a
@@ -253,13 +253,13 @@ def shared_actor(promoter: dict[str, Any] | None, approver: dict[str, Any]) -> s
                     f"pid {entry.get('pid')})")
     return None
 
-# NS-10j's five fields, in the archive's own canonical keys. `guard` and
-# `falsifier` are NS-10j's names for the pre-existing `generalized_guard`/
+# The schema's five fields, in the archive's own canonical keys. `guard` and
+# `falsifier` are this schema's names for the pre-existing `generalized_guard`/
 # `refuted_by` keys - never a second, parallel pair of field names.
 REQUIRED_LESSON_FIELDS: tuple[str, ...] = (
     "root_cause", "correction", "reflection", "generalized_guard", "refuted_by",
 )
-# canonical archive key -> NS-10j's own name, for refusal/report text an
+# canonical archive key -> this schema's own name, for refusal/report text an
 # operator actually typed (`--falsifier`, never `refuted_by`).
 _SPEC_NAMES: dict[str, str] = {
     "root_cause": "root_cause",
@@ -271,7 +271,7 @@ _SPEC_NAMES: dict[str, str] = {
 
 _SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 
-# NS-2: the live candidate set is bounded on two axes - count and combined
+# The live candidate set is bounded on two axes - count and combined
 # text - never unbounded (an unbounded candidate set is the named failure
 # mode this guards against). `godmode_law.shelve_oldest_candidates`
 # enforces both, and `law_candidates` honours the result.
@@ -280,7 +280,7 @@ MAX_CANDIDATE_CHARS = 64_000
 
 
 def missing_structured_fields(data: dict[str, Any]) -> list[str]:
-    """Which of NS-10j's five fields `data` lacks (absent, blank, or
+    """Which of the schema's five fields `data` lacks (absent, blank, or
     non-string all count as missing), named the way the operator typed
     them (`guard`, `falsifier`), not the archive's own storage keys."""
     missing = []
@@ -292,7 +292,7 @@ def missing_structured_fields(data: dict[str, Any]) -> list[str]:
 
 
 def normalize_lesson_write(data: dict[str, Any]) -> dict[str, Any]:
-    """NS-10j: a lesson missing any structured field is `status: candidate`
+    """A lesson missing any structured field is `status: candidate`
     on write - never refused. Mutates and returns `data`. Overrides
     whatever `status` the caller asked for: an incomplete lesson claiming
     `active` status is exactly the silently-untrustworthy shape this rule
@@ -326,7 +326,7 @@ def _newest_lesson_for_subject(archive: Chronicle, subject: str) -> dict[str, An
     """The subject's CURRENT lesson record - highest sequence wins, exactly
     the fold `godmode_law._guarded_lessons` uses to decide which record IS
     the subject's state. Deliberately the same rule as the compiler's, not
-    Task 6's supersession-aware `latest_by_subject`: what `approve` must
+    the supersession-aware `latest_by_subject`: what `approve` must
     not contradict is what the law compiler will actually read."""
     newest: dict[str, Any] | None = None
     for record in archive.read_events(verify=False):
@@ -386,7 +386,7 @@ def guard_pinned_lesson(
 
 def _existing_approval(archive: Chronicle, promotion_seq: int) -> dict[str, Any] | None:
     """The first `lesson_approval` already standing against this promotion,
-    if any - NS-2 fix round 1 (M2): a promotion is approved ONCE."""
+    if any - A promotion is approved ONCE."""
     for record in archive.read_events(verify=False):
         if record.get("kind") != "lesson_approval":
             continue
@@ -400,12 +400,12 @@ def promote(
 ) -> dict[str, Any]:
     """`lessons promote <seq> --cite ... --rerun-hash <h>`: refused (naming
     the exact rule) when no lesson exists at that sequence, when it is
-    missing any of NS-10j's five structured fields (named, never merely
+    missing any of the schema's five structured fields (named, never merely
     counted), when no citation is given, or when `--rerun-hash` is not a
-    sha256 digest. Writes a `lesson_promotion`; actor is Task 5's own
+    sha256 digest. Writes a `lesson_promotion`; actor is the promoter's own
     `agent_id()` - the CLI takes no actor override.
 
-    Fix round 1 (nit 5): the lesson must still be a CANDIDATE. Promoting an
+    The lesson must still be a CANDIDATE. Promoting an
     already-active lesson granted nothing - `approve` would write a real
     `lesson_approval` and then graduate nothing, reporting
     `graduated_seq: None` - and promoting a retired one was an attempt to
@@ -477,7 +477,7 @@ def approve(archive: Chronicle, promotion_seq: int, rerun_hash: str) -> dict[str
     """`lessons approve <promotion-seq> --rerun-hash <h>`: refused (naming
     the exact rule) when no promotion exists at that sequence, when
     `--rerun-hash` is not a sha256 digest, when the approver is the same
-    actor as the promoter (compared by Task 5's fingerprint, never by role
+    actor as the promoter (compared by the caller's fingerprint, never by role
     label), or when the rerun hash equals the promotion's own (the checker
     merely re-cited the author's re-run). On success, this IS the
     graduation: a fresh `lesson` append, same subject, `status: active`,
@@ -485,14 +485,14 @@ def approve(archive: Chronicle, promotion_seq: int, rerun_hash: str) -> dict[str
     reads - the newest-per-subject dedup in `_guarded_lessons` compiles it
     from there.
 
-    Fix round 1 (M2): a promotion is approved ONCE. A second approval is
+    A promotion is approved ONCE. A second approval is
     refused by name, citing the first. Without this, one promotion minted
     as many active `lesson` records on one subject as it was approved
     times - the exact duplicate-active shape `_guarded_lessons`'s own
     2026-08-29 dedup comment records as a bug already fixed once, and the
     shape `godmode forget`'s contradiction pass exists to flag.
 
-    Fix round 1 (B2): an approval graduates the subject's CURRENT state,
+    An approval graduates the subject's CURRENT state,
     never a sequence pinned when the promotion was written. If the newest
     `lesson` record for the subject is no longer the promoted one, the
     promotion is STALE and is refused, naming what changed. Retirement is

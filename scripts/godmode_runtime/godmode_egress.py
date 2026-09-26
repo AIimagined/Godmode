@@ -458,7 +458,7 @@ def notice(action: str, purpose: str, project: Path, paths: list[str],
     }
 
 
-# What to do about each finding. R15: a finding without a remedy is malformed.
+# What to do about each finding. A finding without a remedy is malformed.
 # A scanner that reports a problem it cannot tell you how to fix trains people
 # to disable it, which is worse than not having run it.
 _REMEDIES: dict[str, str] = {

@@ -99,7 +99,7 @@ def _python_symbols(source: str) -> dict[str, list[str]] | None:
         "classes": sorted(classes),
         "functions": sorted(functions),
         "imports": sorted(set(imports)),
-        # L2 (absorbed 2026-08-27): per definition, the names it calls.
+        # Per definition, the names it calls.
         # Names only - a callee is `f` or the `attr` of `x.attr(...)`, never
         # an argument or a body. Resolution to files happens at index time,
         # where every file's definitions are known.

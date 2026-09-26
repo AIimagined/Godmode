@@ -1,4 +1,4 @@
-"""I-4: the two-reversals gate.
+"""The two-reversals gate.
 
 Doctrine already says stop after two failed fixes and go read instead of
 trying a third time blind; nothing enforced it at the one moment it would
@@ -30,7 +30,7 @@ patch or a tool outside `_EDIT_TOOL_NAMES` leaves none, and is invisible to
 this gate exactly as it is to that one; this gate refuses only what its own
 evidence shows, never what it merely suspects.
 
-**Counting rule (fix round 1, review of ac48f2d).** `red_runs` is the
+**Counting rule.** `red_runs` is the
 NEWEST pair of blocked attestations for the check, not the oldest
 (`seqs[-2:]`, not `seqs[:2]`) - the first pair taken for the life of the
 archive would let the first incident ever recorded, anywhere, with both
@@ -51,8 +51,8 @@ happened, not just that a claim was made. `now` is accepted for parity with
 the archive's other point-in-time detectors; nothing here reasons about
 wall-clock time; sequence order is the whole ordering this gate needs.
 
-**The edit count is anchored separately from the bracket (fix round 2,
-re-review of 039b35c).** Counting edits from `red_runs[0]` - the newest
+**The edit count is anchored separately from the bracket (revisited after a
+review of commit 039b35c).** Counting edits from `red_runs[0]` - the newest
 pair's own left edge - was wrong: that edge slides forward on every new red
 run, so a refused loop cleared itself the instant one more `godmode retest
 --run` came back red with no edit in between (the exact next keystroke this
@@ -97,7 +97,7 @@ _REQUIRED_REVERSALS = 2
 _REMEDY = ('godmode remember --kind incident "<what>" --repro "<failing cmd>" '
            '--hypothesis "..." --refuted-by "<cmd>"')
 
-# Fix round 1, S1: `_retest_module_names` used to be its own copy here,
+# `_retest_module_names` used to be its own copy here,
 # wrapping `path` in a one-element list; now a thin call to the one shared
 # `godmode_retest.retest_module_names`, the same helper `godmode_closure`
 # and `godmode_graph` call, so the file->module bridge cannot drift into
@@ -200,8 +200,8 @@ def _lifting_incident_sequences(records: list[dict[str, Any]]) -> list[int]:
 
 def _loop_anchor(seqs: list[int], lifting_incidents: list[int]) -> int:
     """The oldest blocked run in `seqs` (ascending) not preceded by a
-    lifting incident - fix round 2 (re-review of 039b35c, required finding
-    1). Each lifting incident moves the anchor forward to the first red run
+    lifting incident - revisited after a review of commit 039b35c. Each
+    lifting incident moves the anchor forward to the first red run
     after it, once: an incident with nothing red after it yet changes
     nothing (there is no fresh loop to anchor to), and an incident that
     already moved the anchor past some red run never moves it BACKWARD for
@@ -261,7 +261,7 @@ def third_edit_without_incident(
             # red/edit/red/edit loop always re-arms the gate on its own.
             red_runs = seqs[-_REQUIRED_REVERSALS:]
             # Bound explicitly here, not read back below as the loop
-            # variable `seqs` (fix round 3, observation) - correct today
+            # variable `seqs` - correct today
             # only because the loop always `break`s right after this, but
             # binding it beside `red_runs` makes that safe by construction
             # instead of by every no-break path returning first.
@@ -271,8 +271,8 @@ def third_edit_without_incident(
         return None
     all_edits = _edit_sequences(records, normalized)
     # The bracket the brief names: at least one edit strictly BETWEEN some
-    # consecutive pair of this check's blocked runs (fix round 3, required
-    # finding N-1) - checked against EVERY consecutive pair in `window`,
+    # consecutive pair of this check's blocked runs - checked against EVERY
+    # consecutive pair in `window`,
     # not only the newest pair `red_runs`. Bracketing only `red_runs` let
     # two red runs land back to back with nothing edited between THEM
     # clear a live refusal and disarm the gate for the rest of the round,
@@ -290,9 +290,9 @@ def third_edit_without_incident(
     if not between:
         return None
     # The edit count anchors at the oldest red run of THIS check not
-    # preceded by a lifting incident (fix round 2, required finding 1) -
+    # preceded by a lifting incident -
     # separate from `red_runs`, which stays the newest pair for the
-    # incident cutoff below. Anchoring at `red_runs[0]` instead (round 1's
+    # incident cutoff below. Anchoring at `red_runs[0]` instead (an earlier
     # mistake) slid the count forward on every new red run, so a live
     # refusal cleared itself with one more retest and the disciplined
     # edit/retest/edit/retest loop could never trip it at all.

@@ -40,7 +40,7 @@ from .godmode_errors import ArchiveError
 
 KindInvariant = Callable[[dict[str, Any]], None]
 
-# Fix round 1, C1(b) (Critical): the absolute ceiling a `hook-interception-
+# The absolute ceiling a `hook-interception-
 # proof` record's `expiry` may claim, checked here at APPEND time (the
 # normal-write path's outright refusal) - `godmode_hookproof.py` checks the
 # SAME literal, independently, at GRADING time (`_expiry_out_of_bounds`),
@@ -64,14 +64,14 @@ _TOOL_ERROR_ACK = re.compile(r"^acknowledged-remediated$|^acknowledged-deferred:
 
 
 def _verdict_invariants(data: dict[str, Any]) -> None:
-    """U-V1's forbidden combinations, extended by U-E4's panel fold - never a
+    """The forbidden combinations below, extended by a panel-fold check - never a
     disposition worth of trust the record's own detail contradicts.
 
     Drive-vs-acquit: a self-acquitted "confirmed" would let an agent grade
     its own quality as verified; only an independent checker may do that.
     Terminated-vs-truncated: a "confirmed" on a truncated (budget/timeout
     cutoff) run would let exhaustion impersonate completion.
-    Fold-vs-check (U-E4): a "confirmed" fold whose own `checks` list carries
+    Fold-vs-check: a "confirmed" fold whose own `checks` list carries
     a checker that came back `refuted` is not confirmed, it is a fold that
     buried a dissent - that combination is `contested` or nothing, never
     `confirmed`. A raw append that hand-builds a `checks` list is held to
@@ -87,7 +87,7 @@ def _verdict_invariants(data: dict[str, Any]) -> None:
     no tool declared, or a declared tool's pattern never matched) costs
     this check nothing - it is skipped entirely.
     """
-    # N-11 (final review S1): the witness/checker self-reference rule is
+    # The witness/checker self-reference rule is
     # checked UNCONDITIONALLY, above the `disposition != "confirmed"` early
     # return below - `godmode_verdict.record_verdict` applies this same rule
     # unconditionally too, and for the same reason its own comment gives: an
@@ -144,7 +144,7 @@ def _verdict_invariants(data: dict[str, Any]) -> None:
                 "<reason>' - a raw append is held to the same rule "
                 "record_verdict enforces"
             )
-    # N-11: the record is the single source of truth; these are the raw-append
+    # The record is the single source of truth; these are the raw-append
     # copies of the three rules `godmode_verdict.record_verdict` enforces on the
     # normal path. Checkable from `data` alone because `_append_verdict`
     # denormalises `not_checked`/`criteria` and the witness ref into the record.
@@ -253,7 +253,7 @@ def _register_invariants(data: dict[str, Any]) -> None:
         )
 
 
-# NS-11c: the semantic layer's ontology for a `decision` - subject, value,
+# The semantic layer's ontology for a `decision` - subject, value,
 # evidence - checked the same way `_register_invariants` above already
 # checks a register-shaped one: from `data` alone, because `Chronicle.
 # append()` calls a kind's validator with `data` only, never the separate
@@ -280,15 +280,15 @@ def _register_invariants(data: dict[str, Any]) -> None:
 # memory contract's semantic-fact shape opts in by setting it, and gets
 # refused with a named remedy the moment it does so incompletely.
 #
-# Fix round 1, M1 - what this comment used to claim, and no longer does:
-# that the label subject is "unsuitable for the contradiction-detection
-# grouping NS-11e/Task 7 needs". Task 7 has since landed and
+# This comment previously claimed that the label subject is
+# "unsuitable for the contradiction-detection grouping the semantic-fact
+# work needs". That grouping work has since landed, and
 # `godmode_forget._flag_contradictions` groups by exactly that label
 # subject. The honest statement of where this stands: the opt-in key has no
 # writer, so the ontology is unreached rather than bypassable, and the
 # consumer this comment named consumes the other subject. Deciding whether
 # it becomes mandatory (behind a compatibility shim for the ~20 existing
-# writers) or is dropped is carried to 0.3.29; nothing here should be read
+# writers) or is dropped is left for 0.3.29; nothing here should be read
 # as a claim that another module is already using it.
 _SEMANTIC_DECISION_FIELDS = ("subject", "value", "evidence")
 
@@ -313,8 +313,8 @@ def _semantic_decision_invariants(data: dict[str, Any]) -> None:
 def _decision_invariants(data: dict[str, Any]) -> None:
     """Dispatcher for the `decision` kind: register-shaped records keep
     `_register_invariants`'s existing rule unchanged; every decision (
-    register-shaped or not) also passes through the NS-11c semantic-fact
-    check, which is a no-op unless the record opts in (see above)."""
+    register-shaped or not) also passes through the semantic-fact
+    check above, which is a no-op unless the record opts in."""
     _register_invariants(data)
     _semantic_decision_invariants(data)
 
@@ -377,7 +377,7 @@ def _upstream_diff_invariants(data: dict[str, Any]) -> None:
 
 
 def _lesson_invariants(data: dict[str, Any]) -> None:
-    """I-1 (0.3.28 Plan 5 Task 4): a lesson's `enforce` field, when present,
+    """A lesson's `enforce` field, when present,
     must already be the parsed `{kind, predicate}` shape - never a raw
     `--enforce` string that slipped past `godmode_law.parse_enforce_spec`.
     Re-validates `predicate` against the same grammar `parse_enforce_spec`
@@ -398,7 +398,7 @@ def _lesson_invariants(data: dict[str, Any]) -> None:
             f"a lesson's enforce.kind {kind!r} is not a recognised record kind")
     from .godmode_law import ENFORCE_FORBIDDEN_KINDS
     if kind in ENFORCE_FORBIDDEN_KINDS:
-        # I-1 fix round 1 (Blocking 3): same defence-in-depth this module
+        # Same defence-in-depth this module
         # already applies to the predicate grammar below - a raw
         # `Chronicle.append` that built the dict by hand, bypassing
         # `godmode_law.parse_enforce_spec`, is refused here too.
@@ -448,7 +448,7 @@ def _pin_invariants(data: dict[str, Any]) -> None:
 
 
 def _pattern_invariants(data: dict[str, Any]) -> None:
-    """NS-12e: a `pattern` record with no class or no occurrence enforces
+    """A `pattern` record with no class or no occurrence enforces
     nothing while claiming to track a recurring failure - the same
     defense-in-depth `_pin_invariants` above applies to a pin with no
     digest, held here against a raw append that bypasses
@@ -484,7 +484,7 @@ def _pattern_invariants(data: dict[str, Any]) -> None:
 
 
 def _improvement_proposal_invariants(data: dict[str, Any]) -> None:
-    """NS-4 (0.3.28 Plan 5 Task 3): an `improvement_proposal` with no target,
+    """An `improvement_proposal` with no target,
     no diff, no citation, or no named actor enforces nothing while claiming
     to propose a change - the same defense-in-depth `_pattern_invariants`
     above applies to a pattern with no occurrence, held here against a raw
@@ -521,14 +521,14 @@ def _improvement_proposal_invariants(data: dict[str, Any]) -> None:
 
 
 def _checker_bond_invariants(data: dict[str, Any]) -> None:
-    """NS-4: a `checker_bond` with no session, no actor, no target, no
+    """A `checker_bond` with no session, no actor, no target, no
     bad-case hash, or a non-boolean `failed_as_expected` enforces nothing
     while claiming to prove a checker can fail - `ratify` reads
     `failed_as_expected` as a trilean-shaped fact (a rubber stamp reads
     exactly like a missing bond otherwise), so it is checked here, not
     merely at the console seam.
 
-    Fix round 1 (S6): `target` is required too - the file the bond's
+    `target` is required too - the file the bond's
     planted bad case actually broke, so `ratify` can bind a bond to the
     SAME file its proposal names, never a throwaway fixture with nothing
     to do with the proposal under review.
@@ -556,7 +556,7 @@ def _checker_bond_invariants(data: dict[str, Any]) -> None:
 
 
 def _improvement_verdict_invariants(data: dict[str, Any]) -> None:
-    """NS-4: an `improvement_verdict` is valid only chained after a real
+    """An `improvement_verdict` is valid only chained after a real
     proposal and a real bond - `proposal_seq`/`bond_seq` must be positive
     sequence numbers (never a placeholder like 0 or -1), `actor` must name
     who ratified, and today's only legal `verdict` is "ratified" (a refusal
@@ -583,7 +583,7 @@ def _improvement_verdict_invariants(data: dict[str, Any]) -> None:
 
 
 def _lesson_promotion_invariants(data: dict[str, Any]) -> None:
-    """NS-2 (0.3.28 Plan 5 Task 2): a `lesson_promotion` with no lesson_seq,
+    """A `lesson_promotion` with no lesson_seq,
     no actor, no citation, or no rerun_hash enforces nothing while claiming
     to promote a structured lesson - the same defense-in-depth
     `_improvement_proposal_invariants` above applies to a proposal with a
@@ -615,7 +615,7 @@ def _lesson_promotion_invariants(data: dict[str, Any]) -> None:
 
 
 def _lesson_approval_invariants(data: dict[str, Any]) -> None:
-    """NS-2: a `lesson_approval` with no promotion_seq, no actor, or no
+    """A `lesson_approval` with no promotion_seq, no actor, or no
     rerun_hash enforces nothing while claiming to approve a promotion -
     same defense-in-depth as `_lesson_promotion_invariants` above.
     """
@@ -635,7 +635,7 @@ def _lesson_approval_invariants(data: dict[str, Any]) -> None:
 
 
 def _lesson_candidate_invariants(data: dict[str, Any]) -> None:
-    """NS-2: the candidate shelf note (`godmode_law.
+    """The candidate shelf note (`godmode_law.
     shelve_oldest_candidates`) - a note with no shelved sequence or no
     reason enforces nothing while claiming one of the live candidates was
     taken out of the live set.
@@ -657,7 +657,7 @@ def _lesson_candidate_invariants(data: dict[str, Any]) -> None:
 
 
 def _hypothesis_invariants(data: dict[str, Any]) -> None:
-    """NS-13f: a `hypothesis` names its cause and a kill experiment, and its
+    """A `hypothesis` names its cause and a kill experiment, and its
     status agrees with what that experiment did - `killed` only when it ran
     and fired, `survived` only when it ran and did not. Held here as well as
     in `godmode_hypothesis` so a raw append cannot mint a survivor a fix
@@ -700,11 +700,11 @@ def _hypothesis_invariants(data: dict[str, Any]) -> None:
 
 
 def _skill_impact_invariants(data: dict[str, Any]) -> None:
-    """NS-12a + NS-12d (0.3.28 Plan 5 Task 9): a `skill_impact` with no
+    """A `skill_impact` with no
     target, no valid diff digest, a non-numeric score, or an outcome
     outside {accepted, rejected} enforces nothing while claiming the
     strict-improvement gate ran - the same defense-in-depth every other
-    NS-4/NS-12 kind above holds against a raw append bypassing
+    structured-fact kind above holds against a raw append bypassing
     `godmode_skillimpact.record_impact`'s own checks.
     """
     target = data.get("target")
@@ -745,7 +745,7 @@ def _skill_impact_invariants(data: dict[str, Any]) -> None:
 
 
 def _action_invariants(data: dict[str, Any]) -> None:
-    """CX-1: only the `hook-interception-proof` shape is checked here.
+    """Only the `hook-interception-proof` shape is checked here.
 
     `action` is the busiest kind in the archive - deletion-prechecks,
     license-checks, experiment cycles, pin/unpin all use it with entirely
@@ -797,7 +797,7 @@ def _action_invariants(data: dict[str, Any]) -> None:
                 "an archived proof with a blank field enforces nothing while "
                 "claiming to"
             )
-    # CX-5: enrichment fields are OPTIONAL (a pre-CX-5 minimal record must
+    # Enrichment fields are OPTIONAL (a pre-CX-5 minimal record must
     # still validate - see godmode_hookproof.py's own backward-compatibility
     # note) - so nothing here is required. When one IS present, though, its
     # SHAPE is checked, additively, alongside the CX-1 checks above rather
@@ -819,7 +819,7 @@ def _action_invariants(data: dict[str, Any]) -> None:
             "a hook-interception-proof record's 'host_acknowledgement', when present, "
             "must be a boolean or null"
         )
-    # Fix round 1, C1(b) (Critical): the reviewer's live repro minted a
+    # The reviewer's live repro minted a
     # record claiming `expiry: "9999-12-31T23:59:59+00:00"` - nothing
     # anywhere bounded how far into the future an `expiry` may plausibly
     # sit. Refused here, at append time, for the normal write path;
@@ -853,7 +853,7 @@ def _action_invariants(data: dict[str, Any]) -> None:
 
 _SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 
-# NS-1 (0.3.28 Plan 5 Task 1): the named halt reasons a `loop_halt` record
+# The named halt reasons a `loop_halt` record
 # may carry. Hand-copied, not imported, from
 # `godmode_looprecords.py` - this module stays dependency-free of every
 # archive-owning module on purpose (see the module docstring above), the
@@ -870,7 +870,7 @@ LOOP_HALT_REASONS = frozenset(
 
 
 def _loop_step_invariants(data: dict[str, Any]) -> None:
-    """NS-1: a `loop_step` record with no task, no positive attempt number,
+    """A `loop_step` record with no task, no positive attempt number,
     no sha256-shaped signature, or a malformed budget enforces nothing
     while claiming to gate a retry - the same defense-in-depth
     `_pattern_invariants` above applies to a pattern with no occurrence,
@@ -903,7 +903,7 @@ def _loop_step_invariants(data: dict[str, Any]) -> None:
 
 
 def _loop_halt_invariants(data: dict[str, Any]) -> None:
-    """NS-1: a `loop_halt` record's 'reason' must be one this runtime
+    """A `loop_halt` record's 'reason' must be one this runtime
     actually names, and its 'signatures' must match what that reason
     implies - three identical sha256 digests for a repeated-signature
     halt (the whole point of the record), none at all for a budget halt
@@ -935,7 +935,7 @@ def _loop_halt_invariants(data: dict[str, Any]) -> None:
         )
 
 
-# NS-11e fix round 1 (review B, B4): the closed status vocabulary for a
+# The closed status vocabulary for a
 # `review` record. Kept here, beside the validator that enforces it, and
 # re-exported through `godmode_forget` for the pass that writes them;
 # `godmode_chronicle.REVIEW_CLOSING_STATUSES` is the subset the
@@ -944,7 +944,7 @@ REVIEW_STATUSES = frozenset({"open", "acknowledged", "dismissed"})
 
 
 def _review_invariants(data: dict[str, Any]) -> None:
-    """NS-11e (0.3.28 Plan 5 Task 7): `godmode forget`'s contradiction pass
+    """`godmode forget`'s contradiction pass
     writes a `review` record naming which two (or more) active records on
     one subject disagree - never which one is right, only that both are
     still standing. A `review` with fewer than two sequences, or with a
@@ -960,7 +960,7 @@ def _review_invariants(data: dict[str, Any]) -> None:
     the full closed-vocabulary check is `godmode_forget`'s own layer, the
     same split `_pattern_invariants` draws for its own `class` field.
 
-    Fix round 1 (review B, B4): `status` is required, and closed to
+    `status` is required, and closed to
     `open` / `acknowledged` / `dismissed`. A flagged contradiction an
     operator has deliberately accepted (`acknowledged`) or judged not to be
     one (`dismissed`) must be able to STAY that way - without a status

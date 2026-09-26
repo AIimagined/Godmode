@@ -1,4 +1,4 @@
-"""ROI report - counts-only, no causal language (U-E1).
+"""ROI report - counts-only, no causal language.
 
 The measurement loop closed: burn (`metric` records, C-79/U-T1) reported
 beside gate activity, verdict dispositions (U-V1), precedent hits, and fence
@@ -37,7 +37,7 @@ source count what is actually in the archive - zero, honestly, rather than a
 number nothing produced. The same discipline covers
 `verdicts.contested`: the `verdict` disposition vocabulary
 (`godmode_verdict.DISPOSITIONS`) does not include `"contested"` yet - a
-future verdict-panel unit (U-E4) may ship it - so this report counts
+future verdict-panel unit may ship it - so this report counts
 `disposition == "contested"` where it finds it and reports 0 where it does
 not, rather than raising on a disposition that has not shipped.
 
@@ -85,7 +85,7 @@ OBSERVE_PROMOTION_THRESHOLD = 3
 _WOULD_HAVE_TIERS = ("r2", "r3", "r4", "r5")
 
 # The categories an `ask_only` proposal always keeps: the ones whose
-# operation cannot be undone by the next command. Field report 2026-08-27:
+# operation cannot be undone by the next command. Seen in practice, 2026-08-27:
 # in one observed session these were 13 of 304 asks, and they sat in the
 # same bucket as 137 inline interpreter runs. Any category that produced
 # an R4/R5 event joins them in the proposal; nothing else does.
@@ -175,7 +175,7 @@ def roi_report(archive: Chronicle, sessions: int | None = None) -> dict[str, Any
             session_count += 1
 
         elif kind == "refusal":
-            # U-E7: a refusal carrying `observed: True` was written under
+            # A refusal carrying `observed: True` was written under
             # gate_mode=observe - the call was NEVER actually denied, only
             # classified as though it would have been. Folding it into
             # `gate.denied` here would misreport a hypothetical as a real
@@ -334,7 +334,7 @@ def render_roi(report: dict[str, Any]) -> str:
 
 
 def roi_digest(archive: Chronicle, sessions: int | None = None) -> dict[str, Any]:
-    """U-E7: the would-have-caught view over gate_mode=observe records only.
+    """The would-have-caught view over gate_mode=observe records only.
 
     Folds ONLY `kind="refusal"` records carrying `observed: True` - the
     advisory record `hooks/godmode_session_hook.py`'s `_apply_observe_mode`
@@ -406,7 +406,7 @@ def would_have_summary(archive: Chronicle) -> dict[str, Any]:
     only, never a record's free-text fields. Zero is a real answer - the
     caller renders `total: 0` as an explicit statement, because absence of
     signal stated is the whole point of B4-10 (observe mode that is silent
-    is a mute button, not a trial). S-3: counts every refusal on record.
+    is a mute button, not a trial). Counts every refusal on record.
     The old `select(kind="refusal", limit=500)` saved nothing - `select`
     reads the whole archive before it clamps - and turned a long trial's
     total into a flat 500.
@@ -447,7 +447,7 @@ def enforce_digest(archive: Chronicle) -> dict[str, Any] | None:
     for record in archive.read_events():
         data = record.get("data") or {}
         if record.get("kind") == "refusal" and not data.get("observed"):
-            # Grok 0.3.4 field report: the first live Grok project held 16
+            # Grok 0.3.4, seen in practice: the first live Grok project held 16
             # real denials and this section stayed None, because a no-ask
             # host folds every would-ask into a DENY - refusal records ARE
             # that host's enforce-era evidence. R2/R3-tier refusals are

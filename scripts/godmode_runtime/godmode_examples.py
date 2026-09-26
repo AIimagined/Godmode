@@ -1,4 +1,4 @@
-"""C-24: worked examples as a reproducible fixture corpus.
+"""Worked examples as a reproducible fixture corpus.
 
 `docs/DEMO.md` pins its commands against the parser, which proves a
 command exists and nothing about what it returns. An example here names a

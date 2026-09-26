@@ -41,15 +41,15 @@ MASKS: dict[str, tuple[str, ...]] = {
     "receipt": ("source", "path", "lines", "digest"),
     "decision": ("status",),
     "differential": ("subject", "method"),
-    # `actor` included (fix round 1, N3): the whole proposer/checker
+    # `actor` included: the whole proposer/checker
     # separateness rule ratify enforces turns on this field, and it was
     # invisible in a compressed brief before this.
     "improvement_proposal": ("target", "diff_hash", "actor"),
     "improvement_verdict": ("proposal_seq", "verdict", "bond_seq"),
-    # NS-12a + NS-12d (Task 9): the whole point of a compressed view here is
+    # The whole point of a compressed view here is
     # the verdict and the numbers it turned on, never the full patterns list.
     "skill_impact": ("target", "outcome", "score_before", "score_after"),
-    # NS-13f: the cause and where it stands; the kill command stays masked.
+    # The cause and where it stands; the kill command stays masked.
     "hypothesis": ("cause", "status", "of"),
     # `graph_edge` is never a written kind (`godmode_graph.py`'s own
     # `archive.append("graph_edge", ...)` in `_self_check` exists only to
@@ -64,17 +64,17 @@ MASKS: dict[str, tuple[str, ...]] = {
     "inventory": ("files", "captured_at"),
     "invariant": ("status",),
     "lesson": ("status", "generalized_guard"),
-    # NS-2 + NS-10j (0.3.28 Plan 5 Task 2): the separateness fields
+    # The separateness fields
     # `law compile`'s chained-approval check turns on - the same reasoning
     # `improvement_proposal`'s own `actor` inclusion above gives.
     "lesson_promotion": ("lesson_seq", "actor", "rerun_hash"),
     "lesson_approval": ("promotion_seq", "actor", "rerun_hash"),
-    # Fix round 1 (nit 6): the COUNT, never the list. A shelf note can
+    # The COUNT, never the list. A shelf note can
     # name up to MAX_CANDIDATES sequences, and `compress_record` applies no
     # per-value cap - the whole list would have entered the brief verbatim,
     # from the one kind whose entire job is bounding something.
     "lesson_candidate": ("archived_count", "reason"),
-    # NS-1: the signature and remaining budget are the whole point of a
+    # The signature and remaining budget are the whole point of a
     # compressed view - a reader deciding whether a loop is stuck needs
     # the hash and the budget, never the full failing-test-id list.
     "loop_step": ("task", "attempt_n", "failure_signature_hash"),
@@ -89,7 +89,7 @@ MASKS: dict[str, tuple[str, ...]] = {
     "plan": ("state",),
     "refusal": ("tool", "tier", "category"),
     "request": ("digest", "status", "session"),
-    # NS-11e (0.3.28 Plan 5 Task 7): the two fields that ARE the finding -
+    # The two fields that ARE the finding -
     # which kind disagrees and which sequences to open, never `reason`
     # (free text, read from the raw record when a reader wants it).
     "review": ("kind", "sequences"),

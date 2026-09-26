@@ -5,13 +5,13 @@ passes isolated is reported as retried, never silently; an unregistered
 failure, or a registered one that also fails isolated, fails the run.
 Usage: python scripts/dev/run_with_flaky_retry.py tests.test_a tests.test_b
 
-NS-8o: every isolated rerun is recorded through the runtime archive when
+Every isolated rerun is recorded through the runtime archive when
 one is present, so `trends` can rank flakes by frequency and the preflight
 can flag a flake retried three or more times that carries no lesson - the
 lesson-or-leave rule: a frequent flake either gains a lesson cite in
 `tests/KNOWN-FLAKY.txt`, or the entry is removed.
 
-NS-10c: a circuit breaker sits in front of the retry itself. An id that
+A circuit breaker sits in front of the retry itself. An id that
 has failed isolated `n` times inside a window is parked - skipped
 entirely, never retried again - until `cooldown_hours` past the park
 elapses, so a chronically-failing id stops burning a fresh isolated
@@ -56,7 +56,7 @@ def _open_archive():
 
 
 def _record_retry(test_id: str, outcome: str) -> None:
-    """NS-8o: record one isolated rerun through the runtime archive.
+    """Record one isolated rerun through the runtime archive.
     Silent no-op when the runtime cannot be imported or no archive exists:
     this runner's own bookkeeping must never fail a test run.
     """
@@ -72,7 +72,7 @@ def _record_retry(test_id: str, outcome: str) -> None:
 
 
 def _breaker_state(test_id: str):
-    """NS-10c: the id's current trip/cooldown state, or `None` when no
+    """The id's current trip/cooldown state, or `None` when no
     archive is available - treated by every caller as "closed" (retry
     proceeds as before). This runner's own bookkeeping must never fail a
     test run."""
@@ -88,7 +88,7 @@ def _breaker_state(test_id: str):
 
 
 def _record_flake_parked(test_id: str, reason: str) -> None:
-    """NS-10c: record the breaker tripping, once, the run it is observed."""
+    """Record the breaker tripping, once, the run it is observed."""
     try:
         archive = _open_archive()
         if archive is None:
@@ -101,7 +101,7 @@ def _record_flake_parked(test_id: str, reason: str) -> None:
 
 
 def _record_flake_readmitted(test_id: str) -> None:
-    """NS-10c: record cooldown having elapsed, once, the run it is observed."""
+    """Record cooldown having elapsed, once, the run it is observed."""
     try:
         archive = _open_archive()
         if archive is None:

@@ -258,7 +258,7 @@ def _loosening(old: str, new: str) -> str | None:
     new_exact = new_method in _EXACT or (new_method == "assert" and "==" in new)
     if old_exact and not new_exact:
         return f"exact check loosened: {old.strip()} -> {new.strip()}"
-    # S-6: an exact check whose expected value changed (`assertEqual(len(x),
+    # An exact check whose expected value changed (`assertEqual(len(x),
     # 3)` -> `2`) is a changed expectation at the same strength, not a
     # reduced bound; `len(`/`count` in its text used to read it as one.
     if _shape(old) == _shape(new) and not (old_exact and new_exact):
@@ -291,7 +291,7 @@ def _names_code(source: str, path: str) -> bool:
     word = re.compile(rf"(?<![\w-]){re.escape(stem)}(?![\w-])")
     if re.search(rf"(?<![\w-]){re.escape(p.name)}(?![\w-])", source) and p.stem == stem:
         return True
-    # S-6: a comment is not an import. `_IMPORT_LINE`'s `from "..."` and
+    # A comment is not an import. `_IMPORT_LINE`'s `from "..."` and
     # `require(` arms match anywhere in a line, so a comment such as
     # `# totals come from "billing"` used to link the test by its stem.
     return any(_IMPORT_LINE.match(line) and word.search(line)

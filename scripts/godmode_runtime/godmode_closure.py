@@ -1,4 +1,4 @@
-"""I-6: closure attestation before commit.
+"""Closure attestation before commit.
 
 `atlas closure <files>` (`godmode_atlas.unfollowed_dependents`) already answers
 "what depends on this and was not itself touched" - a report a reader has to
@@ -18,25 +18,24 @@ symbols and edges - closure is a claim about a dependency graph, and a
 graph has nothing to say about a file it never put a node on. This project's
 own indexed code is Python under `scripts/`, `hooks/`, `tests/`; nothing else
 here has a closure to check. A staged doc, changelog fragment, fixture, or
-JSON table is exempt, not overlooked. A staged DELETION is exempt too (fix
-round 1, S4): a file that no longer exists has no closure of its own to
+JSON table is exempt, not overlooked. A staged DELETION is exempt too: a file that no longer exists has no closure of its own to
 attest, and its dependents are what `unfollowed_dependents` already answers
 for the surviving staged files.
 
 **"Citing the file."** A `retest:*` attestation (`godmode_attest.run_check`,
 called from `cmd_retest`) stores the module list it ran structurally
-(`data["modules"]`, fix round 1 S1) whenever its caller supplies one; the
+ whenever its caller supplies one; the
 one evidence entry, `cmd:<command line>`, is truncated at 160 characters and
 is read only as a fallback for an older record with no `modules` field. The
 link back to a source file is: which test files pin it
 (`godmode_retest.pinning_tests`) or pin a dependent of it
 (`godmode_atlas.unfollowed_dependents`, depth 1) - a retest attestation whose
 module set (structural, or tokenised from the citation) intersects those
-test modules AS WHOLE NAMES (fix round 1, S2 - never a substring test, which
+test modules AS WHOLE NAMES (never a substring test, which
 let a retest of `tests.test_atlas` count as a retest of `tests.test_atlas_
 registry`) counts as covering the file.
 
-**Uncovered files (fix round 1, S3, coordinator ruling).** A file no test
+**Uncovered files.** A file no test
 pins at all - directly or through a dependent - cannot be cleared by
 `retest --run`: there is nothing for it to run. Refusing such a file under
 the "stale" remedy ("run `godmode retest --run`") is a dead end, so it is
@@ -48,7 +47,7 @@ only for the tool names its own `_EDIT_TOOL_NAMES` matches - a git-applied
 patch or an edit made outside that tool surface leaves no such record. Ruled
 here (not assumed): a staged file with no `edit-recorded` at all still needs
 a retest UNLESS its staged content is provably the same content a green
-retest already covered. Fix round 2 (D5): the preferred proof is a
+retest already covered. The preferred proof is a
 per-path blob hash `godmode_attest.run_check` records (`blob_paths=`,
 threaded from `cmd_retest`, `git hash-object` at the moment the retest ran)
 - this fires even on the dirty tree the normal edit-then-retest-then-commit
@@ -83,27 +82,27 @@ from .godmode_retest import cited_modules, retest_module_names
 # language `godmode_atlas.build` can parse in general. Only Python under
 # these three trees has symbols, edges, or a closure to check here.
 _CLOSURE_ROOTS = ("scripts/", "hooks/", "tests/")
-# Fix round 2 (D2i): the same three trees, as bare directory names rather
+# The same three trees, as bare directory names rather
 # than path-prefix strings, for `godmode_atlas.build`'s own `roots=`
 # parameter - this caller never needs anything outside them, so the walk
 # itself is scoped down rather than filtered down after the fact.
 _CLOSURE_ROOT_DIRS = tuple(root.rstrip("/") for root in _CLOSURE_ROOTS)
 
-# S5 (fix round 1): the conventional location a project keeps a saved atlas
+# The conventional location a project keeps a saved atlas
 # index at, so this check can use it without any wiring beyond `godmode
 # atlas save --to .godmode-atlas-index.json` kept up to date. Purely a
 # convention this module reads - `godmode_atlas.save_index`/`load_index`
-# take an arbitrary path and know nothing about this name. Fix round 2
-# (D2): also wired to write itself, via `refresh_atlas_index` below, called
+# take an arbitrary path and know nothing about this name.
+# Also wired to write itself, via `refresh_atlas_index` below, called
 # from `cmd_retest` after a successful `--run`.
 _ATLAS_INDEX_FILENAME = ".godmode-atlas-index.json"
 
 # A rebuild this check falls back to (no fresh saved index) is bounded so an
 # unreadable or enormous repository fails within seconds, with a stated gap,
 # never five minutes of silence (`godmode_atlas.build`'s own docstring names
-# that exact failure mode). Fix round 3 (coordinator ruling, re-review 2):
-# round 2's 60s comment cited a 13.07s/8.68s figure measured on a WARM
-# fix-round-2 worktree; the re-review measured the same closure-scoped build
+# that exact failure mode). An earlier 60s budget
+# cited a 13.07s/8.68s figure measured on a WARM
+# worktree; a later measurement took the same closure-scoped build
 # on this repository's own MAIN WORKING CHECKOUT, cold-process each time
 # (a pre-commit hook is always a fresh process): 52.10s, 56.77s (94.6% of
 # the old 60s budget), 41.54s - the two checkouts differ by two files and
@@ -131,7 +130,7 @@ def staged_name_status(project: Path) -> list[tuple[str, str]] | None:
     _staged_paths` already established for `--name-only`; this is the same
     rule for the richer `--name-status` read both that function and this
     module's own `closure_survey` now share - ONE git call, not two
-    independently-timed readings of the index (fix round 1, Q2)).
+    independently-timed readings of the index).
     """
     raw = run_git(project, "diff", "--cached", "--name-status")
     if raw is None:
@@ -166,7 +165,7 @@ def _last_edit_sequence(records: list[dict[str, Any]], path: str) -> int | None:
     return last
 
 
-# Fix round 1, S1: `_retest_module_names`/`_cited_modules` used to live
+# `_retest_module_names`/`_cited_modules` used to live
 # here as their own definitions; both are now `godmode_retest.
 # retest_module_names`/`cited_modules`, imported above - one shared home
 # so `godmode_graph` and `godmode_reversals` read exactly this file->module
@@ -216,13 +215,13 @@ def _unattested_but_unchanged(
     """Whether a green retest with no `edit-recorded` for `path` still
     covers it.
 
-    Fix round 2 (D5, re-review): in the NORMAL flow - edit outside the
+    In the NORMAL flow - edit outside the
     tracked-tool surface, `retest --run`, stage, commit - the tree is dirty
     at retest time BY CONSTRUCTION (the very edit being retested is still
-    uncommitted), so round 1's `dirty == 0` requirement could never fire
+    uncommitted), so a `dirty == 0` requirement could never fire
     for the file actually being committed; that made this escape real only
     in a scenario nobody hits. Preferred proof now: `green_worktree["blobs"]`
-    (fix round 2 - `godmode_attest.run_check`'s `blob_paths=`, threaded from
+    (`godmode_attest.run_check`'s `blob_paths=`, threaded from
     `cmd_retest`, hashes each module's pinned SOURCE file via `git
     hash-object` at the moment the retest actually ran, whatever the
     tree's overall dirty count) carries a recorded hash for `path` - if the
@@ -256,7 +255,7 @@ def _atlas_for_closure(project: Path) -> Atlas:
     (bounded by `_ATLAS_BUDGET_SECONDS`, scoped to `_CLOSURE_ROOT_DIRS`)
     otherwise.
 
-    Fix round 2 (D1, re-review): "fully fresh" is `not report["stale"] and
+    "fully fresh" is `not report["stale"] and
     not report["missing"]` - NEVER `report["confidence"] == 1.0`, which is
     `round(len(fresh) / total, 2)` and reads 1.0 for anything at or above
     99.5% fresh. On this repository's own ~518 tracked files that rounds
@@ -267,12 +266,12 @@ def _atlas_for_closure(project: Path) -> Atlas:
     ['scripts/m000.py']` - the rounded check rehydrated a graph that could
     not see that file's new import.
 
-    D2i: bounded to `_CLOSURE_ROOT_DIRS` (`scripts/`, `hooks/`, `tests/`) -
+    Bounded to `_CLOSURE_ROOT_DIRS` (`scripts/`, `hooks/`, `tests/`) -
     the only trees this check's own `_is_closure_checked` ever asks about -
     rather than the whole project, cutting both the walk and the risk of
     tripping the budget.
 
-    Fix round 3 (N1, re-review 2): an index with ZERO stored files
+    An index with ZERO stored files
     (`report["atlas"]["files"] == 0` - saved via `godmode atlas save` on a
     tree the atlas never walked, or a stray empty/malformed JSON) reads as
     "fully fresh" under `not stale and not missing`, since `load_index` only
@@ -286,7 +285,7 @@ def _atlas_for_closure(project: Path) -> Atlas:
     so the caller (`godmode_githooks._evaluate_pre_commit`) turns it into a
     refusal that BLOCKS regardless of declared policy (D2iii - this check's
     own unconditional posture, not `_inspection_failed_result`'s ordinary
-    advisory-when-undeclared shape). Fix round 3: the raised message names
+    advisory-when-undeclared shape). The raised message names
     the remedy directly - `godmode retest --run` both clears the ordinary
     stale/uncovered/unattested categories AND writes the saved index
     (`refresh_atlas_index`, unbounded), so it is what an operator facing a
@@ -323,16 +322,16 @@ def refresh_atlas_index(project: Path) -> dict[str, Any] | None:
     """Write/refresh `.godmode-atlas-index.json` from a fresh,
     closure-scoped build - `None` on any failure, never raises.
 
-    Fix round 2 (D2): the saved-index fast path (`_atlas_for_closure`
-    above) existed in round 1 with nothing that ever wrote to it - an
-    "unwired fast path" the re-review named directly. Called from
+    The saved-index fast path (`_atlas_for_closure`
+    above) once existed with nothing that ever wrote to it - an
+    unwired fast path. Called from
     `cmd_retest` (`godmode_console.cmd_retest`) after a successful
     `--run`: the moment this project's own tests just ran green is exactly
     the moment a saved index is most trustworthy to write, and doing it
     there (a deliberate action) rather than as a side effect of every
     commit keeps `_evaluate_pre_commit` itself read-only towards this file.
 
-    Fix round 3 (coordinator ruling): UNBOUNDED, unlike `_atlas_for_closure`'s
+    UNBOUNDED, unlike `_atlas_for_closure`'s
     commit-time build. This is the deliberate operator action that builds
     the index - `godmode retest --run` is run once, on purpose, not on
     every `git commit` - so it should always finish and leave a fresh index
@@ -363,16 +362,16 @@ def closure_survey(
     ways: `stale` (`edit-recorded` exists, but no green retest is newer
     than it), `uncovered` (no test pins it, or a dependent, at all - "add a
     test" is the only honest remedy, never "run `retest --run`" again),
-    and `unattested` (fix round 2, D5 - no `edit-recorded` at all, AND no
+    and `unattested` (no `edit-recorded` at all, AND no
     green retest whose blob-hash or clean-tree proof covers its current
     content - "run `retest --run`, or record the edit" is the remedy;
     never the "stage the result" wording `stale` uses, which is a no-op
     when there is no edit record to begin with).
 
     `staged`/`deleted` let a caller that has already read `git diff --cached
-    --name-status` (`godmode_githooks._evaluate_pre_commit`, fix round 1 Q2)
+    --name-status`
     pass it straight in instead of this module reading the index a second
-    time. Fix round 2 (D4): `deleted` is derived independently of `staged`
+    time. `deleted` is derived independently of `staged`
     - a caller supplying `staged` alone (the signature allows it) still
     gets a real `deleted` set from a fresh read, rather than silently
     treating every staged path as a non-deletion. Left both `None`, this
@@ -443,7 +442,7 @@ def unattested_staged_files(
     project: Path, archive: Any, *,
     staged: list[str] | None = None, deleted: set[str] | None = None,
 ) -> list[dict[str, Any]] | None:
-    """The `unattested` bucket of `closure_survey` (fix round 2, D5) -
+    """The `unattested` bucket of `closure_survey` -
     covered, staged files with no `edit-recorded` action AND no green
     retest whose blob-hash or clean-tree proof covers their current
     content."""

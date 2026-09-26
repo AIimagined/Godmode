@@ -1,4 +1,4 @@
-"""C-05: one severity-ranked list of output-quality findings.
+"""One severity-ranked list of output-quality findings.
 
 Three detectors already exist and are tested on their own: the docs lint,
 the swallow scanner, and the minimality report. Each answers a narrower
@@ -90,7 +90,7 @@ def _from_minimality(report: dict[str, Any]) -> list[dict[str, Any]]:
 
 def quality_report(project: Path | str, archive: Any = None,
                    deep: bool = False) -> dict[str, Any]:
-    """opencode field report 2026-09-10: `quality` took two minutes where
+    """opencode, seen in practice 2026-09-10: `quality` took two minutes where
     `integrity` took one second. The atlas build and the pairwise duplicate
     scan behind minimality are the cost; they run on `--deep`, every
     section reports its seconds, and the deferred one is named."""
@@ -129,7 +129,7 @@ def quality_report(project: Path | str, archive: Any = None,
     }
 
 
-# C-63: the two shapes editors already consume. Nothing is installed into
+# The two shapes editors already consume. Nothing is installed into
 # any editor - a problem matcher or a SARIF viewer reads what is printed.
 
 def render_editor(report: dict[str, Any]) -> str:

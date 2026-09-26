@@ -323,13 +323,13 @@ def handover(
     charter: dict[str, Any] | None = None,
     anchor: Any = None,
 ) -> dict[str, Any]:
-    """One rolling handover view derived from the store, superseding
+    """One rolling continuity view derived from the store, superseding
     the file-per-session pattern. Latest state is unambiguous; history stays
     queryable through the archive itself.
 
     The §20.1 contract adds what the next session cannot reconstruct from
     memory: where the repository stands (public anchor fields only - private
-    paths never enter a handover), what the approved objective was, which items
+    paths never enter this view), what the approved objective was, which items
     are actually verified versus merely believed done, the invariants that must
     survive the switch, the files this session touched, and the story points
     still open. Every field is derived from records, none is recalled.
@@ -384,7 +384,7 @@ def handover(
             if evidence_tier(entry) == "verified"
         ),
         # Said, not shown: verified states with nothing cited. Kept apart so
-        # a handover reader knows which completions rest on a statement.
+        # a reader of this view knows which completions rest on a statement.
         "declared_completed": sorted(
             name for name, entry in current.items()
             if evidence_tier(entry) == "declared"
@@ -508,7 +508,7 @@ def _age_days(recorded_at: Any, now: Any = None) -> int | None:
 def _prefer_latest_unless_contradicted(
     current_best: dict[str, Any] | None, record: dict[str, Any]
 ) -> dict[str, Any]:
-    """NS-8k's status-trust rule (fix round 1, F3): latest-by-time stays the
+    """The status-trust rule: latest-by-time stays the
     BASE rule; trust only breaks a genuine contradiction.
 
     The old rule (`record_trust(record) >= record_trust(current_best)`) let
@@ -544,7 +544,7 @@ def remaining(
     """Derive what is left from the records, instead of recalling it.
 
     `since_days` hides items older than that many days (their count still
-    reports as `stale_hidden`); `now` is for tests. Field report 2026-09-04:
+    reports as `stale_hidden`); `now` is for tests. Observed on 2026-09-04:
     303 items dominated by July-era obligations answered "what is left
     NOW?" with everything ever left, which is a list nobody can use.
 
@@ -580,18 +580,18 @@ def remaining(
     # The latest record per subject is the obligation's state: a later
     # `closed` or `retired` record supersedes the original `open` one, so
     # closing through `remember --status closed` actually closes.
-    # NS-8k: "latest" bends to trust only on a CONTRADICTION - a higher-
+    # "latest" bends to trust only on a CONTRADICTION - a higher-
     # trust record (an operator's correction) persists across a later,
     # lower-trust record that disagrees with its status, the "persistent
     # human override" the spec cites - but a same-status update (the agent
     # progressing or re-closing its own obligation) still wins by recency,
     # exactly as before `writer` existed (see
-    # `_prefer_latest_unless_contradicted`, fix round 1, F3).
-    # NS-10e: `latest_by_subject` first drops any obligation record another
+    # `_prefer_latest_unless_contradicted`).
+    # `latest_by_subject` first drops any obligation record another
     # record has named via `--supersedes` - it is never "latest" again no
     # matter how it compares by trust or recency - then folds the
     # survivors with `combine=_prefer_latest_unless_contradicted`, so
-    # Task 5's trust-contradiction rule composes with the edge instead of
+    # the trust-contradiction rule composes with the edge instead of
     # being replaced by it.
     latest_obligation = latest_by_subject(
         archive.select(kind="obligation", limit=500),
@@ -605,7 +605,7 @@ def remaining(
                                "detail": str(record["data"].get("value", ""))[:160],
                                "age_days": _age_days(record.get("recorded_at"), now)})
 
-    # NS-11e fix round 1 (review B, B3): a contradiction `godmode forget`
+    # A contradiction `godmode forget`
     # flagged is work left - two active records on one subject disagree and
     # nobody has said which stands. It stayed invisible to every surface but
     # `history --kind review` until it was listed here.
@@ -649,7 +649,7 @@ def remaining(
         # 2026-08-29: two hypothesis-graded retries sat listed beside their
         # own verified successor). The latest record per subject is the
         # claim's state - the same rule obligations already follow.
-        # NS-8k trust rule composed with NS-10e's edge, same as
+        # The same status-trust rule composed with the supersedes edge, same as
         # `latest_obligation` above.
         latest_claim = latest_by_subject(
             archive.select(kind="claim", limit=500),
@@ -698,7 +698,7 @@ def remaining(
         else:
             ready.append(row)
 
-    # NS-8n: an obligation can name another obligation as its blocker
+    # An obligation can name another obligation as its blocker
     # (`remember --kind obligation --blocked-by <id>`, existence/self/cycle
     # checked by `_check_dependencies` at write time). A blocked one is
     # listed here under its blocker instead of standing alone; it still

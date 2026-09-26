@@ -1,4 +1,4 @@
-"""I-2: read receipts for research depth.
+"""Read receipts for research depth.
 
 A sweep's depth used to be unmeasured - "read" meant README seven times in
 one day, and nothing distinguished that from a source file actually opened.

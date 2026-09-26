@@ -1,4 +1,4 @@
-"""R-5 + NS-10a: `hooks wire` as one function, run in two modes.
+"""`hooks wire` as one function, run in two modes.
 
 `wire()` is the single code path behind both `hooks wire --all` and its
 `--dry-run` preview: the same rendering, the same comparisons, and the
@@ -7,7 +7,7 @@ whether the result is actually written to disk differs. A preview and its
 matching apply can therefore never disagree with each other, because
 nothing about the plan changes between the two calls, only `dry_run`.
 
-NS-10a (idempotent marker-delimited host-config merge): every host writer
+Every host writer
 below owns exactly one region of a file it may have to share with other,
 foreign content - a JSON object gets a `"godmode"` owned key (Antigravity's
 `.agents/hooks.json`), a JSON array gets entries carrying `"_godmode":
@@ -23,7 +23,7 @@ telling "we rendered this before, unedited" from "someone hand-edited our
 own output" apart without a second state file. `merge_text_block()` below
 is the literal `<!-- godmode:begin -->` / `<!-- godmode:end -->` primitive
 the plan and spec name for a plain text/TOML shared config, exercised
-directly by `tests/test_hooks_wire.py` and, since NS-6, by the real Copilot
+directly by `tests/test_hooks_wire.py` and by the real Copilot
 instructions block (`.github/copilot-instructions.md`) - the first target
 this primitive actually ships against, and Markdown, not TOML: the shell/
 TOML-style `# --- godmode:begin ---` line this primitive originally used
@@ -192,7 +192,7 @@ def _plan_antigravity(plugin_root: Path, project: Path) -> dict[str, Any]:
     if not exists:
         state = "create"
     elif invalid:
-        # B3: unparseable (or non-object) JSON is refused, never forced -
+        # Unparseable (or non-object) JSON is refused, never forced -
         # the legacy per-host writers already say so; `wire()` must agree
         # and `--force` must not be able to clear this state.
         state = "invalid"
@@ -207,7 +207,7 @@ def _plan_antigravity(plugin_root: Path, project: Path) -> dict[str, Any]:
             prior_digest = prior.get(ANTIGRAVITY_DIGEST_FIELD)
             prior_payload = {k: v for k, v in prior.items() if k != ANTIGRAVITY_DIGEST_FIELD}
             if prior_digest is None:
-                # B4: no digest was ever recorded - a legacy install from
+                # No digest was ever recorded - a legacy install from
                 # before this field existed. If the content on disk is
                 # exactly what today's renderer would produce, that is
                 # evidence we authored it, not evidence of tampering.
@@ -263,7 +263,7 @@ def _plan_codex(plugin_root: Path, project: Path) -> dict[str, Any]:
         elif not invalid:
             invalid = True
 
-    # B5: a file that parses as JSON and is an object, but whose "hooks"
+    # A file that parses as JSON and is an object, but whose "hooks"
     # region is not the shape every operation below assumes - not a dict,
     # an event's value not a list, or a block entry not a dict - must not
     # be silently iterated and rewritten (the old `else {}` fallback below
@@ -283,7 +283,7 @@ def _plan_codex(plugin_root: Path, project: Path) -> dict[str, Any]:
         else:
             existing_hooks = raw_hooks
 
-    # B1: a block written by the legacy `hooks wire --host codex` (or
+    # A block written by the legacy `hooks wire --host codex` (or
     # `write_codex_project_hooks` directly, which every earlier release's
     # README pointed operators at) carries none of our tagging - no
     # `_godmode` key, no digest - but its content is byte-identical to what
@@ -307,7 +307,7 @@ def _plan_codex(plugin_root: Path, project: Path) -> dict[str, Any]:
         tagged blocks and adopted legacy blocks are both counted as ours -
         the shape `prior_digest` was (or should have been) computed over.
 
-        B6: built from the events actually present in `existing_hooks` (the
+        Built from the events actually present in `existing_hooks` (the
         file as it is on disk), not from `tagged["hooks"]`'s key set (today's
         render). Iterating today's event set meant a renderer that adds an
         event invented an empty-list key the stored digest never covered,
@@ -339,7 +339,7 @@ def _plan_codex(plugin_root: Path, project: Path) -> dict[str, Any]:
     if not exists:
         state = "create"
     elif invalid:
-        # B3: unparseable (or non-object) JSON is refused, never forced.
+        # Unparseable (or non-object) JSON is refused, never forced.
         state = "invalid"
         reason = "exists but is not valid JSON, or not the expected shape; fix or remove it first"
     elif prior_digest is not None:
@@ -348,7 +348,7 @@ def _plan_codex(plugin_root: Path, project: Path) -> dict[str, Any]:
         else:
             state = "ok" if combined_prior == tagged else "update"
     elif has_prior_tag:
-        # B4: tagged and/or legacy-matched content with no recorded digest
+        # Tagged and/or legacy-matched content with no recorded digest
         # (a legacy install predates the digest field entirely). Adopt it
         # if it is structurally exactly today's render; otherwise there is
         # nothing to prove we authored it, so it stays a conflict.
@@ -361,7 +361,7 @@ def _plan_codex(plugin_root: Path, project: Path) -> dict[str, Any]:
 
     def writer() -> None:
         merged_hooks: dict[str, list] = {}
-        # N1: sorted, not set-iteration order, so two machines wiring the
+        # Sorted, not set-iteration order, so two machines wiring the
         # same repo (or two runs under hash randomization) write the same
         # bytes instead of a gratuitous key-order diff.
         for event in sorted(set(existing_hooks) | set(tagged["hooks"])):
@@ -372,7 +372,7 @@ def _plan_codex(plugin_root: Path, project: Path) -> dict[str, Any]:
             fresh = tagged["hooks"].get(event, [])
             if foreign or fresh:
                 merged_hooks[event] = foreign + fresh
-        # B2: every top-level key besides "hooks" (e.g. "version", "notify")
+        # Every top-level key besides "hooks" (e.g. "version", "notify")
         # is foreign to us and must survive - only "hooks" and our own
         # digest field are ours to overwrite.
         merged_doc = {**existing, "hooks": merged_hooks, CODEX_DIGEST_FIELD: _digest(tagged)}
@@ -419,7 +419,7 @@ def _plan_opencode(plugin_root: Path, project: Path) -> dict[str, Any]:
                 prior_digest = first_line[len(OPENCODE_DIGEST_PREFIX):]
                 state = "update" if prior_digest == _digest(rest) else "conflict"
             elif normalized == body:
-                # B4: predates the digest header entirely (a legacy
+                # Predates the digest header entirely (a legacy
                 # `hooks wire --host opencode` / `write_opencode_project_
                 # shim` install), but the content is exactly what today's
                 # renderer would produce - adopt it (add the header) rather
@@ -441,7 +441,7 @@ def _plan_opencode(plugin_root: Path, project: Path) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# NS-6: Copilot - JSON owned-key strategy for `.github/hooks/godmode.json`
+# Copilot - JSON owned-key strategy for `.github/hooks/godmode.json`
 # (the whole "hooks" region is godmode's own, foreign top-level keys survive
 # a merge the same way antigravity's "godmode" key does), plus the literal
 # `merge_text_block()` text-marker primitive for the advisory block in
@@ -491,7 +491,7 @@ def _plan_copilot_hooks_file(plugin_root: Path, project: Path) -> dict[str, Any]
         if prior is None:
             state = "update"
         elif not isinstance(prior, dict):
-            # N5: parity with antigravity's owned-key planner (`:175-176`
+            # Parity with antigravity's owned-key planner (`:175-176`
             # there), which marks a non-dict prior `conflict` explicitly
             # rather than reaching it only incidentally via a digest
             # mismatch - same outcome today (a non-dict `prior` can never
@@ -532,7 +532,7 @@ def _plan_copilot_instructions(project: Path) -> dict[str, Any]:
               if state == "conflict" else "")
 
     def writer() -> None:
-        # B1 fix round 1: `merge_text_block` is a CLASSIFIER - on
+        # `merge_text_block` is a CLASSIFIER - on
         # `conflict` it returns `existing_text` unchanged (the whole point
         # is that a preview must never silently overwrite a hand-edit). But
         # `writer()` is only ever invoked by `wire()` once the caller has
@@ -582,7 +582,7 @@ def _plan_copilot(plugin_root: Path, project: Path) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# NS-6: Kiro - array-tag strategy for `.kiro/hooks.json`, mirroring the
+# Kiro - array-tag strategy for `.kiro/hooks.json`, mirroring the
 # Codex merge above (Godmode's own rule blocks per event carry `"_godmode":
 # true`; a legacy, untagged block that is byte-identical to today's render
 # is adopted rather than duplicated). Deliberately a separate, self-
@@ -745,7 +745,7 @@ def wire(project, hosts: Sequence[str], *, dry_run: bool, force: bool) -> dict[s
         try:
             plans.append(_plan_host(_PLUGIN_ROOT, project, host))
         except OSError as exc:
-            # N4: `wire_status` already refuses to let a missing/unreadable
+            # `wire_status` already refuses to let a missing/unreadable
             # source artifact (e.g. the OpenCode shim template under a
             # damaged plugin install) raise past it; `wire()` must agree
             # instead of taking `hooks wire --all` down with an exception.
@@ -774,7 +774,7 @@ def wire(project, hosts: Sequence[str], *, dry_run: bool, force: bool) -> dict[s
         state = plan["state"]
         forced_over_conflict = state == "conflict" and force
         effective = "update" if forced_over_conflict else state
-        # N8: a forced conflict is recorded as such, never silently relabeled
+        # A forced conflict is recorded as such, never silently relabeled
         # as a plain [UPDATE] the operator has no way to tell apart from an
         # ordinary clean apply.
         note = ""
@@ -822,8 +822,8 @@ def wire_status(project, hosts: Sequence[str] = WIRE_HOSTS) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# NS-10a's literal text/TOML primitive. Copilot's `.github/copilot-
-# instructions.md` (NS-6) is the first host to actually wire it - a
+# The literal text/TOML primitive. Copilot's `.github/copilot-
+# instructions.md` is the first host to actually wire it - a
 # Markdown, not TOML, target, which is why the marker pair is an HTML
 # comment rather than the `#`-line shell/TOML comment style this primitive
 # used before (see the module docstring above). It stays exercised
