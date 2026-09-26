@@ -1238,7 +1238,7 @@ _ENV_BINDING = re.compile(
 
 _LOCAL_COMPUTE = re.compile(
     # `npx` runs a package binary, which is what `node ./node_modules/.bin/...`
-    # does with more typing - and a field report shows exactly that workaround
+    # does with more typing - and real usage shows exactly that workaround
     # being reached for, which is the shape of a gate teaching people to
     # rephrase rather than to stop. `npm ci` and `npm install` are here for the
     # same reason `pip` already was: they fetch, and the network gate is what
@@ -1417,7 +1417,7 @@ _DOCKER_SOCKET = re.compile(r"(?i)docker\.sock|/var/run/docker\.sock|npipe:////\
 # ROUND 4 (third independent security review, 2026-08-18), finding I-3:
 # this set and the per-family `_PYTHON_LIKE`/`_NODE_LIKE`/
 # `_POSIX_SHELL_LIKE`/`_PWSH_LIKE` patterns below were two parallel
-# enumerations of the same fact, and round 3 had to add `pypy`/`jython`/
+# enumerations of the same fact, and an earlier review had to add `pypy`/`jython`/
 # `micropython` to both. A name added to one and not the other resolves to a
 # basename that then falls through every branch of `_interpreter_opacity`
 # and returns `None` - a silent allow with no test that would notice. There
@@ -1468,7 +1468,7 @@ _KNOWN_INTERPRETER_BASENAME = re.compile(
 def _interpreter_family(basename: str) -> str | None:
     """Which inline-eval flag grammar reads `basename`, else `None`.
 
-    The single dispatch point that replaced round 3's four parallel
+    The single dispatch point that replaced an earlier design's four parallel
     `_*_LIKE` patterns (finding I-3). A basename that is on
     `_KNOWN_INTERPRETER_BASENAME` therefore ALWAYS has a family, because
     both are built from `_INTERPRETER_FAMILY_PATTERNS`; the two cannot
@@ -1540,7 +1540,7 @@ def _interpreter_basename(token: str) -> str | None:
     ANSI-C quoted (`$'python'`), backslash-escaped (`\\python`), path-
     prefixed (`/usr/bin/python`, `./python`, `C:\\Python\\python.exe`,
     `\\\\host\\share\\python.exe`), or carrying a Windows executable
-    suffix. Applied PER TOKEN (round 3) rather than only to the head, which
+    suffix. Applied PER TOKEN rather than only to the head, which
     is what lets the wrapper table go: the normalization the review
     verified as solid is the same whether the token sits at position one or
     position five.
@@ -1596,7 +1596,7 @@ def _normalized_interpreter_head(
     after a quoted head is not reinterpreted by this function, only located
     correctly.
 
-    Only the HEAD, as of round 3. A wrapped interpreter (`env python -c`,
+    Only the HEAD. A wrapped interpreter (`env python -c`,
     `docker exec … python -c`) is found by `_exec_shape_opacity`'s token
     scan instead of by unwrapping the head, so this function no longer
     needs to know what a wrapper is.
@@ -1670,7 +1670,7 @@ _NODE_FLAG_TOKEN = re.compile(r"(?i)^(?:-[a-zA-Z]*[ep]|--eval|--print)")
 # Ruby and perl were sharing one pattern that matched
 # `-e` OR `-E`, and `-E` is not ruby's eval flag at all - it is ruby's
 # EXTERNAL ENCODING flag, which is why `ruby -Eutf-8` was a false refusal
-# (round 3 disclosed it as an accepted over-ask; it was a wrong rule, not a
+# (an earlier review disclosed it as an accepted over-ask; it was a wrong rule, not a
 # necessary cost). perl really does define both `-e` and `-E`, so perl keeps
 # both and ruby keeps only the lowercase one. Clustered forms their own
 # documentation uses (`perl -ne 'print'`, `ruby -ne`) still match.
@@ -1715,7 +1715,7 @@ def _pwsh_inline_flag_token(token: str) -> bool:
     alias, any unambiguous PREFIX of either, or any parameter that EXTENDS
     either, fused to its argument or not.
 
-    ROUND 4, Critical 4: round 3 asked `any(one.startswith(name) …)` only,
+    ROUND 4, Critical 4: an earlier version asked `any(one.startswith(name) …)` only,
     which recognises spellings SHORTER than the enumerated names and misses
     real parameters that are LONGER. `-CommandWithArgs` is a shipped
     PowerShell 7.4 parameter that runs a command; `-Comm` matched it and the
@@ -1797,7 +1797,7 @@ def _inline_flag_in_tokens(family: str, tokens: list[str]) -> bool:
     and `python -W ignore -c "…"` readable - a flag that takes a separate
     argument is always immediately in front of it - without this module
     learning any interpreter's list of argument-taking options, which is the
-    per-tool grammar round 3 deleted the wrapper table to be rid of.
+    per-tool grammar an earlier design deleted the wrapper table to be rid of.
     """
     previous_was_flag = False
     for token in tokens:
@@ -1853,13 +1853,13 @@ def _interpreter_opacity(basename: str, rest: str, rest_tokens: list[str], *,
     unrecognised flag with no evidence either way (the R1 local-compute
     floor, decided by the caller).
 
-    `rest_tokens` (round 4) is what the FLAG rules read; `rest` is the raw
+    `rest_tokens` is what the FLAG rules read; `rest` is the raw
     text after the head, still needed for `_STDIN_FED_REST`, which matches
     shell operators (`<<<`, `<`, a trailing bare `-`) that are redirections
     rather than argv at all. `payload` is the text the tier scan reads for
     visible evidence, defaulting to `rest`.
 
-    `stdin_fed=False` (round 3) drops the stdin rule for the exec-shape
+    `stdin_fed=False` drops the stdin rule for the exec-shape
     token scan: a bare interpreter name appearing as a LATER token (`which
     python`, `docker exec -it c python`) names an interpreter, and an
     interactive REPL is not an opaque payload - whereas a bare interpreter in
@@ -2326,7 +2326,7 @@ _COMMAND_POSITION = re.compile(
 def _substituted_command_name(text: str, spans: tuple[tuple[int, int], ...]) -> bool:
     """Whether any substitution in `text` BUILDS a command name (form (b)).
 
-    ROUND 4, Critical 3: round 3 required the whole name to be the
+    ROUND 4, Critical 3: an earlier version required the whole name to be the
     substitution, so `$(echo p)ython -cimport os` - a substitution glued to
     the FRONT of a name - was R0. What matters is whether the name is
     knowable from the text, and it is not knowable in either spelling. The
@@ -2358,8 +2358,8 @@ def _first_heredoc_interpreter(operation: str) -> tuple[str, str, str] | None:
     interpreter, and is left to the existing segment-by-segment pipeline
     rather than guessed at here.
 
-    Head recognition is `_normalized_interpreter_head` (round 2, security
-    review) rather than a bare-name regex - `"python" <<EOF` is exactly as
+    Head recognition is `_normalized_interpreter_head` (a security
+    review finding) rather than a bare-name regex - `"python" <<EOF` is exactly as
     opaque as an unwrapped heredoc and gets the same quote/path
     normalization every other interpreter shape in this module now does.
     A WRAPPED interpreter (`env python <<EOF`, `sudo -E python <<EOF`) used
@@ -2499,7 +2499,7 @@ def _is_scratch(target: Path, project_root: Path | None = None) -> bool:
     # B4-9(b): the shell the agent actually types in spells the temp dir
     # `/tmp` (Git Bash on Windows, every POSIX host), which
     # `tempfile.gettempdir()` never returns on Windows - so the exact
-    # command the field report recorded (`... > /tmp/blkA.txt`) failed this
+    # exact command recorded from real usage (`... > /tmp/blkA.txt`) failed this
     # test on the machine that ran it. Normalised on POSIX rules first, so
     # `/tmp/../etc/passwd` collapses to `/etc/passwd` and leaves the
     # allowance before the prefix is ever compared.
@@ -2998,7 +2998,7 @@ def _substitution_scan(command: str) -> tuple[list[str], bool, str, tuple[tuple[
 
     `spans` is each extracted substitution's own `(start, end)` offsets in
     `command`, delimiters included. Returned because `blanked` alone cannot
-    answer round 3's form-(b) question - whether a substitution stood in
+    answer the form-(b) question - whether a substitution stood in
     COMMAND-NAME position (`_substituted_command_name`) - once the span has
     become indistinguishable from the spaces around it.
     """
@@ -3207,7 +3207,7 @@ def _has_unclosed_quote(text: str) -> bool:
 
     The same quote state `_executable_text`'s scan already tracks, exposed
     here because an unterminated quote - malformed input, or the harvest/fuzz
-    truncation Task 2's own investigation found - can swallow real vocabulary
+    truncation an earlier investigation found - can swallow real vocabulary
     into what then looks like quoted, inert text: everything after the open
     quote blanks to nothing, including a mutation verb sitting right there in
     the unquoted original. The unknown-command fallback's "no evidence" read
@@ -3843,7 +3843,7 @@ def _categorize(normalized: str, project_root: Path | None = None,
     # naming a protected operation is not performing one. Built once, through
     # `Segment` rather than a second, string-based path, so vocabulary
     # matching and redirect-target extraction share the exact same
-    # quote/path-aware construction `split_segments` hands to Task 3/4 - a
+    # quote/path-aware construction `split_segments` hands to every downstream reader - a
     # bare-word check added here and one added against `segment.vocab_tokens`
     # can never quietly disagree about what counts as an argument.
     segment = _segment_from_text(normalized)
@@ -4156,7 +4156,7 @@ def _categorize(normalized: str, project_root: Path | None = None,
     # function). Positive evidence of exec shape fails closed here instead.
     #
     # Shielded by `_shields_its_arguments` rather than by ORDERING:
-    # round 3 put this after the read allowlists so `echo python -c "hi"`
+    # this runs after the read allowlists so `echo python -c "hi"`
     # would keep printing an invocation harmlessly, which worked for
     # `_SAFE_SHELL_READS` and made `_POWERSHELL_READS` a shield over a real
     # exec surface (`Measure-Command { python -c "…" }`, Critical 4). Asking
@@ -4182,8 +4182,8 @@ def _categorize(normalized: str, project_root: Path | None = None,
     if asks_for_help:
         return "read-only-inspection", False, ["a help or version banner"]
     if normalized_interpreter is not None and normalized_interpreter[0] != "cmd":
-        # `cmd` is on the interpreter table for its `/c` form only (round 4,
-        # Critical 5). It is Windows' shell, not a compute runtime, so a bare
+        # `cmd` is on the interpreter table for its `/c` form only (Critical
+        # 5). It is Windows' shell, not a compute runtime, so a bare
         # `cmd` must keep falling through to the read/unknown path it always
         # had rather than being reclassified as local compute - `cmd 2>&1 |
         # grep x` is R0 before and after.
@@ -4436,11 +4436,11 @@ _PLAIN_COMMAND_HEAD = re.compile(r"^[A-Za-z0-9_~./][\w./~-]*$")
 # exemption: the corpus backs this - every pipe-position unrecognised head
 # in the regression fixture (`rev`, `tr`, `sed`, `awk`, `xargs`, `Out-Null`,
 # ...) is a filter consuming what came before it, not a second command
-# smuggled past it, and none of NS-8a's own test rows exercise a `|`-led
+# smuggled past it, and none of this set's own test rows exercise a `|`-led
 # deny.
 _SEQUENCING_OPERATORS = frozenset({"&&", ";", "", "&", "||"})
 
-# NS-8a, review round 1 (S1), RE-DERIVED round 2 after N1's fix changed
+# Established during review, then RE-DERIVED after a later fix changed
 # what a resolved head even IS: read-only heads the sequencing separators
 # above would otherwise deny by default, PINNED because a real corpus row
 # already relies on each one staying `allow` - `tests/test_gate_components.
@@ -4456,9 +4456,9 @@ _SEQUENCING_OPERATORS = frozenset({"&&", ";", "", "&", "||"})
 # `_CONTROL_PREFIX` (used by `_categorize` itself, above) strips every one
 # of them before a head is ever resolved, so `do sleep 15` and `if ($f) {`
 # already read as `sleep` and `($f)` respectively by the time
-# `unrecognised_head` is set - round 1's own allowlist carried `do` and
+# `unrecognised_head` is set - an earlier allowlist carried `do` and
 # `if` only because it read the head from raw, UN-stripped `argv[0]`
-# (`_argv_tokens(text)[0]`), which round 2's N1 fix retired. `sleep`
+# (`_argv_tokens(text)[0]`), which a later fix retired. `sleep`
 # replaces `do` here for exactly that reason.
 _SEQUENCED_READ_ONLY_HEADS = frozenset({
     "claude", "ffmpeg", "gzip", "nod", "ps", "sleep", "true",
@@ -4490,7 +4490,7 @@ _PREFIX_RUNNER_HEADS = frozenset({"time", "try"})
 # version conflated the two by returning `None` for both, and the
 # promotion loop's `if remainder:` treated a location FAILURE the same as
 # a genuinely empty one - silently allowing instead of denying. A named
-# sentinel TYPE (final review N4 / Task 5 nit), not a bare `object()`, so
+# sentinel TYPE, not a bare `object()`, so
 # the function below can name what it returns in its own annotation
 # instead of the unhelpful `str | None | object`.
 class _PrefixRunnerLocationFailed:
@@ -4501,15 +4501,15 @@ class _PrefixRunnerLocationFailed:
 
 _PREFIX_RUNNER_LOCATION_FAILED = _PrefixRunnerLocationFailed()
 
-# Final review S5 (Task 5 parked residual, measured against the corpus row
-# `ls && time -p ./frobnicate.sh`): a prefix runner's own OPTIONS sit
+# Measured against the corpus row
+# `ls && time -p ./frobnicate.sh`: a prefix runner's own OPTIONS sit
 # between its name and the command it actually runs - `time -p
 # ./frobnicate.sh` runs `./frobnicate.sh`, exactly as `time ./frobnicate.sh`
 # does, with `-p` inserted. Peeled off the remainder at this function's one
 # call site, before the recursive head test: left in place, `-p` resolves
 # as the remainder's own head, `_PLAIN_COMMAND_HEAD` correctly rejects it
 # (a leading `-` opens neither the plain-command class nor any recognised
-# name), and the deny below never fires - the same shape as round 2's N1
+# name), and the deny below never fires - the same shape as an earlier fix
 # (`FOO=1` read as the head), one strip short. A bare `--` (the POSIX
 # end-of-options marker) is consumed and stops the peel; a bare `-`
 # (stdin/"this file", never an option) is left alone and stops it too.
@@ -4555,8 +4555,8 @@ def _prefix_runner_remainder(
     unrecognised, so `resolved_text` is never actually `None` at the one
     call site; the
     `None` case below is handled defensively rather than assumed away, and
-    there is no separate raw-text fallback to fall back to (final review
-    N4 / Task 5 nit: the earlier `raw_text` fallback arm existed for a case
+    there is no separate raw-text fallback to fall back to (removed: the
+    earlier `raw_text` fallback arm existed for a case
     its own docstring said should not arise, and nothing ever reached it).
     Returns `_PREFIX_RUNNER_LOCATION_FAILED` when `head` cannot be found
     at the start of `resolved_text` at all, so a caller cannot mistake a
@@ -4576,8 +4576,8 @@ def _prefix_runner_remainder(
 
 # A human-readable name for each operator this
 # module's deny message can name, so the promoted impact string never lies
-# about which separator was actually seen (round 1's shipped state
-# hardcoded `'&&'` even after S1 widened the rule to five operators).
+# about which separator was actually seen (an earlier shipped state
+# hardcoded `'&&'` even after the rule widened to five operators).
 _OPERATOR_LABEL = {
     "&&": "'&&'", ";": "';'", "&": "'&'", "||": "'||'", "": "a newline",
 }
@@ -4757,7 +4757,7 @@ def _component_boundaries(command: str) -> list[tuple[str, str | None]]:
     """`command` split the same way `_raw_segments` splits it, paired with
     the operator text that introduced each segment (`None` for the first).
     Built on the same `_walk_segments` scan `_raw_segments` itself now
-    delegates to - review round 1 (C2) removed the hand-copied second
+    delegates to - review (finding C2) removed the hand-copied second
     instance of that state machine this function used to carry, and the
     fail-open guard that used to sit at its one call site (discarding
     every operator whenever this and `shell_segments` disagreed on segment
@@ -5054,7 +5054,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # treated as a network ask, exactly as before the allowance existed
         # (`_allow_standalone_fetch=False` on the inner pass below).
         #
-        # SEC-A round 3: the OUTER text is `_substitution_scan`'s own
+        # Security review: the OUTER text is `_substitution_scan`'s own
         # `blanked` rather than a second `_SUBSTITUTION.sub(" ", ...)` pass.
         # Same shape by that function's contract, but produced by the
         # balanced-paren, quote-aware scan a non-nesting regex could not
@@ -5120,7 +5120,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     # `_raw_segments`/`shell_segments` use) read once, for both the segment
     # texts every pre-existing branch below already needed AND the operator
     # that introduced each one - a plain `shell_segments(normalized)` call
-    # cannot supply the latter, and review round 1 (C2) removed the second,
+    # cannot supply the latter, and review (finding C2) removed the second,
     # hand-copied scan that used to recover it separately.
     boundaries = _component_boundaries(_without_heredoc_bodies(normalized))
     segments = [text for text, _ in boundaries]
@@ -5425,7 +5425,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     # text `unrecognised_head` was resolved FROM - carried so the
     # multi-segment promotion loop's prefix-runner check can cut the
     # runner's name off THAT text, never off the raw, un-stripped segment
-    # (which is what let `FOO=1 time ./frobnicate.sh` escape round 2's own
+    # (which is what let `FOO=1 time ./frobnicate.sh` escape an earlier
     # fix: the head resolved past the `FOO=1` prefix, but the remainder was
     # still being searched for in text that still had it).
     _categorized = _categorize(_blank_quoted_heredoc_bodies(normalized),
@@ -5623,7 +5623,7 @@ _NO_HUMAN_ASK_MODES = frozenset({"auto", "dontAsk", "bypassPermissions"})
 
 
 def attended(session_type: str | None = None, permission_mode: str | None = None) -> bool:
-    """Whether an operator is presumed present for this call (NS-10k).
+    """Whether an operator is presumed present for this call.
 
     Checked in order, the first that answers wins:
 
@@ -5638,7 +5638,7 @@ def attended(session_type: str | None = None, permission_mode: str | None = None
        this call could have raised is answered by the host's own machinery,
        not a person, so it is fed here as the same "no human answers"
        signal the hook's own ask-fold already trusted for the identical
-       reason - the one live signal fix round 1 found reachable today.
+       reason - the one live signal an earlier fix found reachable today.
        Anything else (or none) is not evidence either way.
     4. `session_type` - the host payload's own declaration, when the host
        sends one and it is one of the recognised labels.
@@ -5703,7 +5703,7 @@ def halved_ttl_seconds(ttl_seconds: int) -> int:
 
 
 def policy_row(effective: dict[str, Any], attended_flag: bool) -> dict[str, Any]:
-    """One named row of the NS-10k policy view: what `capability_ttl_seconds`
+    """One named row of the attention policy view: what `capability_ttl_seconds`
     resolves to, which tiers refuse outright, and whether `--without-
     preflight` is available - for the attended row or the unattended one.
     Used both to decide (the broker, the hook) and to explain
@@ -5719,7 +5719,7 @@ def policy_row(effective: dict[str, Any], attended_flag: bool) -> dict[str, Any]
 
 
 def _chronicle_observe_transition(archive: Any, live_observe: bool) -> None:
-    """Chronicle U-E7 observe-mode ENTRY/EXIT the moment either is next
+    """Chronicle observe-mode ENTRY/EXIT the moment either is next
     observed by a live policy read (CX final review F1, part 2).
 
     Compares `live_observe` (this call's freshly-read `gate_mode`) against
@@ -5940,7 +5940,7 @@ class CapabilityBroker:
             if plan_first not in ("on", "off"):
                 raise AuthorizationError('plan_first must be exactly "on" or "off"')
             policy["plan_first"] = plan_first
-        # U-E7 observe mode: a LOOSENING of enforcement (every deny/ask
+        # Observe mode: a LOOSENING of enforcement (every deny/ask
         # becomes an advisory - see `hooks/godmode_session_hook.py`'s
         # `_apply_observe_mode`), so this is the one key in this file that
         # is validated to exactly one legal spelling rather than merely
@@ -6068,7 +6068,7 @@ class CapabilityBroker:
         return data
 
     def confirm_operator(self, password: str) -> bool:
-        """NS-8k, fix round 1 (F0): the one public entry point the console
+        """The one public entry point the console
         uses to turn a bare `--as-operator` claim into a credential -
         reuses this broker's own password store instead of a second check
         living in `godmode_chronicle.py`. Callers check `configured()`
@@ -6340,7 +6340,7 @@ class CapabilityBroker:
         if ttl_seconds is None:
             ttl_seconds = self._policy().get("capability_ttl_seconds", _DEFAULT_TTL_SECONDS)
         if not attended():
-            # Mirrors the halving (and, fix round 1 N5, the floor
+            # Mirrors the halving (and the floor
             # clamp) `issue()` already applied, so the reported lifetime is
             # never a stale, un-halved, or under-floor number.
             ttl_seconds = max(
@@ -6604,7 +6604,7 @@ def stage_hint(plugin_root: Path | str) -> str:
     outright refusal and the auto-mode ask-fold, both in
     `godmode_session_hook.py`) can never drift apart.
 
-    Field report, 2026-09-13 (G-2): the refusal named `godmode authorize
+    Observed 2026-09-13 (G-2): the refusal named `godmode authorize
     stage --from-last-refusal` and told the operator to type it "with a
     leading '!'". Neither half resolves where the refusal is actually
     read - `godmode` is bare, and unqualified names are not on PATH by
@@ -6650,7 +6650,7 @@ def stage_from_refusal(archive: Any, nth: int = 1, with_digest: bool = False) ->
     operation staged silently is worse than a command that says plainly there
     is nothing to stage.
 
-    U-E7 decision: a `refusal` record carrying `observed: True` (written by
+    Observe-mode decision: a `refusal` record carrying `observed: True` (written by
     `godmode_session_hook.py`'s `_apply_observe_mode` when the local
     policy's `gate_mode` is `"observe"`) is NEVER counted here, and `--nth`
     skips past it as if it did not exist. Nothing was actually blocked when
@@ -6732,9 +6732,9 @@ def _self_check() -> None:
         "tar -cf archive.tar somedir", 'docker run -e "NODE_ENV=x" img',
         "pwsh -ExecutionPolicy Bypass -File build.ps1",
         "python -m cProfile script.py",
-        # C1 round 4 (third security review, 2026-08-18). An interpreter
+        # C1 (third security review, 2026-08-18). An interpreter
         # stops reading its OWN options at its first operand, so a flag after
-        # a script file belongs to the script - round 3's prefix widening
+        # a script file belongs to the script - an earlier prefix widening
         # read these twelve everyday shapes as inline code and asked at R2.
         "node server.js -port 3000", "python train.py -ckpt m.pt",
         "python app.py -config conf.yml", "ruby app.rb -Eutf-8",
@@ -6789,12 +6789,12 @@ def _self_check() -> None:
         "node -e \"1\"", "ruby -e \"1\"", "perl -e \"1\"",
         'pwsh -Command "Get-ChildItem"',
         "python <<'PY'\nprint(1)\nPY",
-        # C1 round 3 (second security review, 2026-08-17). Change 1: an
+        # C1 (second security review, 2026-08-17). Change 1: an
         # inline-eval flag is a PREFIX of its argv token, because the shell
         # concatenates the flag with its quoted argument and that is how the
         # interpreter itself parses it - `python -c"…"` was silently R1, and
-        # `bash -c'…'` was a REGRESSION (round 1 caught it, round 2's
-        # whitespace anchor did not).
+        # `bash -c'…'` was a REGRESSION (an earlier pass caught it, the fix after
+        # that's whitespace anchor did not).
         'python -c"import os"', "bash -c'rm -rf /'", 'node -e"1"',
         'pwsh -Comm "Get-ChildItem"', "powershell -Enco ZwBpAHQA",
         # Change 2: an unresolved head with positive evidence of exec shape
@@ -6806,7 +6806,7 @@ def _self_check() -> None:
         'sudo -E python -c "print(1)"', 'docker exec -it c python -c "print(1)"',
         '$(which python) -c "print(1)"', 'su -c "git push --force"',
         'pypy -c "print(1)"', 'python.bat -c "print(1)"',
-        # C1 round 4 (third security review, 2026-08-18). Critical 1: a
+        # C1 (third security review, 2026-08-18). Critical 1: a
         # trailing help flag is not a help request. Every check that can find
         # code runs before the help fast-path now, and the fast-path itself
         # requires the flag to be the first OPTION on the line.
@@ -6826,7 +6826,7 @@ def _self_check() -> None:
         'Invoke-Expression "git push --force"', 'iex "Remove-Item x"',
         'Start-Process python -ArgumentList "-c","print(1)"',
         'pwsh -CommandWithArgs "Remove-Item x"',
-        # Critical 5: shapes round 3 did not disclose, plus Windows' own shell.
+        # Critical 5: shapes an earlier review did not disclose, plus Windows' own shell.
         'su --command="git push --force"', 'builtin eval "python -c 1"',
         "trap 'git push --force' EXIT", 'cmd /c "git push --force"',
         'cmd.exe /k "rm -rf /"',
