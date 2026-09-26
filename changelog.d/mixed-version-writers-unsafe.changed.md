@@ -1,0 +1,1 @@
+- Running two different Godmode versions as writers against the same project archive at once is not safe - a version mismatch can now be named instead of surfacing as plain contention, but the mismatch itself is still a real risk until every host writing that archive is upgraded to the same version.

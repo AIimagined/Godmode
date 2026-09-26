@@ -454,9 +454,9 @@ def _content_stamp(project: Path, path: str) -> int:
     order, squashed, rebased, replayed) stamp every file identically here,
     where git-log would not: each commit's timestamp is whatever wall-clock
     time it happened to be made at, so the git instrument's tie order can
-    differ across two histories that agree on every byte (2026-09-25
-    carried-items triage, row 66: "ranking freshness reads git commit time,
-    so the snapshot depends on commit order"). Reached via
+    differ across two histories that agree on every byte - ranking
+    freshness by git commit time makes the snapshot depend on commit
+    order. Reached via
     `rank(..., freshness_source="content")`, which `godmode_evals._ranking_view`
     passes for exactly this reason - `godmode brief`'s live-session use keeps
     the git-log default because it genuinely needs recency, not just a

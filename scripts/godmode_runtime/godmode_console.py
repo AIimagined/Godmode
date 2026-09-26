@@ -7486,11 +7486,11 @@ def _cli_error_text(exc: GodmodeError, brief: bool) -> str:
     return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
-# Verb consolidation (0.3.31, task 14): the OLD top-level name on the left
-# still runs during this release - it prints a one-line deprecation note to
-# stderr naming the form on the right, then delegates to that form's own
-# handler unchanged. Kept for exactly one release, then the old name and
-# its subparser are deleted outright.
+# Verb consolidation: the OLD top-level name on the left still runs during
+# this release - it prints a one-line deprecation note to stderr naming
+# the form on the right, then delegates to that form's own handler
+# unchanged. Kept for exactly one release, then the old name and its
+# subparser are deleted outright.
 DEPRECATED_ALIASES: dict[str, str] = {
     "explain-context": "context why",
 }

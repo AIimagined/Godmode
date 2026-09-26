@@ -1480,15 +1480,15 @@ def capture_payload_probe(archive: Any, raw: Any, event: HostEvent) -> None:
 # Codex joined 2026-09-08: its PreToolUse wire accepts permissionDecision
 # "ask" (hooks/src/schema.rs PreToolUsePermissionDecisionWire) and its
 # PermissionRequest hook is an ask surface of its own.
-# Grok joined on build 1.0.41 (superseding Addendum 6's "Grok has no ask
-# decision", read against an older build): ~/.grok/docs/user-guide/
+# Grok joined on build 1.0.41 (superseding an earlier reading of "Grok has
+# no ask decision" against an older build): ~/.grok/docs/user-guide/
 # 10-hooks.md's "Output (Blocking Hooks)" section now documents
 # `{"decision": "ask", "reason": "..."}` on `PreToolUse` as a first-class
 # decision alongside allow/deny/defer, reaching a real permission prompt
 # (its own "An ask makes the call reach the permission prompt" wording).
-# Code-read, not yet a live-session proof - task 3.31/16 tracks the live
-# check separately; `godmode_reach.py`'s `ask-decision` cell for grok
-# stays `partial` ("guide, live proof pending") until that proof lands.
+# Code-read, not yet a live-session proof - the live check is tracked
+# separately; `godmode_reach.py`'s `ask-decision` cell for grok stays
+# `partial` ("guide, live proof pending") until that proof lands.
 HOSTS_WITH_ASK = frozenset({"claude", "cursor", "antigravity", "codex", "grok"})
 
 

@@ -1133,8 +1133,8 @@ def push_preflight(project: Path | str,
     if suite_skipped and verdict == "clean":
         verdict = "incomplete"
     if archive is not None:
-        # Row 38 (limits-0.3.29.md #14): the enforce-lesson sidecar's
-        # tier-3 fallback (a full, unlocked-by-default `read_events()` walk,
+        # The enforce-lesson sidecar's tier-3 fallback (a full,
+        # unlocked-by-default `read_events()` walk,
         # paid once per process when the sidecar is absent or stale) runs
         # from INSIDE `append()`'s `write_lock()` when nothing warmed it
         # first - fine once caught up, but on a large, never-warmed archive

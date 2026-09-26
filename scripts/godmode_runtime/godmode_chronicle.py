@@ -476,10 +476,10 @@ del _errno_name
 _EXCLUSIVE_CREATE_SWEEP_SECONDS = 120
 
 
-# Row 39 (limits-0.3.29.md #15): two different Godmode runtime versions
-# writing the same project's archive disagreed about the lock's own shape,
-# so a version mismatch surfaced as plain contention - "archive is busy",
-# sampled 197 times in the field, never naming what was actually different.
+# Two different Godmode runtime versions writing the same project's
+# archive disagreed about the lock's own shape, so a version mismatch
+# surfaced as plain contention - "archive is busy", sampled 197 times in
+# the field, never naming what was actually different.
 # Every lock sidecar already carried a diagnostic pid/timestamp payload
 # (never fsynced - a lock a crash releases by age-out does not need one);
 # the payload now carries the owning runtime version as a third line, so a
@@ -1107,8 +1107,8 @@ class Chronicle:
         if self.config.exists():
             existing = self._read_json(self.config)
             if existing.get("project_key") != self.anchor.project_key:
-                # Row 12 (limits-0.3.29.md #13): the check itself stays
-                # exactly as strict as before - fail-closed, an exact match
+                # The check itself stays exactly as strict as before -
+                # fail-closed, an exact match
                 # only, never widened to accepted_keys() (which trivially
                 # contains `self.anchor.project_key` by construction and so
                 # cannot be used to loosen THIS comparison without making it

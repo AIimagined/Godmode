@@ -9,8 +9,9 @@ suite's wall time. They still need to run, but not on every local
 
 Decorate every `TestCase` class in a slow module with `@slow`. It runs only
 when GODMODE_RUN_SLOW=1 is set - which `godmode precheck --preflight` (the
-release check) and the CI jobs that gate `main` both set; a routine local
-run does not.
+release check) sets, and which the workflow's `verify` and `verify-windows`
+jobs (the ones whose result gates a merge to `main`) also set in their job
+`env`; a routine local run does not.
 
 A module-level `unittest.SkipTest` (skip the whole module at import time)
 was tried first and dropped: `python -m unittest tests.test_x` (named-module
