@@ -562,7 +562,7 @@ class SlowHolderTests(unittest.TestCase):
                 archive.append("claim", "after", {"text": "x"})
                 self.assertTrue(archive.verify()["ok"])
 
-    def test_the_fallback_never_takes_over_from_a_live_holder_however_old(self) -> None:
+    def test_the_fallback_never_takes_over_from_a_live_holder_within_the_ceiling(self) -> None:
         with tempfile.TemporaryDirectory(prefix="godmode-lock-root-") as root, \
                 tempfile.TemporaryDirectory(prefix="godmode-lock-state-") as state:
             with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": state}, clear=False):
@@ -573,7 +573,7 @@ class SlowHolderTests(unittest.TestCase):
                 try:
                     archive.excl_lock_path.write_text(
                         f"{sleeper.pid}\n0\nsame\n", encoding="utf-8")
-                    old = time.time() - 3600
+                    old = time.time() - 20 * 60
                     os.utime(archive.excl_lock_path, (old, old))
                     with self.assertRaises(ArchiveError):
                         with acquire(1.0):
@@ -588,6 +588,50 @@ class SlowHolderTests(unittest.TestCase):
                     self.assertTrue(archive.excl_lock_path.read_text(
                         encoding="utf-8").startswith(f"{os.getpid()}\n"))
                 self.assertFalse(archive.excl_lock_path.exists())
+
+    def _fallback(self, root: str, state: str):
+        archive = Chronicle(resolve_anchor(Path(root)))
+        archive.initialize()
+        return archive, contextlib.contextmanager(archive._write_lock_exclusive_create)
+
+    def test_a_live_but_hung_holder_past_the_ceiling_is_taken_over(self) -> None:
+        from godmode_runtime import godmode_chronicle as C
+
+        with tempfile.TemporaryDirectory(prefix="godmode-lock-root-") as root, \
+                tempfile.TemporaryDirectory(prefix="godmode-lock-state-") as state:
+            with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": state}, clear=False):
+                archive, acquire = self._fallback(root, state)
+                # This test's own process: alive for certain.
+                archive.excl_lock_path.write_text(
+                    C._lock_owner_payload(os.getppid(), 0.0), encoding="utf-8")
+                old = time.time() - C._EXCLUSIVE_CREATE_CEILING_SECONDS - 60
+                os.utime(archive.excl_lock_path, (old, old))
+                with acquire(2.0):
+                    self.assertTrue(archive.excl_lock_path.read_text(
+                        encoding="utf-8").startswith(f"{os.getpid()}\n"))
+
+    def test_a_dead_pid_from_another_host_is_not_taken_over_within_the_ceiling(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="godmode-lock-root-") as root, \
+                tempfile.TemporaryDirectory(prefix="godmode-lock-state-") as state:
+            with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": state}, clear=False):
+                archive, acquire = self._fallback(root, state)
+                sleeper = subprocess.Popen([sys.executable, "-c", "pass"])
+                sleeper.wait(timeout=30)
+                archive.excl_lock_path.write_text(
+                    f"{sleeper.pid}\n0\nsame\nsome-other-host\n", encoding="utf-8")
+                old = time.time() - 10 * 60
+                os.utime(archive.excl_lock_path, (old, old))
+                with self.assertRaises(ArchiveError):
+                    with acquire(1.0):
+                        self.fail("took over a lock another host holds")
+                self.assertIn("some-other-host",
+                              archive.excl_lock_path.read_text(encoding="utf-8"))
+
+    def test_the_lock_payload_records_this_host(self) -> None:
+        from godmode_runtime import godmode_chronicle as C
+
+        payload = C._lock_owner_payload(4242, 1.0)
+        self.assertEqual(C._lock_owner_host(payload), C._lock_host())
 
     def test_release_leaves_a_sidecar_that_is_no_longer_its_own(self) -> None:
         with tempfile.TemporaryDirectory(prefix="godmode-lock-root-") as root, \

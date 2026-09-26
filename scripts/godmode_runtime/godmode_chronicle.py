@@ -474,6 +474,11 @@ del _errno_name
 # answer "is anyone holding the fallback's lock right now" without a
 # kernel probe to ask, since that regime has none.
 _EXCLUSIVE_CREATE_SWEEP_SECONDS = 120
+# The fallback's hard ceiling: a sidecar older than this is taken over
+# whatever its pid says. A holder alive but hung (or a pid reused by an
+# unrelated process) would otherwise wedge the archive for good, and no
+# legitimate write holds the lock this long.
+_EXCLUSIVE_CREATE_CEILING_SECONDS = 30 * 60
 
 
 # Row 39 (limits-0.3.29.md #15): two different Godmode runtime versions
@@ -485,8 +490,24 @@ _EXCLUSIVE_CREATE_SWEEP_SECONDS = 120
 # the payload now carries the owning runtime version as a third line, so a
 # timed-out acquire can tell "a different version holds this, by name"
 # apart from "the same version is legitimately still writing".
+def _lock_host() -> str:
+    """This machine's name, as a lock sidecar records it: a pid means
+    nothing on another host or in another pid namespace."""
+    import socket
+    try:
+        return socket.gethostname().strip() or "unknown"
+    except OSError:
+        return "unknown"
+
+
 def _lock_owner_payload(pid: int, when: float) -> str:
-    return f"{pid}\n{when}\n{RUNTIME_VERSION}\n"
+    return f"{pid}\n{when}\n{RUNTIME_VERSION}\n{_lock_host()}\n"
+
+
+def _lock_owner_host(text: str) -> str | None:
+    """The host line of a lock payload, or None when it predates the field."""
+    lines = text.splitlines()
+    return (lines[3].strip() or None) if len(lines) >= 4 else None
 
 
 def _lock_owner_version(path: Path) -> str | None:
@@ -1509,14 +1530,23 @@ class Chronicle:
         before, and two writers then overlapped. A sidecar naming a pid is
         abandoned only when that process is dead; one with no readable pid
         (a crash between create and write) only once it is older than the
-        sweep window."""
+        sweep window. A pid is only read on the host that wrote it: a
+        sidecar from another host (a shared filesystem, another container)
+        is never judged by a local pid lookup. Past the ceiling
+        (`_EXCLUSIVE_CREATE_CEILING_SECONDS`) any sidecar is abandoned, so
+        a live but hung holder cannot wedge the archive for good."""
         try:
             text = self.excl_lock_path.read_text(encoding="utf-8", errors="replace")
             age = time.time() - self.excl_lock_path.stat().st_mtime
         except OSError:
             return False
+        if age > _EXCLUSIVE_CREATE_CEILING_SECONDS:
+            return True
         pid = _payload_pid(text)
         if pid is not None:
+            host = _lock_owner_host(text)
+            if host is not None and host != _lock_host():
+                return False
             return not _pid_alive(pid)
         return age > _EXCLUSIVE_CREATE_SWEEP_SECONDS
 
