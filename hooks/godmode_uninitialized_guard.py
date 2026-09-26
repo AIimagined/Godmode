@@ -19,6 +19,7 @@ rare branch.
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -35,7 +36,34 @@ _HARM_LABELS = {
     "interpreter-opaque-inline": "an interpreter payload naming a harm-class operation",
     "password-in-transcript": "a password typed into the transcript",
     "operator-authorization-from-agent": "an agent opening the operator's password prompt",
+    "unreadable-command": "a command whose program or verb is built when it runs",
 }
+
+# A word the shell builds when the line runs: its value is not in the text.
+_EXPANSION = re.compile(r"[$`]|^[(@]")
+
+
+def _unreadable_command(operation: str) -> bool:
+    """Whether a segment runs a program - or a git verb - that is only
+    built when the line runs (`& ('gi'+'t') push`, `$cmd push`,
+    `git $(printf pu)sh`). The call already named a harm-class word, so a
+    program the classifier cannot name is not cleared as harmless."""
+    from godmode_runtime.godmode_parseview import opaque_head
+    from godmode_runtime.godmode_sentinel import shell_segments
+    if opaque_head(operation, True) or opaque_head(operation, False):
+        return True
+    for segment in shell_segments(operation):
+        if opaque_head(segment, True) or opaque_head(segment, False):
+            return True
+        words = segment.split()
+        # The splitter drops PowerShell's call operator: `('gi'+'t') push`
+        # is what is left of `& ('gi'+'t') push`.
+        if words and _EXPANSION.search(words[0]):
+            return True
+        if (len(words) > 1 and words[0].strip("\"'").lower() in ("git", "git.exe")
+                and _EXPANSION.search(words[1])):
+            return True
+    return False
 
 
 def _shown(operation: str) -> str:
@@ -102,6 +130,8 @@ def guard_decision(payload: dict[str, Any], root: str) -> dict[str, Any] | None:
             return body("setting")
         verdict = classify_action(operation, project_root=Path(root), tool_name=event.tool)
         category = _harm_category(verdict, root, _contained)
+        if category is None and verdict.get("protected") and _unreadable_command(operation):
+            category = "unreadable-command"
         if category is None:
             return None
         return body("harm", _HARM_LABELS.get(category, category.replace("-", " ")))

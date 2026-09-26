@@ -1618,5 +1618,19 @@
     "class": "by-design",
     "tool": "Bash",
     "note": "a force push spelled through ANSI-C quoting"
+  },
+  {
+    "operation": "& ('gi'+'t') push -f",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "PowerShell",
+    "note": "the program is an expression built when the line runs"
+  },
+  {
+    "operation": "git $(printf pu)sh -f",
+    "expected": "ask",
+    "class": "by-design",
+    "tool": "Bash",
+    "note": "git's verb is built by a substitution"
   }
 ]

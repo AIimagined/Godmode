@@ -692,6 +692,17 @@ class UninitializedGuard(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self._decision(self._run(command)), "ask")
 
+    def test_a_program_or_git_verb_built_at_run_time_asks(self) -> None:
+        # The classifier cannot name the program (an expression or a
+        # variable as the command word, a substitution as git's verb); on
+        # a call that already named a harm-class word that is not cleared.
+        for command, tool in (("& ('gi'+'t') push -f", "PowerShell"),
+                              ("$g push --force", "Bash"),
+                              ("git $(printf pu)sh -f", "Bash")):
+            with self.subTest(command=command):
+                self.assertEqual(self._decision(self._run(command, tool=tool)), "ask")
+        self.assertIsNone(self._run("echo $(date) && git status"))
+
     def test_releases_and_history_rewrites_ask(self) -> None:
         for command in ("npm publish", "gh release create v1", "git reset --hard HEAD~3",
                         "git branch -D topic", "git push origin v1.0"):
