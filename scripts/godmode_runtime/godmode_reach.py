@@ -79,8 +79,8 @@ _TABLE: dict[str, dict[str, tuple[str, str]]] = {
         "ask-decision": (_P, "PreToolUse ask accepted by its wire; PermissionRequest deny dialect projected; unproven live"),
     },
     "grok": {
-        # Task 16 (0.3.31): `~/.grok/docs/user-guide/10-hooks.md` (build
-        # 1.0.41) now documents a real `ask` decision and reads `PostToolUse`
+        # `~/.grok/docs/user-guide/10-hooks.md` (build 1.0.41) now
+        # documents a real `ask` decision and reads `PostToolUse`
         # stdout - superseding the "no ask decision"/"PostToolUse ignored"
         # reading an older build gave this row. Both cells below are marked
         # `partial` ("guide, live proof pending"), never `yes` - a code read

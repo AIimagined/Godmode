@@ -2181,8 +2181,8 @@ _AGENT_RELAY = re.compile(
     r"Another Claude session sent a message)")
 
 # The host can preface a real delivery with its own notice before the
-# envelope opens - observed live (archive sequence 21090): a hand-back
-# arrived behind the "delivered while you were working" notice, and the
+# envelope opens - observed live: a hand-back arrived behind the
+# "delivered while you were working" notice, and the
 # FIRST-non-blank-line rule above tested that notice's line instead of the
 # `<agent-message ...>` line one further down, so the relay read as an
 # operator ask. Neither shape is operator- or subagent-authored text; both

@@ -607,10 +607,9 @@ def _write_fixture_text(path: Path, text: str) -> bool:
     `Path.write_text` translates every `\\n` to `os.linesep` when no
     `newline=` is given, so an unconditional write on Windows turns a
     committed eval fixture CRLF on every run even though nothing in it
-    changed - the exact incident `routing-stability.json` suffered mid-sprint
-    (2026-09-25 carried-items triage, row 89: "a test run rewrites
-    evals/fixtures/routing-stability.json with CRLF (content unchanged),
-    dirtying the tracked tree"). Writing with `newline="\\n"` keeps the bytes
+    changed - `routing-stability.json` was observed dirtying the tracked
+    tree this way, content unchanged, from a run that rewrote it with
+    CRLF line endings. Writing with `newline="\\n"` keeps the bytes
     identical on every platform, and skipping the write when the content is
     already current means a clean tree stays clean after a run that changed
     nothing - `godmode evals --refresh`'s second run is a no-op by
@@ -1132,9 +1131,9 @@ def _ranking_view(project: Path, withhold_memory: bool = False) -> dict[str, Any
     timestamp is whatever wall-clock time it happened to be made at, so a
     snapshot taken after a squash or a differently-ordered rebase could
     tie-break equally-scored segments differently despite byte-identical
-    files (2026-09-25 carried-items triage, row 66: "ranking freshness reads
-    git commit time, so the snapshot depends on commit order"). The content
-    instrument depends on nothing but the bytes on disk, so
+    files - ranking freshness by git commit time makes the snapshot depend
+    on commit order. The content instrument depends on nothing but the
+    bytes on disk, so
     `godmode evals --refresh` gives a byte-identical fixture regardless of how
     the tree was committed. This is deliberately narrower than what
     `godmode brief` uses for a live session (the git-log default, kept as-is)
