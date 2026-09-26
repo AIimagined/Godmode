@@ -124,6 +124,29 @@ def _child_rss_bytes_windows(pid: int) -> int | None:
         return None
 
 
+KILL_ATTEMPTS = 3
+
+
+def _kill(proc: subprocess.Popen, attempts: int = KILL_ATTEMPTS) -> bool:
+    """Kill `proc`, retrying; True only when a kill was delivered and the
+    child is gone. A child that exited on its own first was not killed."""
+    sent = False
+    for _ in range(attempts):
+        if proc.poll() is not None:
+            return sent
+        try:
+            proc.kill()
+        except OSError:
+            continue
+        sent = True
+        try:
+            proc.wait(timeout=1)
+            return True
+        except subprocess.TimeoutExpired:
+            continue
+    return sent and proc.poll() is not None
+
+
 def run_with_memory_cap(
     argv: list[str],
     *,
@@ -141,7 +164,9 @@ def run_with_memory_cap(
 
     The returned `CompletedProcess` carries two extra attributes:
     `peak_rss_bytes` (best sample seen, 0 if the platform never yielded
-    one) and `memory_killed` (True when the cap fired). A timeout still
+    one), `memory_killed` (True when the cap fired and the child was
+    killed) and `kill_failed` (True when the cap fired but no kill took
+    hold, so the child ran on while still being polled). A timeout still
     raises `subprocess.TimeoutExpired` exactly as `subprocess.run` does;
     that exception also carries `peak_rss_bytes` for the same reporting.
     """
@@ -154,7 +179,7 @@ def run_with_memory_cap(
         stdout=subprocess.PIPE if capture_output else None,
         stderr=subprocess.PIPE if capture_output else None,
     )
-    state: dict[str, Any] = {"peak": 0, "memory_killed": False}
+    state: dict[str, Any] = {"peak": 0, "memory_killed": False, "kill_failed": False}
     stop = threading.Event()
 
     def _poll() -> None:
@@ -165,14 +190,17 @@ def run_with_memory_cap(
             if rss > state["peak"]:
                 state["peak"] = rss
             if memory_limit_bytes and rss > memory_limit_bytes:
-                state["memory_killed"] = True
-                try:
-                    proc.kill()
-                except OSError:
+                if _kill(proc):
+                    state["memory_killed"] = True
+                    state["kill_failed"] = False
+                    return
+                if proc.poll() is not None:
                     # The child exited on its own between the sample and
                     # the kill: it was not stopped for memory.
-                    state["memory_killed"] = proc.poll() is None
-                return
+                    return
+                # Still running and every kill failed: say so, and keep
+                # polling rather than report a kill that did not happen.
+                state["kill_failed"] = True
 
     monitor = threading.Thread(target=_poll, daemon=True)
     monitor.start()
@@ -191,6 +219,7 @@ def run_with_memory_cap(
     result = subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
     result.peak_rss_bytes = state["peak"]  # type: ignore[attr-defined]
     result.memory_killed = state["memory_killed"]  # type: ignore[attr-defined]
+    result.kill_failed = state["kill_failed"]  # type: ignore[attr-defined]
     if result.memory_killed and result.returncode == 0:
         result.returncode = -9
     if check and result.returncode != 0:

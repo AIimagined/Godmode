@@ -1,0 +1,1 @@
+- A child process that crosses the memory cap during preflight and cannot be killed is no longer reported as killed for memory. The kill is retried, and when it still fails the run reports that the kill failed and keeps watching the child.

@@ -18,6 +18,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -194,6 +195,22 @@ class ChildMemoryCapTests(unittest.TestCase):
         self.assertGreater(result.peak_rss_bytes, 0)
         self.assertNotEqual(result.returncode, 0)
 
+
+    def test_a_kill_that_fails_is_reported_and_polling_continues(self) -> None:
+        grow = "import time; hold = bytearray(120 * 1024 * 1024); time.sleep(3)"
+        with mock.patch.object(subprocess.Popen, "kill", autospec=True,
+                               side_effect=OSError("access denied")) as kill:
+            result = run_with_memory_cap(
+                [sys.executable, "-c", grow],
+                timeout=20,
+                memory_limit_bytes=40 * 1024 * 1024,
+                poll_seconds=0.2,
+            )
+        self.assertFalse(result.memory_killed)
+        self.assertTrue(result.kill_failed)
+        self.assertEqual(result.returncode, 0)
+        # Retried within one poll, and polled again after every kill failed.
+        self.assertGreater(kill.call_count, 3)
 
 if __name__ == "__main__":
     unittest.main()
