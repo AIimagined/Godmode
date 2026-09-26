@@ -1057,7 +1057,8 @@ def harm_candidate(payload: dict[str, Any], roots: list[str]) -> bool:
     # A path that resolves to the guard's own setting names no keyword at
     # all when it is spelled with a glob (`.gi?/conf*`).
     try:
-        return _writes_guard_setting(strings, roots[0] if roots else None)
+        return _writes_guard_setting(strings, roots[0] if roots else None,
+                                     roots[1] if len(roots) > 1 else None)
     except Exception:  # noqa: BLE001 - an unresolvable path is doubt, and doubt is a candidate
         return True
 
@@ -1090,16 +1091,18 @@ def _guard_setting_files(root: str | None) -> list[str]:
     return [os.path.normcase(os.path.normpath(os.path.abspath(path))) for path in files]
 
 
-def _writes_guard_setting(texts: list[str], root: str | None) -> bool:
+def _writes_guard_setting(texts: list[str], root: str | None, cwd: str | None = None) -> bool:
     """Whether any path-shaped word in `texts` resolves to a file the
     guard's setting lives in - read from what the path resolves to, not
     how it is spelled: `.` and `..` are normalised, a `cd`/`pushd`/
     `Set-Location` earlier in the call moves the directory relative words
     resolve against, and a glob matches when it could name the file. A
     directory change the text cannot resolve (`cd $x`) makes any word that
-    could name `config` count."""
+    could name `config` count. Relative words start from both the
+    project root and the call's own directory (`cwd`): a host shell that
+    kept an earlier `cd .git` runs the call from there."""
     files = _guard_setting_files(root)
-    base = os.path.abspath(root) if root else os.getcwd()
+    starts = [os.path.abspath(start) for start in (root, cwd) if start] or [os.getcwd()]
     home = os.path.expanduser("~")
     # Each text is read twice: with quotes dropped (a backslash is a
     # Windows separator) and flattened the way the shell removes escapes.
@@ -1107,7 +1110,7 @@ def _writes_guard_setting(texts: list[str], root: str | None) -> bool:
                 for reading in (re.sub(r"[\"']", "", text), _FLATTEN.sub("", text))]
     for text in readings:
         words = [word for word in _PATH_WORD_SPLIT.split(text) if word]
-        bases = [base]
+        bases = list(dict.fromkeys(starts))
         dynamic_base = False
         for index, word in enumerate(words):
             if word.lower() in _CD_HEADS:
@@ -1143,7 +1146,8 @@ def _fnmatch(name: str, pattern: str) -> bool:
     return fnmatch.fnmatchcase(os.path.normcase(name), os.path.normcase(pattern))
 
 
-def _disables_guard(operation: str, targets: list[str], root: str | None = None) -> bool:
+def _disables_guard(operation: str, targets: list[str], root: str | None = None,
+                    cwd: str | None = None) -> bool:
     """Whether this call would change the guard's own setting: the
     machine-wide file, `godmode config set uninitialized`, or a
     repository's `godmode.uninitialized` key. Changing it is the operator's
@@ -1162,7 +1166,7 @@ def _disables_guard(operation: str, targets: list[str], root: str | None = None)
                 or shown.endswith("godmode-settings.json")):
             return True
     try:
-        return _writes_guard_setting([operation, *targets], root)
+        return _writes_guard_setting([operation, *targets], root, cwd)
     except Exception:  # noqa: BLE001 - a path this cannot resolve is doubt, and doubt asks
         return True
 

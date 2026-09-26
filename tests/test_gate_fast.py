@@ -756,6 +756,14 @@ class UninitializedGuard(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertIsNone(self._run(command))
 
+    def test_a_write_from_a_call_already_inside_the_git_directory_asks(self) -> None:
+        # The host shell kept an earlier `cd .git`: the call's own `cwd`
+        # is where a bare `config` lands.
+        command = r"printf '[godmode]\n\tuninit%s = off\n' ialized >> config"
+        self.assertEqual(self._decision(self._run(command, cwd=self.project / ".git")), "ask")
+        self.assertEqual(self._decision(
+            self._no_ask(command, cwd=self.project / ".git", session="n")), "deny")
+
     def test_an_edit_of_the_repository_config_is_asked_about(self) -> None:
         body = {"hook_event_name": "PreToolUse", "tool_name": "Write",
                 "tool_input": {"file_path": str(self.project / ".git" / "config"),
