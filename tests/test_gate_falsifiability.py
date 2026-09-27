@@ -261,7 +261,12 @@ class GateFalsifiabilityTests(unittest.TestCase):
         # `planmode specify`), so that one directory - and only it, never the
         # rest of the working tree's ignored files - is copied across by
         # hand.
-        source_state = PLUGIN_ROOT / ".git" / "godmode-state"
+        # In a linked worktree `.git` is a pointer file, so the archive is
+        # asked from git itself rather than assumed at `.git/`.
+        common = subprocess.run(
+            ["git", "-C", str(PLUGIN_ROOT), "rev-parse", "--git-common-dir"],
+            capture_output=True, text=True, check=True, timeout=30).stdout.strip()
+        source_state = (PLUGIN_ROOT / common).resolve() / "godmode-state"
         if source_state.is_dir():
             shutil.copytree(source_state, cls.project / ".git" / "godmode-state")
 
