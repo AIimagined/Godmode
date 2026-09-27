@@ -162,6 +162,25 @@ class AskOnlyHookTests(unittest.TestCase):
         self.assertEqual(len(silenced), 1, "the silence must leave a record")
         self.assertEqual(silenced[0]["data"]["category"], "interpreter-opaque-inline")
 
+    def test_an_unlisted_r2_is_not_silenced_while_unattended(self) -> None:
+        # The list narrows what an operator is asked about; with no operator
+        # presumed present it silences nothing, and the call follows the
+        # unattended rules every other path does: an ask where a person
+        # could answer one, a refusal where the host answers its own asks.
+        command = {"command": "node -e \"require('fs').writeFileSync('x', '1')\""}
+        with _project() as (root, archive):
+            with mock.patch.dict(os.environ, {"GODMODE_ATTENDED": "0"}):
+                declared = _decide(root, "Bash", command)
+            with mock.patch.dict(os.environ, {"GODMODE_ATTENDED": ""}):
+                os.environ.pop("GODMODE_ATTENDED", None)
+                auto = _decide(root, "Bash", command, permission_mode="auto")
+            silenced = [r for r in archive.read_events(verify=False)
+                        if r.get("kind") == "action"
+                        and (r.get("data") or {}).get("silenced_by") == "ask_only"]
+        self.assertEqual(declared, "ask")
+        self.assertEqual(auto, "deny")
+        self.assertEqual(silenced, [], "nothing may be silenced while unattended")
+
     def test_a_listed_category_still_asks(self) -> None:
         with _project() as (root, _archive):
             decision = _decide(root, "Bash", {"command": "git checkout -- notes.md"})

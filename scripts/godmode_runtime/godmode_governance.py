@@ -1,4 +1,4 @@
-"""Sprint 8: governance proposed from this project's own record.
+"""Governance proposed from this project's own record.
 
 The pivot: stop shipping generic frames, start proposing the rules this
 project's history already argues for. Every input exists already - refusals
@@ -36,7 +36,7 @@ from typing import Any
 from .godmode_chronicle import Chronicle
 from .godmode_errors import ArchiveError
 # The sprint plan left "merge or layer?" open for the recurring-ask miner.
-# Layered: U-E10 already folds the request ledger into charter-rule
+# Layered: the recurring-ask miner already folds the request ledger into charter-rule
 # candidates under this same propose-never-install shape. A second
 # implementation over the same ledger would be a duplicate authority - two
 # components answering "what keeps getting asked" that drift apart the
@@ -186,7 +186,7 @@ def _repeated_obligation_candidates(
 
 
 def _recurring_ask_candidates(archive: Chronicle) -> list[dict[str, Any]]:
-    """U-E10's own candidates, re-dressed in the candidate shape.
+    """The recurring-ask miner's own candidates, re-dressed in the candidate shape.
 
     The miner owns the clustering (it shares `_terms` with the precheck, so
     "the same ask" means one thing across the runtime); this only adopts its

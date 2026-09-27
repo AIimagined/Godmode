@@ -6,20 +6,15 @@ its own prose.
 
 ## Gap evidence
 
-- seq:12266 - the offline routing snapshot scores lexical token overlap
-  between a prompt and a skill's own description plus its sibling prompts,
-  with no model consulted: an authored positive scored 0.5714 to `godmode`
-  while the same intent in plain user phrasing scored only 0.1111 and routed
-  to a different skill. One instrument, one number, accepted alone.
-- seq:12268 - a later, independent instrument (a live plugin eval, three
-  cases and 18 runs, overall score 1.0) found the `godmode` skill was
-  invoked 0 of 3 times on natural resume phrasing, even though its own
-  lexical snapshot asserted that route passes. Its own recorded advisory
-  flags the disagreement directly: "quantities disagree with seq 12266 on
-  the same subject ... if this corrects it, resolve the elder superseded;
-  if both are true, say what differs." Nothing in the archive completes
-  that resolution - the two instruments' scores for the same routing claim
-  were left standing side by side, unreconciled.
+- An offline routing check scores lexical overlap between a prompt and a
+  skill's own description, with no model consulted: an authored example
+  scored well while the same intent phrased naturally by a real user
+  scored far lower and routed to the wrong skill — one instrument, one
+  number, accepted alone.
+- A separate, live evaluation found a skill was not invoked at all on
+  natural phrasing, even though the offline lexical check had asserted
+  that routing passed. The two results disagreed about the same routing
+  claim and nothing reconciled them.
 
 ## Promise
 
@@ -28,4 +23,4 @@ against the committed baseline by running the harness twice (lexically and
 for determinism) before the skill lands, so two instruments never disagree
 about the same claim with nobody asked to reconcile them.
 
-Future edits to this skill append their own seq: citation above.
+Future edits to this skill append their own plain-language evidence above.

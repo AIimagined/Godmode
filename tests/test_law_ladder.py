@@ -94,7 +94,8 @@ class PromoteTests(unittest.TestCase):
             any(law["subject"] == "registry-check-before-ranking" for law in laws))
 
     def test_promotion_graduates_to_a_law_only_after_a_chained_approval(self) -> None:
-        with _project() as (_root, archive):
+        from _law_fixtures import processes_per_agent_id
+        with _project() as (_root, archive), processes_per_agent_id():
             _recur(archive, ["S-1", "S-2", "S-3"])
             cluster = law_candidates(archive)[0]
             with mock.patch.dict(os.environ, {"GODMODE_AGENT_ID": "ladder-agent"}):

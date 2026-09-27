@@ -260,7 +260,10 @@ class InventoryCountTests(unittest.TestCase):
         import re
 
         text = (PLUGIN_ROOT / "docs" / "FEATURE-INVENTORY.md").read_text(encoding="utf-8")
-        stated = int(re.search(r"(\d+) numbered capability statements", text).group(1))
+        # `\s+`, not a literal space: prose reflow (9420a85f, "shorten the
+        # capability-count paragraph") can land the count and the phrase on
+        # either side of a line wrap.
+        stated = int(re.search(r"(\d+)\s+numbered capability statements", text).group(1))
         registry = json.loads((PLUGIN_ROOT / "capabilities.json").read_text(encoding="utf-8"))
         entries = registry if isinstance(registry, list) else registry.get("capabilities", [])
         self.assertEqual(stated, len(entries))

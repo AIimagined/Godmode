@@ -37,6 +37,8 @@ class VerbReachTests(unittest.TestCase):
         verbs = {name for action in parser._actions
                  if isinstance(action, __import__("argparse")._SubParsersAction)
                  for name in action.choices}
+        # A deprecated alias is kept for one release but not measured.
+        verbs -= set(console.DEPRECATED_ALIASES)
         self.assertEqual({v["verb"] for v in report["verbs"]}, verbs)
         for entry in report["verbs"]:
             self.assertEqual(set(entry) >= {"verb", "skill", "nudge", "docs"}, True, entry)

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_from": "06a034be7c36",
+  "generated_from": "12d359a242cd",
   "floor": {
     "claude-code": [
       "git status",
@@ -41,7 +41,10 @@
     "date",
     "basename",
     "dirname",
-    "realpath"
+    "realpath",
+    "nl",
+    "column",
+    "cd"
   ],
   "mutation_heads": {
     "filesystem-mutation": [
@@ -146,6 +149,19 @@
     "sort": [
       "-o",
       "--output"
+    ],
+    "time": [
+      "-o",
+      "--output"
     ]
-  }
+  },
+  "protected_edit_paths": [
+    "(?i)(?:^|[/\\\\])\\.git[/\\\\]|(?:^|[/\\\\])\\.env\\b|credential|\\bid_rsa\\b|\\.pem$|\\.key$|(?:^|[/\\\\])\\.godmode\\-authorization\\-policy\\.json$",
+    "(?i)(?:^|[/\\\\])(?:\\.git[/\\\\]hooks[/\\\\]|\\.github[/\\\\]workflows[/\\\\]|\\.husky[/\\\\]|\\.claude[/\\\\](?:settings(?:\\.local)?\\.json|hooks(?:[/\\\\]|\\.json))|\\.cursor[/\\\\]hooks\\.json|\\.codex[/\\\\]hooks\\.json|\\.agents[/\\\\]hooks\\.json|\\.gemini[/\\\\]settings\\.json|\\.pre-commit-config\\.ya?ml|lefthook\\.ya?ml)",
+    "(?i)(?:^|[/\\\\])(?:CODEFREEZE|\\.freeze|FREEZE|\\.codefreeze|RELEASE-FREEZE)(?:\\.md|\\.txt)?$",
+    "(?i)(?:^|[/\\\\])godmode\\-settings\\.json$",
+    "(?i)(?:^|[/\\\\])\\.godmode[^/\\\\]*$",
+    "(?i)(?:^|[/\\\\])\\.git(?:[/\\\\]|$)",
+    "(?i)^(?:\\.claude/)?skills/"
+  ]
 }

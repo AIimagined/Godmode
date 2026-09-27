@@ -23,8 +23,8 @@ command is classified exactly as it was before this module existed.
 
 `dialect_for_tool` picks the dialect from the host's tool name. A shell tool
 whose shell is not declared (a Codex, Grok or Antigravity shell tool) on
-Windows may be running PowerShell, so it is read both ways and the stricter
-reading wins (`DIALECT_EITHER`).
+Windows may be running PowerShell or cmd, so it is read all three ways and
+the stricter reading wins (`DIALECT_EITHER`).
 
 Standard library only; no import from the rest of the runtime at module
 level, so the classifier can import this without a cycle.
@@ -42,8 +42,10 @@ BASH = "bash"
 POWERSHELL = "powershell"
 CMD = "cmd"
 DIALECTS = (BASH, POWERSHELL, CMD)
-# Not a dialect of its own: "read this as Bash AND as PowerShell, keep the
-# stricter answer". Used for a shell tool whose shell is not declared.
+# Not a dialect of its own: "read this as Bash, as PowerShell and as cmd,
+# keep the stricter answer". Used for a shell tool whose shell is not
+# declared, on Windows, where any of the three may be the one that runs it.
+# The value keeps its first name so a recorded dialect still reads.
 DIALECT_EITHER = "bash-or-powershell"
 
 # The shell segment walk, shared with the classifier (godmode_sentinel),
@@ -146,7 +148,7 @@ def _walk_segments(command: str) -> Iterator[tuple[str, str | None]]:
     segment ends. Yields `(text, operator)` pairs - `operator` is the
     separator that introduced `text`, `None` for the first - so a caller
     that needs to know which `&&`/`||`/`;`/`|`/`&`/newline preceded a
-    component (NS-8a's component-scoped deny-by-default) reads it from the
+    component (the component-scoped deny-by-default rule) reads it from the
     same single scan `_raw_segments` already trusted, rather than a second,
     hand-copied instance of this machine that could quietly drift from it."""
     current: list[str] = []
@@ -280,7 +282,7 @@ def dialect_for_tool(tool: str | None, platform: str | None = None) -> str:
 def dialects_to_read(dialect: str) -> tuple[str, ...]:
     """The concrete dialects a command in `dialect` is classified under."""
     if dialect == DIALECT_EITHER:
-        return (BASH, POWERSHELL)
+        return (BASH, POWERSHELL, CMD)
     if dialect not in DIALECTS:
         raise ValueError(f"unknown shell dialect: {dialect!r}")
     return (dialect,)
@@ -681,7 +683,7 @@ def head_readings(segment: str) -> list[str]:
     - the head with its quoting resolved (`'git' push` -> `git push`);
     - a head that is a path, quoted or not, read by its program name
       (`'/usr/bin/git' push`, `& "C:/Program Files/git.exe" push` ->
-      `git push`; review round 2, F3). The base name is cut from the word
+      `git push`). The base name is cut from the word
       as written, so a Windows path's backslashes still separate.
     """
     readings: list[str] = []
@@ -699,6 +701,618 @@ def head_readings(segment: str) -> list[str]:
             if reading not in readings:
                 readings.append(reading)
     return readings
+
+
+# ---------------------------------------------------------------------------
+# Command words that are not written as a plain name.
+#
+# `head_readings` above resolves quoting and paths. The forms below name the
+# program some other way - an expansion, PowerShell's call and dot-source
+# operators, `Start-Process`, a pseudo-terminal wrapper - and each one was
+# read as an unrecognised command, which the classifier's no-evidence
+# default allows. Each form is either normalised to the command it runs
+# (an extra reading; the stricter reading still wins, so a reading can only
+# raise a verdict) or, where the program is not knowable from the text,
+# reported as opaque.
+# ---------------------------------------------------------------------------
+
+# A PowerShell operator in the second word: `$x -eq 1` compares, it runs
+# nothing.
+_PWSH_OPERATOR = re.compile(
+    r"(?i)^-(?:[ci]?(?:eq|ne|gt|ge|lt|le|like|notlike|match|notmatch|contains|"
+    r"notcontains|in|notin|replace|split)|join|is|isnot|as|band|bor|bxor|bnot|"
+    r"shl|shr|and|or|xor|not|f)$")
+# `$x = ...`, `$env:X += ...`, `$x.Name = ...`, `$x[0] = ...`: an assignment,
+# the one PowerShell statement shape that starts with a variable and runs
+# nothing of its own. Its value, when it is a command, is judged elsewhere.
+_VARIABLE_ASSIGNMENT = re.compile(
+    r"^\$(?:\{[^}]*\}|[\w:]+)(?:\[[^\]]*\]|\.\w+)*\s*[-+*/%]?=(?!=)")
+_VARIABLE_WORD = re.compile(r"^\$(?:\{[^}]*\}|[A-Za-z_][\w:]*|[0-9@*#?$!-])$")
+_EXPANSION_DEFAULT = re.compile(r"^\$\{[A-Za-z_]\w*:?[-=+?](?P<word>[^}]*)\}$")
+_ANSI_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "a": "\a", "b": "\b",
+                 "e": "\x1b", "E": "\x1b", "f": "\f", "v": "\v",
+                 "\\": "\\", "'": "'", '"': '"', "?": "?"}
+_GET_COMMAND = re.compile(
+    r"(?i)^\(\s*(?:Get-Command|gcm)\s+(?:-Name\s+)?(?P<q>['\"]?)(?P<name>[A-Za-z0-9_.\\/:+-]+)"
+    r"(?P=q)(?:\s+-\w+(?:\s+[\w-]+)?)*\s*\)\s*(?:\.(?:Source|Path|Definition|Name))?$")
+_START_PROCESS = frozenset({"start-process", "start", "saps"})
+# `Start-Process` parameters that take a value, by full name. PowerShell
+# accepts any unambiguous prefix, so a written parameter is matched as one.
+_START_PROCESS_VALUED = ("filepath", "argumentlist", "args", "workingdirectory", "verb",
+                         "windowstyle", "redirectstandardoutput", "redirectstandarderror",
+                         "redirectstandardinput", "credential", "environment")
+# Wrappers that run a command under a pseudo-terminal. A terminal is what
+# an operator-only prompt checks for, so running one of those verbs under a
+# wrapper is not the operator at a keyboard.
+# `tmux`, `screen`, `socat`, `ssh -t` and `setsid` hand the command a
+# terminal (or a new session) of their own the same way.
+_PTY_WRAPPERS = frozenset({"script", "winpty", "unbuffer", "expect", "pty", "ptyrun",
+                           "tmux", "screen", "socat", "ssh", "setsid"})
+
+
+def _call_operator(segment: str) -> tuple[str | None, str]:
+    """`(operator, text)`: PowerShell's call operator `&` or the dot-source
+    `.` (Bash's `source`) in front of the command word, and the text after
+    it. `(None, segment)` when neither is there."""
+    text = segment.lstrip()
+    if text.startswith("&") and not text.startswith("&&"):
+        return "&", text[1:].lstrip()
+    if len(text) > 1 and text[0] == "." and text[1] in " \t":
+        return ".", text[1:].lstrip()
+    return None, text
+
+
+def _leading_word(text: str) -> tuple[str, str]:
+    """The first word of `text` as written (quotes and `${...}` braces kept
+    whole) and the text after it."""
+    index = 0
+    quote: str | None = None
+    depth = 0
+    while index < len(text):
+        ch = text[index]
+        if quote:
+            if ch == "\\" and quote != "'" and index + 1 < len(text):
+                index += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch == "\\" and index + 1 < len(text):
+            index += 2
+            continue
+        elif ch in "'\"":
+            quote = ch
+        elif ch in "({":
+            depth += 1
+        elif ch in ")}":
+            depth = max(0, depth - 1)
+        elif depth == 0 and ch in _WORD_END:
+            break
+        index += 1
+    return text[:index], text[index:]
+
+
+def _unwrapped_double_quotes(word: str) -> str:
+    """`word` without one pair of enclosing double quotes."""
+    if len(word) > 1 and word[0] == '"' and word[-1] == '"' and '"' not in word[1:-1]:
+        return word[1:-1]
+    return word
+
+
+def _ansi_c(body: str) -> str:
+    """The value of a Bash `$'...'` string's body."""
+    out: list[str] = []
+    index = 0
+    while index < len(body):
+        ch = body[index]
+        if ch != "\\" or index + 1 >= len(body):
+            out.append(ch)
+            index += 1
+            continue
+        nxt = body[index + 1]
+        if nxt in _ANSI_ESCAPES:
+            out.append(_ANSI_ESCAPES[nxt])
+            index += 2
+        elif nxt == "x":
+            digits = re.match(r"[0-9A-Fa-f]{1,2}", body[index + 2:])
+            if digits:
+                out.append(chr(int(digits.group(0), 16)))
+                index += 2 + len(digits.group(0))
+            else:
+                out.append("\\x")
+                index += 2
+        elif nxt in "uU":
+            digits = re.match(r"[0-9A-Fa-f]{1,8}" if nxt == "U" else r"[0-9A-Fa-f]{1,4}",
+                              body[index + 2:])
+            if digits:
+                out.append(chr(int(digits.group(0), 16)))
+                index += 2 + len(digits.group(0))
+            else:
+                out.append("\\" + nxt)
+                index += 2
+        elif nxt in "01234567":
+            digits = re.match(r"[0-7]{1,3}", body[index + 1:])
+            out.append(chr(int(digits.group(0), 8)))
+            index += 1 + len(digits.group(0))
+        else:
+            out.append("\\" + nxt)
+            index += 2
+    return "".join(out)
+
+
+def _written_word_value(word: str) -> str | None:
+    """The value of one command word written with Bash quoting - `'a'`,
+    `"a"`, `a\\b`, `$'a'` and `$"a"` parts, concatenated - or None when any
+    part expands (`$x`, `${x}`, a substitution) or a quote never closes."""
+    out: list[str] = []
+    index = 0
+    while index < len(word):
+        ch = word[index]
+        if word.startswith("$'", index):
+            end = index + 2
+            while end < len(word) and word[end] != "'":
+                end += 2 if word[end] == "\\" else 1
+            if end >= len(word):
+                return None
+            out.append(_ansi_c(word[index + 2:end]))
+            index = end + 1
+        elif word.startswith('$"', index):
+            index += 1
+            continue
+        elif ch == "'":
+            end = word.find("'", index + 1)
+            if end == -1:
+                return None
+            out.append(word[index + 1:end])
+            index = end + 1
+        elif ch == '"':
+            end = index + 1
+            part: list[str] = []
+            while end < len(word) and word[end] != '"':
+                if word[end] in "$`":
+                    return None
+                if word[end] == "\\" and end + 1 < len(word) and word[end + 1] in '"\\$`':
+                    part.append(word[end + 1])
+                    end += 2
+                    continue
+                part.append(word[end])
+                end += 1
+            if end >= len(word):
+                return None
+            out.append("".join(part))
+            index = end + 1
+        elif ch == "\\" and index + 1 < len(word):
+            out.append(word[index + 1])
+            index += 2
+        elif ch in "$`":
+            return None
+        else:
+            out.append(ch)
+            index += 1
+    return "".join(out)
+
+
+def _program_name(value: str) -> str:
+    """The program a command word names: its base name, any Windows
+    executable suffix dropped."""
+    return _EXECUTABLE_SUFFIX.sub("", re.split(r"[\\/]", value)[-1])
+
+
+def lookalike_head(segment: str) -> str | None:
+    """The command name of `segment` when it is not plain ASCII - a Cyrillic
+    `і` in `gіt` names a different program that reads, to a person, as git.
+    None for an ASCII name. Only the program's own name counts, so a
+    non-ASCII directory on the way to an ordinary tool does not."""
+    _operator, text = _call_operator(segment)
+    word, _rest = _leading_word(text)
+    value = _written_word_value(word)
+    if value is None or not value or any(ch.isspace() for ch in value):
+        # An expansion, or a quoted phrase: not a name a person reads as a
+        # known command.
+        return None
+    name = _program_name(value)
+    return None if name.isascii() else name
+
+
+def _start_process_reading(rest: str) -> tuple[str | None, bool]:
+    """`(reading, opaque)` for `Start-Process <rest>`: the command it
+    launches as a command line, and whether the program is an expansion
+    this text cannot name."""
+    try:
+        tokens = shlex.split(rest, posix=True)
+    except ValueError:
+        return None, True
+    program: str | None = None
+    arguments: list[str] = []
+    redirects: list[str] = []
+    positional: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token.startswith("-") and len(token) > 1:
+            name = token[1:].split(":", 1)[0].lower()
+            valued = [full for full in _START_PROCESS_VALUED if full.startswith(name)]
+            if valued and index + 1 < len(tokens):
+                value = tokens[index + 1]
+                if valued[0] == "filepath":
+                    program = value
+                elif valued[0] in ("argumentlist", "args"):
+                    arguments.append(value)
+                elif valued[0] in ("redirectstandardoutput", "redirectstandarderror"):
+                    redirects.append(value)
+                index += 2
+                continue
+            index += 1
+            continue
+        positional.append(token)
+        index += 1
+    if program is None and positional:
+        program = positional.pop(0)
+    if not arguments and positional:
+        arguments.append(positional.pop(0))
+    if not program:
+        return None, False
+    if program.startswith(("$", "(")):
+        return None, True
+    words = [program] + [argument.replace(",", " ") for argument in arguments]
+    reading = " ".join(words) + "".join(f" > {shlex.quote(target)}" for target in redirects)
+    return reading, False
+
+
+def _script_command(tokens: list[str]) -> str | None:
+    """The command `script` runs: util-linux `-c CMD`/`--command CMD`
+    (short flags may be bundled, `-qc CMD`), or the BSD form's words after
+    the typescript file."""
+    positional: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token.startswith("--command"):
+            if "=" in token:
+                return token.split("=", 1)[1]
+            return tokens[index + 1] if index + 1 < len(tokens) else None
+        if token.startswith("-") and not token.startswith("--") and len(token) > 1:
+            flags = token[1:]
+            if "c" in flags:
+                after = flags[flags.index("c") + 1:]
+                if after:
+                    return after
+                return tokens[index + 1] if index + 1 < len(tokens) else None
+            # Options that take a value (util-linux and BSD).
+            if flags[-1] in "BEIOTFmt" and index + 1 < len(tokens):
+                index += 2
+                continue
+            index += 1
+            continue
+        if token.startswith("--"):
+            index += 1
+            continue
+        positional.append(token)
+        index += 1
+        # BSD: every word after the typescript file is the command, its
+        # own options included - option parsing stops at the file.
+        if index < len(tokens) and not tokens[index].startswith("-"):
+            return shlex.join(tokens[index:])
+    if len(positional) >= 2:
+        return shlex.join(positional[1:])
+    return None
+
+
+# Commands that run the rest of their line as a command of its own, after
+# their options: `(positional words before the command, options that take a
+# value)`. `timeout 60 script ...` runs `script ...`.
+_PREFIX_RUNNERS: dict[str, tuple[int, frozenset[str]]] = {
+    "timeout": (1, frozenset({"-s", "--signal", "-k", "--kill-after"})),
+    "env": (0, frozenset({"-u", "--unset", "-C", "--chdir"})),
+    "nohup": (0, frozenset()),
+    "nice": (0, frozenset({"-n", "--adjustment"})),
+    "stdbuf": (0, frozenset({"-i", "-o", "-e", "--input", "--output", "--error"})),
+    "ionice": (0, frozenset({"-c", "-n", "-p", "--class", "--classdata"})),
+    "time": (0, frozenset({"-f", "--format", "-o", "--output"})),
+    "command": (0, frozenset()),
+    "exec": (0, frozenset({"-a"})),
+    "sudo": (0, frozenset({"-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-U"})),
+    "doas": (0, frozenset({"-u", "-C"})),
+}
+_ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _without_prefix_runners(text: str) -> str:
+    """`text` with each leading `timeout`, `env`, `nohup`, `nice`, `stdbuf`
+    (and the like) removed along with its own options and values, as
+    written, so the command they run is at the head."""
+    remaining = text.lstrip()
+    while True:
+        word, after = _leading_word(remaining)
+        runner = _PREFIX_RUNNERS.get(_program_name(word.strip("\"'")).lower()) if word else None
+        if runner is None:
+            return remaining
+        positionals, valued = runner
+        rest = after.lstrip()
+        while True:
+            token, following = _leading_word(rest)
+            bare = token.strip("\"'")
+            if not token:
+                return ""
+            if bare == "--":
+                rest = following.lstrip()
+                break
+            if bare.startswith("-") and len(bare) > 1:
+                rest = following.lstrip()
+                if bare in valued:
+                    _value, rest = _leading_word(rest)
+                    rest = rest.lstrip()
+                continue
+            if _ENV_ASSIGNMENT.match(bare):
+                rest = following.lstrip()
+                continue
+            break
+        for _ in range(positionals):
+            _value, rest = _leading_word(rest)
+            rest = rest.lstrip()
+        remaining = rest
+
+
+def pty_wrapped(segment: str) -> str | None:
+    """The command a pseudo-terminal wrapper at the head of `segment` runs,
+    or None. `winpty git status` runs `git status`; `script -qc "..."
+    /dev/null` runs its `-c` string; `expect -c '...'` runs its script.
+    A `timeout`, `env`, `nohup`, `nice` or `stdbuf` in front of the wrapper
+    is read through."""
+    _operator, text = _call_operator(segment)
+    text = _without_prefix_runners(text)
+    try:
+        tokens = shlex.split(text, posix=True)
+    except ValueError:
+        return None
+    if not tokens:
+        return None
+    wrapper = _program_name(tokens[0]).lower()
+    if wrapper not in _PTY_WRAPPERS:
+        return None
+    rest = tokens[1:]
+    if wrapper == "script":
+        return _script_command(rest)
+    if wrapper == "expect":
+        for index, token in enumerate(rest):
+            if token == "-c" and index + 1 < len(rest):
+                return rest[index + 1]
+        return shlex.join(rest) if rest else None
+    # The wrapped command as written, cut after the wrapper's own options,
+    # so its words keep their own quoting (`winpty $'git' push`).
+    _word, remaining = _leading_word(text)
+    while True:
+        stripped = remaining.lstrip()
+        word, after = _leading_word(stripped)
+        if not word or not word.startswith("-"):
+            return stripped or None
+        remaining = after
+
+
+# `xargs` options that take the next word as their value.
+_XARGS_VALUED = frozenset({"-I", "-n", "-L", "-P", "-d", "-E", "-s", "-a",
+                           "--arg-file", "--delimiter", "--max-args", "--max-lines",
+                           "--max-procs", "--max-chars", "--eof", "--replace"})
+
+
+def _xargs_command(text: str) -> str | None:
+    """The command `xargs` runs, as written after its own options. A bare
+    `xargs` runs `echo`, which needs no reading."""
+    remaining = text
+    while True:
+        stripped = remaining.lstrip()
+        word, after = _leading_word(stripped)
+        if not word:
+            return None
+        if word == "--":
+            return after.strip() or None
+        if not word.startswith("-"):
+            return stripped
+        remaining = after
+        if word in _XARGS_VALUED:
+            _value, remaining = _leading_word(remaining.lstrip())
+
+
+def _tee_readings(program: str, rest: str) -> list[str]:
+    """A write to each file `tee` or `Tee-Object` names, spelled as a
+    redirect, so where it lands is judged the way a `>` is."""
+    try:
+        tokens = shlex.split(rest, posix=True)
+    except ValueError:
+        return []
+    targets: list[str] = []
+    append = False
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        lowered = token.lower()
+        if program == "tee":
+            if token == "--":
+                targets.extend(tokens[index + 1:])
+                break
+            if token.startswith("-") and len(token) > 1:
+                append = append or token == "--append" or (
+                    not token.startswith("--") and "a" in token[1:])
+            else:
+                targets.append(token)
+            index += 1
+            continue
+        # Tee-Object: -FilePath / -LiteralPath (any unambiguous prefix, and
+        # -Path), -Append, -Variable (a variable, not a file).
+        if lowered.startswith("-"):
+            name = lowered[1:].split(":", 1)[0]
+            if name and ("filepath".startswith(name) or "literalpath".startswith(name)
+                         or name == "path"):
+                if index + 1 < len(tokens):
+                    targets.append(tokens[index + 1])
+                index += 2
+                continue
+            if len(name) > 1 and "variable".startswith(name):
+                index += 2
+                continue
+            if len(name) > 1 and "append".startswith(name):
+                append = True
+            index += 1
+            continue
+        targets.append(token)
+        index += 1
+    operator = ">>" if append else ">"
+    return [f"echo {operator} {shlex.quote(target)}" for target in targets if target]
+
+
+# Heads whose next positional word selects what they do, so quoting that
+# word hides the operation from a head-and-subcommand rule.
+_SUBCOMMAND_HEADS = frozenset({
+    "git", "gh", "godmode", "npm", "pnpm", "yarn", "cargo", "docker", "podman",
+    "kubectl", "helm", "terraform", "claude", "twine", "gcloud", "az", "aws",
+    "dotnet", "pip", "pip3", "uv", "poetry",
+})
+# Plain enough that quoting it changes nothing the shell does.
+_PLAIN_WORD = re.compile(r"^[A-Za-z0-9_./:=@%+,-]+$")
+
+
+def _unquoted_flags(segment: str) -> str | None:
+    """`segment` with its quoted flags, and a subcommand head's quoted
+    subcommand words, written bare: `git "push" "--force"` runs exactly
+    what `git push --force` runs. Quoted data (a message, a search
+    pattern) keeps its quotes, so the words inside it stay data. None when
+    nothing changes."""
+    _operator, text = _call_operator(segment)
+    words: list[str] = []
+    changed = False
+    remaining = text
+    position = 0
+    head: str | None = None
+    subcommand_words = 0
+    previous_valued = False
+    # A subcommand comes before the options that configure it; once one
+    # is seen, a later bare word may be a flag's value (a message), which
+    # is data.
+    seen_flag = False
+    while remaining.strip():
+        stripped = remaining.lstrip()
+        spacing = remaining[:len(remaining) - len(stripped)]
+        if stripped[0] in "|;&<>":
+            words.append(spacing + stripped)
+            break
+        word, remaining = _leading_word(stripped)
+        if not word:
+            words.append(spacing + stripped)
+            break
+        value = _written_word_value(word)
+        written = word
+        if position == 0:
+            head = _program_name(value if value is not None else word).lower()
+        elif value is not None and value != word and _PLAIN_WORD.match(value):
+            if value.startswith("-"):
+                written = value
+            elif (head in _SUBCOMMAND_HEADS and subcommand_words < 2
+                  and not previous_valued and not seen_flag):
+                written = value
+        current = value or word
+        if position > 0 and current[:1] != "-":
+            if not previous_valued:
+                subcommand_words += 1
+        # git's `-C <path>` / `-c <key=value>` take the next word and come
+        # before the subcommand; every other flag ends the subcommand words.
+        previous_valued = head == "git" and current in ("-C", "-c")
+        if position > 0 and current[:1] == "-" and not previous_valued:
+            seen_flag = True
+        changed = changed or written != word
+        words.append(spacing + written)
+        position += 1
+    if not changed:
+        return None
+    return "".join(words)
+
+
+def command_readings(segment: str) -> list[str]:
+    """Readings of `segment` with its command word normalised to the
+    program it runs, beyond what `head_readings` resolves: a `$'...'` or
+    `$"..."` name, a `${x:-name}` default, `& (Get-Command name)`, a
+    dot-sourced script run as a script, `Start-Process`, a pseudo-terminal
+    wrapper, and quoted flags or subcommand words written bare. Each is an
+    extra reading; the classifier keeps the stricter verdict."""
+    readings: list[str] = []
+    operator, text = _call_operator(segment)
+    word, rest = _leading_word(text)
+    if word.startswith(("$'", '$"')):
+        value = _written_word_value(word)
+        if value and _PLAIN_NAME.match(_program_name(value)):
+            readings.append(value + rest)
+    default = _EXPANSION_DEFAULT.match(_unwrapped_double_quotes(word))
+    if default:
+        value = _written_word_value(default.group("word"))
+        if value and _PLAIN_NAME.match(_program_name(value)):
+            readings.append(value + rest)
+    command = _GET_COMMAND.match(word)
+    if command and operator is not None:
+        readings.append(command.group("name") + rest)
+    if operator == "." and word and not word.startswith(("$", "(", "{")):
+        value = _written_word_value(word)
+        if value:
+            runner = "pwsh" if value.lower().endswith(".ps1") else "bash"
+            readings.append(f"{runner} {shlex.quote(value)}{rest}")
+    value = _written_word_value(word)
+    if value is not None and _program_name(value).lower() in _START_PROCESS:
+        reading, _opaque = _start_process_reading(rest)
+        if reading:
+            readings.append(reading)
+    program = _program_name(value).lower() if value is not None else ""
+    if program in ("tee", "tee-object"):
+        readings.extend(_tee_readings(program, rest))
+    if program == "xargs":
+        command = _xargs_command(rest)
+        if command:
+            readings.append(command)
+    wrapped = pty_wrapped(segment)
+    if wrapped:
+        readings.append(wrapped)
+    unquoted = _unquoted_flags(segment)
+    if unquoted:
+        readings.append(unquoted)
+    return [reading for index, reading in enumerate(readings)
+            if reading.strip() and reading not in readings[:index]]
+
+
+def opaque_head(segment: str, strict: bool) -> str | None:
+    """Why the program `segment` runs cannot be read from its text, or
+    None. An expansion in the command word (`$cmd`, `${x:-git}`,
+    PowerShell's `& $cmd`, `& (expression)`, `Start-Process $exe`) names
+    whatever the variable holds when it runs.
+
+    `strict` is True when the text is certainly Bash, where a variable
+    standing alone as the command word is run. A variable with more after
+    it (`$x.Name`, `$x[0]`) is read as PowerShell member access and left
+    alone: Bash would run `${x}.Name`, a named residual. Otherwise the text may be
+    PowerShell, which runs a variable only through the call or dot-source
+    operator, or when words follow it; a bare `$x`, `$x | ...` or an
+    assignment there is a value, not a command."""
+    operator, text = _call_operator(segment)
+    word, rest = _leading_word(text)
+    if not word:
+        return None
+    # `"$cmd"` runs what `$cmd` runs; the quotes only stop word splitting.
+    word = _unwrapped_double_quotes(word)
+    if word.startswith("$") and not word.startswith(("$'", '$"', "$(")):
+        if operator is None and _VARIABLE_ASSIGNMENT.match(text):
+            return None
+        if _EXPANSION_DEFAULT.match(word):
+            return "the command word is a parameter expansion; the program depends on a variable"
+        if operator is not None or (strict and _VARIABLE_WORD.match(word)):
+            return "the command word is a variable; the program it names is not in the text"
+        following = rest.split()
+        if (_VARIABLE_WORD.match(word) and following
+                and following[0][:1] not in "|;&)=<>" and not _PWSH_OPERATOR.match(following[0])):
+            return "the command word is a variable; the program it names is not in the text"
+        return None
+    if operator is not None and word.startswith("(") and not _GET_COMMAND.match(word):
+        return "the command word is an expression; the program it names is not in the text"
+    value = _written_word_value(word)
+    if value is not None and _program_name(value).lower() in _START_PROCESS:
+        _reading, opaque = _start_process_reading(rest)
+        if opaque:
+            return "Start-Process names its program through an expansion"
+    return None
 
 
 @dataclass(frozen=True)

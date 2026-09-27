@@ -82,7 +82,7 @@ def validate_incident(failure_class: str | None, turning_point: bool,
 def run_repro(
     archive: Chronicle, session: str, project: Path, command: str, timeout: int = 900,
 ) -> dict[str, Any]:
-    """Run an incident's reproduction command through the attested runner (NS-13e).
+    """Run an incident's reproduction command through the attested runner.
 
     The exit code is recorded at write time, by the runner, never reported by
     the author: argv with no shell, bounded by `timeout`. A shell operator is
@@ -149,7 +149,7 @@ def record_incident(
     failure the run never recovered from; it is a causal claim, so it
     requires at least one citation.
 
-    `repro` (NS-13e) is `run_repro`'s result: the reproduction command and
+    `repro` is `run_repro`'s result: the reproduction command and
     the exit code the runner saw at write time. `no_repro` is the stated
     reason there is none; the incident is then classed `underspecified-ask`
     unless a class was given, because the record shows the failure was
@@ -209,7 +209,7 @@ def record_incident(
     )
 
 
-# Fix round 1 (review finding 1): a bound on the detect-and-merge retry
+# A bound on the detect-and-merge retry
 # below. Each attempt writes one more superseding record; a subject racing
 # past this many hand-offs is refused loudly instead of looping forever.
 _PATTERN_RACE_MAX_ATTEMPTS = 3
@@ -243,7 +243,7 @@ def record_pattern(
     occurrence: int | None = None,
     cites: list[str] | None = None,
 ) -> dict[str, Any]:
-    """NS-12e: a recurring failure mode as a record that ACCUMULATES.
+    """A recurring failure mode as a record that ACCUMULATES.
 
     The archive is append-only, so "append an occurrence to an existing
     pattern" cannot mean rewriting the first record - it means writing a
@@ -260,7 +260,7 @@ def record_pattern(
     (`godmode_preflight.pattern_workaround_findings`), rather than a second,
     independently-typed set of bucket names.
 
-    Concurrency (fix round 1, review finding 1): the fold above and the
+    Concurrency: the fold above and the
     `archive.append()` below are two separate chronicle operations, not
     one atomic step, so two processes calling `record_pattern` for the
     same subject at nearly the same time can both fold the same prior
@@ -338,11 +338,11 @@ def record_pattern(
 
 
 def list_patterns(archive: Any) -> list[dict[str, Any]]:
-    """NS-12e's index: one row per pattern subject, folded to its latest
+    """The pattern index: one row per pattern subject, folded to its latest
     record - read before deciding whether a new sighting is a fresh
     pattern or one more occurrence of an old one. `history --kind pattern`
     is the sibling evolution log, unfolded."""
-    # NS-10e: a pattern another record has named via `--supersedes` (e.g.
+    # A pattern another record has named via `--supersedes` (e.g.
     # merged into a broader pattern subject) drops out of the index the
     # same way any other latest-per-subject reader now excludes one.
     latest = latest_by_subject(
@@ -844,7 +844,7 @@ def claim_from_a_sample(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 # Status vocabulary that says an item is being CARRIED - re-presented from a
-# ledger, a handover, a checklist row - rather than freshly established. A
+# ledger, a status report, a checklist row - rather than freshly established. A
 # carried label was measured drifting from code twice in one recorded night:
 # a "pending sweep" listed six items already shipped, and a month-old OPEN
 # marker put fixed work back on the critical path.
@@ -1047,13 +1047,13 @@ def obligation_sibling_advisory(archive: Any, subject: str,
                                 value: str) -> str | None:
     """One sentence when a new obligation is an open one in new clothes.
 
-    Field report (2026-09-01): a version-bearing subject mints a fresh
+    A version-bearing subject mints a fresh
     obligation every bump, subject-keyed supersession never links them,
     and the corpses nag beside the living one. At record time the overlap
     is cheapest to name: >=3 shared salient words with an OPEN obligation
     of a different subject means close or supersede the elder now.
 
-    Fix round 1 (NS-10e task-6, ruling 4): now routed through
+    Now routed through
     `latest_by_subject` - the exact `supersedes` link this docstring
     describes as absent now exists, and a superseded elder should stop
     nagging here the same way it stops nagging in `status.remaining()`.

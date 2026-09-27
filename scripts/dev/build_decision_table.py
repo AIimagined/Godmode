@@ -8,7 +8,7 @@ auto-allow set (Claude Code's `readOnlyValidation` matcher) is not reachable
 from this repo - no bundled copy of the CLI's source ships here, and pinning
 this table to an unpinned dependency would be exactly the drift this module
 exists to prevent. Pinned instead to the conservative, documented set the
-gate-v2 plan recorded for this purpose (its Task 5 brief, Step 1), transcribed
+gate-v2 design work recorded for this purpose, transcribed
 here verbatim on 2026-08-14:
     git status|log|diff|show|branch|ls-files|rev-parse|rev-list|remote -v|
     shortlog|describe|blame
@@ -19,7 +19,7 @@ full sentinel did not yet classify a bare `tr` as read-only at the time that
 fixture was hand-built (see `changelog.d/gate-fast-path.added.md`). Verified
 again here, live, against the sentinel this script now imports:
 `classify_action("tr a b")` is R0 today - the stream-tool gap that exclusion
-named was closed by this same plan's Task 3 - so `tr` now belongs on the
+named was closed by a later fix in that same gate work - so `tr` now belongs on the
 floor, and every entry below (git and non-git alike) is re-verified against
 `classify_action` at generation time rather than trusted from this docstring:
 a floor entry that stops being R0 fails the build loudly, not the table
@@ -75,8 +75,12 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from godmode_runtime.godmode_sentinel import (  # noqa: E402
     DB_CLIENTS,
+    MACHINE_SETTINGS_FILENAME,
     _FIND_MUTATION,
+    _FREEZE_FILE,
+    _HOOK_AS_CODE,
     _OUTPUT_FLAGS_BY_HEAD,
+    _SENSITIVE_EDIT,
     classify_action,
 )
 # The runtime owns the digest this table's freshness check is compared
@@ -164,6 +168,13 @@ _READ_HEADS = [
     # generation time exactly like the originals - a wrong guess fails the
     # build loudly, not the table silently.
     "rev", "date", "basename", "dirname", "realpath",
+    # Pipeline filters with no output-file flag. `tee` (writes the files it
+    # names) and `xargs` (runs a command) are deliberately not here.
+    "nl", "column",
+    # 2026-09-25: `cd <dir> && git log` escalated every time and, under
+    # load, ran past the host's timeout. `cd` changes no file; every other
+    # segment of the command is still judged on its own.
+    "cd",
 ]
 
 # --- git_ask / git_refuse: curated candidates, bucketed by the sentinel's
@@ -341,6 +352,35 @@ def _build_mutation_heads() -> dict[str, list[str]]:
     return result
 
 
+# Edit targets the fast gate never clears on its own, whatever a clearance
+# says: the classifier's own protected-path patterns, exported verbatim, and
+# the paths the full hook guards past the classifier - every project-level
+# Godmode setting (policy, ceilings, boundaries, roles, the stop flag),
+# git's own directory, and the project skills (every skill edit reaches the
+# full hook, which reports one made unattended). Matched against the
+# target as the host sent it and against its path inside the project.
+_PROTECTED_EDIT_EXTRA = [
+    r"(?i)(?:^|[/\\])" + re.escape(MACHINE_SETTINGS_FILENAME) + r"$",
+    r"(?i)(?:^|[/\\])\.godmode[^/\\]*$",
+    r"(?i)(?:^|[/\\])\.git(?:[/\\]|$)",
+    r"(?i)^(?:\.claude/)?skills/",
+]
+# Samples the classifier must refuse or ask about, one per exported pattern.
+_PROTECTED_EDIT_SAMPLES = ["write file .env", "write file .github/workflows/ci.yml",
+                           "write file CODEFREEZE"]
+
+
+def _build_protected_edit_paths() -> list[str]:
+    for sample in _PROTECTED_EDIT_SAMPLES:
+        verdict = classify_action(sample)
+        assert verdict["protected"], f"protected-edit sample is not protected: {sample!r}"
+    patterns = [_SENSITIVE_EDIT.pattern, _HOOK_AS_CODE.pattern, _FREEZE_FILE.pattern,
+                *_PROTECTED_EDIT_EXTRA]
+    for pattern in patterns:
+        re.compile(pattern)
+    return patterns
+
+
 def build_table() -> dict[str, object]:
     git_ask, git_refuse = _build_git_ask_refuse()
     return {
@@ -355,6 +395,7 @@ def build_table() -> dict[str, object]:
         "find_mutation_flags": _build_find_mutation_flags(),
         "flag_denylist": _build_flag_denylist(),
         "output_flags_by_head": _build_output_flags_by_head(),
+        "protected_edit_paths": _build_protected_edit_paths(),
     }
 
 

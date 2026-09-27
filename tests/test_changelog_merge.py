@@ -101,6 +101,14 @@ class RepeatedMergeTests(unittest.TestCase):
         self.assertEqual(headings, ["Unreleased", "0.2.3", "0.1.0"], headings)
         self.assertIn("the first thing", body)
 
+    def test_merge_writes_lf_line_endings_even_on_windows(self) -> None:
+        holder, root = _project()
+        with holder:
+            _fragment(root, "one.added.md", "a windows-safe entry")
+            merge_fragments(root, "0.2.3", "2026-08-08")
+            raw = (root / "CHANGELOG.md").read_bytes()
+        self.assertNotIn(b"\r\n", raw)
+
 
 class ShippedChangelogTests(unittest.TestCase):
     """The repository's own changelog, which carried the duplicate."""

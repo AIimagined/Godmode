@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Small front door for `godmode_session_hook.py`.
 
-Field report 2026-09-23: a host's diagnostics advised uninstalling Godmode
+A host's diagnostics advised uninstalling Godmode
 because its hooks ran past their timeouts in projects nobody had initialized.
 Python compiles a script in full before running its first line, and the
 session hook is about 5,000 lines - measured here at 150-600 ms of compile
@@ -37,10 +37,18 @@ def main() -> int:
     if raw is not None:
         import godmode_stdin
         godmode_stdin.preload(raw)
-    hook = os.path.join(here, HOOK_NAME)
-    with open(hook, "rb") as handle:
-        code = compile(handle.read(), hook, "exec")
+    return run_hook(os.path.join(here, HOOK_NAME))
+
+
+def run_hook(hook: str) -> int:
+    """Run `hook` as `__main__` in this process. Its code object comes
+    through the ordinary source loader, so the launcher's private byte-code
+    cache (`-X pycache_prefix`) serves it: compiling the 5,000-line session
+    hook cost 150-600 ms on every event (2026-09-25). Under `-B` nothing is
+    written and it compiles as before."""
+    import importlib.machinery
     import types
+    code = importlib.machinery.SourceFileLoader("__main__", hook).get_code("__main__")
     module = types.ModuleType("__main__")
     module.__file__ = hook
     sys.argv[0] = hook

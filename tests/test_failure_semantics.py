@@ -532,8 +532,13 @@ class HooksStatusHealthFieldsTests(unittest.TestCase):
             self.assertEqual(result.payload["honored"], True)
             self.assertEqual(result.payload["version"], RUNTIME_VERSION)
             self.assertTrue(result.payload["invoked"])
+            # Task 3: a deny is on record, so `next_action` reports it rather
+            # than asking for another step.
+            self.assertIsNotNone(result.payload["last_deny"])
+            self.assertEqual(result.payload["last_deny"]["version"], RUNTIME_VERSION)
+            self.assertTrue(result.payload["next_action"].startswith("deny on record"))
 
-    def test_status_reports_unknown_honored_and_version_with_no_proof(self) -> None:
+    def test_status_reports_unknown_honored_but_the_running_version_with_no_proof(self) -> None:
         with isolated_project() as (_project, _state, anchor, archive):
             archive.initialize()
             runtime = Runtime(anchor=anchor, archive=archive)
@@ -542,9 +547,19 @@ class HooksStatusHealthFieldsTests(unittest.TestCase):
                                       git=False)
             result = cmd_hooks(args, runtime)
             self.assertEqual(result.payload["honored"], "unknown")
-            self.assertEqual(result.payload["version"], "unknown")
+            # Task 3: `version` is always the running CLI's own version, never
+            # the honest-but-useless "unknown" - even with no proof on file.
+            self.assertEqual(result.payload["version"], RUNTIME_VERSION)
             self.assertFalse(result.payload["invoked"])
             self.assertIsNone(result.payload["degraded_reason"])
+            self.assertIsNone(result.payload["last_deny"])
+            # An unregistered host is honestly "not wired", not silently
+            # folded into the initialized project's happy path.
+            self.assertTrue(result.payload["initialized"])
+            self.assertEqual(
+                result.payload["next_action"],
+                "not wired: run `godmode hooks wire --host some-unmatched-host`",
+            )
 
 
 # ---------------------------------------------------------------------------

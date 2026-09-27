@@ -44,12 +44,23 @@ from test_godmode_runtime import isolated_project  # noqa: E402
 # Every one of these is a real subject from this project's own ledger.
 HOST_ENVELOPES = [
     "<task-notification> <task-id>bgim7zim8</task-id> <tool-use-id>toolu_01</tool-use-id>",
+    "[SYSTEM NOTIFICATION - NOT USER INPUT] the delegated task finished",
     "Hook PreToolUse:Bash requires confirmation for this command: "
     "release-or-external-write (R4) - touches a redirected write",
     "Bash command grep -n \"^- \\[ \\]\" docs/RELEASE-CHECKLIST.md | tail -8",
     "Bash command \u00b7 from the general-purpose agent SCRATCH=\"C:\\Users\"",
     "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
 ]
+
+# Field cases (archive sequences 21094, 21119, 21133, 21153): a pasted
+# `authorize stage` error transcript, wrapped in the host's own
+# `<pasted_content>` tag, with no operator words alongside it at all.
+PASTED_CONTENT_ONLY = (
+    '<pasted_content id="1">'
+    "PS C:\\Users\\v17ra> authorize stage --from-last-refusal\n"
+    "ArchiveError: push origin sprint/v0.3.31 failed"
+    '</pasted_content id="1">'
+)
 
 REAL_ASKS = [
     "anything else pending? i dont want surprise later",
@@ -76,6 +87,17 @@ class PredicateTests(unittest.TestCase):
     def test_a_prompt_with_no_word_is_not_an_ask(self) -> None:
         self.assertFalse(is_operator_ask("---- ==== ...."))
 
+    def test_a_pasted_content_only_prompt_is_not_an_ask(self) -> None:
+        """The pasted transcript carries words (a path, a command, an error
+        class) but none of them are the operator's own - stripped before the
+        envelope check runs, nothing is left to ask about."""
+        self.assertFalse(is_operator_ask(PASTED_CONTENT_ONLY))
+
+    def test_operator_words_beside_a_pasted_block_still_ask(self) -> None:
+        mixed = ("why did this fail: " + PASTED_CONTENT_ONLY
+                 + " can you fix the push")
+        self.assertTrue(is_operator_ask(mixed))
+
 
 class RecordingTests(unittest.TestCase):
     def test_a_host_envelope_is_not_stored(self) -> None:
@@ -88,6 +110,27 @@ class RecordingTests(unittest.TestCase):
         with isolated_project() as (_project, _state, _anchor, archive):
             archive.initialize()
             self.assertIsNotNone(record_request(archive, "make the repo public"))
+
+    def test_a_pasted_content_only_prompt_is_not_stored(self) -> None:
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            stored = record_request(archive, PASTED_CONTENT_ONLY)
+            self.assertIsNone(stored)
+
+    def test_operator_words_beside_a_pasted_block_are_recorded_alone(self) -> None:
+        """The ask is derived from the operator's own words only - the
+        pasted command and error text contribute nothing to its keywords."""
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            mixed = ("why did this fail: " + PASTED_CONTENT_ONLY
+                     + " can you fix the push")
+            stored = record_request(archive, mixed)
+            self.assertIsNotNone(stored)
+            keywords = stored["data"]["keywords"]
+            for paste_word in ("authorize", "archiveerror", "sprint"):
+                self.assertNotIn(paste_word, keywords, keywords)
+            for operator_word in ("fail", "push"):
+                self.assertIn(operator_word, keywords, keywords)
 
 
 class ReviewTests(unittest.TestCase):

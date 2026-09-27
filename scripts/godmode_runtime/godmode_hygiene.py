@@ -43,7 +43,7 @@ def hygiene(records: list[dict[str, Any]], cap: int = DEFAULT_CAP) -> dict[str, 
     command is `remember ... --status superseded` on the one that lost."""
     out: dict[str, Any] = {"considered": {}, "near_duplicates": [], "contradictions": [], "cap": cap}
     for kind in KINDS:
-        # NS-10e: a lesson/decision another record has named via
+        # A lesson/decision another record has named via
         # `--supersedes` drops out here too - it is never the one
         # compared for near-duplicates or contradictions again, the same
         # rule every other latest-per-subject reader now follows.
@@ -79,7 +79,7 @@ def hygiene(records: list[dict[str, Any]], cap: int = DEFAULT_CAP) -> dict[str, 
                 else:
                     finding["why"] = "two phrasings of one rule - keep the sharper, supersede the other"
                     out["near_duplicates"].append(finding)
-    # NS-11e fix round 1 (review B, B3): the contradictions `godmode forget`
+    # The contradictions `godmode forget`
     # already FLAGGED belong in the same report as the ones this pass just
     # found - a `review` record nothing surfaces is a finding filed into a
     # drawer no verb opens. These are exact, recorded findings, so they are

@@ -33,8 +33,7 @@ known `$VAR` references to `$env:VAR`; there a bare quoted path in
 statement position is a ParserError, `& "..."` is a syntax error back in
 sh, `$env:` written by hand is refused by Grok's own variable check, and a
 one-shot git alias runs in both but costs three extra process spawns per
-hook on Windows (eighth field report, 2026-09-05, every hook fail-open on
-the shipped shape). A directory change plus a relative-path command is a
+hook on Windows (every hook failed open on the shipped shape). A directory change plus a relative-path command is a
 builtin and a native command in both shells: sh hosts pay nothing extra,
 pwsh runs the `.cmd` through cmd.exe. Every hook reads the project from the
 payload's `cwd`, never from the process directory, so the `cd` is invisible
@@ -73,6 +72,17 @@ process with the payload it already read. The pre-tool gate makes the same
 check before it would start the full hook. In a project where Godmode was
 never initialized, every hook costs one interpreter start and a few file
 lookups.
+
+Such a project is still guarded against harm-class commands by default:
+force-push, history rewrite, deletes outside the project, releases and
+publishes. The pre-tool gate asks the host's own permission prompt about
+them (a host with no ask denies, naming the remedy); ordinary commands stay
+on the file-lookup path, and nothing is recorded or created. The setting is
+`uninitialized`: `godmode config set uninitialized off` turns the guard off
+machine-wide, and `--repo` sets it for one repository in its own git config.
+Changing it from inside an agent session is itself asked about. A host that
+ignores SessionStart output (Grok) hears the not-initialized notice on the
+session's first pre-tool answer instead.
 
 A host without hook dispatch at all still gets a named fallback instead of
 reading as merely "unverifiable": `godmode hooks status` reports a

@@ -3,16 +3,16 @@
 The continuity machinery here is good at "do not forget X" and had nothing for
 "stop repeating X, it is done". Both are continuity failures and only one was
 implemented, so a next-action recorded validly and made moot by a later event
-was restated in every handover until a human noticed it.
+was restated in every checkpoint until a human noticed it.
 
 The case that produced this module: "publish the v0.2.2 release page", recorded
-when v0.2.2 was the newest release, carried through three more handovers after
+when v0.2.2 was the newest release, repeated in three more checkpoints after
 v0.2.3 and v0.2.4 had superseded it, and retired only when the owner asked why
 it was still there. Nothing had invalidated it, because nothing could.
 
 Two signals, deliberately dull:
 
-* **carried-unchanged** - restated across three or more handovers with no
+* **carried-unchanged** - restated across three or more checkpoints with no
   change. It needs no understanding of the text at all, and it is the signal
   that would have caught the case above.
 * **version-superseded** - the same standing obligation recorded later about a
@@ -31,7 +31,7 @@ from typing import Any
 
 from .godmode_chronicle import latest_by_subject as _latest_by_subject
 
-# Three handovers, not two. Two is a task still in progress; the signal is
+# Three checkpoints, not two. Two is a task still in progress; the signal is
 # persistence across a third, by which point nothing about it has moved.
 CARRIED_THRESHOLD = 3
 
@@ -72,7 +72,7 @@ SIMILARITY = 0.6
 # Two obligation SUBJECTS that both carry a version number are compared
 # more leniently: the version-superseded finding needs a higher version on
 # the later one anyway, which is a second guard the general threshold does
-# not have (seventh and eleventh field reports 2026-09-05: "live-verify
+# not have ("live-verify
 # 0.7.109 on mac" and "live-verify 0.8.29 rows" were never grouped).
 SIMILARITY_VERSIONED = 0.5
 _STOPWORDS = frozenset({
@@ -113,7 +113,7 @@ def _highest(text: str) -> tuple[int, ...] | None:
 
 
 def review_obligations(records: list[dict[str, Any]]) -> dict[str, Any]:
-    """Report obligations a later handover may have made moot.
+    """Report obligations a later checkpoint may have made moot.
 
     `records` are checkpoint records oldest first, as the archive stores them.
     """
@@ -122,7 +122,7 @@ def review_obligations(records: list[dict[str, Any]]) -> dict[str, Any]:
     # cluster shares most of its words with the one that opened it.
     # An obligation somebody closed. Reporting without a closure is not
     # restraint: the same superseded items came back every review and a fresh
-    # handover added one more rather than retiring any, so the list only grew
+    # checkpoint added one more rather than retiring any, so the list only grew
     # and the signal decayed until nobody would read it. Retiring stays a human
     # act - this honours the record of one, it does not make the decision.
     retired = {
@@ -138,15 +138,15 @@ def review_obligations(records: list[dict[str, Any]]) -> dict[str, Any]:
     versioned_openers: dict[int, bool] = {}
     handovers = 0
     total = 0
-    # Obligation-KIND records join the same clustering (three field reports,
+    # Obligation-KIND records join the same clustering (observed three times on
     # 2026-09-01: version-bearing subjects mint open siblings the reviewer
     # never saw, because it read only checkpoint next-lists). Latest record
     # per subject is the state, same as everywhere else; only open ones
     # enter, so a closure is honoured before clustering ever sees the text.
     #
-    # Fix round 1 (B2): routed through `latest_by_subject` (chronicle) -
-    # this fed `checkpoint --review`, precisely NS-10e's own use case
-    # ("obligations a later handover made moot"), through a plain
+    # Routed through `latest_by_subject` (chronicle) -
+    # this fed `checkpoint --review`, precisely this function's own use case
+    # ("obligations a later checkpoint made moot"), through a plain
     # last-in-order fold that never honoured a `supersedes` edge; an
     # obligation superseded under a NEW subject still surfaced here as an
     # open, un-clustered duty under its OLD one.
@@ -157,7 +157,7 @@ def review_obligations(records: list[dict[str, Any]]) -> dict[str, Any]:
         if str(data.get("status", "open")).lower() in {
                 "closed", "done", "retired", "superseded"}:
             continue
-        # Seventh and eleventh field reports 2026-09-05: an obligation
+        # An obligation
         # record's identity is its SUBJECT; the value is prose that, once
         # reworded, drowned the shared subject and let a superseded duty
         # resurface as new. Cluster on the subject, and only fall back to
@@ -224,7 +224,7 @@ def review_obligations(records: list[dict[str, Any]]) -> dict[str, Any]:
         if newest is None:
             continue
         # One finding per distinct obligation, at its earliest sighting. The
-        # same wording recorded in several handovers is one thing to decide
+        # same wording recorded in several checkpoints is one thing to decide
         # about, and repeating it makes the report look busier than the
         # backlog actually is.
         reported: set[str] = set()

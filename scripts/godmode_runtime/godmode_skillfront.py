@@ -5,8 +5,8 @@ fits and carries a trigger. This module adds the rules a routing skill needs
 to stay routable and stay honest about why it exists: a negative-scope
 clause (what the skill is NOT for), a description budget, no reference to a
 path that does not exist, and - for a skill this repository actually ships -
-a `PURPOSE.md` naming the archive record(s) that justified it. It runs as a
-selftest control so a skill cannot ship without them.
+a `PURPOSE.md` that states, in plain public language, the problem the skill
+solves. It runs as a selftest control so a skill cannot ship without them.
 """
 from __future__ import annotations
 
@@ -14,9 +14,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .godmode_anchor import resolve_anchor
-from .godmode_chronicle import Chronicle
-from .godmode_fingerprint import existing_sequences, seq_cite_resolves
 from .godmode_forge import _FRONTMATTER, ForgeError, validate_skill
 
 NEGATIVE_SCOPE_MARKERS = ("not for", "do not use", "not when", "never for", "does not cover")
@@ -25,10 +22,18 @@ _PATH_TOKEN = re.compile(r"`([A-Za-z0-9_./-]+/[A-Za-z0-9_./-]+\.(?:md|py|json|ym
 # parses (godmode_forge.py's frontmatter loop is line-by-line key: value); a
 # description that wraps past its own line is not read by either parser.
 _DESCRIPTION = re.compile(r"^description:\s*(.*)$", re.M)
-# A `seq:<n>` token anywhere in PURPOSE.md's prose - not anchored to a whole
-# line or field the way `godmode_attest._SEQ_CITE` is, because PURPOSE.md is
-# free-form prose that cites a record mid-sentence.
+# A `seq:<n>` token anywhere in PURPOSE.md's prose. A shipped PURPOSE.md is a
+# public surface every reader of the skill sees; a `seq:<n>` cite points at a
+# private, per-checkout archive record that a fresh clone or CI checkout can
+# never open. That citation belongs in the local archive that produced it,
+# never in a file that ships, so its presence here is a finding, not merely
+# unresolved.
 _SEQ_TOKEN = re.compile(r"\bseq:(\d+)\b")
+# The public problem statement a shipped PURPOSE.md carries: read between its
+# own heading and the next `## ` heading (or end of file), the same way this
+# suite's other section readers work.
+_GAP_SECTION = re.compile(r"^## Gap evidence\s*$(?P<body>.*?)(?=^## |\Z)", re.M | re.S)
+_GAP_MIN_CHARS = 40
 
 
 def _repo_root(skill_dir: Path) -> Path:
@@ -48,70 +53,49 @@ def _is_shipped_skill(skill_dir: Path, root: Path) -> bool:
     return skill_dir.resolve().parent == (root / "skills").resolve()
 
 
-def _purpose_findings(skill_dir: Path, root: Path, archive: Chronicle | None,
-                      existing: set[int] | None = None) -> tuple[list[str], list[str]]:
-    """NS-12b: a shipped skill's `PURPOSE.md` names the record(s) that justified it.
+def _purpose_findings(skill_dir: Path) -> list[str]:
+    """A shipped skill's `PURPOSE.md` states, in plain public
+    language, the problem the skill solves.
 
-    Returns `(findings, advisories)`. Two hard requirements need no archive
-    at all - present, and citing at least one well-formed `seq:<n>` token -
-    so both are checked, reported in `findings`, and fail the lint even when
-    `archive` cannot be opened (a non-git fixture, an unreadable state
-    home): these are portable and checkable on any clone.
-
-    Whether every cited sequence actually *resolves* is a different
-    question - the referential-integrity check `require_seq_cite` runs for
-    a `claim --cite seq:` (`godmode_fingerprint.seq_cite_resolves`), applied
-    here to a PURPOSE file's own citations. It cannot be a hard requirement:
-    the archive that could prove a record exists lives only in the one
-    checkout that accumulated it (`resolve_anchor` roots it under that
+    This used to require a `seq:<n>` citation into the local archive - a
+    private, per-checkout record (`resolve_anchor` roots it under that
     checkout's own `.git`, never shipped, never cloned, never shared by a
-    real `git clone`). A fresh clone, CI, or another contributor's machine
-    opens the *same kind* of archive, empty, and would fail this control for
-    every cite it has no way to check - not a defect in the skill. So an
-    unresolved cite is reported only in `advisories`, which never flips
-    `passed`; it is silently accepted only in the sense that "silent" would
-    mean, which this is not - the note is right there in the next run's
-    report for whoever has the archive to check it against.
+    real `git clone`). Requiring it inside a shipped file blurred a real
+    distinction: the archive record that motivated a skill is a private
+    decision trail for this project's own use; `PURPOSE.md` is a public
+    surface every reader of the shipped skill sees. So the requirement
+    now runs the other way: a `## Gap evidence` section must state the
+    problem in plain prose any reader can check for themselves, and must
+    carry no `seq:<n>` token - that citation stays in the local archive
+    that produced it, never in a file that ships. Both checks need no
+    archive at all and are checkable on any clone.
     """
     purpose_path = skill_dir / "PURPOSE.md"
     if not purpose_path.is_file():
-        return (["purpose: PURPOSE.md is missing (add a PURPOSE.md citing the seq: "
-                  "record(s) that motivated this skill)"], [])
+        return ["purpose: PURPOSE.md is missing (add a PURPOSE.md with a "
+                "'## Gap evidence' section stating, in plain public "
+                "language, the problem this skill solves)"]
     text = purpose_path.read_text(encoding="utf-8", errors="replace")
-    cites = sorted({int(n) for n in _SEQ_TOKEN.findall(text)})
-    if not cites:
-        return (["purpose: PURPOSE.md cites no seq: record (add a seq: cite naming "
-                  "the real record)"], [])
-    if archive is None:
-        return ([], [])
-    if existing is None:
-        existing = existing_sequences(archive)
-    unresolved = [n for n in cites if not seq_cite_resolves(archive, n, existing=existing)]
-    if not unresolved:
-        return ([], [])
-    named = ", ".join(f"seq:{n}" for n in unresolved)
-    return ([], [f"purpose-unresolved: PURPOSE.md cites {named}, which does not resolve in "
-                 "this checkout's archive (resolution needs the archive that originated the "
-                 "record - a fresh clone or CI checkout has none; this is reported, not a "
-                 "lint failure)"])
+    match = _GAP_SECTION.search(text)
+    if not match:
+        return ["purpose: PURPOSE.md has no '## Gap evidence' section "
+                "(add one stating, in plain public language, the problem "
+                "this skill solves)"]
+    body = match.group("body")
+    if _SEQ_TOKEN.search(body):
+        return ["purpose: PURPOSE.md's gap evidence cites a private archive "
+                "record (seq:<n>); state the problem in plain public "
+                "language instead and keep the archive citation in the "
+                "local archive"]
+    prose = re.sub(r"[#*`_>-]+", " ", body).strip()
+    if len(prose) < _GAP_MIN_CHARS:
+        return [f"purpose: PURPOSE.md's gap evidence is too short to state "
+                f"a concrete problem ({_GAP_MIN_CHARS} characters of plain "
+                "prose minimum)"]
+    return []
 
 
-def _project_archive(root: Path) -> Chronicle | None:
-    """The real, local archive `root` resolves to - never a write, only a read.
-
-    `resolve_anchor` can fail on a directory git cannot see cleanly, or one
-    this process cannot resolve a state home for; either way that is not a
-    lint finding of its own; `_purpose_findings` above degrades to the
-    checks that need no archive when this returns `None`.
-    """
-    try:
-        return Chronicle(resolve_anchor(root))
-    except Exception:  # noqa: BLE001  # godmode: swallow-ok: no archive to check seq: cites against; presence+cite checks still ran
-        return None
-
-
-def lint_frontmatter(skill_dir: Path, budget: int = 1024, archive: Chronicle | None = None,
-                     existing: set[int] | None = None) -> dict[str, Any]:
+def lint_frontmatter(skill_dir: Path, budget: int = 1024) -> dict[str, Any]:
     findings: list[str] = []
     advisories: list[str] = []
     text = (skill_dir / "SKILL.md").read_text(encoding="utf-8", errors="replace")
@@ -152,15 +136,11 @@ def lint_frontmatter(skill_dir: Path, budget: int = 1024, archive: Chronicle | N
         if _is_shipped_skill(skill_dir, root):
             findings.append("companions: missing agents/openai.yaml or godmode-evals.json")
 
-    # NS-12b: only a skill this repo actually ships is held to PURPOSE.md - a
-    # fixture built under a synthetic root (no real `skills/`) has no
-    # archive to cite records from and is not what this rule protects.
+    # Only a skill this repo actually ships is held to PURPOSE.md - a
+    # fixture built under a synthetic root (no real `skills/`) is not what
+    # this rule protects.
     if _is_shipped_skill(skill_dir, root):
-        purpose_archive = archive if archive is not None else _project_archive(root)
-        purpose_findings, purpose_advisories = _purpose_findings(skill_dir, root, purpose_archive,
-                                                                     existing if purpose_archive is archive else None)
-        findings.extend(purpose_findings)
-        advisories.extend(purpose_advisories)
+        findings.extend(_purpose_findings(skill_dir))
 
     if len(description) > budget:
         findings.append(f"budget: description is {len(description)} chars, budget {budget}")
@@ -175,12 +155,7 @@ def lint_frontmatter(skill_dir: Path, budget: int = 1024, archive: Chronicle | N
 
 
 def lint_all(skills_root: Path, budget: int = 1024) -> dict[str, Any]:
-    # One archive open (and one full `existing_sequences` read) shared across
-    # every skill in this call, instead of one per skill - `_purpose_findings`
-    # only ever reads it, so sharing changes no result, only the cost.
-    archive = _project_archive(skills_root.parent)
-    existing = existing_sequences(archive) if archive is not None else None
     per_skill: dict[str, dict[str, Any]] = {}
     for skill_dir in sorted(p for p in skills_root.iterdir() if (p / "SKILL.md").is_file()):
-        per_skill[skill_dir.name] = lint_frontmatter(skill_dir, budget, archive=archive, existing=existing)
+        per_skill[skill_dir.name] = lint_frontmatter(skill_dir, budget)
     return {"passed": all(r["passed"] for r in per_skill.values()), "per_skill": per_skill}

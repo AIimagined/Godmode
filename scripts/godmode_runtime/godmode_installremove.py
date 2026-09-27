@@ -19,6 +19,7 @@ a mistake costs a rename to undo rather than a restore from backup.
 """
 from __future__ import annotations
 
+import json
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +30,56 @@ from . import godmode_installmanifest as manifest_io
 
 class UnsafeManifest(Exception):
     """A manifest entry failed containment; the whole removal was refused."""
+
+
+# Groups whose recorded path is a file this plugin only partly owns - a JSON
+# object keyed by tool, so an uninstall must strip only this plugin's key and
+# leave any other tool's key (and the file) in place. Maps the manifest group
+# name to the JSON key this plugin's entries live under.
+#
+# Antigravity's `.agents/hooks.json` maps hook names to configs, one
+# key per tool (`write_antigravity_project_hooks` merges only the `godmode`
+# key in). Treating the recorded path as a whole-file artifact on removal -
+# the same handling every other host writer gets - moved the entire file into
+# the archive, taking every other tool's hooks with it.
+SHARED_KEY_GROUPS: dict[str, str] = {
+    "antigravity-hooks": "godmode",
+}
+
+
+def _strip_shared_key(source: Path, backup_target: Path, key: str) -> bool:
+    """Remove `key` from the JSON object at `source`, in place.
+
+    `source` is a file this plugin does not own outright; other tools' keys in
+    the same object must survive. The removed fragment is written to
+    `backup_target` so the operation stays recoverable the same way a whole-
+    file move is - the archive holds what was taken.
+
+    When the object holds no other key after removal, the file itself is
+    removed rather than left behind as an empty shell (an uninstall must
+    still leave nothing behind for the common case of a project no other tool
+    has touched).
+
+    Returns False - nothing removed - for a file that is not a JSON object or
+    does not carry `key`: a corrupt or foreign-shaped file is never rewritten.
+    """
+    try:
+        data = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(data, dict) or key not in data:
+        return False
+
+    removed = data.pop(key)
+    backup_target.parent.mkdir(parents=True, exist_ok=True)
+    backup_target.write_text(
+        json.dumps({key: removed}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    if data:
+        source.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    else:
+        source.unlink()
+    return True
 
 
 def is_safe_managed_path(root: Path | str, candidate: Any) -> bool:
@@ -110,6 +161,12 @@ def archive(
     if not entries:
         return {"archived": [], "missing": [], "archive_dir": None}
 
+    manifest = manifest_io.read(root, plugin_name) or {"groups": {}}
+    shared_key_of: dict[str, str] = {}
+    for group, key in SHARED_KEY_GROUPS.items():
+        for entry in manifest["groups"].get(group, []):
+            shared_key_of[entry] = key
+
     destination = (
         manifest_io.manifest_path(root, plugin_name).parent
         / "removed"
@@ -122,6 +179,13 @@ def archive(
         source = root / entry
         if not source.exists():
             missing.append(entry)
+            continue
+        owned_key = shared_key_of.get(entry)
+        if owned_key is not None:
+            if _strip_shared_key(source, destination / entry, owned_key):
+                archived.append(entry)
+            else:
+                missing.append(entry)
             continue
         target = destination / entry
         target.parent.mkdir(parents=True, exist_ok=True)

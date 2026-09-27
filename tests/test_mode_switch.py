@@ -144,5 +144,111 @@ class HarmGateParityTests(unittest.TestCase):
             self.assertEqual(advise.stdout, strict.stdout)
 
 
+CLAIM_SENTENCE = "The gate now blocks every force-push and prevents data loss"
+POST_EDIT = PLUGIN_ROOT / "hooks" / "godmode_post_edit.py"
+
+
+class LeanTurnTests(unittest.TestCase):
+    """R11: outside strict mode an ordinary turn carries little hook text.
+    Strict mode keeps the full output (pinned by the older suites)."""
+
+    def _stop(self, project: Path, state: Path, text: str, session: str = "s1") -> str:
+        transcript = _transcript(project, text)
+        done = _run_hook("stop", project, state, {"session_id": session,
+                                                  "transcript_path": str(transcript)})
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout
+
+    def _prompt(self, project: Path, state: Path, session: str = "s1") -> str:
+        done = _run_hook("user-prompt", project, state, {
+            "session_id": session, "prompt": "thanks, continue",
+            "hook_event_name": "UserPromptSubmit"})
+        self.assertEqual(done.returncode, 0, done.stderr)
+        return done.stdout
+
+    def test_an_unsupported_claim_reaches_the_model_once_and_nowhere_else(self) -> None:
+        with _project() as (project, state, _archive):
+            stop = self._stop(project, state, f"{CLAIM_SENTENCE}.")
+            self.assertNotIn("force-push", stop)
+            first = self._prompt(project, state)
+            context = json.loads(first)["hookSpecificOutput"]["additionalContext"]
+            self.assertEqual(context.count("force-push"), 1)
+            self.assertEqual(self._prompt(project, state).strip(), "")
+
+    def test_an_open_ask_is_named_only_in_strict_mode(self) -> None:
+        from godmode_runtime.godmode_projectmode import set_project_mode
+        from godmode_runtime.godmode_requests import record_request
+        reply = "Looked at the deployment pipeline timeout; nothing else touched."
+        for mode, expected in (("advise", False), ("strict", True)):
+            with self.subTest(mode=mode), _project() as (project, state, archive):
+                set_project_mode(archive, mode)
+                record_request(archive, "please investigate the flaky deployment pipeline "
+                                        "timeout across staging clusters tonight", session="s1")
+                shown = self._stop(project, state, reply) + self._prompt(project, state)
+                self.assertEqual("operator ask" in shown, expected, shown)
+
+    def _brief(self, project: Path, state: Path, session: str) -> dict:
+        done = _run_hook("session-start", project, state, {
+            "session_id": session, "hook_event_name": "SessionStart", "source": "startup"})
+        self.assertEqual(done.returncode, 0, done.stderr)
+        context = json.loads(done.stdout)["hookSpecificOutput"]["additionalContext"]
+        return json.loads(context.splitlines()[1])
+
+    def test_the_brief_is_lean_and_the_doctrine_rides_once_per_project(self) -> None:
+        with _project() as (project, state, _archive):
+            first = self._brief(project, state, "s1")
+            self.assertIn("TWO-REVERSALS", first["doctrine"])
+            self.assertIn("red_flags", first)
+            for section in ("ledger", "laws", "next_actions"):
+                self.assertNotIn(section, first)
+            self.assertIn("open_obligations", first["resume"])
+            self.assertIn("godmode resume", first["resume"]["more"])
+            second = self._brief(project, state, "s2")
+            self.assertNotIn("TWO-REVERSALS", second["doctrine"])
+            self.assertNotIn("red_flags", second)
+
+    def test_strict_mode_keeps_the_full_brief(self) -> None:
+        from godmode_runtime.godmode_projectmode import set_project_mode
+        with _project() as (project, state, archive):
+            set_project_mode(archive, "strict")
+            self._brief(project, state, "s1")
+            second = self._brief(project, state, "s2")
+            self.assertIn("TWO-REVERSALS", second["doctrine"])
+            self.assertIn("ledger", second)
+            self.assertIn("laws", second)
+
+    def test_resume_carries_what_the_brief_left_out(self) -> None:
+        with _project() as (project, state, _archive):
+            done = _cli(project, state, "resume")
+            self.assertEqual(done.returncode, 0, done.stderr)
+            payload = json.loads(done.stdout)
+            self.assertIn("ledger", payload)
+            self.assertIn("laws", payload)
+
+    def test_post_edit_quality_is_one_summary_per_session(self) -> None:
+        with _project() as (project, state, _archive):
+            (project / ".godmode-authorization-policy.json").write_text(
+                json.dumps({"post_edit_quality": True}), encoding="utf-8")
+            doc = project / "notes.md"
+            doc.write_text("See C:\\Users\\someone\\x for it.\n", encoding="utf-8")
+
+            def edit(session: str) -> str:
+                done = subprocess.run(
+                    [sys.executable, str(POST_EDIT)], input=json.dumps({
+                        "hook_event_name": "PostToolUse", "tool_name": "Edit",
+                        "session_id": session, "cwd": str(project),
+                        "tool_input": {"file_path": str(doc)}}),
+                    capture_output=True, text=True, encoding="utf-8", timeout=120,
+                    env=scrubbed_env(GODMODE_STATE_HOME=str(state)))
+                self.assertEqual(done.returncode, 0, done.stderr)
+                return done.stdout
+
+            first = edit("s1")
+            self.assertIn("local-path", first)
+            self.assertIn("once per session", first)
+            self.assertNotIn("local-path", edit("s1"))
+            self.assertIn("local-path", edit("s2"))
+
+
 if __name__ == "__main__":
     unittest.main()

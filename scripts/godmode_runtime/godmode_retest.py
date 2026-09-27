@@ -1,4 +1,4 @@
-"""`godmode retest` (field report file Part 5, 2026-09-10): the tests that
+"""`godmode retest`: the tests that
 pin a changed file, as one command per runner, run and attested on
 request. "Pins" is textual and language-neutral: a test file that names
 the changed file's path, module, or stem. A changed test file pins
@@ -104,7 +104,7 @@ def retest_module_names(project: Path, files: list[str]) -> set[str]:
     `files` - the exact form `commands()` builds into a retest command
     line (`t[:-3].replace("/", ".")`).
 
-    Fix round 1, S1: this lived as three independently-typed private
+    This lived as three independently-typed private
     copies (`godmode_closure._retest_module_names`,
     `godmode_reversals._retest_module_names`, and a fourth ad hoc regex
     scan inside `godmode_graph._retested_by_edges`) - one home here, so
@@ -118,7 +118,7 @@ def cited_modules(record: dict[str, Any]) -> set[str] | None:
     """The module names a `check:retest:*` attestation actually covered, or
     `None` when that cannot be determined honestly.
 
-    Fix round 1, S1/S2 (absorbed from `godmode_closure._cited_modules`,
+    Absorbed from `godmode_closure._cited_modules`,
     now the one shared reader). Preferred source: `data["modules"]`,
     written structurally by `godmode_attest.run_check` when its caller
     supplies one - exact, untruncated. Fallback (an older record with no
@@ -158,13 +158,13 @@ def commands(project: Path, pinned: dict[str, list[str]]) -> list[dict[str, Any]
     out: list[dict[str, Any]] = []
     if py:
         modules = [t[:-3].replace("/", ".") for t in py]
-        # `"modules"` (I-6 fix round 1, S1): the exact dotted names carried
+        # `"modules"`: the exact dotted names carried
         # in `command` below, exposed structurally so a caller attesting
         # this run (`cmd_retest`) can store them on the attestation
         # (`run_check(..., modules=...)`) instead of a reader having to
         # re-parse `command`, which `run_check`'s own citation truncates.
         #
-        # `"pinned_sources"` (I-6 fix round 2, D5): every file these
+        # `"pinned_sources"`: every file these
         # `modules` pin (the union of `pinned[t]` for each test `t` here),
         # so `cmd_retest` can pass them to `run_check(..., blob_paths=...)`
         # and hash each one's exact working-tree content at the moment

@@ -18,6 +18,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -31,7 +32,12 @@ from godmode_runtime import godmode_console as console  # noqa: E402
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_runtime.godmode_guardrails import OPERATOR_STOP_FLAG  # noqa: E402
-from godmode_runtime.godmode_watchdog import watchdog_report  # noqa: E402
+from godmode_runtime.godmode_watchdog import (  # noqa: E402
+    child_memory_limit_bytes,
+    child_rss_bytes,
+    run_with_memory_cap,
+    watchdog_report,
+)
 
 
 @contextmanager
@@ -154,6 +160,57 @@ class WatchdogTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertTrue(payload["interrupted"])
 
+
+class ChildMemoryCapTests(unittest.TestCase):
+    """Row 29 (2026-09-25 carried-items triage): an 8.9 GB scratch runaway
+    during preflight went unreported; these pin the RSS poll and the kill."""
+
+    def test_child_rss_bytes_reads_this_process(self) -> None:
+        rss = child_rss_bytes(os.getpid())
+        self.assertIsNotNone(rss)
+        self.assertGreater(rss, 0)
+
+    def test_child_rss_bytes_is_none_for_a_dead_pid(self) -> None:
+        # PID 0 is never a real child on either platform this reads.
+        self.assertIsNone(child_rss_bytes(0))
+
+    def test_child_memory_limit_bytes_honours_the_env_override(self) -> None:
+        with mock.patch.dict(os.environ, {"GODMODE_CHILD_MEMORY_LIMIT_MB": "256"}, clear=False):
+            self.assertEqual(child_memory_limit_bytes(), 256 * 1024 * 1024)
+
+    def test_run_with_memory_cap_reports_a_normal_run(self) -> None:
+        result = run_with_memory_cap([sys.executable, "-c", "print('ok')"], timeout=10)
+        self.assertEqual(result.returncode, 0)
+        self.assertFalse(result.memory_killed)
+
+    def test_run_with_memory_cap_kills_a_child_over_the_limit(self) -> None:
+        grow = "import time; hold = bytearray(120 * 1024 * 1024); time.sleep(5)"
+        result = run_with_memory_cap(
+            [sys.executable, "-c", grow],
+            timeout=10,
+            memory_limit_bytes=40 * 1024 * 1024,
+            poll_seconds=0.2,
+        )
+        self.assertTrue(result.memory_killed)
+        self.assertGreater(result.peak_rss_bytes, 0)
+        self.assertNotEqual(result.returncode, 0)
+
+
+    def test_a_kill_that_fails_is_reported_and_polling_continues(self) -> None:
+        grow = "import time; hold = bytearray(120 * 1024 * 1024); time.sleep(3)"
+        with mock.patch.object(subprocess.Popen, "kill", autospec=True,
+                               side_effect=OSError("access denied")) as kill:
+            result = run_with_memory_cap(
+                [sys.executable, "-c", grow],
+                timeout=20,
+                memory_limit_bytes=40 * 1024 * 1024,
+                poll_seconds=0.2,
+            )
+        self.assertFalse(result.memory_killed)
+        self.assertTrue(result.kill_failed)
+        self.assertEqual(result.returncode, 0)
+        # Retried within one poll, and polled again after every kill failed.
+        self.assertGreater(kill.call_count, 3)
 
 if __name__ == "__main__":
     unittest.main()

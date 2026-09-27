@@ -98,7 +98,7 @@ def assess(project: Path, budget: int = TYPICAL_COLD_START_TOKENS,
     findings: list[dict[str, str]] = []
     report: dict[str, Any] = {"project": project.name, "budget": budget}
 
-    # U-E7: observe mode is a loosening of enforcement, and the operator
+    # Observe mode is a loosening of enforcement, and the operator
     # directive requires it stay explicit and loud - `assess` is where an
     # operator checks a project's posture, so it states this one always,
     # not only when something else is already wrong. Same seam every other
@@ -229,7 +229,7 @@ def assess(project: Path, budget: int = TYPICAL_COLD_START_TOKENS,
     except GodmodeError as exc:
         report["charter"] = {"unavailable": str(exc)[:160]}
 
-    # U-S2: capability register debt, surfaced instead of hidden in a
+    # Capability register debt, surfaced instead of hidden in a
     # separate command nobody remembers to run. A project with no
     # capabilities.json (every project but this one, today) reports an
     # empty debt list rather than an error - the register is Godmode's own

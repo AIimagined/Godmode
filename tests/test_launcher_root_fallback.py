@@ -20,7 +20,17 @@ PROBE = "godmode_gate_fast.py"
 
 if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
+from _slow import slow  # noqa: E402
 from _host_env import scrubbed_env  # noqa: E402
+
+# Every interpreter starts isolated, writing byte-code only to the private
+# cache under the application home (or nowhere, with no home to name).
+_ISOLATED = r'-I (?:-B|"?-Xpycache_prefix=)'
+
+
+def _isolated(args: str, lead: str = "") -> bool:
+    import re
+    return re.match(re.escape(lead) + _ISOLATED, args) is not None
 
 def _posix_sh() -> str | None:
     """A POSIX `sh`: on PATH, or Git for Windows' bundled one beside
@@ -62,6 +72,7 @@ _SELF_REPORTING_SH = ("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{log}\"\n"
                       "case \"$1\" in -c) printf '%s' \"{self}\" ;; esac\nexit 0\n")
 
 
+@slow
 class LauncherTests(unittest.TestCase):
     def _env(self) -> dict:
         # Fix round 2 (NS-10k, task-14-rereview.md B1): this was
@@ -148,8 +159,8 @@ class LauncherTests(unittest.TestCase):
             subprocess.run(["cmd", "/c", str(LAUNCHER), PROBE], input=payload, capture_output=True, text=True,
                            cwd=LAUNCHER.parent.parent, env=env)
             self.assertTrue(recorded.exists(), "the fake py launcher was never invoked")
-            args = recorded.read_text(encoding="utf-8").strip()
-        self.assertTrue(args.startswith("-3 -I -B"), args)
+            args = recorded.read_text(encoding="utf-8", errors="replace").strip()
+        self.assertTrue(_isolated(args, "-3 "), args)
         self.assertTrue(args.rstrip().endswith(PROBE + '"'), args)
 
     @unittest.skipUnless(os.name == "nt", "cmd half")
@@ -171,8 +182,8 @@ class LauncherTests(unittest.TestCase):
                            cwd=LAUNCHER.parent.parent, env=env)
             self.assertTrue(recorded_python.exists(), "python was never invoked")
             self.assertFalse(recorded_py.exists(), "py was tried although python answered")
-            args = recorded_python.read_text(encoding="utf-8").strip()
-        self.assertTrue(args.startswith("-I -B"), args)
+            args = recorded_python.read_text(encoding="utf-8", errors="replace").strip()
+        self.assertTrue(_isolated(args), args)
 
     @unittest.skipUnless(os.name == "nt", "cmd half")
     def test_windows_skips_a_windowsapps_python_for_py(self) -> None:
@@ -215,7 +226,7 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual(first.returncode, 0, first.stderr)
             self.assertNotIn("no working python", first.stdout)
             cache = home / "launcher-python-cmd"
-            self.assertEqual(Path(cache.read_text(encoding="utf-8").strip()).resolve(),
+            self.assertEqual(Path(cache.read_text(encoding="utf-8", errors="replace").strip()).resolve(),
                              Path(sys.executable).resolve())
             fake_dir = base / "fake"
             fake_dir.mkdir()
@@ -268,15 +279,15 @@ class LauncherTests(unittest.TestCase):
         recorded = fake_dir / "calls.txt"
         (fake_dir / "python.cmd").write_text(
             f'@echo off\r\necho %* >> "{recorded}"\r\nexit /b 0\r\n', encoding="utf-8")
-        entry = cache.read_text(encoding="utf-8").strip()
+        entry = cache.read_text(encoding="utf-8", errors="replace").strip()
         if not entry.startswith("@"):
             self.skipTest(f"this machine read the path back ({entry!r}); nothing to prove here")
         env["PATH"] = str(fake_dir) + os.pathsep + _SYSTEM32
         subprocess.run(["cmd", "/c", str(LAUNCHER), PROBE], input=payload, capture_output=True,
                        text=True, cwd=LAUNCHER.parent.parent, env=env, timeout=120)
-        calls = recorded.read_text(encoding="utf-8").splitlines()
+        calls = recorded.read_text(encoding="utf-8", errors="replace").splitlines()
         self.assertEqual(len(calls), 1, calls)
-        self.assertTrue(calls[0].startswith("-I -B"), calls)
+        self.assertTrue(_isolated(calls[0]), calls)
 
     @unittest.skipUnless(os.name == "nt", "cmd half")
     def test_windows_an_unwritable_state_home_says_nothing(self) -> None:
@@ -313,7 +324,7 @@ class LauncherTests(unittest.TestCase):
                                   text=True, cwd=LAUNCHER.parent.parent, env=env)
             self.assertEqual(done.returncode, 0, done.stderr)
             self.assertNotIn("no working python", done.stdout)
-            self.assertEqual(Path(cache.read_text(encoding="utf-8").strip()).resolve(),
+            self.assertEqual(Path(cache.read_text(encoding="utf-8", errors="replace").strip()).resolve(),
                              Path(sys.executable).resolve())
 
     @unittest.skipUnless(os.name == "nt", "cmd half")
@@ -326,7 +337,7 @@ class LauncherTests(unittest.TestCase):
             env["GODMODE_PYTHON"] = str(fake_python)
             subprocess.run(["cmd", "/c", str(LAUNCHER), "godmode_session_hook.py", "stop"], input="{}",
                            capture_output=True, text=True, cwd=LAUNCHER.parent.parent, env=env)
-            args = recorded.read_text(encoding="utf-8").strip()
+            args = recorded.read_text(encoding="utf-8", errors="replace").strip()
         self.assertIn('godmode_session_entry.py" stop', args)
 
     @unittest.skipUnless(os.name == "nt", "cmd half")
@@ -346,11 +357,12 @@ class LauncherTests(unittest.TestCase):
             subprocess.run(["cmd", "/c", str(LAUNCHER), PROBE], input=payload, capture_output=True, text=True,
                            cwd=LAUNCHER.parent.parent, env=env)
             self.assertTrue(recorded.exists(), "GODMODE_PYTHON was never invoked")
-            args = recorded.read_text(encoding="utf-8").strip()
-        self.assertTrue(args.startswith("-I -B"), args)
+            args = recorded.read_text(encoding="utf-8", errors="replace").strip()
+        self.assertTrue(_isolated(args), args)
         self.assertFalse(args.startswith("-3"), args)
 
 
+@slow
 class ShLauncherTests(unittest.TestCase):
     """R-3a extension: `hooks/run-hook.sh`'s root resolution and interpreter
     probe survive the identical corpus rows the `.cmd` half is pinned
@@ -436,8 +448,8 @@ class ShLauncherTests(unittest.TestCase):
             preferred, other = (recorded_py, recorded3) if windows else (recorded3, recorded_py)
             self.assertTrue(preferred.exists(), f"{preferred.name} recorder was never invoked")
             self.assertFalse(other.exists(), f"{other.name} was tried although the preferred one answered")
-            args = preferred.read_text(encoding="utf-8").strip()
-        self.assertTrue(args.startswith("-I -B"), args)
+            args = preferred.read_text(encoding="utf-8", errors="replace").strip()
+        self.assertTrue(_isolated(args), args)
         self.assertTrue(args.rstrip().endswith(PROBE), args)
 
     @unittest.skipUnless(os.name == "nt", "the Store alias exists only on Windows")
@@ -479,22 +491,22 @@ class ShLauncherTests(unittest.TestCase):
             payload = '{"hook_event_name":"PreToolUse","cwd":".","tool_name":"Bash","tool_input":{"command":"echo hi"}}'
 
             self._run(payload, env)
-            calls = log.read_text(encoding="utf-8").splitlines()
+            calls = log.read_text(encoding="utf-8", errors="replace").splitlines()
             self.assertEqual(len(calls), 2, calls)  # the probe, then the run
             self.assertTrue(calls[0].startswith("-c "), calls)
-            self.assertTrue(calls[1].startswith("-I -B"), calls)
-            self.assertEqual(cache.read_text(encoding="utf-8").strip(), fake.as_posix())
+            self.assertTrue(_isolated(calls[1]), calls)
+            self.assertEqual(cache.read_text(encoding="utf-8", errors="replace").strip(), fake.as_posix())
 
             self._run(payload, env)
-            calls = log.read_text(encoding="utf-8").splitlines()
+            calls = log.read_text(encoding="utf-8", errors="replace").splitlines()
             self.assertEqual(len(calls), 3, calls)  # the run alone
-            self.assertTrue(calls[2].startswith("-I -B") and calls[2].endswith(PROBE), calls)
+            self.assertTrue(_isolated(calls[2]) and calls[2].endswith(PROBE), calls)
 
             cache.write_text((fake_dir / "gone" / name).as_posix() + "\n", encoding="utf-8")
             self._run(payload, env)
-            calls = log.read_text(encoding="utf-8").splitlines()
+            calls = log.read_text(encoding="utf-8", errors="replace").splitlines()
             self.assertEqual(len(calls), 5, calls)  # probed again
-            self.assertEqual(cache.read_text(encoding="utf-8").strip(), fake.as_posix())
+            self.assertEqual(cache.read_text(encoding="utf-8", errors="replace").strip(), fake.as_posix())
 
     def test_session_events_enter_through_the_front_door(self) -> None:
         """`godmode_session_hook.py` is dispatched as
@@ -511,7 +523,7 @@ class ShLauncherTests(unittest.TestCase):
             subprocess.run([self.sh, LAUNCHER_SH.as_posix(), "godmode_session_hook.py", "stop"],
                            input="{}", capture_output=True, text=True,
                            cwd=LAUNCHER_SH.parent.parent, env=env, timeout=60)
-            args = recorded.read_text(encoding="utf-8").strip()
+            args = recorded.read_text(encoding="utf-8", errors="replace").strip()
         self.assertTrue(args.endswith("/godmode_session_entry.py stop"), args)
 
     def test_a_cached_path_not_named_like_an_interpreter_is_ignored(self) -> None:
@@ -539,8 +551,8 @@ class ShLauncherTests(unittest.TestCase):
             payload = '{"hook_event_name":"PreToolUse","cwd":".","tool_name":"Bash","tool_input":{"command":"echo hi"}}'
             self._run(payload, env)
             self.assertFalse(planted_log.exists(), "the planted cache entry was executed")
-            calls = log.read_text(encoding="utf-8").splitlines()
-            self.assertTrue(calls and calls[-1].startswith("-I -B"), calls)
+            calls = log.read_text(encoding="utf-8", errors="replace").splitlines()
+            self.assertTrue(calls and _isolated(calls[-1]), calls)
 
     def test_godmode_python_outranks_the_cache(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -586,11 +598,12 @@ class ShLauncherTests(unittest.TestCase):
             self._run(payload, env)
             self.assertTrue(recorded_override.exists(), "GODMODE_PYTHON was never invoked")
             self.assertFalse(recorded_path.exists(), "the PATH probe fired despite GODMODE_PYTHON")
-            args = recorded_override.read_text(encoding="utf-8").strip()
-        self.assertTrue(args.startswith("-I -B"), args)
+            args = recorded_override.read_text(encoding="utf-8", errors="replace").strip()
+        self.assertTrue(_isolated(args), args)
         self.assertTrue(args.rstrip().endswith(PROBE), args)
 
 
+@slow
 class BackslashRootGuardTests(unittest.TestCase):
     """B1 (task-3-review.md): `hooks/run-hook.sh`'s root-resolution `case`
     must strip a backslash-separated `$0` - the shape a host wiring this
@@ -616,7 +629,7 @@ class BackslashRootGuardTests(unittest.TestCase):
     """
 
     def test_generated_sh_carries_the_escaped_backslash_pattern(self) -> None:
-        content = LAUNCHER_SH.read_text(encoding="utf-8")
+        content = LAUNCHER_SH.read_text(encoding="utf-8", errors="replace")
         self.assertIn('case "$dir" in *\\\\*) dir=${dir%\\\\*} ;; esac', content)
         # The regression this guards against: an escaped ASTERISK matches a
         # literal `*`, not a backslash - assert the narrower, wrong pattern
@@ -667,7 +680,7 @@ class BackslashRootGuardTests(unittest.TestCase):
             subprocess.run([sh, backslash_path, "some_hook.py"], input=payload,
                            capture_output=True, text=True, cwd=cwd_dir, env=env, timeout=60)
             self.assertTrue(recorded.exists(), "GODMODE_PYTHON was never invoked")
-            args = recorded.read_text(encoding="utf-8").strip()
+            args = recorded.read_text(encoding="utf-8", errors="replace").strip()
 
         # If the guard were a no-op (the B1 bug), `dir` falls through to
         # `.` and the hook is resolved against `cwd_dir`, not `expected`.

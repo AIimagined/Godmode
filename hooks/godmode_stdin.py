@@ -92,7 +92,7 @@ def read_first_json(cap: int = CAP_BYTES) -> bytes:
 def parse_first_json(raw: bytes) -> tuple[dict[str, Any], bool]:
     """`(payload, malformed)` for the bytes `read_first_json` returned.
 
-    G-8: the reader already resolves on the first complete JSON object and
+    The reader already resolves on the first complete JSON object and
     tolerates a leading UTF-8 BOM, CRLF, and anything after that object
     (trailing whitespace, trailing data, a second concatenated object) -
     but every call site used to hand the raw bytes straight to `json.loads`,
@@ -114,7 +114,7 @@ def parse_first_json(raw: bytes) -> tuple[dict[str, Any], bool]:
     existed (`str.strip()` on the fully decoded text, which treats a BOM
     character as content, not whitespace - `"﻿".strip()` is truthy) so
     a bare BOM, or a BOM plus nothing else meaningful, is never mistaken
-    for empty stdin. Fix round 1: `_LSTRIP_PREFIX` treats a BOM as
+    for empty stdin. `_LSTRIP_PREFIX` treats a BOM as
     whitespace for the READER's own "is the object complete yet" check,
     which is a different question from "was anything real sent at all" -
     conflating the two here made a bare BOM (or BOM+CRLF) decode to an

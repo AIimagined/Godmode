@@ -322,7 +322,7 @@ def sop_status(archive: Chronicle, session: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# NS-13c + I-8: named SOPs. PDCA, OODA and the research read order are loops
+# Named SOPs. PDCA, OODA and the research read order are loops
 # over verbs that already exist; naming them makes a phase attestable and
 # its cycle time measurable, so a stalled phase is a fact on record rather
 # than a feeling about the session.

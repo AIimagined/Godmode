@@ -30,6 +30,7 @@ from .godmode_fingerprint import (
     seq_cite_resolves,
     tree_fingerprint,
 )
+from .godmode_parseview import _xargs_command
 from .godmode_sentinel import shell_segments
 from .godmode_session_log import command_digest
 
@@ -50,11 +51,11 @@ _BLAST_RADIUS_MIN_WITNESSES = 2
 _FILE_CITE = re.compile(r"^file:(?P<path>[^#]+)(?:#L(?P<start>\d+)(?:-L?(?P<end>\d+))?)?$")
 _RECORD_CITE = re.compile(r"^rec:(?P<digest>[0-9a-f]{6,64})$")
 _VERDICT_CITE = re.compile(r"^verdict:(?P<sequence>\d+)$")
-# U-E3: what a differential's a_ref/b_ref name when they point at an archived
+# What a differential's a_ref/b_ref name when they point at an archived
 # state rather than a file or a command, and the differential citation itself.
 _SEQ_CITE = re.compile(r"^seq:(?P<sequence>\d+)$")
 _DIFF_CITE = re.compile(r"^diff:(?P<sequence>\d+)$")
-# U-T3: the one output shape a numeric claim about a registered metric may
+# The one output shape a numeric claim about a registered metric may
 # cite - reconstructed as "<name>:<value>" and checked against the metric's
 # own registered anchor pattern.
 _LINE_CITE = re.compile(r"^line:(?P<name>[^:]+):(?P<value>.+)$")
@@ -112,13 +113,13 @@ def agent_fingerprint() -> dict[str, Any]:
 
 def open_session(archive: Chronicle, label: str, role: str = "agent",
                   operator_verified: bool = False) -> str:
-    # NS-8k, fix round 1 (F0/F1): `role` is chronicled here so a later
+    # `role` is chronicled here so a later
     # `checker` claim (`GODMODE_SESSION` env var naming this record) is
     # attributable to a real `session open --role checker` call in THIS
     # archive, never a bare self-declaration - see
     # `Chronicle._chronicled_session_role`.
     #
-    # Fix round 2 (B1): attributable is not enough by itself - a `checker`
+    # Attributable is not enough by itself - a `checker`
     # role must be OPERATOR-GRANTED. `operator_verified` is resolved by the
     # caller (`godmode_console.cmd_session_open`, through the same
     # `--as-operator` password/interactive path every other operator write
@@ -173,7 +174,7 @@ def opening_handshake(archive: Chronicle, anchor: Any, project: Path, transcript
         for record in archive.select(kind="invariant", limit=200)
         if record["data"].get("status") != "retired"
     ]
-    # Field report 2026-08-28: `read` was the literal 0. The line "read 0 of
+    # `read` was the literal 0. The line "read 0 of
     # 8 required sources" could never have said anything else, so an agent
     # that quoted it and an agent that obeyed it produced the same number -
     # a counter that cannot move is decoration, and this one was read aloud
@@ -349,7 +350,7 @@ def record_step(
     # cannot prove. Absent (a stated gap) when there is no project or no
     # git; never a crash.
     if project is not None:
-        # Review Q7: this used to hand-roll its own `subprocess.run` pair
+        # This used to hand-roll its own `subprocess.run` pair
         # (a 30s timeout, a bare `except Exception`) - a second, coarser
         # working-tree read living beside `godmode_fingerprint.run_git`'s
         # (5s timeout, `GIT_OPTIONAL_LOCKS`/`GIT_TERMINAL_PROMPT` hardening).
@@ -358,7 +359,7 @@ def record_step(
         # `godmode_precheck.py` and this module's own `executed_predicates`
         # read it back by that exact shape.
         #
-        # N3 (review): `run_git` itself only swallows `FileNotFoundError`
+        # `run_git` itself only swallows `FileNotFoundError`
         # and `subprocess.TimeoutExpired` - it lets a `PermissionError` or
         # other launch-time `OSError` propagate. This boundary's own
         # contract ("never a crash") predates `run_git` and is wider than
@@ -378,11 +379,11 @@ def record_step(
                 "head": head[:12],
                 "dirty": len([l for l in porcelain.splitlines() if l.strip()]),
             }
-            # `blob_paths` (I-6 fix round 2, D5): per-path proof that
+            # `blob_paths`: per-path proof that
             # survives a dirty tree, where `head[:12]`/`dirty` alone cannot
             # - the normal edit-then-retest-then-commit flow always has
             # uncommitted changes at retest time, so a reader that only
-            # trusted a clean `dirty == 0` tree (round 1) could never use
+            # trusted a clean `dirty == 0` tree could never use
             # this attestation for the file actually being retested.
             # `git hash-object` reads the file AS IT SITS RIGHT NOW
             # (working tree, staged or not) without needing it committed -
@@ -510,7 +511,7 @@ def run_check(
 ) -> dict[str, Any]:
     """Run a declared check and attest its exit code, rather than its report.
 
-    `modules` (I-6 fix round 1, S1): a caller that knows this check maps to
+    `modules`: a caller that knows this check maps to
     named units - `cmd_retest`'s one pinning-test module per runner today -
     passes them here to be stored structurally as `data["modules"]` on the
     attestation, not only inside the one `cmd:` evidence string. That string
@@ -519,13 +520,13 @@ def run_check(
     any module past the cut. `None` (every other caller) leaves the
     attestation exactly as before.
 
-    `blob_paths` (I-6 fix round 2, D5): forwarded to `record_step` verbatim
+    `blob_paths`: forwarded to `record_step` verbatim
     - the source files `modules` pin, hashed via `git hash-object` at the
     moment this check ran, so `godmode_closure._unattested_but_unchanged`
     can trust an attestation against its EXACT content even on the dirty
     tree the normal edit-then-retest flow always has.
 
-    `offline` (obligation 9792, seventeenth and eighteenth field reports: a
+    `offline` (a
     negative test believed free made a paid call inside a check-shaped
     command) runs the check under the netgate socket audit with every proxy
     variable pointed at a closed local port; any connection the audit sees
@@ -609,7 +610,7 @@ def run_check(
                  if connections else f"check failed with exit {code}")),
         # `runner` stamps the attestation as written by this runner, with the
         # exit code it observed - `godmode attest` cannot set either, so a
-        # reader that must trust an exit code (NS-13e's red-then-green pair)
+        # reader that must trust an exit code (a fix claim's red-then-green pair)
         # can tell a run from a report of one.
         extra={"runner": RUNNER_STAMP, "exit_code": code,
                **({"modules": modules} if modules else {})},
@@ -917,18 +918,18 @@ _CLAIM_NUMBERS = re.compile(r"\d[\d,]*(?:\.\d+)?")
 
 
 def _untrusted_digests(archive: Chronicle) -> set[str]:
-    """Every digest the NS-8f PostToolUse scan has flagged as instruction-
+    """Every digest the PostToolUse untrusted-content scan has flagged as instruction-
     shaped content, from `action` / `untrusted-content-seen` records
     (`hooks/godmode_post_edit.py`). A `tool:<digest>` citation resolves
     against this set, and `record_claim` caps a claim citing (or citing a
     `file:` whose bytes hash to) one of these at `observed`.
 
     UNBOUNDED (`archive.read_events()`, not `archive.select(...)`) - final
-    review S3: `Chronicle.select` clamps its `limit` to the last 500
+    `Chronicle.select` clamps its `limit` to the last 500
     records regardless of what is asked for, and whether content was ever
     flagged as untrusted is a referential question about the WHOLE
     archive, not a recency window. Windowed at 500 this failed OPEN (the
-    worse direction than Task 6's N1, which failed closed): a claim citing
+    worse direction, since it fails silently instead of loudly): a claim citing
     a digest flagged more than 500 `untrusted-content-seen` records ago
     would read as never flagged and escape the `observed` cap entirely.
     Same reasoning as `godmode_fingerprint.existing_sequences`.
@@ -941,7 +942,7 @@ def _untrusted_digests(archive: Chronicle) -> set[str]:
     }
 
 
-# Final review S2: the single source of truth for this cap, shared with
+# The single source of truth for this cap, shared with
 # `hooks/godmode_post_edit.py`'s own `_TOOL_RESULT_SCAN_CAP` (which cannot
 # import this module - or any of `godmode_runtime` - at module level; see
 # that module's own docstring) - `tests/test_untrusted_marker.py` pins both
@@ -949,16 +950,16 @@ def _untrusted_digests(archive: Chronicle) -> set[str]:
 # either side fails the test. The hook's digest is over the first
 # this-many CHARACTERS of the decoded result, not its raw bytes, so a
 # file-citation match has to reproduce that same truncation to compare
-# like with like (Task 7 review, S2).
+# like with like.
 _UNTRUSTED_SCAN_CAP = UNTRUSTED_SCAN_CAP_BYTES
 
 
 def _citation_is_untrusted(project: Path, digests: set[str], citation: str) -> bool:
-    """Does this citation point at content the NS-8f scan flagged?
+    """Does this citation point at content the untrusted-content scan flagged?
 
     `digests` is the caller's own `_untrusted_digests(archive)` result,
     computed once per `record_claim` call rather than once per citation
-    (Task 7 review, C3 - a claim with N citations used to run N archive
+    (a claim with N citations used to run N archive
     scans here, plus one more per `tool:` citation inside
     `_citation_resolves`).
 
@@ -971,7 +972,7 @@ def _citation_is_untrusted(project: Path, digests: set[str], citation: str) -> b
     covered past its cap, so only the capped digest can match a file
     like that). Checking only the whole-file digest let a claim launder
     flagged content past the cap by citing the file it was saved to
-    (Task 7 review, S2: a 70 KB flagged fetch saved verbatim and cited as
+    (a 70 KB flagged fetch saved verbatim and cited as
     `file:` recorded `verified`, `untrusted: False`).
     """
     if not digests:
@@ -997,7 +998,7 @@ def _citation_is_untrusted(project: Path, digests: set[str], citation: str) -> b
 def _citation_resolves(project: Path, archive: Chronicle, citation: str,
                        session: str | None = None,
                        untrusted_digests: set[str] | None = None,
-                       # Final review N5: named `existing` (matching
+                       # Named `existing` (matching
                        # `seq_cite_resolves`'s own parameter), never
                        # `existing_sequences` - that name shadows the
                        # module-level `existing_sequences` imported from
@@ -1041,12 +1042,12 @@ def _citation_resolves(project: Path, archive: Chronicle, citation: str,
         )
     match = _SEQ_CITE.match(citation)
     if match:
-        # U-E3: a differential's a_ref/b_ref pointing at an archived state -
+        # A differential's a_ref/b_ref pointing at an archived state -
         # existence in the chain is enough here; the differential's own
         # record is what vouches for the comparison, this only vouches the
         # state being compared exists.
         #
-        # R2 (review): routed through the same `seq_cite_resolves`
+        # Routed through the same `seq_cite_resolves`
         # `record_claim`'s hard referential check uses (head-cache
         # short-circuit for an out-of-range sequence, unbounded
         # `read_events()` scan otherwise) - this branch used to bound
@@ -1056,14 +1057,14 @@ def _citation_resolves(project: Path, archive: Chronicle, citation: str,
         # still be reported "does not resolve" here, downgrading a claim
         # over a citation that was never false.
         #
-        # R3 (review): `existing`, when the caller already has it (a claim
+        # `existing`, when the caller already has it (a claim
         # with more than one `seq:` cite), skips the scan entirely here
         # too - the same set backs both the hard check and this softer one
         # for the same call.
         return seq_cite_resolves(archive, int(match.group("sequence")), existing=existing)
     match = _DIFF_CITE.match(citation)
     if match:
-        # U-E3: a differential resolves only when its own record exists AND
+        # A differential resolves only when its own record exists AND
         # both sides of the comparison it names also resolve - pointing at
         # one side of a comparison is reading the artefact, not diffing it,
         # so a dangling a_ref/b_ref (or a deleted differential record) must
@@ -1079,7 +1080,7 @@ def _citation_resolves(project: Path, archive: Chronicle, citation: str,
         return False
     match = _LINE_CITE.match(citation)
     if match:
-        # U-T3: resolves only against a metric contract registered for this
+        # Resolves only against a metric contract registered for this
         # exact name, and only when the reconstructed "name:value" text
         # matches the anchor that contract declared at registration - an
         # unregistered metric name resolves nothing, by design.
@@ -1103,11 +1104,11 @@ def _citation_resolves(project: Path, archive: Chronicle, citation: str,
         except re.error:
             return False
     if citation.startswith("hyp:"):
-        # NS-13f: a hypothesis resolves only once its kill experiment ran
+        # A hypothesis resolves only once its kill experiment ran
         # and did not fire - an untested cause supports nothing yet.
         return survived(archive, citation)
     if citation.startswith("criterion:"):
-        # U-T2: resolves when a criterion record exists under that exact
+        # Resolves when a criterion record exists under that exact
         # subject - the citation string and the subject are the same text,
         # so no separate parsing is needed to compare them.
         return any(
@@ -1115,14 +1116,14 @@ def _citation_resolves(project: Path, archive: Chronicle, citation: str,
             for record in archive.select(kind="criterion", limit=500)
         )
     if citation.startswith("tool:"):
-        # NS-8f: resolves when the digest names a tool result the
+        # Resolves when the digest names a tool result the
         # PostToolUse scan actually flagged (`hooks/godmode_post_edit.py`'s
         # `untrusted-content-seen` record) - existence only, the same as
         # every other digest-shaped citation above. Whether a claim resting
         # on it may say more than "observed" is `record_claim`'s cap below,
         # not a resolution question.
         #
-        # Fix round 2 (Task 7 re-review, C3 residue): `record_claim`
+        # `record_claim`
         # already computed this exact set once, above, to decide the cap -
         # passed in as `untrusted_digests` so an N-`tool:`-citation claim
         # does not run a second `archive.select` per citation on top of
@@ -1295,7 +1296,7 @@ def looks_like_root_cause(text: str) -> tuple[bool, str]:
     return (True, f"asserts a cause: {match.group(0)}") if match else (False, "")
 
 
-# U-E3: differential-evidence detector - diff before theory.
+# Differential-evidence detector - diff before theory.
 # The rule above fires on any root-cause phrasing; this is the
 # more precise instrument it was missing - it only holds a claim to needing
 # the *diff* once the archive actually holds two comparable states to diff,
@@ -1323,7 +1324,7 @@ def _strip_quoted(text: str) -> str:
 
 
 def _asserts_a_cause(text: str) -> tuple[bool, str]:
-    """The union of the old recognizer and U-E3's own vocabulary.
+    """The union of the old recognizer and the newer cause-claiming vocabulary.
 
     `looks_like_root_cause` itself is left untouched (see the constant's
     docstring above); this is the trigger the differential gate actually
@@ -1367,7 +1368,7 @@ def _differential_reason(
     text: str,
     citations: list[str],
 ) -> str | None:
-    """U-E3: the downgrade reason when a root-cause claim needs the diff, or
+    """The downgrade reason when a root-cause claim needs the diff, or
     `None` when the claim should be left alone.
 
     Fires on root-cause vocabulary found OUTSIDE quotes and code spans, and
@@ -1411,7 +1412,7 @@ def record_differential(
     delta: list[str],
     method: str,
 ) -> dict[str, Any]:
-    """U-E3: record a comparison of two archived states.
+    """Record a comparison of two archived states.
 
     `a_ref`/`b_ref` are citation strings (`seq:<n>`, `file:<path>`, `cmd:...`)
     naming the two states compared - stored as given, NOT validated to
@@ -1450,7 +1451,7 @@ def record_differential(
     return archive.append("differential", subject, data, evidence=[a_ref, b_ref])
 
 
-# U-T2: a claim that a broken thing now works. Narrow on purpose - the
+# A claim that a broken thing now works. Narrow on purpose - the
 # red-before-green rule below is a real burden (it demands the cited command
 # was actually run failing, not merely cited), and holding every verified
 # claim to it would be the over-gating that gets a check switched off. Only
@@ -1521,7 +1522,7 @@ _PASS_VERDICT_VOCAB = re.compile(
 # A run-shaped claim reports the outcome of something that was executed:
 # tests, a suite, a build, CI, a check. It is the claim an executed
 # attestation can settle, which is why its grade is composed, never
-# asserted (obligations 10118, 10245).
+# asserted.
 _RUN_SHAPED = re.compile(
     r"(?i)\b(?:tests?|suite|build|ci|checks?|pipeline|matrix|legs?|lint(?:er)?|"
     r"typecheck|benchmark)\b[^.;]{0,60}?\b(?:pass(?:es|ed|ing)?|green|succeed(?:s|ed)?|"
@@ -1616,14 +1617,14 @@ def _temporal_violation(timeline: dict[str, Any], cmd_citations: list[str]) -> s
     return TEMPORAL_REASON
 
 
-# E4: state what passing looks like before doing the work, so the
+# State what passing looks like before doing the work, so the
 # criterion judges the work rather than the work retrofitting the criterion.
 _WEAK_VERBS = re.compile(
     r"(?i)\b(?:improve[sd]?|clean(?:ed|s|ing)?(?:\s+up)?|better|nicer"
     r"|enhance[sd]?|polish(?:ed|ing)?)\b"
 )
 
-# Field report part 5 (2026-09-10): a check the same agent ran and attested is
+# A check the same agent ran and attested is
 # graded on its exit code; the note names what would make it independent. It
 # rides its own field so the advisories list keeps meaning "something to fix".
 SELF_ATTESTED_NOTE = (
@@ -1637,7 +1638,7 @@ SELF_AUTHORED_EVIDENCE_NOTE = (
 LATE_CRITERION_FINDING = "criterion must precede the work it judges"
 
 
-# U-T3: anchored-metric contracts. A numeric claim about a registered metric
+# Anchored-metric contracts. A numeric claim about a registered metric
 # must cite an output line matching the anchor declared for it, never a
 # paraphrase - and when it does cite one, the value on that line must be the
 # number the claim states, or the two are said out loud.
@@ -1842,7 +1843,7 @@ def _numbers_differ(cited: str, claimed: str) -> bool:
 
 
 def _metric_contract_reason(archive: Chronicle, text: str, citations: list[str]) -> str | None:
-    """U-T3: the downgrade reason when a claimed number contradicts its
+    """The downgrade reason when a claimed number contradicts its
     cited anchored line, or `None` when the claim should be left alone.
 
     Only fires when a registered metric's name literally appears in the
@@ -2060,7 +2061,7 @@ def stale_claims(archive: Chronicle, project: Path, limit: int = 500) -> list[di
     # three resolved claims stayed on the stale list through a whole gate).
     resolved = {int((r.get("data") or {}).get("resolves"))
                 for r in records if (r.get("data") or {}).get("resolves") is not None}
-    # R1 (review): the same "settled, not stale" fact above, bridged to a
+    # The same "settled, not stale" fact above, bridged to a
     # verdict by claim TEXT - a verdict carries no sequence link to the
     # claim record it backs, only the same descriptive text a claim's own
     # `text` field holds, so a resolved claim's text is the only handle a
@@ -2078,7 +2079,7 @@ def stale_claims(archive: Chronicle, project: Path, limit: int = 500) -> list[di
             continue
         latest[text] = record
     stale: list[dict[str, Any]] = []
-    # Q1: computed at most once for the whole call, and only when a claim
+    # Computed at most once for the whole call, and only when a claim
     # actually needs it (a claim with no `file:` citation, or one whose
     # per-citation hash already caught the movement, never triggers the
     # four `git` subprocesses tree_fingerprint spends) - the digest cannot
@@ -2089,7 +2090,7 @@ def stale_claims(archive: Chronicle, project: Path, limit: int = 500) -> list[di
         data = record.get("data") or {}
         recorded = data.get("evidence_versions") or {}
         current = evidence_versions(Path(project), list(recorded))
-        # S3: the tree-wide fingerprint below is the FALLBACK signal for
+        # The tree-wide fingerprint below is the FALLBACK signal for
         # movement no per-citation hash caught - once this record already
         # produced a `changed`/`vanished` entry, the tree check is
         # redundant for it and would otherwise double the same claim into
@@ -2111,7 +2112,7 @@ def stale_claims(archive: Chronicle, project: Path, limit: int = 500) -> list[di
                 "reason": reason,
                 "grade": data.get("grade"),
             })
-        # NS-8b: the tree as a whole moved since this claim was cited, not
+        # The tree as a whole moved since this claim was cited, not
         # merely the one file a per-citation hash above already caught -
         # a rename, a sibling file, or an index change with no per-file
         # citation of its own. Restricted to claims citing at least one
@@ -2125,7 +2126,7 @@ def stale_claims(archive: Chronicle, project: Path, limit: int = 500) -> list[di
                 and any(c.startswith("file:") for c in citations_list)):
             if current_fingerprint is None:
                 current_fingerprint = tree_fingerprint(Path(project))["digest"]
-            # S5/S6: a fingerprint that could not be read just now (a
+            # A fingerprint that could not be read just now (a
             # transient git failure, not a real "clean" or "changed" tree)
             # is never compared - it would either forge a false match or a
             # false, unfixable mismatch against a real digest.
@@ -2133,21 +2134,21 @@ def stale_claims(archive: Chronicle, project: Path, limit: int = 500) -> list[di
                 stale.append({
                     "sequence": record.get("sequence"),
                     "text": text[:120],
-                    # Q6: never `None` - both live consumers interpolate
+                    # Never `None` - both live consumers interpolate
                     # this into a rendered line and would print the word
                     # "None" beside the reason.
                     "citation": "",
                     "reason": "tree-changed",
                     "grade": data.get("grade"),
                 })
-    # S4: a verdict's own `file:` witness moving since it was recorded -
+    # A verdict's own `file:` witness moving since it was recorded -
     # the same "the evidence moved" fact above, extended to the witness a
     # verdict's checkers ran against rather than a claim's citations.
     # Mirrors the claim pass above: fold to the newest verdict per subject
     # first, so an older verdict a later re-check superseded is not
     # reported forever on every SessionStart and every preflight gate.
     #
-    # N2 (review): keyed on `(claim, witness ref)`, not on `claim` alone -
+    # Keyed on `(claim, witness ref)`, not on `claim` alone -
     # two verdicts about the same claim text but different witnesses must
     # not fold together (that would drop the older witness's own staleness
     # entirely), and every verdict whose `claim` is empty or absent keys on
@@ -2165,7 +2166,7 @@ def stale_claims(archive: Chronicle, project: Path, limit: int = 500) -> list[di
     for record in latest_verdicts.values():
         data = record.get("data") or {}
         claim_text = str(data.get("claim") or "")
-        # R1 (review): the claim this verdict backs was later resolved
+        # The claim this verdict backs was later resolved
         # (held, failed, superseded) - its witness moving afterward is
         # history, not staleness, same reasoning as the claim pass's own
         # `resolved`/`resolved_texts` skip above.
@@ -2189,7 +2190,7 @@ def stale_claims(archive: Chronicle, project: Path, limit: int = 500) -> list[di
 
 
 # Commands that read or filter and never run the thing a run-shaped claim
-# describes (field report 27, 2026-09-10: "final suite exit 0" was graded
+# describes ("final suite exit 0" was graded
 # verified because the cited grep over a log exited 0). A filter's exit
 # code is the filter's verdict, not the run's.
 #
@@ -2198,11 +2199,20 @@ def stale_claims(archive: Chronicle, project: Path, limit: int = 500) -> list[di
 # reshaping state is not a verdict about it, so every head here except the
 # search family caps a claim at observed. Adding a head here therefore
 # tightens both paths at once - see `_reports_state`.
+#
+# `tee` belongs here: it copies its input and exits on its own success, so a
+# run piped into it reports tee's exit code. `xargs` does not: its exit code
+# is the command it runs (123 when any run fails), so an `xargs` stage is
+# judged by that command instead (`_head_and_rest`). PowerShell's object
+# cmdlets reshape a pipeline and set no exit code of their own.
 _FILTER_HEADS = frozenset({
     "grep", "rg", "egrep", "fgrep", "ag", "echo", "printf", "cat", "head", "tail", "wc",
     "sort", "uniq", "cut", "tr", "awk", "sed", "ls", "find", "test", "[", "true", "false",
     "type", "which", "where", "stat", "file", "less", "more", "jq", "select-string",
     "get-content", "findstr", "write-output", "write-host",
+    "tee", "nl", "column", "rev",
+    "select-object", "sort-object", "group-object", "measure-object", "where-object",
+    "tee-object", "format-table", "format-list", "out-string", "out-host",
 })
 
 
@@ -2244,6 +2254,11 @@ def _head_and_rest(stage: str) -> tuple[str, list[str]]:
     head = tokens[0].replace("\\", "/").split("/")[-1].lower()
     if head.endswith(".exe"):
         head = head[:-4]
+    if head == "xargs":
+        # The command xargs runs decides its exit code; a bare `xargs`
+        # runs `echo`.
+        command = _xargs_command(stage.split("xargs", 1)[1])
+        return _head_and_rest(command) if command else ("echo", [])
     return head, tokens[1:]
 
 
@@ -2257,7 +2272,7 @@ def filter_head(citation: str) -> str | None:
     return head if head in _FILTER_HEADS else None
 
 
-# Field report file 2026-09-10, Part 4: `--verify` on `git status --short`
+# `--verify` on `git status --short`
 # graded a claim "verified" that the command could not contradict. A
 # check earns the grade only when its exit code can fail for the claim's
 # negation; these heads report state and never fail on it.
@@ -2269,13 +2284,13 @@ _NON_VERDICT_HEADS = re.compile(
     # do so unconditionally on success; a failure means the target did not
     # exist, which the command line's own following stages already act on,
     # not something a claim's citation should get credit for as a verdict.
-    # Added round 3 (re-review 2, 3.2): once the negative path started
+    # Once the negative path started
     # judging the pipeline tail, `ls -la && cd x` graded falsifiable on the
     # `cd x` tail with nothing downstream to cap it.
     r"uname|hostname|id|history|true|cd|pushd|popd|export|source|set)\b)")
 
 
-# I-5 (design doc Sprint 7): the commands below carry a real verdict in
+# The commands below carry a real verdict in
 # their exit code even though a bare head match would otherwise miss them
 # or (worse) `_NON_VERDICT_HEADS` would wrongly cap them at observed.
 # `falsifiable()` consults these before the head regex, on the last
@@ -2295,7 +2310,7 @@ _NON_VERDICT_HEADS = re.compile(
 # wrapper script (`cmd:python -c "raise SystemExit(0)"`) could always
 # launder a verdict anyway - narrowing this case buys no real soundness.
 # The same reasoning covers plain `grep foo` with no `-q`/`--quiet` at all
-# (round 3, re-review 2, note 3.2): `grep` is not in `_NON_VERDICT_HEADS`,
+# `grep` is not in `_NON_VERDICT_HEADS`,
 # so it is falsifiable by that regex's default, and rightly so - its exit
 # code depends on whether `foo` matched, which is data, with or without the
 # quiet flag; `-q` only silences the output, it does not create the
@@ -2391,7 +2406,7 @@ _PREDICATE_HEADS = frozenset({"test", "["})
 
 # The one part of `_FILTER_HEADS` that keeps its verdict when it is the
 # pipeline tail: a search's exit code answers "did the pattern match",
-# which is data, with or without `-q` (round 3's ruling for bare
+# which is data, with or without `-q` (the rule for bare
 # `grep foo`; `grep -c foo` exits 1 on zero matches exactly as `grep -q`
 # does). Everything else in that table reshapes or prints its input and
 # succeeds unconditionally on well-formed input.
@@ -2484,8 +2499,7 @@ def subject_files(project: Path, text: str, limit: int = 6) -> list[str]:
 def executed_predicates(archive: Chronicle, project: Path,
                         citations: list[str],
                         transcript_path: str | Path | None = None) -> dict[str, Any]:
-    """The deterministic picker for a run-shaped claim (obligations 10118,
-    10245): the grade is composed from executed predicates, never asserted.
+    """The deterministic picker for a run-shaped claim: the grade is composed from executed predicates, never asserted.
 
     For the first `cmd:` citation: `check_ran` - an attestation with that
     command as evidence exists and ran green; `exit_recorded` - it carries
@@ -2585,10 +2599,12 @@ def record_claim(
     transcript_path: str | Path | None = None,
     depends_on: list[int] | None = None,
     fixes: int | None = None,
+    cap_grade: str | None = None,
+    cap_reason: str = "",
 ) -> dict[str, Any]:
     """Persist a claim, downgrading it when its citations do not resolve.
 
-    `fixes` (NS-13e) names the incident the claim fixes. The claim verifies
+    `fixes` names the incident the claim fixes. The claim verifies
     only as a red-then-green pair: the incident holds the red run of its
     reproduction command, and this claim cites that same command with a
     green run in this session after the incident. Anything less caps the
@@ -2618,6 +2634,15 @@ def record_claim(
     citations that both resolve to the same file, or two copies of the same
     `cmd:` string, are one witness said twice and downgrade exactly like too
     few citations at all, naming the bar in the reason.
+
+    `cap_grade` (with `cap_reason`) caps the effective grade at that grade
+    without touching `grade` itself - the caller's requested grade is what
+    `claimed_grade` records, so a claim that gets capped still shows
+    `downgraded: true` instead of quietly reporting the capped grade as
+    what was asked for. Used by `claim --verify` when a cited check just
+    ran red or a held-back check disagreed: the claim stays "claimed
+    verified, graded observed, downgraded" rather than being rewritten to
+    ask for observed before it ever reaches this ladder.
     """
     if grade not in GRADES:
         raise ArchiveError(f"Unknown claim grade '{grade}'; expected one of {', '.join(GRADES)}")
@@ -2636,10 +2661,10 @@ def record_claim(
             f"{', '.join(BLAST_RADIUS_KINDS)}"
         )
     citations = cites or []
-    # NS-13e: a fix claim names a real incident or nothing - a dangling
+    # A fix claim names a real incident or nothing - a dangling
     # --fixes is a mistake in the claim itself, refused before grading.
     fix_incident = _fix_incident(archive, fixes) if fixes is not None else None
-    # NS-13f: a fix may rest on a hypothesis only when that hypothesis's
+    # A fix may rest on a hypothesis only when that hypothesis's
     # kill experiment ran and did not fire. Refused, not downgraded: the
     # citation itself claims a test that never happened.
     if fixes is not None or looks_like_fix_claim(text)[0]:
@@ -2647,7 +2672,7 @@ def record_claim(
             refusal = fix_citation_refusal(archive, str(_citation))
             if refusal:
                 raise ArchiveError(f"fix claim refused: {refusal}")
-    # NS-8f fix round 1 (S3/C3): computed once, here, above every early
+    # Computed once, here, above every early
     # return - not at the tail after the ladder - so `untrusted` is on
     # EVERY record this call can write, including the four early-return
     # `hypothesis` dicts below (`blast_radius` already follows this same
@@ -2659,13 +2684,13 @@ def record_claim(
     untrusted = any(
         _citation_is_untrusted(project, _untrusted_digests_now, c) for c in citations
     )
-    # NS-8b: a seq:<n> citation is a referential claim about the archive's
+    # A seq:<n> citation is a referential claim about the archive's
     # own history, not a claim about project state - "the record this rests
     # on never existed" is a mistake in the citation itself, not a fact to
     # grade softer. Checked before any other discipline so a fabricated
     # seq: never reaches the downgrade ladder below.
     #
-    # R3 (review): a claim citing MORE THAN ONE `seq:` used to scan
+    # A claim citing MORE THAN ONE `seq:` used to scan
     # `archive.read_events()` once per such citation here, then again per
     # `seq:` citation inside `unresolved` below (`_citation_resolves`'s own
     # `seq:` branch) - up to 2N full-archive reads for an N-`seq:`-citation
@@ -2677,7 +2702,7 @@ def record_claim(
     )
     for _citation in citations:
         require_seq_cite(archive, str(_citation), existing=existing_seqs)
-    # NS-8b: the working tree's shape at cite time, stamped on every claim
+    # The working tree's shape at cite time, stamped on every claim
     # this call produces (including the downgrades below) so a later sweep
     # can tell the ground moved even when no single cited file's hash did.
     fingerprint_digest = tree_fingerprint(project)["digest"]
@@ -2697,11 +2722,11 @@ def record_claim(
                  "untrusted": untrusted,
                  "advisories": [], "reason": loop_reason,
                  "tree_fingerprint": fingerprint_digest,
-                 # S2 (review): without this, `stale_claims`' own filter
+                 # Without this, `stale_claims`' own filter
                  # (`not data.get("evidence_versions")`) skips this record
                  # before the tree check above it can ever read the stamp -
                  # a downgraded claim is precisely one worth re-checking.
-                 # N4 (review): matches the main append below - a downgraded
+                 # Matches the main append below - a downgraded
                  # claim's SUBJECT files (paths the claim text names, not
                  # just what it cited) get the same per-citation staleness
                  # coverage an accepted claim gets, not a narrower one.
@@ -2716,7 +2741,7 @@ def record_claim(
     # A cause is a claim about a mechanism, and the ledger this rule comes from
     # is a record of mechanisms asserted from the nearest anomaly. Checked
     # before the external gate so a root cause about a third-party system is
-    # held to both. U-E3: only bites once the archive holds two comparable
+    # held to both. Only bites once the archive holds two comparable
     # states to diff - see `_differential_reason`.
     if grade == "verified":
         differential_reason = _differential_reason(project, archive, session, text, citations)
@@ -2728,7 +2753,7 @@ def record_claim(
                  "operator_asserted": [], "blast_radius": blast_radius, "confidence": confidence,
                  "untrusted": untrusted,
                  "reason": differential_reason, "tree_fingerprint": fingerprint_digest,
-                 # N4 (review): matches the main append below - a downgraded
+                 # Matches the main append below - a downgraded
                  # claim's SUBJECT files (paths the claim text names, not
                  # just what it cited) get the same per-citation staleness
                  # coverage an accepted claim gets, not a narrower one.
@@ -2736,7 +2761,7 @@ def record_claim(
                      project, list(citations) + [f"file:{p}" for p in subject_files(project, text)])},
                 evidence=citations,
             )
-    # U-T3: a claimed number that contradicts the value on its own cited
+    # A claimed number that contradicts the value on its own cited
     # anchored line - checked before the external gate for the same reason
     # as the root-cause check above: a claim can be held to more than one
     # discipline at once.
@@ -2750,7 +2775,7 @@ def record_claim(
                  "operator_asserted": [], "blast_radius": blast_radius, "confidence": confidence,
                  "untrusted": untrusted,
                  "reason": metric_reason, "tree_fingerprint": fingerprint_digest,
-                 # N4 (review): matches the main append below - a downgraded
+                 # Matches the main append below - a downgraded
                  # claim's SUBJECT files (paths the claim text names, not
                  # just what it cited) get the same per-citation staleness
                  # coverage an accepted claim gets, not a narrower one.
@@ -2769,7 +2794,7 @@ def record_claim(
                  "reason": "external claim without a primary source read this session; "
                            "cite doc:<path> or url:<address> from a source actually opened",
                  "tree_fingerprint": fingerprint_digest,
-                 # N4 (review): matches the main append below - a downgraded
+                 # Matches the main append below - a downgraded
                  # claim's SUBJECT files (paths the claim text names, not
                  # just what it cited) get the same per-citation staleness
                  # coverage an accepted claim gets, not a narrower one.
@@ -2780,10 +2805,10 @@ def record_claim(
             return record
     unresolved = [
         citation for citation in citations
-        # Fix round 2 (Task 7 re-review, C3 residue): pass the digest set
+        # Pass the digest set
         # `record_claim` already computed above, so a `tool:` citation's
         # resolution check does not repeat the `archive.select` scan.
-        # R3 (review): `existing_seqs`, computed above only when more than
+        # `existing_seqs`, computed above only when more than
         # one `seq:` citation is present, does the same for this call's
         # `seq:` citations - the hard `require_seq_cite` pass above and
         # this softer `_citation_resolves` pass share the one scan.
@@ -2811,7 +2836,7 @@ def record_claim(
         if not citations:
             effective, reason = "hypothesis", "no citation"
         elif cmd_citations and not any(falsifiable(c) for c in cmd_citations):
-            # Field report file 2026-09-10, Part 4: `git status --short`
+            # `git status --short`
             # graded a claim verified that it could not contradict.
             effective, reason = (
                 "observed",
@@ -2850,7 +2875,7 @@ def record_claim(
                 f"{len(citations)} citation(s)",
             )
         elif fix_claim and timeline is not None and cmd_citations:
-            # U-T2: the citation resolves (checked above), but a fix claim
+            # The citation resolves (checked above), but a fix claim
             # needs more than a citation - it needs the command to have been
             # observed failing before the fix and passing after.
             #
@@ -2890,7 +2915,7 @@ def record_claim(
                 "absence claim cites no search that would have found a counter-example",
             )
         elif _guard_citations(citations) and not cmd_citations:
-            # Obligation 4122 (field report 2026-08-28): three withdrawals
+            # Three withdrawals
             # rested on guard assertions READ but not RUN. Reading a test
             # file pins what it would check; only running it checks it. A
             # verified claim resting on a test file needs the run beside it.
@@ -2903,11 +2928,11 @@ def record_claim(
         elif (absence
               and (pin_reason := _guard_pin_reason(project, archive, text, citations))
               and not _pin_is_advisory_only(pin_reason)):
-            # Obligation 4166 (field report 2026-08-28): a state-is-a-gap
+            # A state-is-a-gap
             # claim about a line an uncited test pins, or a symptom the
             # lessons ledger already holds, is answered by that pin's
             # provenance - not published as a gap, not fixed in place.
-            # H5: an `advisory:`-prefixed pin_reason shares vocabulary with
+            # An `advisory:`-prefixed pin_reason shares vocabulary with
             # a lesson but not a cited path/command stem - it is surfaced
             # as an advisory below, never a downgrade.
             effective, reason = "hypothesis", pin_reason
@@ -2927,7 +2952,7 @@ def record_claim(
         advisories.append(pin_reason)
     if window_note:
         advisories.append(window_note)
-    # Field report 2026-09-02: an observed-grade claim citing a command that
+    # An observed-grade claim citing a command that
     # was never attested recorded clean - "zero advisories on a claim it
     # cannot check". The verified ladder above downgrades; below verified,
     # the same gap is at least NAMED, so "observed" never silently reads as
@@ -2953,7 +2978,7 @@ def record_claim(
             "a universal claim (every/all/100%) enumerates its lanes - a "
             "grep proves existence, an enumeration proves coverage; list "
             "what was covered, or scope the claim to what was")
-    # "Any citation passes" (field reports 16/18): a doc: cite whose file
+    # "Any citation passes": a doc: cite whose file
     # never mentions the claim's subject is decoration. Named below
     # verified; at verified the unsupported ladder already downgrades.
     if grade != "verified":
@@ -3088,7 +3113,7 @@ def record_claim(
         if own.get("self_attested"):
             composed["independence"] = SELF_ATTESTED_NOTE
     if effective == "observed" and (pass_verdict or fix_claim or is_run_shaped(text)):
-        # Deterministic picker (obligations 10118, 10245): a run-shaped
+        # Deterministic picker: a run-shaped
         # claim is graded by executed predicates. Green attestation for the
         # cited command on this tree composes verified; otherwise the
         # record names the check that would settle it.
@@ -3120,7 +3145,7 @@ def record_claim(
         else:
             composed["settleable_by"] = (
                 "claim --verify --cite \"cmd:<the command that proves it>\"")
-    # NS-8f: whatever grade the ladder above landed on, a claim resting on
+    # Whatever grade the ladder above landed on, a claim resting on
     # content the PostToolUse scan flagged as instruction-shaped cannot
     # outrank the self-report tier - `untrusted` (computed once, above,
     # before the first early return) caps `effective` at `observed`.
@@ -3132,16 +3157,30 @@ def record_claim(
         if not reason:
             reason = "citation rests on content the untrusted-content scan flagged; capped at observed"
         effective = "observed"
+    # Field feedback 2026-09-11 / the held-back oracle (2026-09-10): a cited
+    # check that just ran red, or a held-back check the agent did not
+    # choose, caps the grade the same way `untrusted` does above - after
+    # composition, so nothing upstream can re-elevate past it. `grade`
+    # (and therefore `claimed_grade` below) is left alone: the caller
+    # asked for `cap_grade`'s better grade and did not get it, which is
+    # exactly what `downgraded` exists to say.
+    capped_reason = None
+    if cap_grade is not None and _GRADE_RANK.get(effective, 0) > _GRADE_RANK.get(cap_grade, 0):
+        if not reason:
+            reason = capped_reason = cap_reason or f"capped at {cap_grade}"
+        effective = cap_grade
     if fix_incident is not None:
-        # NS-13e, applied after composition for the same reason as the cap
+        # The fix pairing is applied after composition for the same reason as the cap
         # above: nothing downstream may re-elevate an unpaired fix.
         composed["fixes"] = int(fixes)
         pair_reason = _fix_pair_reason(archive, session, fix_incident, citations)
         if pair_reason and _GRADE_RANK.get(effective, 0) > _GRADE_RANK["observed"]:
             effective, reason = "observed", pair_reason
-        elif pair_reason and not reason:
-            # Already below verified (a red --verify run caps before this
-            # call): still say why the pair is not complete.
+        elif pair_reason and (not reason or reason == capped_reason):
+            # Already below verified (a red --verify run capped it just
+            # above): the incident's own reason is the more specific one -
+            # a red cited check on a fix claim is its reproduction still
+            # failing - so it replaces the generic cap wording.
             reason = pair_reason
         composed["fix_pair"] = "unpaired" if pair_reason else "red-then-green"
     record = archive.append(
@@ -3153,11 +3192,11 @@ def record_claim(
             "claimed_grade": grade,
             "grade": effective,
             **composed,
-            # Grounded claims (obligation 10248): the evidence's version at
+            # Grounded claims: the evidence's version at
             # record time, so `stale_claims` can tell when it moved.
             "evidence_versions": evidence_versions(
                 project, list(citations) + [f"file:{p}" for p in subject_files(project, text)]),
-            # NS-8b: the working-tree fingerprint at cite time (see module
+            # The working-tree fingerprint at cite time (see module
             # docstring in `godmode_fingerprint`) - `stale_claims` compares
             # it against the tree as it is now.
             "tree_fingerprint": fingerprint_digest,
@@ -3172,7 +3211,7 @@ def record_claim(
             # this schema version".
             "blast_radius": blast_radius, "confidence": confidence,
             "refuted_by": refuted_by,
-            # NS-8f: stored even when False, same reasoning as
+            # Stored even when False, same reasoning as
             # `blast_radius` above - a reader never has to guess whether
             # an absent key means "checked, found trustworthy" or "this
             # schema version never checked at all".
@@ -3609,7 +3648,7 @@ def recurrences(archive: Chronicle, limit: int = 500) -> dict[str, Any]:
         data = record["data"]
         if data.get("status") != "blocked":
             continue
-        # Field report file 2026-09-10, finding on `recurrences`: a check run
+        # For `recurrences`, a check run
         # deliberately red and later green is a RED-GREEN cycle, not a
         # control blocking twice on one cause.
         if record["subject"] in _later_green:
@@ -3673,7 +3712,7 @@ def close_session(archive: Chronicle, session: str, charter: dict[str, Any]) -> 
         if record["data"].get("session") == session and record["data"].get("downgraded")
     ]
     half_done = half_done_pairs(archive, session, charter)
-    # E62 (Task 4b): each `accept: cmd:...` entry on the active plan needs a
+    # Each `accept: cmd:...` entry on the active plan needs a
     # this-session attestation before completion - the same discipline as an
     # unattested HARD rule, applied to a plan's own executable acceptance.
     from .godmode_plan import unattested_accept_commands
@@ -3736,9 +3775,9 @@ def obligations_digest(archive: Chronicle) -> dict[str, int]:
     """open / attested / waived over the latest record per obligation
     subject (SWE-EVO partial-vs-resolved: never a fake 100%).
 
-    Fix round 1 (B2): routed through `latest_by_subject` - this fed
+    Routed through `latest_by_subject` - this fed
     `status --digest` (`cmd_status`) and the session closure verdict
-    through a plain per-subject fold that never honoured a NS-10e
+    through a plain per-subject fold that never honoured a
     `supersedes` edge, so `godmode status` and `godmode status --digest`
     disagreed about the same archive ON THAT AXIS: `remaining()` drops a
     superseded obligation, this counted it `open` regardless.
@@ -3767,7 +3806,7 @@ def obligations_digest(archive: Chronicle) -> dict[str, int]:
 
 def calibration_digest(archive: Chronicle) -> dict[str, Any]:
     """How many claims carried a confidence and how many were ever scored;
-    field report file 2026-09-10, finding 9: 0 scored after 2,729 records
+    0 scored after 2,729 records
     and nothing said so."""
     recorded = 0
     with_confidence = 0
@@ -3812,7 +3851,7 @@ def false_green_rate(archive: Chronicle) -> dict[str, Any]:
     2026-09-10)."""
     grades: dict[int, str] = {}
     downgraded = 0
-    # S-5: every claim on record. `select(kind="claim", limit=1000)` was
+    # Every claim on record. `select(kind="claim", limit=1000)` was
     # clamped to the newest 500 by `select` itself, so a resolution of an
     # older verified claim found no grade to count against and the rate
     # read clean over claims it never saw.
@@ -4033,7 +4072,7 @@ def lesson_pipeline(archive: Chronicle) -> dict[str, Any]:
                 e[len("file:"):] for e in record.get("evidence", []) if e.startswith("file:"))
     lessons = []
     unresolved = 0
-    # NS-10e: fold to the latest, non-superseded record per subject first
+    # Fold to the latest, non-superseded record per subject first
     # - a lesson restated (or explicitly superseded) does not get its own,
     # separately-tracked promote-or-retire verdict alongside its
     # successor's.

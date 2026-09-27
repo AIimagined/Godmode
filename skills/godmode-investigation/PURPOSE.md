@@ -5,23 +5,21 @@ discriminating test, instead of from a plausible-sounding story about the mechan
 
 ## Gap evidence
 
-- seq:11672 — a test asserted the wording of a claim rather than the exit code of the
-  check meant to verify it, and stayed green after the verifier it depended on had
-  stopped running at all.
-- seq:12461 — a guard regression was only confirmed once a controlled before/after
-  comparison actually ran; the mechanism story that preceded it was not evidence on
-  its own.
-- seq:12721 — four separate suite failures traced back to one exception that had been
-  swallowed without ever being marked as an intentional, reviewed case.
-
-- seq:14909 — a code read of the method selector found the 5-Whys contract stopped at a
-  cited root: no backward validation of the chain, no countermeasures, nothing refusing a
-  root that names a person, and reproduce-first living only as skill prose rather than a
-  record requirement.
-- seq:14913 — the same finding answered to the operator: plan-first and reproduce-first
-  were advice, not gates, and the RCA ritual existed nowhere as a checkable record. The
-  postmortem flow (validated 5-Whys, competing hypotheses with kill experiments, `repro:`
-  red-then-green, the RCA checklist) is the answer to both.
+- A test asserted the wording of a claim rather than the exit code of the
+  check meant to verify it, and stayed green even after the verifier it
+  depended on had stopped running at all.
+- A guard regression was only confirmed once a controlled before/after
+  comparison actually ran; the mechanism story that preceded it was not
+  evidence on its own.
+- Four separate test failures traced back to one exception that had been
+  silently swallowed, never marked as an intentional, deliberate case.
+- A root-cause method stopped at a cited root with no backward validation
+  of the chain, no countermeasures, and nothing refusing a root that names
+  a person — reproducing the failure first lived only as prose, never as a
+  checkable requirement.
+- Planning before acting and reproducing a failure before fixing it were
+  treated as advice rather than as gates, with no checkable record that
+  either had actually happened.
 
 ## Promise
 
@@ -30,4 +28,4 @@ its reproduction red, weighs competing falsifiable hypotheses, runs the discrimi
 check, and reports either a verified remedy - the same reproduction green - or exactly
 what remains unknown. A postmortem is complete only when `method --check-record` says so.
 
-Future edits to this skill append their own seq: citation above.
+Future edits to this skill append their own plain-language evidence above.

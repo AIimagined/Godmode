@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CX-6: (re)generate `tests/e2e/perf_baseline.json` from a live measurement
+"""(re)generate `tests/e2e/perf_baseline.json` from a live measurement
 sweep on THIS machine.
 
 Run manually, on purpose, when a real perf change makes the checked-in

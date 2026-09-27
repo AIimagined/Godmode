@@ -43,8 +43,7 @@ def loosens(branch: str | None, role: str) -> bool:
     throwaway declaration. Such a declaration counts only from a verified
     operator; one that tightens (maintained) counts from anyone.
 
-    Compared with the role, never with the branch name's default (review
-    round 2, F2): on `spike/*` an operator may have declared the branch
+    Compared with the role, never with the branch name's default: on `spike/*` an operator may have declared the branch
     maintained, and an agent restating it as a spike would undo that.
     Restating a spike by name is a no-op the default already gives."""
     return role == THROWAWAY
@@ -60,8 +59,15 @@ def declared_role(archive: Any, branch: str | None) -> str | None:
         return None
     from .godmode_chronicle import TRUST_ORDER, record_trust
 
-    for record in reversed(archive.select(kind=TOPOLOGY_KIND, subject=TOPOLOGY_SUBJECT,
-                                          limit=500)):
+    # Not archive.select(limit=500): Chronicle.select keeps only the newest
+    # 500 matching records, so a role declared more than 500 git-topology
+    # records ago used to silently revert to the branch's default once
+    # enough newer topology records accumulated. Filtered straight off
+    # read_events() so a standing declaration keeps deciding for the life
+    # of the archive.
+    records = [r for r in archive.read_events()
+               if r.get("kind") == TOPOLOGY_KIND and r.get("subject") == TOPOLOGY_SUBJECT]
+    for record in reversed(records):
         data = record.get("data") or {}
         if data.get("branch") != branch or data.get("role") not in ROLES:
             continue

@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import ast
 import base64
+import contextvars
 from dataclasses import dataclass
 import hashlib
 import json
@@ -29,6 +30,8 @@ from .godmode_parseview import (
     BASH as _BASH_DIALECT, dialect_for_tool as _dialect_for_tool,
     dialects_to_read as _dialects_to_read, lower as _lower_dialect,
     head_readings as _head_readings, resolved_head as _resolved_head,
+    command_readings as _command_readings, opaque_head as _opaque_head,
+    lookalike_head as _lookalike_head, pty_wrapped as _pty_wrapped,
     _SEPARATORS, _HEREDOC, _without_heredoc_bodies, _blank_quoted_heredoc_bodies,
     _COMMENT_WORD_START, _walk_segments,
 )
@@ -56,7 +59,7 @@ def _stdin_is_interactive() -> bool:
 
 def _require_tty() -> None:
     if not _stdin_is_interactive():
-        # S-4: the launcher is named by its resolved path - the running
+        # The launcher is named by its resolved path - the running
         # plugin's own root, the same one `stage_hint` prints - never a
         # `<plugin-root>` placeholder the operator would have to resolve.
         root = Path(__file__).resolve().parents[2]
@@ -72,6 +75,31 @@ def _require_tty() -> None:
             "--password-stdin leaves it in the transcript; that flag is for "
             "a file or a secret manager."
         )
+
+
+def read_approval_password(operation: str, ttl_seconds: int,
+                           digest: str | None = None) -> str | None:
+    """The password for staging `operation`, from wherever a human can type it.
+
+    A terminal prompts as before. Without one - a chat's `!` prefix - a native
+    password dialog opens showing the exact command and its scope; the typed
+    password comes straight back into this process, never through the chat,
+    argv or the environment. None means the operator cancelled. Only when no
+    dialog can be shown does the old "use a separate terminal" refusal stand.
+    """
+    if _stdin_is_interactive():
+        import getpass
+
+        print(f"Staging (one use, expires in {ttl_seconds} seconds): {operation}",
+              file=sys.stderr)
+        return getpass.getpass("Godmode authorization password: ")
+    from .godmode_passdialog import DialogUnavailable, approval_message, ask_password
+
+    try:
+        return ask_password(approval_message(operation, ttl_seconds, digest))
+    except DialogUnavailable:
+        _require_tty()
+        raise
 
 
 def read_password_stdin() -> str:
@@ -149,7 +177,7 @@ _GIT_LOCAL_CHANGE = re.compile(r"(?i)^\s*git\s+(?:add|commit)(?![-\w])(?!.*\s--a
 # as `-b` here, since neither leaves the machine or discards committed work.
 _GIT_BRANCH_CREATE = re.compile(r"(?i)^\s*git\s+checkout\s+-[bB]\b")
 
-# G-1: `git restore --staged <path>` moves a path from the index back to
+# `git restore --staged <path>` moves a path from the index back to
 # HEAD - the exact inverse of `git add`, already unprotected two branches
 # above. Nothing in the working tree is touched unless `--worktree`/`-W`
 # also appears, which is the destructive form `worktree-discard` (in
@@ -160,8 +188,8 @@ _GIT_RESTORE_HEAD = re.compile(r"(?i)^\s*git\s+restore\b")
 _RESTORE_STAGED_FLAG = re.compile(r"(?i)(?<![\w-])(?:--staged|-S)(?![\w-])")
 _RESTORE_WORKTREE_FLAG = re.compile(r"(?i)(?<![\w-])(?:--worktree|-W)(?![\w-])")
 
-# G-1 (fix round 1, controller ruling - supersedes the plan text's initial
-# reading): `claude plugin eval` publishes its report to claude.ai by
+# This corrects an earlier assumption that publishing was opt-in:
+# `claude plugin eval` publishes its report to claude.ai by
 # DEFAULT when the account supports it (`claude plugin eval --help`,
 # v2.1.270) - `--publish-report` only forces that default on, and
 # `--no-publish` is the one flag that turns it off. So a BARE run (no
@@ -175,7 +203,7 @@ _RESTORE_WORKTREE_FLAG = re.compile(r"(?i)(?<![\w-])(?:--worktree|-W)(?![\w-])")
 # `--no-publish` (a hyphen is a non-word boundary) and because a bare run
 # carries no "publish"-shaped word at all for that pattern to catch.
 _CLAUDE_PLUGIN_EVAL_HEAD = re.compile(r"(?i)^\s*claude\s+plugin\s+eval\b")
-# Final review finding 1: `init\b` matched `init/…`, `init.d/…` and
+# `init\b` matched `init/…`, `init.d/…` and
 # `init-foo` too - `\b` only requires a word/non-word transition, and `/`,
 # `.` and `-` are all non-word characters, so a bare (default-publishing)
 # run named against a path that merely starts with `init` was misread as
@@ -342,7 +370,7 @@ _ACTION_PATTERNS: tuple[tuple[str, re.Pattern[str], tuple[str, ...]], ...] = (
     (
         # PowerShell's write cmdlets, named the same way `stop-process` already
         # was: the read-verb list (`_PS_READ_VERBS`) is what usually keeps an
-        # unlisted cmdlet failing closed, but Task 3's unknown-command fallback
+        # unlisted cmdlet failing closed, but the unknown-command fallback
         # (below) now reads a genuinely unrecognised head as a plain command
         # with no evidence of mutation - which these ARE evidence of, by name,
         # so they are named here rather than left to fall through to it.
@@ -412,7 +440,7 @@ _ACTION_PATTERNS: tuple[tuple[str, re.Pattern[str], tuple[str, ...]], ...] = (
         ("a running process", "whatever it was serving"),
     ),
     (
-        # U-B2: unpinning a protected evaluator is the one operation that
+        # Unpinning a protected evaluator is the one operation that
         # can defeat the pin mechanism, so it is capability-gated the same
         # way a forced push is - see `unpin_operation_text` and
         # `_TIER_BY_CATEGORY["evaluator-unpin"]` (R5, refuse outright, only
@@ -468,6 +496,211 @@ _NETWORK_FETCH_HEADS = re.compile(
 # shape reaching here already failed that check on purpose.
 _NAMED_BY_OWN_RULES = re.compile(r"(?i)^\s*(?:git|gh|export|unset)\b")
 
+# Godmode's own protection switches. `godmode config set uninitialized off`
+# silences the guard in every uninitialized project on the machine (or, with
+# `--repo`, in this repository), and `godmode config mode advise` relaxes this
+# project's quality gates. Both read as an unrecognised command with no
+# write evidence - R0 - so a session could turn its own gate down without
+# anyone being asked. Weakening is now the operator's call, asked the same
+# way a push or a release is (R4); moving a switch to its stricter value
+# (`guard`, `strict`) and every read (`config mode` with no value, `config
+# check`) stay free. The same holds for the settings file and the per-
+# repository git config key the switch writes to, reached any other way.
+_GODMODE_TOKEN = re.compile(r"(?i)godmode")
+_GODMODE_GIT_KEY = re.compile(r"(?i)^godmode(?:\.|$)")
+# The stricter value of each switch; any other value (including one the
+# classifier cannot read, like an unexpanded `$VALUE`) is treated as weakening.
+_STRICT_SETTING_VALUES = {("set", "uninitialized"): "guard", ("mode",): "strict"}
+_GIT_CONFIG_READ_FLAGS = frozenset({
+    "--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l",
+    "--get-color", "--get-colorbool"})
+_GIT_CONFIG_WRITE_FLAGS = frozenset({
+    "--unset", "--unset-all", "--add", "--replace-all", "--remove-section",
+    "--rename-section", "--edit", "-e"})
+_GIT_CONFIG_VALUE_FLAGS = frozenset({
+    "-f", "--file", "--blob", "--type", "--default", "--comment"})
+
+
+def _positionals(tokens: list[str], value_flags: frozenset[str] = frozenset()) -> list[str]:
+    """`tokens` with flags (and the argument a value-taking flag consumes)
+    removed, so `--json`/`--repo`/`--project x` can sit anywhere."""
+    kept: list[str] = []
+    skip = False
+    for token in tokens:
+        if skip:
+            skip = False
+            continue
+        if token.startswith("-"):
+            skip = token in value_flags or token == "--project"
+            continue
+        kept.append(token)
+    return kept
+
+
+# The `authorize` verbs that open the operator's password prompt. An agent's
+# own tool call has no terminal to type into, so since the prompt became a
+# native dialog one of these would pop it at the operator on the agent's
+# behalf - and an agent that can raise the prompt can ask for it to be
+# answered. `request`/`requests` are the verbs meant for agents and stay free.
+_OPERATOR_AUTHORIZE_VERBS = frozenset({"stage", "setup", "grant", "issue"})
+# The only `authorize` verbs an agent's call may run, and only when written
+# out literally: a verb the shell builds when the line runs (`$(echo stage)`,
+# `${v:-stage}`, PowerShell's `('st'+'age')` or `@args`) can be any verb.
+_AGENT_AUTHORIZE_VERBS = frozenset({"request", "requests", "deny"})
+# A flag written out literally; anything else before the verb could expand
+# into the verb itself.
+_LITERAL_FLAG = re.compile(r"^--?[a-z][a-z0-9-]*(?:=[^$`@(%{]*)?$")
+# Heads that feed words from their input onto the command they run, so the
+# verb after `authorize` is not in the text at all.
+_ARGUMENT_FEEDERS = frozenset({"xargs", "xargs.exe", "parallel"})
+# The launcher, or the console module it runs, by file (`godmode_console.py`)
+# or by module name (`-m godmode_runtime.godmode_console`, any package prefix).
+_GODMODE_LAUNCHER = re.compile(
+    r"(?i)^(?:godmode(?:\.(?:py|pyw|cmd|bat|exe|ps1|sh))?"
+    r"|(?:[\w.]+\.)?godmode_console(?:\.pyw?)?)$")
+
+
+def _operator_authorize_verb(normalized: str, argv: list[str] | None) -> str | None:
+    """The password-bearing `authorize` verb this segment runs, or None.
+
+    Any launcher form counts - the bare `godmode`, `bin/godmode`, a quoted
+    absolute path, `python scripts/godmode.py` - because the head is found
+    by the token's own basename, anywhere before the `authorize` word."""
+    if not argv:
+        return None
+    if (_SAFE_SHELL_READS.match(normalized) or _POWERSHELL_READS.match(normalized)
+            or any(pattern.search(normalized) for pattern in _SAFE_INSPECTION_PATTERNS)):
+        return None
+    lowered = [token.lower() for token in argv]
+    for index, token in enumerate(lowered):
+        if token != "authorize":
+            continue
+        heads = [t.lstrip("({").replace("\\", "/").rsplit("/", 1)[-1] for t in lowered[:index]]
+        if not any(_GODMODE_LAUNCHER.match(head) for head in heads):
+            continue
+        if any(head in _ARGUMENT_FEEDERS for head in heads):
+            return "<verb from xargs input>"
+        rest = lowered[index + 1:]
+        dynamic_flag = next((t for t in rest if t.startswith("-") and not _LITERAL_FLAG.match(t)),
+                            None)
+        if dynamic_flag is not None:
+            return dynamic_flag
+        positionals = _positionals(rest)
+        if not positionals or positionals[0] in _AGENT_AUTHORIZE_VERBS:
+            continue
+        return positionals[0]
+    return None
+
+
+def _operator_authorize_impact(verb: str) -> list[str]:
+    if verb in _OPERATOR_AUTHORIZE_VERBS:
+        return [f"`authorize {verb}` opens the operator's password prompt, "
+                "and an agent's tool call must never raise it",
+                f"the operator types `! godmode authorize {verb} ...` "
+                "themselves; an agent records `godmode authorize request` instead"]
+    return [f"`authorize {verb[:40]}` is not a literal `request`, `requests` or `deny`, "
+            "so it may open the operator's password prompt, and an agent's tool call "
+            "must never raise it",
+            "the operator types `! godmode authorize ...` themselves; an agent "
+            "records `godmode authorize request` instead"]
+
+
+# A host's plugin install tree holding Godmode (`~/.claude/plugins/cache/
+# <marketplace>/godmode/<version>/...`): code the gate itself runs.
+_PLUGIN_INSTALL_TREE = re.compile(r"(?i)[/\\]\.[^/\\]+[/\\]plugins[/\\](?:[^/\\]+[/\\])*?godmode(?:[/\\]|$)")
+
+
+def _godmode_code_dirs(project_root: Path | None) -> list[str]:
+    """Directories whose files run inside the gate: the private bytecode
+    cache the hook launchers point Python at (`<application home>/pycache`)
+    and the plugin's own install directory - unless the project being
+    worked on is that directory (Godmode's own repository)."""
+    dirs: list[str] = []
+    try:
+        from .godmode_anchor import application_home
+        dirs.append(str(application_home() / "pycache"))
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: no home means no cache is written
+        pass
+    plugin = Path(__file__).resolve().parents[2]
+    try:
+        root = Path(project_root).resolve() if project_root is not None else None
+    except (OSError, ValueError):
+        root = None
+    if root is None or not (root == plugin or plugin in root.parents or root in plugin.parents):
+        dirs.append(str(plugin))
+    # realpath on both sides: a temporary home may sit behind a symlink
+    # (macOS /var) or a short name (Windows RUNNER~1).
+    return [os.path.normcase(os.path.realpath(entry)).lower().rstrip("\\/") for entry in dirs]
+
+
+def _lands_in_godmode_code(target: str, project_root: Path | None) -> bool:
+    """Whether a write to `target` lands where Godmode's own gate code or
+    its bytecode lives: a planted `.pyc` there runs inside the gate."""
+    cleaned = os.path.expanduser(os.path.expandvars(target.strip().strip("\"'")))
+    if _PLUGIN_INSTALL_TREE.search(cleaned):
+        return True
+    # A relative path lands in the project, and the project is excluded
+    # only when it is Godmode's own repository.
+    if not os.path.isabs(cleaned):
+        return False
+    try:
+        shown = os.path.normcase(os.path.realpath(cleaned)).lower()
+    except (OSError, ValueError):
+        return False
+    return any(shown == entry or shown.startswith(entry + os.sep)
+               for entry in _godmode_code_dirs(project_root))
+
+
+def _protection_weakening(normalized: str, argv: list[str] | None,
+                          write_target: str | None,
+                          project_root: Path | None = None) -> str | None:
+    """What this segment would weaken of Godmode's own protection, or None."""
+    settings = MACHINE_SETTINGS_FILENAME.lower()
+    if write_target and settings in write_target.lower():
+        return f"a write to the machine-wide Godmode settings: {write_target[:80]}"
+    if write_target and _lands_in_godmode_code(write_target, project_root):
+        return f"a write to Godmode's own code or bytecode cache: {write_target[:80]}"
+    if not argv:
+        return None
+    lowered = [token.lower() for token in argv]
+    head = lowered[0].replace("\\", "/").rsplit("/", 1)[-1]
+    reads_only = bool(_SAFE_SHELL_READS.match(normalized) or _POWERSHELL_READS.match(normalized)
+                      or any(pattern.search(normalized) for pattern in _SAFE_INSPECTION_PATTERNS))
+    if not reads_only and any(settings in token for token in lowered[1:]):
+        return "the machine-wide Godmode settings file"
+    if not reads_only and any(_lands_in_godmode_code(token, project_root)
+                              for token in argv[1:] if not token.startswith("-")):
+        return "Godmode's own code or bytecode cache"
+    if head in ("git", "git.exe") and len(lowered) > 1 and lowered[1] == "config":
+        rest = lowered[2:]
+        if not any(_GODMODE_GIT_KEY.match(token) for token in rest):
+            return None
+        positionals = _positionals(rest, _GIT_CONFIG_VALUE_FLAGS)
+        if positionals and positionals[0] in ("set", "unset", "rename-section",
+                                              "remove-section", "edit"):
+            return "a Godmode setting in this repository's git config"
+        if positionals and positionals[0] in ("get", "list"):
+            return None
+        if any(token in _GIT_CONFIG_WRITE_FLAGS for token in rest):
+            return "a Godmode setting in this repository's git config"
+        if any(token in _GIT_CONFIG_READ_FLAGS for token in rest):
+            return None
+        return ("a Godmode setting in this repository's git config"
+                if len(positionals) >= 2 else None)
+    if reads_only:
+        return None
+    for index, token in enumerate(lowered):
+        if token != "config" or not any(_GODMODE_TOKEN.search(t) for t in lowered[:index]):
+            continue
+        positionals = _positionals(lowered[index + 1:])
+        for key, strict in _STRICT_SETTING_VALUES.items():
+            if tuple(positionals[:len(key)]) != key or len(positionals) <= len(key):
+                continue
+            value = positionals[len(key)]
+            if value != strict:
+                return f"Godmode's own `{' '.join(key)}` switch, set to `{value}`"
+    return None
+
 # Per-command flags that name an output-file argument on a command this
 # module otherwise reads as ordinary inspection: `git log --output=file` and
 # `sort -o file` write a file exactly like a `>` redirect does, without
@@ -480,6 +713,8 @@ _NAMED_BY_OWN_RULES = re.compile(r"(?i)^\s*(?:git|gh|export|unset)\b")
 _OUTPUT_FLAGS_BY_HEAD: dict[str, tuple[str, ...]] = {
     "git": ("--output",),
     "sort": ("-o", "--output"),
+    # GNU `time -o FILE` writes its timing report to FILE.
+    "time": ("-o", "--output"),
 }
 
 
@@ -523,7 +758,7 @@ def _output_flag_target(segment: Segment) -> str | None:
 # usually-quoted argument. `bash -c "..."`/`sh -c "..."` (and every other
 # POSIX shell + fused-flag form, plus a wrapped/quoted/pathed invocation
 # of any of them) are handled EARLIER now, by `_normalized_interpreter_
-# head`/`_interpreter_opacity` above (C1, round 2 - security review,
+# head`/`_interpreter_opacity` above (a security review finding,
 # 2026-08-17) - moved there rather than left here so a wrapped shell gets
 # the exact same head-resolution every other interpreter now does, instead
 # of a second, narrower copy of "is this bash/sh" that only ever
@@ -783,10 +1018,10 @@ _SAFE_GODMODE_READ = re.compile(
 #
 # Every head here treats its arguments as DATA, which is what makes this list
 # a shield: `echo python -c "hi"` PRINTS an invocation and runs nothing, so
-# the exec-shape scan (round 3) is deliberately checked AFTER this list and
+# the exec-shape scan is deliberately checked AFTER this list and
 # an interpreter token appearing after one of these heads is text.
 #
-# `env` is therefore NOT here any more (round 3). Its entire purpose is to
+# `env` is therefore NOT here any more. Its entire purpose is to
 # exec its trailing argument with a modified environment - it is a wrapper,
 # not a read - and it being on this list is exactly how `env -u VAR python -c
 # "…"` reached R0: the safe-read return fired on the literal word "env"
@@ -823,7 +1058,7 @@ _POWERSHELL_READS = re.compile(
     r"gci|gc|gi|gl|gp|gm|gcm|gu|sls|ls|dir|cls|ft|fl|man|help)\b"
 )
 
-# `env` is not a read - round 3 removed it from `_SAFE_SHELL_READS` for
+# `env` is not a read - it was removed from `_SAFE_SHELL_READS` for
 # exactly that reason, because its trailing argument is a command it execs.
 # But it is still a command this module RECOGNISES, and `head_known` asks a
 # different question from "is this a read": whether a detected write should
@@ -842,7 +1077,7 @@ def _shields_its_arguments(normalized: str) -> bool:
     it would be a false refusal on a command that provably executes no code.
 
     ROUND 4, Critical 4: `_POWERSHELL_READS` was doing what `_SAFE_SHELL_
-    READS` did for `env` before round 3 removed it - shielding an exec.
+    READS` did for `env` before that removal - shielding an exec.
     `Measure-Command { python -c "…" }` RUNS its scriptblock and its verb is
     on the read list, so the whole round-3 mechanism was unreachable behind
     it; `Where-Object`, `Sort-Object` and `Group-Object` take executable
@@ -1009,7 +1244,7 @@ _ENV_BINDING = re.compile(
 
 _LOCAL_COMPUTE = re.compile(
     # `npx` runs a package binary, which is what `node ./node_modules/.bin/...`
-    # does with more typing - and a field report shows exactly that workaround
+    # does with more typing - and real usage shows exactly that workaround
     # being reached for, which is the shape of a gate teaching people to
     # rephrase rather than to stop. `npm ci` and `npm install` are here for the
     # same reason `pip` already was: they fetch, and the network gate is what
@@ -1047,6 +1282,9 @@ _REDIRECT = re.compile(r"(?<![<>])>{1,2}(?!&)\s*(?P<target>[^\s;&|<>]*)")
 # scan - a per-write capability prompt only teaches the operator to switch the
 # gate off. Paths that are not ordinary working files are excluded below.
 _TOOL_FILE_EDIT = re.compile(r"(?i)^(?:write|edit) file\s+(?P<path>.+)$")
+# A whole-skill command on a locked skill (`retire skill <name>`): staged and
+# spent under its own action, never under one file's edit approval.
+_SKILL_ACTION = re.compile(r"(?i)^(?:retire|restore|forge) skill\s+(?P<name>[A-Za-z0-9][\w.-]*)$")
 
 # The file that switches this module's own enforcement between "enforce" and
 # "observe" (`CapabilityBroker._policy()`, below). Defined here, ahead of
@@ -1078,6 +1316,7 @@ _POLICY_READ_BACKOFF_SECONDS = 0.02
 # session (their own editor/terminal), which stays the intended declaration
 # path; nor `apply_profile`'s/`init`'s own direct filesystem writes, which
 # never go through `classify_action` at all.
+_GLOB_TARGET = re.compile(r"[*?\[]")
 _SENSITIVE_EDIT = re.compile(
     r"(?i)(?:^|[/\\])\.git[/\\]|(?:^|[/\\])\.env\b|credential|\bid_rsa\b|"
     r"\.pem$|\.key$|(?:^|[/\\])" + re.escape(POLICY_FILENAME) + r"$"
@@ -1109,7 +1348,7 @@ _RECOVERY_POINT_DESTRUCTION = re.compile(
 _DOCKER_SOCKET = re.compile(r"(?i)docker\.sock|/var/run/docker\.sock|npipe:////\./pipe/docker_engine")
 
 # ---------------------------------------------------------------------------
-# C1 (external audit, 2026-08-17): an interpreter handed a whole program as
+# An interpreter handed a whole program as
 # one string argument matched `_LOCAL_COMPUTE` on its bare name alone -
 # `python -c "subprocess.run(['git','push','--force', ...])"` and `python -c
 # "<writes .godmode-authorization-policy.json>"` both classified as R1 local
@@ -1150,7 +1389,7 @@ _DOCKER_SOCKET = re.compile(r"(?i)docker\.sock|/var/run/docker\.sock|npipe:////\
 # cannot read into anything - those, and only those, stay opaque here.
 #
 # ---------------------------------------------------------------------
-# ROUND 2 (independent security review, 2026-08-17): round 1 anchored every
+# Round 1 anchored every
 # check to the interpreter being the LITERAL FIRST TOKEN, spelled one of a
 # few exact ways. `/usr/bin/python -c "…"`, `env python -c "…"`, `"python"
 # -c "…"`, and `sudo timeout 5 python -c "…"` are all ordinary ways to
@@ -1164,7 +1403,7 @@ _DOCKER_SOCKET = re.compile(r"(?i)docker\.sock|/var/run/docker\.sock|npipe:////\
 # against the RESOLVED form instead of learning a second, parallel copy of
 # "what counts as this interpreter."
 #
-# ROUND 3 (second independent security review, 2026-08-17): round 2 located
+# Round 2 located
 # the interpreter by STRIPPING AWAY everything that was not it - a table of
 # wrapper commands (`_WRAPPER_STRIP_STEPS`), each with its own hand-written
 # flag grammar. That table is deleted here. It was wrong about three of its
@@ -1184,7 +1423,7 @@ _DOCKER_SOCKET = re.compile(r"(?i)docker\.sock|/var/run/docker\.sock|npipe:////\
 # ROUND 4 (third independent security review, 2026-08-18), finding I-3:
 # this set and the per-family `_PYTHON_LIKE`/`_NODE_LIKE`/
 # `_POSIX_SHELL_LIKE`/`_PWSH_LIKE` patterns below were two parallel
-# enumerations of the same fact, and round 3 had to add `pypy`/`jython`/
+# enumerations of the same fact, and an earlier review had to add `pypy`/`jython`/
 # `micropython` to both. A name added to one and not the other resolves to a
 # basename that then falls through every branch of `_interpreter_opacity`
 # and returns `None` - a silent allow with no test that would notice. There
@@ -1235,7 +1474,7 @@ _KNOWN_INTERPRETER_BASENAME = re.compile(
 def _interpreter_family(basename: str) -> str | None:
     """Which inline-eval flag grammar reads `basename`, else `None`.
 
-    The single dispatch point that replaced round 3's four parallel
+    The single dispatch point that replaced an earlier design's four parallel
     `_*_LIKE` patterns (finding I-3). A basename that is on
     `_KNOWN_INTERPRETER_BASENAME` therefore ALWAYS has a family, because
     both are built from `_INTERPRETER_FAMILY_PATTERNS`; the two cannot
@@ -1307,7 +1546,7 @@ def _interpreter_basename(token: str) -> str | None:
     ANSI-C quoted (`$'python'`), backslash-escaped (`\\python`), path-
     prefixed (`/usr/bin/python`, `./python`, `C:\\Python\\python.exe`,
     `\\\\host\\share\\python.exe`), or carrying a Windows executable
-    suffix. Applied PER TOKEN (round 3) rather than only to the head, which
+    suffix. Applied PER TOKEN rather than only to the head, which
     is what lets the wrapper table go: the normalization the review
     verified as solid is the same whether the token sits at position one or
     position five.
@@ -1332,7 +1571,7 @@ def _interpreter_basename(token: str) -> str | None:
     basename = _EXECUTABLE_SUFFIX.sub("", re.split(r"[\\/]", stem)[-1])
     if _KNOWN_INTERPRETER_BASENAME.match(basename):
         return basename.lower()
-    # ROUND 4: tokenizing removes the QUOTES of an ANSI-C `$'python'` and
+    # Tokenizing removes the QUOTES of an ANSI-C `$'python'` and
     # leaves the `$` behind, where the raw-text reader saw `$'…'` whole. The
     # `$` is stripped only when what remains is a known interpreter, so this
     # cannot widen anything else; a shell variable that literally expands to
@@ -1341,7 +1580,7 @@ def _interpreter_basename(token: str) -> str | None:
     # population sweep's cases, and this is what keeps them closed.)
     if basename.startswith("$") and _KNOWN_INTERPRETER_BASENAME.match(basename[1:]):
         return basename[1:].lower()
-    # ROUND 4, Critical 3: an INTERIOR backslash is shell quoting, not a path
+    # An INTERIOR backslash is shell quoting, not a path
     # separator - `pyth\on` is `python` to the shell, and the path split
     # above truncates it to `on` instead. Tried only after the path reading
     # fails, so `C:\Python\python.exe` still resolves through its real
@@ -1363,7 +1602,7 @@ def _normalized_interpreter_head(
     after a quoted head is not reinterpreted by this function, only located
     correctly.
 
-    Only the HEAD, as of round 3. A wrapped interpreter (`env python -c`,
+    Only the HEAD. A wrapped interpreter (`env python -c`,
     `docker exec … python -c`) is found by `_exec_shape_opacity`'s token
     scan instead of by unwrapping the head, so this function no longer
     needs to know what a wrapper is.
@@ -1399,7 +1638,7 @@ def _normalized_interpreter_head(
     return basename, rest
 
 
-# ROUND 4 (third security review): every pattern below used to be searched
+# Every pattern below used to be searched
 # over RAW TEXT anchored `(?:^|\s)-`. Round 3 deleted the trailing `(?:\s|$)`
 # and left that LEADING anchor, so one quote character - which the shell
 # removes before `execve` - walked straight through all of them
@@ -1434,10 +1673,10 @@ _PYTHON_FLAG_TOKEN = re.compile(r"^-[A-LN-Za-ln-z]*c")
 # only long options named here are the two that evaluate.
 _NODE_FLAG_TOKEN = re.compile(r"(?i)^(?:-[a-zA-Z]*[ep]|--eval|--print)")
 
-# ROUND 4, finding I-1: ruby and perl were sharing one pattern that matched
+# Ruby and perl were sharing one pattern that matched
 # `-e` OR `-E`, and `-E` is not ruby's eval flag at all - it is ruby's
 # EXTERNAL ENCODING flag, which is why `ruby -Eutf-8` was a false refusal
-# (round 3 disclosed it as an accepted over-ask; it was a wrong rule, not a
+# (an earlier review disclosed it as an accepted over-ask; it was a wrong rule, not a
 # necessary cost). perl really does define both `-e` and `-E`, so perl keeps
 # both and ruby keeps only the lowercase one. Clustered forms their own
 # documentation uses (`perl -ne 'print'`, `ruby -ne`) still match.
@@ -1482,7 +1721,7 @@ def _pwsh_inline_flag_token(token: str) -> bool:
     alias, any unambiguous PREFIX of either, or any parameter that EXTENDS
     either, fused to its argument or not.
 
-    ROUND 4, Critical 4: round 3 asked `any(one.startswith(name) …)` only,
+    ROUND 4, Critical 4: an earlier version asked `any(one.startswith(name) …)` only,
     which recognises spellings SHORTER than the enumerated names and misses
     real parameters that are LONGER. `-CommandWithArgs` is a shipped
     PowerShell 7.4 parameter that runs a command; `-Comm` matched it and the
@@ -1564,7 +1803,7 @@ def _inline_flag_in_tokens(family: str, tokens: list[str]) -> bool:
     and `python -W ignore -c "…"` readable - a flag that takes a separate
     argument is always immediately in front of it - without this module
     learning any interpreter's list of argument-taking options, which is the
-    per-tool grammar round 3 deleted the wrapper table to be rid of.
+    per-tool grammar an earlier design deleted the wrapper table to be rid of.
     """
     previous_was_flag = False
     for token in tokens:
@@ -1599,7 +1838,7 @@ def _deno_eval_subcommand(tokens: list[str]) -> bool:
     return False
 
 
-# C5/C6 (security review): the payload arrives on stdin instead of as a
+# The payload arrives on stdin instead of as a
 # flag argument at all - a pipe from an earlier segment (`echo … | python`,
 # the "rest" of the PIPED segment is bare), a herestring (`<<<`), a stdin
 # redirect (`< file`, `/dev/stdin`), or an explicit bare `-`. Matched
@@ -1620,13 +1859,13 @@ def _interpreter_opacity(basename: str, rest: str, rest_tokens: list[str], *,
     unrecognised flag with no evidence either way (the R1 local-compute
     floor, decided by the caller).
 
-    `rest_tokens` (round 4) is what the FLAG rules read; `rest` is the raw
+    `rest_tokens` is what the FLAG rules read; `rest` is the raw
     text after the head, still needed for `_STDIN_FED_REST`, which matches
     shell operators (`<<<`, `<`, a trailing bare `-`) that are redirections
     rather than argv at all. `payload` is the text the tier scan reads for
     visible evidence, defaulting to `rest`.
 
-    `stdin_fed=False` (round 3) drops the stdin rule for the exec-shape
+    `stdin_fed=False` drops the stdin rule for the exec-shape
     token scan: a bare interpreter name appearing as a LATER token (`which
     python`, `docker exec -it c python`) names an interpreter, and an
     interactive REPL is not an opaque payload - whereas a bare interpreter in
@@ -1693,6 +1932,14 @@ _OPAQUE_R5_EVIDENCE = re.compile(
 _OPAQUE_POLICY_WRITE_EVIDENCE = re.compile(re.escape(POLICY_FILENAME))
 
 
+# A password-bearing `authorize` verb inside a shell or interpreter payload
+# (`bash -c "godmode authorize stage ..."`): the same prompt raised one
+# wrapper deeper, judged the same as the bare command.
+_OPAQUE_OPERATOR_AUTHORIZE = re.compile(
+    r"(?i)godmode(?:\.(?:py|pyw|cmd|bat|exe|ps1|sh))?[\"']?\s+(?:\S+\s+){0,3}?"
+    r"authorize\s+(?!(?:request|requests|deny)(?![\w$`(@%{-]))[^\s;&|)]")
+
+
 def _opaque_inline_verdict(payload: str) -> tuple[str, bool, list[str]]:
     """category/protected/impact for an opaque interpreter payload this
     module does not and must not try to parse. Always protected; the only
@@ -1702,6 +1949,10 @@ def _opaque_inline_verdict(payload: str) -> tuple[str, bool, list[str]]:
     flag shape, `payload` is the whole normalized segment) and
     `classify_action` (the heredoc shape, `payload` is the recovered body,
     or the header line alone when the body could not be read)."""
+    if _OPAQUE_OPERATOR_AUTHORIZE.search(payload):
+        return ("operator-authorization-from-agent", True,
+                ["an interpreter payload starts a password-bearing `authorize` verb; "
+                 "the operator types `! godmode authorize ...` themselves"])
     if _OPAQUE_POLICY_WRITE_EVIDENCE.search(payload):
         return ("worktree-file-mutation", True,
                 [f"an interpreter payload names {POLICY_FILENAME}; opaque "
@@ -1716,7 +1967,7 @@ def _opaque_inline_verdict(payload: str) -> tuple[str, bool, list[str]]:
              "code is protected regardless of visible content"])
 
 
-# `inline_interpreter: "scan"` (thirteenth field report: 321 of one archive's
+# `inline_interpreter: "scan"` (321 of one archive's
 # refusals were asks on `python -c`/heredoc blocks the agent itself wrote).
 # Under that posture, and only then, a Python payload at the HEAD of a
 # segment is parsed with `ast` and cleared when everything in it is a read or
@@ -1942,7 +2193,7 @@ def _scanned_inline_verdict(evidence: str, code: str | None,
 # The fix is narrow, deliberately NOT a global fail-closed default: an
 # unrecognised command with no exec evidence (`foobar --version`) must still
 # be R0. A blanket ask-on-unknown needs observe-mode ask-rate visibility
-# (task B4-I, unbuilt) and evidence-derived allowlist synthesis (Sprint 8)
+# (task B4-I, unbuilt) and evidence-derived allowlist synthesis
 # before it is affordable to ship, and the operator already runs with this
 # plugin disabled on every host because friction is the top complaint.
 #
@@ -2081,7 +2332,7 @@ _COMMAND_POSITION = re.compile(
 def _substituted_command_name(text: str, spans: tuple[tuple[int, int], ...]) -> bool:
     """Whether any substitution in `text` BUILDS a command name (form (b)).
 
-    ROUND 4, Critical 3: round 3 required the whole name to be the
+    ROUND 4, Critical 3: an earlier version required the whole name to be the
     substitution, so `$(echo p)ython -cimport os` - a substitution glued to
     the FRONT of a name - was R0. What matters is whether the name is
     knowable from the text, and it is not knowable in either spelling. The
@@ -2113,8 +2364,8 @@ def _first_heredoc_interpreter(operation: str) -> tuple[str, str, str] | None:
     interpreter, and is left to the existing segment-by-segment pipeline
     rather than guessed at here.
 
-    Head recognition is `_normalized_interpreter_head` (round 2, security
-    review) rather than a bare-name regex - `"python" <<EOF` is exactly as
+    Head recognition is `_normalized_interpreter_head` (a security
+    review finding) rather than a bare-name regex - `"python" <<EOF` is exactly as
     opaque as an unwrapped heredoc and gets the same quote/path
     normalization every other interpreter shape in this module now does.
     A WRAPPED interpreter (`env python <<EOF`, `sudo -E python <<EOF`) used
@@ -2254,7 +2505,7 @@ def _is_scratch(target: Path, project_root: Path | None = None) -> bool:
     # B4-9(b): the shell the agent actually types in spells the temp dir
     # `/tmp` (Git Bash on Windows, every POSIX host), which
     # `tempfile.gettempdir()` never returns on Windows - so the exact
-    # command the field report recorded (`... > /tmp/blkA.txt`) failed this
+    # exact command recorded from real usage (`... > /tmp/blkA.txt`) failed this
     # test on the machine that ran it. Normalised on POSIX rules first, so
     # `/tmp/../etc/passwd` collapses to `/etc/passwd` and leaves the
     # allowance before the prefix is ever compared.
@@ -2719,7 +2970,7 @@ _PS_ASSIGNMENT_ONLY = re.compile(
 # `${VAR}` is excluded: it expands a value rather than running anything. Only
 # `$( )` and backticks execute.
 #
-# C7 (security review, 2026-08-17): a single-level regex (`\$\((?P<paren>
+# A single-level regex (`\$\((?P<paren>
 # [^()]*)\)`) cannot span a parenthesised body, and almost every real
 # interpreter payload IS one - `.run(...)`, `print(...)`, `execSync(...)`.
 # `echo $(python -c "…run(['git','push','--force'])")` matched only up to
@@ -2753,7 +3004,7 @@ def _substitution_scan(command: str) -> tuple[list[str], bool, str, tuple[tuple[
 
     `spans` is each extracted substitution's own `(start, end)` offsets in
     `command`, delimiters included. Returned because `blanked` alone cannot
-    answer round 3's form-(b) question - whether a substitution stood in
+    answer the form-(b) question - whether a substitution stood in
     COMMAND-NAME position (`_substituted_command_name`) - once the span has
     become indistinguishable from the spaces around it.
     """
@@ -2847,7 +3098,7 @@ def shell_segments(command: str) -> list[str]:
     return _raw_segments(_without_heredoc_bodies(command))
 
 
-# C1 round 2 (security review, 2026-08-17): `P=python; $P -c "…"` - one
+# `P=python; $P -c "…"` - one
 # more layer of indirection the review's own C-1 list names. A simple,
 # bareword-only assignment made EARLIER in the SAME command is resolved
 # when a LATER segment's own head is that exact `$VAR`/`${VAR}` - not
@@ -2962,7 +3213,7 @@ def _has_unclosed_quote(text: str) -> bool:
 
     The same quote state `_executable_text`'s scan already tracks, exposed
     here because an unterminated quote - malformed input, or the harvest/fuzz
-    truncation Task 2's own investigation found - can swallow real vocabulary
+    truncation an earlier investigation found - can swallow real vocabulary
     into what then looks like quoted, inert text: everything after the open
     quote blanks to nothing, including a mutation verb sitting right there in
     the unquoted original. The unknown-command fallback's "no evidence" read
@@ -3115,11 +3366,21 @@ def evidence_pipe_advisory(command: str) -> str | None:
     truncator = _EVIDENCE_TRUNCATOR.search(command, runner.end())
     if not truncator:
         return None
-    # Field report file 2026-09-10, Part 3: the advisory fired on a run
+    # The advisory fired on a run
     # whose full output was already captured. `tee` keeps every line and
     # `pipefail`/PIPESTATUS keep the exit code; neither is a truncation.
     between = command[runner.end():truncator.start()]
     if re.search(r"\btee\b", between) or re.search(r"pipefail|PIPESTATUS", command):
+        return None
+    # The advisory's own remedy: the run's stdout went to a file (`> f`,
+    # `>> f`, `1> f`, `&> f`, `*> f`; a bare `2>&1`/`2> f` is not stdout)
+    # and a command separator ends the run before the filter reads the
+    # file. Nothing was dropped and the run finished on its own exit code.
+    # A redirect to the null device discards the output instead.
+    captured = re.search(
+        r"(?:^|[\s;])(?:[1&*]?>>?)\s*[\"']?(?!(?:/dev/null|\$null|nul)\b)[^\s&|;>]",
+        between, re.IGNORECASE)
+    if captured and re.search(r";|&&|\|\||\n", between[captured.end():]):
         return None
     return (
         "evidence-pipe: a verdict-bearing command is piped through a filter "
@@ -3129,9 +3390,19 @@ def evidence_pipe_advisory(command: str) -> str | None:
     )
 
 
-# mutation) are reserved for categories the classifier does not yet emit;
-# every unmapped category resolves to R3 so an unknown can never rank below
-# history mutation.
+# The tier each category is floored at. A category with no row here
+# (`unknown-command`, anything a later rule starts emitting) takes
+# `_FALLBACK_TIER`, so an unknown can never rank below history mutation.
+#
+# Every row is load-bearing and each is pinned by a test that swaps the
+# fallback for a different tier and checks the row still decides
+# (`tests/test_meta_gate.py`, `tests/test_gate_tier_floors.py`). A row whose
+# tier merely equalled the fallback used to be unobservable: deleting it
+# changed nothing a test could see. Named rather than inlined as a literal
+# at each lookup for the same reason - the fallback has to be swappable for
+# the pin to mean anything.
+_FALLBACK_TIER = "R3"
+
 _TIER_BY_CATEGORY = {
     "read-only-inspection": "R0",
     "local-compute-or-state": "R1",
@@ -3154,9 +3425,9 @@ _TIER_BY_CATEGORY = {
     # produced by `classify_action` itself (this category names an Edit/Write
     # decision, not a Bash operation), registered here anyway so the tier
     # comes from this one vocabulary rather than being hard-coded a second
-    # time at the call site (fix round 1, review of ac48f2d).
+    # time at the call site.
     "fix-loop-reversal": "R2",
-    # C1 (external audit): an interpreter's opaque inline payload - the
+    # An interpreter's opaque inline payload - the
     # floor is R2 (an ask, never a silent R1 allow) whether or not the
     # scan below finds anything; `_R5_ESCALATIONS` raises it further when
     # the payload shows visible evidence of something worse.
@@ -3175,14 +3446,18 @@ _TIER_BY_CATEGORY = {
     "scripted-source-edit": "R3",
     "process-control": "R3",
     "database-mutation": "R3",
-    "unclassified-mutation": "R3",
-    # C7 (security review): a `$(...)`/backtick substitution this module's
+    # A `$(...)`/backtick substitution this module's
     # own balanced scan could not close before the text ended - a parse
     # failure, judged the same as any other real thing it cannot read.
     "unparsed-substitution": "R3",
     "release-or-external-write": "R4",
     "filesystem-mutation": "R4",
-    # U-B2: a pinned evaluator's own protection, and the edit a pin exists to
+    # Turning Godmode's own gate down (`config set uninitialized off`,
+    # `config mode advise`, the settings file or git key behind them): asked
+    # like a push when someone is there, refused with a staged-capability
+    # remedy when nobody is.
+    "protection-weakening": "R4",
+    # A pinned evaluator's own protection, and the edit a pin exists to
     # stop, are both damage a later command does not undo - the numbers a
     # change was judged against are gone the moment either happens. R5, the
     # same tier a forced push sits at: refused outright, moved only by a
@@ -3190,6 +3465,11 @@ _TIER_BY_CATEGORY = {
     "pinned-evaluator-mutation": "R5",
     "evaluator-unpin": "R5",
     "password-in-transcript": "R5",
+    # An agent's own tool call starting a password-bearing `authorize` verb
+    # (stage/setup/grant/issue): the prompt it raises lands on the operator,
+    # and a click-through there is consent nobody gave. Refused in every
+    # mode; the operator runs the same command with a leading `!`.
+    "operator-authorization-from-agent": "R5",
 }
 
 _GIT_PUSH = re.compile(r"(?i)\bgit\s+push\b")
@@ -3247,7 +3527,7 @@ _R5_ESCALATIONS: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"(?:[\\/]?\*?\s*)(?:$|[\s;|&])"
         ),
     ),
-    # C1 (external audit): the same escalation `_opaque_inline_verdict`
+    # The same escalation `_opaque_inline_verdict`
     # already computed for an interpreter's opaque payload, wired through
     # this table so `_risk_tier` (the single place a category becomes a
     # tier) is still the only thing that ever produces R5 - no second,
@@ -3502,6 +3782,14 @@ def _categorize(normalized: str, project_root: Path | None = None,
         if _FREEZE_FILE.search(path):
             return ("release-freeze-mutation", True,
                     [f"a release-freeze marker: {_shown_path(path, project_root)}"])
+        if MACHINE_SETTINGS_FILENAME in path.replace("\\", "/").rsplit("/", 1)[-1].lower():
+            return ("protection-weakening", True,
+                    ["weakens Godmode's own protection: the machine-wide Godmode "
+                     "settings file", "only the operator should change it"])
+        if _lands_in_godmode_code(path, project_root):
+            return ("protection-weakening", True,
+                    ["weakens Godmode's own protection: Godmode's own code or "
+                     f"bytecode cache: {path[:80]}", "only the operator should change it"])
         if _SENSITIVE_EDIT.search(path):
             return ("worktree-file-mutation", True,
                     [f"not an ordinary working file: {_shown_path(path, project_root)}"])
@@ -3561,7 +3849,7 @@ def _categorize(normalized: str, project_root: Path | None = None,
     # naming a protected operation is not performing one. Built once, through
     # `Segment` rather than a second, string-based path, so vocabulary
     # matching and redirect-target extraction share the exact same
-    # quote/path-aware construction `split_segments` hands to Task 3/4 - a
+    # quote/path-aware construction `split_segments` hands to every downstream reader - a
     # bare-word check added here and one added against `segment.vocab_tokens`
     # can never quietly disagree about what counts as an argument.
     segment = _segment_from_text(normalized)
@@ -3597,6 +3885,18 @@ def _categorize(normalized: str, project_root: Path | None = None,
     if write_target is None:
         write_target = _output_flag_target(segment)
         from_output_flag = write_target is not None
+
+    argv = _argv_tokens(normalized)
+    operator_verb = _operator_authorize_verb(normalized, argv)
+    if operator_verb is not None:
+        return ("operator-authorization-from-agent", True,
+                _operator_authorize_impact(operator_verb))
+
+    weakened = _protection_weakening(normalized, argv, write_target, project_root)
+    if weakened is not None:
+        return ("protection-weakening", True,
+                [f"weakens Godmode's own protection: {weakened}",
+                 "only the operator should change it"])
 
     if _GIT_BRANCH_MUTATION.search(command_position):
         impact = ["branch refs", "possibly unmerged local work"]
@@ -3638,7 +3938,7 @@ def _categorize(normalized: str, project_root: Path | None = None,
         # either category is meant to give.
         return ("git-branch-create", False,
                 ["a new local branch; nothing leaves the machine"])
-    # G-1: `--staged` alone unstages; the working tree is untouched. Checked
+    # `--staged` alone unstages; the working tree is untouched. Checked
     # before `_ACTION_PATTERNS`'s `worktree-discard` entry (which still
     # matches bare `git restore` and `--staged --worktree` alike) so the
     # non-destructive form never reaches it.
@@ -3648,7 +3948,7 @@ def _categorize(normalized: str, project_root: Path | None = None,
         if staged and not worktree:
             return ("local-compute-or-state", False,
                     ["unstages a path; the working tree is untouched"])
-    # G-1 (fix round 1 ruling): `init` never publishes; a bare run publishes
+    # `init` never publishes; a bare run publishes
     # by DEFAULT (the account's setting, when it supports publishing) and
     # stays protected; `--no-publish` turns that default off UNLESS
     # `--publish-report` is also present, which forces it back on. Checked
@@ -3820,14 +4120,17 @@ def _categorize(normalized: str, project_root: Path | None = None,
         if write_target and _FREEZE_FILE.search(write_target):
             return ("release-freeze-mutation", True,
                     [f"{kind} write to a release-freeze marker: {write_target[:80]}"])
+        # A glob target names whatever it matches when it runs (`.gi?/conf*`
+        # is `.git/config`), so, like a variable, it is not known to stay
+        # among ordinary working files.
         if (not write_target or not _contained(write_target, project_root)
-                or _SENSITIVE_EDIT.search(write_target)):
+                or _SENSITIVE_EDIT.search(write_target) or _GLOB_TARGET.search(write_target)):
             return ("worktree-file-mutation", True,
                     [f"{kind} write outside ordinary working files: {write_target[:80]}"])
         return "worktree-file-mutation", False, [f"{kind} write inside the working tree"]
     if _find_action_mutates(command_position):
         return "filesystem-mutation", True, ["local files", "recoverability"]
-    # ROUND 4, Critical 1: EVERY check that can find executable code now runs
+    # EVERY check that can find executable code now runs
     # BEFORE the help/version fast-path, not after it. The old ordering put
     # that fast-path here, above all of them, so one appended token returned
     # an unprotected read for a line carrying a payload - see `_HELP_FLAG_
@@ -3836,7 +4139,7 @@ def _categorize(normalized: str, project_root: Path | None = None,
     # independent half, so a future widening of what counts as a help flag
     # cannot reopen the class on its own.
     #
-    # C1: the interpreter this segment invokes in its own HEAD position,
+    # The interpreter this segment invokes in its own HEAD position,
     # however that head is spelled (quoted, escaped, path-prefixed,
     # `.exe`/`.bat`-suffixed). Checked before the read allowances below so a
     # quoted or pathed interpreter cannot reach one of them by accident, and
@@ -3852,14 +4155,14 @@ def _categorize(normalized: str, project_root: Path | None = None,
                          if _interpreter_family(basename) == "pwsh" else None))
         if opacity is not None:
             return opacity
-    # C1 round 3: an unresolved head is all this function has left, and
+    # An unresolved head is all this function has left, and
     # returning R0 for it - identically to matching the safe list - is what
     # made the safe list contribute nothing (findings C-2/C-3/C-5, every one
     # of them an unresolved head landing in the R0 default at the end of this
     # function). Positive evidence of exec shape fails closed here instead.
     #
-    # Shielded by `_shields_its_arguments` rather than by ORDERING (round 4):
-    # round 3 put this after the read allowlists so `echo python -c "hi"`
+    # Shielded by `_shields_its_arguments` rather than by ORDERING:
+    # this runs after the read allowlists so `echo python -c "hi"`
     # would keep printing an invocation harmlessly, which worked for
     # `_SAFE_SHELL_READS` and made `_POWERSHELL_READS` a shield over a real
     # exec surface (`Measure-Command { python -c "…" }`, Critical 4). Asking
@@ -3872,7 +4175,7 @@ def _categorize(normalized: str, project_root: Path | None = None,
         if exec_shape is not None:
             return exec_shape
     if _UNKNOWABLE_BODY_HEADS.match(normalized):
-        # C1 (external audit): `bash -c`/`eval`/`ForEach-Object` were
+        # `bash -c`/`eval`/`ForEach-Object` were
         # already protected, but flatly, at whatever `unknown-command`
         # defaults to (R3) - never lower, but never raised either, even
         # when the opaque body plainly names a forced push. Routed through
@@ -3885,8 +4188,8 @@ def _categorize(normalized: str, project_root: Path | None = None,
     if asks_for_help:
         return "read-only-inspection", False, ["a help or version banner"]
     if normalized_interpreter is not None and normalized_interpreter[0] != "cmd":
-        # `cmd` is on the interpreter table for its `/c` form only (round 4,
-        # Critical 5). It is Windows' shell, not a compute runtime, so a bare
+        # `cmd` is on the interpreter table for its `/c` form only (Critical
+        # 5). It is Windows' shell, not a compute runtime, so a bare
         # `cmd` must keep falling through to the read/unknown path it always
         # had rather than being reclassified as local compute - `cmd 2>&1 |
         # grep x` is R0 before and after.
@@ -3953,7 +4256,7 @@ def _categorize(normalized: str, project_root: Path | None = None,
                 ["a quote in this segment is never closed; the text after "
                  "it cannot be read reliably"])
     if segment.head:
-        # N1 (review round 2): the head `_categorize` actually resolved, AFTER
+        # The head `_categorize` actually resolved, AFTER
         # its own assignment-prefix and control-keyword stripping (both
         # already applied, recursively, above `segment` is ever computed) -
         # `FOO=1 frobnicate` reaches this line as `normalized == "frobnicate"`,
@@ -3974,7 +4277,7 @@ def _categorize(normalized: str, project_root: Path | None = None,
         [f"an unrecognised command: {segment.head}" if segment.head
          else "no recognised command"],
         resolved_head,
-        # Review round 3 (D1): `normalized` itself, the exact text this
+        # `normalized` itself, the exact text this
         # head was resolved FROM (after every one of `_categorize`'s own
         # recursive strips) - carried alongside `resolved_head` so a
         # caller that needs "what comes after the head" (the multi-segment
@@ -4010,9 +4313,9 @@ def _without_git_global_options(command: str) -> str:
 def _risk_tier(category: str, normalized: str) -> tuple[str, bool]:
     """§9.2 tier for a classified operation, and whether it is destructive
     enough (R5) to demand a second confirmation before any capability is
-    spent. Escalations run first so a force form cannot keep its base tier."""
-    if category == "read-only-inspection":
-        return "R0", False
+    spent. Escalations run first so a force form cannot keep its base tier.
+    Every escalation is scoped to a protected category, so a read-only
+    inspection reaches its own row (R0) below like any other category."""
     # The same text the category was decided on, or a global option demotes a
     # forced push to an ordinary one by moving the word it is anchored to.
     canonical = _without_git_global_options(normalized)
@@ -4021,7 +4324,7 @@ def _risk_tier(category: str, normalized: str) -> tuple[str, bool]:
             return "R5", True
     if category == "git-history-or-remote" and _GIT_PUSH.search(canonical):
         return "R4", False
-    return _TIER_BY_CATEGORY.get(category, "R3"), False
+    return _TIER_BY_CATEGORY.get(category, _FALLBACK_TIER), False
 
 
 # B4-9: heads that can EXECUTE or re-dispatch whatever a pipeline hands
@@ -4112,8 +4415,8 @@ def _without_path_tokens(text: str) -> str:
                             or re.match(r"^[A-Za-z][\w.]*-[\w.-]+$", token)))
 
 
-# NS-8a: a bareword- or path-shaped head, nothing else - no parenthesis,
-# brace, or quote. Review round 1 (S2): the original form anchored the
+# A bareword- or path-shaped head, nothing else - no parenthesis,
+# brace, or quote. The original form anchored the
 # first character to `[A-Za-z0-9_]`, so every path-spelled invocation -
 # `./frobnicate.sh`, `/usr/local/bin/frobnicate`, `~/frobnicate` - escaped
 # the rule it was written for, and only the bareword form was caught. `~`,
@@ -4129,7 +4432,7 @@ def _without_path_tokens(text: str) -> str:
 # vocabulary review needs, not a silent side effect of this one.
 _PLAIN_COMMAND_HEAD = re.compile(r"^[A-Za-z0-9_~./][\w./~-]*$")
 
-# NS-8a, review round 1 (S1): which separators actually smuggle a second
+# Which separators actually smuggle a second
 # command. `ls && frobnicate` runs `frobnicate` conditionally; `ls ;
 # frobnicate` runs it UNCONDITIONALLY - a strictly easier smuggle, not a
 # safer one - and `ls || frobnicate` runs it whenever the first component
@@ -4139,11 +4442,11 @@ _PLAIN_COMMAND_HEAD = re.compile(r"^[A-Za-z0-9_~./][\w./~-]*$")
 # exemption: the corpus backs this - every pipe-position unrecognised head
 # in the regression fixture (`rev`, `tr`, `sed`, `awk`, `xargs`, `Out-Null`,
 # ...) is a filter consuming what came before it, not a second command
-# smuggled past it, and none of NS-8a's own test rows exercise a `|`-led
+# smuggled past it, and none of this set's own test rows exercise a `|`-led
 # deny.
 _SEQUENCING_OPERATORS = frozenset({"&&", ";", "", "&", "||"})
 
-# NS-8a, review round 1 (S1), RE-DERIVED round 2 after N1's fix changed
+# Established during review, then RE-DERIVED after a later fix changed
 # what a resolved head even IS: read-only heads the sequencing separators
 # above would otherwise deny by default, PINNED because a real corpus row
 # already relies on each one staying `allow` - `tests/test_gate_components.
@@ -4159,15 +4462,15 @@ _SEQUENCING_OPERATORS = frozenset({"&&", ";", "", "&", "||"})
 # `_CONTROL_PREFIX` (used by `_categorize` itself, above) strips every one
 # of them before a head is ever resolved, so `do sleep 15` and `if ($f) {`
 # already read as `sleep` and `($f)` respectively by the time
-# `unrecognised_head` is set - round 1's own allowlist carried `do` and
+# `unrecognised_head` is set - an earlier allowlist carried `do` and
 # `if` only because it read the head from raw, UN-stripped `argv[0]`
-# (`_argv_tokens(text)[0]`), which round 2's N1 fix retired. `sleep`
+# (`_argv_tokens(text)[0]`), which a later fix retired. `sleep`
 # replaces `do` here for exactly that reason.
 _SEQUENCED_READ_ONLY_HEADS = frozenset({
     "claude", "ffmpeg", "gzip", "nod", "ps", "sleep", "true",
 })
 
-# NS-8a, review round 2 (N2): a subset of the read-only heads above that
+# A subset of the read-only heads above that
 # carry ANOTHER command as their own argument - pinning the runner's name
 # must not also pin whatever it runs. `time ./frobnicate.sh` is not `time
 # node ...`, and this set is exactly the difference between the two.
@@ -4187,13 +4490,13 @@ _SEQUENCED_READ_ONLY_HEADS = frozenset({
 _PREFIX_RUNNER_HEADS = frozenset({"time", "try"})
 
 
-# Review round 3 (D1): distinct from `None` (a real "nothing follows the
+# Distinct from `None` (a real "nothing follows the
 # runner" - a bare `time` alone), returned by `_prefix_runner_remainder`
 # when it could not locate `head` in `resolved_text` at all. The earlier
 # version conflated the two by returning `None` for both, and the
 # promotion loop's `if remainder:` treated a location FAILURE the same as
 # a genuinely empty one - silently allowing instead of denying. A named
-# sentinel TYPE (final review N4 / Task 5 nit), not a bare `object()`, so
+# sentinel TYPE, not a bare `object()`, so
 # the function below can name what it returns in its own annotation
 # instead of the unhelpful `str | None | object`.
 class _PrefixRunnerLocationFailed:
@@ -4204,19 +4507,26 @@ class _PrefixRunnerLocationFailed:
 
 _PREFIX_RUNNER_LOCATION_FAILED = _PrefixRunnerLocationFailed()
 
-# Final review S5 (Task 5 parked residual, measured against the corpus row
-# `ls && time -p ./frobnicate.sh`): a prefix runner's own OPTIONS sit
+# Measured against the corpus row
+# `ls && time -p ./frobnicate.sh`: a prefix runner's own OPTIONS sit
 # between its name and the command it actually runs - `time -p
 # ./frobnicate.sh` runs `./frobnicate.sh`, exactly as `time ./frobnicate.sh`
 # does, with `-p` inserted. Peeled off the remainder at this function's one
 # call site, before the recursive head test: left in place, `-p` resolves
 # as the remainder's own head, `_PLAIN_COMMAND_HEAD` correctly rejects it
 # (a leading `-` opens neither the plain-command class nor any recognised
-# name), and the deny below never fires - the same shape as round 2's N1
+# name), and the deny below never fires - the same shape as an earlier fix
 # (`FOO=1` read as the head), one strip short. A bare `--` (the POSIX
 # end-of-options marker) is consumed and stops the peel; a bare `-`
 # (stdin/"this file", never an option) is left alone and stops it too.
 _LEADING_OPTION_TOKEN = re.compile(r"^(--|-\S+)(?:\s+|$)")
+
+# Options of a prefix runner that take the next word as their value: GNU
+# `time -f FORMAT` / `-o FILE`. Peeling only the flag left the value as the
+# remainder's head (`%e`), which the plain-name test rejects, so `ls && time
+# -f %e ./frobnicate.sh` was allowed. The value goes with its flag.
+_VALUED_RUNNER_OPTIONS = frozenset({"-f", "-o", "--format", "--output"})
+_OPTION_VALUE_TOKEN = re.compile(r"^(?:\"[^\"]*\"|'[^']*'|\S+)(?:\s+|$)")
 
 
 def _strip_leading_option_tokens(remainder: str) -> str:
@@ -4233,6 +4543,10 @@ def _strip_leading_option_tokens(remainder: str) -> str:
         text = text[match.end():]
         if match.group(1) == "--":
             return text
+        if match.group(1) in _VALUED_RUNNER_OPTIONS:
+            value = _OPTION_VALUE_TOKEN.match(text)
+            if value:
+                text = text[value.end():]
 
 
 def _prefix_runner_remainder(
@@ -4247,8 +4561,8 @@ def _prefix_runner_remainder(
     unrecognised, so `resolved_text` is never actually `None` at the one
     call site; the
     `None` case below is handled defensively rather than assumed away, and
-    there is no separate raw-text fallback to fall back to (final review
-    N4 / Task 5 nit: the earlier `raw_text` fallback arm existed for a case
+    there is no separate raw-text fallback to fall back to (removed: the
+    earlier `raw_text` fallback arm existed for a case
     its own docstring said should not arise, and nothing ever reached it).
     Returns `_PREFIX_RUNNER_LOCATION_FAILED` when `head` cannot be found
     at the start of `resolved_text` at all, so a caller cannot mistake a
@@ -4266,26 +4580,408 @@ def _prefix_runner_remainder(
     return remainder or None
 
 
-# NS-8a, review round 1 (C5): a human-readable name for each operator this
+# A human-readable name for each operator this
 # module's deny message can name, so the promoted impact string never lies
-# about which separator was actually seen (round 1's shipped state
-# hardcoded `'&&'` even after S1 widened the rule to five operators).
+# about which separator was actually seen (an earlier shipped state
+# hardcoded `'&&'` even after the rule widened to five operators).
 _OPERATOR_LABEL = {
     "&&": "'&&'", ";": "';'", "&": "'&'", "||": "'||'", "": "a newline",
 }
+
+
+# Words that move the directory every later relative path in the same
+# command text resolves against, and the ones that return to a saved one.
+_CHDIR_HEADS = frozenset({"cd", "chdir", "set-location", "sl"})
+_PUSHD_HEADS = frozenset({"pushd", "push-location"})
+_POPD_HEADS = frozenset({"popd", "pop-location"})
+# `Set-Location -Path x`: the flags whose value is the directory itself.
+_CHDIR_PATH_FLAGS = frozenset({"-path", "-literalpath", "-lp"})
+# One word of a segment as the shell sees it: quoted spans stay whole.
+_SEGMENT_WORD = re.compile(r"""(?:[^\s"']|"[^"]*"|'[^']*')+""")
+_REDIRECT_WORD = re.compile(r"^(?P<fd>\d*|&)(?P<op>>{1,2}|<)(?P<rest>.*)$")
+_ASSIGNED_VALUE = re.compile(r"^(?P<name>-{0,2}[A-Za-z_][\w-]*[=:])(?P<value>.+)$")
+# The directory an earlier change moved to cannot be read from the text:
+# a later relative path is named under this, so it reads as the variable
+# target it effectively is.
+_UNRESOLVED_DIRECTORY = "$GODMODE_UNRESOLVED_DIRECTORY"
+# A rooted word: `/x`, `\x` or a drive (`C:`), in either shell.
+_ABSOLUTE_WORD = re.compile(r"^(?:[/\\]|[A-Za-z]:)")
+# A word the shell expands before it names a directory.
+_DYNAMIC_WORD_TEXT = re.compile(r"[$`%]")
+
+
+def _directory_change(text: str) -> tuple[str, str | None] | None:
+    """`("chdir"|"pushd"|"popd", target)` when `text` is one directory
+    change, else None. `target` is None when the command names none."""
+    tokens = _argv_tokens(text) or text.split()
+    while tokens and tokens[0] in ("(", "{"):
+        tokens = tokens[1:]
+    if tokens and tokens[0][:1] in ("(", "{"):
+        tokens = [tokens[0][1:], *tokens[1:]]
+    if not tokens:
+        return None
+    head = tokens[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if head.endswith(".exe"):
+        head = head[:-4]
+    if head in _CHDIR_HEADS:
+        kind = "chdir"
+    elif head in _PUSHD_HEADS:
+        kind = "pushd"
+    elif head in _POPD_HEADS:
+        return ("popd", None)
+    else:
+        return None
+    rest = [token.rstrip(")}") for token in tokens[1:]]
+    for index, token in enumerate(rest):
+        lowered = token.lower()
+        if lowered in _CHDIR_PATH_FLAGS:
+            return (kind, rest[index + 1] if index + 1 < len(rest) else None)
+        if lowered.startswith(("-path:", "-literalpath:")):
+            return (kind, token.split(":", 1)[1])
+        if token == "-":
+            return (kind, "-")
+        if token == "--":
+            return (kind, rest[index + 1] if index + 1 < len(rest) else None)
+        if token.startswith("-") or lowered in ("/d",):
+            continue
+        return (kind, token)
+    return (kind, None)
+
+
+def _changed_directory(current: str | None, target: str | None, kind: str) -> str | None:
+    """The absolute directory `target` names from `current`, or None when
+    the text does not say (a variable, a glob, `cd -`, an unknown start)."""
+    if target is None:
+        # A bare `cd` goes home; a bare `pushd` swaps with a directory the
+        # text never named.
+        return os.path.expanduser("~") if kind == "chdir" else None
+    if not target or target == "-" or _DYNAMIC_WORD_TEXT.search(target) or _GLOB_TARGET.search(target):
+        return None
+    if target.startswith("~"):
+        target = os.path.expanduser("~") + target[1:]
+    if _ABSOLUTE_WORD.match(target):
+        return os.path.normpath(target)
+    if current is None:
+        return None
+    return os.path.normpath(os.path.join(current, target))
+
+
+def _segment_directories(segments: list[str], root: Path) -> list[str | None]:
+    """The directory each segment runs in: the project root until a `cd`,
+    `pushd`, `popd` or `Set-Location` earlier in the same text moves it.
+    None where the move names a directory the text cannot resolve."""
+    start = os.path.normpath(os.path.abspath(str(root)))
+    current: str | None = start
+    # `cd -` returns to the directory the last change left (OLDPWD); the
+    # one the command started from was set before it, so it is unknown.
+    previous: str | None = None
+    stack: list[str | None] = []
+    directories: list[str | None] = []
+    for text in segments:
+        directories.append(current)
+        change = _directory_change(text)
+        if change is None:
+            continue
+        kind, target = change
+        if kind == "popd":
+            previous, current = current, (stack.pop() if stack else None)
+            continue
+        if kind == "pushd":
+            stack.append(current)
+        if kind == "chdir" and target == "-":
+            previous, current = current, previous
+            continue
+        previous, current = current, _changed_directory(current, target, kind)
+    return directories
+
+
+def _relocated_word(value: str, directory: str | None, root: str, write: bool) -> str | None:
+    """`value` spelled from the project root as seen from `directory`, or
+    None when that changes nothing a verdict reads. A write target is
+    always relocated; any other argument only when it resolves somewhere
+    that is not an ordinary working path (outside the tree, or under a
+    dot-directory such as `.git`)."""
+    if (not value or value.startswith("-") or _DYNAMIC_WORD_TEXT.search(value)
+            or _NULL_DEVICE.match(value) or value.startswith("~")
+            or _ABSOLUTE_WORD.match(value)):
+        return None
+    if directory is None:
+        return f"{_UNRESOLVED_DIRECTORY}/{value}"
+    resolved = os.path.normpath(os.path.join(directory, value))
+    try:
+        relative = os.path.relpath(resolved, root)
+    except ValueError:  # another drive
+        relative = ".."
+    inside = not (relative == ".." or relative.startswith(".." + os.sep) or os.path.isabs(relative))
+    if not inside:
+        return resolved.replace(os.sep, "/")
+    shown = relative.replace(os.sep, "/")
+    if write or any(part.startswith(".") for part in shown.split("/")):
+        return shown
+    return None
+
+
+def _unquoted_redirect_starts(word: str) -> list[int]:
+    """Where a redirect glued to the text before it starts inside `word`:
+    each unquoted `>`/`>>` (with the `&` of `&>`, or the descriptor digits
+    that stand alone before it), never the word's own first character."""
+    starts: list[int] = []
+    quote: str | None = None
+    index = 0
+    while index < len(word):
+        char = word[index]
+        if quote:
+            if char == quote:
+                quote = None
+        elif char == "\\":
+            index += 2
+            continue
+        elif char in "\"'":
+            quote = char
+        elif char == ">":
+            start = index
+            if start and word[start - 1] == "&":
+                start -= 1
+            else:
+                digits = start
+                while digits and word[digits - 1].isdigit():
+                    digits -= 1
+                if digits == 0 or (starts and digits == starts[-1]):
+                    start = digits
+            if start and (not starts or start > starts[-1]):
+                starts.append(start)
+            index += 2 if word[index + 1:index + 2] == ">" else 1
+            continue
+        index += 1
+    return starts
+
+
+def _segment_words(text: str) -> list[tuple[int, int, str]]:
+    """Each word of `text` as `(start, end, word)`, a redirect glued to the
+    word before it (`x>>config`, `"x">>config`) split off as its own word
+    so the target it names is read as a write."""
+    words: list[tuple[int, int, str]] = []
+    for match in _SEGMENT_WORD.finditer(text):
+        word, offset = match.group(0), match.start()
+        cuts = [0, *_unquoted_redirect_starts(word), len(word)]
+        for begin, end in zip(cuts, cuts[1:]):
+            if begin < end:
+                words.append((offset + begin, offset + end, word[begin:end]))
+    return words
+
+
+def _relocated_segment(text: str, directory: str | None, root: Path) -> str | None:
+    """`text` with each relative path argument and write target spelled
+    as it resolves after an earlier directory change, or None when no
+    word moves. The head word is the command, never an argument."""
+    base = os.path.normpath(os.path.abspath(str(root)))
+    words = _segment_words(text)
+    pieces: list[str] = []
+    last = 0
+    write_next = False
+    changed = False
+    for index, (start, end, word) in enumerate(words):
+        if index == 0 or (index == 1 and words[0][2] in ("(", "{")):
+            continue
+        prefix, value, write = "", word, write_next
+        write_next = False
+        redirect = _REDIRECT_WORD.match(word)
+        if redirect:
+            if redirect.group("op") == "<" or redirect.group("rest").startswith("&"):
+                continue
+            if not redirect.group("rest"):
+                write_next = True
+                continue
+            prefix = word[:len(word) - len(redirect.group("rest"))]
+            value, write = redirect.group("rest"), True
+        else:
+            assigned = _ASSIGNED_VALUE.match(word)
+            if assigned:
+                prefix, value = assigned.group("name"), assigned.group("value")
+        bare = value.replace('"', "").replace("'", "")
+        moved = _relocated_word(bare, directory, base, write)
+        if moved is None:
+            continue
+        quoted = f'"{moved}"' if re.search(r"\s", moved) else moved
+        pieces.append(text[last:start])
+        pieces.append(prefix + quoted)
+        last = end
+        changed = True
+    if not changed:
+        return None
+    pieces.append(text[last:])
+    return "".join(pieces)
+
+
+# What stands in for a substitution when the directory walk reads a line:
+# a word the shell expands, so a directory it names cannot be resolved.
+_SUBSTITUTED_WORD = "$GODMODE_SUBSTITUTION"
+
+
+def _marked_substitutions(blanked: str, spans: tuple[tuple[int, int], ...]) -> str:
+    """`blanked` with each substitution span holding `_SUBSTITUTED_WORD`
+    instead of spaces."""
+    pieces: list[str] = []
+    last = 0
+    for start, end in sorted(spans):
+        if start < last:
+            continue
+        pieces += [blanked[last:start], _SUBSTITUTED_WORD]
+        last = end
+    pieces.append(blanked[last:])
+    return "".join(pieces)
+
+
+def _relocate_verdicts(segments: list[str], directories: list[str | None],
+                       verdicts: list[Any], root: Path,
+                       classify: Any) -> None:
+    """Judge each segment a second time with its paths spelled from the
+    root, where an earlier directory change moved it, and keep the stricter
+    verdict in `verdicts`. A `None` verdict is classified here first."""
+    start = os.path.normpath(os.path.abspath(str(root)))
+    for position, (segment, directory) in enumerate(zip(segments, directories)):
+        if directory == start:
+            continue
+        verdict = verdicts[position]
+        if verdict is None:
+            verdict = classify(segment)
+        if not verdict["protected"] and verdict["category"] == "read-only-inspection":
+            continue
+        moved = _relocated_segment(segment, directory, root)
+        if moved is None:
+            continue
+        relocated = classify(moved)
+        if (relocated["protected"], relocated["tier"]) > (verdict["protected"], verdict["tier"]):
+            relocated["impact"] = [*relocated["impact"],
+                                   "judged where an earlier directory change "
+                                   f"points it: {moved[:80]}"]
+            verdicts[position] = relocated
 
 
 def _component_boundaries(command: str) -> list[tuple[str, str | None]]:
     """`command` split the same way `_raw_segments` splits it, paired with
     the operator text that introduced each segment (`None` for the first).
     Built on the same `_walk_segments` scan `_raw_segments` itself now
-    delegates to - review round 1 (C2) removed the hand-copied second
+    delegates to - review (finding C2) removed the hand-copied second
     instance of that state machine this function used to carry, and the
     fail-open guard that used to sit at its one call site (discarding
     every operator whenever this and `shell_segments` disagreed on segment
     count) is gone with it: the two can no longer diverge, because they are
     now one scan read twice."""
     return list(_walk_segments(command))
+
+
+# Whether the text being classified is certainly Bash. False while a
+# PowerShell text (or a text that may be either) is read in its Bash
+# spelling, where a bare `$x` is a value rather than a command.
+_CERTAINLY_BASH: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "godmode_certainly_bash", default=True)
+
+# How many times a command-word reading is itself read again.
+_MAX_HEAD_DEPTH = 3
+
+# An operator-only verb's own flag. Its confirmation prompt needs a
+# terminal, which is what a pseudo-terminal wrapper supplies.
+# Any prefix of it counts: a parser that accepts abbreviations reads
+# `--as-op` as the full flag.
+_AS_OPERATOR = re.compile(r"(?<![\w-])--as-o(?:p(?:e(?:r(?:a(?:t(?:o(?:r)?)?)?)?)?)?)?(?![\w-])")
+
+
+# Text the shell builds when the line runs: a variable, a `${...}`
+# expansion, a `$(...)` or backtick substitution (never `$'...'`, which is
+# quoting).
+_DYNAMIC_COMMAND_TEXT = re.compile(r"\$(?:[A-Za-z_{(@*#?!0-9-])|`")
+
+
+def _flattened(text: str) -> str:
+    """`text` with its quoting and escapes taken away, the way the shell
+    joins the pieces of one word: `--as-""operator`, `--as-\\operator`
+    and `--as-$'o'perator` all read `--as-operator`."""
+    return re.sub(r"[\"'`\\]", "", re.sub(r"\$(?=['\"])", "", text))
+
+
+# Heads that search text, where `--as-operator` is a pattern rather than a
+# flag passed to anything.
+_TEXT_SEARCH_HEADS = frozenset({"grep", "egrep", "fgrep", "rg", "ag", "ack", "findstr",
+                                "select-string", "sls"})
+
+
+def _carries_operator_flag(segment: str) -> bool:
+    """Whether `segment` passes `--as-operator` (or a prefix of it) to
+    anything it runs, however the flag is quoted or escaped. A search for
+    the text (`grep -- --as-operator`, `git grep`, `git log --grep`) passes
+    it to nothing."""
+    flat = _flattened(segment)
+    if not _AS_OPERATOR.search(flat):
+        return False
+    words = flat.split()
+    while words and words[0] in ("(", "{", "!"):
+        words = words[1:]
+    head = words[0].replace("\\", "/").rsplit("/", 1)[-1].lower() if words else ""
+    if head.endswith(".exe"):
+        head = head[:-4]
+    if head in _TEXT_SEARCH_HEADS:
+        return False
+    return not (head == "git" and len(words) > 1 and words[1] in ("grep", "log"))
+
+
+def _command_words(normalized: str) -> str:
+    """`normalized` with leading `VAR=value` assignments and control
+    keywords removed - the text `_categorize` finds the command word in."""
+    text = normalized
+    while True:
+        trimmed = _ASSIGNMENT_PREFIX.sub("", text, count=1)
+        trimmed = _CONTROL_PREFIX.sub("", trimmed, count=1)
+        if trimmed == text or not trimmed.strip():
+            return text
+        text = trimmed
+
+
+def _head_form_verdicts(command: str, normalized: str,
+                        external_repo_ref: Any) -> list[dict[str, Any]]:
+    """Verdicts decided by the command word's form alone: a lookalike
+    name, a name nobody can read from the text, and an operator-only verb
+    run under a pseudo-terminal wrapper."""
+    found: list[tuple[str, list[str]]] = []
+    lookalike = _lookalike_head(command)
+    if lookalike is not None:
+        found.append(("unknown-command", [
+            f"a command name with non-ASCII characters: {lookalike[:60]}",
+            "a name that reads like a known command can run a different program"]))
+    opaque = _opaque_head(command, strict=_CERTAINLY_BASH.get())
+    if opaque is not None:
+        category, _protected, impact = _opaque_inline_verdict(normalized)
+        found.append((category, [opaque, *impact]))
+    wrapped = _pty_wrapped(command)
+    if wrapped is not None and _AS_OPERATOR.search(_flattened(wrapped)):
+        found.append(("protection-weakening", [
+            "runs an operator-only verb under a pseudo-terminal wrapper, where "
+            "its confirmation prompt can be answered without the operator",
+            "only the operator should run it, at their own terminal"]))
+    elif wrapped is not None and _DYNAMIC_COMMAND_TEXT.search(wrapped):
+        found.append(("protection-weakening", [
+            "runs a command built when the line runs under a pseudo-terminal "
+            "wrapper, where an operator-only verb's confirmation can be "
+            "answered without the operator",
+            "only the operator should run it, at their own terminal"]))
+    elif _carries_operator_flag(command):
+        found.append(("protection-weakening", [
+            "passes `--as-operator`, which claims the operator is at the keyboard; "
+            "an agent's tool call is not the operator",
+            "only the operator should run it, at their own terminal"]))
+    verdicts = []
+    for category, impact in found:
+        tier, second = _risk_tier(category, normalized)
+        verdicts.append({
+            "protected": True, "category": category,
+            "operation_digest": hashlib.sha256(normalized.encode()).hexdigest(),
+            "impact": impact, "tier": tier,
+            "second_confirmation_required": second,
+            "external_repo_ref": external_repo_ref,
+            "components": [{"text": normalized, "category": category,
+                            "tier": tier, "protected": True}],
+        })
+    return verdicts
 
 
 def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
@@ -4305,15 +5001,17 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                     # script does. Depth-guarded so a script that runs an
                     # interpreter cannot recurse without end.
                     _script_depth: int = 0,
-                    # R-2 (one hook contract): provenance only, appended last
+                    # Provenance only, appended last
                     # so no existing positional call site shifts. See the
                     # docstring paragraph below.
                     tool_name: str | None = None,
-                    # G-5: the shell dialect the text is written in; None
+                    # The shell dialect the text is written in; None
                     # derives it from `tool_name` (no tool name = bash).
                     dialect: str | None = None,
-                    # G-5 private: False while classifying a head reading.
-                    _read_heads: bool = True) -> dict[str, Any]:
+                    # False while classifying a head reading.
+                    _read_heads: bool = True,
+                    # Private: how many command-word readings deep this call is.
+                    _head_depth: int = 0) -> dict[str, Any]:
     """Deterministic preview of what an operation would touch.
 
     A compound command is classified part by part and takes the risk of its
@@ -4379,14 +5077,20 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     if dialect is None:
         dialect = _dialect_for_tool(tool_name)
     if dialect != _BASH_DIALECT:
-        readings = [
-            classify_action(
-                _lower_dialect(normalized, one), extra_protected, project_root,
-                archive, require_approval,
-                _allow_standalone_fetch=_allow_standalone_fetch,
-                inline_scan=inline_scan, _script_depth=_script_depth,
-                dialect=_BASH_DIALECT)
-            for one in _dialects_to_read(dialect)]
+        # The text may be PowerShell, which runs a variable only through
+        # its call operator; `_opaque_head` reads a bare `$x` accordingly.
+        token = _CERTAINLY_BASH.set(False)
+        try:
+            readings = [
+                classify_action(
+                    _lower_dialect(normalized, one), extra_protected, project_root,
+                    archive, require_approval,
+                    _allow_standalone_fetch=_allow_standalone_fetch,
+                    inline_scan=inline_scan, _script_depth=_script_depth,
+                    dialect=_BASH_DIALECT)
+                for one in _dialects_to_read(dialect)]
+        finally:
+            _CERTAINLY_BASH.reset(token)
         worst = dict(max(readings, key=lambda v: (v["protected"], v["tier"])))
         worst["operation_digest"] = hashlib.sha256(normalized.encode()).hexdigest()
         return worst
@@ -4397,17 +5101,18 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     # outright - the flag exists for a file or a secret manager, and the
     # prompt exists for a person at a terminal.
     if _PASSWORD_PIPED_LITERAL.search(normalized):
+        password_tier = _TIER_BY_CATEGORY.get("password-in-transcript", _FALLBACK_TIER)
         return {
             "protected": True,
             "category": "password-in-transcript",
             "operation_digest": hashlib.sha256(normalized.encode()).hexdigest(),
             "impact": ["pipes a typed password into --password-stdin; the transcript "
                        "would keep it. Type it at the prompt in a separate terminal window"],
-            "tier": "R5",
+            "tier": password_tier,
             "second_confirmation_required": True,
             "external_repo_ref": None,
             "components": [{"text": normalized, "category": "password-in-transcript",
-                            "tier": "R5", "protected": True}],
+                            "tier": password_tier, "protected": True}],
         }
 
     # B3-5 detection: a repository outside this project entering the work,
@@ -4418,7 +5123,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     # it is computed once and carried onto whichever dict this call returns.
     external_repo_ref = detect_external_repo(normalized)
 
-    # C1 (external audit): the heredoc form of an opaque interpreter payload
+    # The heredoc form of an opaque interpreter payload
     # (`python <<EOF` / `node <<'EOF'`) - checked before `shell_segments`
     # ever runs, because that function's own `_without_heredoc_bodies` (by
     # design, for every OTHER command) discards the body unread, and a
@@ -4477,12 +5182,12 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     inner, sub_unparsed, sub_blanked, sub_spans = _substitution_scan(
         _blank_quoted_heredoc_bodies(normalized))
     if sub_unparsed:
-        # C7 (security review): a `$(` opened and never validly closed (or
+        # A `$(` opened and never validly closed (or
         # a backtick opened and never closed) before the text ended - a
         # parse FAILURE, not "no substitution was found here". Fails
         # closed rather than falling through to whatever the rest of this
         # function would make of the raw, un-recursed text.
-        unparsed_tier = _TIER_BY_CATEGORY.get("unparsed-substitution", "R3")
+        unparsed_tier = _TIER_BY_CATEGORY.get("unparsed-substitution", _FALLBACK_TIER)
         return {
             "protected": True,
             "category": "unparsed-substitution",
@@ -4503,7 +5208,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # treated as a network ask, exactly as before the allowance existed
         # (`_allow_standalone_fetch=False` on the inner pass below).
         #
-        # SEC-A round 3: the OUTER text is `_substitution_scan`'s own
+        # Security review: the OUTER text is `_substitution_scan`'s own
         # `blanked` rather than a second `_SUBSTITUTION.sub(" ", ...)` pass.
         # Same shape by that function's contract, but produced by the
         # balanced-paren, quote-aware scan a non-nesting regex could not
@@ -4516,7 +5221,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                                   require_approval, _allow_standalone_fetch=False,
                                   inline_scan=inline_scan)
                   for one in inner]
-        # ROUND 4: blanking the substitution leaves the line headless, so the
+        # Blanking the substitution leaves the line headless, so the
         # help test is given a placeholder head - `$(which python3)
         # --version` asks a substituted binary to print its version and is
         # not a command name this gate can usefully refuse (round-3 review,
@@ -4524,7 +5229,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # help flag and is unaffected.
         if (_substituted_command_name(normalized, sub_spans)
                 and not _is_help_request(["_"] + (_argv_tokens(sub_blanked) or []))):
-            # C1 round 3, evidence form (b): the substitution stood where the
+            # The substitution stood where the
             # command NAME goes, so blanking it leaves the outer line headless
             # (`$(which python) -c "…"` reduces to `-c "…"`, whose head is
             # `-c`) and every inner part reads harmless on its own (`which
@@ -4540,12 +5245,57 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                 "external_repo_ref": external_repo_ref,
                 "impact": ["the command NAME is produced by a substitution; what "
                            "this line runs cannot be read from the text", *impact]})
+        # Blanking the substitution also blanks an `authorize` verb it builds
+        # (`godmode authorize $(echo stage)`): the verb is read on the whole
+        # line, where a verb that is not in the text is refused.
+        operator_verb = _operator_authorize_verb(normalized, _argv_tokens(normalized))
+        if operator_verb is not None:
+            category = "operator-authorization-from-agent"
+            tier, second = _risk_tier(category, normalized)
+            parts.append({
+                "protected": True, "category": category, "tier": tier,
+                "operation_digest": "", "second_confirmation_required": second,
+                "external_repo_ref": external_repo_ref,
+                "impact": _operator_authorize_impact(operator_verb)})
+        # `script -qc "$(cat cmd)" /dev/null`: blanking leaves the wrapper
+        # an empty command, but it runs whatever the substitution prints.
+        for text, _ in _component_boundaries(
+                _without_heredoc_bodies(_marked_substitutions(sub_blanked, sub_spans))):
+            wrapped = _pty_wrapped(_command_words(text))
+            if wrapped is not None and _DYNAMIC_COMMAND_TEXT.search(wrapped):
+                category = "protection-weakening"
+                tier, second = _risk_tier(category, normalized)
+                parts.append({
+                    "protected": True, "category": category, "tier": tier,
+                    "operation_digest": "", "second_confirmation_required": second,
+                    "external_repo_ref": external_repo_ref,
+                    "impact": ["runs a command built when the line runs under a "
+                               "pseudo-terminal wrapper, where an operator-only verb's "
+                               "confirmation can be answered without the operator"]})
+        # `cd "$(printf .git)" && echo x >> config`: the blanked line reads
+        # `cd " "`, a directory inside the tree. Where a substitution stood
+        # the directory is whatever it prints, so the directory walk reads
+        # it as a word it cannot resolve and a later write is judged there.
+        if project_root is not None:
+            outer = [text for text, _ in _component_boundaries(
+                _without_heredoc_bodies(sub_blanked))]
+            marked = [text for text, _ in _component_boundaries(
+                _without_heredoc_bodies(_marked_substitutions(sub_blanked, sub_spans)))]
+            if len(outer) > 1 and len(outer) == len(marked):
+                classify_outer = (
+                    lambda text: classify_action(text, extra_protected, project_root, archive,
+                                                 require_approval, _allow_standalone_fetch=False,
+                                                 inline_scan=inline_scan))
+                outer_verdicts: list[dict[str, Any] | None] = [None] * len(outer)
+                _relocate_verdicts(outer, _segment_directories(marked, Path(project_root)),
+                                   outer_verdicts, Path(project_root), classify_outer)
+                parts += [verdict for verdict in outer_verdicts if verdict is not None]
         worst = max(parts, key=lambda v: (v["protected"], v["tier"]))
         worst["impact"] = sorted({item for v in parts for item in v["impact"]})
         worst["operation_digest"] = hashlib.sha256(normalized.encode()).hexdigest()
         worst["substitutions"] = len(inner)
         worst["external_repo_ref"] = external_repo_ref
-        # NS-8a: a substitution mixes the outer line and its inner command(s)
+        # A substitution mixes the outer line and its inner command(s)
         # in a way that isn't a plain `&&`/`||`/`;`/`|` split - reported as
         # one component (the whole line), not decomposed further, so this
         # never disagrees with the worst-of-`parts` decision just made above.
@@ -4553,11 +5303,11 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                                 "tier": worst["tier"], "protected": worst["protected"]}]
         return worst
 
-    # NS-8a: `_component_boundaries` (built on the same `_walk_segments` scan
+    # `_component_boundaries` (built on the same `_walk_segments` scan
     # `_raw_segments`/`shell_segments` use) read once, for both the segment
     # texts every pre-existing branch below already needed AND the operator
     # that introduced each one - a plain `shell_segments(normalized)` call
-    # cannot supply the latter, and review round 1 (C2) removed the second,
+    # cannot supply the latter, and review (finding C2) removed the second,
     # hand-copied scan that used to recover it separately.
     boundaries = _component_boundaries(_without_heredoc_bodies(normalized))
     segments = [text for text, _ in boundaries]
@@ -4566,16 +5316,35 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # The worst part decides, ranked by tier, so `git status && git push
         # --force` is a force push rather than a status call.
         #
-        # C1 round 2: `P=python; $P -c "…"` resolved BEFORE each segment is
+        # `P=python; $P -c "…"` resolved BEFORE each segment is
         # classified independently - `_resolve_head_variables` only ever
         # trades a plain `VAR=value` this loop already reads for the value
         # it names, at the exact head position; `worst["segments"]` still
         # counts the real, unresolved segment count below.
         resolved_segments = _resolve_head_variables(segments)
+        if not _CERTAINLY_BASH.get():
+            # `$g = 'git'; & $g push`: the segment walk takes the `&` for a
+            # separator, and PowerShell's call operator went with it. Kept
+            # on its segment so the call is read as a call.
+            resolved_segments = [
+                f"& {text}" if operator == "&" else text
+                for text, operator in zip(resolved_segments, operators)]
         verdicts = [classify_action(segment, extra_protected, project_root, archive,
                                     require_approval, _allow_standalone_fetch=False,
                                     inline_scan=inline_scan)
                     for segment in resolved_segments]
+        # `cd .git && echo x >> config` writes `.git/config`: a relative
+        # path is judged from the directory an earlier `cd`/`pushd`/
+        # `Set-Location` in the same text moved to, never only from the
+        # project root. A segment that writes is judged a second time with
+        # its paths spelled from the root, and the stricter verdict holds.
+        if project_root is not None:
+            directories = _segment_directories(resolved_segments, Path(project_root))
+            _relocate_verdicts(
+                resolved_segments, directories, verdicts, Path(project_root),
+                lambda text: classify_action(text, extra_protected, project_root, archive,
+                                             require_approval, _allow_standalone_fetch=False,
+                                             inline_scan=inline_scan))
         # B4-9 pipeline post-pass: a literal-URL read-only fetch whose ask
         # is the ONLY thing protecting the line is downgraded when every
         # consumer beside it is a KNOWN local read - and never when any
@@ -4585,7 +5354,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # consumers are visible, which is why this decision lives here and
         # not in `_categorize`.
         #
-        # MERGE (SEC-A round 2 x B4-9): the post-pass is handed the RESOLVED
+        # The post-pass is handed the RESOLVED
         # segments, never the raw ones. It decides by segment TEXT
         # (`_consumes_stdin_dangerously` matches an executor at the head),
         # so a line that assigns `P=sh` and then pipes a literal-URL fetch
@@ -4594,7 +5363,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # handing this function the list the verdicts did NOT come from.
         verdicts = _downgrade_harmless_fetches(resolved_segments, verdicts)
 
-        # NS-8a: component-scoped classification, deny-by-default. A
+        # Component-scoped classification, deny-by-default. A
         # component that names no recognised command, and sits after a real
         # sequencing separator (`_SEQUENCING_OPERATORS`: `&&`, `;`, a
         # newline, `&`, `||` - never `|`, the filter position the corpus
@@ -4603,11 +5372,11 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # evidence, so read" allowance, UNLESS its head is a pinned
         # read-only one (`_SEQUENCED_READ_ONLY_HEADS`).
         #
-        # Review round 2 (N1): the head is read from `verdict["unrecognised_
+        # The head is read from `verdict["unrecognised_
         # head"]` - the structured field `_categorize` itself resolved,
         # AFTER its own assignment-prefix and control-keyword stripping -
         # never `_argv_tokens(text)[0]` on the raw, un-stripped segment
-        # (round 1's own C1 fix, which this replaces: it read `FOO=1` as the
+        # (it read `FOO=1` as the
         # head of `FOO=1 frobnicate` and `_PLAIN_COMMAND_HEAD` correctly
         # rejected that shape, so the deny never fired - a fail-open on a
         # completely ordinary shell spelling). A segment whose own verdict
@@ -4626,7 +5395,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                 head = verdict["unrecognised_head"]
                 if head and _PLAIN_COMMAND_HEAD.match(head):
                     if head in _PREFIX_RUNNER_HEADS:
-                        # N2 (review round 2): a prefix runner carries
+                        # A prefix runner carries
                         # another command as its own argument - `time`,
                         # `try` in this corpus - so pinning the runner's OWN
                         # name read-only must not also pin whatever it runs
@@ -4636,7 +5405,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                         # `_script_depth` 0 like any other segment this
                         # branch already classifies.
                         #
-                        # D1 (review round 3): the remainder is cut from
+                        # The remainder is cut from
                         # `verdict["resolved_text"]` (the exact text `head`
                         # was resolved from). A location FAILURE (the
                         # runner's name could not be found in it) denies
@@ -4650,7 +5419,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                             comp_protected = True
                             comp_tier, _ = _risk_tier(comp_category, text)
                         elif remainder:
-                            # S5 (final review, Task 5 residual): strip the
+                            # Strip the
                             # runner's own leading options (`-p` in `time -p
                             # ./frobnicate.sh`) before the recursive head
                             # test below - left in, `-p` resolves as the
@@ -4677,7 +5446,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                     elif head not in _SEQUENCED_READ_ONLY_HEADS:
                         comp_category = "unknown-command"
                         comp_protected = True
-                        # C3: tiered through `_risk_tier` like every other
+                        # Tiered through `_risk_tier` like every other
                         # `unknown-command` verdict in this module, rather
                         # than a magic `"R3"` default `_TIER_BY_CATEGORY`
                         # does not actually carry a key for.
@@ -4701,7 +5470,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         if worst_component["protected"] and not worst["protected"]:
             worst["protected"] = True
             worst["category"] = worst_component["category"]
-            # C4: tier AND its confirmation flag come from the same
+            # Tier AND its confirmation flag come from the same
             # `_risk_tier` call, rather than leaving `second_confirmation_
             # required` at whatever the unprotected `worst` happened to
             # carry - the one place in this function a category and its
@@ -4710,7 +5479,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                 worst_component["category"], worst_component["text"])
             worst["tier"] = tier
             worst["second_confirmation_required"] = second_confirmation
-            # C5: the operator actually seen, not a hardcoded `'&&'` -
+            # The operator actually seen, not a hardcoded `'&&'` -
             # S1 widened this to five operators, and the message must be
             # able to say which one it was.
             label = _OPERATOR_LABEL.get(operators[worst_index],
@@ -4726,19 +5495,38 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     # the text and saw a quote where `git` should be - the push was allowed.
     # A quoted or escaped head that resolves to a plain name is classified
     # under that name; the digest stays the submitted text's.
-    # Review round 2 F3: a head that is a path (`'/usr/bin/git' push`,
+    # A head that is a path (`'/usr/bin/git' push`,
     # `& "C:/Program Files/git.exe" push`) is also read by its program
     # name, and the stricter reading wins. `_read_heads` stops the readings
     # themselves from being read again.
-    readings = _head_readings(normalized) if _read_heads else []
-    if readings:
+    #
+    # The command-word forms `godmode_parseview.command_readings` normalises
+    # (an expansion with a known value, `& (Get-Command git)`, dot-sourcing,
+    # `Start-Process`, a pseudo-terminal wrapper, quoted flags) join the
+    # readings the same way. A command word no reading can name - a variable,
+    # an expression - is judged opaque, like an interpreter's inline payload;
+    # a non-ASCII command name is an unknown command, never a read. Those
+    # readings are read again up to `_MAX_HEAD_DEPTH` deep, so
+    # `winpty $'git' push` still reaches `git push`.
+    readings: list[str] = []
+    extra: list[str] = []
+    judged: list[dict[str, Any]] = []
+    if _read_heads:
+        readings = list(_head_readings(normalized))
+        command = _command_words(normalized)
+        extra = [text for text in _command_readings(command)
+                 if text not in readings and text != normalized]
+        judged = _head_form_verdicts(command, normalized, external_repo_ref)
+    if readings or extra or judged:
         texts = readings if _resolved_head(normalized) is not None else [normalized, *readings]
+        deeper = _head_depth + 1 < _MAX_HEAD_DEPTH
         verdicts = [
             classify_action(
                 text, extra_protected, project_root, archive, require_approval,
                 _allow_standalone_fetch=_allow_standalone_fetch, inline_scan=inline_scan,
-                _script_depth=_script_depth, dialect=_BASH_DIALECT, _read_heads=False)
-            for text in texts]
+                _script_depth=_script_depth, dialect=_BASH_DIALECT,
+                _read_heads=deeper and text in extra, _head_depth=_head_depth + 1)
+            for text in texts + extra] + judged
         verdict = dict(max(verdicts, key=lambda v: (v["protected"], v["tier"])))
         verdict["operation_digest"] = hashlib.sha256(normalized.encode()).hexdigest()
         return verdict
@@ -4797,7 +5585,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     # An interpreter-fed heredoc never reaches this line: it is recognised and
     # returned above, body scanned, as R5 requires. Unquoted bodies are left
     # intact here too, because those really do expand.
-    # N1 (review round 2): `_categorize` returns two extra elements,
+    # `_categorize` returns two extra elements,
     # `unrecognised_head` and `resolved_text`, ONLY at its two "unknown
     # command" return sites (the write-evidence branch and the final
     # no-vocabulary fallback) - every other one of its ~50 return
@@ -4808,11 +5596,11 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
     # `_opaque_inline_verdict`/`_exec_shape_opacity` and every other helper
     # `_categorize` passes a result through unexamined.
     #
-    # D1 (review round 3): `resolved_text` is the exact, fully-stripped
+    # `resolved_text` is the exact, fully-stripped
     # text `unrecognised_head` was resolved FROM - carried so the
     # multi-segment promotion loop's prefix-runner check can cut the
     # runner's name off THAT text, never off the raw, un-stripped segment
-    # (which is what let `FOO=1 time ./frobnicate.sh` escape round 2's own
+    # (which is what let `FOO=1 time ./frobnicate.sh` escape an earlier
     # fix: the head resolved past the `FOO=1` prefix, but the remainder was
     # still being searched for in text that still had it).
     _categorized = _categorize(_blank_quoted_heredoc_bodies(normalized),
@@ -4871,11 +5659,11 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         "tier": tier,
         "second_confirmation_required": second_confirmation,
         "external_repo_ref": external_repo_ref,
-        # NS-8a: no `&&`/`||`/`;`/`|` split above this call - it is its own
+        # No `&&`/`||`/`;`/`|` split above this call - it is its own
         # one and only component.
         "components": [{"text": normalized, "category": category,
                         "tier": tier, "protected": protected}],
-        # N1 (review round 2): the structured head `_categorize` resolved,
+        # The structured head `_categorize` resolved,
         # if this verdict came from one of its two "unknown command" sites -
         # `None` otherwise. Read by the multi-segment promotion loop below
         # instead of parsing `impact` or re-tokenizing raw text, so an
@@ -4883,7 +5671,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # (`"frobnicate"`) resolve the same way here as they do inside
         # `_categorize` itself.
         "unrecognised_head": unrecognised_head,
-        # D1 (review round 3): the exact, fully-stripped text
+        # The exact, fully-stripped text
         # `unrecognised_head` came from - `None` whenever the head is.
         # `_prefix_runner_remainder` cuts the runner's name off THIS, never
         # off the raw segment text a caller happened to have lying around.
@@ -4951,7 +5739,7 @@ def _decode(data: str) -> bytes:
 # `POLICY_FILENAME` is defined once, near `_SENSITIVE_EDIT` above, so the
 # classifier and this reader can never drift onto two different literals.
 
-# U-E7: the one `gate_mode` value this file understands. Set here so the
+# The one `gate_mode` value this file understands. Set here so the
 # validating reader (`CapabilityBroker._policy()`) and every consumer of
 # `local_authorization_policy()` (the full hook, `assess`) compare against
 # the same literal rather than a second, independently-spelled copy.
@@ -4973,13 +5761,13 @@ _DEFAULT_TTL_SECONDS = 300
 
 # The bounds `issue()` validates an explicit `--ttl` against. Named so the
 # unattended halving below clamps back to the same floor it validated
-# against, rather than a second, unnamed `10` (fix round 1, N5: an
+# against, rather than a second, unnamed `10` (an
 # unattended `--ttl 10` used to mint a 5-second capability - below the
 # floor this very constant advertises).
 _EXPLICIT_TTL_FLOOR_SECONDS = 10
 _EXPLICIT_TTL_CEILING_SECONDS = 600
 
-# NS-10k: the unattended gating tier. An operator present to answer an "ask"
+# The unattended gating tier. An operator present to answer an "ask"
 # is what makes an ask meaningful at all - a session nobody is watching
 # cannot answer one, so the gate applies a stricter row instead: the tier
 # that stops the call outright (never merely asking) drops by one, a
@@ -5003,14 +5791,14 @@ _ATTENDED_SESSION_TYPES = frozenset({"attended", "interactive", "foreground"})
 # human answers" signal already live in a host payload today (the hook's
 # ask-fold read it for this exact reason before `attended()` ever existed);
 # owned here, once, so the hook imports it rather than keeping its own copy
-# that could drift from this one (fix round 1, N1's sibling: one source for
+# that could drift from this one (one source for
 # this vocabulary too). `default`, `plan` and `acceptEdits` still prompt a
 # person for a shell command and are not in this set.
 _NO_HUMAN_ASK_MODES = frozenset({"auto", "dontAsk", "bypassPermissions"})
 
 
 def attended(session_type: str | None = None, permission_mode: str | None = None) -> bool:
-    """Whether an operator is presumed present for this call (NS-10k).
+    """Whether an operator is presumed present for this call.
 
     Checked in order, the first that answers wins:
 
@@ -5025,7 +5813,7 @@ def attended(session_type: str | None = None, permission_mode: str | None = None
        this call could have raised is answered by the host's own machinery,
        not a person, so it is fed here as the same "no human answers"
        signal the hook's own ask-fold already trusted for the identical
-       reason - the one live signal fix round 1 found reachable today.
+       reason - the one live signal an earlier fix found reachable today.
        Anything else (or none) is not evidence either way.
     4. `session_type` - the host payload's own declaration, when the host
        sends one and it is one of the recognised labels.
@@ -5090,7 +5878,7 @@ def halved_ttl_seconds(ttl_seconds: int) -> int:
 
 
 def policy_row(effective: dict[str, Any], attended_flag: bool) -> dict[str, Any]:
-    """One named row of the NS-10k policy view: what `capability_ttl_seconds`
+    """One named row of the attention policy view: what `capability_ttl_seconds`
     resolves to, which tiers refuse outright, and whether `--without-
     preflight` is available - for the attended row or the unattended one.
     Used both to decide (the broker, the hook) and to explain
@@ -5106,7 +5894,7 @@ def policy_row(effective: dict[str, Any], attended_flag: bool) -> dict[str, Any]
 
 
 def _chronicle_observe_transition(archive: Any, live_observe: bool) -> None:
-    """Chronicle U-E7 observe-mode ENTRY/EXIT the moment either is next
+    """Chronicle observe-mode ENTRY/EXIT the moment either is next
     observed by a live policy read (CX final review F1, part 2).
 
     Compares `live_observe` (this call's freshly-read `gate_mode`) against
@@ -5184,7 +5972,7 @@ class CapabilityBroker:
             # exit the same way if entry was previously chronicled.
             _chronicle_observe_transition(self.archive, False)
             return {}
-        # Two layers, tightest wins (obligation 10274, 2026-09-09): an
+        # Two layers, tightest wins: an
         # operator-level file under the state home is the governance
         # ceiling; the project file may only tighten it. Without an
         # operator file the project policy is exactly what it always was.
@@ -5280,7 +6068,7 @@ class CapabilityBroker:
                 raise AuthorizationError(
                     "nag_posture must be 'quiet', 'standard', or 'strict'")
             policy["nag_posture"] = posture
-        # S16 (E56): declarative per-tool gates - approval demanded at the
+        # Declarative per-tool gates - approval demanded at the
         # tool's DECLARATION. Tighten-only like everything in this file:
         # only "ask" and "deny" survive validation; any other value refuses
         # loudly rather than silently becoming a second allow source.
@@ -5295,7 +6083,7 @@ class CapabilityBroker:
                     "policy file can tighten, never loosen")
             policy["tool_gates"] = {
                 k: str(v).lower() for k, v in tool_gates.items()}
-        # `ask_only` (field report 2026-08-27): the focused posture. The
+        # `ask_only`: the focused posture. The
         # categories that keep asking; every other R2/R3 ask becomes an
         # allow with an `action` record naming the silence. R4 still asks
         # and R5 still denies whatever the list says - the list narrows
@@ -5309,7 +6097,7 @@ class CapabilityBroker:
             ):
                 raise AuthorizationError("ask_only must be a list of category names")
             policy["ask_only"] = tuple(ask_only)
-        # `inline_interpreter` (thirteenth field report): "scan" lets a
+        # `inline_interpreter`: "scan" lets a
         # Python `-c`/heredoc payload the parser reads as reads-only
         # through, with a record; "ask" is the default floor. A loosening,
         # so like observe mode it is validated to its exact spellings.
@@ -5319,7 +6107,7 @@ class CapabilityBroker:
                 raise AuthorizationError(
                     "inline_interpreter must be exactly \"ask\" or \"scan\"")
             policy["inline_interpreter"] = inline
-        # NS-13d: the plan-first gate is on by default in an initialized
+        # The plan-first gate is on by default in an initialized
         # project; "off" switches it off (a spike repository). Exact
         # spellings only, like every loosening here.
         plan_first = raw.get("plan_first")
@@ -5327,7 +6115,7 @@ class CapabilityBroker:
             if plan_first not in ("on", "off"):
                 raise AuthorizationError('plan_first must be exactly "on" or "off"')
             policy["plan_first"] = plan_first
-        # U-E7 observe mode: a LOOSENING of enforcement (every deny/ask
+        # Observe mode: a LOOSENING of enforcement (every deny/ask
         # becomes an advisory - see `hooks/godmode_session_hook.py`'s
         # `_apply_observe_mode`), so this is the one key in this file that
         # is validated to exactly one legal spelling rather than merely
@@ -5364,7 +6152,7 @@ class CapabilityBroker:
         anchor = getattr(self.archive, "anchor", None)
         root = getattr(anchor, "project_root", None)
         policy = self._policy()
-        return classify_action(
+        classification = classify_action(
             operation, extra_protected=policy.get("password_required", ()),
             project_root=Path(root) if root else None,
             archive=self.archive,
@@ -5372,6 +6160,17 @@ class CapabilityBroker:
             require_approval=policy.get("approval_required", ()),
             inline_scan=policy.get("inline_interpreter", "scan") == "scan",
         )
+        if not classification["protected"] and root:
+            # An edit onto a declared design surface is refused outright at
+            # the tool boundary, so it is exactly what the password moves:
+            # staging it must not answer "read-only inspection".
+            surface = design_surface_of(operation, Path(root))
+            if surface is not None:
+                classification = dict(
+                    classification, protected=True, category=DESIGN_BOUNDARY_EDIT,
+                    tier="R3",
+                    impact=[f"a declared design surface: {surface}"])
+        return classification
 
     def _mint_context(self) -> dict[str, str]:
         """Identity a capability binds to at mint time.
@@ -5444,7 +6243,7 @@ class CapabilityBroker:
         return data
 
     def confirm_operator(self, password: str) -> bool:
-        """NS-8k, fix round 1 (F0): the one public entry point the console
+        """The one public entry point the console
         uses to turn a bare `--as-operator` claim into a credential -
         reuses this broker's own password store instead of a second check
         living in `godmode_chronicle.py`. Callers check `configured()`
@@ -5506,10 +6305,10 @@ class CapabilityBroker:
             raise AuthorizationError("Authorization failed")
         if context is None:
             context = self._mint_context()
-        # NS-10k: unattended halves whatever lifetime was resolved above -
+        # Unattended halves whatever lifetime was resolved above -
         # the policy default or an explicit `--ttl` alike - because nobody
         # is present to notice a capability sitting spent-but-unconsumed
-        # for the ordinary duration. Fix round 1, N5: clamped back up to
+        # for the ordinary duration. Clamped back up to
         # the floor this method itself just validated an explicit `--ttl`
         # against, so halving can never mint a capability shorter than the
         # lifetime this same call would have refused to accept outright.
@@ -5547,6 +6346,14 @@ class CapabilityBroker:
 
     def _store(self, data: dict[str, Any]) -> None:
         _atomic_json(self.path, data)
+
+    def stage_ttl_seconds(self, ttl_seconds: int | None = None) -> int:
+        """The lifetime `issue` will give a capability, shown before the
+        password is asked for so the approval names its real expiry."""
+        if ttl_seconds is None:
+            ttl_seconds = self._policy().get("capability_ttl_seconds", _DEFAULT_TTL_SECONDS)
+        return ttl_seconds if attended() else max(
+            _EXPLICIT_TTL_FLOOR_SECONDS, halved_ttl_seconds(ttl_seconds))
 
     def stage(
         self, operation: str, password: str, ttl_seconds: int | None = None,
@@ -5708,7 +6515,7 @@ class CapabilityBroker:
         if ttl_seconds is None:
             ttl_seconds = self._policy().get("capability_ttl_seconds", _DEFAULT_TTL_SECONDS)
         if not attended():
-            # NS-10k: mirrors the halving (and, fix round 1 N5, the floor
+            # Mirrors the halving (and the floor
             # clamp) `issue()` already applied, so the reported lifetime is
             # never a stale, un-halved, or under-floor number.
             ttl_seconds = max(
@@ -5828,6 +6635,17 @@ def operator_policy_path() -> Path:
     return base / OPERATOR_POLICY_FILENAME
 
 
+MACHINE_SETTINGS_FILENAME = "godmode-settings.json"
+
+
+def machine_settings_path() -> Path:
+    """Machine-wide settings (today only `uninitialized`: what an installed
+    Godmode does in a project nobody initialized), in the operator policy's
+    own directory. `hooks/godmode_initstate.machine_settings_path` mirrors
+    it without importing this module."""
+    return operator_policy_path().parent / MACHINE_SETTINGS_FILENAME
+
+
 def compose_policies(operator: dict[str, Any], project: dict[str, Any]) -> dict[str, Any]:
     """Tightest wins, key by key. The project layer may add protected
     categories, approvals, tool gates and ask_only categories, shorten the
@@ -5888,7 +6706,7 @@ def explain_policy(archive: Any) -> dict[str, Any]:
         else:
             decided = "project"
         keys.append({"key": key, "value": value, "decided_by": decided})
-    # NS-10k: the two gating-tier rows, and which one this call is actually
+    # The two gating-tier rows, and which one this call is actually
     # under - `operator --policy` is the one place both are named together,
     # so an operator can see the stricter row exists before ever meeting it.
     is_attended = attended()
@@ -5913,13 +6731,66 @@ def local_authorization_policy(archive: Any) -> dict[str, Any]:
     return CapabilityBroker(archive)._policy()  # noqa: SLF001
 
 
+DESIGN_BOUNDARY_EDIT = "design-boundary-edit"
+
+
+def design_surface_of(operation: str, project_root: Path) -> str | None:
+    """The project-relative path an `edit file <path>` / `write file <path>`
+    operation lands on when `.godmode-boundaries.json` declares it a design
+    surface, else None. The hook refuses such an edit outright; this is what
+    lets the operator's staged approval for it exist and be spent."""
+    from .godmode_designsurface import design_surface
+
+    skill = _SKILL_ACTION.match(operation.strip())
+    if skill:
+        # The files `skill_boundary_refusal` asks about, so an action it
+        # refuses can be staged: the skill's own files, then every file
+        # under its directory, in every skill root a skill command writes.
+        name = skill.group("name")
+        root = Path(project_root)
+        for skills in ("skills", ".claude/skills", ".grok/skills"):
+            skill_dir = root / skills / name
+            candidates = [f"{skills}/{name}/SKILL.md", f"{skills}/{name}/godmode-evals.json"]
+            if skill_dir.is_dir():
+                candidates += [path.relative_to(root).as_posix()
+                               for path in sorted(skill_dir.rglob("*")) if path.is_file()]
+            for candidate in candidates:
+                surface = design_surface(project_root, candidate)
+                if surface is not None:
+                    return surface
+        return None
+    edit = _TOOL_FILE_EDIT.match(operation.strip())
+    if not edit:
+        return None
+    return design_surface(project_root, edit.group("path").strip().strip("\"'"))
+
+
+def design_edit_operation(relative: str) -> str:
+    """The one operation text a design-surface approval is staged and spent
+    under, whichever writer (Edit, Write, a skill command) reaches the path."""
+    return f"edit file {relative}"
+
+
+def stage_operation_hint(plugin_root: Path | str, operation: str) -> str:
+    """`stage_hint` for one named operation rather than the last refusal:
+    the operator's own runnable command, both launcher forms."""
+    root = Path(plugin_root).resolve()
+    quoted = json.dumps(operation, ensure_ascii=False)
+    hint = (f'`! "{(root / "bin" / "godmode").as_posix()}" authorize stage '
+            f'--operation {quoted}` (Claude prompt / bash; opens a password dialog)')
+    if os.name == "nt":
+        hint += (f' or `& "{root / "bin" / "godmode.cmd"}" authorize stage '
+                 f'--operation {quoted}` (PowerShell)')
+    return hint
+
+
 def stage_hint(plugin_root: Path | str) -> str:
     """The one runnable staging line every refusal that names `--from-last-
     refusal` prints, routed through here so the two call sites (the R5
     outright refusal and the auto-mode ask-fold, both in
     `godmode_session_hook.py`) can never drift apart.
 
-    Field report, 2026-09-13 (G-2): the refusal named `godmode authorize
+    Observed 2026-09-13 (G-2): the refusal named `godmode authorize
     stage --from-last-refusal` and told the operator to type it "with a
     leading '!'". Neither half resolves where the refusal is actually
     read - `godmode` is bare, and unqualified names are not on PATH by
@@ -5941,7 +6812,7 @@ def stage_hint(plugin_root: Path | str) -> str:
     posix_launcher = root / "bin" / "godmode"
     hint = (
         f'Stage it: `! "{posix_launcher.as_posix()}" authorize stage '
-        '--from-last-refusal` (Claude prompt / bash)'
+        '--from-last-refusal` (Claude prompt / bash; opens a password dialog)'
     )
     if os.name == "nt":
         cmd_launcher = root / "bin" / "godmode.cmd"
@@ -5965,7 +6836,7 @@ def stage_from_refusal(archive: Any, nth: int = 1, with_digest: bool = False) ->
     operation staged silently is worse than a command that says plainly there
     is nothing to stage.
 
-    U-E7 decision: a `refusal` record carrying `observed: True` (written by
+    Observe-mode decision: a `refusal` record carrying `observed: True` (written by
     `godmode_session_hook.py`'s `_apply_observe_mode` when the local
     policy's `gate_mode` is `"observe"`) is NEVER counted here, and `--nth`
     skips past it as if it did not exist. Nothing was actually blocked when
@@ -5987,7 +6858,8 @@ def stage_from_refusal(archive: Any, nth: int = 1, with_digest: bool = False) ->
     # `select`'s 500 cap had the same flaw one level up - a real refusal
     # behind 500 observed ones read as "no refusal is on record".
     records = [record for record in archive.read_events() if record["kind"] == "refusal"]
-    stageable = [record for record in records if not record["data"].get("observed")]
+    stageable = [record for record in records if not record["data"].get("observed")
+                 and record["data"].get("stageable", True)]
     if len(stageable) < nth:
         raise AuthorizationError("No refusal is on record; nothing to stage")
     data = stageable[-nth]["data"]
@@ -6037,7 +6909,7 @@ def _self_check() -> None:
         # opaque-body executors below are the named exceptions that still
         # ask, not the rule.
         "frobnicate --all", "rev docs/notes.txt",
-        # C1 round 3: the exec-shape escalation below is NOT a global
+        # The exec-shape escalation below is NOT a global
         # fail-closed default. A bare `env`, an `env` over a non-interpreter,
         # an unknown wrapper over a non-interpreter, and a safe read that
         # merely PRINTS an interpreter invocation all stay unprotected -
@@ -6046,9 +6918,9 @@ def _self_check() -> None:
         "tar -cf archive.tar somedir", 'docker run -e "NODE_ENV=x" img',
         "pwsh -ExecutionPolicy Bypass -File build.ps1",
         "python -m cProfile script.py",
-        # C1 round 4 (third security review, 2026-08-18). An interpreter
+        # C1 (third security review, 2026-08-18). An interpreter
         # stops reading its OWN options at its first operand, so a flag after
-        # a script file belongs to the script - round 3's prefix widening
+        # a script file belongs to the script - an earlier prefix widening
         # read these twelve everyday shapes as inline code and asked at R2.
         "node server.js -port 3000", "python train.py -ckpt m.pt",
         "python app.py -config conf.yml", "ruby app.rb -Eutf-8",
@@ -6094,7 +6966,7 @@ def _self_check() -> None:
         # unrecognised `git` subcommand still asks rather than reading R0.
         'bash -c "rm -rf /"', "psql -c 'drop table users'", "git mv a.txt b.txt",
         "ForEach-Object { Remove-Item x }",
-        # C1 (external audit, 2026-08-17): an interpreter's opaque inline
+        # An interpreter's opaque inline
         # payload is protected unconditionally now - the shape both of the
         # audit's own repros used to walk around every gate through. `-m`
         # is deliberately ABSENT here (coordinator correction) - it names
@@ -6103,12 +6975,12 @@ def _self_check() -> None:
         "node -e \"1\"", "ruby -e \"1\"", "perl -e \"1\"",
         'pwsh -Command "Get-ChildItem"',
         "python <<'PY'\nprint(1)\nPY",
-        # C1 round 3 (second security review, 2026-08-17). Change 1: an
+        # C1 (second security review, 2026-08-17). Change 1: an
         # inline-eval flag is a PREFIX of its argv token, because the shell
         # concatenates the flag with its quoted argument and that is how the
         # interpreter itself parses it - `python -c"…"` was silently R1, and
-        # `bash -c'…'` was a REGRESSION (round 1 caught it, round 2's
-        # whitespace anchor did not).
+        # `bash -c'…'` was a REGRESSION (an earlier pass caught it, the fix after
+        # that's whitespace anchor did not).
         'python -c"import os"', "bash -c'rm -rf /'", 'node -e"1"',
         'pwsh -Comm "Get-ChildItem"', "powershell -Enco ZwBpAHQA",
         # Change 2: an unresolved head with positive evidence of exec shape
@@ -6120,7 +6992,7 @@ def _self_check() -> None:
         'sudo -E python -c "print(1)"', 'docker exec -it c python -c "print(1)"',
         '$(which python) -c "print(1)"', 'su -c "git push --force"',
         'pypy -c "print(1)"', 'python.bat -c "print(1)"',
-        # C1 round 4 (third security review, 2026-08-18). Critical 1: a
+        # C1 (third security review, 2026-08-18). Critical 1: a
         # trailing help flag is not a help request. Every check that can find
         # code runs before the help fast-path now, and the fast-path itself
         # requires the flag to be the first OPTION on the line.
@@ -6140,11 +7012,11 @@ def _self_check() -> None:
         'Invoke-Expression "git push --force"', 'iex "Remove-Item x"',
         'Start-Process python -ArgumentList "-c","print(1)"',
         'pwsh -CommandWithArgs "Remove-Item x"',
-        # Critical 5: shapes round 3 did not disclose, plus Windows' own shell.
+        # Critical 5: shapes an earlier review did not disclose, plus Windows' own shell.
         'su --command="git push --force"', 'builtin eval "python -c 1"',
         "trap 'git push --force' EXIT", 'cmd /c "git push --force"',
         'cmd.exe /k "rm -rf /"',
-        # I-2: the exec-shape scan runs even when the head IS an interpreter
+        # The exec-shape scan runs even when the head IS an interpreter
         # whose own rule did not fire.
         'bun x python -c "print(1)"', 'deno task python -c "print(1)"',
         # Tokenization failure is evidence the parse failed, not evidence of
@@ -6157,7 +7029,7 @@ def _self_check() -> None:
 
     assert classify_action("git push --force origin main")["tier"] == "R5"
     assert classify_action("ls")["tier"] == "R0"
-    # C1: an interpreter's opaque payload is never silently R1 again - `_self_
+    # An interpreter's opaque payload is never silently R1 again - `_self_
     # check` used to pin the OLD, vulnerable reading here (`_UNKNOWABLE_BODY_
     # HEADS`'s own comment named this exact assertion as the reason `bash`/
     # `sh` were never widened to match); the floor is now R2, and the audit's
@@ -6175,7 +7047,7 @@ def _self_check() -> None:
     # on every ordinary test run.
     assert classify_action("python -m unittest discover -s tests")["tier"] == "R1"
     assert not classify_action("python -m unittest discover -s tests")["protected"]
-    # C1 round 3: the fused form reaches the same tier as the spaced form -
+    # The fused form reaches the same tier as the spaced form -
     # the missing space was the whole bypass, so the two must not disagree.
     assert classify_action('python -c"print(1)"')["tier"] == "R2"
     assert classify_action('bash -c"git push --force"')["tier"] == "R5"
@@ -6184,7 +7056,7 @@ def _self_check() -> None:
     # still read, not asked about.
     assert classify_action("foobar --version")["tier"] == "R0"
     assert classify_action("env")["tier"] == "R0"
-    # C1 round 4: the tier equalities the help suffix used to erase. A
+    # The tier equalities the help suffix used to erase. A
     # payload keeps the tier it had, whatever is appended after it.
     assert classify_action('python -c "git push --force" --version')["tier"] == "R5"
     assert classify_action("git push --force origin main --help")["tier"] == "R5"
@@ -6215,7 +7087,7 @@ def _self_check() -> None:
     assert detect_external_repo("ls -la") is None
     assert classify_action("ls -la")["external_repo_ref"] is None
 
-    # U-B2: unpinning is capability-gated no matter which project it names -
+    # Unpinning is capability-gated no matter which project it names -
     # `archive` absent (as it is on every direct `classify_action` call above)
     # never leaves a pinned edit undetected AS "protected", because the
     # category comes from the operation's own shape, not a pin lookup.

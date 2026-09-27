@@ -10,9 +10,12 @@ distinctly from a negative result (R8).
 """
 from __future__ import annotations
 
+import io
+import json
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 CHECKS = PLUGIN_ROOT / "quality" / "checks"
@@ -170,6 +173,128 @@ class CommitMessagesAreScanned(unittest.TestCase):
             found = N.scan_messages(root, ["Zorblax"], base="published")
             self.assertEqual([f.kind for f in found], ["private-path"])
             self.assertIsNone(N.scan_messages(root, None, base="no-such-ref"))
+
+
+class AllowlistMigration(unittest.TestCase):
+    """R10 (2026-09-23): the allowlist is keyed by path and the exact line
+    text, not path and line number - an unrelated edit that moves the line
+    must not break an accepted entry. The previous path:line form is still
+    read for one release."""
+
+    def setUp(self) -> None:
+        import tempfile
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def _allowlist(self, body: str) -> None:
+        _write(self.tmp, "quality/external-name-allowlist.json", body)
+
+    def test_a_v2_entry_survives_the_flagged_line_moving(self) -> None:
+        self._allowlist(json.dumps({
+            "schema": "godmode-external-name-allowlist-v2",
+            "accepted": [{"path": "README.md", "text": "Acmeforge did it first.",
+                         "reason": "accepted"}],
+        }))
+        with mock.patch.object(N, "ALLOWLIST_PATH", self.tmp / "quality" / "external-name-allowlist.json"):
+            # The same accepted line, now three lines further down the file -
+            # an edit above it, nothing to do with this reference.
+            _write(self.tmp, "README.md", "one\ntwo\nthree\nAcmeforge did it first.\n")
+            findings = N.scan(self.tmp, [self.tmp / "README.md"], deny_names=["acmeforge"])
+        self.assertEqual(findings, [])
+
+    def test_a_v1_path_line_entry_is_still_read(self) -> None:
+        self._allowlist(json.dumps({
+            "schema": "godmode-external-name-allowlist-v1",
+            "accepted": {"README.md:1": "accepted"},
+        }))
+        with mock.patch.object(N, "ALLOWLIST_PATH", self.tmp / "quality" / "external-name-allowlist.json"):
+            _write(self.tmp, "README.md", "Acmeforge did it first.\n")
+            findings = N.scan(self.tmp, [self.tmp / "README.md"], deny_names=["acmeforge"])
+        self.assertEqual(findings, [])
+
+    def test_a_v1_entry_breaks_when_the_line_moves(self) -> None:
+        """The defect R10 fixes, pinned: the old form is line-number-keyed,
+        so an edit that shifts the accepted line by one is not the same
+        entry any more."""
+        self._allowlist(json.dumps({"accepted": {"README.md:1": "accepted"}}))
+        with mock.patch.object(N, "ALLOWLIST_PATH", self.tmp / "quality" / "external-name-allowlist.json"):
+            _write(self.tmp, "README.md", "unrelated line\nAcmeforge did it first.\n")
+            findings = N.scan(self.tmp, [self.tmp / "README.md"], deny_names=["acmeforge"])
+        self.assertEqual(len(findings), 1, findings)
+
+    def test_missing_allowlist_accepts_nothing(self) -> None:
+        with mock.patch.object(N, "ALLOWLIST_PATH", self.tmp / "nope.json"):
+            allow = N.load_allowlist()
+        self.assertFalse(allow.accepts("x.py", 1, "anything"))
+        self.assertEqual(len(allow), 0)
+
+    def test_the_real_allowlist_loads_without_error(self) -> None:
+        allow = N.load_allowlist()
+        self.assertGreater(len(allow), 0)
+
+
+class Classify(unittest.TestCase):
+    def test_deny_name_and_forge_url_and_private_path_are_harm(self) -> None:
+        for kind in ("deny-name", "forge-url", "private-path"):
+            self.assertEqual(N.classify(kind), "harm", kind)
+
+    def test_internal_process_is_warning(self) -> None:
+        self.assertEqual(N.classify("internal-process"), "warning")
+
+    def test_an_unknown_kind_defaults_to_warning_not_below_it(self) -> None:
+        self.assertEqual(N.classify("some-future-kind"), "warning")
+
+
+class FilterAndFailLevel(unittest.TestCase):
+    """`main()`'s own scope wiring: a finding outside `--filter` scope is
+    invisible; one inside scope but pre-existing is labelled and does not
+    fail the run; `--fail-level` gates severity."""
+
+    def setUp(self) -> None:
+        import tempfile
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def _run(self, argv: list[str]) -> tuple[int, str]:
+        _write(self.tmp, "README.md", "Acmeforge did it first.\n")
+        err = io.StringIO()
+        with mock.patch.object(N, "ROOT", self.tmp), \
+                mock.patch.object(N, "shipped_paths", return_value=[self.tmp / "README.md"]), \
+                mock.patch.object(N, "_deny_from_env", return_value=["acmeforge"]), \
+                mock.patch.object(N, "scan_messages", return_value=[]), \
+                mock.patch.object(sys, "stdout", io.StringIO()), \
+                mock.patch.object(sys, "stderr", err):
+            code = N.main(argv)
+        return code, err.getvalue()
+
+    def test_filter_added_with_no_touched_lines_hides_the_finding_and_passes(self) -> None:
+        with mock.patch.object(N.scope, "resolve", return_value=("added", {})):
+            code, err = self._run(["--filter", "added"])
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "")
+
+    def test_filter_file_labels_an_untouched_line_pre_existing_and_passes(self) -> None:
+        with mock.patch.object(N.scope, "resolve", return_value=("file", {"README.md": {99}})):
+            code, err = self._run(["--filter", "file"])
+        self.assertEqual(code, 0)
+        self.assertIn("pre-existing:", err)
+
+    def test_filter_all_blocks_regardless_of_any_diff(self) -> None:
+        with mock.patch.object(N.scope, "resolve", return_value=("all", {})):
+            code, err = self._run(["--filter", "all"])
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL:", err)
+
+    def test_fail_level_warning_never_blocks_a_harm_only_default_run(self) -> None:
+        # deny-name is harm; asking for --fail-level warning still fails on
+        # it (warning is the LOWEST bar, catching harm and above).
+        with mock.patch.object(N.scope, "resolve", return_value=("all", {})):
+            code, _err = self._run(["--filter", "all", "--fail-level", "warning"])
+        self.assertEqual(code, 1)
 
 
 class TheRealTree(unittest.TestCase):

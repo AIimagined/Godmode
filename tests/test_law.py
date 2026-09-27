@@ -28,6 +28,7 @@ for entry in (SCRIPTS, HOOKS, Path(__file__).parent):
 
 from _law_fixtures import graduated_lesson, operator_lesson  # noqa: E402
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
+from godmode_runtime.godmode_projectmode import set_project_mode  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_runtime.godmode_law import (  # noqa: E402
     LAW_FILENAME, compile_laws, top_laws,
@@ -44,6 +45,7 @@ def _project():
                              clear=False):
             archive = Chronicle(resolve_anchor(root))
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             yield root, archive
 
 

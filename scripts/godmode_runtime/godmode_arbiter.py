@@ -1,4 +1,4 @@
-"""C-56: a plan arbiter. Deterministic, and it never picks silently.
+"""A plan arbiter. Deterministic, and it never picks silently.
 
 Two plans for the same work, and a reader who wants to know which one to
 hold the agent to. The arbiter scores each on what a plan can be held to:

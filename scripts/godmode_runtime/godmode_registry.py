@@ -1,4 +1,4 @@
-"""Registry-aware recurrence and design reads (field report file Part 6,
+"""Registry-aware recurrence and design reads (seen in practice,
 2026-09-10).
 
 Two recurrences that month had a registry row and a green guard, and both

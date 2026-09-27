@@ -32,7 +32,7 @@ refusal word. A task whose normalized terms name a `rejected-precedent` key
 is told the sequence and the way through - cite it and supersede it, or drop
 the work - rather than being left to rediscover the same refusal by hand.
 
-**Foreign precedent is a fifth question, strictly advisory.** U-E2's
+**Foreign precedent is a fifth question, strictly advisory.** The
 cross-project exchange (`godmode_register.py`'s `reg-foreign:` namespace)
 lets a precedent imported from another project's archive travel here as a
 FILE, never a network call. It is surfaced the same way `rejected_precedents`
@@ -110,7 +110,7 @@ _DISCHARGED = frozenset({"closed", "done", "discharged", "resolved", "complete",
                          "completed", "fixed", "refused"})
 
 # Seconds the precheck atlas walk may take before it answers with what it
-# has and says so. Field report 26: an unbounded build outlasted the suite.
+# has and says so. An unbounded build outlasted the suite.
 PRECHECK_ATLAS_BUDGET_SECONDS = 20.0
 
 _WORD = re.compile(r"[A-Za-z][A-Za-z0-9_]{2,}")
@@ -285,7 +285,7 @@ def precheck(project_root: Path | str, archive: Chronicle, task: str,
     symbols_examined = 0
     from .godmode_atlas import build as build_atlas
 
-    # Field report 26: `precheck --about` did not return in five minutes on
+    # `precheck --about` did not return in five minutes on
     # a TypeScript tree whose full atlas build takes nine. A gate that
     # outlasts the suite is not a gate: the build is bounded, and the bound
     # is stated in `searched` so a partial map never reads as a full one.
@@ -315,7 +315,7 @@ def precheck(project_root: Path | str, archive: Chronicle, task: str,
     for record in records:
         kind = record.get("kind")
         data = record.get("data") or {}
-        # U-E2: a `reg-foreign:` record is a decision-kind record too (an
+        # A `reg-foreign:` record is a decision-kind record too (an
         # imported precedent's `state` field routinely reads "rejected-
         # precedent", which trips `_REFUSAL_WORDS` on its own), but it must
         # never be scored by this LOCAL free-text scanner - only the
@@ -401,7 +401,7 @@ def precheck(project_root: Path | str, archive: Chronicle, task: str,
         key_terms = _terms(hit["key"].replace("-", " ").replace("_", " "))
         # Same precise, subset-of-key-terms match as the local rejected-
         # precedent check above - never the weaker overlap-of-two used for
-        # free text. U-E2's trust model (advisory everywhere): this hit
+        # free text. The trust model here (advisory everywhere): this hit
         # never enters `findings`/`verdict` below, no matter how strong the
         # match is - a foreign precedent cannot block, only inform.
         if key_terms and key_terms.issubset(terms):
@@ -417,7 +417,7 @@ def precheck(project_root: Path | str, archive: Chronicle, task: str,
                            "review before treating it as settled here",
             })
 
-    # `foreign_precedent_hits` is deliberately excluded from `findings`: U-E2's
+    # `foreign_precedent_hits` is deliberately excluded from `findings`: the
     # trust model makes a foreign precedent advisory everywhere, and that
     # includes never flipping this precheck from "proceed" to "prior work
     # found" on its own.
@@ -510,7 +510,7 @@ def render(report: dict[str, Any]) -> str:
                  f"{report['symbols_examined']} symbols and "
                  f"{report['records_examined']} records."]
         # A foreign precedent never changes this verdict (advisory
-        # everywhere, U-E2), but it must not go unmentioned just because it
+        # everywhere), but it must not go unmentioned just because it
         # was the only thing found - that would be surfacing it in the JSON
         # report while silently dropping it from the text a human reads.
         for hit in report.get("foreign_precedents", []):
@@ -631,7 +631,7 @@ _PROMPT_SHAPES = (
      "anything leaves the machine; when nothing leaves the machine, "
      "`godmode precheck --about \"<what ships>\"` runs the known-bad-shape "
      "scan on the working tree instead."),
-    # Thirteenth field report (obligation 9700): 198 plan-shaped asks and
+    # 198 plan-shaped asks and
     # zero plan records in one archive; a reversal is the demand for an
     # independent check (8 warranted, 0 run). The census names both
     # afterwards; these name the verb as the ask arrives.
@@ -665,7 +665,7 @@ _PROMPT_SHAPES = (
      "with evidence tiers; declared and verified are different columns."),
     # The largest lesson source in every field corpus is the operator's
     # own catch - and the catch-moment is when the evidence is freshest.
-    # Twenty-first field report (obligation 10116): zero help on an RCA.
+    # Zero help on an RCA.
     # The verbs exist; nothing named them when a failure was chased.
     ("investigation", re.compile(
         r"(?i)(?:\broot[\s-]?cause\b|\brca\b|\bwhy\s+(?:did|does|is|was|are)\b[^?.]{0,60}"
@@ -698,7 +698,7 @@ def prompt_shape_nudge(archive: Chronicle, prompt: str,
     keyed additionally by shape so fix and ship each get their one say.
 
     `resume_doc` is the project's own state document when it keeps one
-    (field report 23: `godmode resume` was pushed at a project whose
+    (`godmode resume` was pushed at a project whose
     STATE.md already carried the resume); the resume shape then says
     nothing."""
     if not prompt:
@@ -730,7 +730,7 @@ _FAILURE_SIGNAL = re.compile(
     r"(?im)(?:^Traceback \(most recent call last\)|\bexit(?:ed)?(?: code)?\s+[1-9]\d*\b|"
     r"\bFAILED\b|\b(?:Error|Exception)\b:|\bcommand not found\b|\bfatal:|"
     r"\bpanic:|\bsegmentation fault\b|\bnpm ERR!|\bERROR\b|"
-    # Field report 22 (2026-09-09): "no help with the memory kills". A
+    # "no help with the memory kills". A
     # process the kernel or the host killed for memory leaves one of these.
     r"\bKilled\b|\bexit(?:ed)?(?: code)?\s+137\b|\bOOM\b|\bout of memory\b|"
     r"\bMemoryError\b|\bheap out of memory\b|\bENOMEM\b)")
@@ -799,7 +799,7 @@ def failure_nudge(archive: Chronicle, tool_output: str,
     except Exception:  # noqa: BLE001
         return None
     if _MEMORY_KILL.search(tool_output):
-        # Field report 22: a kill is not a bug in the code under test; it
+        # A kill is not a bug in the code under test; it
         # is a run that outgrew its box, and the next move is a smaller box.
         return (
             "godmode: a tool run was killed for memory this turn (137/OOM) - "

@@ -63,7 +63,7 @@ def _changed_files(project: Path, base: str) -> dict[str, str]:
         parts = line.split("\t")
         if len(parts) >= 2:
             files[parts[-1]] = parts[0][:1]
-    # Field report file 2026-09-10, Part 3: a NEW test file is untracked
+    # A NEW test file is untracked
     # until it is added, and a diff against HEAD cannot see it - so the
     # coverage pairing called three tested routes untested. Untracked
     # files count as added.
@@ -94,7 +94,7 @@ def _assertion_diff(ctx: dict[str, Any]) -> list[dict[str, Any]]:
         removed, added = ctx["diff"][path]
         split = split_assertion_changes(removed, added, _ASSERTION)
         # A bound or literal that moved is a changed assertion, named as
-        # such and not blocked (field report file 2026-09-10, finding 6:
+        # such and not blocked (
         # a widened timing margin read the same as a deleted assertion).
         if split["changed"]:
             findings.append(_finding(
@@ -203,7 +203,7 @@ def _coverage_shape(ctx: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _edit_without_test(ctx: dict[str, Any]) -> list[dict[str, Any]]:
-    """NS-13h: on a maintained branch a code change carries a test change
+    """On a maintained branch a code change carries a test change
     in the same change set. Advisory - one finding for the change set,
     naming the branch and where its role came from. A throwaway (spike)
     branch, or one with no role, is not held to it."""
@@ -637,7 +637,7 @@ def source_damage(project: Path, base: str = "HEAD") -> list[dict[str, Any]]:
                 listed = ", ".join(f"0x{byte:02x}" for byte in bad)
                 hint = ""
                 if 0x08 in bad:
-                    # Field report file 2026-09-10, Part 3: two repairs of a
+                    # Two repairs of a
                     # 0x08 went through the same heredoc and re-collapsed.
                     hint = (" - a 0x08 is a collapsed backslash-b; repair it from a script "
                             "file with bytes([92, 98]), never through a heredoc, and re-run "

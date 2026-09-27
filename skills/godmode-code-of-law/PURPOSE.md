@@ -6,12 +6,12 @@ was made to check.
 
 ## Gap evidence
 
-- seq:7999 — an operator challenge caught a review pass that had graded several
-  repositories from their top-level description alone, without opening one source
-  file.
-- seq:14408 — the identical miss recurred later at the same shallow depth, because
-  the corrective lesson from seq:7999 carried no enforced guard; it existed only as
-  a note nobody was required to consult before acting again.
+- An outside-code assessment once graded several repositories from their
+  top-level description alone, without opening a single source file, until
+  a challenge caught the shortcut.
+- The identical shortcut recurred later at the same shallow depth, because
+  the earlier correction carried no enforced guard; it existed only as a
+  note nobody was required to consult before acting again.
 
 ## Promise
 
@@ -19,4 +19,4 @@ Before substantive work, the compiled law file at the project root is read and i
 guards are followed; a guard that seems wrong is challenged and its lesson retired
 through the normal pipeline, never silently skipped.
 
-Future edits to this skill append their own seq: citation above.
+Future edits to this skill append their own plain-language evidence above.

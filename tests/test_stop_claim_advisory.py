@@ -27,6 +27,7 @@ for entry in (SCRIPTS, HOOKS):
         sys.path.insert(0, str(entry))
 
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
+from godmode_runtime.godmode_projectmode import set_project_mode  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 
 HOOK = HOOKS / "godmode_session_hook.py"
@@ -46,6 +47,7 @@ def _project():
                              clear=False):
             archive = Chronicle(resolve_anchor(root))
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             yield root, state, archive
 
 

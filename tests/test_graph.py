@@ -388,11 +388,16 @@ class FileToModuleBridgeTests(unittest.TestCase):
     def test_depth_zero_is_refused_at_the_parser(self) -> None:
         with isolated_project() as (project, _state, _anchor, _archive):
             self._seed(project)
-            out = io.StringIO()
-            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-                with self.assertRaises(SystemExit):
-                    console_main(["--project", str(project), "--json",
-                                  "atlas", "graph", "query", "widget.py", "--depth", "0"])
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = console_main(["--project", str(project), "--json",
+                                     "atlas", "graph", "query", "widget.py", "--depth", "0"])
+            # A bad command line reports the console's own usage error, not
+            # argparse's bare exit, so a JSON caller can read why.
+            self.assertEqual(code, 2)
+            payload = json.loads(err.getvalue())
+            self.assertEqual(payload["error"], "UsageError")
+            self.assertIn("depth", payload["message"])
 
 
 if __name__ == "__main__":

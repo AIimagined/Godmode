@@ -12,7 +12,7 @@ hook-carrying hosts, stated rather than implied.
 Native JSON-RPC 2.0 over stdio, no SDK dependency: initialize, tools/list,
 tools/call. Anything else answers method-not-found.
 
-NS-10l (decision seq 11 - no daemons/listeners): one implementation, host-
+One implementation, host-
 generic. `--host` selects only the `serverInfo.name` suffix and which
 manifest documents it (goose's own extension config; Cursor's `mcp.json`)
 - the wire protocol, the tool table, and the per-request/no-port/no-daemon

@@ -42,7 +42,7 @@ SCENARIO_VERSIONS: dict[str, int] = {
     # the plain O_EXCL creation it used to name - a real content change to
     # what this scenario documents, landed without the version bump the
     # registry needs to tell drift from intent.
-    "concurrent-agent-collision": 2,
+    "concurrent-agent-collision": 3,
 }
 
 
@@ -474,7 +474,7 @@ def _concurrent_agent_collision(project: Path, archive: Chronicle) -> tuple[bool
         result = fresh.verify()
         intact = result["valid"]
         detail = f"{result['records']} records landed, chain valid={result['valid']}"
-        # N-9: verify() now reports a broken record (e.g. a non-contiguous
+        # Verify() now reports a broken record (e.g. a non-contiguous
         # sequence from the disabled lock above) instead of raising - the
         # named break still has to reach `detail`, or this control silently
         # stops detecting the corruption it exists to catch.
@@ -660,7 +660,7 @@ SCENARIO_DIGEST_REGISTRY: dict[str, str] = {
     'session-restart.local.v1': '4d01814d565143bd80ce4ad183f34d4f0044c7fa20b2e45f310e960afe2913b7',
     'prior-fix-unguarded.local.v1': 'bfdae584dcdb48b28511e51457d5ecce04e101704f4f02ead1f3ad6cfdcc57e5',
     'tool-call-interception.local.v1': 'b2999f12ac92abdb0401d0cb1d008e8df2bc37f04011ad11290fd30b31b1c457',
-    'concurrent-agent-collision.local.v2': 'c0679a1f48832d79206e188c5aeb34b942636799a34af92fa3ad503d143eaafb',
+    'concurrent-agent-collision.local.v3': '59bddb1baecf73c1ed6917a9cae33b72cc49771fcdc1a31c8a69143c6bc25a46',
     'oracle-moved-with-patch.local.v1': '8986a59fdca16cddff84ac7ef091277bfb1bcce830634ff34376b7a5381d80e4',
     'assertion-literal-moved.local.v1': 'b35cb886af9f3da0a0e9f6209276e5c4b8c58640d60c8b25e637e66fcf2ef6d1',
     'harness-node-dropped.local.v1': '799ef59ca2da12643b4deb0c76f50aa064fee905f2931a7b6b8328eeff14f851',
@@ -785,7 +785,7 @@ def _self_check() -> None:
     assert report["not_reproducible_here"], report
     assert all(entry["why"] for entry in report["not_reproducible_here"])
 
-    # U-S1: every scenario carries a versioned id and a content digest, and
+    # Every scenario carries a versioned id and a content digest, and
     # the shipped registry is clean against the code as it actually reads.
     for entry in report["scenarios"]:
         assert entry["id"] == scenario_id(entry["scenario"]), entry

@@ -69,6 +69,8 @@ class ReleaseNotesTests(_ProjectHelpers):
         self.assertIn("python -m unittest tests.test_perimeter", text)
         self.assertNotIn("Older thing", text)
         self.assertEqual(check_notes(root, "1.2.0")["ok"], True)
+        # The note is committed as-is on every platform: LF only.
+        self.assertNotIn(b"\r\n", notes_path(root, "1.2.0").read_bytes())
 
     def test_build_refuses_without_a_section_or_over_an_existing_note(self) -> None:
         root = self._project()

@@ -13,7 +13,7 @@ Most rows verify with `--help` (always resolves, always accurate, and
 never claims more than that the command exists). A small, curated set of
 verbs that already carry a dedicated `tests/test_verb_<verb>.py` module or
 an authored README section introducing them specifically - both added
-while closing NS-7's orphan-verb list - point the Verify column at that
+while closing the orphan-verb list - point the Verify column at that
 stronger, already-existing check instead; see `_VERIFY_OVERRIDES` below.
 Every other verb keeps `--help`.
 """
@@ -38,7 +38,7 @@ _VERIFY_OVERRIDES: dict[str, str] = {
     "ceilings": "`tests/test_verb_ceilings.py`",
     "rewind": "`tests/test_verb_rewind.py`",
     "sop": "`tests/test_verb_sop.py`",
-    "explain-context": 'see README "Continuity across sessions"',
+    "explain-context": "`tests/test_verb_explain_context.py`",
     "reflect": 'see README "Verdicts"',
     "locale": 'see README "Quality, freshness, and the watchdog"',
     "absorb": 'see README "Minimality and upstream drift"',

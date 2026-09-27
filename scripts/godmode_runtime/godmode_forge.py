@@ -56,12 +56,12 @@ class SkillProposal:
         if len(self.gap_evidence.strip()) < 30:
             raise ForgeError("A concrete capability-gap observation is required")
         if self.repeated_uses < 3:
-            # NS-11d: the procedural layer's promotion bar - tightened from
+            # The procedural layer's promotion bar - tightened from
             # two to three, matching `godmode_law.PROMOTION_SESSIONS`'s own
             # three-distinct-occurrence bar for a law candidate (read, not
             # imported: this module stays independent of `godmode_law`, the
             # same way `godmode_invariants.py` stays independent of every
-            # kind-owning module). The evidence-seq half of NS-11d (each of
+            # kind-owning module). The evidence-seq half of the rule (each of
             # the three successes cited by an archive record, not merely
             # asserted as a bare count) is enforced by the CLI at
             # `godmode skill forge`'s `--success-evidence`, not here: this

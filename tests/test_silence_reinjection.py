@@ -32,6 +32,7 @@ for extra in (SCRIPTS, HOOKS, Path(__file__).parent):
 from godmode_runtime.godmode_constants import (  # noqa: E402
     ACTION_SUBJECTS, BOOKKEEPING_SUBJECTS, COOLDOWN_SUBJECT, RUN_INERT_SUBJECTS,
 )
+from godmode_runtime.godmode_projectmode import set_project_mode  # noqa: E402
 from godmode_runtime.godmode_cooldown import (  # noqa: E402
     due_for_resurface, record_resurfaced,
 )
@@ -57,6 +58,7 @@ class DueForResurfaceTests(unittest.TestCase):
     def test_never_surfaced_and_idle_is_due(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             self.assertTrue(
                 due_for_resurface(archive, "ask:aaaaaaaaaaaa", now_turn=5,
                                   last_touched_turn=0, idle_turns=3))
@@ -64,6 +66,7 @@ class DueForResurfaceTests(unittest.TestCase):
     def test_not_yet_idle_is_not_due(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             self.assertFalse(
                 due_for_resurface(archive, "ask:aaaaaaaaaaaa", now_turn=2,
                                   last_touched_turn=0, idle_turns=3))
@@ -71,6 +74,7 @@ class DueForResurfaceTests(unittest.TestCase):
     def test_surfaced_once_then_silent_for_the_cooldown(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             anchor = "ask:bbbbbbbbbbbb"
             self.assertTrue(
                 due_for_resurface(archive, anchor, now_turn=3,
@@ -93,6 +97,7 @@ class DueForResurfaceTests(unittest.TestCase):
     def test_a_touched_ask_resets(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             anchor = "ask:cccccccccccc"
             record_resurfaced(archive, anchor, now_turn=3, cooldown_turns=5)
             # Turn 9 is past the cooldown (until_turn 8), but the anchor
@@ -110,6 +115,7 @@ class DueForResurfaceTests(unittest.TestCase):
     def test_distinct_anchors_do_not_share_a_cooldown(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             record_resurfaced(archive, "ask:dddddddddddd", now_turn=3, cooldown_turns=5)
             self.assertTrue(
                 due_for_resurface(archive, "ask:eeeeeeeeeeee", now_turn=4,
@@ -130,6 +136,7 @@ class DueForResurfaceTests(unittest.TestCase):
         sooner than the record alone says."""
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             anchor = "ask:gggggggggggg"
             # Recorded with a generous 10-turn cooldown (until_turn = 13).
             record_resurfaced(archive, anchor, now_turn=3, cooldown_turns=10)
@@ -161,6 +168,7 @@ class LoopAndWatchdogNonTripTests(unittest.TestCase):
     def test_three_cooldown_records_do_not_trip_the_loop_command(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             for turn, anchor in enumerate(
                     ("ask:1111", "ask:2222", "ask:3333"), start=1):
                 record_resurfaced(archive, anchor, now_turn=turn, cooldown_turns=5)
@@ -170,6 +178,7 @@ class LoopAndWatchdogNonTripTests(unittest.TestCase):
     def test_three_cooldown_records_do_not_trip_the_watchdog(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             for turn, anchor in enumerate(
                     ("ask:1111", "ask:2222", "ask:3333"), start=1):
                 record_resurfaced(archive, anchor, now_turn=turn, cooldown_turns=5)
@@ -184,6 +193,7 @@ class IdleResurfaceCapTests(unittest.TestCase):
     def test_25_open_obligations_cap_at_two_lines_and_two_records(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             for i in range(25):
                 archive.append("obligation", f"finish subsystem {i}",
                                {"status": "open", "value": f"subsystem {i} rollout"},
@@ -209,6 +219,7 @@ class IdleResurfaceCapTests(unittest.TestCase):
     def test_a_crowded_out_candidate_writes_no_cooldown_record(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             for i in range(5):
                 archive.append("obligation", f"finish part {i}",
                                {"status": "open", "value": f"part {i} rollout"},
@@ -235,6 +246,7 @@ class IdleResurfaceTouchTests(unittest.TestCase):
     def test_a_third_touched_obligation_refreshes_its_last_touched_turn(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             subjects = ["rewrite parser tokenizer", "rewrite parser lexer",
                         "rewrite parser grammar"]
             for subject in subjects:
@@ -272,6 +284,7 @@ class IdleResurfaceAskRenderTests(unittest.TestCase):
     def test_a_resurfaced_ask_shows_its_keyword_phrase(self) -> None:
         with isolated_project() as (_p, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             record = record_request(
                 archive, "please rename the launcher directory variable everywhere",
                 session="ask-session")
@@ -304,6 +317,7 @@ class ResurfacedSurvivesEarlierNoticesTests(unittest.TestCase):
     def test_a_stop_with_two_earlier_notices_still_shows_the_resurfaced_line(self) -> None:
         with isolated_project() as (project, state, _anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             # Earlier notice #1: three blocked --offline checks trip the
             # paid-iteration tripwire (`_tripwire_nudges`), at the
             # declared default ceiling of 3.

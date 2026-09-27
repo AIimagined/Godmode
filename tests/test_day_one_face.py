@@ -59,7 +59,9 @@ class DayOneFaceTests(unittest.TestCase):
             self.assertIn(name, done.stdout)
 
     def test_a_no_ask_host_sees_the_deny_dialect_on_the_face(self) -> None:
-        done = _run([], {"GROK_PLUGIN_ROOT": "C:/x"})
+        # Grok gained `ask` (HOSTS_WITH_ASK) and now takes the ask path like
+        # Claude, so a genuinely no-ask host (Copilot) proves this instead.
+        done = _run([], {"COPILOT_PLUGIN_DATA": "C:/x"})
         self.assertIn("has no ask", done.stdout)
         self.assertIn("authorize stage", done.stdout)
 

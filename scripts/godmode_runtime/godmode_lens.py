@@ -388,7 +388,7 @@ def detect_context_issues(
     """
     moment = now or datetime.now(timezone.utc)
     issues: list[dict[str, Any]] = []
-    # NS-11e fix round 1 (review B, B3): the brief carries the count and the
+    # The brief carries the count and the
     # subjects of every contradiction `godmode forget` flagged and nobody has
     # closed - two active records on one subject that disagree are exactly
     # the kind of context problem this list exists to name, and a reader who
@@ -495,7 +495,7 @@ def detect_context_issues(
         latest_sequence = records[-1]["sequence"] if records else 0
         baseline_confidence = record_confidence(latest_inventory["sequence"], latest_sequence)
         captured = _parse_time(latest_inventory["data"].get("captured_at"))
-        # Age alone is not staleness on a dormant repo (field report,
+        # Age alone is not staleness on a dormant repo (seen in practice,
         # 2026-09-03: a 117h-old baseline warned while the diff was clean).
         # When the live tree is available and diffs clean, the age warning
         # stays quiet; without a live tree to compare, age is the only
@@ -532,7 +532,7 @@ def detect_context_issues(
                         "severity": "warning",
                         # The scan measures drift and never moves the
                         # baseline; the finding names the verb that does
-                        # (field report 2026-09-04: "--scan does not
+                        # ("--scan does not
                         # refresh the baseline, needed a separate rebuild").
                         "detail": (f"{len(drift['added'])} added, {len(drift['changed'])} changed, "
                                    f"{len(drift['removed'])} removed since the baseline; once "
@@ -777,7 +777,7 @@ def build_context_brief(
     selected = selected[-DEFAULT_RECORD_LIMIT:]
     brief = {
         "generated_at": _utc_now(),
-        # NS-8f: the one fixed rule every brief carries, so a reader never
+        # The one fixed rule every brief carries, so a reader never
         # has to have seen the PostToolUse scan's marker (`action` /
         # `untrusted-content-seen`, `hooks/godmode_post_edit.py`) to know
         # the posture it enforces - fetched content and pasted evidence
@@ -850,7 +850,7 @@ def capacity_checkpoint_due(
     over = estimated > threshold
     # A brief past 80% stays past 80% for the life of a busy archive, so
     # the bare threshold re-fired on every call after the remedy had been
-    # applied (field report 2026-09-04: "fires on every call, no
+    # applied ("fires on every call, no
     # auto-remedy"). A checkpoint among the newest records IS the remedy:
     # the signal re-arms only once enough has happened since it.
     # Deliberate ceiling: "recent" is a record count, not a content diff -
@@ -952,7 +952,7 @@ def explain_context(anchor: ProjectAnchor, archive: Chronicle) -> dict[str, Any]
 
 
 def _tests_naming_symbol(project, about) -> dict[str, Any]:
-    """S6 (obligation 4482, reports 11-12): "which guards cite this symbol".
+    """"which guards cite this symbol".
 
     A reversal and a withdrawal both came from reading a test file directly
     because no godmode surface answered it. The last token of `about` is
@@ -982,13 +982,13 @@ def _tests_naming_symbol(project, about) -> dict[str, Any]:
     return result
 
 
-# NS-11b: the four kinds `why()` SHOWS as "what happened" (NS-11's table:
+# The four kinds `why()` SHOWS as "what happened" (
 # "Godmode today: chronicle actions, refusals, incidents, checkpoints"),
 # as opposed to "what is true".
 #
 # Deliberately NOT the same set as `godmode_forget.EPISODIC_KINDS`, and
-# named differently so the two are not mistaken for one definition (fix
-# round 1, M2). That one is the set that EXPIRES - `{action, refusal,
+# named differently so the two are not mistaken for one definition.
+# That one is the set that EXPIRES - `{action, refusal,
 # attestation}`, the keys of its own `TTL_DAYS` - and the two disagree in
 # both directions: an `attestation` expires but is never shown here, and
 # an `incident` or a `checkpoint` is shown here but never expires. One
@@ -1041,7 +1041,7 @@ def why(anchor: ProjectAnchor, archive: Chronicle, about: str) -> dict[str, Any]
         "invariants": [],
         "episodes": [],
     }
-    # S6 (obligation 4482): the tests that name the asked-about surface,
+    # The tests that name the asked-about surface,
     # beside the records - a gap claim meets its pin at design time.
     answer["guards"] = _tests_naming_symbol(anchor.project_root, about)
     episodes: list[dict[str, Any]] = []
@@ -1062,7 +1062,7 @@ def why(anchor: ProjectAnchor, archive: Chronicle, about: str) -> dict[str, Any]
             needle in str(name).lower() for name in data.get("files", [])
         ):
             answer["dependencies"].append(entry(record))
-        # NS-11b: retrieval before a task - the last N episodes (what
+        # Retrieval before a task - the last N episodes (what
         # happened, not what is true) matching the files/keywords named by
         # `about`. `entry()` above already carries sequence/recorded_at/an
         # evidence cite; a raw kind/status label is added here since
@@ -1163,7 +1163,7 @@ def ledger_block(archive: Any, records: list[dict[str, Any]] | None = None) -> d
 
 
 def precedence_block(archive: Any, dirty: int | None = None) -> dict[str, Any]:
-    """NS-8m: declared state (named directly by a plan or checkpoint record)
+    """Declared state (named directly by a plan or checkpoint record)
     outranks inferred state (computed by walking the archive). `goal` and
     `current_step` come from the active plan's own fields; `next` comes from
     the latest checkpoint's own `next` list - all three are declarations, not
@@ -1213,7 +1213,7 @@ def precedence_block(archive: Any, dirty: int | None = None) -> dict[str, Any]:
 
 
 def catch_up_block(archive: Any, now: str | None = None) -> dict[str, Any]:
-    """NS-8m multi-day catch-up: a per-day tally of what landed since the
+    """Multi-day catch-up: a per-day tally of what landed since the
     last checkpoint, so a session that resumes after a gap sees what changed
     on each day it missed rather than one flattened total. Days are grouped
     by the UTC calendar date in each record's `recorded_at`; `now` is taken

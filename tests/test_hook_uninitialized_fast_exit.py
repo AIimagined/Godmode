@@ -289,5 +289,73 @@ class InitStateMatchesResolveAnchorTests(unittest.TestCase):
             self.assertEqual(initstate.project_state(str(self.base))[0], initstate.UNKNOWN)
 
 
+class UninitializedModeTests(unittest.TestCase):
+    """`guard` unless the operator said `off`: machine-wide in the settings
+    file beside the operator policy, or for one repository in its own git
+    config. Read with stats and one small file each, nothing imported."""
+
+    def setUp(self) -> None:
+        self.base = Path(tempfile.mkdtemp(prefix="gm-uninit-mode-"))
+        self.addCleanup(shutil.rmtree, self.base, ignore_errors=True)
+        patcher = mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(self.base / "state")})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.project = self.base / "repo"
+        self.project.mkdir()
+        _git("init", "-q", cwd=self.project)
+
+    def _machine(self, text: str) -> None:
+        path = Path(initstate.machine_settings_path())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def test_the_settings_file_is_where_the_runtime_writes_it(self) -> None:
+        from godmode_runtime.godmode_sentinel import machine_settings_path
+        self.assertEqual(initstate.machine_settings_path(), str(machine_settings_path()))
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("GODMODE_STATE_HOME")
+            self.assertEqual(initstate.machine_settings_path(), str(machine_settings_path()))
+
+    def test_the_default_is_guard(self) -> None:
+        self.assertEqual(initstate.uninitialized_mode(str(self.project)), "guard")
+        self.assertIn("only harm-class commands are guarded",
+                      initstate.not_initialized_notice(str(self.project)))
+
+    def test_machine_wide_off(self) -> None:
+        self._machine(json.dumps({"uninitialized": "off"}))
+        self.assertEqual(initstate.uninitialized_mode(str(self.project)), "off")
+        self.assertIn("nothing is being gated", initstate.not_initialized_notice(str(self.project)))
+
+    def test_an_unreadable_or_unknown_value_is_guard(self) -> None:
+        for text in ("{not json", json.dumps({"uninitialized": "never"}), "[]"):
+            with self.subTest(text=text):
+                self._machine(text)
+                self.assertEqual(initstate.uninitialized_mode(str(self.project)), "guard")
+
+    def test_the_repository_value_wins_over_the_machine_value(self) -> None:
+        self._machine(json.dumps({"uninitialized": "guard"}))
+        _git("config", "--local", "godmode.uninitialized", "off", cwd=self.project)
+        (self.project / "sub").mkdir()
+        self.assertEqual(initstate.uninitialized_mode(str(self.project / "sub")), "off")
+        self._machine(json.dumps({"uninitialized": "off"}))
+        _git("config", "--local", "godmode.uninitialized", "guard", cwd=self.project)
+        self.assertEqual(initstate.uninitialized_mode(str(self.project)), "guard")
+
+    def test_config_set_writes_the_values_and_creates_no_archive(self) -> None:
+        cli = PLUGIN_ROOT / "scripts" / "godmode.py"
+        env = scrubbed_env(GODMODE_STATE_HOME=str(self.base / "state"))
+        for args, expected in ((["off"], "off"), (["guard", "--repo"], "guard")):
+            done = subprocess.run(
+                [sys.executable, str(cli), "--project", str(self.project), "config", "set",
+                 "uninitialized", *args], capture_output=True, text=True, env=env, timeout=120)
+            self.assertEqual(done.returncode, 0, done.stderr[-600:])
+            with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(self.base / "state")}):
+                self.assertEqual(initstate.uninitialized_mode(str(self.project)), expected)
+        self.assertEqual(json.loads(Path(initstate.machine_settings_path()).read_text(
+            encoding="utf-8")), {"uninitialized": "off"})
+        self.assertEqual(initstate.project_state(str(self.project))[0], initstate.ABSENT)
+        self.assertEqual(sorted(p.name for p in self.project.iterdir()), [".git"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -82,11 +82,12 @@ from pathlib import Path
 from typing import Any
 
 from .godmode_errors import ArchiveError
+from .godmode_watchdog import run_with_memory_cap
 
 
 def swallow_ratchet_finding(project: Path | str) -> dict[str, str] | None:
     """A file whose silent-handler count rose above its committed ceiling
-    (obligation 10273). None when the tree holds the ratchet."""
+    . None when the tree holds the ratchet."""
     from .godmode_swallow import BASELINE_FILENAME, scan_project
 
     try:
@@ -110,7 +111,7 @@ def swallow_ratchet_finding(project: Path | str) -> dict[str, str] | None:
 def malformed_findings(findings: list[dict[str, Any]]) -> list[dict[str, str]]:
     """A finding whose `class` field is present-and-blank, or names
     something outside `FAILURE_CLASSES`, is itself a mechanical finding
-    (N-12): a class that does not name a real class looks classified and
+    A class that does not name a real class looks classified and
     is not - worse than carrying none. A finding with no `class` key at
     all is untouched; `class` stays optional."""
     from .godmode_mistakes import FAILURE_CLASSES
@@ -131,7 +132,7 @@ def malformed_findings(findings: list[dict[str, Any]]) -> list[dict[str, str]]:
 
 
 def pattern_workaround_findings(findings: list[dict[str, Any]], archive: Any) -> None:
-    """NS-12e: a finding whose `class` names a recorded pattern's `subject`
+    """A finding whose `class` names a recorded pattern's `subject`
     gets that pattern's workaround folded into its detail, in place.
 
     The vocabulary a preflight finding's `class` is drawn from
@@ -165,7 +166,7 @@ def pattern_workaround_findings(findings: list[dict[str, Any]], archive: Any) ->
 
 
 def flake_findings(archive: Any) -> list[dict[str, str]]:
-    """NS-8o: a registered flake retried three or more times with no lesson
+    """A registered flake retried three or more times with no lesson
     naming it is a judgment finding - the registry entry must then either
     gain a lesson cite or be removed. `retries < 3` or a matching lesson is
     silent: a lesson-or-leave rule, not a quota on retries themselves."""
@@ -200,6 +201,66 @@ def _classes_tally(findings: list[dict[str, Any]]) -> dict[str, int]:
 
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, check=False)
+
+
+_TEST_MODULE_PATH = re.compile(r"^tests/test_[^/]+\.py$")
+_TEST_FUNC_DEF = re.compile(r"^\s*def test_")
+
+
+def _suite_size(repo: Path, ref: str) -> tuple[int, int] | None:
+    """(module count, `def test_` count) of `tests/test_*.py` at `ref`.
+    None when `ref` cannot be read at all - no such ref (no tag yet), a
+    shallow clone missing it, or git itself unavailable - so the caller
+    reports nothing rather than a crash or a made-up zero."""
+    listing = _git(repo, "ls-tree", "-r", "--name-only", ref, "--", "tests")
+    if listing.returncode != 0:
+        return None
+    paths = [p for p in listing.stdout.decode("utf-8", errors="replace").splitlines()
+             if _TEST_MODULE_PATH.match(p)]
+    functions = 0
+    for path in paths:
+        shown = _git(repo, "show", f"{ref}:{path}")
+        if shown.returncode != 0:
+            continue
+        text = shown.stdout.decode("utf-8", errors="replace")
+        functions += sum(1 for line in text.splitlines() if _TEST_FUNC_DEF.match(line))
+    return len(paths), functions
+
+
+def suite_growth_finding(repo: Path) -> dict[str, str] | None:
+    """How much `tests/test_*.py` grew - module count and `def test_`
+    count - since the previous release tag (`git describe --tags
+    --abbrev=0` .. HEAD). None (report nothing) with no previous tag, an
+    unreadable ref, or git unavailable - this check never fails a
+    preflight on its own absence. A finding only past 10% growth on
+    either count over its own previous count; whether it blocks is the
+    caller's call (advise: informational; strict: a finding)."""
+    described = _git(repo, "describe", "--tags", "--abbrev=0")
+    if described.returncode != 0:
+        return None
+    tag = described.stdout.decode("utf-8", errors="replace").strip()
+    if not tag:
+        return None
+    before = _suite_size(repo, tag)
+    after = _suite_size(repo, "HEAD")
+    if before is None or after is None:
+        return None
+    before_modules, before_functions = before
+    after_modules, after_functions = after
+    added_modules = after_modules - before_modules
+    added_functions = after_functions - before_functions
+    module_growth = (added_modules / before_modules) if before_modules else None
+    function_growth = (added_functions / before_functions) if before_functions else None
+    if not ((module_growth is not None and module_growth > 0.10)
+            or (function_growth is not None and function_growth > 0.10)):
+        return None
+    return {
+        "check": "suite-growth",
+        "detail": (f"tests grew from {before_modules} module(s)/{before_functions} "
+                   f"function(s) at {tag} to {after_modules}/{after_functions} at HEAD "
+                   f"({added_modules:+d} module(s), {added_functions:+d} function(s)) - "
+                   "over 10% growth since the previous release"),
+    }
 
 
 def _term_list(repo: Path) -> Path | None:
@@ -551,7 +612,7 @@ def push_preflight(project: Path | str,
     status = _git(repo, "status", "--porcelain=v1")
     if status.returncode != 0:
         raise ArchiveError("preflight needs a git repository")
-    # Field report 22 (2026-09-09): "preflight only runs on a committed
+    # "preflight only runs on a committed
     # tree, so here it can only run after the owner's gated commit". With
     # `dirty=True` the gate validates a snapshot of the working tree's
     # tracked changes (`git stash create`, which leaves the tree untouched)
@@ -658,7 +719,7 @@ def push_preflight(project: Path | str,
                                   "private list; run the scrub before staging "
                                   "the push",
                     })
-        # The swallow ratchet (obligation 10273): a file whose count of
+        # The swallow ratchet: a file whose count of
         # silent exception handlers rose above its committed ceiling is a
         # mechanical finding. The scanner and its baseline existed; nothing
         # at this gate read them.
@@ -694,6 +755,17 @@ def push_preflight(project: Path | str,
             import shlex
             suite = shlex.split(suite[0])
         suite_designated = bool(suite)
+        if suite:
+            # This IS the release check (the once-per-release full run, or
+            # its CI-gate equivalent): the suite it runs is the whole
+            # designated command, not a developer's routine local pass, so
+            # `tests/_slow.py`-gated modules (subprocess-heavy; skipped by
+            # default so `python -m unittest discover` stays fast) belong
+            # in it. `aliased_temp_environment()` below copies `os.environ`
+            # (or, when it returns None, the child inherits it directly),
+            # so setting it here reaches both the sharded and single-process
+            # runs.
+            os.environ["GODMODE_RUN_SLOW"] = "1"
         if suite and (shards_total > 1 or shard_index is not None) and "discover" in " ".join(suite):
             # One process over 3,400 tests is killed for memory on the
             # reference machine; N sequential shards finish. Each shard's
@@ -711,14 +783,29 @@ def push_preflight(project: Path | str,
                     continue
                 ran_shards.append(index)
                 try:
-                    shard = subprocess.run(watchdog_command(modules), cwd=worktree,
-                                           capture_output=True, check=False, timeout=SUITE_TIMEOUT_SECONDS,
-                                           env=aliased_temp_environment())
-                except subprocess.TimeoutExpired:
+                    # Memory-capped, not a bare subprocess.run: a runaway
+                    # scratch process under a shard (8.9 GB observed
+                    # 2026-09-25) used to run unbounded until the OS or the
+                    # timeout stopped it; this polls RSS and kills past the
+                    # configurable cap instead of waiting either out.
+                    shard = run_with_memory_cap(watchdog_command(modules), cwd=worktree,
+                                                capture_output=True, check=False, timeout=SUITE_TIMEOUT_SECONDS,
+                                                env=aliased_temp_environment())
+                except subprocess.TimeoutExpired as expired:
+                    peak = getattr(expired, "peak_rss_bytes", 0)
                     judgment.append({"check": "suite", "class": "environment-failure",
                                      "detail": f"shard {index} killed after "
-                                               f"{SUITE_TIMEOUT_SECONDS}s without a verdict"})
+                                               f"{SUITE_TIMEOUT_SECONDS}s without a verdict"
+                                               + (f"; peak child RSS {peak // (1024 * 1024)} MB"
+                                                  if peak else "")})
                     break
+                if shard.memory_killed:
+                    peak = shard.peak_rss_bytes // (1024 * 1024)
+                    judgment.append({"check": "suite", "class": "environment-failure",
+                                     "detail": f"shard {index} killed for memory: child RSS reached "
+                                               f"{peak} MB, over the configured cap "
+                                               "(GODMODE_CHILD_MEMORY_LIMIT_MB)"})
+                    continue
                 if shard.returncode != 0:
                     # Every shard runs: one gate round names every red test
                     # instead of the first shard's, so the next round is
@@ -743,11 +830,14 @@ def push_preflight(project: Path | str,
             # minutes on the reference machine, and a timeout kill is
             # indistinguishable from a failure in the finding.
             try:
-                run = subprocess.run(suite, cwd=worktree, capture_output=True,
-                                     check=False, timeout=SUITE_TIMEOUT_SECONDS)
+                # Memory-capped for the same reason as the sharded run
+                # above: an unbounded suite process is exactly where the
+                # 8.9 GB scratch runaway was observed.
+                run = run_with_memory_cap(suite, cwd=worktree, capture_output=True,
+                                          check=False, timeout=SUITE_TIMEOUT_SECONDS)
             except subprocess.TimeoutExpired as expired:
-                # A timeout kill is a verdict, not a crash: round 7 of the
-                # 0.3.18 gate died here as a bare traceback and the hour of
+                # A timeout kill is a verdict, not a crash: an earlier 0.3.18
+                # gate run died here as a bare traceback and the hour of
                 # suite output behind it was lost with the process. The
                 # partial output rides the exception; its tail is the only
                 # witness to where the suite was when the clock ran out.
@@ -757,10 +847,11 @@ def push_preflight(project: Path | str,
                 text = partial.decode("utf-8", errors="replace")
                 tail = text[-600:].strip()
                 # unittest's quiet stream is one mark per test; the count
-                # says how far the suite got before the clock did (round 8
+                # says how far the suite got before the clock did (one run
                 # reported 300 dots and nothing else - a tail with no
                 # position in it).
                 completed = sum(len(m) for m in re.findall(r"[.FEsx]{5,}", text))
+                peak = getattr(expired, "peak_rss_bytes", 0)
                 judgment.append({
                     "check": "suite",
                     "class": "environment-failure",
@@ -771,10 +862,20 @@ def push_preflight(project: Path | str,
                               "it stopped in"
                               + (f"; about {completed} quiet-mode test marks "
                                  "before the kill" if completed else "")
+                              + (f"; peak child RSS {peak // (1024 * 1024)} MB" if peak else "")
                               + (f"; last output: {tail[-300:]!r}" if tail else ""),
                 })
                 run = None
-            if run is not None and run.returncode != 0:
+            if run is not None and run.memory_killed:
+                peak = run.peak_rss_bytes // (1024 * 1024)
+                judgment.append({
+                    "check": "suite",
+                    "class": "environment-failure",
+                    "detail": f"designated suite killed for memory: child RSS reached "
+                              f"{peak} MB, over the configured cap "
+                              "(GODMODE_CHILD_MEMORY_LIMIT_MB)",
+                })
+            elif run is not None and run.returncode != 0:
                 # The finding names its catch: "exit 1" alone trains a
                 # 20-minute re-run to learn which test failed (first live
                 # run of the ratchet, 2026-09-04). unittest writes verdicts
@@ -913,7 +1014,7 @@ def push_preflight(project: Path | str,
     if archive is not None:
         try:
             # Closure honouring lives in one place (open_stated_requests),
-            # read through the one shared window (Task 2, 0.3.28): this
+            # read through the one shared window (since 0.3.28): this
             # gate used to ask for its own, shorter tail of request
             # records than the other readers did, so a busy session could
             # already have this ask fall out of the gate's view while it
@@ -939,7 +1040,7 @@ def push_preflight(project: Path | str,
                 })
         except Exception:  # noqa: BLE001
             skipped.append("open-asks scan: unavailable")
-        # Feature reach (2026-09-09, obligation 10119): a declared hook host
+        # Feature reach: a declared hook host
         # with no interception proof on this archive is a finding, not
         # silence - "unverifiable" was green over the host-reach gap for
         # twenty releases.
@@ -951,13 +1052,13 @@ def push_preflight(project: Path | str,
                 judgment.append(finding)
         except Exception:  # noqa: BLE001  # godmode: swallow-ok: a scan that cannot run is named in skipped, never a gate crash
             skipped.append("host-reach scan: unavailable")
-        # Grounded claims (obligation 10248): a claim whose cited evidence
+        # Grounded claims: a claim whose cited evidence
         # changed or vanished since it was recorded is a judgment finding.
         try:
             from .godmode_attest import stale_claims
             stale = stale_claims(archive, Path(project))
             if stale:
-                # Q6 (review): a `tree-changed` entry's `citation` is empty
+                # A `tree-changed` entry's `citation` is empty
                 # (no single citation is at fault, the whole tree moved) -
                 # rendered bare, never with the stray leading space an
                 # unconditional `f"{citation} {reason}"` left behind.
@@ -974,13 +1075,13 @@ def push_preflight(project: Path | str,
                 })
         except Exception:  # noqa: BLE001  # godmode: swallow-ok: a scan that cannot run is named in skipped, never a gate crash
             skipped.append("stale-claims scan: unavailable")
-        # NS-8o: a registered flake retried three or more times with no
+        # A registered flake retried three or more times with no
         # lesson naming it - the lesson-or-leave rule for the registry.
         try:
             judgment.extend(flake_findings(archive))
         except Exception:  # noqa: BLE001  # godmode: swallow-ok: a scan that cannot run is named in skipped, never a gate crash
             skipped.append("flake-ranking scan: unavailable")
-        # I-3: a hypothesis claim's or an incident's falsifier aged past
+        # A hypothesis claim's or an incident's falsifier aged past
         # two days with nothing run behind it - the theory stands on
         # exactly as much today as the day it was written.
         try:
@@ -988,7 +1089,17 @@ def push_preflight(project: Path | str,
             judgment.extend(falsifier_stale_findings(archive))
         except Exception:  # noqa: BLE001  # godmode: swallow-ok: a scan that cannot run is named in skipped, never a gate crash
             skipped.append("falsifier-aging scan: unavailable")
-        # NS-12e: a finding's class matched against a recorded pattern's
+        # Suite growth: tests/test_*.py modules and `def test_` functions
+        # added since the previous release tag - a quality signal, not
+        # harm, so it rides the same archive-scan slice and the same
+        # mode-severity rule below as every other check in it.
+        try:
+            growth = suite_growth_finding(repo)
+            if growth is not None:
+                judgment.append(growth)
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: a scan that cannot run is named in skipped, never a gate crash
+            skipped.append("suite-growth scan: unavailable")
+        # A finding's class matched against a recorded pattern's
         # subject - the workaround named the last time this class fired,
         # so a recurring failure is not rediscovered from scratch.
         try:
@@ -1002,7 +1113,7 @@ def push_preflight(project: Path | str,
         if project_mode(archive) == "advise":
             for _finding in judgment[_archive_scan_start:]:
                 _finding.setdefault("severity", "advisory")
-    # N-12: a class that does not name a real class (blank, or outside
+    # A class that does not name a real class (blank, or outside
     # FAILURE_CLASSES) is itself a mechanical finding - checked over both
     # buckets before the fold below, so a malformed class in a judgment
     # finding still turns the verdict.
@@ -1022,6 +1133,25 @@ def push_preflight(project: Path | str,
     if suite_skipped and verdict == "clean":
         verdict = "incomplete"
     if archive is not None:
+        # The enforce-lesson sidecar's tier-3 fallback (a full,
+        # unlocked-by-default `read_events()` walk,
+        # paid once per process when the sidecar is absent or stale) runs
+        # from INSIDE `append()`'s `write_lock()` when nothing warmed it
+        # first - fine once caught up, but on a large, never-warmed archive
+        # that walk is exactly what turns one attestation write into a long
+        # hold, blocking every other writer (hooks included) for the
+        # window. `godmode doctor` already avoids this by calling
+        # `seed_enforce_index()` from its own unlocked health-check walk
+        # before any write needs to; a preflight run - long-lived, and the
+        # one moment other writers most need the archive free - gets the
+        # same treatment here, so the write_lock the final append below
+        # takes is scoped to the write itself, never to catching up a
+        # backlog. Best-effort: a warm-up that cannot run must not cost the
+        # preflight its own attestation.
+        try:
+            archive.seed_enforce_index()
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: a cache warm is an optimization, never a preflight finding
+            pass
         # The attestation `authorize stage` reads before it stages a push.
         # A preflight that ran no suite attests `incomplete`, never `ran`.
         try:

@@ -168,6 +168,11 @@ Outside one, call the installed copy directly:
 $ python ~/.claude/plugins/cache/aiimagined/godmode/<version>/scripts/godmode.py init
 ```
 
+**PATH.** A plugin install does not put a bare `godmode` on PATH. The shim
+lives at `<plugin root>/bin/godmode.cmd` on Windows or `<plugin root>/bin/godmode`
+on macOS/Linux - call it by that path, or add its `bin` directory to PATH
+yourself for a bare `godmode` command.
+
 ## First five minutes
 
 Start with nothing blocked. In observe mode every gate that would deny or ask
@@ -244,6 +249,15 @@ that stays on the same chain - actions and refusals after thirty days,
 attestations after ninety - while anything a live claim, checkpoint, law guard or
 pin still cites never expires, and history can still reach a cold record by
 sequence. `godmode forget --dry-run` reports a pass without recording one.
+
+**Locking a skill.** Project skills change freely, and a change made with nobody
+watching is reported once and listed by `godmode status`; list a skill in
+`.godmode-boundaries.json` (`"ui": {"declared": ["skills/<name>/**"]}`) and every
+writer - an edit, `skill forge`, `retire`, `restore` - is refused in every session
+unless you make the change yourself, stage it with the password as the refusal
+shows (`authorize stage --operation "edit file <path>"` for one edit, `"retire skill <name>"`,
+`"restore skill <name>"` or `"forge skill <name>"` for a skill command), or run the skill command
+`--as-operator`.
 
 Every verb, its purpose, and a command that verifies it:
 [docs/COMMAND-REFERENCE.md](docs/COMMAND-REFERENCE.md), generated from the CLI's

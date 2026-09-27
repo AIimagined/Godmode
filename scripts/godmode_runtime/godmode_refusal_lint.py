@@ -7,7 +7,7 @@ an f-string (`JoinedStr`) and a `"a" + "b"` concatenation (`BinOp` of
 `+`, including a conditional clause like `(f"..." if x else "")`) into
 one string, with a `{<source>}` placeholder standing in for each
 interpolated expression (e.g. `{tier}`, `{preview['category']}`) - then
-lints each assembled message once. Fix round 1: the first version only
+lints each assembled message once. The first version only
 inspected bare `ast.Constant` nodes in isolation, so a wording problem
 spread across an f-string's own literal fragments (nearly every shipped
 refusal) was invisible to it - it saw the fragment `"refused: "` and

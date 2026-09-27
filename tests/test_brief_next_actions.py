@@ -26,6 +26,7 @@ for entry in (SCRIPTS, PLUGIN_ROOT):
         sys.path.insert(0, str(entry))
 
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
+from godmode_runtime.godmode_projectmode import set_project_mode  # noqa: E402
 from godmode_runtime.godmode_attest import record_claim  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_runtime.godmode_metrics import next_actions  # noqa: E402
@@ -42,6 +43,7 @@ def _project():
                              clear=False):
             archive = Chronicle(resolve_anchor(root))
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             yield root, archive
 
 
@@ -112,6 +114,7 @@ class NextActionsTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(base / "state")}, clear=False):
                 archive = Chronicle(resolve_anchor(root))
                 archive.initialize()
+                set_project_mode(archive, "strict")  # pins the full Stop and brief output
                 archive.append("incident", "the build broke twice",
                                {"failure_class": "plan-departure", "value": "x"}, evidence=[])
                 learning = [a for a in next_actions(archive, root) if a.startswith("learning")]
@@ -317,6 +320,7 @@ class HonestyTuningTests(unittest.TestCase):
         import subprocess
         with isolated_project() as (project, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             root = _P(__file__).resolve().parents[1]
             payload = _json.dumps({"session_id": "S-open",
                                    "cwd": str(project)})
@@ -344,6 +348,7 @@ class GatePostureTests(unittest.TestCase):
         import json as _json, os as _os, subprocess
         with isolated_project() as (project, _s, _a, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             root = _P(__file__).resolve().parents[1]
             env = dict(_os.environ)
             env["CLAUDE_PROJECT_DIR"] = str(project)

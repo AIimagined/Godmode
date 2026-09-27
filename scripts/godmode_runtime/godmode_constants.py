@@ -78,14 +78,14 @@ def agent_id() -> str:
 
 
 PRODUCT = "Godmode"
-RUNTIME_VERSION = "0.3.30"
+RUNTIME_VERSION = "0.3.31"
 SCHEMA_VERSION = 1
 ARCHIVE_DIRNAME = "godmode-state"
 MAX_HASH_BYTES = 5 * 1024 * 1024
 DEFAULT_CONTEXT_BUDGET = 1_200
 DEFAULT_RECORD_LIMIT = 24
 
-# Final review S2: the untrusted-content scan cap used to be two hand-synced
+# The untrusted-content scan cap used to be two hand-synced
 # literals (`godmode_attest._UNTRUSTED_SCAN_CAP`,
 # `hooks.godmode_post_edit._TOOL_RESULT_SCAN_CAP`) plus a third hardcoded
 # copy in `tests/test_untrusted_marker.py`, tied together only by a "must
@@ -95,8 +95,8 @@ DEFAULT_RECORD_LIMIT = 24
 # at module level (see that module's own docstring), so it keeps its own
 # module-level literal but `tests/test_untrusted_marker.py` pins the two
 # equal to this one value, so a drift on either side fails the test instead
-# of silently reopening the >64 KB file-hash-laundering path (Task 7's own
-# S2 fix: a flagged fetch saved to a file and cited as `file:`).
+# of silently reopening the >64 KB file-hash-laundering path (a flagged
+# fetch saved to a file and cited as `file:`).
 UNTRUSTED_SCAN_CAP_BYTES = 64 * 1024
 
 EVENT_KINDS = frozenset(
@@ -108,7 +108,7 @@ EVENT_KINDS = frozenset(
         "checker_bond", "claim", "criterion", "perimeter", "ratchet", "database", "decision",
         "differential", "documentation",
         "improvement_proposal", "improvement_verdict", "skill_impact",
-        # NS-2 + NS-10j (0.3.28 Plan 5 Task 2): a lesson graduates into the
+        # A lesson graduates into the
         # compiled law only through a promotion a DIFFERENT actor approves
         # with an independent re-run - see godmode_lessons.py and
         # godmode_law.promote_candidate. `lesson_candidate` is the rotation
@@ -116,11 +116,11 @@ EVENT_KINDS = frozenset(
         "lesson_promotion", "lesson_approval", "lesson_candidate",
         "incident", "invariant", "inventory", "lesson", "metric", "obligation", "pattern", "pin",
         "plan", "receipt", "refusal", "request",
-        # NS-11e (0.3.28 Plan 5 Task 7): `godmode forget`'s contradiction pass
+        # `godmode forget`'s contradiction pass
         # writes this - never a finding about who is right, only that the
         # archive holds two active, disagreeing records on one subject.
         "review",
-        # NS-13f (0.3.28 Plan 7 Task 5): a competing hypothesis with its kill
+        # A competing hypothesis with its kill
         # experiment; a kill result is a new record whose `of` names the first.
         "hypothesis",
         "session", "sprint", "upstream-diff", "verdict", "version",
@@ -133,7 +133,7 @@ EVENT_KINDS = frozenset(
 # a threat-detection harness's KnownActions census, 2026-09-10). A new
 # subject is added here first; `tests/test_action_subjects.py` greps every
 # writer and reader for the literal and fails on one this set lacks.
-# Fix round 2 (Task 8 review, B3): the one canonical spelling of the
+# The one canonical spelling of the
 # per-edit bookkeeping subject `hooks/godmode_post_edit.py` writes, so
 # every reader that must treat it specially - `godmode_loop`'s mutation
 # reset, `godmode_watchdog`'s unattested-run counter,
@@ -142,20 +142,20 @@ EVENT_KINDS = frozenset(
 # writer's own.
 EDIT_RECORD_SUBJECT = "edit-recorded"
 
-# NS-8f: a PostToolUse scan finding instruction-shaped text in a tool
+# A PostToolUse scan finding instruction-shaped text in a tool
 # result records the fact that it happened - a fact about the read, not
 # about a step this trajectory took. Same reasoning as `EDIT_RECORD_SUBJECT`
 # above, so it joins the same bookkeeping set rather than a second,
 # independently-typed one.
 UNTRUSTED_CONTENT_SUBJECT = "untrusted-content-seen"
 
-# NS-8o: the retry runner's record of one isolated rerun of a registered
+# The retry runner's record of one isolated rerun of a registered
 # flake. A retry is bookkeeping about the flake, never a step this
 # trajectory took, so it joins the same excluded set rather than a fourth,
 # independently-typed literal.
 FLAKY_RETRY_SUBJECT = "flaky-retry"
 
-# NS-10c: the retry runner's circuit breaker trips - a registered flake
+# The retry runner's circuit breaker trips - a registered flake
 # that failed isolated `n` times inside a window is parked, and skipped
 # (never retried) until `cooldown_hours` past the park record elapses.
 # Bookkeeping about the flake, same as `FLAKY_RETRY_SUBJECT` above, so both
@@ -163,18 +163,18 @@ FLAKY_RETRY_SUBJECT = "flaky-retry"
 FLAKE_PARKED_SUBJECT = "flake-parked"
 FLAKE_READMITTED_SUBJECT = "flake-readmitted"
 
-# NS-10d: one Stop/SessionEnd call's host-reported token usage. Bookkeeping
+# One Stop/SessionEnd call's host-reported token usage. Bookkeeping
 # about what the host declared, never a step this trajectory took, so it
 # joins the same excluded set rather than a fifth, independently-typed
 # literal.
 USAGE_OBSERVED_SUBJECT = "usage-observed"
 
-# C-9 (0.3.28 Plan 3 Task 3, fix round 1): one tick per real Stop pass
+# One tick per real Stop pass
 # while a builder done-bar check has a live escalation - `godmode_donebar
 # .note_turn`'s own record, counted against to retire the escalation.
 # Bookkeeping about the check, never a step this trajectory took, so it
 # joins the same excluded set rather than a sixth, independently-typed
-# literal. Task 3's first commit (6af4ff0) wrote this subject as a bare
+# literal. An earlier commit (6af4ff0) wrote this subject as a bare
 # module-local string, invisible to every reader below and to the census
 # `tests/test_action_subjects.py` runs to catch exactly that - the review
 # that followed measured the fallout: an ordinary session that stops
@@ -182,34 +182,34 @@ USAGE_OBSERVED_SUBJECT = "usage-observed"
 # tripped the watchdog. Both were the record itself, never the operator.
 DONEBAR_TURN_SUBJECT = "donebar-turn"
 
-# NS-10h (0.3.28 Plan 3 Task 11): `godmode_cooldown`'s own record of one
+# `godmode_cooldown`'s own record of one
 # resurface of an idle anchor (an obligation or an operator ask this
-# session's replies have gone quiet on) - the primitive NS-14e's bounded
-# verify nudges will call later against its own anchors. Bookkeeping about
+# session's replies have gone quiet on) - the primitive bounded
+# verify nudges can call later against its own anchors. Bookkeeping about
 # an anchor's silence, never a step this trajectory took, so it joins the
 # same excluded set rather than a seventh, independently-typed literal.
 COOLDOWN_SUBJECT = "cooldown"
-# NS-13d review H2: an edit the plan-first gate let through only because it
+# An edit the plan-first gate let through only because it
 # was small. It does not enroll its file in the change, so a later large
 # edit to that file is judged as a new file.
 PLAN_FIRST_EXEMPT_SUBJECT = "plan-first-small-edit"
 
-# NS-11e fix round 1 (review B, cadence / N9): the subject of the one
+# The subject of the one
 # bookkeeping `action` a real `godmode forget` pass writes about itself -
 # counts and outcomes, never a narration. Nothing else could say when a
 # pass last ran: a pass that found nothing eligible left no cold segment
 # and no other trace, so `recurring` had to re-derive "is a pass due" with
-# a full dry run on every call, and NS-11f's "scheduled (forget pass ran)"
+# a full dry run on every call, and a "scheduled (forget pass ran)"
 # test had no evidence to assert on.
 FORGET_PASS_SUBJECT = "forget-pass"
 
 # Subjects that are bookkeeping ABOUT an action, never an operation or step
 # the loop/watchdog/metrics detectors should reason about when they count
-# repeated or unattested work (Task 7 review, finding C5: `EDIT_RECORD_SUBJECT`
+# repeated or unattested work (`EDIT_RECORD_SUBJECT`
 # used to be the only member, checked by two separate `!= EDIT_RECORD_SUBJECT`
 # exclusion literals - `godmode_watchdog.py`'s unattested-run counter and
 # `godmode_metrics.py`'s `_action_transparency` - that would silently miss a
-# second bookkeeping subject added later; Tasks 11 and 12 extend this same
+# second bookkeeping subject added later; later work extends this same
 # set instead of adding a third and fourth literal. `godmode_metrics.py`'s
 # `_plan_adherence` (and `edit_records`) is deliberately NOT one of these
 # sites: it *selects* `edit-recorded` specifically rather than excluding
@@ -221,7 +221,7 @@ BOOKKEEPING_SUBJECTS = frozenset({
     PLAN_FIRST_EXEMPT_SUBJECT,
 })
 
-# Task 7 re-review (fix round 2, N1): `BOOKKEEPING_SUBJECTS` minus
+# `BOOKKEEPING_SUBJECTS` minus
 # `EDIT_RECORD_SUBJECT` - the subset of bookkeeping that is a genuinely
 # inert READ, never a run boundary. `edit-recorded` is bookkeeping too,
 # but it is ALSO the one record that marks "something changed here" - the
@@ -241,20 +241,21 @@ RUN_INERT_SUBJECTS = BOOKKEEPING_SUBJECTS - {EDIT_RECORD_SUBJECT}
 
 ACTION_SUBJECTS = frozenset(
     {
-        # I-9: a subagent's hand-back message is data about work done, not
+        # A subagent's hand-back message is data about work done, not
         # an operator ask - recorded as the lightweight fact that a relay
         # arrived, never minted as a request the operator is waited on to
         # close.
         "agent-relay-seen",
-        "atlas-query", "capability-consumed", "capability-issued", "chain-reanchored",
+        "archive-identity-adopted",
+        "atlas-query", "chain-fork-repaired", "capability-consumed", "capability-issued", "chain-reanchored",
         # A compaction is a context eviction that destroys the evidence it
         # happened. Without a record, a session cannot say it compacted at all,
         # and every later "what I have seen so far" rests on an invisible gap.
         "context-compacted",
-        # C-9 (0.3.28 Plan 3 Task 3): the done-bar's own per-Stop turn
+        # The done-bar's own per-Stop turn
         # tick, joined to `BOOKKEEPING_SUBJECTS` above.
         DONEBAR_TURN_SUBJECT,
-        # NS-10h (0.3.28 Plan 3 Task 11): one resurface of an idle
+        # One resurface of an idle
         # anchor - bookkeeping about the anchor's silence, joined to
         # `BOOKKEEPING_SUBJECTS` above.
         COOLDOWN_SUBJECT,
@@ -268,16 +269,16 @@ ACTION_SUBJECTS = frozenset(
         # about repeated or unattested operations.
         EDIT_RECORD_SUBJECT,
         "failure-nudge",
-        # NS-10c: the breaker's own trip/readmit records - bookkeeping about
+        # The breaker's own trip/readmit records - bookkeeping about
         # the flake, joined to `BOOKKEEPING_SUBJECTS` above.
         FLAKE_PARKED_SUBJECT, FLAKE_READMITTED_SUBJECT,
-        # NS-8o: one isolated rerun of a registered flake - bookkeeping
+        # One isolated rerun of a registered flake - bookkeeping
         # about the flake, joined to `BOOKKEEPING_SUBJECTS` above.
         FLAKY_RETRY_SUBJECT,
-        # NS-13d: bookkeeping about an edit the plan-first gate exempted
+        # Bookkeeping about an edit the plan-first gate exempted
         # as small, joined to `BOOKKEEPING_SUBJECTS` above.
         PLAN_FIRST_EXEMPT_SUBJECT,
-        # NS-11e (0.3.28 Plan 5 Task 7): one record per real `godmode forget`
+        # One record per real `godmode forget`
         # pass - the evidence that the scheduled pass ran at all.
         FORGET_PASS_SUBJECT,
         "gate-asked", "git-hook-inspection-failed", "git-hook-malformed-input",
@@ -285,11 +286,11 @@ ACTION_SUBJECTS = frozenset(
         "interrupted-intent", "law-debrief", "laws-delivered", "observe-advisory",
         "preflight-skipped", "prompt-shape-nudge", "recurrence-nudge", "registry-nudge",
         "sources-gate", "tripwire-nudge",
-        # NS-8f: a fetch/search/read-of-external tool result that scanned as
+        # A fetch/search/read-of-external tool result that scanned as
         # instruction-shaped text - bookkeeping about the read, joined to
         # `BOOKKEEPING_SUBJECTS` above.
         UNTRUSTED_CONTENT_SUBJECT,
-        # NS-10d: one Stop/SessionEnd call's host-reported usage - bookkeeping
+        # One Stop/SessionEnd call's host-reported usage - bookkeeping
         # about what the host declared, joined to `BOOKKEEPING_SUBJECTS` above.
         USAGE_OBSERVED_SUBJECT,
         "verify-promotion-nudge", "would-have-required-read",
@@ -315,7 +316,7 @@ IGNORED_DIRECTORY_NAMES = frozenset(
         # copy of this list, so every other walk - the atlas, the database
         # inventory, the scope fence - descended into them.
         ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
-        # Framework build caches. Field report 2026-09-04: a Next.js
+        # Framework build caches. A Next.js
         # project's `.next` output polluted every drift count - hundreds
         # of "added/changed" paths no person had touched.
         ".next", ".nuxt", ".svelte-kit", ".turbo", ".cache",

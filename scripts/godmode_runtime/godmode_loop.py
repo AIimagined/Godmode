@@ -23,9 +23,9 @@ from .godmode_errors import ArchiveError
 REPEAT_THRESHOLD = 3
 LOOP_CONFIG_FILENAME = ".godmode-loop.json"
 
-# U-R2: consecutive no-progress rounds before each mandated response.
-STALL_REDIRECT_THRESHOLD = 2  # N1: blocking "change direction" finding
-STALL_HALT_THRESHOLD = 4  # N2: governance human-escalation halt
+# Consecutive no-progress rounds before each mandated response.
+STALL_REDIRECT_THRESHOLD = 2  # Blocking "change direction" finding
+STALL_HALT_THRESHOLD = 4  # Governance human-escalation halt
 # Progress that clears a stall streak - the same records U-V1/U-R3 already
 # treat as evidence something happened, not just was attempted.
 _PROGRESS_KINDS = frozenset({"change", "attestation", "verdict"})
@@ -35,7 +35,7 @@ _PROGRESS_KINDS = frozenset({"change", "attestation", "verdict"})
 # human escalation the halt asked for.
 _OPERATOR_SOURCE_KINDS = frozenset({"request", "decision"})
 
-# Task 10b: what a loop/experiment declaration may claim about how closely
+# What a loop/experiment declaration may claim about how closely
 # it is watched. "unattended" is not a third level quietly accepted here -
 # nothing in this runtime reads every cycle's output before the next one
 # starts, so nothing may declare itself safe to run with nobody watching.
@@ -82,7 +82,7 @@ def _finding(detector: str, detail: str, blocking: bool, citations: list[int]) -
 def _repeated_actions(
     records: list[dict[str, Any]], threshold: int = REPEAT_THRESHOLD
 ) -> list[dict[str, Any]]:
-    # Field report file 2026-09-10: 112 `npx vitest run` gate records were
+    # 112 `npx vitest run` gate records were
     # read as "nothing changed between runs" while the source changed
     # before every one of them. A run after a mutation-shaped record (an
     # edit, a change record, an attestation) is a new experiment; only
@@ -96,7 +96,7 @@ def _repeated_actions(
                 kind in ("action", "refusal") and subject in _MUTATION_SUBJECTS):
             last_mutation_seq = int(record.get("sequence", 0))
             continue
-        # Task 7 review (fix round 1, C1; fix round 2, N2): bookkeeping
+        # Bookkeeping
         # about a read (`untrusted-content-seen`, `flaky-retry`,
         # `usage-observed` - `RUN_INERT_SUBJECTS`) is not a mutation, so it
         # must never reach the branch above and reset `last_mutation_seq`
@@ -109,7 +109,7 @@ def _repeated_actions(
         # branch four lines above (it IS a mutation record; see
         # `_MUTATION_SUBJECTS` below), so it is deliberately excluded from
         # `RUN_INERT_SUBJECTS` and never named here as an example this
-        # skip handles (round 2 N2: round 1's comment claimed it was).
+        # skip handles.
         if kind == "action" and subject in RUN_INERT_SUBJECTS:
             continue
         if kind != "action":
@@ -135,7 +135,7 @@ def _repeated_actions(
 _MUTATION_SUBJECTS = frozenset({
     "worktree-file-mutation", "scripted-source-edit", "local-repository-change",
     "filesystem-mutation", "edit", "write", "notebookedit", "apply_patch",
-    # Fix round 2 (Task 8 review, B1): it IS a mutation record - excluding
+    # It IS a mutation record - excluding
     # it from `_repeated_actions`' own action-repetition tally (the
     # `continue` two lines above this set's use) is a side effect of
     # treating it as one, not a separate carve-out, and it gives this
@@ -334,7 +334,7 @@ def stall_escalation(
     n1: int = STALL_REDIRECT_THRESHOLD,
     n2: int = STALL_HALT_THRESHOLD,
 ) -> list[dict[str, Any]]:
-    """U-R2: graduated response to consecutive empty rounds, not one
+    """Graduated response to consecutive empty rounds, not one
     threshold treated as both "notice" and "emergency".
 
     Below N1: nominal, no finding. From N1 to just under N2: a blocking
@@ -365,7 +365,7 @@ def stall_escalation(
 
 
 def declare_maturity(value: Any) -> str:
-    """Validate a loop/experiment declaration's `maturity` field (Task 10b).
+    """Validate a loop/experiment declaration's `maturity` field.
 
     Only `"report-only"` and `"assisted"` are legal. `"unattended"` is
     refused by name, not silently mapped to the nearest legal level: nothing
@@ -383,7 +383,7 @@ def declare_maturity(value: Any) -> str:
 
 
 def loop_ready(declaration: dict[str, Any]) -> dict[str, Any]:
-    """Task 10b's pre-flight audit: structural readiness before cycle one.
+    """Pre-flight audit: structural readiness before cycle one.
 
     Checks the CONTRACT's shape, not whether its parts are individually
     sound - a declared stop contract's own predicates are `godmode_stop`'s
@@ -437,8 +437,8 @@ def loop_ready(declaration: dict[str, Any]) -> dict[str, Any]:
 
 
 def experiment_ready(declaration: dict[str, Any]) -> dict[str, Any]:
-    """Task 10b's pre-flight audit for the OTHER declaration type the brief
-    names alongside loops: `.godmode-experiment.json`. Narrower than
+    """Pre-flight audit for the OTHER declaration type
+    alongside loops: `.godmode-experiment.json`. Narrower than
     `loop_ready` on purpose - an experiment has no escalation ladder and no
     separate verdict_path to name, so only what an experiment actually has
     is checked: its stop contract (`max_runs`, already this file's own

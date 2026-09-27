@@ -6,19 +6,15 @@ reference that would settle it sits unread.
 
 ## Gap evidence
 
-- seq:14934 - a lesson recorded 2026-09-16: compatibility was declared
-  unverifiable for several hosts while the private record already held
-  per-host reference implementations nobody had opened. The ruling it
-  carries: read the reference, replicate it in stdlib under Godmode's
-  names, pin it with a reproducing test, cite both on the host row.
-- seq:16489 - "Plan 3 Task 4: read receipts recorded by godmode read, absorb
-  verdicts refuse README-only readings, parity --sources reports files
-  opened (7fa218a)": the record that introduced `godmode read` and `parity
-  --sources`, which this skill's step 1 fronts to prove the reference was
-  read rather than skimmed.
-- seq:10840 - the 0.3.23 cut checkpoint whose summary names `privacy
-  --repo` among what shipped: the tracked-tree scan this skill's step 6
-  runs before a replication is committed.
+- Compatibility with several hosts was declared unverifiable while
+  reference implementations for each of those hosts already existed and
+  sat unopened.
+- A way to prove a reference had actually been read, rather than skimmed
+  from its landing page, existed separately from the workflow that would
+  use it before replicating anything.
+- A privacy scan of the tracked tree existed as a standalone check,
+  disconnected from the point in a replication where it actually needs to
+  run — right before the change is committed.
 
 ## Promise
 
@@ -26,4 +22,4 @@ A replication starts from receipted source reads, is pinned by a test
 proven able to fail, is cited on its row with both the receipt and the
 test, and is scrubbed before it is committed.
 
-Future edits to this skill append their own seq: citation above.
+Future edits to this skill append their own plain-language evidence above.

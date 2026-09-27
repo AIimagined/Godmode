@@ -1,6 +1,6 @@
 """Iteration controls computed from records and the host transcript.
 
-Field report file 2026-09-10 and the operator's own observation: an agent
+Observed in practice and confirmed by the operator: an agent
 declares everything complete, then after the deployment work names one
 more item "for the next release" that was asked for in this one; and the
 iteration trap (spectator loops, local minima, runaway spend) is watched
@@ -33,7 +33,7 @@ def open_scope(archive: Any, session_id: str | None) -> dict[str, list[str]]:
     out: dict[str, Any] = {"asks": [], "steps": [], "criteria": [], "hypotheses": [],
                            "temporaries": [], "window_overflow": False, "blocked_obligations": []}
     records = archive.select(limit=600)
-    # NS-10e: an obligation another record has named via `--supersedes` is
+    # An obligation another record has named via `--supersedes` is
     # never latest here either, same rule `godmode_status.remaining` folds
     # through - this reader carries no trust rule of its own, so the
     # default `combine` (plain recency) is exactly what it used before.
@@ -48,7 +48,7 @@ def open_scope(archive: Any, session_id: str | None) -> dict[str, list[str]]:
         if not _obligation_open(record):
             continue
         data = record.get("data") or {}
-        # NS-8n: an obligation blocked by another open obligation is listed
+        # An obligation blocked by another open obligation is listed
         # here so it is never lost, but stays out of every nagged list
         # (`scope_items` does not read this key) until its blocker closes.
         open_blockers = [b for b in (data.get("blocked_by") or [])
@@ -61,7 +61,7 @@ def open_scope(archive: Any, session_id: str | None) -> dict[str, list[str]]:
                 f"{subject} still on record - restore it, then `godmode remember --kind obligation "
                 f"--subject \"{subject}\" --status closed`")
     # The one shared reader every open-ask surface now pulls through
-    # (Task 2, 0.3.28): a per-caller record count here disagreed with the
+    # (fixed in 0.3.28): a per-caller record count here disagreed with the
     # closure command's own count in a busy session, and the gate named an
     # ask the closure had already answered.
     requests, window_overflow = read_request_window(archive)
@@ -277,7 +277,7 @@ def commit_score_plateau(project: Path, window: int = 12, streak: int = 4) -> di
     from .godmode_anchor import git_marker_above
     if not git_marker_above(Path(project).resolve()):
         # Not a repository: nothing to read, and the spawn costs 100 ms or
-        # more on every Stop (field report 2026-09-23).
+        # more on every Stop.
         return None
     try:
         done = subprocess.run(["git", "log", f"-{window}", "--format=%h %s"], cwd=str(project),

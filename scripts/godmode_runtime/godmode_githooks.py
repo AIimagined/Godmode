@@ -1,4 +1,4 @@
-"""CX-4: git-hook enforcement backstop - a second boundary, host-independent.
+"""Git-hook enforcement backstop - a second boundary, host-independent.
 
 CX-1/CX-2/CX-3 all enforce at a HOST's own boundary (Claude's PreToolUse,
 Codex's pre_tool_use, ...). Every one of them shares the same weakness: they
@@ -65,7 +65,7 @@ else's pre-existing hook. `.sample` files (git's own uninstalled templates)
 are never even looked at: this module only ever reads/writes the exact hook
 filename, never anything with a suffix.
 
-**Known, disclosed bypass (fix round 1, I1).** `git push --no-verify` (and
+**Known, disclosed bypass.** `git push --no-verify` (and
 any client that skips or reroutes hooks, e.g. `git -c
 core.hooksPath=<elsewhere>`) skips every client-side hook including this
 one - git's own documented escape hatch, not a defect here. This backstop
@@ -170,7 +170,7 @@ def _canonical_body(text: str) -> str:
     re-hashes from the REAL on-disk file to check that digest against - so
     the comparison is "does this file's actual body match what its own
     header claims", never two independently-regenerated "ideal" strings
-    that happen to share a recipe (the defect fix round 1 closed: the old
+    that happen to share a recipe (the old
     comparison recomputed `expected_digest` from `(name, godmode_py)` alone
     and never read the file's real bytes at all, so a hand-edit that left
     the header line untouched - e.g. `exit $?` -> `exit 0  # tampered` -
@@ -260,7 +260,7 @@ def _hook_file_state(path: Path, expected_name: str) -> dict[str, Any]:
     `.sample` files are never reached here: callers only ever pass the exact
     hook filename, never a suffixed one.
 
-    Tamper detection (fix round 1, C1): `recorded_digest` is read from the
+    Tamper detection: `recorded_digest` is read from the
     file's OWN header line, and the value it is checked AGAINST -
     `actual_digest` - is the sha256 of THIS file's real, current, on-disk
     canonical body (`_canonical_body`). No independently-regenerated "ideal"
@@ -305,7 +305,7 @@ def git_hooks_install(archive: Any, project_root: Path) -> dict[str, Any]:
     clobber). Re-running this after an earlier install is an ordinary
     reinstall/update for any hook this module already owns.
     """
-    # M6 (external audit): this whole function used to report success by a
+    # This whole function used to report success by a
     # single proxy - `declared` - that only ever answers "is the policy
     # opted in", never "did the install actually happen". Both the
     # unresolvable-hooks-directory branch and a swallowed `chmod` failure
@@ -430,7 +430,7 @@ _BOUNDARY_NOTES: dict[str, str] = {
                      "a problem (a pinned evaluator's content changed) and cannot undo it",
 }
 
-# I1 (fix round 1): the one bypass every one of the four hooks above shares,
+# The one bypass every one of the four hooks above shares,
 # stated once here rather than re-derived per hook, and surfaced in
 # `git_hooks_status`'s own output - not just in prose a reader has to find.
 # `--no-verify` is git's own documented flag; naming it is not conceding a
@@ -447,7 +447,7 @@ KNOWN_BYPASS = (
 
 
 def _git_registration_grade(hooks: dict[str, dict[str, Any]]) -> str:
-    """CX-5: `"partial"`/`"none"` - the git backstop's own registration signal.
+    """`"partial"`/`"none"` - the git backstop's own registration signal.
 
     `godmode_hookproof.py` cannot compute this itself (it would need to
     import this module, which already imports IT - a real cycle). `"none"`
@@ -473,7 +473,7 @@ def git_hooks_status(archive: Any, project_root: Path) -> dict[str, Any]:
             "declared": declared, "hooks_dir": None,
             "hooks": {name: {"state": "no-git"} for name in HOOK_NAMES},
             "boundary_notes": dict(_BOUNDARY_NOTES), "known_bypass": KNOWN_BYPASS,
-            # CX-5: no git directory at all is the same UNAVAILABLE grade as
+            # No git directory at all is the same UNAVAILABLE grade as
             # no godmode hook file - `registration="none"` since `hooks` is
             # entirely synthetic `"no-git"` markers here, never a real state.
             "interception": interception_state(archive, "git", registration="none"),
@@ -482,7 +482,7 @@ def git_hooks_status(archive: Any, project_root: Path) -> dict[str, Any]:
     return {
         "declared": declared, "hooks_dir": str(hooks_dir), "hooks": hooks,
         "boundary_notes": dict(_BOUNDARY_NOTES), "known_bypass": KNOWN_BYPASS,
-        # CX-5: the five-level grade for the git backstop specifically -
+        # The five-level grade for the git backstop specifically -
         # `verify --git` is what can move this to HARD; a tampered or
         # missing hook file caps it at PARTIAL/UNAVAILABLE via the
         # registration override above, regardless of any stale proof.
@@ -542,7 +542,7 @@ def _parse_pre_push_refs(
 ) -> tuple[list[tuple[str, str, str, str]], bool]:
     """`(updates, malformed)`.
 
-    Fix round 1, C2: the old version silently dropped any line that did not
+    The old version silently dropped any line that did not
     split into exactly 4 fields, so an all-garbled stdin produced the same
     `updates == []` an honestly-empty push does - indistinguishable, and
     silently allowed by `_evaluate_pre_push`'s empty-updates branch. That is
@@ -575,7 +575,7 @@ def _is_fast_forward(project_root: Path, ancestor_sha: str, descendant_sha: str)
 def _malformed_stdin_result(
     archive: Any, project_root: Path, hook_name: str, detail: str,
 ) -> dict[str, Any]:
-    """Fix round 1, C2: malformed/unreadable stdin fails closed under
+    """Malformed/unreadable stdin fails closed under
     declared policy, and stays advisory-only otherwise - the policy check
     runs BEFORE any allow/block decision, never after a parse-result
     shortcut. Chronicled either way (counts-only: host + hook name, never
@@ -710,7 +710,7 @@ def _closure_inspection_failed(archive: Any, detail: str) -> dict[str, Any]:
     closure_survey` raising, or reporting a failed inspection) blocks
     unconditionally, regardless of the declared `git_backstop` policy.
 
-    Fix round 2 (D2iii, re-review): round 1 routed this through
+    An earlier version routed this through
     `_inspection_failed_result`, whose ordinary behavior - advisory-allow
     when `git_backstop` is not declared - is exactly right for every OTHER
     hook this file evaluates, all of which sit behind that policy gate by
@@ -804,7 +804,7 @@ def _evaluate_pre_commit(archive: Any, project_root: Path) -> dict[str, Any]:
             "git_hook": "pre-commit", "verdict": "allow", "staged_files": 0,
             "reason": "no staged changes visible to pre-commit",
         }
-    # NS-8g: a commit that stages one version surface out of step with its
+    # A commit that stages one version surface out of step with its
     # siblings ships a claim the project itself already disagrees with. This
     # is unconditional (not gated behind the declared `git_backstop` policy,
     # unlike `_decide` below) for the same reason the private-term scan
@@ -827,7 +827,7 @@ def _evaluate_pre_commit(archive: Any, project_root: Path) -> dict[str, Any]:
                     "`godmode version --reconcile` and stage every surface together"
                 ),
             }
-    # C-6 (0.3.28 Plan 4 Task 2): `hooks/gate_table.json`'s own
+    # `hooks/gate_table.json`'s own
     # `generated_from` naming a digest the live sentinel no longer produces
     # is the exact 0.3.27 miss this closes - a decision table silently out
     # of step with the classifier it was generated from, caught nowhere
@@ -852,14 +852,14 @@ def _evaluate_pre_commit(archive: Any, project_root: Path) -> dict[str, Any]:
                 "regenerated table"
             ),
         }
-    # I-6: a staged code file with no green retest newer than its last edit
+    # A staged code file with no green retest newer than its last edit
     # is a closure claim nobody checked. Unconditional, exactly like the
     # version-drift check above and for the identical reason - a commit
     # that shipped unretested is history a later `retest --run` cannot
     # retroactively undo, so this is never gated behind the declared
     # `git_backstop` policy and has no capability escape.
     #
-    # Fix round 1 (Q1) / round 2 (D2iii): a failure INSIDE the survey (a
+    # A failure INSIDE the survey (a
     # bad record, an atlas build that hit its own time budget) must read
     # as a reason, never a bare traceback, AND must block unconditionally
     # like every other closure verdict - `_closure_inspection_failed`
@@ -872,7 +872,7 @@ def _evaluate_pre_commit(archive: Any, project_root: Path) -> dict[str, Any]:
     if survey is None:
         return _closure_inspection_failed(
             archive, "`git diff --cached --name-status` exited nonzero")
-    # S3 (coordinator ruling): an uncovered file is its own category with
+    # An uncovered file is its own category with
     # its own remedy - never folded into the "stale" list under a retest
     # remedy that could never clear it, because nothing retests it today.
     uncovered = survey["uncovered"]
@@ -885,7 +885,7 @@ def _evaluate_pre_commit(archive: Any, project_root: Path) -> dict[str, Any]:
             "uncovered_files": uncovered,
             "reason": f"refused: {remedy}",
         }
-    # D5 (coordinator ruling, fix round 2): a file with no `edit-recorded`
+    # A file with no `edit-recorded`
     # action AND no green retest whose blob-hash or clean-tree proof
     # covers its current content is its OWN category too - "stage the
     # retest result" (the `stale` remedy below) is a no-op for a file that

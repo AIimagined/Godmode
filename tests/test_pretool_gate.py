@@ -64,7 +64,9 @@ class ReadKindAllowTests(unittest.TestCase):
         # Allow is SILENT by this hook's contract (only deny/ask print a
         # body), so the pin is a contrast pair: the read-only builtin stays
         # silent with exit 0, while an unknown name on the same payload
-        # shape prints a deny - the verdict can vary, so it is a verdict.
+        # shape is refused - the verdict can vary, so it is a verdict. Grok
+        # reads `ask` since 3b7841ef ("ask reaches the host"), so the
+        # recoverable R3 refusal arrives as an ask there, not a deny.
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertNotIn("deny", done.stdout)
         with isolated_project() as (project, _archive):
@@ -82,7 +84,9 @@ class ReadKindAllowTests(unittest.TestCase):
                 capture_output=True, text=True, encoding="utf-8",
                 timeout=120, env=environment,
             )
-        self.assertIn("deny", unknown.stdout)
+        verdict = json.loads(unknown.stdout)
+        self.assertEqual(verdict["decision"], "ask")
+        self.assertIn("unrecognized-tool", verdict["reason"])
 
 
 class MeterTests(unittest.TestCase):

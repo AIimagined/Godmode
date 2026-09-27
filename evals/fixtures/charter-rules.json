@@ -6,11 +6,11 @@
       "trigger": "always",
       "verify": "none"
     },
-    "R-1b73eb11ad": {
+    "R-20491c95b3": {
       "enforcement": "ADVISORY",
-      "text_hash": "c51492baf0bc64c2",
-      "trigger": "before_completion",
-      "verify": "second_probe_cited"
+      "text_hash": "7cc2e8241e44782b",
+      "trigger": "always",
+      "verify": "none"
     },
     "R-2259c5b00c": {
       "enforcement": "HARD",
@@ -149,15 +149,21 @@
       "text_hash": "9da1de908466b152",
       "trigger": "before_completion",
       "verify": "attestation_present"
+    },
+    "R-f2005df709": {
+      "enforcement": "ADVISORY",
+      "text_hash": "006b1f8f21f09e3e",
+      "trigger": "always",
+      "verify": "none"
     }
   },
   "schema": "godmode-charter-snapshot-v1",
   "summary": {
     "enforcement": {
-      "ADVISORY": 15,
+      "ADVISORY": 16,
       "HARD": 10,
       "SOFT": 0
     },
-    "rules": 25
+    "rules": 26
   }
 }

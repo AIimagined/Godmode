@@ -1,4 +1,4 @@
-"""CX-2: the canonical host-event adapter.
+"""The canonical host-event adapter.
 
 Every host that can call this plugin's pre-tool boundary speaks its own
 dialect: field names in two casings, tool names that mean the same thing
@@ -18,7 +18,7 @@ never guessed):
   `toolName`/`tool_name`, `toolInput`/`tool_input`, `sessionId`/
   `session_id`, `workspaceRoot`/`cwd` - both casings, always (`field()`).
   **First-alias-wins is a deliberate security property, not incidental
-  dict-ordering** (fix round 1, I3): when a payload carries BOTH casings
+  dict-ordering**: when a payload carries BOTH casings
   of a field with conflicting values, the alias listed FIRST in
   `_ALIASES` (always the camelCase spelling) wins, consistently, at
   every call site that reads a payload field this way -
@@ -40,8 +40,8 @@ never guessed):
   synthesis with the Plan's ORIGINAL (pre-amendment) CX-2 interface line
   ("`parse_host_payload(raw) -> HostEvent` - detects host by payload
   shape"), needed because a real hook subprocess frequently runs with
-  none of the three env vars set at all (fix round 1, I2 - corrects a
-  misattribution in the prior revision of this docstring that cited the
+  none of the three env vars set at all (this corrects a
+  misattribution in an earlier revision of this docstring that cited the
   whole chain, including the shape step, as addendum text). No env var
   here ever decides an INTERCEPTION claim - that stays
   `godmode_hookproof.py`'s chronicled-proof job exclusively; this chain
@@ -56,8 +56,8 @@ never guessed):
   INTENT (Plan amendment 3); `functions.exec` is Codex's orchestration
   wrapper - unwrapped to the nested tool call it names, or failed closed
   when the nested shape does not match any documented pattern (Plan
-  amendment 2, CX-2 additions). **STRICT whole-patch parsing** (fix
-  round 1, C1): if ANY line in the patch body looks directive-like (the
+  amendment 2, CX-2 additions). **STRICT whole-patch parsing**:
+  if ANY line in the patch body looks directive-like (the
   `***` marker plus an Add/Update/Delete File or Move to keyword, in any
   indentation or spacing variant) but does not match the exact grammar
   above, the ENTIRE `apply_patch` call fails closed - a patch mixing one
@@ -75,16 +75,16 @@ never guessed):
   with `tool_kind="unrecognized"`, and the caller (the hook) classifies it
   fail-closed as `protected=True, category="unrecognized-tool"`,
   chronicled with counts only (`record_unrecognized_tool`), exactly ONCE
-  per miss (fix round 1, M1 - the classifier's own generic refusal-write
+  per miss (the classifier's own generic refusal-write
   used to fire a second time for the same miss; the hook now checks
   `preview["_chronicled_miss"]` before its own write). A `tool_name` field
   that is PRESENT but empty/whitespace-only is also unrecognized-tool
-  (fix round 1, M2), distinct from a payload that carries no `tool_name`
+  , distinct from a payload that carries no `tool_name`
   field at all (the bare `{"operation": ...}` shape below).
-- Gate-exactly-once dedup was REMOVED in fix round 1 (C2/I1): the prior
+- Gate-exactly-once dedup was REMOVED: the prior
   revision keyed a `seen` set on `request_id` alone, so a SECOND, DIFFERENT
   operation replaying an already-seen id was silently allowed with zero
-  scrutiny - a live bypass guarding a double-dispatch path
+  scrutiny - guarding against a double-dispatch path
   (`_adapt_codex`'s `functions.exec` unwrap recurses via a direct Python
   call, never through `parse_host_payload`) that does not exist anywhere
   in this tree. `request_id` stays on `HostEvent` (recorded, and hashed
@@ -114,7 +114,7 @@ SCHEMA = 1
 # reads a payload field through this, never through a bare `raw.get(...)`,
 # so a host that ships camelCase or snake_case is never a special case.
 #
-# Alias ORDER is load-bearing (fix round 1, I3): each tuple lists camelCase
+# Alias ORDER is load-bearing: each tuple lists camelCase
 # before snake_case, and `field()` returns the FIRST key present - so when a
 # payload carries both casings with conflicting values, camelCase always
 # wins, deterministically, everywhere this table (or a duplicate of it, like
@@ -131,7 +131,7 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "cwd": ("workspaceRoot", "workspace_root", "cwd"),
     "request_id": ("requestId", "request_id", "toolUseId", "tool_use_id"),
     "actor": ("agentId", "agent_id", "subagentType", "subagent_type"),
-    # CX-5: Codex's sandbox-approval metadata field name is NOT documented
+    # Codex's sandbox-approval metadata field name is NOT documented
     # anywhere in-repo or in the addenda (the spec's own CONFIRMED/ACCEPTED
     # findings note Codex's exact hook-payload field names are unpublished).
     # These four spellings are this module's own best-effort guess at the
@@ -146,13 +146,13 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     # safe; ACTING on one would not be.
     "approval_context": ("approvalContext", "approval_context",
                         "sandboxApproval", "sandbox_approval"),
-    # NS-10k: an optional host declaration of what kind of session this is
+    # An optional host declaration of what kind of session this is
     # (interactive, background, scheduled, ...) - read the same dual-cased
     # way as every other field here, and read-if-present exactly like
     # `approval_context` above: no adapter's documented contract names this
     # field either, so its absence is the ordinary case, not a defect.
     "session_type": ("sessionType", "session_type"),
-    # NS-10k fix round 2 (task-14-rereview.md R1): read through `field()`
+    # Read through `field()`
     # like every field above, but had no alias entry, so it fell back to
     # `(name,)` and read only the exact snake_case key - a host that spells
     # it `permissionMode` (Claude Code's own PreToolUse payload documents
@@ -179,7 +179,7 @@ def field(raw: Any, name: str) -> Any:
 def field_present(raw: Any, name: str) -> bool:
     """Whether `raw` carries ANY known casing of `name`'s key, regardless of
     its value - distinct from `field()` returning a falsy value. Fix round
-    1, M2: a payload with `"tool_name": ""` (explicitly present, empty) must
+    A payload with `"tool_name": ""` (explicitly present, empty) must
     be told apart from one with no `tool_name` field at all - the first is
     an unrecognized tool, the second is the host-neutral bare-operation
     shape.
@@ -189,7 +189,7 @@ def field_present(raw: Any, name: str) -> bool:
     return any(key in raw for key in _ALIASES.get(name, (name,)))
 
 
-# NS-10d: the host-reported usage block, read the same host-neutral way as
+# The host-reported usage block, read the same host-neutral way as
 # every other payload field, but not through `field()`/`_ALIASES` - no
 # adapter or plan text documents a camelCase spelling for this key, and
 # guessing one (the way CX-5's `approval_context` guesses do) would put an
@@ -247,8 +247,8 @@ def usage_from_payload(raw: Any) -> dict[str, int] | None:
 # a read costs nothing, a fenced mutation walks `targets` through the scope
 # fence, a shell command is classified as text, `unrecognized` fails closed
 # (an unmapped tool name, OR an empty/whitespace `tool_name` that was
-# explicitly present - fix round 1, M2), `malformed` fails closed the same
-# way for a structurally-invalid `apply_patch` body (fix round 1, C1 - kept
+# explicitly present), `malformed` fails closed the same
+# way for a structurally-invalid `apply_patch` body (kept
 # distinct from `unrecognized` so the chronicle record and the operator-
 # facing reason both name the real cause), and `other` is "known tool, none
 # of the above" (e.g. Claude's TodoWrite).
@@ -271,7 +271,7 @@ class HostEvent:
     cwd: str
     request_id: str
     tool_kind: str | None = None
-    # CX-5: the host's OWN sandbox/approval metadata (e.g. Codex's sandbox
+    # The host's OWN sandbox/approval metadata (e.g. Codex's sandbox
     # approval state), when the payload carries one under any alias in
     # `_ALIASES["approval_context"]`. RECORDED ONLY - see
     # `godmode_hookproof.py`'s module docstring and CX-5's mode table:
@@ -300,14 +300,14 @@ _CLAUDE_TOOLS = frozenset({
 _CODEX_TOOLS = frozenset({"shell_command", "apply_patch", "functions.exec"})
 # Grok tool map, Addendum 6 verbatim: run_terminal_command/write/search_replace.
 _GROK_TOOLS = frozenset({"run_terminal_command", "write", "search_replace"})
-# Field report 2026-08-28 (live Grok session): the adapter knew only the
+# The adapter knew only the
 # three mutating names, so Grok's own read-only builtins arrived as
 # `unrecognized-tool` and fail-closed - the gate blocked ordinary reads.
 # Observed names only; a read-kind event is allow by construction (the
 # hook's own early branch), and unknown names still fail closed.
 _GROK_READONLY_TOOLS = frozenset({
     "get_command_or_subagent_output", "read_file", "grep", "spawn_subagent",
-    # Eighth field report 2026-09-05 + the `tools` array of a live
+    # Also observed 2026-09-05, together with the `tools` array of a live
     # `grok -p` init event on 1.0.13 the same day: the rest of Grok's
     # non-mutating builtins. Reads, listings, searches, plan-mode toggles,
     # a question to the user, a scheduler listing, a monitor - none of them
@@ -344,7 +344,7 @@ _ANTIGRAVITY_READONLY_TOOLS = frozenset({
     "read_url_content", "grep_search", "codebase_search", "find_by_name",
     "list_dir",
 })
-# Field report 2026-08-29 (live Antigravity agent, its own tool vocabulary):
+# Observed 2026-08-29 (live Antigravity agent, its own tool vocabulary):
 # the mutating file tools are write_to_file / replace_file_content with a
 # PascalCase `TargetFile` arg - names no other documented host uses, so
 # they also serve shape detection. The same report shows the live envelope
@@ -367,7 +367,7 @@ def detect_host(raw: Any) -> str:
     "unknown"`. The first three steps are Addendum 6's binding chain,
     verbatim; the payload-shape step is this module's own addition, needed
     because a real subprocess invocation frequently carries none of the
-    three env vars (fix round 1, I2 - the prior docstring wrongly cited the
+    three env vars (an earlier docstring wrongly cited the
     whole chain as addendum text; see the module docstring's host-detection
     bullet for the full correction). The Codex step (2026-08-28) reads the
     markers Codex documents as its own - `PLUGIN_ROOT` in the env, `turn_id`
@@ -388,7 +388,7 @@ def detect_host(raw: Any) -> str:
         return "antigravity"
     if os.environ.get("ANTIGRAVITY_AGENT") or os.environ.get(
             "ANTIGRAVITY_CONVERSATION_ID"):
-        # Field report 2026-08-29: Antigravity injects ANTIGRAVITY_AGENT,
+        # Antigravity injects ANTIGRAVITY_AGENT,
         # ANTIGRAVITY_CONVERSATION_ID, ANTIGRAVITY_PROJECT_ID (and more)
         # into its agent subprocesses - names captured live from an env
         # dump. A hook subprocess is expected to inherit them; that
@@ -398,7 +398,7 @@ def detect_host(raw: Any) -> str:
     if os.environ.get("GROK_AGENT"):
         return "grok"
     if os.environ.get("GROK_PLUGIN_ROOT") or os.environ.get("GROK_HOOK_EVENT"):
-        # Live field report 2026-08-29 (Grok 1.0.5): the hook SUBPROCESS is
+        # The hook SUBPROCESS is
         # given GROK_PLUGIN_ROOT / GROK_HOOK_EVENT, not GROK_AGENT - so a
         # Grok builtin outside the three mutating names detected as no host
         # at all and fail-closed on an allowed tool. The variables Grok
@@ -418,7 +418,7 @@ def detect_host(raw: Any) -> str:
         # override them (Cursor's own plugin-root variable is undocumented).
         return shape
     if os.environ.get("PLUGIN_ROOT"):
-        # Codex field report 2026-08-28: Codex sends Claude's tool names and
+        # Codex sends Claude's tool names and
         # sets none of the env vars above, so the shape step called it
         # Claude - and Claude's "ask" is a hook FAILURE on Codex, which then
         # runs the command. `PLUGIN_ROOT`/`PLUGIN_DATA` are "a Codex-specific
@@ -449,7 +449,7 @@ def _detect_from_shape(raw: Any) -> str | None:
     if isinstance(tool, str) and tool:
         if tool in (_ANTIGRAVITY_SHELL_TOOLS | _ANTIGRAVITY_FENCED_TOOLS
                     | _ANTIGRAVITY_READONLY_TOOLS):
-            # Antigravity's own vocabulary (field report 2026-08-29) - no
+            # Antigravity's own vocabulary - no
             # other documented host names a tool run_command, view_file,
             # write_to_file, or replace_file_content.
             return "antigravity"
@@ -510,7 +510,7 @@ def unrecognized_tool_preview(tool: str) -> dict[str, Any]:
     approval, never a silent guess and never an outright unrecoverable
     refusal for something that might turn out to be harmless.
 
-    `_chronicled_miss: True` (fix round 1, M1) tells the hook this preview
+    `_chronicled_miss: True` tells the hook this preview
     already has its own dedicated chronicle record
     (`record_unrecognized_tool`, called alongside this) - the classifier's
     OWN generic refusal-write, downstream, must not write a second record
@@ -534,7 +534,7 @@ def record_unrecognized_tool(archive: Any, host: str, tool: str) -> None:
     with no adapter mapping - never the command/target text that came with
     it. Best-effort: a chronicle failure must never change the fail-closed
     answer, which is already decided before this is ever called. Called
-    exactly ONCE per miss (fix round 1, M1) - the hook checks
+    exactly ONCE per miss - the hook checks
     `preview["_chronicled_miss"]` before its own generic refusal-write, so
     this is never followed by a second record for the same call.
     """
@@ -552,7 +552,7 @@ def record_unrecognized_tool(archive: Any, host: str, tool: str) -> None:
 def malformed_apply_patch_preview(tool: str) -> dict[str, Any]:
     """The `classify_action`-shaped preview for an `apply_patch` call whose
     patch body contains a directive-looking line that does not match the
-    strict grammar (fix round 1, C1). Distinct category from
+    strict grammar. Distinct category from
     `unrecognized-tool`: the TOOL is known (`apply_patch` is mapped) - what
     failed is the patch BODY's own structure, and the operator-facing
     reason should say that, not "this tool is unmapped".
@@ -685,7 +685,7 @@ _APPLY_PATCH_MOVE = re.compile(r"^\*\*\* Move to: (.+)$")
 _APPLY_PATCH_STRICT = (_APPLY_PATCH_ADD, _APPLY_PATCH_DELETE,
                        _APPLY_PATCH_UPDATE, _APPLY_PATCH_MOVE)
 
-# Fix round 1, C1 (review Critical): a LOOSE detector, deliberately not
+# A LOOSE detector, deliberately not
 # anchored and deliberately case-insensitive - the strict regexes above
 # require column-0, single-space, exact-case text; this one exists purely
 # to catch a line that LOOKS like a directive but does not match them.
@@ -694,7 +694,7 @@ _APPLY_PATCH_STRICT = (_APPLY_PATCH_ADD, _APPLY_PATCH_DELETE,
 # only the first - `has_malformed_directive` below is what makes the whole
 # call fail closed instead.
 #
-# Fix round 2 (re-review adversarial extension): round 1's version matched
+# Round 1's version matched
 # literal `***` + keyword + colon, which two smuggling vectors defeated -
 # a Unicode zero-width character breaking the literal `***` run (`**<ZWSP>*
 # Add File: /etc/passwd`), and a directive keyword with no trailing colon
@@ -857,10 +857,10 @@ def apply_patch_targets(patch_text: str) -> list[tuple[str, str]]:
 
 
 def has_malformed_directive(patch_text: str) -> bool:
-    """Fix round 1, C1 (widened in fix round 2): `True` iff any line in
+    """`True` iff any line in
     `patch_text` LOOKS like a patch directive - after Unicode-format-
-    character stripping and whitespace folding (`_normalize_for_lookalike`,
-    fix round 2), a 2+-asterisk run followed by a directive keyword,
+    character stripping and whitespace folding (`_normalize_for_lookalike`),
+    a 2+-asterisk run followed by a directive keyword,
     colon optional (`_looks_directive_like`) - but the ORIGINAL,
     un-normalized line does not match one of the four STRICT grammars
     `apply_patch_targets` requires. The caller's job is to fail the WHOLE
@@ -930,7 +930,7 @@ def _adapt_codex(raw: Any, tool: str | None = None, tool_input: Any = None,
 
     if tool == "apply_patch":
         candidates = _body_candidates(tool_input, _PATCH_BODY_FIELDS)
-        # Fix round 1, C1 (review Critical): checked BEFORE trusting
+        # Checked BEFORE trusting
         # apply_patch_targets's output - a patch with one well-formed and
         # one malformed directive must never proceed on the well-formed
         # target alone. Union form (review I1): ANY candidate malformed
@@ -1168,7 +1168,7 @@ def _adapt_cursor(raw: Any) -> HostEvent:
 
 
 # ---------------------------------------------------------------------------
-# Gemini CLI adapter. Sprint 4: the shipped `.gemini-plugin/hooks-fragment.json`
+# Gemini CLI adapter. The shipped `.gemini-plugin/hooks-fragment.json`
 # subscribes `BeforeTool` with matcher `.*` - EVERY tool - while Gemini was
 # routed through the generic adapter, whose map knows only Claude's names. So
 # every Gemini tool call arrived as `unrecognized-tool`: `run_shell_command`,
@@ -1280,7 +1280,7 @@ def _adapt_antigravity(raw: Any) -> HostEvent:
         args = call.get("args")
         args = args if isinstance(args, dict) else {}
     else:
-        # Flat dialect, as the live host actually spoke it (field report
+        # Flat dialect, as the live host actually spoke it (observed
         # 2026-08-29): hook_event_name/tool_name/tool_input at top level,
         # PascalCase arg names inside.
         tool = str(field(raw, "tool_name") or "").strip()
@@ -1353,7 +1353,7 @@ _ADAPTERS = {
     "claude": _adapt_claude,
     "codex": _adapt_codex,
     "grok": _adapt_grok,
-    # Sprint 4: Cursor moved off the generic fallback onto its own documented
+    # Cursor moved off the generic fallback onto its own documented
     # dialect - see `_adapt_cursor`. Gemini stays generic (its dialect is
     # Addendum 4a and is not tool-type-matched the way Cursor's is).
     "cursor": _adapt_cursor,
@@ -1365,7 +1365,7 @@ _ADAPTERS = {
 def parse_host_payload(raw: Any) -> HostEvent:
     """Detect the host, translate its payload into one canonical `HostEvent`.
 
-    Every call classifies fully - fix round 1 (C2/I1) removed the prior
+    Every call classifies fully - this removed the prior
     revision's `seen`-set dedup entirely; see the module docstring's
     "Gate-exactly-once dedup was REMOVED" bullet for why. `request_id`
     still travels on the returned `HostEvent` (and is hashed, never stored
@@ -1376,7 +1376,7 @@ def parse_host_payload(raw: Any) -> HostEvent:
         raw = {}
     host = detect_host(raw)
 
-    # Fix round 1, M2: a `tool_name` field that is PRESENT but empty or
+    # A `tool_name` field that is PRESENT but empty or
     # whitespace-only is a host explicitly saying "no tool" - that is not
     # the same signal as a payload that carries no `tool_name` field at
     # all (the bare `{"operation": ...}` shape), and must not be routed
@@ -1404,7 +1404,7 @@ def parse_host_payload(raw: Any) -> HostEvent:
     actor = field(raw, "actor")
     if actor is not None:
         event.actor = str(actor)
-    # CX-5: recorded verbatim when the payload carries a dict-shaped
+    # Recorded verbatim when the payload carries a dict-shaped
     # approval_context - never coerced, never inspected for a "truthy"
     # value to act on. A non-dict value under one of the aliases (a host
     # that spells the field differently than guessed, or an unrelated
@@ -1471,16 +1471,25 @@ def capture_payload_probe(archive: Any, raw: Any, event: HostEvent) -> None:
 # ---------------------------------------------------------------------------
 
 # Hosts whose own documented contract includes an `ask`/third decision.
-# Everyone else has only allow/deny (Addendum 6: "Grok has no ask decision";
-# Addenda 4a/2 document no ask for Gemini/Codex either) - `render_decision`
-# folds `ask` down to `deny` for those, with a remedy that names the staged-
-# capability escape hatch by its exact command.
+# Everyone else has only allow/deny (Addenda 4a/2 document no ask for
+# Gemini/Codex either) - `render_decision` folds `ask` down to `deny` for
+# those, with a remedy that names the staged-capability escape hatch by its
+# exact command.
 # Antigravity belongs here: its documented decision vocabulary includes a
 # real "ask" (and "force_ask") - antigravity.google/docs/hooks.
 # Codex joined 2026-09-08: its PreToolUse wire accepts permissionDecision
 # "ask" (hooks/src/schema.rs PreToolUsePermissionDecisionWire) and its
 # PermissionRequest hook is an ask surface of its own.
-HOSTS_WITH_ASK = frozenset({"claude", "cursor", "antigravity", "codex"})
+# Grok joined on build 1.0.41 (superseding an earlier reading of "Grok has
+# no ask decision" against an older build): ~/.grok/docs/user-guide/
+# 10-hooks.md's "Output (Blocking Hooks)" section now documents
+# `{"decision": "ask", "reason": "..."}` on `PreToolUse` as a first-class
+# decision alongside allow/deny/defer, reaching a real permission prompt
+# (its own "An ask makes the call reach the permission prompt" wording).
+# Code-read, not yet a live-session proof - the live check is tracked
+# separately; `godmode_reach.py`'s `ask-decision` cell for grok stays
+# `partial` ("guide, live proof pending") until that proof lands.
+HOSTS_WITH_ASK = frozenset({"claude", "cursor", "antigravity", "codex", "grok"})
 
 
 def render_decision(host: str, event_name: str, base_decision: str,
@@ -1502,6 +1511,11 @@ def render_decision(host: str, event_name: str, base_decision: str,
             "decision": {"behavior": "deny", "message": reason},
         }}, 0
     effective = base_decision if (base_decision != "ask" or host in HOSTS_WITH_ASK) else "deny"
+    # `grok_decision` backs the union fallback below, reached only when
+    # detection failed and the host is genuinely unknown - conservative on
+    # purpose, so it keeps folding `ask` to `deny` there regardless of
+    # `HOSTS_WITH_ASK`. Grok itself is positively detected (`host == "grok"`
+    # below) and uses `effective` directly, which is already host-aware.
     grok_decision = "deny" if base_decision == "ask" else base_decision
     claude_key = {
         "hookSpecificOutput": {
@@ -1531,14 +1545,21 @@ def render_decision(host: str, event_name: str, base_decision: str,
         # base decision travels unfolded.
         return {"decision": base_decision, "reason": reason}, 0
     if host == "grok":
-        return {**claude_key, **grok_keys}, 0
+        # Build 1.0.41: grok's own top-level `decision` takes the same
+        # {allow, deny, ask, defer} vocabulary as `hookSpecificOutput.
+        # permissionDecision` (whichever is present decides; the guide
+        # names `permissionDecision` canonical when both are), so `ask`
+        # travels through unfolded here too, via `effective` - not the
+        # unconditionally-folded `grok_decision` the undetected-host
+        # fallback below still uses.
+        return {**claude_key, "decision": effective, "reason": reason}, 0
     if host == "cursor":
         return cursor_keys, 0
     return {**claude_key, **grok_keys, **cursor_keys}, 0
 
 
 # ---------------------------------------------------------------------------
-# CX-3: public aliases of this module's own tool/event vocabularies, for
+# Public aliases of this module's own tool/event vocabularies, for
 # `godmode_host_manifests.py` (the packaging layer) to build host hook
 # manifests FROM. A manifest generator must never re-type a tool or event
 # name by hand - every matcher/allowlist it emits is built from one of these

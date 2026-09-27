@@ -40,6 +40,7 @@ if str(Path(__file__).parent) not in sys.path:
 
 from godmode_runtime.godmode_anchor import (  # noqa: E402
     anchor_fingerprint, resolve_anchor)
+from godmode_runtime.godmode_projectmode import set_project_mode  # noqa: E402
 from godmode_runtime.godmode_chronicle import (  # noqa: E402
     Chronicle, TRUST_ORDER, _record_hash, latest_by_subject, writer_fingerprint)
 from godmode_runtime.godmode_console import main as console_main  # noqa: E402
@@ -82,6 +83,7 @@ class AmnesiaTests(unittest.TestCase):
     def test_a_decision_recorded_in_session_one_is_recalled_in_session_two(self) -> None:
         with isolated_project() as (_project, _state, anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             archive.append(
                 "decision", "release-cadence",
                 {"value": "ship weekly, not nightly", "status": "active"},
@@ -96,6 +98,7 @@ class AmnesiaTests(unittest.TestCase):
     def test_the_same_fact_is_recalled_by_context_why(self) -> None:
         with isolated_project() as (_project, _state, anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             archive.append(
                 "decision", "release-cadence",
                 {"value": "ship weekly, not nightly", "status": "active"},
@@ -121,6 +124,7 @@ class ContradictionTests(unittest.TestCase):
         # intended shape (see the module's own lesson example).
         with isolated_project() as (_project, _state, _anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             first = archive.append(
                 "decision", "stdin-read-behavior-full",
                 {"value": "hooks read stdin to EOF", "status": "active"}, evidence=[],
@@ -156,6 +160,7 @@ class SemanticDecisionInvariantTests(unittest.TestCase):
     def test_a_semantic_decision_missing_value_and_evidence_is_refused(self) -> None:
         with isolated_project() as (_project, _state, _anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             with self.assertRaises(ArchiveError) as ctx:
                 archive.append(
                     "decision", "some-label",
@@ -169,6 +174,7 @@ class SemanticDecisionInvariantTests(unittest.TestCase):
     def test_a_complete_semantic_decision_is_accepted(self) -> None:
         with isolated_project() as (_project, _state, _anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             record = archive.append(
                 "decision", "some-label",
                 {"subject": "database-choice", "value": "postgres",
@@ -180,6 +186,7 @@ class SemanticDecisionInvariantTests(unittest.TestCase):
     def test_absorb_and_plain_decisions_without_the_opt_in_key_are_unaffected(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             # A plain decision via `remember`, with no --evidence at all -
             # the exact shape `tests/test_writer_trust.py` and
             # `tests/test_supersession.py` rely on staying legal.
@@ -196,6 +203,7 @@ class StalenessTests(unittest.TestCase):
     def test_a_superseded_decision_is_not_the_current_value_for_its_subject(self) -> None:
         with isolated_project() as (_project, _state, _anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             old = archive.append(
                 "decision", "database-choice",
                 {"value": "sqlite", "status": "active"}, evidence=[],
@@ -273,6 +281,7 @@ class PromotionTests(unittest.TestCase):
     def test_cli_refuses_fewer_than_three_success_evidence_citations(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             destination = Path(project) / "skills"
             code, err = _run_err(
                 project, *self._forge_argv(destination, success_evidence=("seq:1", "seq:2")))
@@ -283,6 +292,7 @@ class PromotionTests(unittest.TestCase):
     def test_cli_refuses_a_malformed_evidence_citation(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             destination = Path(project) / "skills"
             code, err = _run_err(
                 project, *self._forge_argv(
@@ -305,6 +315,7 @@ class PromotionTests(unittest.TestCase):
     def test_cli_creates_the_skill_with_three_valid_citations_and_records_them(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             destination = Path(project) / "skills"
             cites = self._three_recorded_successes(archive)
             code, payload = _run(
@@ -326,6 +337,7 @@ class PromotionTests(unittest.TestCase):
         # so this is the distinctness rule failing, not resolution.
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             destination = Path(project) / "skills"
             cite = self._three_recorded_successes(archive)[0]
             code, err = _run_err(
@@ -339,6 +351,7 @@ class PromotionTests(unittest.TestCase):
         # B3: three distinct, well-formed, entirely fictional sequences.
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             destination = Path(project) / "skills"
             code, err = _run_err(
                 project,
@@ -354,6 +367,7 @@ class PromotionTests(unittest.TestCase):
         # shape regex exactly as well as any real cite did.
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             destination = Path(project) / "skills"
             code, err = _run_err(
                 project,
@@ -419,6 +433,7 @@ class LoadTests(unittest.TestCase):
     def test_ten_thousand_records_build_a_brief_and_run_hygiene(self) -> None:
         with isolated_project() as (_project, _state, anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             record_count = 10_000
             write_seconds = _fabricate_records(archive, record_count)
 
@@ -487,6 +502,7 @@ class ScheduledForgetTests(unittest.TestCase):
         from godmode_runtime.godmode_forget import forget
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             stale = archive.append("action", "ran the load fixture", {"gate": "allow"})
             first = archive.append(
                 "decision", "index-strategy", {"value": "btree", "status": "active"})
@@ -542,6 +558,7 @@ class ContinuityTests(unittest.TestCase):
     def test_next_actions_from_session_one_are_counted_in_session_two(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
+            set_project_mode(archive, "strict")  # pins the full Stop and brief output
             archive.append(
                 "checkpoint", "midway through the memory contract",
                 {"status": "active",

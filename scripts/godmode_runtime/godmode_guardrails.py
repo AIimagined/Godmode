@@ -26,7 +26,7 @@ from .godmode_errors import ArchiveError
 from .godmode_stop import OperatorStop
 
 CEILINGS_FILENAME = ".godmode-ceilings.json"
-# `paid_iterations` (nineteenth field report, obligation 9868): checks a
+# `paid_iterations`: checks a
 # session has had blocked for dialling out under `verify --offline`
 # before the Stop notices name the runaway; 0 disables it like the rest.
 DEFAULT_CEILINGS = {"tokens": 0, "tool_calls": 0, "seconds": 0, "paid_iterations": 3,
@@ -219,7 +219,7 @@ def tool_operation(tool: str, tool_input: dict[str, Any] | None) -> str | None:
     payload = tool_input or {}
     if tool in ("Bash", "PowerShell"):
         return str(payload.get("command", "")).strip() or f"{tool} with no command"
-    # MultiEdit joins the edit family (Sprint 4): the Grok manifest's matcher
+    # MultiEdit joins the edit family: the Grok manifest's matcher
     # has always subscribed to it, but no tool map named it, so every one
     # arrived as an unrecognised tool and was refused outright. It carries the
     # same `file_path` these do and belongs to the same fence.
@@ -235,7 +235,7 @@ _USAGE_STOP_EVENTS = frozenset({"stop", "subagent-stop"})
 
 
 def usage_records_preferring_stop(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """NS-10d (review round 2, N4): `_record_usage_observed` can write a
+    """`_record_usage_observed` can write a
     record from BOTH the Stop and the SessionEnd branch for one session -
     summing both would double the session's reported spend if a host sends
     usage at both boundaries. Decided rule: Stop-family records
@@ -253,7 +253,7 @@ def usage_records_preferring_stop(records: list[dict[str, Any]]) -> list[dict[st
 def usage_record_total(data: dict[str, Any]) -> int:
     """The token figure one `usage-observed` record contributes: its own
     `total_tokens` when present, or - for a record written before this
-    field existed (review round 2, N5: every record `eab0679` shipped) -
+    field existed (every record `eab0679` shipped) -
     derived from the split fields at READ time, so a pre-fix record still
     contributes its real figure instead of reading as 0 and silently
     dropping out of every total."""
@@ -275,7 +275,7 @@ def usage_record_total(data: dict[str, Any]) -> int:
 def usage_ledger_totals(
     archive: Chronicle, *, start: int | None = None, end: int | None = None
 ) -> dict[str, Any]:
-    """NS-10d: the host's own reported token totals - the same figure
+    """The host's own reported token totals - the same figure
     `check_ceilings`'s caller compares against a `tokens` ceiling, and the
     same one the digest's spend line renders. Godmode measures nothing
     here; these are the host's own numbers, taken as declared, read back
@@ -283,21 +283,21 @@ def usage_ledger_totals(
     wrote them (falling back to `usage_record_total`'s derivation for a
     pre-fix record with no `total_tokens` field - N5).
 
-    Fix round 2 (review S4/N1): windowed to the CURRENT session boundary
+    Windowed to the CURRENT session boundary
     via `godmode_hookproof._session_anchor_sequence` - the max of the
     newest `kind="session"` record (an explicit `session open`) and the
     newest `hook-session-anchor` action record (written automatically on
-    every real hook session-start; CX-1's own freshness anchor). Round 1's
-    fix keyed this on `latest_session(archive)`
+    every real hook session-start; the freshness anchor). An earlier
+    version keyed this on `latest_session(archive)`
     (`kind="session"` only), which is `None` on every archive a hook alone
     ever produces - no hook writes a `kind="session"` record - so the
     "session-scoped" branch was unreachable in practice and the ceiling
-    silently read the archive's lifetime total instead (the original S4
-    defect, reproduced through the real hook in round 2's review). The
+    silently read the archive's lifetime total instead (reproduced
+    through the real hook). The
     per-run ceiling and the digest's session line must never read the
     `lifetime` figure below; it is exposed only for information.
 
-    `start`/`end` (final review S6, Task 7/12 D2): an explicit sequence
+    `start`/`end` gives an explicit sequence
     window, for the one caller that can be asked about a session OTHER
     than the current one - `godmode_console.session_digest --session
     <older>`. `start=None` (every other caller: `check_ceilings`'s hook
@@ -312,11 +312,11 @@ def usage_ledger_totals(
     0 - nothing to be stale relative to - so an un-narrowed `scoped` here
     silently reads identically to `lifetime` below: every usage record the
     archive has ever seen, not a defect, just the honest answer when there
-    is no session boundary to window by at all (Task 12 D3).
+    is no session boundary to window by at all.
 
-    Also applies `usage_records_preferring_stop` (N4) within each window -
+    Also applies `usage_records_preferring_stop` within each window -
     `scoped` as one window, `lifetime` as however many sessions the WHOLE
-    archive has ever anchored (Task 12 D1: grouped by session boundary,
+    archive has ever anchored (grouped by session boundary,
     each session's own Stop/SessionEnd preference decided independently
     and the per-session totals then added together, rather than the
     single archive-wide preference the un-grouped fix used to apply -
@@ -358,7 +358,7 @@ def usage_ledger_totals(
         return totals
 
     def _sum_by_session(records: list[dict[str, Any]]) -> dict[str, Any]:
-        # Task 12 D1: bucket by which session boundary each record falls
+        # Bucket by which session boundary each record falls
         # after (bisect's own "how many boundaries are <= this sequence" -
         # the same membership `godmode_console.session_digest`'s own
         # `_belongs()` computes), then prefer Stop over SessionEnd WITHIN
@@ -649,7 +649,7 @@ def record_experiment_verdict(
     simpler: bool = False,
     acquitted_by: str = "self",
 ) -> dict[str, Any]:
-    """U-R3: epsilon adjudication for one experiment cycle - computed, not
+    """Epsilon adjudication for one experiment cycle - computed, not
     asserted, from `{metric, before, after, epsilon}`.
 
     `improvement = after - before`: the caller orients `before`/`after` so
@@ -673,7 +673,7 @@ def record_experiment_verdict(
     attest_run_state`'s existing convention for execution facts - `disposition`
     therefore stays unset here, so a claim later citing this record as
     `verdict:<seq>` will NOT resolve "confirmed" through
-    `godmode_attest._citation_resolves` (U-R3's own audit hook: termination is
+    `godmode_attest._citation_resolves` (termination is
     a claim needing independent confirmation, not an inference this
     self-graded arithmetic gets to make on its own). A caller with genuine
     independent standing may pass `acquitted_by="independent"`, which lets
@@ -770,7 +770,7 @@ def run_experiment(
     unkilled; only the loop noticing *afterward* that the series ran long
     is not enough (review fix, U-R1).
 
-    Task 10b (review fix): a `maturity` field in the spec is validated by
+    A `maturity` field in the spec is validated by
     `godmode_loop.declare_maturity`, which RAISES on an illegal value
     ("unattended" included) before cycle one - the same refusal the loop
     path gives, named the same way. A spec with no `maturity` at all is not
@@ -780,7 +780,7 @@ def run_experiment(
     above, budget declared) become a real gate - blocking findings refuse
     the run before cycle one, not just report on it afterward.
 
-    Task 11/U-R3: each call is one CYCLE of a commit-linked experiment
+    Each call is one CYCLE of a commit-linked experiment
     ledger. Before running anything, the previous cycle (if any) must
     already carry a verdict (`record_experiment_verdict`) - verdict-before-
     next-cycle, refused here at the API rather than only detected later

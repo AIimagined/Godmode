@@ -237,9 +237,38 @@ class GateFalsifiabilityTests(unittest.TestCase):
         # the harness testing an out-of-contract shape. Copying `.git`
         # keeps the harness itself in-contract; the copy stays cheap
         # (~20MB for this repository).
-        shutil.copytree(
-            PLUGIN_ROOT, cls.project,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        #
+        # A `git clone`, not a raw directory copy: a contributor's working
+        # tree routinely carries files git itself ignores - an editor's own
+        # `.claude/settings.local.json`, a stray build artifact - and a raw
+        # `shutil.copytree` carried those into the "pristine" project too,
+        # so a gate that inspects the working tree (`trust`) could report a
+        # finding that belongs to the machine running the suite, not to
+        # this repository. A local clone only ever materializes tracked
+        # content from `HEAD` plus the object database, which is exactly
+        # "this repository"'s contract, and - source and destination on the
+        # same filesystem - hardlinks objects by default, so it is no more
+        # expensive than the copy it replaces.
+        subprocess.run(
+            ["git", "clone", "--quiet", str(PLUGIN_ROOT), str(cls.project)],
+            check=True, timeout=120)
+        # Godmode's own archive for this checkout lives at `.git/godmode-state`
+        # - deliberately inside `.git` so it is never a tracked file, but a
+        # real `git clone` does not carry it either (clone replicates the
+        # object database and refs, not arbitrary extra files another tool
+        # left inside `.git`). Several `evals` assertions exercise commands
+        # that require an initialized project (`guard --operation`,
+        # `planmode specify`), so that one directory - and only it, never the
+        # rest of the working tree's ignored files - is copied across by
+        # hand.
+        # In a linked worktree `.git` is a pointer file, so the archive is
+        # asked from git itself rather than assumed at `.git/`.
+        common = subprocess.run(
+            ["git", "-C", str(PLUGIN_ROOT), "rev-parse", "--git-common-dir"],
+            capture_output=True, text=True, check=True, timeout=30).stdout.strip()
+        source_state = (PLUGIN_ROOT / common).resolve() / "godmode-state"
+        if source_state.is_dir():
+            shutil.copytree(source_state, cls.project / ".git" / "godmode-state")
 
     @classmethod
     def tearDownClass(cls) -> None:

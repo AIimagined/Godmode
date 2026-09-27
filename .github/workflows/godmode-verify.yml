@@ -66,8 +66,14 @@ jobs:
     # through `scrubbed_environment`'s `extra`, which replaces the whole
     # process environment (`clear=True`) for the duration, so this job-level
     # value is not present to interfere.
+    #
+    # This job gates main, so it also opts into the subprocess-heavy
+    # modules `tests/_slow.py` skips by default (see that module's
+    # docstring for which ones and why) - a routine local run stays fast,
+    # but the check that guards `main` still covers them.
     env:
       GODMODE_ATTENDED: "1"
+      GODMODE_RUN_SLOW: "1"
 
     steps:
       - name: Check out repository
@@ -180,8 +186,11 @@ jobs:
       fail-fast: false
       matrix:
         part: [0, 1, 2, 3]
+    # This job gates main too, so its four shards also opt into the
+    # subprocess-heavy modules `tests/_slow.py` skips by default.
     env:
       GODMODE_ATTENDED: "1"
+      GODMODE_RUN_SLOW: "1"
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

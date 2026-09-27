@@ -9,6 +9,7 @@ personal name is ever required in a path.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -56,7 +57,7 @@ DEFAULT_ROLES: dict[str, list[str]] = {
 
 UNWEIGHTED_ROLE_WEIGHT = 0.5
 
-# NS-12c: the two roles that carry what this project has LEARNED - the
+# The two roles that carry what this project has LEARNED - the
 # lessons it recorded and the law compiled from them - as opposed to the
 # roles that describe how it is built. Named here, beside the role table
 # itself, because withholding them is a property of the brief rather than
@@ -427,7 +428,7 @@ def _freshness_stamp(project: Path, path: str, is_git: bool) -> int:
         stamp = run_git(project, "log", "-1", "--format=%ct", "--", path)
         if stamp is None:
             # None is git FAILING (a 5 s timeout on a machine just woken
-            # from sleep, at the 0.3.18 gate's round 13), not an untracked
+            # from sleep), not an untracked
             # path (that is ""). Falling straight to mtime on a failure
             # made the checkout time the file's freshness and flipped the
             # ranking snapshot for one run out of four. One retry; the
@@ -439,8 +440,38 @@ def _freshness_stamp(project: Path, path: str, is_git: bool) -> int:
     return _mtime_stamp(project, path)
 
 
+def _content_stamp(project: Path, path: str) -> int:
+    """A file's content fingerprint: depends only on the bytes checked out,
+    never on git history, commit time or commit order.
+
+    `_freshness_stamp` above is deliberately git-log-based so two CHECKOUTS of
+    the identical commits agree on tie order - a real property a live session
+    needs (`build_brief`'s default instrument). It is not a property a
+    COMMITTED snapshot needs: the snapshot only uses freshness to break a tie
+    between two equally-scored segments deterministically, and a content hash
+    does that without ever reading git. Two repositories holding the
+    byte-identical tree under two DIFFERENT commit histories (different
+    order, squashed, rebased, replayed) stamp every file identically here,
+    where git-log would not: each commit's timestamp is whatever wall-clock
+    time it happened to be made at, so the git instrument's tie order can
+    differ across two histories that agree on every byte - ranking
+    freshness by git commit time makes the snapshot depend on commit
+    order. Reached via
+    `rank(..., freshness_source="content")`, which `godmode_evals._ranking_view`
+    passes for exactly this reason - `godmode brief`'s live-session use keeps
+    the git-log default because it genuinely needs recency, not just a
+    reproducible tie-break.
+    """
+    try:
+        data = (project / path).read_bytes()
+    except OSError:
+        return 0
+    return int.from_bytes(hashlib.sha256(data).digest()[:8], "big")
+
+
 def rank(
-    segments: list[Segment], task: str, project: Path | None = None
+    segments: list[Segment], task: str, project: Path | None = None,
+    *, freshness_source: str = "git",
 ) -> list[tuple[Segment, float]]:
     """Score every segment: role weight x relevance x freshness.
 
@@ -468,6 +499,14 @@ def rank(
     `evals/fixtures/ranking.json`) must be generated and compared in the same
     mode it will be evaluated in - never generated in one mode and asserted
     against the other.
+
+    `freshness_source` picks the instrument itself: `"git"` (default) is the
+    two paragraphs above - `_freshness_stamp`'s commit time, falling back to
+    path sort for a non-git project. `"content"` uses `_content_stamp`
+    instead and never reads git at all, so it is stable across differing
+    commit HISTORIES as well as differing checkouts of the same one; pass it
+    when what must reproduce is the committed snapshot, not a live session's
+    recency signal.
     """
     terms = _terms(task)
     raw: dict[int, float] = {}
@@ -477,24 +516,34 @@ def rank(
 
     freshness: dict[str, float] = {}
     if project is not None:
-        is_git = (project / ".git").exists()
-        stamps: dict[str, int] = {
-            path: _freshness_stamp(project, path, is_git)
-            for path in {segment.path for segment in segments}
-        }
-        if is_git:
+        if freshness_source == "content":
+            # No git involved at all: two repositories with the identical
+            # tree agree here regardless of commit history or order (see
+            # `_content_stamp`).
+            stamps: dict[str, int] = {
+                path: _content_stamp(project, path)
+                for path in {segment.path for segment in segments}
+            }
             newest_first = sorted(stamps, key=lambda p: (-stamps[p], p))
         else:
-            # A non-git project has no commit-object timestamp for any file,
-            # so every stamp here came from the mtime fallback - a value
-            # copy timing controls, not content. Ordering by that magnitude
-            # across files is exactly the checkout-order instability the
-            # git-log fix above exists to prevent, just with no deterministic
-            # substitute value available; the tie-break degrades to path,
-            # the same deterministic instrument the git branch already uses
-            # as ITS secondary key, so identical non-git copies always agree
-            # regardless of which file the copy happened to timestamp newest.
-            newest_first = sorted(stamps)
+            is_git = (project / ".git").exists()
+            stamps = {
+                path: _freshness_stamp(project, path, is_git)
+                for path in {segment.path for segment in segments}
+            }
+            if is_git:
+                newest_first = sorted(stamps, key=lambda p: (-stamps[p], p))
+            else:
+                # A non-git project has no commit-object timestamp for any file,
+                # so every stamp here came from the mtime fallback - a value
+                # copy timing controls, not content. Ordering by that magnitude
+                # across files is exactly the checkout-order instability the
+                # git-log fix above exists to prevent, just with no deterministic
+                # substitute value available; the tie-break degrades to path,
+                # the same deterministic instrument the git branch already uses
+                # as ITS secondary key, so identical non-git copies always agree
+                # regardless of which file the copy happened to timestamp newest.
+                newest_first = sorted(stamps)
         # A small, bounded factor: freshness reorders equals, never outvotes weight.
         for position, path in enumerate(newest_first):
             freshness[path] = 1.0 + 0.05 / (1 + position)
@@ -513,18 +562,23 @@ def rank(
 
 
 def build_brief(
-    project: Path, task: str, budget: int, withhold_memory: bool = False
+    project: Path, task: str, budget: int, withhold_memory: bool = False,
+    *, freshness_source: str = "git",
 ) -> dict[str, Any]:
     """Assemble the bounded, deterministic context brief.
 
     The contract other stages depend on: identical project state plus identical task
     yields an identical brief, whichever model asks for it.
 
-    `withhold_memory=True` (NS-12c) builds the brief without the `MEMORY_ROLES`
+    `withhold_memory=True` builds the brief without the `MEMORY_ROLES`
     documents, so the reader gets the project as it is described rather than as
     it has been corrected. The dropped roles are named in `withheld_roles`: a
     brief that is missing a layer must say which layer, or a score taken under
     it reads as an ordinary score.
+
+    `freshness_source` passes straight through to `rank` (see there): the
+    default `"git"` is what a live session wants, `"content"` is what a
+    committed snapshot wants.
     """
     resolution = resolve_roles(project)
     bindings = list(resolution.bindings)
@@ -536,7 +590,7 @@ def build_brief(
     for binding in bindings:
         segments.extend(segment_document(binding, resolution.project))
 
-    scored = rank(segments, task, project=resolution.project)
+    scored = rank(segments, task, project=resolution.project, freshness_source=freshness_source)
     included: list[dict[str, Any]] = []
     used = 0
     for segment, score in scored:

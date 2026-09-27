@@ -24,7 +24,7 @@ from .godmode_anchor import ProjectAnchor, anchor_fingerprint, current_host, non
 def writer_fingerprint() -> dict[str, str]:
     """Who is writing: host, model, effort, and the adapter's enforcement level."""
     return {
-        # CX-2: delegates to `godmode_anchor.current_host()` rather than
+        # Delegates to `godmode_anchor.current_host()` rather than
         # re-reading the env vars here, so this record's `host` field can
         # never disagree with what `godmode_hookproof.py`'s proof records or
         # `godmode_hostevent.py`'s adapters call the same session.
@@ -38,7 +38,7 @@ def writer_fingerprint() -> dict[str, str]:
         # since this record travels.
         "platform": os.environ.get("GODMODE_PLATFORM_OVERRIDE") or sys.platform,
         "python": f"{sys.version_info.major}.{sys.version_info.minor}",
-        # B5: which agent, not merely which host. Host and model are not an
+        # Which agent, not merely which host. Host and model are not an
         # identity when two agents run on the same host - without this,
         # concurrent lanes interleave into one indistinguishable stream and
         # the fleet layer can name a lease holder that cannot be found in
@@ -61,8 +61,8 @@ from . import godmode_law as _law
 from .godmode_sentinel import enforce_private_payload
 
 
-# NS-8k + NS-11h (0.3.28 Plan 5 Task 5): who wrote a record, and how much
-# that writer is trusted. `writer` is what Tasks 1-3 compare actors by -
+# Who wrote a record, and how much
+# that writer is trusted. `writer` is what the approval checks compare actors by -
 # the field name and its four values are load-bearing beyond this module.
 # `record_writer` treats anything outside this set as the pre-Task-5
 # default (`agent`) - a corrupt or hand-edited field is a missing one,
@@ -74,7 +74,7 @@ WRITER_KINDS = ("agent", "operator", "checker", "hook")
 # without importing an enum.
 TRUST_ORDER: dict[str, int] = {"agent": 0, "hook": 1, "checker": 2, "operator": 3}
 
-# NS-11h fix round 1 (F2): the single-writer close guard used to match only
+# The single-writer close guard used to match only
 # the literal string "closed", while `status.remaining()` already treated
 # `met`/`done`/`retired` as equally terminal - a foreign agent refused
 # `--status closed` could close the very same obligation with `--status
@@ -95,7 +95,7 @@ CLOSING_STATUSES = frozenset({"closed", "met", "done", "retired"})
 # was refused and `superseded` was not.
 LESSON_CLOSING_STATUSES = CLOSING_STATUSES | frozenset({"superseded"})
 
-# NS-11e fix round 1 (review B, B4): a `review` record - the contradiction
+# A `review` record - the contradiction
 # `godmode forget` files - is closed by a different vocabulary than the rest
 # of the archive. Its statuses are `open` / `acknowledged` / `dismissed`
 # (enforced by `godmode_invariants._review_invariants`), and the two that end
@@ -106,7 +106,7 @@ REVIEW_CLOSING_STATUSES = frozenset({"acknowledged", "dismissed"})
 
 # The two entrypoint files a hook process is launched as - see their own
 # `if __name__ == "__main__":` guards. Matched by the running script's own
-# name AND its own directory (F4, fix round 1 - see `_running_as_hook`
+# name AND its own directory (see `_running_as_hook`
 # below), never by anything a tool-call payload carries, so a transcript
 # can never claim to BE the hook currently evaluating it.
 _HOOK_ENTRYPOINTS = frozenset({"godmode_session_hook.py", "godmode_gate_fast.py"})
@@ -116,7 +116,7 @@ _HOOK_ENTRYPOINTS = frozenset({"godmode_session_hook.py", "godmode_gate_fast.py"
 # `hooks/`). A candidate entrypoint must resolve to a file INSIDE this
 # exact directory, not merely share a hook script's basename.
 #
-# N2 (rereview round 1): `.resolve()` on the WHOLE path, not only on the
+# `.resolve()` on the WHOLE path, not only on the
 # ancestors before appending "hooks" - a candidate's own `path.resolve()`
 # below resolves every segment, including a symlinked leaf, so leaving
 # this one segment unresolved could make a genuine hook process (launched
@@ -144,13 +144,13 @@ def _running_as_hook() -> bool:
     not merely importing hook code (a test importing `godmode_session_hook`
     for its helpers must not read as a hook process actually running), and
     not spoofable by naming an arbitrary file `godmode_gate_fast.py`
-    somewhere else (fix round 1, F4: a bare basename match let
+    somewhere else (a bare basename match let
     `sys.argv[0] = "/tmp/anything/godmode_gate_fast.py"` read as `hook`
     with no file needing to exist).
 
-    Fix round 2 (Blocking 4): `hook` IS now a trust boundary for one
+    `hook` IS now a trust boundary for one
     decision - `Chronicle._enforced_refusal` exempts `writer == "hook"`
-    writes from every enforce guard (I-1, 0.3.28 Plan 5 Task 4), so an
+    writes from every enforce guard (added in 0.3.28 so hook writes stay trusted), so an
     entrypoint that reads as a hook by this function's loose derivation
     (its own `sys.argv[0]` or `__main__.__file__`, matched only against a
     basename AND the plugin's installed `hooks/` directory - never
@@ -170,7 +170,7 @@ def derive_writer(*, role: str | None = None, as_operator: bool = False,
                    operator_verified: bool | None = None) -> str:
     """Which of `agent | operator | checker | hook` is writing right now.
 
-    A PURE function (fix round 1, F0/F1): it reads no environment variable
+    A PURE function: it reads no environment variable
     and never prompts. Every input arrives as an explicit argument, resolved
     by the caller BEFORE this is invoked - `Chronicle.append` resolves
     `role` from a chronicled session (see `_chronicled_session_role`) and
@@ -214,9 +214,9 @@ def record_trust(record: dict[str, Any]) -> int:
     return TRUST_ORDER[record_writer(record)]
 
 
-# NS-10e (0.3.28 Plan 5 Task 6): `remember --supersedes <seq>` (console.py's
+# `remember --supersedes <seq>` (console.py's
 # `cmd_remember`, validated there against the archive - existence, same
-# kind, not already superseded, and (fix round 1, B1) not outranked on
+# kind, not already superseded, and not outranked on
 # trust, since none of that is checkable from a single record's `data` the
 # way `KIND_INVARIANTS` validators are) stores `supersedes` on the NEW
 # record. Once it is on disk, every reader that ever asked "what is the
@@ -230,16 +230,16 @@ def record_trust(record: dict[str, Any]) -> int:
 # `godmode_iteration.open_scope`'s obligation fold, `godmode_hygiene.
 # hygiene`'s lesson/decision fold, `godmode_mistakes.list_patterns`,
 # `godmode_mistakes.obligation_sibling_advisory`, `godmode_attest.
-# lesson_pipeline`, `godmode_attest.obligations_digest` (fix round 1, B2 -
-# missed by the original grep; feeds `status --digest` and the closure
-# verdict), `godmode_obligations.review_obligations` (fix round 1, B2 -
+# lesson_pipeline`, `godmode_attest.obligations_digest` (it
+# feeds `status --digest` and the closure
+# verdict), `godmode_obligations.review_obligations` (it
 # feeds `checkpoint --review`)) routes through it rather than re-deriving
 # the rule. Known un-routed folds and why: see `latest_by_subject`'s own
 # docstring.
 def _sequence_of(record: dict[str, Any]) -> int:
     """Safe int coercion of a record's `sequence` - a malformed or missing
     value reads as 0 rather than raising, everywhere this field is
-    compared (fix round 1, nit: `_newest_wins` used to call `int(...)`
+    compared (`_newest_wins` used to call `int(...)`
     bare while this module's other two readers already guarded it; a
     record with a malformed `sequence` coerced to `0`, survived the
     exclusion check, then raised inside the default combine)."""
@@ -254,12 +254,12 @@ def superseded_sequences(records: list[dict[str, Any]]) -> frozenset[int]:
     `data["supersedes"]` AND is trusted to retire - the set nothing may
     ever again call "latest".
 
-    NS-10e fix round 1 (B1): trust-aware, not "trust any stored citation
+    Trust-aware, not "trust any stored citation
     unconditionally" as this docstring used to argue. A record is excluded
-    only when the CITING record's writer trust (`record_trust`, Task 5) is
+    only when the CITING record's writer trust (`record_trust`) is
     `>=` the trust of the record it names - a lower-trust writer naming a
     higher-trust record's sequence is a forged or mistaken edge, not a
-    valid retraction, and must not erase what NS-8k's own trust order
+    valid retraction, and must not erase what the writer trust order
     would have refused to overwrite by a plain status flip. `_validate_
     supersedes` (console.py) is the write-time half of the same gate,
     refusing the write outright before it ever reaches disk; this is the
@@ -303,7 +303,7 @@ def superseded_sequences(records: list[dict[str, Any]]) -> frozenset[int]:
 
 def open_reviews(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Every contradiction `godmode forget` flagged that nobody has closed
-    yet, newest first (NS-11e fix round 1, review B B3).
+    yet, newest first.
 
     One entry per (subject, exact sequence set), carrying the LATEST status
     recorded for it: a `review` is written open by the forgetting pass and
@@ -345,7 +345,7 @@ def latest_by_subject(
     combine: Callable[[dict[str, Any] | None, dict[str, Any]], dict[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """The latest record per `key(record)` (default: its own `subject`),
-    honouring NS-10e supersession edges - the ONE fold every latest-per-
+    honouring supersession edges - the ONE fold every latest-per-
     subject reader in this codebase now goes through.
 
     THE RULE, precisely: a record is superseded the instant some OTHER
@@ -366,7 +366,7 @@ def latest_by_subject(
     `combine` is how a caller composes its OWN fold with this one instead
     of being replaced by it: the default keeps the plain "later sequence
     wins" rule every caller used before this edge existed, but a caller
-    like `godmode_status.remaining` passes its NS-8k trust-contradiction
+    like `godmode_status.remaining` passes its trust-contradiction
     rule (`_prefer_latest_unless_contradicted`) instead - this function
     decides which records are even IN the running (excluding the
     superseded ones), `combine` decides which of the remaining ones for a
@@ -375,7 +375,7 @@ def latest_by_subject(
     lower-trust writer than its target never excludes that target here
     either, since this function's exclusion set IS that one.
 
-    Scope (nit, fix round 1): "ANYWHERE in `records`" means exactly that -
+    Scope: "ANYWHERE in `records`" means exactly that -
     the argument this call received, not the archive as a whole. Every
     caller today passes a kind-filtered, often window-limited selection
     (`archive.select(kind="obligation", limit=500)`), so a supersession
@@ -385,7 +385,7 @@ def latest_by_subject(
     Self-Review; a caller with a narrower selection than "all records of
     this kind" inherits a narrower blind spot, not a bug in this function.
 
-    Known gap (S2, out of bounds for NS-10e): `godmode_law._guarded_
+    Known gap: `godmode_law._guarded_
     lessons` and `godmode_law.amend_law` still re-derive their own
     newest-record-per-subject fold instead of routing through this
     function, so a superseded standing/enforce lesson can still read as
@@ -408,7 +408,7 @@ def latest_by_subject(
 
 def _newest_wins(current: dict[str, Any] | None, record: dict[str, Any]) -> dict[str, Any]:
     """`latest_by_subject`'s default `combine`: plain recency, the rule
-    every caller used before NS-10e's edge or NS-8k's trust rule existed."""
+    every caller used before the supersession edge or the trust rule existed."""
     if current is None:
         return record
     if _sequence_of(record) >= _sequence_of(current):
@@ -430,7 +430,7 @@ def _record_hash(record: dict[str, Any]) -> str:
 # A non-blocking lock attempt's errno falls into three families, and
 # `write_lock`/`lock_is_held` classify it fresh on every single call -
 # never latched on the `Chronicle` instance. An instance-level latch was
-# tried and reverted (fix round 3): two different processes each open
+# tried and reverted: two different processes each open
 # their OWN descriptor and see their OWN errno, so process A holding the
 # kernel lock cleanly and process B latching "unusable" from one transient
 # failure would serialize on two DIFFERENT sidecars and could both append
@@ -474,6 +474,141 @@ del _errno_name
 # answer "is anyone holding the fallback's lock right now" without a
 # kernel probe to ask, since that regime has none.
 _EXCLUSIVE_CREATE_SWEEP_SECONDS = 120
+# The fallback's hard ceiling: a sidecar older than this is taken over
+# whatever its pid says. A holder alive but hung (or a pid reused by an
+# unrelated process) would otherwise wedge the archive for good, and no
+# legitimate write holds the lock this long.
+_EXCLUSIVE_CREATE_CEILING_SECONDS = 30 * 60
+# A takeover claim is held only for one read and one unlink; one older than
+# this was left by a writer that died holding it.
+_TAKEOVER_CLAIM_STALE_SECONDS = 10
+
+
+# Two different Godmode runtime versions writing the same project's
+# archive disagreed about the lock's own shape, so a version mismatch
+# surfaced as plain contention - "archive is busy", sampled 197 times in
+# the field, never naming what was actually different.
+# Every lock sidecar already carried a diagnostic pid/timestamp payload
+# (never fsynced - a lock a crash releases by age-out does not need one);
+# the payload now carries the owning runtime version as a third line, so a
+# timed-out acquire can tell "a different version holds this, by name"
+# apart from "the same version is legitimately still writing".
+def _lock_host() -> str:
+    """This machine's name, as a lock sidecar records it: a pid means
+    nothing on another host or in another pid namespace."""
+    import platform
+    try:
+        return platform.node().strip() or "unknown"
+    except OSError:
+        return "unknown"
+
+
+def _lock_owner_payload(pid: int, when: float) -> str:
+    return f"{pid}\n{when}\n{RUNTIME_VERSION}\n{_lock_host()}\n"
+
+
+def _lock_owner_host(text: str) -> str | None:
+    """The host line of a lock payload, or None when it predates the field."""
+    lines = text.splitlines()
+    return (lines[3].strip() or None) if len(lines) >= 4 else None
+
+
+def _lock_owner_version(path: Path) -> str | None:
+    """The runtime version recorded in a lock sidecar by
+    `_lock_owner_payload`, or None when the file is absent, unreadable, or
+    predates this field (a lock from a runtime older than this fix) - a
+    caller that gets None knows only "no version to compare", never treats
+    it as "same version"."""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    if len(lines) < 3:
+        return None
+    version = lines[2].strip()
+    return version or None
+
+
+def _busy_message(path: Path) -> str:
+    """The message a timed-out lock acquire raises: named by runtime
+    version when the current holder's sidecar proves it is a different
+    Godmode version, the previous generic wording otherwise (same version,
+    ordinary contention - or a sidecar with nothing to compare)."""
+    owner_version = _lock_owner_version(path)
+    if owner_version is not None and owner_version != RUNTIME_VERSION:
+        return (
+            f"Godmode archive lock is held by runtime {owner_version}; this "
+            f"process is runtime {RUNTIME_VERSION}. This is a version "
+            "mismatch, not ordinary contention - run the same Godmode "
+            "version everywhere that writes this archive, then retry."
+        )
+    return "Godmode archive is busy; retry after the active write"
+
+
+def _pid_alive(pid: int) -> bool:
+    """Whether process `pid` is still running. Anything this cannot answer
+    for certain reads as alive: the callers use "dead" as permission to
+    take over a lock or a sequence claim, so a wrong "dead" is the only
+    answer that can do harm.
+
+    Never `os.kill(pid, 0)` on Windows - there, signal 0 is CTRL_C_EVENT
+    and would interrupt the process being asked about."""
+    if pid <= 0:
+        return True
+    if pid == os.getpid():
+        return True
+    if os.name == "nt":
+        try:
+            import ctypes
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
+            if not handle:
+                # 87 = ERROR_INVALID_PARAMETER: no process has this id.
+                # Anything else (access denied, ...) means it exists.
+                return ctypes.get_last_error() != 87
+            try:
+                code = ctypes.c_ulong()
+                if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                    return True
+                return code.value == 259  # STILL_ACTIVE
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: unanswerable reads as alive (fail closed)
+            return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def _unlink_shared(path: Path) -> None:
+    """Remove a small sidecar other processes may be reading. On Windows a
+    reader's open handle refuses the delete for a moment; retry briefly,
+    then leave it - a stale queue ticket is cleared by the next writer once
+    its owner is gone."""
+    for _attempt in range(50):
+        try:
+            path.unlink(missing_ok=True)
+            return
+        except PermissionError:
+            time.sleep(0.002)
+        except OSError:
+            return
+
+
+def _payload_pid(text: str) -> int | None:
+    """The pid on the first line of a lock or claim payload, or None."""
+    first = text.split("\n", 1)[0].strip()
+    return int(first) if first.isdigit() else None
+
+
+class _SequenceTaken(ArchiveError):
+    """Another writer already holds, or already sealed, the sequence this
+    write was about to take. `append` re-derives the tail from disk and
+    retries; any other caller surfaces it as an ordinary archive error."""
 
 
 def _kernel_lock(fd: int) -> None:
@@ -530,7 +665,7 @@ _WIN_LONG_PATH_THRESHOLD = 230  # margin below MAX_PATH (260) for the OS's own o
 def _syscall_path(path: Path | str) -> str:
     """The string an OS-level call should actually receive for `path`.
 
-    D-7 (a live field walk, Windows): Windows' legacy file APIs refuse any
+    Windows' legacy file APIs refuse any
     path past 260 characters unless the machine-wide "enable long paths"
     policy is on - off by default, and outside this process's authority
     to flip. An operator's own `GODMODE_STATE_HOME`/`TEMP` can be short
@@ -556,8 +691,8 @@ def _syscall_path(path: Path | str) -> str:
 
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
-    # Ninth field report 2026-09-05 (Codex sandbox: PermissionError outside
-    # the workspace) and a field walk the same day (Windows: the temporary
+    # A Codex sandbox (PermissionError outside
+    # the workspace) and a field walk (Windows: the temporary
     # name built from the 60-character record name pushed a deep state
     # home past MAX_PATH, FileNotFoundError): both escaped as tracebacks.
     # The temporary name is short, and any OS refusal becomes an
@@ -695,7 +830,33 @@ class Chronicle:
         # "someone holds this", spinning the fallback's full timeout on
         # every single append for a problem retrying can never fix.
         self.excl_lock_path = self.root / "godmode-write.excl.lock"
+        # The kernel lock's owner metadata (pid/time/runtime
+        # version) cannot live inside `self.lock_path` itself - on Windows,
+        # `msvcrt.locking()`'s byte-range lock is MANDATORY, so a second
+        # process's plain read of that same file (byte 0 onward) while the
+        # lock is held fails with a sharing violation instead of returning
+        # the content, exactly when a timed-out acquirer most needs to read
+        # it. A separate, never-locked sidecar keeps the diagnostic
+        # readable by a contending process throughout the hold - the
+        # exclusive-create fallback below needs no equivalent: its own
+        # sidecar's exclusivity comes from O_EXCL creation, not a byte
+        # lock, so its content was always plainly readable.
+        self.lock_owner_path = self.root / "godmode-write.lock.owner"
         self.head = self.root / "godmode-head.json"
+        # Sequence claims: before a record file is written, its sequence is
+        # claimed by creating `<sequence>.claim` here with O_EXCL. Record
+        # names carry a random id, so the record file itself can never be
+        # the exclusive object; the claim is. Two writers that ever derive
+        # the same sequence (a stale view, or two lock holders at once)
+        # cannot both claim it - the second re-derives the tail from disk
+        # and retries instead of forking the chain. Only the newest claim
+        # or two are kept; older ones are pruned after each seal.
+        self.sequence_claims = self.root / "godmode-sequence-claims"
+        # The write lock's waiting line: each contender takes the next
+        # ticket here by exclusive create and enters the lock only once its
+        # ticket is the lowest one standing. It orders the writers; the
+        # kernel (or exclusive-create) lock alone still keeps them apart.
+        self.lock_queue = self.root / "godmode-write.queue"
         # B4-1: the tail-truncation anchor. The hash chain is tamper-evident
         # mid-chain but silent on tail truncation (deleting the newest
         # record(s) leaves a shorter, internally valid chain), and the head
@@ -704,7 +865,7 @@ class Chronicle:
         # may only ever catch UP to it - an anchor that over-counts the
         # files means records that existed are gone.
         self.chain_anchor = self.root / "godmode-chain-anchor.json"
-        # C-8 fix round 1: the verified-checkpoint registry. Beside the
+        # The verified-checkpoint registry. Beside the
         # chain anchor, same trust class - written only after a FULL walk
         # (every record, from position 0, no acceleration) proves the chain
         # intact through a given checkpoint, and read-only for every other
@@ -715,7 +876,7 @@ class Chronicle:
         # full walk can. `expunge`/`reanchor` clear it, since either one
         # can change what an earlier full walk actually proved.
         self.checkpoint_registry = self.root / "godmode-checkpoint-registry.json"
-        # NS-11e + NS-11g (0.3.28 Plan 5 Task 7): the cold tier's own
+        # The cold tier's own
         # sidecar - which sequences `godmode forget`'s expire operation has
         # moved out of `self.events` into a rotated `events-cold-<n>.jsonl`
         # segment, and the record_hash each one sealed with, so `verify()`
@@ -743,7 +904,7 @@ class Chronicle:
         self._last_listing: tuple[str, dict[str, tuple[int, int]]] | None = None
         self._accepted_keys_cache_key: tuple[int, int] | None = None
         self._accepted_keys_cache: set[str] | None = None
-        # I-1 (0.3.28 Plan 5 Task 4): the enforce-lesson index. Keyed on how
+        # The enforce-lesson index. Keyed on how
         # much of the archive's head it has already folded in
         # (`_enforce_index_upto`, a record count) rather than re-deriving
         # from scratch every append - see `_sync_enforce_index`.
@@ -876,12 +1037,84 @@ class Chronicle:
 
         verified = self.verify()
         if not verified["ok"]:
-            # N-9 fix round 1: verify() reports rather than raises now, but
+            # Verify() reports rather than raises now, but
             # adopt() must not - a caller that copies a pre-tampered
             # stranded archive and gets back exit 0 has silently adopted a
             # broken chain. Mirrors reanchor()'s own check below.
             raise ArchiveError(verified["message"])
         return {"adopted": copied, "source": str(source), "chain": verified}
+
+    def identity_drift(self) -> dict[str, Any] | None:
+        """The recorded and resolved keys when this archive was born under
+        a different identity than this checkout now resolves - a moved or
+        copied checkout whose archive travelled with it - and no adopt has
+        recorded the current one yet; None otherwise."""
+        if not self.config.is_file():
+            return None
+        try:
+            existing = self._read_json(self.config)
+        except ArchiveError:
+            return None
+        recorded = existing.get("project_key")
+        current = self.anchor.project_key
+        adopted = existing.get("adopted_keys")
+        if recorded == current or (isinstance(adopted, list) and current in adopted):
+            return None
+        return {"recorded_key": recorded, "current_key": current,
+                "records": len(self.event_paths()), "archive": str(self.root)}
+
+    def adopt_moved_identity(self) -> dict[str, Any]:
+        """Relink THIS archive to the identity this checkout now resolves,
+        as an operator-confirmed decision (`godmode adopt --confirm`).
+
+        `adopt()` refuses here by design - the destination already holds
+        records, and it exists to copy a separate, stranded archive in.
+        A moved checkout needs no copy: the chain must still verify under
+        the identities it already accepts, then the config's key becomes
+        the current one and the old key is kept in `adopted_keys`, so every
+        record it wrote still verifies. `initialize()`'s exact-match check
+        is untouched: it passes afterwards only because the recorded key
+        now IS the current one. The relink is chronicled."""
+        with self.write_lock():
+            drift = self.identity_drift()
+            if drift is None:
+                raise ArchiveError(
+                    "This archive already carries this checkout's identity; "
+                    "nothing to adopt.")
+            existing = self._read_json(self.config)
+            previous = existing.get("project_key")
+            if not isinstance(previous, str) or not previous:
+                raise ArchiveError("The archive config names no identity to adopt from.")
+            if existing.get("schema_version") != SCHEMA_VERSION:
+                raise ArchiveError("Archive schema requires an explicit migration")
+            records = [self._read_json(path) for path in self.event_paths()]
+            outcome = self.verify(records)
+            if not outcome["ok"]:
+                raise ArchiveError(
+                    f"Refusing to adopt: the chain does not verify ({outcome['message']}).")
+            current = self.anchor.project_key
+            payload = dict(existing)
+            adopted = {key for key in (existing.get("adopted_keys") or [])
+                       if isinstance(key, str)}
+            adopted.add(previous)
+            adopted.discard(current)
+            payload["project_key"] = current
+            payload["adopted_keys"] = sorted(adopted)
+            payload["adopted_from"] = "moved-checkout"
+            payload["last_anchor"] = asdict(self.anchor)
+            payload["last_anchor_fingerprint"] = anchor_fingerprint(self.anchor)
+            _atomic_json(self.config, payload)
+        record = self.append(
+            "action", "archive-identity-adopted",
+            {"previous_key": previous, "current_key": current, "records": len(records)},
+            evidence=[],
+        )
+        verified = self.verify(self.read_events(verify=False))
+        if not verified["ok"]:
+            raise ArchiveError(verified["message"])
+        return {"adopted": "moved-checkout", "previous_key": previous,
+                "current_key": current, "records": len(records),
+                "record": f"seq:{record['sequence']}", "chain": verified}
 
     def initialize(self) -> None:
         # initialize() runs on every append, but creating and re-permissioning
@@ -898,7 +1131,34 @@ class Chronicle:
         if self.config.exists():
             existing = self._read_json(self.config)
             if existing.get("project_key") != self.anchor.project_key:
-                raise ArchiveError("Archive identity does not match this project")
+                # The check itself stays exactly as strict as before -
+                # fail-closed, an exact match
+                # only, never widened to accepted_keys() (which trivially
+                # contains `self.anchor.project_key` by construction and so
+                # cannot be used to loosen THIS comparison without making it
+                # vacuous). What changed is the message: a moved or copied
+                # checkout - the archive travels with it when it lives
+                # inside `.git`, but its stamped identity does not - used to
+                # get a bare "does not match", naming neither key nor a next
+                # step. Both keys are named now, and the archive's own
+                # `adopted_keys` (already how a genuinely relinked archive
+                # is recognized) is checked directly, rather than via a
+                # helper whose trivial self-inclusion would defeat the
+                # point of asking.
+                adopted = existing.get("adopted_keys")
+                already_adopted = isinstance(adopted, list) and self.anchor.project_key in adopted
+                if not already_adopted:
+                    raise ArchiveError(
+                        "Archive identity does not match this project: "
+                        f"recorded {existing.get('project_key')!r}, this "
+                        f"checkout resolves {self.anchor.project_key!r}. If "
+                        "this checkout was moved or copied together with its "
+                        "archive, that is the born identity drifting, not "
+                        "tampering - `godmode adopt` previews relinking this "
+                        "archive to this checkout's identity, and `godmode "
+                        "adopt --confirm --as-operator` performs it (recorded, and the old "
+                        "identity stays accepted for the records it wrote)."
+                    )
             if existing.get("schema_version") != SCHEMA_VERSION:
                 raise ArchiveError("Archive schema requires an explicit migration")
             refreshed = dict(existing)
@@ -962,8 +1222,25 @@ class Chronicle:
         ERRNOS`): a latch tried in an earlier round let two different
         processes, each reacting to their own errno, serialize on two
         different sidecars at once - a silent chain fork.
+
+        Contenders queue first (`_take_queue_ticket`) and try the lock only
+        at their turn, so under load each waits behind the writers ahead of
+        it rather than losing every poll to whoever happens to retry first;
+        `timeout_seconds` bounds the queue wait and the lock wait together.
         """
         self.root.mkdir(parents=True, exist_ok=True)
+        deadline = time.monotonic() + timeout_seconds
+        ticket = self._take_queue_ticket()
+        try:
+            self._wait_for_queue_turn(ticket, deadline)
+            yield from self._write_lock_acquired(max(0.0, deadline - time.monotonic()))
+        finally:
+            if ticket is not None:
+                _unlink_shared(ticket)
+
+    def _write_lock_acquired(self, timeout_seconds: float) -> Iterator[None]:
+        """The lock itself, entered once this writer's turn in the queue
+        has come (see `write_lock`)."""
         if not _has_kernel_locking():
             yield from self._write_lock_exclusive_create(timeout_seconds)
             return
@@ -980,7 +1257,7 @@ class Chronicle:
                 except OSError as exc:
                     if exc.errno in _LOCK_CONTENTION_ERRNOS:
                         if time.monotonic() >= deadline:
-                            raise ArchiveError("Godmode archive is busy; retry after the active write")
+                            raise ArchiveError(_busy_message(self.lock_owner_path))
                         # Field feedback 2026-09-11 (Part 10): "busy; retry"
                         # twice in one pass with a hook and a CLI call
                         # writing together. A 20 s deadline with a growing,
@@ -1023,8 +1300,18 @@ class Chronicle:
             return
 
         try:
-            os.lseek(descriptor, 0, os.SEEK_SET)
-            os.write(descriptor, f"{os.getpid()}\n{time.time()}\n".encode())
+            # Written to the SEPARATE sidecar (`lock_owner_path`),
+            # never into `descriptor` itself - that file's byte 0 is what
+            # `_kernel_lock` just locked, and on Windows a locked byte
+            # range refuses even a read from another process, which is
+            # exactly the moment a contending acquirer needs this content.
+            # Best-effort like the payload always was ("diagnostic only");
+            # a write that fails here must not cost the lock itself.
+            try:
+                self.lock_owner_path.write_text(
+                    _lock_owner_payload(os.getpid(), time.time()), encoding="utf-8")
+            except OSError:  # godmode: swallow-ok: diagnostic only, never the lock's own business
+                pass
             yield
         finally:
             try:
@@ -1032,6 +1319,108 @@ class Chronicle:
             except OSError:  # godmode: swallow-ok: the descriptor close releases it anyway
                 pass
             os.close(descriptor)
+
+    def _take_queue_ticket(self) -> Path | None:
+        """Join the write lock's waiting line: exclusively create the ticket
+        one above the highest standing one. None when the line cannot be
+        joined at all (an unwritable folder) - the lock still excludes,
+        it just no longer orders this writer.
+
+        Fairness: a ticket is created above every ticket standing when its
+        writer listed the folder, so a writer can be overtaken only by a
+        writer that listed before its own ticket existed - at most one per
+        other contender - and every writer then waits for at most one
+        critical section per writer ahead of it."""
+        try:
+            self.lock_queue.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return None
+        for _attempt in range(64):
+            standing = self._queue_tickets()
+            number = (standing[-1][0] + 1) if standing else 1
+            path = self.lock_queue / f"{number:012d}.ticket"
+            try:
+                descriptor = os.open(
+                    _syscall_path(path),
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+            except (FileExistsError, PermissionError):
+                # PermissionError: on Windows, a name whose delete is still
+                # pending behind a reader's handle - taken, for now.
+                continue
+            except OSError:
+                return None
+            try:
+                os.write(descriptor, f"{os.getpid()}\n{uuid.uuid4().hex}\n".encode())
+            except OSError:  # godmode: swallow-ok: a pid-less ticket ages out like a pid-less claim
+                pass
+            finally:
+                os.close(descriptor)
+            return path
+        return None
+
+    def _queue_tickets(self) -> list[tuple[int, Path]]:
+        """Standing tickets, lowest first."""
+        try:
+            names = os.listdir(self.lock_queue)
+        except OSError:
+            return []
+        tickets = []
+        for name in names:
+            head, _, suffix = name.partition(".")
+            if suffix == "ticket" and head.isdigit():
+                tickets.append((int(head), self.lock_queue / name))
+        tickets.sort()
+        return tickets
+
+    def _wait_for_queue_turn(self, ticket: Path | None, deadline: float) -> None:
+        """Block until no live ticket stands below `ticket`, or raise busy
+        at `deadline`. A ticket below is cleared only when its writer is
+        provably gone (the same rule as a sequence claim), or - so a reused
+        pid cannot wedge the line - once it has stood past the fallback's
+        sweep window while nobody holds the lock. A wrong clear only
+        reorders writers: exclusion never depended on the queue."""
+        if ticket is None:
+            return
+        mine = int(ticket.name[:12])
+        watched: Path | None = None
+        since = 0.0
+        while True:
+            ahead = [(n, p) for n, p in self._queue_tickets() if n < mine]
+            if not ahead:
+                return
+            lowest = ahead[0][1]
+            now = time.monotonic()
+            if lowest != watched:
+                watched, since = lowest, now
+            # Only a ticket that has stood at the front for a while is read:
+            # on Windows an open read blocks its owner's release unlink, so
+            # every waiter reading the front ticket on every poll would
+            # stall the very hand-off it is waiting for.
+            elif now - since >= 0.5:
+                since = now
+                if self._queue_ticket_abandoned(lowest):
+                    _unlink_shared(lowest)
+                    continue
+            if now >= deadline:
+                path = self.lock_owner_path if _has_kernel_locking() else self.excl_lock_path
+                raise ArchiveError(_busy_message(path))
+            # The writer next in line polls fast so the hand-off is quick;
+            # those further back poll in proportion to their distance, so a
+            # long line does not slow the holder's own disk work.
+            time.sleep(min(0.25, 0.003 + 0.02 * (len(ahead) - 1)))
+
+    def _queue_ticket_abandoned(self, path: Path) -> bool:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+            age = time.time() - path.stat().st_mtime
+        except OSError:
+            return False
+        pid = _payload_pid(text)
+        if pid is not None and not _pid_alive(pid):
+            return True
+        if pid is None and age > 10:
+            return True
+        return age > _EXCLUSIVE_CREATE_SWEEP_SECONDS and not self.lock_is_held()
 
     def lock_is_held(self) -> bool:
         """Whether some process holds the write lock right now.
@@ -1083,11 +1472,7 @@ class Chronicle:
 
         if not self.excl_lock_path.exists():
             return False
-        try:
-            age = time.time() - self.excl_lock_path.stat().st_mtime
-        except OSError:
-            return False
-        return age <= _EXCLUSIVE_CREATE_SWEEP_SECONDS
+        return not self._exclusive_lock_abandoned()
 
     def _write_lock_exclusive_create(self, timeout_seconds: float) -> Iterator[None]:
         """Fallback lock, on its own sidecar (`self.excl_lock_path`).
@@ -1103,26 +1488,25 @@ class Chronicle:
         """
         deadline = time.monotonic() + timeout_seconds
         descriptor: int | None = None
+        token = b""
         while descriptor is None:
             try:
                 descriptor = os.open(
-                    self.excl_lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+                    self.excl_lock_path,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0),
+                    0o600,
                 )
-                # No fsync: mutual exclusion comes from O_EXCL creation, which
-                # is durable enough for a lock that a crash releases by age-out;
-                # the pid/time content is diagnostic only. The flush cost was
-                # measurable on every single append.
-                os.write(descriptor, f"{os.getpid()}\n{time.time()}\n".encode())
+                # No fsync: mutual exclusion comes from O_EXCL creation; the
+                # content names the holder (pid, a unique time, version) so a
+                # takeover can prove the holder is dead, and so release can
+                # prove the sidecar is still its own.
+                token = _lock_owner_payload(os.getpid(), time.time()).encode()
+                os.write(descriptor, token)
             except FileExistsError:
-                try:
-                    age = time.time() - self.excl_lock_path.stat().st_mtime
-                    if age > _EXCLUSIVE_CREATE_SWEEP_SECONDS:
-                        self.excl_lock_path.unlink(missing_ok=True)
-                        continue
-                except OSError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
-                    pass
+                if self._take_over_abandoned_exclusive_lock():
+                    continue
                 if time.monotonic() >= deadline:
-                    raise ArchiveError("Godmode archive is busy; retry after the active write")
+                    raise ArchiveError(_busy_message(self.excl_lock_path))
                 waited = timeout_seconds - (deadline - time.monotonic())
                 time.sleep(min(0.25, 0.05 + waited * 0.02) + (os.getpid() % 7) * 0.003)
         try:
@@ -1130,7 +1514,96 @@ class Chronicle:
         finally:
             if descriptor is not None:
                 os.close(descriptor)
-            self.excl_lock_path.unlink(missing_ok=True)
+            # Release only a sidecar that is still this holder's own: one a
+            # takeover replaced belongs to the new holder, and unlinking it
+            # would let a third writer in beside them.
+            try:
+                still_ours = self.excl_lock_path.read_bytes() == token
+            except OSError:
+                still_ours = False
+            if still_ours:
+                self.excl_lock_path.unlink(missing_ok=True)
+
+    def _take_over_abandoned_exclusive_lock(self) -> bool:
+        """Remove the exclusive-create sidecar when its holder is gone, as
+        one writer only.
+
+        Judging and removing are two steps, so two waiters can both judge
+        the same abandoned sidecar: the first removes it and creates its
+        own, and a second that then removed "the" sidecar would remove the
+        first one's fresh lock and create another beside it. The removal is
+        therefore made under a short claim of its own (an exclusive-create
+        `.takeover` file), and only once the sidecar still holds exactly
+        the bytes that were judged abandoned; a sidecar that changed since
+        belongs to a new holder and is left alone. Returns whether this
+        writer removed it."""
+        try:
+            judged = self.excl_lock_path.read_bytes()
+        except OSError:
+            return False
+        if not self._exclusive_lock_abandoned():
+            return False
+        claim_path = self.excl_lock_path.with_name(self.excl_lock_path.name + ".takeover")
+        try:
+            claim = os.open(claim_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                            | getattr(os, "O_BINARY", 0), 0o600)
+        except FileExistsError:
+            # Another waiter is taking over right now. A claim is held only
+            # for a read and an unlink, so one left by a writer that died
+            # mid-claim is cleared once it is clearly older than that.
+            try:
+                if time.time() - claim_path.stat().st_mtime > _TAKEOVER_CLAIM_STALE_SECONDS:
+                    claim_path.unlink(missing_ok=True)
+            except OSError:  # godmode: swallow-ok: the next wait round looks again
+                pass
+            return False
+        except OSError:
+            return False
+        try:
+            try:
+                current = self.excl_lock_path.read_bytes()
+            except OSError:
+                return False
+            if current != judged or not self._exclusive_lock_abandoned():
+                return False
+            try:
+                self.excl_lock_path.unlink(missing_ok=True)
+            except OSError:
+                # Windows refuses to remove a file a live process still has
+                # open; the holder is not gone after all, so keep waiting.
+                return False
+            return True
+        finally:
+            os.close(claim)
+            claim_path.unlink(missing_ok=True)
+
+    def _exclusive_lock_abandoned(self) -> bool:
+        """Whether the exclusive-create sidecar's holder is provably gone.
+
+        Age alone is never enough: a holder that is merely slow (a large
+        archive, a loaded machine) past the sweep window was taken over
+        before, and two writers then overlapped. A sidecar naming a pid is
+        abandoned only when that process is dead; one with no readable pid
+        (a crash between create and write) only once it is older than the
+        sweep window. A pid is only read on the host that wrote it: a
+        sidecar from another host (a shared filesystem, another container)
+        is never judged by a local pid lookup. Past the ceiling
+        (`_EXCLUSIVE_CREATE_CEILING_SECONDS`) any sidecar is abandoned, so
+        a live but hung holder cannot wedge the archive for good."""
+        try:
+            text = self.excl_lock_path.read_text(encoding="utf-8", errors="replace")
+            age = time.time() - self.excl_lock_path.stat().st_mtime
+        except OSError:
+            return False
+        if age > _EXCLUSIVE_CREATE_CEILING_SECONDS:
+            return True
+        pid = _payload_pid(text)
+        if pid is not None:
+            host = _lock_owner_host(text)
+            if host is not None and host != _lock_host():
+                return False
+            return not _pid_alive(pid)
+        return age > _EXCLUSIVE_CREATE_SWEEP_SECONDS
 
     def event_paths(self) -> list[Path]:
         if not self.events.exists():
@@ -1188,7 +1661,7 @@ class Chronicle:
         """The per-file (mtime_ns, size) behind `identity`, when the last
         directory scan produced exactly that identity; None otherwise.
 
-        Field report 2026-09-23: on a 20,000-record archive a hook's first
+        On a 20,000-record archive a hook's first
         read stat-ed every record file one by one for the read index's
         prefix identity (4.4 s of a 7.5 s read) and listed the directory a
         second time for the record paths, after `_events_identity` had
@@ -1233,7 +1706,7 @@ class Chronicle:
                 (self.root / self._INDEX_NAME).unlink()
             except OSError:  # godmode: swallow-ok: no index, or one the rewritten stats will reject anyway
                 pass
-            # C-8 fix round 1: expunge/reanchor re-seal records in place,
+            # Expunge/reanchor re-seal records in place,
             # which changes the `record_hash`/`previous_hash` a later
             # checkpoint's registry entry pinned - that entry no longer
             # describes what is on disk, so it must not go on granting
@@ -1247,14 +1720,14 @@ class Chronicle:
                 self.checkpoint_registry.unlink()
             except OSError:  # godmode: swallow-ok: no registry, or one the rewrite already invalidated
                 pass
-            # I-1: expunge/reanchor can mutate an ALREADY-scanned record in
+            # Expunge/reanchor can mutate an ALREADY-scanned record in
             # place (e.g. a lesson itself gets expunged) with no new record
             # added to signal it - the incremental sync below only ever
             # looks at the tail, so it would never notice. Reset to force
             # one full, one-time rescan on the next append.
             self._enforce_index_upto = 0
             self._enforce_lessons_by_subject = {}
-            # I-1 fix round 1 (Blocking 1): the on-disk enforce sidecar
+            # The on-disk enforce sidecar
             # would otherwise keep describing pre-rewrite content under a
             # (count, head_hash) pair a fast in-place rewrite can leave
             # numerically unchanged (an expunge re-seals a record without
@@ -1292,8 +1765,8 @@ class Chronicle:
                 # The on-disk index holds the first N records, parsed and
                 # chain-walked under those N files' exact stat identity
                 # (name, mtime, size). Only the files after N are parsed
-                # and only their links are re-hashed. Field report file
-                # 2026-09-10, finding 5: every CLI call re-read and
+                # and only their links are re-hashed. Before this,
+                # every CLI call re-read and
                 # re-hashed the whole archive (2.4-4 s per call).
                 trusted = len(indexed)
                 records = indexed + [self._read_json(path) for path in paths[trusted:]]
@@ -1301,7 +1774,7 @@ class Chronicle:
                 records = [self._read_json(path) for path in paths]
             self._events_cache_key, self._events_cache = identity, records
             if verify and (identity is None or identity != self._events_verified_key):
-                # N-9: verify() now REPORTS a broken record instead of
+                # Verify() now REPORTS a broken record instead of
                 # raising; read_events() is the caller that relied on the
                 # raise to make a corrupt archive unreadable rather than
                 # silently returning tampered records, so it raises here
@@ -1406,7 +1879,7 @@ class Chronicle:
         except OSError:
             return
 
-    # --- on-disk enforce-lesson index (I-1 fix round 1, Blocking 1) --------
+    # --- on-disk enforce-lesson index --------
     # Beside the read index above: a fresh `Chronicle` (every hook
     # invocation, every write-only CLI call is one) used to pay a full
     # `read_events()` walk on its first non-lesson append hunting for
@@ -1461,7 +1934,7 @@ class Chronicle:
             enforce = entry.get("enforce")
             result[str(subject)] = {
                 "sequence": entry["sequence"],
-                # Fix round 3 (nit): normalised the same way every writer
+                # Normalised the same way every writer
                 # of this dict does (`_sync_enforce_index`'s tier-3 fold,
                 # `.strip().lower()`) - a raw read here was the one place
                 # left where a hand-edited sidecar's `"Superseded"` would
@@ -1476,7 +1949,7 @@ class Chronicle:
         return result
 
     def _write_enforce_index(self, count: int, head_hash: str | None) -> None:
-        """Best-effort (fix round 1 ruling): a failed write costs the next
+        """Best-effort: a failed write costs the next
         fresh process one fallback scan, nothing else - never raised,
         never allowed to fail the append whose data it is merely caching."""
         path = self.root / self._ENFORCE_INDEX_NAME
@@ -1585,7 +2058,7 @@ class Chronicle:
                              if isinstance(v, str) and v}
         except (TypeError, ValueError):
             return None
-        # Fix round 2 (R2-B4): `rotated` and `hash_by_sequence` used to be
+        # `rotated` and `hash_by_sequence` used to be
         # validated independently and never cross-checked, so a registry
         # could claim a sequence was rotated while holding no hash for it -
         # and a non-string value was simply dropped, producing exactly that
@@ -1660,7 +2133,7 @@ class Chronicle:
             sequence = record.get("sequence")
             if not isinstance(sequence, int) or isinstance(sequence, bool):
                 continue
-            # NS-11g fix round 1 (review A, B7): the GLOBAL position
+            # The GLOBAL position
             # (`sequence - 1`), never this list's index. Once a rotation has
             # removed older files, a hot-list index is smaller than the
             # record's true position, and every checkpoint - old and new -
@@ -1683,7 +2156,7 @@ class Chronicle:
             self._write_checkpoint_registry(registered)
 
     def _checkpoint_boundary(self, records: list[dict[str, Any]]) -> dict[str, Any] | None:
-        """C-8 fix round 1: the newest `checkpoint` that is BOTH C-8-shaped
+        """The newest `checkpoint` that is BOTH C-8-shaped
         AND already present in the verified-checkpoint registry
         (`_read_checkpoint_registry`) - `None` when nothing in `records`
         qualifies, so callers keep whatever `trusted_prefix` they already
@@ -1742,7 +2215,7 @@ class Chronicle:
         registered = self._read_checkpoint_registry()
         if not registered:
             return None
-        # NS-11g fix round 1 (review A, B7): `record_count` is a GLOBAL
+        # `record_count` is a GLOBAL
         # position (`sequence - 1`), and `records` here is the hot tier,
         # which after a rotation holds fewer records than the chain does.
         # The rotated sequences below a candidate are exactly the difference
@@ -1790,7 +2263,7 @@ class Chronicle:
                check_anchor: bool = True, trusted_prefix: int = 0,
                use_checkpoint: bool = True, bridge_gaps: bool = True,
                path_at: Callable[[int], Path | None] | None = None) -> dict[str, Any]:
-        # `bridge_gaps=False` (fix round 1, review A B1: only `verify_cold()`
+        # `bridge_gaps=False` (only `verify_cold()`
         # passes it) turns the cold registry off entirely for this call, so a
         # sequence missing from `records` is a BROKEN CHAIN rather than a gap
         # the registry explains. The ordinary read path keeps the bridge - it
@@ -1798,20 +2271,20 @@ class Chronicle:
         # design - but the thorough cross-tier check hands in cold and hot
         # together, and there nothing legitimate is missing, so nothing may be
         # explained away.
-        # `path_at` (NS-11g, Task 7): how a broken record's position maps to
+        # `path_at`: how a broken record's position maps to
         # a file, for the ONE caller (`verify_cold()`) whose `records` are
         # not `self.event_paths()`'s own list - a cold-plus-hot combined
         # walk, where `self.event_paths()` alone would name the wrong file
         # for a break inside the cold portion. Every other caller leaves
         # this `None` and gets exactly today's `event_paths()` lookup.
-        # N-9: a broken record (schema, project identity, sequence, chain
+        # A broken record (schema, project identity, sequence, chain
         # link, or content hash) is reported here, not raised - the caller
         # gets the exact record that broke (sequence, file, line) instead
         # of a bare "tamper detected" that sends the reader to grep. Tail
         # truncation stays a raise below: that failure means records are
         # GONE, which no return value can safely let a caller ignore.
         records = self.read_events(verify=False) if records is None else records
-        # C-8: the two prefix optimisations compose by taking whichever
+        # The two prefix optimisations compose by taking whichever
         # proves MORE. `trusted_prefix` as passed in comes from the
         # file-stat index (godmode-events.index.json) - valid only while
         # those exact files' stat identity (name, mtime, size) hasn't
@@ -1846,11 +2319,11 @@ class Chronicle:
         full_walk = trusted_prefix == 0
         previous: str | None = None
         expected_sequence = 1
-        # NS-11g (0.3.28 Plan 5 Task 7): the cold registry, read once per
+        # The cold registry, read once per
         # verify() call - see `_read_cold_registry`'s docstring for why
         # this is safe to trust for BRIDGING a gap (never for re-proving
         # the cold bytes themselves; that is `verify_cold()`'s job).
-        # Absent on every archive Task 7 did not touch, so this is a
+        # Absent on every archive that never rotated to cold storage, so this is a
         # no-op there and every existing caller's behaviour is unchanged.
         cold_registry = self._read_cold_registry() if bridge_gaps else None
         cold_rotated: frozenset[int] = (
@@ -1859,7 +2332,7 @@ class Chronicle:
         cold_hash_by_sequence: dict[int, str] = (
             cold_registry["hash_by_sequence"] if cold_registry else {}
         )
-        # N12: a registry file that exists but did not survive
+        # A registry file that exists but did not survive
         # `_read_cold_registry`'s checks leaves every rotation gap
         # unexplained - correct (fail-closed), but the resulting break read
         # as a bare "record sequence is not contiguous" with no named cause
@@ -1875,6 +2348,27 @@ class Chronicle:
                 # that happens to start above 1 - the hot tier right after a
                 # cold rotation - still hands the loop the right starting
                 # point below.
+                #
+                # Unchanged stat identity
+                # proves these bytes still match what the index recorded -
+                # it says nothing about which PROJECT wrote them. Skipping
+                # the identity check here let a record whose project_key
+                # is not one of this archive's accepted_keys() ride the
+                # trusted prefix straight past the exact check the tail
+                # enforces below, so a verdict depended on how much of the
+                # archive the index happened to cover. Cheap enough (a set
+                # lookup, no hashing) to run unconditionally without
+                # undoing what the index actually accelerates: the hash
+                # work, not this.
+                if record.get("project_key") not in self.accepted_keys():
+                    if path_at is not None:
+                        path = path_at(position)
+                    else:
+                        paths = self.event_paths()
+                        path = paths[position] if position < len(paths) else None
+                    return self._broken(
+                        position, len(records), previous, record.get("sequence"),
+                        path, '"project_key"', "record project identity mismatch")
                 previous = record["record_hash"]
                 expected_sequence = _sequence_of(record) + 1
                 continue
@@ -1885,7 +2379,7 @@ class Chronicle:
             elif record.get("project_key") not in self.accepted_keys():
                 broken = ('"project_key"', "record project identity mismatch")
             elif sequence != expected_sequence:
-                # NS-11g: a gap here is legitimate ONLY when every sequence
+                # A gap here is legitimate ONLY when every sequence
                 # number it skips was moved to a cold segment by
                 # `rotate_to_cold`, AND this record's own `previous_hash` -
                 # sealed at append time, long before any rotation existed -
@@ -1895,8 +2389,8 @@ class Chronicle:
                 # stored bytes already claim, so a forged registry entry
                 # with no matching `previous_hash` still fails here exactly
                 # like an unexplained gap always has. A gap the registry
-                # does not explain is reported precisely as before Task 7.
-                # Fix round 2 (R2-B4): the bridging hash must BE a hash. A
+                # does not explain is reported precisely as before cold-registry bridging existed.
+                # The bridging hash must BE a hash. A
                 # bare `.get(...) == record.get("previous_hash")` passed on
                 # `None == None` - a registry entry the `rotated` list claims
                 # and `hash_by_sequence` does not hold, against a record whose
@@ -1954,7 +2448,7 @@ class Chronicle:
         result = {
             "valid": True,
             # `records`/`record_count` are the records THIS walk saw - the hot
-            # tier, on the ordinary read path. Fix round 2 (N5): a rotation
+            # tier, on the ordinary read path. A rotation
             # makes that number shrink, which reads as an archive losing
             # history when it has only moved storage, so the number that never
             # shrinks (the highest sequence ever sealed, cold included) is
@@ -2101,11 +2595,11 @@ class Chronicle:
         """(anchored, remaining) when the chain does not pass through the
         anchored head; None when it does.
 
-        NS-11g (0.3.28 Plan 5 Task 7): matched by the anchored record's own
+        Matched by the anchored record's own
         `sequence` field, not by list POSITION - `records` here is
         `self.event_paths()`'s hot-only list, and once `rotate_to_cold` has
         removed older files, position `length - 1` no longer names the
-        `length`-th record the way it always did before Task 7 (position
+        `length`-th record the way it always did before rotation existed (position
         and sequence agree only while nothing has ever been rotated). The
         anchor itself is untouched by rotation (`_write_chain_anchor` is
         never called by `rotate_to_cold`) - it still names the true total
@@ -2129,7 +2623,7 @@ class Chronicle:
                 if record.get("record_hash") != anchor_state["head_hash"]:
                     return length, len(records)
                 return None
-        # Fix round 2 (N1): no HOT record carries that sequence, which on a
+        # No HOT record carries that sequence, which on a
         # rotated archive means the anchored record is cold. The branch
         # above already knows how to answer from the registry's own recorded
         # hash; answer from it here too rather than skip the anchored-head
@@ -2205,7 +2699,7 @@ class Chronicle:
         or a record file deleted out of the MIDDLE of the chain) must be refused,
         or the next append would fork the chain.
 
-        Fix round 1 (review A, B2): this returns the FILE COUNT, exactly as it
+        This returns the FILE COUNT, exactly as it
         did before the cold tier existed. Returning the tail's sequence number
         here instead made `_chain_tail`'s guard below compare a sequence against
         a sequence, which cannot see files missing from the middle - a plain
@@ -2234,7 +2728,7 @@ class Chronicle:
         """The sequence number a record file's own name carries - the same
         zero-padded 12-digit prefix `event_paths()` orders by - or 0 when there
         is no file. Deliberately separate from `_tail_entry`'s file COUNT
-        (review A, B2): once `rotate_to_cold` can remove an older file, the
+        Once `rotate_to_cold` can remove an older file, the
         count and the tail sequence are different numbers, and each guard needs
         the one it actually means."""
         if path is None:
@@ -2268,7 +2762,7 @@ class Chronicle:
         rotated_below = sum(1 for s in registry["rotated"] if s <= tail_sequence)
         return count + rotated_below == tail_sequence
 
-    def _chain_tail(self) -> tuple[int, str | None]:
+    def _chain_tail(self, *, fresh: bool = False) -> tuple[int, str | None]:
         """Locate the chain tail without re-reading history. Caller holds the lock.
 
         Re-verifying the whole chain on every append made writes O(history), so a
@@ -2278,11 +2772,15 @@ class Chronicle:
         hash); any mismatch falls back to the full verified scan and rebuilds the
         cache. Tamper detection is not weakened: verify()/doctor still walk the
         entire chain.
+
+        Every answer comes from disk as it stands under the lock, never from
+        this process's own memory. `fresh=True` skips the head hint entirely
+        (a retry after a sequence claim was refused).
         """
         count, last_path = self._tail_entry()
         tail_sequence = self._tail_sequence_of(last_path)
-        head = self._read_head()
-        # Review A, B2: BOTH halves, or the fast path is refused. The head must
+        head = None if fresh else self._read_head()
+        # BOTH halves, or the fast path is refused. The head must
         # name the tail's own sequence, AND the files present must account for
         # every sequence below it (directly, or through the cold registry's own
         # record of what was rotated away).
@@ -2321,10 +2819,19 @@ class Chronicle:
                             and last.get("record_hash") != anchor_state["head_hash"]):
                         self._raise_truncated(anchor_state["length"], tail_sequence)
                 return head["sequence"], head["record_hash"]
+        # A pinned identity (a hook process) is the directory as it stood
+        # when the pin was taken; other processes may have sealed records
+        # since. Reading the tail through it handed a hook its own stale
+        # list the moment the head hint failed to validate (a writer killed
+        # between its record and its hint, say): the next record reused a
+        # sequence already on disk, with the same previous_hash - a fork.
+        # Re-scan first, so the read below reflects the directory now.
+        if self._pinned_identity is not None:
+            self._pinned_identity = (True, self._events_identity())
         records = self.read_events(verify=True)
-        # NS-11g: the true tail is the highest sequence ever sealed, which is
+        # The true tail is the highest sequence ever sealed, which is
         # not always the last HOT record - `self.events` holds only what no
-        # rotation has moved. Fix round 1 (review A, N4): the cold registry is
+        # rotation has moved. The cold registry is
         # consulted whenever it names a HIGHER sequence, not only when the hot
         # tier is empty. `rotate_to_cold` refuses to move the tail and
         # `eligible_for_expiry` never selects it, so an ordinary pass should
@@ -2346,6 +2853,115 @@ class Chronicle:
         self._write_head(tail_sequence, tail_hash)
         return tail_sequence, tail_hash
 
+    def _sequence_sealed(self, sequence: int) -> bool:
+        """Whether a record file for `sequence` is on disk (hot tier) or the
+        cold registry says one was sealed and rotated."""
+        prefix = f"{sequence:012d}-"
+        try:
+            names = os.listdir(self.events)
+        except OSError:
+            names = []
+        if any(name.startswith(prefix) and _is_record_name(name) for name in names):
+            return True
+        registry = self._read_cold_registry()
+        return bool(registry and sequence in registry["rotated"])
+
+    def _claim_abandoned(self, path: Path, sequence: int) -> bool:
+        """A claim left by a writer that died before sealing: no record
+        carries its sequence and its holder is not running. A claim whose
+        record exists is never abandoned - that sequence is taken."""
+        if self._sequence_sealed(sequence):
+            return False
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+            age = time.time() - path.stat().st_mtime
+        except OSError:
+            return False
+        pid = _payload_pid(text)
+        if pid is not None:
+            return not _pid_alive(pid)
+        # Created but never written: the holder died in between, or is
+        # writing right now. Only age tells those apart.
+        return age > 10
+
+    def _claim_sequence(self, sequence: int) -> Path:
+        """Take `sequence` exclusively before its record is written.
+
+        O_EXCL on `<sequence>.claim`: of any two writers that derived the
+        same sequence, exactly one creates it. The loser raises
+        `_SequenceTaken`. A claim ABOVE this one means a writer already
+        sealed past this sequence (claims below the newest are pruned only
+        after a later record lands), so this writer's view of the tail is
+        stale and it is refused too. Abandoned claims (holder dead, nothing
+        sealed) are cleared rather than wedging the archive."""
+        claims = self.sequence_claims
+        try:
+            claims.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise ArchiveError(f"cannot create {claims} ({exc.strerror or exc})") from exc
+        path = claims / f"{sequence:012d}.claim"
+        for attempt in (1, 2):
+            try:
+                descriptor = os.open(
+                    _syscall_path(path),
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+            except FileExistsError:
+                if attempt == 1 and self._claim_abandoned(path, sequence):
+                    path.unlink(missing_ok=True)
+                    continue
+                raise _SequenceTaken(
+                    f"sequence {sequence} is already claimed by another writer")
+            try:
+                os.write(descriptor, f"{os.getpid()}\n{uuid.uuid4().hex}\n".encode())
+            finally:
+                os.close(descriptor)
+            break
+        try:
+            others = os.listdir(claims)
+        except OSError:
+            others = []
+        for name in others:
+            head, _, suffix = name.partition(".")
+            if suffix != "claim" or not head.isdigit() or int(head) <= sequence:
+                continue
+            higher = claims / name
+            if self._claim_abandoned(higher, int(head)):
+                higher.unlink(missing_ok=True)
+                continue
+            path.unlink(missing_ok=True)
+            raise _SequenceTaken(
+                f"sequence {int(head)} is already claimed, above {sequence}")
+        return path
+
+    def _clear_claims_above(self, tail: int) -> None:
+        """Drop every claim above `tail` - only for an explicit operator
+        decision that the chain ends at `tail` (reanchor, fork repair)."""
+        try:
+            names = os.listdir(self.sequence_claims)
+        except OSError:
+            return
+        for name in names:
+            head, _, suffix = name.partition(".")
+            if suffix == "claim" and head.isdigit() and int(head) > tail:
+                (self.sequence_claims / name).unlink(missing_ok=True)
+
+    def _prune_claims(self, sealed: int) -> None:
+        """Drop claims below the one just sealed (best-effort). Pruning only
+        BELOW a sealed record keeps the refusal sound: any sequence whose
+        claim is gone already has its record on disk and a higher claim
+        standing, which a stale writer's claim check sees."""
+        try:
+            names = os.listdir(self.sequence_claims)
+        except OSError:
+            return
+        for name in names:
+            head, _, suffix = name.partition(".")
+            if suffix == "claim" and head.isdigit() and int(head) < sealed:
+                try:
+                    (self.sequence_claims / name).unlink()
+                except OSError:  # godmode: swallow-ok: a leftover claim below the tail is inert
+                    pass
+
     def _write_record(
         self,
         kind: str,
@@ -2364,7 +2980,7 @@ class Chronicle:
         repairs from the files -- the files are the truth, the head is a hint.
         """
         identifier = uuid.uuid4().hex
-        # NS-8k: computed here (rather than required from every caller) so
+        # Computed here (rather than required from every caller) so
         # the one direct caller outside append() (expunge()'s tombstone)
         # still gets a real derivation instead of an omitted field.
         if writer is None:
@@ -2379,7 +2995,7 @@ class Chronicle:
             # Every record attributes its author, so drift between models is
             # traceable on any kind, not only attestations.
             "agent": writer_fingerprint(),
-            # NS-8k: who wrote it and how much that writer is trusted. Old
+            # Who wrote it and how much that writer is trusted. Old
             # records (sealed before this field existed) simply lack it -
             # `record_writer`/`record_trust` read that absence as `agent`,
             # and the hash below covers only whatever keys are actually
@@ -2394,7 +3010,15 @@ class Chronicle:
         }
         record["record_hash"] = _record_hash(record)
         destination = self.events / f"{sequence:012d}-{identifier}.godmode.json"
-        _atomic_json(destination, record)
+        claim = self._claim_sequence(sequence)
+        try:
+            _atomic_json(destination, record)
+        except BaseException:
+            # Nothing sealed: give the sequence back, or the next writer
+            # would have to wait for this process to exit to take it.
+            claim.unlink(missing_ok=True)
+            raise
+        self._prune_claims(sequence)
         # B4-1 ordering: record first, anchor second, hint last. A crash
         # after the record leaves the anchor lagging by one (legal, repaired
         # by the next append); an anchor ahead of the files can only mean
@@ -2408,7 +3032,7 @@ class Chronicle:
         # cache extends by one - into a NEW list, so a caller holding the
         # old one never sees it mutate - and the identity re-scans once.
         cache = self._events_cache
-        # NS-11g fix round 2 (N2): compared against the cached tail's own
+        # Compared against the cached tail's own
         # SEQUENCE, not the list's length. After any rotation the hot list is
         # shorter than the tail sequence forever, so `len(cache) == sequence
         # - 1` was false on every append for the life of the archive and the
@@ -2425,7 +3049,7 @@ class Chronicle:
                 self._pinned_identity = (True, identity)
         else:
             self._drop_events_cache()
-        # I-1: the enforce-lesson index advances the same way, one record at
+        # The enforce-lesson index advances the same way, one record at
         # a time, straight from the record just sealed - never a re-read.
         # `_enforce_index_upto` starting at 0 collides with nothing here
         # (unlike `_events_cache_key`, 0 is never ambiguous with "not
@@ -2446,7 +3070,7 @@ class Chronicle:
         if self._enforce_index_upto == sequence - 1:
             _fold_into(self._enforce_lessons_by_subject)
             self._enforce_index_upto = sequence
-            # I-1 fix round 1 (Blocking 1): refresh the on-disk sidecar
+            # Refresh the on-disk sidecar
             # every time the in-process index stays caught up - cheap (one
             # small JSON write, no record read), and it is what lets the
             # NEXT fresh process (this append's own count/head_hash, which
@@ -2454,7 +3078,7 @@ class Chronicle:
             # re-earning it once per process forever.
             self._write_enforce_index(sequence, record["record_hash"])
         else:
-            # I-1 fix round 2 (Blocking 1): NOT caught up in-process - the
+            # NOT caught up in-process - the
             # common case is a `writer == "hook"` append, which never calls
             # `_sync_enforce_index` at all (`_enforced_refusal`'s own early
             # return for `writer == "hook"`), so a fresh process whose FIRST
@@ -2479,7 +3103,7 @@ class Chronicle:
                 self._write_enforce_index(sequence, record["record_hash"])
         return record
 
-    # NS-11h: kinds a different actor may always append against someone
+    # Kinds a different actor may always append against someone
     # else's subject - collaborative-by-design, never a closure. Every
     # other kind's `--status closed` is single-writer.
     _SINGLE_WRITER_EXEMPT_KINDS = frozenset({"request", "claim"})
@@ -2500,9 +3124,9 @@ class Chronicle:
 
     def _chronicled_session_role(self) -> str | None:
         """`checker`, but only when it is OPERATOR-GRANTED and belongs to
-        THIS caller (fix round 2, B1; fix round 3, B1-residual).
+        THIS caller.
 
-        Fix round 1 read a bare `GODMODE_SESSION_ROLE=checker` claim back
+        An earlier version read a bare `GODMODE_SESSION_ROLE=checker` claim back
         against the archive's LATEST `session` record - attributable to
         *some* `session open --role checker` call, but not necessarily one
         THIS process made, and that call itself was ungated: any process
@@ -2525,12 +3149,12 @@ class Chronicle:
              without that verification writes a record with neither, so
              this never matches it.
 
-        Round 2 stopped there, which closed the "latest record" bug but left
+        Stopping there would close the "latest record" bug but leave
         a narrower one open: naming a DIFFERENT, genuinely operator-granted
-        session id still minted `checker` for whichever process asked,
+        session id would still mint `checker` for whichever process asked,
         because nothing tied the record to the caller - the id is not a
         secret (`godmode history --kind session --json` prints it, and the
-        grant never expires). Fix round 3 (B1-residual) closes this too:
+        grant never expires). So this is closed too:
 
           3. Ownership: the record's `data["agent"]["agent_id"]` -
              stamped by `open_session` via `agent_fingerprint()` /
@@ -2574,12 +3198,12 @@ class Chronicle:
         return None
 
     def chronicled_session_role(self) -> str | None:
-        """Public wrapper for `_chronicled_session_role` (Task 5) - the
+        """Public wrapper for `_chronicled_session_role` - the
         SAME derivation `append` uses to decide whether THIS process, right
         now, holds an operator-granted `checker` session belonging to its
         own `agent_id()`. Callers outside this module that need to assert
-        "the caller currently holds real checker trust" (Task 3's
-        `godmode_bonds.ratify`, NS-4) reuse this, never a second copy of
+        "the caller currently holds real checker trust" (such as
+        `godmode_bonds.ratify`) reuse this, never a second copy of
         the same rule."""
         return self._chronicled_session_role()
 
@@ -2588,7 +3212,7 @@ class Chronicle:
         """The `writer` value THIS process's next `append()` call would
         stamp, without actually writing anything.
 
-        NS-10e fix round 1 (B1): `_validate_supersedes` (console.py) needs
+        `_validate_supersedes` (console.py) needs
         to know the writer's trust rank BEFORE the write happens, to refuse
         a low-trust supersession of a high-trust record rather than
         discover the hole after `combine` has already run. Factored out of
@@ -2600,8 +3224,8 @@ class Chronicle:
         return derive_writer(
             role=resolved_role, as_operator=as_operator, operator_verified=operator_verified)
 
-    # I-1 (0.3.28 Plan 5 Task 4): a lesson's own status values that take it
-    # out of enforcement. Fix round 1 (nit 7): imported from `godmode_law`
+    # A lesson's own status values that take it
+    # out of enforcement. Imported from `godmode_law`
     # rather than a separately-maintained copy - the two used to drift (a
     # `--status superseded` lesson stopped refusing writes here but kept
     # rendering as active law in the brief); one set now backs both.
@@ -2610,7 +3234,7 @@ class Chronicle:
     def _sync_enforce_index(self, count: int) -> None:
         """Advance the enforce-lesson index up to `count` (the archive's
         current record count, from the SAME `_tail_entry()`/`_chain_tail()`
-        call the caller already made - fix round 1, nit 9: this used to
+        call the caller already made: this used to
         take its own `_tail_entry()` listing, a second `os.listdir()` per
         append the caller's own count already made redundant) - never
         rescanning what it already folded in.
@@ -2632,7 +3256,7 @@ class Chronicle:
         3. Behind, sidecar missing or stale: the one full `read_events()`
            walk this method ever pays, ONCE - after which it writes the
            sidecar so the NEXT fresh process lands on tier 2 instead of
-           repeating this walk (fix round 1 ruling: "reads fall back to a
+           repeating this walk ("reads fall back to a
            scan ONCE and then write").
 
         A shrink (only possible after expunge/reanchor, which reset
@@ -2641,7 +3265,7 @@ class Chronicle:
         yet" here too and forces the same one-time rescan.
 
         Guards are read from `read_events(verify=False)` - unverified
-        records (fix round 1, nit 11). Harmless: `read_events()`'s OWN
+        records. Harmless: `read_events()`'s OWN
         verified paths still run on every reading caller that asks for
         `verify=True`, catching real tampering there; a write that reads
         the archive to decide whether to refuse itself is not the
@@ -2660,7 +3284,7 @@ class Chronicle:
                     self._enforce_index_upto = count
                     return
         records = self.read_events(verify=False)
-        # NS-11g fix round 2 (N3): a SEQUENCE, not the hot count. `count`
+        # A SEQUENCE, not the hot count. `count`
         # comes from `_chain_tail()` and `_write_record`'s own incremental
         # bump compares `_enforce_index_upto == sequence - 1`, so both ends
         # of this field have always been sequences; only this tier set it
@@ -2706,7 +3330,7 @@ class Chronicle:
     def seed_enforce_index(self) -> None:
         """Freshen `godmode-enforce.index.json` outside any write lock.
 
-        I-1 fix round 3 (B1 deployment note): `_sync_enforce_index`'s tier-3
+        `_sync_enforce_index`'s tier-3
         fallback (a full `read_events()` walk, paid once per process when
         the sidecar is absent or stale) normally runs from inside
         `append()`'s `write_lock()` - fine for the sidecar's steady state
@@ -2734,7 +3358,7 @@ class Chronicle:
         short-circuit tier 1's "already caught up" check into doing
         nothing at all.
         """
-        # Fix round 2 (N3): the tail SEQUENCE off the last filename, not the
+        # The tail SEQUENCE off the last filename, not the
         # file count - still one directory listing, no file parsed, but on a
         # rotated archive a count is smaller than the sequence this method's
         # own caller compares against, and passing one here would let tier 1
@@ -2751,7 +3375,7 @@ class Chronicle:
         must always stay possible is recording another lesson, including
         the corrective `--status superseded` one that lifts a bad guard.
 
-        Fix round 1 (Blocking 3): a `writer == "hook"` write is exempt too -
+        A `writer == "hook"` write is exempt too -
         `record_refusal`, the hook's own action/checkpoint writes, feed
         `authorize stage --from-last-refusal`, `observe --report`, and the
         session digest; an enforce lesson that happened to name one of
@@ -2760,7 +3384,7 @@ class Chronicle:
         authoring such a lesson in the first place; this is the second,
         independent layer for a hand-edited archive that already has one.
 
-        Fix round 3 (Blocking 2): `enforce_predicate_matches` raises
+        `enforce_predicate_matches` raises
         `EnforceFieldTooLong` (never `ArchiveError`, so the generic
         malformed-predicate swallow below cannot catch it by accident) when
         a `matches` rule's field exceeds the scan cap - that refuses THIS
@@ -2795,11 +3419,11 @@ class Chronicle:
     def _refuse_incomplete_supersession(
         self, subject: str, data: dict[str, Any], count: int
     ) -> None:
-        """I-1 fix round 1 (ruling 4): a subject whose latest lesson carries
+        """A subject whose latest lesson carries
         an ACTIVE `enforce` guard stays armed until a later lesson on that
         same subject either re-affirms it (carries its own `--enforce`) or
         explicitly disarms it with any status that already takes it out of
-        enforcement (fix round 2, nit: `_ENFORCE_INACTIVE_STATUSES`, i.e.
+        enforcement (`_ENFORCE_INACTIVE_STATUSES`, i.e.
         `godmode_law.LESSON_DORMANT_STATUSES` - `superseded`, `retired`, or
         `candidate`, not `superseded` alone) - an ordinary `remember --kind
         lesson` on the same subject with neither used to silently turn an
@@ -2848,7 +3472,7 @@ class Chronicle:
             validator(data)
         evidence = evidence or []
         payload_for_scan = {"subject": subject, "data": data, "evidence": evidence}
-        # NS-8k: a secret-shaped free-text field refuses the write outright,
+        # A secret-shaped free-text field refuses the write outright,
         # naming exactly which field it found it in - never persisted, even
         # redacted, because the shape alone is enough to leak in a diff or a
         # shared archive copy.
@@ -2878,19 +3502,19 @@ class Chronicle:
                     and (closing_status in CLOSING_STATUSES
                          or (kind == "lesson" and closing_status in LESSON_CLOSING_STATUSES)
                          or (kind == "review" and closing_status in REVIEW_CLOSING_STATUSES))
-                    # NS-8k human override: a confirmed operator, or a
+                    # Human override: a confirmed operator, or a
                     # declared checker, may always close a subject they did
                     # not create - the persistent-override property the
                     # guard exists alongside, not one it should defeat
-                    # (fix round 1, F2: without this, an operator sharing
+                    # (without this, an operator sharing
                     # the writing agent's own `agent_id` was refused too,
                     # the moment a host declared per-agent ids).
                     and writer not in ("operator", "checker")):
-                # NS-11h single writer: a subject's owner is whoever created
+                # Single writer: a subject's owner is whoever created
                 # it. Closing is the one act another actor cannot do on its
                 # behalf - hook-agnostic, since this compares `agent_id`
                 # (the actual actor), never the `writer` role a hook process
-                # happens to carry. `CLOSING_STATUSES` (fix round 1, F2) is
+                # happens to carry. `CLOSING_STATUSES` is
                 # the full terminal set `status.remaining()` already treats
                 # as closed - matching only the literal "closed" let a
                 # foreign agent close the same subject with `--status done`
@@ -2906,9 +3530,9 @@ class Chronicle:
                         "can close it - append a request/claim against it "
                         "instead, or have the creator close it."
                     )
-                # Fix round 2 (R2-B7): TRUST rank as well as identity, the
-                # same rule `_validate_supersedes` already applies (NS-10e
-                # fix round 1, B1). Identity alone is not enough: by
+                # TRUST rank as well as identity, the
+                # same rule `_validate_supersedes` already applies.
+                # Identity alone is not enough: by
                 # `godmode_constants`' own default, two undeclared agents on
                 # one project SHARE an `agent_id`, so the check above is
                 # vacuous in the default configuration - and a plain agent
@@ -2925,37 +3549,58 @@ class Chronicle:
                         "higher-trust one opened. Re-run with `--as-operator`, or "
                         "append a request/claim against it instead."
                     )
-            # I-1 (0.3.28 Plan 5 Task 4): guards that execute, not advise.
+            # Guards that execute, not advise.
             # `_chain_tail()` moves ahead of the enforce checks (fix round
             # 1, nit 9) so `_sync_enforce_index` can reuse its `count`
             # instead of listing the directory a second time - reading the
             # tail draws no sequence number by itself (only `_write_record`
             # below does, from `count + 1`), so a refused write still never
             # consumes one, exactly as before.
-            count, tail_hash = self._chain_tail()
-            if kind == "lesson":
-                self._refuse_incomplete_supersession(subject, data, count)
-            matched = self._enforced_refusal(kind, subject, data, writer, count)
-            if matched is not None:
-                raise ArchiveError(
-                    f"Refusing to write {kind} {subject!r}: matches enforce "
-                    f"lesson seq:{matched['sequence']} - {matched['guard']}"
-                )
-            if kind == "checkpoint":
-                # C-8: a checkpoint is itself a chain entry that later lets
-                # verify() bound its work to the tail after it. `chain_head`
-                # and `record_count` are the head hash and length as they
-                # stood immediately BEFORE this append - captured here,
-                # under the lock, from the same `_chain_tail()` call the
-                # write itself uses, so they can never disagree with the
-                # sequence/previous_hash this record is actually sealed
-                # with.
-                data = {**data, "chain_head": tail_hash, "record_count": count}
-            return self._write_record(
-                kind, subject, data, evidence,
-                sequence=count + 1, previous_hash=tail_hash,
-                writer=writer,
-            )
+            base_data = data
+            attempts = 5
+            for attempt in range(1, attempts + 1):
+                # A refused sequence claim means this view of the tail was
+                # not the directory's: re-derive it from disk (no head
+                # hint, no cached list) and try again.
+                count, tail_hash = self._chain_tail(fresh=attempt > 1)
+                if kind == "lesson":
+                    self._refuse_incomplete_supersession(subject, base_data, count)
+                matched = self._enforced_refusal(kind, subject, base_data, writer, count)
+                if matched is not None:
+                    raise ArchiveError(
+                        f"Refusing to write {kind} {subject!r}: matches enforce "
+                        f"lesson seq:{matched['sequence']} - {matched['guard']}"
+                    )
+                data = base_data
+                if kind == "checkpoint":
+                    # A checkpoint is itself a chain entry that later lets
+                    # verify() bound its work to the tail after it. `chain_head`
+                    # and `record_count` are the head hash and length as they
+                    # stood immediately BEFORE this append - captured here,
+                    # under the lock, from the same `_chain_tail()` call the
+                    # write itself uses, so they can never disagree with the
+                    # sequence/previous_hash this record is actually sealed
+                    # with.
+                    data = {**base_data, "chain_head": tail_hash, "record_count": count}
+                try:
+                    return self._write_record(
+                        kind, subject, data, evidence,
+                        sequence=count + 1, previous_hash=tail_hash,
+                        writer=writer,
+                    )
+                except _SequenceTaken as exc:
+                    if attempt == attempts:
+                        raise ArchiveError(
+                            f"Refusing to write {kind} {subject!r}: {exc}, and the "
+                            "tail read from disk kept naming it. Another writer is "
+                            "sealing at the same time outside the archive lock, or "
+                            f"a claim in {self.sequence_claims} belongs to a process "
+                            "that is still running. Retry; `godmode doctor` checks "
+                            "the chain."
+                        ) from exc
+                    self._drop_events_cache()
+                    time.sleep(0.02 * attempt)
+            raise AssertionError("unreachable")
 
     def reanchor(self) -> dict[str, Any]:
         """B4-1's explicit recovery: accept the chain that remains as the
@@ -2970,14 +3615,14 @@ class Chronicle:
         with self.write_lock():
             self._drop_events_cache(rewrite=True)
             records = [self._read_json(path) for path in self.event_paths()]
-            # N-9: verify() reports rather than raises now; reanchor() still
+            # Verify() reports rather than raises now; reanchor() still
             # refuses to anchor a chain that does not verify structurally -
             # accepting a shorter chain is fine, accepting a BROKEN one is not.
             outcome = self.verify(records, check_anchor=False)
             if not outcome["ok"]:
                 raise ArchiveError(outcome["message"])
             previous = self._read_chain_anchor()
-            # NS-11g fix round 2 (R2-B3): a SEQUENCE, never the hot count.
+            # A SEQUENCE, never the hot count.
             # Everywhere else in this file the anchor's `length` is the
             # highest sequence ever sealed - `_write_record` writes
             # `_write_chain_anchor(sequence, ...)`, and `_chain_tail`'s own
@@ -2996,6 +3641,9 @@ class Chronicle:
             anchored = _sequence_of(records[-1]) if records else 0
             self._write_chain_anchor(
                 anchored, records[-1]["record_hash"] if records else None)
+            # Claims above the accepted tail belong to records this decision
+            # just gave up; left standing they would refuse every next write.
+            self._clear_claims_above(anchored)
         record = self.append(
             "action", "chain-reanchored",
             {
@@ -3010,6 +3658,121 @@ class Chronicle:
             "reanchored": True,
             "anchored_length": anchored,
             "record": f"seq:{record['sequence']}",
+        }
+
+    def repair_fork(self) -> dict[str, Any]:
+        """Undo a same-sequence fork at the chain's tip, as an explicit
+        operator decision (`godmode doctor --repair-fork`).
+
+        Accepts exactly one shape: the highest sequence is held by two or
+        more record files, every one of them intact (its own hash checks),
+        all naming the same `previous_hash`, which is the record before
+        them - and nothing else in the hot tier is duplicated. Anything
+        else is refused unchanged. The sibling the chain anchor names is
+        kept (no anchor at that sequence: the earliest recorded); the
+        others are moved - never deleted - into `godmode-quarantine/`
+        beside the events directory. The repair is chronicled as its own
+        record, and the chain is re-verified.
+        """
+        with self.write_lock():
+            by_sequence: dict[int, list[Path]] = {}
+            for path in self.event_paths():
+                try:
+                    number = int(path.name[:12])
+                except ValueError as exc:
+                    raise ArchiveError(
+                        f"Refusing to repair: {path.name} carries no sequence") from exc
+                by_sequence.setdefault(number, []).append(path)
+            forked = sorted(s for s, paths in by_sequence.items() if len(paths) > 1)
+            if not forked:
+                raise ArchiveError("No fork to repair: every sequence is held by one record.")
+            tip = max(by_sequence)
+            if forked != [tip]:
+                raise ArchiveError(
+                    f"Refusing to repair: sequence(s) {forked} are duplicated, and only a "
+                    f"single fork at the tip (sequence {tip}) has a safe repair.")
+            siblings = [(path, self._read_json(path)) for path in by_sequence[tip]]
+            previous_hashes = {record.get("previous_hash") for _path, record in siblings}
+            for path, record in siblings:
+                if (record.get("sequence") != tip
+                        or record.get("record_hash") != _record_hash(record)):
+                    raise ArchiveError(
+                        f"Refusing to repair: {path.name} is not an intact record "
+                        f"at sequence {tip}.")
+            if len(previous_hashes) != 1:
+                raise ArchiveError(
+                    f"Refusing to repair: the records at sequence {tip} do not share "
+                    "one previous record - that is not a fork of one chain.")
+            (previous_hash,) = previous_hashes
+            if tip > 1:
+                before = by_sequence.get(tip - 1)
+                predecessor = self._read_json(before[0]) if before else None
+                expected = predecessor.get("record_hash") if predecessor else None
+                if expected is None:
+                    registry = self._read_cold_registry()
+                    expected = registry["hash_by_sequence"].get(tip - 1) if registry else None
+                if expected is None or expected != previous_hash:
+                    raise ArchiveError(
+                        f"Refusing to repair: the records at sequence {tip} do not link "
+                        f"to the record at sequence {tip - 1}.")
+            elif previous_hash is not None:
+                raise ArchiveError("Refusing to repair: a first record names a predecessor.")
+            anchor_state = self._read_chain_anchor()
+            keeper: tuple[Path, dict[str, Any]] | None = None
+            kept_by = "earliest"
+            if anchor_state is not None and anchor_state["length"] > tip:
+                raise ArchiveError(
+                    f"Refusing to repair: the chain anchor records {anchor_state['length']} "
+                    f"records but the chain ends at {tip} - that is a truncation, not a fork.")
+            if anchor_state is not None and anchor_state["length"] == tip:
+                named = [item for item in siblings
+                         if item[1].get("record_hash") == anchor_state["head_hash"]]
+                if len(named) != 1:
+                    raise ArchiveError(
+                        f"Refusing to repair: the chain anchor names no single record at "
+                        f"sequence {tip}.")
+                keeper, kept_by = named[0], "anchor"
+            if keeper is None:
+                keeper = min(siblings, key=lambda item: (
+                    str(item[1].get("recorded_at") or ""), item[0].name))
+            quarantine = self.root / "godmode-quarantine" / (
+                f"fork-{tip:012d}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}")
+            quarantine.mkdir(parents=True, exist_ok=True)
+            moved: list[str] = []
+            for path, _record in siblings:
+                if path == keeper[0]:
+                    continue
+                os.replace(_syscall_path(path), _syscall_path(quarantine / path.name))
+                moved.append(path.name)
+            self._write_chain_anchor(tip, keeper[1]["record_hash"])
+            self._write_head(tip, keeper[1]["record_hash"])
+            self._drop_events_cache(rewrite=True)
+            outcome = self.verify([self._read_json(path) for path in self.event_paths()])
+            if not outcome["ok"]:
+                raise ArchiveError(
+                    f"Fork moved to {quarantine}, but the chain still does not verify: "
+                    f"{outcome['message']}")
+        record = self.append(
+            "action", "chain-fork-repaired",
+            {
+                "sequence": tip,
+                "kept": keeper[0].name,
+                "kept_by": kept_by,
+                "quarantined": moved,
+                "quarantine": str(quarantine.relative_to(self.root)).replace("\\", "/"),
+            },
+            evidence=[],
+        )
+        verified = self.verify(self.read_events(verify=False))
+        return {
+            "repaired": True,
+            "sequence": tip,
+            "kept": keeper[0].name,
+            "kept_by": kept_by,
+            "quarantined": moved,
+            "quarantine": str(quarantine),
+            "record": f"seq:{record['sequence']}",
+            "chain": verified,
         }
 
     def expunge(self, sequence: int, reason: str) -> dict[str, Any]:
@@ -3038,7 +3801,7 @@ class Chronicle:
             # later read_events() call see partially-expunged content that
             # was never verified or written to disk.
             records = [dict(record) for record in self.read_events(verify=True)]
-            # NS-11g (0.3.28 Plan 5 Task 7): looked up by the record's OWN
+            # Looked up by the record's OWN
             # `sequence` field, not by `records[sequence - 1]` - the two
             # agreed only while `self.events` held every record ever sealed
             # (position N-1 was always sequence N); `rotate_to_cold` can
@@ -3057,7 +3820,7 @@ class Chronicle:
                         "rotated it); expunge only reaches hot records"
                     )
                 raise ArchiveError(f"No record with sequence {sequence} to expunge")
-            # NS-11g fix round 2 (R2-B2): this method re-seals every record
+            # This method re-seals every record
             # from the target onward, so a COLD record sitting at or after
             # the target is not something it can repair - the segment's
             # bytes are immutable, and the link they claim into the hot
@@ -3140,8 +3903,7 @@ class Chronicle:
 
     def rotate_to_cold(self, sequences: list[int]) -> dict[str, Any]:
         """Move the given sequence numbers out of `self.events` into a new,
-        immutable `events-cold-<n>.jsonl` segment - NS-11e + NS-11g (0.3.28
-        Plan 5 Task 7), the mechanism `godmode_forget`'s expire operation
+        immutable `events-cold-<n>.jsonl` segment - the mechanism `godmode_forget`'s expire operation
         drives. A record's own bytes travel unchanged (same
         `record_hash`/`previous_hash`/`sequence`); only their storage
         moves, one JSON object per line, sorted by sequence.
@@ -3156,7 +3918,7 @@ class Chronicle:
         has been deleted and the registry already explains exactly that
         subset (see `verify()`'s gap-bridging comment).
 
-        Fix round 1 (review A, B3): a crash between the registry write and
+        A crash between the registry write and
         the unlinks is a RESUME, not a duplicate. A sequence that is both
         registered cold and still hot has work left to do - its hot file -
         so this re-unlinks it and carries on; only a sequence that is cold
@@ -3198,7 +3960,7 @@ class Chronicle:
             # registry write and the unlinks. Finish it.
             resumed = [s for s in targets if s in already_cold]
             fresh = [s for s in targets if s not in already_cold]
-            # NS-11g fix round 1 (review A, N4): the newest record stays hot.
+            # The newest record stays hot.
             # `_chain_tail`'s slow path takes the tail from the LAST hot
             # record, so rotating the true tail while older records remain
             # would hand the next append a sequence number already sealed -
@@ -3274,7 +4036,7 @@ class Chronicle:
                 path = hot_paths.get(sequence)
                 if path is None:
                     continue
-                # Fix round 2 (R2-B1): the ONE delete this method performs
+                # The ONE delete this method performs
                 # goes through `_syscall_path`, exactly as `_atomic_json`
                 # and `_read_json` already do. `Path.unlink` has no
                 # long-path form, so past MAX_PATH Windows answered
@@ -3318,7 +4080,7 @@ class Chronicle:
     @staticmethod
     def _require_intact(record: dict[str, Any], sequence: int, location: str) -> None:
         """Refuse to serve a record whose stored `record_hash` no longer
-        matches its own content (fix round 1, review A B4). One hash of one
+        matches its own content. One hash of one
         record - the cheapest possible check on a path that already read the
         bytes, and the difference between "reachable" and "trustworthy"."""
         if record.get("record_hash") != _record_hash(record):
@@ -3330,14 +4092,14 @@ class Chronicle:
             )
 
     def find_by_sequence(self, sequence: int) -> dict[str, Any] | None:
-        """The record with this sequence number, hot or cold (NS-11g). Hot
+        """The record with this sequence number, hot or cold. Hot
         is checked first - a filename-prefix match over one directory
         listing, no per-file parse - since that is the overwhelming common
         case; only a miss there consults the cold segments the registry
         names, in the order they were written. `None` when the sequence
         was never sealed at all.
 
-        Fix round 1 (review A, B4): whatever this returns has had its own
+        Whatever this returns has had its own
         content hash recomputed and compared against the `record_hash` it
         carries, and a cold hit additionally re-hashes the segment it came
         out of against the digest the cold registry recorded at rotation
@@ -3399,8 +4161,8 @@ class Chronicle:
         return {"ok": False, "valid": False, "message": message}
 
     def verify_cold(self) -> dict[str, Any]:
-        """The thorough cross-tier check (NS-11g), rewritten in fix round 1
-        (review A, B1): it walks the cold segments THEMSELVES and never takes
+        """The thorough cross-tier check.
+        It walks the cold segments THEMSELVES and never takes
         the registry's word for what they hold. Before this, a sequence listed
         in `rotated` but present in no segment file at all read as an
         explained gap - two records could be deleted outright and both

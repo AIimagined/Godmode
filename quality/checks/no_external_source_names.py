@@ -32,16 +32,31 @@ with the same two classes plus `private-path`, a path into the private working
 tree. `--message-file` scans one message, for a local commit-msg hook. Until
 0.3.28 no check read messages at all, so a report path pasted into a commit
 body passed every check that existed.
+
+R10 (2026-09-23): `--filter {added,file,all}` (default `added`) and
+`--fail-level {harm,error,warning}` (default `harm`) - see `_change_scope`
+beside this file. A finding whose kind is not classified `harm` here is
+`warning`, never below it, so `--fail-level warning` at `--filter all`
+reproduces this check's old, unconditional behaviour exactly (CI's own
+default). The allowlist is keyed by path and the exact line text, not path
+and line number, so an unrelated edit that moves a line cannot break an
+accepted entry; the previous path:line-keyed form (`accepted` as an object)
+is still read, for one release, matched the old way.
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _change_scope as scope  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -62,9 +77,33 @@ _TEXT_SUFFIXES = {
     ".ini", ".sh", ".cmd", ".ps1", ".js", ".ts", ".mjs",
 }
 
-#: Paths excluded from scanning, each with the reason it is excluded.
+
+def _private_docs_prefix() -> str:
+    """The untracked working-documents archive's path, read from
+    `quality/publication.json`'s `unpublishable_prefixes` (first entry) -
+    the same policy file `prepublication.py` reads it from - rather than
+    duplicated here as a literal (follow-up to R10, 2026-09-25). Empty when
+    the policy file is missing or declares nothing, never a guess."""
+    import json
+
+    policy_path = ROOT / "quality" / "publication.json"
+    if not policy_path.exists():
+        return ""
+    try:
+        data = json.loads(policy_path.read_text(encoding="utf-8"))
+    except ValueError:
+        return ""
+    prefixes = data.get("unpublishable_prefixes", [])
+    return prefixes[0] if prefixes else ""
+
+
+#: Paths excluded from scanning, each with the reason it is excluded. Built
+#: from `_private_docs_prefix()`, not a literal dict key, so an empty
+#: (unresolved) prefix never becomes a `startswith("")` that matches every
+#: path.
 _EXCLUDED_PREFIXES = {
-    "docs/superpowers/": "working specs and plans; checked separately and never published",
+    prefix: "working specs and plans; checked separately and never published"
+    for prefix in (_private_docs_prefix(),) if prefix
 }
 
 #: Paths where forge-URL findings are expected, each with the reason. The
@@ -77,6 +116,16 @@ _FORGE_URL_EXEMPT_PREFIXES = {
 }
 
 ALLOWLIST_PATH = ROOT / "quality" / "external-name-allowlist.json"
+_ALLOWLIST_REL = "quality/external-name-allowlist.json"
+
+#: The allowlist's own path is exempt from the deny-name class only (R10):
+#: a path+text entry quotes the exact accepted line, which for a path-prefix
+#: entry naming the private working-docs tree or a well-known agent-config
+#: filename is the same text the deny list flags - scanning the allowlist
+#: for the very fragments it exists to record an exception for is circular,
+#: not a leak. forge-url is unaffected; this is the only deny-name exemption
+#: outside the deny list's own supply.
+_DENY_NAME_EXEMPT_PATHS = {_ALLOWLIST_REL}
 
 #: The published branch. Messages above it are what the next push publishes.
 PUSH_BASE = "origin/main"
@@ -124,18 +173,48 @@ def shipped_paths(root: Path) -> list[Path]:
     return kept
 
 
-def load_allowlist() -> dict[str, str]:
-    """Accepted references, mapping `path:line` to the reason it is accepted.
+@dataclass(frozen=True)
+class Allowlist:
+    """Accepted references. `by_text` is the current form, keyed by
+    `(path, exact line text)` - a line moving does not break the entry.
+    `by_line` is the previous form, keyed by `path:line`; still read for one
+    release (R10, 2026-09-23) so an unmigrated entry is not silently
+    dropped, matched the old way.
+    """
+    by_text: dict[tuple[str, str], str]
+    by_line: dict[str, str]
 
-    An entry here is a recorded decision, not a suppression: the reason travels
-    with it and a reviewer can see what was accepted and why.
+    def __len__(self) -> int:
+        return len(self.by_text) + len(self.by_line)
+
+    def accepts(self, path: str, line: int, text: str) -> bool:
+        return (path, text.strip()) in self.by_text or f"{path}:{line}" in self.by_line
+
+
+def load_allowlist() -> Allowlist:
+    """Accepted references: an entry here is a recorded decision, not a
+    suppression - the reason travels with it and a reviewer can see what was
+    accepted and why.
     """
     if not ALLOWLIST_PATH.exists():
-        return {}
+        return Allowlist({}, {})
     import json
 
     data = json.loads(ALLOWLIST_PATH.read_text(encoding="utf-8"))
-    return dict(data.get("accepted", {}))
+    accepted = data.get("accepted", [])
+    if isinstance(accepted, dict):
+        # v1 (path:line -> reason): the whole file predates the migration,
+        # or was hand-edited back to it. Read it as-is; nothing here writes
+        # this shape again.
+        return Allowlist({}, {str(k): str(v) for k, v in accepted.items()})
+    by_text: dict[tuple[str, str], str] = {}
+    for entry in accepted if isinstance(accepted, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        path, text = str(entry.get("path", "")), str(entry.get("text", ""))
+        if path and text:
+            by_text[(path, text)] = str(entry.get("reason", ""))
+    return Allowlist(by_text, {})
 
 
 def _deny_pattern(names: list[str]) -> re.Pattern[str] | None:
@@ -163,8 +242,9 @@ def scan(root: Path, paths: list[Path], deny_names: list[str] | None) -> list[Fi
             rel = path.as_posix()
 
         forge_exempt = any(rel.startswith(p) for p in _FORGE_URL_EXEMPT_PREFIXES)
+        deny_exempt = rel in _DENY_NAME_EXEMPT_PATHS
         for number, line in enumerate(text.splitlines(), start=1):
-            if f"{rel}:{number}" in allow:
+            if allow.accepts(rel, number, line):
                 continue
 
             for match in ([] if forge_exempt else _FORGE.finditer(line)):
@@ -175,12 +255,12 @@ def scan(root: Path, paths: list[Path], deny_names: list[str] | None) -> list[Fi
                     remedy=(
                         "Describe the mechanism instead of linking its source. If the "
                         "reference is a formal citation that must be kept, add "
-                        f"\"{rel}:{number}\" to quality/external-name-allowlist.json "
-                        "with the reason."
+                        "{\"path\": \"" + rel + "\", \"text\": <the exact line, trimmed>, "
+                        "\"reason\": ...} to quality/external-name-allowlist.json."
                     ),
                 ))
 
-            if deny is not None:
+            if deny is not None and not deny_exempt:
                 found = deny.search(line)
                 if found:
                     findings.append(Finding(
@@ -296,15 +376,62 @@ def scan_messages(root: Path, deny_names: list[str] | None,
     return findings
 
 
-def main() -> int:
+#: Severity per finding kind (R10). Most of this check's own kinds ARE the
+#: harm class it exists to catch - secrets, private names leaving the
+#: machine, release/publish safety - so `harm` is the majority, not a rare
+#: escalation. `internal-process` (how the work was made, not what changed)
+#: is process hygiene, not a leak of identity or secrecy.
+_CLASS_LEVEL = {
+    "forge-url": "harm",
+    "deny-name": "harm",
+    "private-path": "harm",
+    "internal-process": "warning",
+}
+
+
+def classify(kind: str) -> str:
+    """The fail level a finding's kind carries; unclassified kinds default
+    to `warning`, never below it - nothing here is exempt from CI's
+    `--fail-level warning --filter all`."""
+    return _CLASS_LEVEL.get(kind, "warning")
+
+
+def parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    scope.add_scope_args(parser)
+    parser.add_argument("--message-file", type=Path, default=None,
+                        help="scan one commit message instead of the tree "
+                             "(a local commit-msg hook); always treated as "
+                             "in-scope - a message is inherently new")
+    return parser.parse_args(argv)
+
+
+def _report_finding(finding: Finding, *, pre_existing: bool, fail_level: str) -> bool:
+    """Print one finding and return whether it fails the run."""
+    level = classify(finding.kind)
+    fails = scope.blocks(level, fail_level) and not pre_existing
+    tag = "FAIL" if fails else ("pre-existing" if pre_existing else "info")
+    print(f"{tag}: {finding}  [{level}]", file=sys.stderr)
+    print(f"      {finding.remedy}", file=sys.stderr)
+    return fails
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     deny_names = _deny_from_env()
-    if "--message-file" in sys.argv:
-        target = Path(sys.argv[sys.argv.index("--message-file") + 1])
-        found = scan_message("message", target.read_text(encoding="utf-8", errors="replace"),
-                             deny_names)
-        for finding in found:
-            print(f"FAIL: {finding}\n      {finding.remedy}", file=sys.stderr)
-        return 1 if found else 0
+
+    if args.message_file:
+        found = scan_message(
+            "message", args.message_file.read_text(encoding="utf-8", errors="replace"),
+            deny_names)
+        # A commit message is inherently new content - there is no "line
+        # this change did not touch" concept for it, so it is never
+        # pre-existing regardless of --filter.
+        blocking = [f for f in found if _report_finding(f, pre_existing=False,
+                                                          fail_level=args.fail_level)]
+        return 1 if blocking else 0
+
+    filt, added = scope.resolve(ROOT, args.filter, args.base)
     paths = shipped_paths(ROOT)
     findings = scan(ROOT, paths, deny_names)
     verdict = report(deny_names, findings)
@@ -319,19 +446,27 @@ def main() -> int:
         print(f"  messages    unmeasured  ({PUSH_BASE} is not a known ref)")
     else:
         print(f"  messages    {'findings' if messages else 'clean'}  ({PUSH_BASE}..HEAD)")
-        findings = findings + messages
 
     accepted = load_allowlist()
-    if accepted:
+    if len(accepted):
         print(f"  {len(accepted)} accepted reference(s) recorded in the allowlist")
+    print(f"  filter={filt} fail-level={args.fail_level}"
+          + ("" if filt == args.filter else f" (requested {args.filter}; no diff to measure it, fell back to all)"))
 
-    if findings:
+    # Commit-message findings are always in scope (see above) - never
+    # pre-existing, and the filter never trims them: an unpushed message is
+    # entirely new by definition.
+    tree_findings = [(f, scope.in_scope(f.path, f.line, filt, added),
+                      filt != "all" and scope.pre_existing(f.path, f.line, added))
+                     for f in findings]
+    message_findings = [(f, True, False) for f in (messages or [])]
+
+    shown = [(f, pre) for f, in_scope, pre in tree_findings + message_findings if in_scope]
+    if shown:
         print()
-        for finding in findings:
-            print(f"FAIL: {finding}", file=sys.stderr)
-            print(f"      {finding.remedy}", file=sys.stderr)
-        return 1
-    return 0
+    blocking = [_report_finding(f, pre_existing=pre, fail_level=args.fail_level)
+                for f, pre in shown]
+    return 1 if any(blocking) else 0
 
 
 if __name__ == "__main__":

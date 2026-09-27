@@ -259,7 +259,7 @@ _CONSTITUTION_CANDIDATES = (
 
 
 def _detect_constitution(project: Path) -> list[dict[str, Any]]:
-    """Grok field report 2026-09-10: a Spec Kit repository's load-bearing
+    """A Spec Kit repository's load-bearing
     rules live in .specify/memory/constitution.md, and the capped walk
     never reached it. These paths are probed by name before the walk."""
     out: list[dict[str, Any]] = []

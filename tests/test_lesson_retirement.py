@@ -106,5 +106,19 @@ class OtherSettledStatusesAlsoClear(Base):
                 self.assertEqual(self.pin_reason(), "", status)
 
 
+class ThePinCheckReadsTheWholeArchive(Base):
+    """Row 88 (2026-09-25 carried-items triage): the check used to read
+    lessons through `archive.select(kind="lesson", limit=200)`, which keeps
+    only the newest 200 - a pin recorded early in a long-lived archive
+    silently stopped capping claims once enough newer lessons piled up."""
+
+    def test_a_pin_older_than_200_later_lessons_still_caps(self) -> None:
+        self.lesson()  # the pin, recorded first - sequence 1
+        for n in range(300):
+            self.archive.append("lesson", f"unrelated subject {n}",
+                                {"value": "x", "generalized_guard": f"unrelated guard {n}"})
+        self.assertIn("pin already names this surface", self.pin_reason())
+
+
 if __name__ == "__main__":
     unittest.main()

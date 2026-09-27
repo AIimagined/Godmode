@@ -229,6 +229,89 @@ class GodmodeOwnReadTests(GateCase):
         self.refused("python deploy.py --publish", "release-or-external-write")
 
 
+class ProtectionWeakeningTests(GateCase):
+    """Godmode's own switches read as an unrecognised command with no write
+    evidence, so a governed session could turn its own gate down unasked.
+    Weakening is the operator's call; the stricter value and reads stay free."""
+
+    WEAKENING = (
+        "godmode config set uninitialized off",
+        "godmode config set uninitialized off --repo",
+        "godmode --json config set uninitialized off",
+        'godmode config set uninitialized "off"',
+        "python scripts/godmode.py --project . config set uninitialized off",
+        '"C:/Users/u/.claude/plugins/godmode/bin/godmode" config set uninitialized off',
+        "godmode config mode advise",
+        "git config godmode.uninitialized off",
+        "git config --local godmode.uninitialized off",
+        "git -C . config --unset godmode.uninitialized",
+        "git config --remove-section godmode",
+        "echo {} > ~/.godmode/godmode-settings.json",
+        "echo {} | tee ~/.godmode/godmode-settings.json",
+        "rm ~/.godmode/godmode-settings.json",
+        "Set-Content -Path C:/Users/u/.godmode/godmode-settings.json -Value '{}'",
+        "write file C:/Users/u/.godmode/godmode-settings.json",
+        # Compound commands: the worst part decides.
+        "git status && godmode config set uninitialized off",
+        "godmode status; godmode config mode advise",
+        "echo $(godmode config set uninitialized off)",
+    )
+
+    def test_weakening_godmodes_own_protection_is_protected(self) -> None:
+        for command in self.WEAKENING:
+            with self.subTest(command=command):
+                verdict = classify_action(command, project_root=PROJECT)
+                self.assertTrue(verdict["protected"], command)
+                self.assertEqual(verdict["category"], "protection-weakening", command)
+                self.assertEqual(verdict["tier"], "R4", command)
+
+    def test_a_write_into_godmodes_own_code_or_bytecode_cache_is_weakening(self) -> None:
+        # A `.pyc` planted in the launchers' bytecode cache, or a file in
+        # the plugin's install directory, runs inside the gate itself.
+        import os
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as home:
+            cache = Path(home, "pycache", "hooks", "godmode_gate_fast.cpython-314.pyc").as_posix()
+            plugin = "C:/Users/u/.claude/plugins/cache/market/godmode/0.3.30/hooks/x.py"
+            with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": home}):
+                for command in (f"echo x > {cache}", f"cp evil.pyc {cache}",
+                                f"echo x > {plugin}", f"write file {cache}"):
+                    with self.subTest(command=command):
+                        verdict = classify_action(command, project_root=PROJECT)
+                        self.assertEqual(verdict["category"], "protection-weakening", verdict)
+                        self.assertEqual(verdict["tier"], "R4", command)
+                self.allowed(f"cat {cache}")
+                self.allowed("echo x > notes.txt")
+
+    def test_the_governed_gate_asks_attended_and_refuses_unattended(self) -> None:
+        hooks = str(PLUGIN_ROOT / "hooks")
+        if hooks not in sys.path:
+            sys.path.insert(0, hooks)
+        import godmode_session_hook as hook
+        verdict = classify_action("godmode config set uninitialized off", project_root=PROJECT)
+        self.assertEqual(hook._decision_for(verdict, True), "ask")
+        self.assertEqual(hook._decision_for(verdict, False), "deny")
+
+    def test_reads_and_the_stricter_value_stay_free(self) -> None:
+        for command in ("godmode config mode", "godmode config check",
+                        "godmode config mode strict",
+                        "godmode config set uninitialized guard",
+                        "godmode config set uninitialized guard --repo",
+                        "cat ~/.godmode/godmode-settings.json",
+                        "grep uninitialized ~/.godmode/godmode-settings.json",
+                        "echo godmode config set uninitialized off"):
+            with self.subTest(command=command):
+                self.allowed(command)
+
+    def test_other_git_config_keys_are_not_this_category(self) -> None:
+        for command in ("git config --get godmode.uninitialized",
+                        "git config user.name someone"):
+            with self.subTest(command=command):
+                verdict = classify_action(command, project_root=PROJECT)
+                self.assertNotEqual(verdict["category"], "protection-weakening", command)
+
+
 class AgentTrustBoundaryTests(GateCase):
     """`claude plugin marketplace add` registers a new plugin SOURCE - from
     then on, everything it serves is code the agent will offer to run. The

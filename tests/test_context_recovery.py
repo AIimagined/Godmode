@@ -23,6 +23,9 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = PLUGIN_ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
+if str(Path(__file__).parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).parent))
+from _slow import slow  # noqa: E402
 
 from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_attest import (  # noqa: E402
@@ -75,6 +78,7 @@ def make_merge_conflict(project: Path, git: list[str]) -> None:
         raise AssertionError("fixture expected a merge conflict but the merge succeeded")
 
 
+@slow
 class RepoStateTests(unittest.TestCase):
     def test_clean_repo_reports_no_crisis(self) -> None:
         with isolated_git_project() as (project, _archive, _anchor, _git):
@@ -136,6 +140,7 @@ class RepoStateTests(unittest.TestCase):
             self.assertNotIn("repo-in-progress-operation", codes)
 
 
+@slow
 class RetiredInvariantTests(unittest.TestCase):
     """Retiring an invariant is the lifecycle, not a contradiction.
 
@@ -200,6 +205,7 @@ class RetiredInvariantTests(unittest.TestCase):
             self.assertIn("contradictory-invariants", self._issues(archive, anchor))
 
 
+@slow
 class HandshakeCrisisTests(unittest.TestCase):
     def test_handshake_carries_repo_state_and_warning_under_crisis(self) -> None:
         with isolated_git_project() as (project, archive, anchor, git):
@@ -245,6 +251,7 @@ class HandshakeCrisisTests(unittest.TestCase):
             self.assertIn("1 of", after["statement"])
 
 
+@slow
 class ScopedLessonTests(unittest.TestCase):
     def test_lessons_are_filtered_by_project_tag(self) -> None:
         with isolated_git_project() as (_project, archive, _anchor, _git):
@@ -281,6 +288,7 @@ class ScopedLessonTests(unittest.TestCase):
                 record_lesson_scoped(archive, "untagged", "value", project_tag="  ")
 
 
+@slow
 class EvidenceLadderTests(unittest.TestCase):
     def test_ladder_names_all_seven_levels_in_order(self) -> None:
         self.assertEqual(

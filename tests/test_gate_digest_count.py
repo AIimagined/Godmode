@@ -45,6 +45,7 @@ from godmode_runtime.godmode_anchor import resolve_anchor  # noqa: E402
 from godmode_runtime.godmode_attest import open_session  # noqa: E402
 from godmode_runtime.godmode_chronicle import Chronicle  # noqa: E402
 from godmode_runtime.godmode_console import Runtime, session_digest  # noqa: E402
+from godmode_runtime.godmode_errors import ArchiveError  # noqa: E402
 from godmode_session_hook import record_refusal  # noqa: E402
 
 
@@ -128,6 +129,33 @@ class GateDigestCountTests(unittest.TestCase):
                 _refuse(archive)
             digest = session_digest(runtime, None, None)
             self.assertEqual(digest["gate"], {"denied": 3, "would-ask": 0, "would-deny": 0})
+
+    def test_an_older_explicit_session_windows_by_its_own_boundary(self) -> None:
+        """Row 21 (2026-09-25 carried-items triage): passing an OLDER
+        session's id must window the digest by that session's own
+        boundary, not read as "no boundary" and count everything up to
+        the latest session too."""
+        with _runtime() as runtime:
+            archive = runtime.archive
+            session_a = open_session(archive, "session-a")
+            _refuse(archive)
+            _refuse(archive)
+            open_session(archive, "session-b")
+            _refuse(archive)
+            digest_a = session_digest(runtime, session_a, None)
+            self.assertEqual(digest_a["gate"]["denied"], 2)
+
+    def test_an_unknown_session_id_is_refused_not_read_as_lifetime(self) -> None:
+        """Row 21: a `--session` id that matches no `session`-kind record
+        used to fall through with the range-start default (0), which reads
+        as "the whole archive" - the same window an omitted --session
+        gets. An unknown id must be refused by name instead."""
+        with _runtime() as runtime:
+            archive = runtime.archive
+            open_session(archive, "session-a")
+            _refuse(archive)
+            with self.assertRaises(ArchiveError):
+                session_digest(runtime, "S-doesnotexist", None)
 
     def test_recording_a_refusal_never_creates_a_session_record(self) -> None:
         """G-7 fix round 4: `record_refusal` (the real function both the

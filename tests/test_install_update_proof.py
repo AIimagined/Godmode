@@ -21,6 +21,7 @@ Temporary projects are plain directories, never git repositories.
 from __future__ import annotations
 
 import inspect
+import json
 import shutil
 import sys
 import tempfile
@@ -154,20 +155,45 @@ class InstallThenUpdate(unittest.TestCase):
                 self.assertFalse(retired.exists(), f"{host}: the N-only file survived")
                 self._assert_is_payload(project, host, payload)
 
-    def test_the_project_writers_update_in_place_when_forced(self) -> None:
-        """`hooks wire --host codex|antigravity|opencode` call these writers;
-        they refuse a changed file without --force, so the update is forced."""
+    def test_the_project_writers_update_in_place_across_a_version_bump(self) -> None:
+        """Row 86: `hooks wire --host codex|antigravity|opencode` recognizes
+        its own prior render (a digest recorded alongside it) and updates in
+        place across a version bump with no `--force` - the same leniency
+        `hooks wire --all` already gives these same files."""
         for host, writer in LEGACY_WRITERS.items():
             with self.subTest(host=host):
                 project = self._project()
                 first = writer(self.root_n, project)
                 self.assertTrue(first["written"], first)
-                refused = writer(self.root_n1, project)
-                self.assertFalse(refused["written"], refused)
-                second = writer(self.root_n1, project, force=True)
+                second = writer(self.root_n1, project)
                 self.assertTrue(second["written"], second)
                 payload = {M.relative_posix(project, second["path"])}
                 self._assert_is_payload(project, host, payload)
+
+    # A hand edit for each writer's file format: unrelated content that
+    # carries none of that writer's own digest marking.
+    _HAND_EDITS = {
+        "codex": lambda path: path.write_text(
+            json.dumps({"hooks": {"PreToolUse": []}}) + "\n", encoding="utf-8"),
+        "antigravity": lambda path: path.write_text(
+            json.dumps({"godmode": {"enabled": False}}) + "\n", encoding="utf-8"),
+        "opencode": lambda path: path.write_text("// a local edit\n", encoding="utf-8"),
+    }
+
+    def test_a_hand_edit_still_needs_force(self) -> None:
+        """The digest recognition above must not blur into "any content is
+        ours": a file changed by something other than this writer - not a
+        version bump - stays a conflict without `--force`."""
+        for host, writer in LEGACY_WRITERS.items():
+            with self.subTest(host=host):
+                project = self._project()
+                first = writer(self.root_n, project)
+                self.assertTrue(first["written"], first)
+                self._HAND_EDITS[host](Path(first["path"]))
+                refused = writer(self.root_n1, project)
+                self.assertFalse(refused["written"], refused)
+                forced = writer(self.root_n1, project, force=True)
+                self.assertTrue(forced["written"], forced)
 
 
 class UninstallForgetsWhatItRemoved(unittest.TestCase):

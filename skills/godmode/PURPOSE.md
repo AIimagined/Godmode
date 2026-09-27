@@ -6,14 +6,16 @@ somewhere an agent will actually read it before acting.
 
 ## Gap evidence
 
-- seq:9404 — the root skill said nothing about a PARTIAL hooks status, so an agent
-  could still claim the gate had blocked a tool that the gate never actually ran.
-- seq:10121 — a census found 57 of 120 verbs were named by no skill, no hook nudge,
-  and no doc at all; the count itself was measuring the wrong thing until a skill
-  line existed for each one.
-- seq:10272 — an internal study of real skill use found selection accuracy collapses
-  as the number of skills grows, while naming verbs from the existing few did not;
-  the fix was one coordinating skill routing to capabilities, not more skills.
+- With no visible status for a partially wired safety hook, an agent could
+  still claim a tool had been blocked by a gate that was never actually
+  running.
+- Many of the commands this project ships were named by no skill, no hook
+  nudge, and no documentation at all, leaving an agent to guess which
+  capability to reach for.
+- Selection accuracy drops as the number of available skills grows, while
+  naming the same capabilities from one coordinating skill does not carry
+  that cost — so a single entry point routes to capabilities instead of
+  adding more skills.
 
 ## Promise
 
@@ -21,4 +23,4 @@ Starting or resuming substantive work routes through this skill first, which
 establishes current reality, picks one bounded workflow, and only then hands off to
 a narrower skill when the task needs one.
 
-Future edits to this skill append their own seq: citation above.
+Future edits to this skill append their own plain-language evidence above.

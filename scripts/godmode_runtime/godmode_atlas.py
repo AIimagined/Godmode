@@ -740,7 +740,7 @@ def _candidate_files(
     `IGNORED_DIRECTORY_NAMES` and nested checkouts BEFORE descending into
     them.
 
-    S5 (I-6 fix round 1): the previous shape - `[p for p in
+    The previous shape - `[p for p in
     project.rglob("*") if ... not any(part in IGNORED_DIRECTORY_NAMES for
     part in path.parts)]` - filtered by name only AFTER `rglob` had already
     walked every directory, including a nested nested checkout's own full
@@ -751,7 +751,7 @@ def _candidate_files(
     ran. `os.walk`'s own `topdown` pruning (`dirnames[:] = ...`) skips a
     matched directory's contents entirely, at the point of descent.
 
-    `roots` (I-6 fix round 2, D2i): a caller that only ever needs a known
+    `roots`: a caller that only ever needs a known
     subtree (`godmode_closure`'s closure check needs only `scripts/`,
     `hooks/`, `tests/`) passes it here so the walk itself never touches
     anything else - not filtered out afterward, never even listed. A
@@ -787,7 +787,7 @@ def build(project: Path, suffixes: Iterable[str] | None = None,
     started = time.monotonic()
     for position, path in enumerate(candidates):
         # A build with no ceiling has no honest answer on a repo it cannot
-        # finish (twelfth field report: five minutes, no output). Past the
+        # finish (five minutes, no output). Past the
         # budget the map stops and says what it did not read, so a query on it
         # is bounded rather than silently short.
         # `>=`: a coarse clock (Windows 3.11, 15.6 ms ticks) reads zero for
@@ -854,7 +854,7 @@ _RESOLVE_SUFFIXES: dict[str, tuple[str, ...]] = {
 def _resolve_relative_imports(atlas: "Atlas") -> None:
     """Point a generic `./x` or `../x` import at the scanned file it names.
 
-    Field report 26 (2026-09-09): on a TypeScript tree with 19,000 edges the
+    On a TypeScript tree with 19,000 edges the
     dependents query answered nothing, because every generic import edge
     carried the raw specifier (`./providers`) as its target and `inferred`
     as its evidence, and `affected` follows extracted edges to file paths.
@@ -1027,7 +1027,7 @@ def rehydrate_index(path: Path, project: Path) -> Atlas:
     """Reconstruct a real, queryable `Atlas` from a saved index - the
     companion `load_index` itself does not provide.
 
-    S5 (I-6 fix round 1): `load_index` only ever answers freshness
+    `load_index` only ever answers freshness
     (`fresh`/`stale`/`missing`/`confidence`); it never hands a caller back
     a graph `affected`/`unfollowed_dependents` can traverse. A caller that
     has already confirmed the index fresh via `load_index` (this project's

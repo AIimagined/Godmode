@@ -68,10 +68,16 @@ class FlowTests(unittest.TestCase):
                                "--cite", exit_bearing, "--verify")
             self.assertEqual(code, 0, strong)
             self.assertEqual(strong["grade"], "verified")
-            # ... while a state-reporting one caps at observed.
+            # ... while a state-reporting one caps at observed: the request
+            # stays on the record (`claimed`), the effective grade is capped
+            # (`grade`), `downgraded` is true, and a downgrade is a finding
+            # the exit code must carry too.
             code, weak = run("claim", "the tree lists the note", "--grade", "verified",
                              "--cite", "cmd:git status", "--verify")
+            self.assertEqual(code, 1, weak)
+            self.assertEqual(weak["claimed"], "verified", weak)
             self.assertEqual(weak["grade"], "observed", weak)
+            self.assertTrue(weak["downgraded"], weak)
 
             # Step 4: a hypothesis carries its falsifier.
             code, hypothesis = run("claim", "the cache is the cause", "--grade", "hypothesis",
@@ -106,9 +112,16 @@ class FlowTests(unittest.TestCase):
                               "--cite", "file:note.txt#L1")
             self.assertNotEqual(code, 0, again)
 
-            # Step 7: the backlog views run.
+            # Step 7: the backlog views run. The weak claim from Step 3 is
+            # still downgraded and unresolved, so `remaining` correctly
+            # surfaces it and the digest's exit code reports work
+            # outstanding rather than a false-clean 0.
             code, digest = run("status", "remaining", "--digest")
-            self.assertEqual(code, 0, digest)
+            self.assertEqual(code, 1, digest)
+            self.assertEqual(digest["by_source"].get("claim"), 1, digest)
+            self.assertTrue(
+                any(item["id"] == "the tree lists the note" for item in digest["remaining"]),
+                digest)
             code, scan = run("claim", "--scan")
             self.assertEqual(code, 0, scan)
 
