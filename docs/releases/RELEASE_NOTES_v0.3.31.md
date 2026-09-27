@@ -107,6 +107,7 @@
 - The BSD `script` form (`script -q /dev/null godmode adopt --confirm --as-operator`) is now read with every word after the typescript file as the command it runs, so an operator-only verb under it asks like the `-c` form.
 - A skill locked by a boundary that covers only some of its files (`skills/*/scripts/**`) or that lives under `.grok/skills` can now be unlocked the way its refusal says: `authorize stage --operation "retire skill <name>"` (and forge or restore) is accepted for it instead of being refused as a read.
 - The evals refresh, the memory watchdog and the protection check for Godmode's own code now behave the same on Python 3.11, macOS and a Windows short-name home.
+- The memory watchdog reads a child's resident size through ps where /proc is absent, without hiding a read error.
 
 ## Verifying
 
