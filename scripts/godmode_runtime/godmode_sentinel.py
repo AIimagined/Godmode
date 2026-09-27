@@ -628,7 +628,9 @@ def _godmode_code_dirs(project_root: Path | None) -> list[str]:
         root = None
     if root is None or not (root == plugin or plugin in root.parents or root in plugin.parents):
         dirs.append(str(plugin))
-    return [os.path.normcase(os.path.abspath(entry)).lower().rstrip("\\/") for entry in dirs]
+    # realpath on both sides: a temporary home may sit behind a symlink
+    # (macOS /var) or a short name (Windows RUNNER~1).
+    return [os.path.normcase(os.path.realpath(entry)).lower().rstrip("\\/") for entry in dirs]
 
 
 def _lands_in_godmode_code(target: str, project_root: Path | None) -> bool:
@@ -642,7 +644,7 @@ def _lands_in_godmode_code(target: str, project_root: Path | None) -> bool:
     if not os.path.isabs(cleaned):
         return False
     try:
-        shown = os.path.normcase(os.path.abspath(cleaned)).lower()
+        shown = os.path.normcase(os.path.realpath(cleaned)).lower()
     except (OSError, ValueError):
         return False
     return any(shown == entry or shown.startswith(entry + os.sep)

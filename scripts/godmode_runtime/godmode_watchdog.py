@@ -82,8 +82,14 @@ def _child_rss_bytes_posix(pid: int) -> int | None:
                     if len(parts) >= 2:
                         return int(parts[1]) * 1024  # kB -> bytes
     except (OSError, ValueError, IndexError):
+        pass
+    # No /proc (macOS, the BSDs): ask ps for the resident set in kilobytes.
+    try:
+        out = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)], capture_output=True,
+                             text=True, timeout=5, check=False).stdout.strip()
+        return int(out) * 1024 if out else None
+    except (OSError, ValueError, subprocess.SubprocessError):
         return None
-    return None
 
 
 def _child_rss_bytes_windows(pid: int) -> int | None:

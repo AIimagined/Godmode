@@ -617,7 +617,9 @@ def _write_fixture_text(path: Path, text: str) -> bool:
     """
     if path.is_file():
         try:
-            current: str | None = path.read_text(encoding="utf-8", newline="")
+            # open(), not read_text(newline=...): that keyword needs Python 3.13.
+            with path.open(encoding="utf-8", newline="") as handle:
+                current: str | None = handle.read()
         except OSError:
             # Unreadable is not current: rewrite it, and let the write
             # itself raise if the path is truly unusable.
