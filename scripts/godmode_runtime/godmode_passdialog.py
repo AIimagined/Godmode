@@ -66,6 +66,17 @@ def displayable(operation: str) -> str:
     return "".join(shown)
 
 
+def lifetime_text(seconds: int) -> str:
+    """`43200` as "12 hours": the number an operator reads, not the one the
+    clock counts."""
+    if seconds < 120:
+        return f"{seconds} seconds"
+    if seconds < 7200:
+        return f"{seconds // 60} minutes"
+    hours = seconds / 3600
+    return f"{hours:g} hours"
+
+
 def approval_message(operation: str, ttl_seconds: int, digest: str | None = None) -> str:
     """The text every dialog shows: the exact command and what approving
     spends. An operation that does not fit is refused, never cut: approving
@@ -82,7 +93,7 @@ def approval_message(operation: str, ttl_seconds: int, digest: str | None = None
         "",
         shown,
         "",
-        f"Scope: one use, expires in {ttl_seconds} seconds.",
+        f"Scope: one use, this commit and branch only, expires in {lifetime_text(ttl_seconds)}.",
     ]
     if digest:
         lines.append(f"Operation digest: {digest[:16]}")

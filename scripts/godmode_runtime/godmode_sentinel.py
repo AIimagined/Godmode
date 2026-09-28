@@ -90,8 +90,10 @@ def read_approval_password(operation: str, ttl_seconds: int,
     if _stdin_is_interactive():
         import getpass
 
-        print(f"Staging (one use, expires in {ttl_seconds} seconds): {operation}",
-              file=sys.stderr)
+        from .godmode_passdialog import lifetime_text
+
+        print(f"Staging (one use, this commit, expires in {lifetime_text(ttl_seconds)}): "
+              f"{operation}", file=sys.stderr)
         return getpass.getpass("Godmode authorization password: ")
     from .godmode_passdialog import DialogUnavailable, approval_message, ask_password
 
@@ -729,10 +731,15 @@ def _protection_weakening(normalized: str, argv: list[str] | None,
     head = lowered[0].replace("\\", "/").rsplit("/", 1)[-1]
     reads_only = bool(_SAFE_SHELL_READS.match(normalized) or _POWERSHELL_READS.match(normalized)
                       or any(pattern.search(normalized) for pattern in _SAFE_INSPECTION_PATTERNS))
-    if not reads_only and any(settings in token for token in lowered[1:]):
+    # PowerShell's call operator: `& "<path>\godmode.cmd" resume` RUNS the
+    # launcher; the path after `&` is the program, not an argument that
+    # could be written to (2026-09-28: every launcher call by path on
+    # PowerShell read as a write to Godmode's own code, R4).
+    arguments = argv[2:] if head == "&" and len(argv) > 1 else argv[1:]
+    if not reads_only and any(settings in token.lower() for token in arguments):
         return "the machine-wide Godmode settings file"
     if not reads_only and any(_lands_in_godmode_code(token, project_root)
-                              for token in argv[1:] if not token.startswith("-")):
+                              for token in arguments if not token.startswith("-")):
         return "Godmode's own code or bytecode cache"
     if head in ("git", "git.exe") and len(lowered) > 1 and lowered[1] == "config":
         rest = lowered[2:]
@@ -5912,10 +5919,13 @@ GATE_MODE_OBSERVE = "observe"
 SUBJECT_OBSERVE_ENTERED = "observe-mode-entered"
 SUBJECT_OBSERVE_EXITED = "observe-mode-exited"
 
-# 180 expired under an agent's ordinary retry latency (a slow tool round-trip
-# plus one retry could outlast it); 300 measured comfortable while staying
-# one short conversation, not an open-ended window.
-_DEFAULT_TTL_SECONDS = 300
+# A staged approval is bound to the exact operation, the repository, the
+# worktree, HEAD and the branch (`_mint_context`), and is spent once. Those
+# bindings are what make it safe; the clock is not. At 300 seconds every
+# approval that waited on a suite or on CI died and was re-staged (nine
+# password rounds for one release, 2026-09-25..27), while a new commit
+# already invalidated it. Twelve hours: one working day, still one commit.
+_DEFAULT_TTL_SECONDS = 12 * 3600
 
 # The bounds `issue()` validates an explicit `--ttl` against. Named so the
 # unattended halving below clamps back to the same floor it validated
@@ -5923,7 +5933,7 @@ _DEFAULT_TTL_SECONDS = 300
 # unattended `--ttl 10` used to mint a 5-second capability - below the
 # floor this very constant advertises).
 _EXPLICIT_TTL_FLOOR_SECONDS = 10
-_EXPLICIT_TTL_CEILING_SECONDS = 600
+_EXPLICIT_TTL_CEILING_SECONDS = 12 * 3600
 
 # The unattended gating tier. An operator present to answer an "ask"
 # is what makes an ask meaningful at all - a session nobody is watching
@@ -6192,7 +6202,7 @@ class CapabilityBroker:
         if ttl is not None:
             if isinstance(ttl, bool) or not isinstance(ttl, int):
                 raise AuthorizationError("capability_ttl_seconds must be an integer")
-            policy["capability_ttl_seconds"] = min(900, max(60, ttl))
+            policy["capability_ttl_seconds"] = min(_EXPLICIT_TTL_CEILING_SECONDS, max(60, ttl))
         required = raw.get("password_required")
         if required is not None:
             if not isinstance(required, list) or not all(
@@ -6451,7 +6461,7 @@ class CapabilityBroker:
         if not classification["protected"]:
             raise AuthorizationError("Read-only inspection does not need a capability")
         if ttl_seconds is None:
-            # The policy value was already clamped to 60..900 when read.
+            # The policy value was already clamped to 60..ceiling when read.
             ttl_seconds = policy.get("capability_ttl_seconds", _DEFAULT_TTL_SECONDS)
         elif (ttl_seconds < _EXPLICIT_TTL_FLOOR_SECONDS
               or ttl_seconds > _EXPLICIT_TTL_CEILING_SECONDS):
@@ -6539,6 +6549,7 @@ class CapabilityBroker:
         ]
         staged.append({
             "operation_digest": body["operation_digest"],
+            "core_digest": staging_core_digest(operation, self._project_root()),
             "category": body["category"],
             "expires_at": body["expires_at"],
             "token": token,
@@ -6568,22 +6579,35 @@ class CapabilityBroker:
 
         digest = classification["operation_digest"]
         now = int(time.time())
-        for entry in list(data.get("staged", [])):
-            if entry.get("operation_digest") != digest:
-                continue
-            # Removed before the token is spent, so a store that fails to write
-            # cannot leave a capability that is both staged and consumed.
-            data["staged"] = [
-                other for other in data.get("staged", []) if other is not entry
-            ]
-            self._store(data)
-            if int(entry.get("expires_at", 0)) < now:
+        entries = list(data.get("staged", []))
+        exact = [entry for entry in entries if entry.get("operation_digest") == digest]
+        if exact:
+            matched = exact[0]
+        else:
+            # The strict normalised form (`staging_core`): the same command
+            # with a redirect into the tree, a read filter or a read beside
+            # it. A staging carries the digest of its own core.
+            core = staging_core_digest(operation, self._project_root())
+            loose = [entry for entry in entries if entry.get("core_digest") == core]
+            if not loose:
                 return None
-            try:
-                return self.consume(operation, str(entry.get("token", "")))
-            except AuthorizationError:
-                return None
-        return None
+            matched = loose[0]
+        # Removed before the token is spent, so a store that fails to write
+        # cannot leave a capability that is both staged and consumed.
+        data["staged"] = [other for other in entries if other is not matched]
+        self._store(data)
+        if int(matched.get("expires_at", 0)) < now:
+            return None
+        try:
+            return self.consume(operation, str(matched.get("token", "")),
+                                staged_digest=str(matched.get("operation_digest", "")))
+        except AuthorizationError:
+            return None
+
+    def _project_root(self) -> Path | None:
+        anchor = getattr(self.archive, "anchor", None)
+        root = getattr(anchor, "project_root", None)
+        return Path(root) if root else None
 
     def issue_interactive(self, operation: str, ttl_seconds: int | None = None) -> str:
         import getpass
@@ -6709,8 +6733,13 @@ class CapabilityBroker:
         return {"request": identifier, "state": "denied", "reason": reason[:300]}
 
     def consume(
-        self, operation: str, token: str, context: dict[str, str] | None = None
+        self, operation: str, token: str, context: dict[str, str] | None = None,
+        staged_digest: str | None = None,
     ) -> dict[str, Any]:
+        """`staged_digest`: the digest the token was minted for when
+        `consume_staged` matched `operation` by its normalised core rather
+        than byte for byte; the token is still checked against exactly the
+        text that was approved."""
         import hmac
         classification = self._classify(operation)
         if not classification["protected"]:
@@ -6729,7 +6758,7 @@ class CapabilityBroker:
             raise AuthorizationError("Capability payload is invalid") from exc
         if not hmac.compare_digest(expected, supplied):
             raise AuthorizationError("Capability signature is invalid")
-        if body.get("operation_digest") != classification["operation_digest"]:
+        if body.get("operation_digest") != (staged_digest or classification["operation_digest"]):
             raise AuthorizationError("Capability is scoped to a different operation")
         if int(body.get("expires_at", 0)) < int(time.time()):
             raise AuthorizationError("Capability has expired")
@@ -6929,17 +6958,72 @@ def design_edit_operation(relative: str) -> str:
     return f"edit file {relative}"
 
 
+# A trailing redirect on a segment: `> out.log`, `>> x`, `2>&1`, `&> x`.
+_TRAILING_REDIRECT = re.compile(
+    r"\s+(?:2>&1|[12&]?>>?\s*(\"[^\"]*\"|'[^']*'|[^\s;&|<>]+))\s*$")
+
+
+def staging_core(operation: str, project_root: Path | None = None) -> str:
+    """The part of `operation` a staged approval has to match, strictly.
+
+    0.3.31 required the staged text to equal the command byte for byte, so
+    `git push origin main > push.log 2>&1` and `git status && git push
+    origin main` each cost another password. Dropped here, and only here:
+    a trailing redirect into the working tree or the null device, a read-
+    only filter after a pipe, and a `&&`/`;` segment that is R0 on its own
+    and changes no directory. Everything else stays, so `--force`, a
+    redirect outside the tree, `| sh`, `cd elsewhere &&` and `&& rm -rf /`
+    are mismatches, never matches."""
+    kept: list[str] = []
+    for text, _operator in _component_boundaries(operation.strip()):
+        text = text.strip()
+        while True:
+            match = _TRAILING_REDIRECT.search(text)
+            if not match:
+                break
+            target = (match.group(1) or "").strip().strip("\"'")
+            if target and not (_NULL_DEVICE.match(target) or (
+                    _contained(target, project_root) and not _SENSITIVE_EDIT.search(target))):
+                break
+            text = text[:match.start()].rstrip()
+        if not text:
+            continue
+        verdict = classify_action(text, project_root=project_root)
+        if (not verdict["protected"] and verdict["tier"] == "R0"
+                and _directory_change(text) is None):
+            continue
+        kept.append(text)
+    return " && ".join(kept)
+
+
+def staging_core_digest(operation: str, project_root: Path | None = None) -> str:
+    return hashlib.sha256(staging_core(operation, project_root).encode()).hexdigest()
+
+
 def stage_operation_hint(plugin_root: Path | str, operation: str) -> str:
     """`stage_hint` for one named operation rather than the last refusal:
     the operator's own runnable command, both launcher forms."""
     root = Path(plugin_root).resolve()
-    quoted = json.dumps(operation, ensure_ascii=False)
     hint = (f'`! "{(root / "bin" / "godmode").as_posix()}" authorize stage '
-            f'--operation {quoted}` (Claude prompt / bash; opens a password dialog)')
+            f'--operation {bash_quoted(operation)}` (Claude prompt / bash; opens a password dialog)')
     if os.name == "nt":
         hint += (f' or `& "{root / "bin" / "godmode.cmd"}" authorize stage '
-                 f'--operation {quoted}` (PowerShell)')
+                 f'--operation {powershell_quoted(operation)}` (PowerShell)')
     return hint
+
+
+def bash_quoted(operation: str) -> str:
+    """`operation` as one bash word that reads back byte for byte. A JSON
+    string was printed here before, and `"$VAR"` inside it expanded when
+    pasted, so the staged text never matched the command it was for."""
+    import shlex
+    return shlex.quote(operation)
+
+
+def powershell_quoted(operation: str) -> str:
+    """`operation` as one PowerShell word: single quotes, where nothing
+    expands and the only escape is a doubled quote."""
+    return "'" + operation.replace("'", "''") + "'"
 
 
 def stage_hint(plugin_root: Path | str) -> str:

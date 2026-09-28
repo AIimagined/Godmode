@@ -43,16 +43,19 @@ def tearDownModule() -> None:
 
 
 class TtlTests(unittest.TestCase):
-    def test_default_ttl_is_300(self) -> None:
+    def test_default_ttl_is_twelve_hours(self) -> None:
+        # A staging is bound to HEAD and spent once; the clock only has to
+        # outlast a suite and a CI run, which 300 seconds never did.
         from godmode_runtime.godmode_sentinel import _DEFAULT_TTL_SECONDS
-        self.assertEqual(_DEFAULT_TTL_SECONDS, 300)
+        self.assertEqual(_DEFAULT_TTL_SECONDS, 12 * 3600)
 
     def test_default_ttl_is_within_the_clamp_range(self) -> None:
-        # issue()'s own guard: 10-600 seconds. 300 must stay inside it, or
-        # the "default" would be silently rejected the moment it's used.
-        from godmode_runtime.godmode_sentinel import _DEFAULT_TTL_SECONDS
-        self.assertGreaterEqual(_DEFAULT_TTL_SECONDS, 10)
-        self.assertLessEqual(_DEFAULT_TTL_SECONDS, 600)
+        # issue()'s own guard: the default must stay inside it, or the
+        # "default" would be silently rejected the moment it's used.
+        from godmode_runtime.godmode_sentinel import (
+            _DEFAULT_TTL_SECONDS, _EXPLICIT_TTL_CEILING_SECONDS, _EXPLICIT_TTL_FLOOR_SECONDS)
+        self.assertGreaterEqual(_DEFAULT_TTL_SECONDS, _EXPLICIT_TTL_FLOOR_SECONDS)
+        self.assertLessEqual(_DEFAULT_TTL_SECONDS, _EXPLICIT_TTL_CEILING_SECONDS)
 
 
 class AuthorizeHelpTests(unittest.TestCase):

@@ -309,8 +309,8 @@ class AuthorizationPolicyTests(unittest.TestCase):
         body = token_body(token)
         return body["expires_at"] - body["issued_at"]
 
-    def test_policy_ttl_clamps_to_60_and_900(self) -> None:
-        for configured, expected in ((30, 60), (5000, 900), (300, 300)):
+    def test_policy_ttl_clamps_to_60_and_twelve_hours(self) -> None:
+        for configured, expected in ((30, 60), (100_000, 43_200), (300, 300)):
             with isolated_project() as (project, _state, _anchor, archive):
                 archive.initialize()
                 self.write_policy(project, {"capability_ttl_seconds": configured})
