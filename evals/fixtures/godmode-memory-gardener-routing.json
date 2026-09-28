@@ -1,7 +1,7 @@
 {
   "routes": {
     "near_negative": {
-      "Erase a leaked credential from an archived record": "godmode-evidence",
+      "Erase a leaked credential from an archived record": "godmode-continuity",
       "Follow the compiled code of law before starting a new task": "godmode-code-of-law",
       "Resume where the last session stopped and rebuild the lost context brief": "godmode"
     },

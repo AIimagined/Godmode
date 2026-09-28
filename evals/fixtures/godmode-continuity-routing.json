@@ -8,7 +8,9 @@
     },
     "positive": {
       "Detect context drift after changing branches or worktrees.": "godmode-continuity",
-      "Explain the current context after changing branches or worktrees: obligations, drift, and the next action.": "godmode-continuity"
+      "Explain the current context after changing branches or worktrees: obligations, drift, and the next action.": "godmode-continuity",
+      "Reconstruct project continuity from local evidence when resuming work in this archive after a restart.": "godmode-continuity",
+      "Record a handoff so the next session resumes with the obligations and drift preserved.": "godmode-continuity"
     }
   },
   "schema": "godmode-routing-snapshot-v1",
@@ -16,7 +18,7 @@
   "summary": {
     "near_negatives_rejected": 4,
     "near_negatives_total": 4,
-    "positives_routed_correctly": 2,
-    "positives_total": 2
+    "positives_routed_correctly": 4,
+    "positives_total": 4
   }
 }

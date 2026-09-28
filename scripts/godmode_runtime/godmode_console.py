@@ -6241,12 +6241,12 @@ def cmd_upstream(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
                               "next": ("read each listed file before the parity verdict; record it with "
                                        "`godmode remember --kind decision --subject \"absorb:<item>\"`")},
                              exit_code=0 if hits else 1)
-    """one `upstream-diff` record per run - a named package's
- (or, via `--path`, a forked/fully-copied external repo's) shipped
- surface diffed against this project's own equivalents. Each `--dispose
- SYMBOL=DISPOSITION:BEHAVIOR_VERDICT` supplies the paired import+behavior
- verdicts for one unmatched symbol; a disposition given with no
- behavior_verdict is refused before the archive is ever touched."""
+    """One `upstream-diff` record per run - a named package's
+    (or, via `--path`, a forked/fully-copied external repo's) shipped
+    surface diffed against this project's own equivalents. Each `--dispose
+    SYMBOL=DISPOSITION:BEHAVIOR_VERDICT` supplies the paired import+behavior
+    verdicts for one unmatched symbol; a disposition given with no
+    behavior_verdict is refused before the archive is ever touched."""
     _require_archive(runtime)
     dispositions: dict[str, dict[str, str | None]] = {}
     for raw in args.dispose:
@@ -7268,7 +7268,7 @@ def cmd_skill_forge(args: argparse.Namespace, runtime: Runtime) -> CommandResult
             "skill forge needs --success-evidence seq:<n> at least three "
             "times: a method becomes a skill candidate only after "
             "three recorded successes of one task type, each cited by the "
- f"archive record that proves it; got {len(success_evidence)}"
+            f"archive record that proves it; got {len(success_evidence)}"
         )
     malformed = [item for item in success_evidence if not _SUCCESS_EVIDENCE_CITE.match(item)]
     if malformed:

@@ -682,7 +682,7 @@ def _skill_impact_invariants(data: dict[str, Any]) -> None:
     if data.get("outcome") not in ("accepted", "rejected"):
         raise ArchiveError(
             "a skill_impact's 'outcome' must be \"accepted\" or \"rejected\" "
- "- gate has no third state (neutral folds into "
+            "- gate has no third state (neutral folds into "
             "rejected)"
         )
     patterns = data.get("patterns", [])

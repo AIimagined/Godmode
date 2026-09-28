@@ -1726,7 +1726,10 @@ _SEQ_EVIDENCE = re.compile(r"^(?:seq|verdict|diff):(\d+)$")
 def _moved_evidence(archive: Any, lesson_seq: int) -> list[str]:
     """The `seq:`-shaped citations of the lesson at `lesson_seq` that no
     record in either tier answers to any more."""
-    record = archive.find_by_sequence(lesson_seq) if hasattr(archive, "find_by_sequence") else None
+    try:
+        record = archive.find_by_sequence(lesson_seq) if hasattr(archive, "find_by_sequence") else None
+    except Exception:  # noqa: BLE001 - a lesson that cannot be served is `doctor`'s finding, not this compile's
+        record = None
     if record is None:
         return []
     data = record.get("data") or {}

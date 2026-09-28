@@ -1,0 +1,1 @@
+- The eval snapshots (routing, routing stability, charter, ranking) are refreshed for the reworded skills; `law compile` no longer raises when one of its own lessons cannot be served and instead leaves that law standing; the upstream diff help text reads as prose.

@@ -5,7 +5,7 @@
       "Cut a release: bump the version number and publish the changelog.": "godmode-changelog",
       "Draft user-facing release notes from the merged changelog fragments.": "godmode-changelog",
       "Implement an already specified change with a known mechanism.": "godmode-replicate",
-      "Record a session handoff checkpoint before stopping work for the day.": "godmode-code-of-law",
+      "Record a session handoff checkpoint before stopping work for the day.": "godmode-continuity",
       "Ship a fully specified change using an already-agreed approach.": "godmode-codegraph"
     },
     "positive": {
