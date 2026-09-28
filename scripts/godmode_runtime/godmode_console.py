@@ -191,7 +191,9 @@ from .godmode_plan import bind_execution, mutation_verdict
 from .godmode_plan import SPEC_FIELDS
 from .godmode_plan import specify as plan_specify
 from .godmode_plan import start as plan_start
-from .godmode_scenarios import run as run_scenarios
+# godmode_scenarios pulls unittest.mock and asyncio: about one second of
+# every CLI start (measured with -X importtime), paid by every hook and
+# every eval probe. Imported where it is used instead.
 from .godmode_scope import scope as scope_change
 from .godmode_status import ITEM_TYPES, STATES, handover, record_item, remaining, render_view, survey
 from .godmode_corpus import build_brief, resolve_roles
@@ -3475,6 +3477,8 @@ def cmd_recurrences(args: argparse.Namespace, runtime: Runtime) -> CommandResult
 
 
 def cmd_scenarios(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    from .godmode_scenarios import run as run_scenarios
+
     report = run_scenarios(only=args.only)
     # A control that passes its unit test and misses the failure it was written
     # for is the expensive kind of green, so a miss fails the command. A
@@ -5187,18 +5191,38 @@ def _doctor_host(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     }, exit_code=0)
 
 
-def _secret_scan_targets(root: Path) -> Iterator[tuple[str, Any]]:
+DOCTOR_SECRET_SCAN_RECORDS = 500
+
+
+def _secret_scan_targets(root: Path, newest: int | None = None) -> Iterator[tuple[str, Any]]:
     """Every JSON value under `root` a secret-shape scan should examine:
     each `*.json` file whole, and each line of a `*.jsonl` cold segment
     as its own record - a secret rotated
     into a cold segment by `godmode forget` must stay exactly as findable
     here as it was while hot, one file-glob was never the security
-    boundary."""
-    for path in root.rglob("*.json"):
+    boundary. `newest` bounds the scan to the N last record files by name
+    (record files are sequence-numbered) and skips the cold segments and
+    the derived sidecars (read index, atlas cache), whose contents are
+    those same records."""
+    if newest is not None:
+        # One directory listing of the record files, not a walk of the
+        # whole state tree (28,000 paths sorted: two seconds on this repo).
+        events = root / "godmode-events"
+        try:
+            with os.scandir(events) as entries:
+                names = sorted(e.name for e in entries if e.name.lower().endswith(".godmode.json"))
+        except OSError:
+            names = []
+        files = [events / name for name in names[-newest:]]
+    else:
+        files = sorted(root.rglob("*.json"), key=lambda p: p.name)
+    for path in files:
         try:
             yield path.name, json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
+    if newest is not None:
+        return
     for path in root.rglob("*.jsonl"):
         try:
             text = path.read_text(encoding="utf-8")
@@ -5338,7 +5362,14 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
                        "`godmode verify` and `godmode doctor` are both clean."),
         })
     secret_locations: list[str] = []
-    for label, value in _secret_scan_targets(runtime.archive.root):
+    # Every append already refuses secret-shaped material
+    # (`enforce_private_payload`), so this is a bounded re-check of the
+    # newest records, not the exhaustive pass: rescanning all 28,000 event
+    # files took two minutes of every doctor run. `godmode privacy` scans
+    # everything.
+    scanned_recent = 0
+    for label, value in _secret_scan_targets(runtime.archive.root, newest=DOCTOR_SECRET_SCAN_RECORDS):
+        scanned_recent += 1
         secret_locations.extend(f"{label}:{item}" for item in find_secret_shapes(value))
     if secret_locations:
         issues.append(
@@ -6040,6 +6071,14 @@ def cmd_roi(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     separate fold (`roi_digest`), never merged into the real-denial counts
     above. JSON with --json, prose otherwise, either way."""
     _require_archive(runtime)
+    if getattr(args, "releases", False):
+        from .godmode_roi import release_roi, release_tags, render_release_roi
+
+        project = Path(runtime.anchor.project_root)
+        rows = release_roi(runtime.archive.read_events(verify=False), release_tags(project))
+        if getattr(args, "json", False):
+            return CommandResult({"releases": rows})
+        return CommandResult({"report": render_release_roi(rows)})
     if getattr(args, "digest", False):
         digest = roi_digest(runtime.archive, sessions=args.sessions)
         # S11-B: the enforce-era section rides the same digest.
@@ -6843,12 +6882,22 @@ def cmd_evals(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         "withhold_memory": True, "diffs": [],
         "verdict": "snapshot-mode-withheld",
     }
-    assertions = run_behavior_assertions(project, withhold_memory=withhold_memory)
+    if getattr(args, "fast", False):
+        # The behaviour probes and the cross-model matrix are 80 CLI
+        # subprocesses (two to three seconds each on this repo); the rest
+        # of the evals runs in-process in seconds.
+        assertions = {"verdict": "assertions-skipped",
+                      "skipped": "--fast: behaviour probes not run; drop --fast to run them"}
+        models = {"skipped": "--fast: cross-model matrix not run"}
+    else:
+        print("evals: running the behaviour probes as subprocesses "
+              "(minutes on a large suite; --fast skips them)", file=sys.stderr, flush=True)
+        assertions = run_behavior_assertions(project, withhold_memory=withhold_memory)
+        # One row per skill per declared model. A dict, so `--brief`
+        # (scalars only) leaves the headline untouched.
+        models = cross_model_matrix(project, withhold_memory=withhold_memory)
     charter = charter_snapshot(project)
     ranking = ranking_snapshot(project, withhold_memory=withhold_memory)
-    # One row per skill per declared model. A dict, so `--brief`
-    # (scalars only) leaves the headline untouched.
-    models = cross_model_matrix(project, withhold_memory=withhold_memory)
     payload = {**routing, "snapshots": snapshots, "assertions": assertions,
                "charter": charter, "ranking": ranking, "models": models}
     # A mode-differing ranking comparison is out of contract, not a failure:
@@ -6857,7 +6906,7 @@ def cmd_evals(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     gates = {
         "routing": routing["verdict"] == "routing-sound",
         "snapshots": snapshots["verdict"] in ("behaviour-stable", "snapshot-mode-withheld"),
-        "assertions": assertions["verdict"] == "assertions-held",
+        "assertions": assertions["verdict"] in ("assertions-held", "assertions-skipped"),
         "charter": charter["verdict"] == "charter-stable",
         "ranking": ranking["verdict"] in (
             "ranking-stable", "ranking-mode-differs", "ranking-mode-withheld"),
@@ -9606,6 +9655,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="U-E7: would-have-caught view over gate_mode=observe records only "
              "(would-have-denied/would-have-asked by category), never merged "
              "with the real denial counts above")
+    roi_parser.add_argument(
+        "--releases", action="store_true",
+        help="Per release tag range: password rounds, gate refusals by "
+             "category, preflight runs and minutes, suite runs repeated "
+             "for one HEAD - one table, no prose")
     roi_parser.set_defaults(handler=cmd_roi)
 
     trends_parser = sub.add_parser(
@@ -9831,6 +9885,9 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="Raise the committed routing-score baseline to the current scores (refused on any regression)")
     evals_mode.add_argument("--determinism", action="store_true",
                        help="Run the offline routing harness twice and name any case whose route differs")
+    evals.add_argument("--fast", action="store_true",
+                       help="Skip the behaviour probes and the cross-model matrix (the subprocess-heavy "
+                            "part); everything else runs in-process in seconds")
     evals.add_argument("--withhold-memory", action="store_true",
                        help="Score with this project's lessons and compiled law withheld from the subject brief, "
                             "so the number measures the skill rather than the memory; the baseline keeps a "
@@ -10014,6 +10071,13 @@ def _dispatch(args: argparse.Namespace, mode: str = "standard") -> int:
     """
     try:
         runtime = _runtime(args.project)
+        # One directory scan per process, as the hook already does: `resume`
+        # read the archive ten times and re-stat-ed 28,000 record files on
+        # each read (6 of its 10 seconds). A write by this process re-pins.
+        try:
+            runtime.archive.pin_identity()
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unpinned read is the slow path, never a failure
+            pass
         handler: Callable[[argparse.Namespace, Runtime], CommandResult] = args.handler
         result = handler(args, runtime)
         if result.exit_code == 0 and _reports_error(result.payload):

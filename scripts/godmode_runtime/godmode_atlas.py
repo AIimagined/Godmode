@@ -111,6 +111,9 @@ class Atlas:
     body_signatures: dict[str, frozenset] = field(default_factory=dict)
     # Set when a build budget stopped the scan: what was read, what was not.
     gap: dict[str, Any] | None = None
+    # Identity of the extraction cache this atlas was built from (see
+    # `build`); None when no local state directory holds one.
+    cache_stamp: Any = None
 
     # ---- queries -------------------------------------------------------------
 
@@ -263,6 +266,15 @@ class Atlas:
         modules is the house pattern being followed rather than a capability
         built twice.
         """
+        # The scan is a pure function of the extraction, so its result is
+        # cached under the extraction cache's identity (about 7 s on this
+        # repo for 1.6 million pairs, paid once per tree state).
+        memo: FileCache | None = None
+        if self.cache_stamp is not None:
+            memo = FileCache(self.project, "duplicates")
+            hit = memo.entries.get("pairs")
+            if hit is not None and hit[0] == (self.cache_stamp, threshold):
+                return list(hit[1])
         candidates = [
             s for s in self.symbols
             if s.kind in ("function", "class")
@@ -270,19 +282,43 @@ class Atlas:
             and not s.name.startswith("_")
             and not _is_test_path(s.path)
         ]
-        signatures = {s.id: _shingles(s.name) for s in candidates}
+        # Shingle sets as bitmasks over one shared vocabulary: 1.6 million
+        # pairs of 300-element sets took minutes in set arithmetic on this
+        # repo; `int.bit_count` over the same pairs takes seconds. Same
+        # numbers, same pairs.
+        vocabulary: dict[str, int] = {}
+
+        def _mask(tokens: Iterable[str]) -> int:
+            mask = 0
+            for token in tokens:
+                mask |= 1 << vocabulary.setdefault(token, len(vocabulary))
+            return mask
+
+        def _score(left: int, right: int) -> float:
+            union = (left | right).bit_count()
+            return (left & right).bit_count() / union if union else 0.0
+
+        names = [_mask(_shingles(s.name)) for s in candidates]
+        bodies = [_mask(self.body_signatures.get(s.id) or ()) for s in candidates]
+        # Size filter: J(A, B) >= t needs |A| / |B| >= t, so a pair whose
+        # sizes differ more than that on both signatures never scores.
+        name_sizes = [mask.bit_count() for mask in names]
+        body_sizes = [mask.bit_count() for mask in bodies]
         pairs: list[dict[str, Any]] = []
         for index, first in enumerate(candidates):
-            for second in candidates[index + 1:]:
+            name_size, body_size = name_sizes[index], body_sizes[index]
+            for other in range(index + 1, len(candidates)):
+                second = candidates[other]
                 if first.name == second.name and first.path == second.path:
                     continue
-                name_score = _jaccard(signatures[first.id], signatures[second.id])
+                other_name, other_body = name_sizes[other], body_sizes[other]
+                if (min(name_size, other_name) < threshold * max(name_size, other_name)
+                        and min(body_size, other_body) < threshold * max(body_size, other_body)):
+                    continue
+                name_score = _score(names[index], names[other])
                 # Two implementations of one behaviour under unrelated names have
                 # similar bodies; the name comparison alone would never see them.
-                body_score = _jaccard(
-                    self.body_signatures.get(first.id, frozenset()),
-                    self.body_signatures.get(second.id, frozenset()),
-                ) if self.body_signatures.get(first.id) and self.body_signatures.get(second.id) else 0.0
+                body_score = _score(bodies[index], bodies[other]) if bodies[index] and bodies[other] else 0.0
                 score, basis = max((name_score, "name"), (body_score, "body"))
                 # An identical name in two modules with different bodies is an
                 # interface convention - every detector exposing `analyze` is the
@@ -294,6 +330,10 @@ class Atlas:
                     pairs.append({"a": first.view(), "b": second.view(),
                                   "similarity": round(score, 3), "basis": basis})
         pairs.sort(key=lambda pair: (-pair["similarity"], pair["a"]["id"]))
+        if memo is not None:
+            memo.entries["pairs"] = ((self.cache_stamp, threshold), pairs)
+            memo.dirty = True
+            memo.save()
         return pairs
 
     def diagnose(self) -> dict[str, Any]:
@@ -784,6 +824,9 @@ def build(project: Path, suffixes: Iterable[str] | None = None,
     allowed = set(suffixes) if suffixes else set(CODE_SUFFIXES) | set(EXTRACTORS)
     atlas = Atlas(project=project)
     candidates = _candidate_files(project, allowed, roots=roots)
+    # Per-file extraction cache keyed on (size, mtime): parsing this repo's
+    # 611 files took 35 s on every build; unchanged files now cost a stat.
+    cache = FileCache(project, "atlas")
     started = time.monotonic()
     for position, path in enumerate(candidates):
         # A build with no ceiling has no honest answer on a repo it cannot
@@ -801,43 +844,125 @@ def build(project: Path, suffixes: Iterable[str] | None = None,
             }
             break
         relative = path.relative_to(project).as_posix()
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError as exc:
-            atlas.unparsed.append({"path": relative, "reason": str(exc)[:120]})
-            continue
+        cached = cache.get(path, relative)
+        if cached is not None:
+            symbols, edges, bodies = cached
+        else:
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                atlas.unparsed.append({"path": relative, "reason": str(exc)[:120]})
+                continue
+            extractor = EXTRACTORS.get(path.suffix.lower(), _generic_symbols)
+            try:
+                symbols, edges = extractor(relative, text)
+            except SyntaxError as exc:
+                atlas.unparsed.append({"path": relative, "reason": f"syntax error line {exc.lineno}"})
+                continue
+            if _is_test_path(relative):
+                # The import stays (it is a real import) and gains a coverage twin,
+                # so evidence tiers and dependent counts are unchanged while the
+                # tests bucket becomes answerable.
+                edges = list(edges) + [
+                    Edge(e.source, e.target, TESTED_BY, e.evidence, e.line)
+                    for e in edges if e.relation == IMPORTS
+                ]
+            # Approximate bodies: a symbol runs from its line to the next symbol's.
+            lines = text.splitlines()
+            ordered = sorted((s for s in symbols if s.kind in ("function", "class")),
+                             key=lambda s: s.line)
+            bodies = {}
+            for position, symbol in enumerate(ordered):
+                end = ordered[position + 1].line - 1 if position + 1 < len(ordered) else len(lines)
+                body = " ".join(
+                    stripped for raw in lines[symbol.line:end]
+                    if (stripped := raw.strip()) and not stripped.startswith(("#", "//"))
+                )
+                if len(body) >= 40:
+                    bodies[symbol.id] = _shingles(body)
+            cache.put(path, relative, (symbols, edges, bodies))
         atlas.files.append(relative)
-        extractor = EXTRACTORS.get(path.suffix.lower(), _generic_symbols)
-        try:
-            symbols, edges = extractor(relative, text)
-        except SyntaxError as exc:
-            atlas.unparsed.append({"path": relative, "reason": f"syntax error line {exc.lineno}"})
-            continue
-        if _is_test_path(relative):
-            # The import stays (it is a real import) and gains a coverage twin,
-            # so evidence tiers and dependent counts are unchanged while the
-            # tests bucket becomes answerable.
-            edges = list(edges) + [
-                Edge(e.source, e.target, TESTED_BY, e.evidence, e.line)
-                for e in edges if e.relation == IMPORTS
-            ]
         atlas.symbols.extend(symbols)
         atlas.edges.extend(edges)
-        # Approximate bodies: a symbol runs from its line to the next symbol's.
-        lines = text.splitlines()
-        ordered = sorted((s for s in symbols if s.kind in ("function", "class")),
-                         key=lambda s: s.line)
-        for position, symbol in enumerate(ordered):
-            end = ordered[position + 1].line - 1 if position + 1 < len(ordered) else len(lines)
-            body = " ".join(
-                stripped for raw in lines[symbol.line:end]
-                if (stripped := raw.strip()) and not stripped.startswith(("#", "//"))
-            )
-            if len(body) >= 40:
-                atlas.body_signatures[symbol.id] = _shingles(body)
+        atlas.body_signatures.update(bodies)
+    cache.save()
+    # Results derived from this exact extraction (the duplicate scan) key on
+    # the saved cache's own identity, plus the budget gap when one applied.
+    atlas.cache_stamp = ((cache.stamp(), len(candidates), atlas.gap is None, sorted(roots or ()))
+                         if cache.path else None)
     _resolve_relative_imports(atlas)
     _link_documentation(project, atlas)
     return atlas
+
+
+class FileCache:
+    """A per-file derived value (extracted symbols, literals), keyed on the
+    file's (size, mtime_ns) and pickled as one file under the project's
+    local state directory. Pickle, deliberately: the file lives beside the
+    archive's own read index under the git common directory, written and
+    read only by this runtime, so a writer who can plant one already holds
+    the archive itself (THREAT-MODEL.md, ledger tampering - out of scope);
+    JSON was measured at four seconds per load for this repo's atlas.
+    Missing or unreadable state means every file is computed, as before; a
+    save that cannot happen is silent."""
+
+    VERSION = 1
+
+    def __init__(self, project: Path, name: str) -> None:
+        import pickle
+
+        self.path: Path | None = None
+        self.entries: dict[str, tuple[tuple[int, int], Any]] = {}
+        self.dirty = False
+        try:
+            from .godmode_anchor import resolve_anchor
+
+            root = Path(resolve_anchor(project).archive_root)
+            self.path = root / f"godmode-{name}.cache.pickle"
+            payload = pickle.loads(self.path.read_bytes())
+            if payload.get("version") == self.VERSION:
+                self.entries = payload["files"]
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: no cache is the plain computation, never a failure
+            pass
+
+    @staticmethod
+    def key(path: Path) -> tuple[int, int] | None:
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        return (stat.st_size, stat.st_mtime_ns)
+
+    def get(self, path: Path, relative: str) -> Any | None:
+        entry = self.entries.get(relative)
+        if entry is None or entry[0] != self.key(path):
+            return None
+        return entry[1]
+
+    def put(self, path: Path, relative: str, value: Any) -> None:
+        key = self.key(path)
+        if key is None:
+            return
+        self.entries[relative] = (key, value)
+        self.dirty = True
+
+    def save(self) -> None:
+        import pickle
+
+        if not self.dirty or self.path is None:
+            return
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.path.with_suffix(".tmp")
+            temporary.write_bytes(pickle.dumps({"version": self.VERSION, "files": self.entries},
+                                               protocol=pickle.HIGHEST_PROTOCOL))
+            os.replace(temporary, self.path)
+        except OSError:
+            pass
+
+    def stamp(self) -> tuple[int, int] | None:
+        """Identity of the saved cache file, for results derived from it."""
+        return self.key(self.path) if self.path is not None else None
 
 
 # Suffixes a bare relative import may resolve to, by the importing file's own

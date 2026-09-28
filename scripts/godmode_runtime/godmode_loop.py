@@ -630,21 +630,55 @@ def _git(project: Path, *args: str) -> str:
     return done.stdout if done.returncode == 0 else ""
 
 
-def _is_version_chore(project: Path, sha: str, path: str) -> bool:
-    """Whether a commit moved nothing but a version string in this file.
+def _is_version_chore(diff_lines: list[str]) -> bool:
+    """Whether a file's diff moved nothing but a version string.
 
     Without this every file carrying a version scores the maximum, because a
     release touches all of them, and the real signal is buried under chores.
     """
-    diff = _git(project, "show", sha, "--unified=0", "--", path)
     # `startswith`, not `line[:1] in "+-"`: an empty string is a member of every
     # string, so blank diff lines passed that test and broke the `all()` below,
     # which read every version bump as a genuine repair.
     body = [
-        line for line in diff.splitlines()
+        line for line in diff_lines
         if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
     ]
     return bool(body) and all("version" in line.lower() for line in body)
+
+
+def _repaired_paths(log: str) -> list[str]:
+    """Source paths with a non-chore change in one `git log -p --unified=0`
+    listing (commits separated by a leading `\\x1e`)."""
+    out: list[str] = []
+    for commit in log.split("\x1e"):
+        path: str | None = None
+        lines: list[str] = []
+        sections: list[tuple[str, list[str]]] = []
+        for line in commit.splitlines():
+            if line.startswith("diff --git "):
+                if path is not None:
+                    sections.append((path, lines))
+                path, lines = line.split(" b/", 1)[1] if " b/" in line else None, []
+            elif path is not None:
+                lines.append(line)
+        if path is not None:
+            sections.append((path, lines))
+        for path, lines in sections:
+            if not path.endswith(".py") or path.startswith("tests/") or "/test" in path:
+                continue
+            if _is_version_chore(lines):
+                continue
+            out.append(path)
+    return out
+
+
+def _repairs_cache(project: Path) -> Path | None:
+    try:
+        from .godmode_anchor import resolve_anchor
+
+        return Path(resolve_anchor(project).archive_root) / "godmode-repairs.cache.json"
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: no local state means no cache, never a failure
+        return None
 
 
 def repeated_repairs(project: Path, threshold: int = REPAIR_THRESHOLD) -> list[dict[str, Any]]:
@@ -653,19 +687,40 @@ def repeated_repairs(project: Path, threshold: int = REPAIR_THRESHOLD) -> list[d
     tags = [tag for tag in _git(project, "tag", "--list", "--sort=v:refname").split() if tag]
     if not tags:
         return []
+    # The answer depends only on the tagged history, so it is cached under
+    # the tag listing (name and commit of every tag): one git call instead
+    # of one per release span (10 s of process spawns on this repo).
+    key = _git(project, "for-each-ref", "--format=%(refname) %(objectname)", "refs/tags")
+    cache = _repairs_cache(project)
+    if cache is not None:
+        try:
+            stored = json.loads(cache.read_text(encoding="utf-8"))
+            if stored.get("key") == key and stored.get("threshold") == threshold:
+                return stored["findings"]
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    findings = _repeated_repairs(project, tags, threshold)
+    if cache is not None:
+        try:
+            cache.write_text(json.dumps({"key": key, "threshold": threshold, "findings": findings}),
+                             encoding="utf-8")
+        except OSError:
+            pass
+    return findings
 
+
+def _repeated_repairs(project: Path, tags: list[str], threshold: int) -> list[dict[str, Any]]:
     repaired: dict[str, set[str]] = {}
     previous = ""
     for tag in tags:
         span = f"{previous}..{tag}" if previous else tag
         previous = tag
-        for sha in _git(project, "log", span, "--format=%H", "--grep=^fix").split():
-            for path in _git(project, "show", sha, "--name-only", "--format=").split():
-                if not path.endswith(".py") or path.startswith("tests/") or "/test" in path:
-                    continue
-                if _is_version_chore(project, sha, path):
-                    continue
-                repaired.setdefault(path, set()).add(tag)
+        # One git call per release span (was two per file per fix commit:
+        # minutes of subprocess spawns on a long history).
+        log = _git(project, "log", span, "--grep=^fix", "-p", "--unified=0",
+                   "--format=%x1e%H", "--", "*.py")
+        for path in _repaired_paths(log):
+            repaired.setdefault(path, set()).add(tag)
 
     findings: list[dict[str, Any]] = []
     for path, releases in sorted(repaired.items(), key=lambda kv: (-len(kv[1]), kv[0])):

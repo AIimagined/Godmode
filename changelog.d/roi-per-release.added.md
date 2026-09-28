@@ -1,0 +1,1 @@
+- `godmode roi --releases` prints one table per release tag range: password rounds staged and consumed, gate refusals by category, preflight runs with their minutes, and suite runs repeated for the same commit. `--json` gives the same rows as JSON, and each preflight attestation now records how long it took.
