@@ -1492,6 +1492,30 @@ def capture_payload_probe(archive: Any, raw: Any, event: HostEvent) -> None:
 HOSTS_WITH_ASK = frozenset({"claude", "cursor", "antigravity", "codex", "grok"})
 
 
+def render_spent_allow(host: str, event_name: str, reason: str) -> dict[str, Any]:
+    """The one explicit `allow` this gate ever emits: an operator staged
+    this exact command with the password and the hook just spent it.
+    Spoken, not silent, so the host's own permission layer does not ask a
+    second time for a call the password already answered (0.3.31: the
+    host refused a push Godmode had approved). An ordinary allow stays
+    silent and an ordinary ask stays an ask - `render_decision`."""
+    claude_key = {"hookSpecificOutput": {
+        "hookEventName": event_name or "PreToolUse",
+        "permissionDecision": "allow",
+        "permissionDecisionReason": reason,
+    }}
+    if host in ("claude", "codex"):
+        return claude_key
+    if host == "antigravity":
+        return {"decision": "allow", "reason": reason}
+    if host == "grok":
+        return {**claude_key, "decision": "allow", "reason": reason}
+    if host == "cursor":
+        return {"permission": "allow", "user_message": reason, "agent_message": reason}
+    return {**claude_key, "decision": "allow", "reason": reason,
+            "permission": "allow", "user_message": reason, "agent_message": reason}
+
+
 def render_decision(host: str, event_name: str, base_decision: str,
                     reason: str) -> tuple[dict[str, Any], int]:
     """`(body, exit_code)` for one decision. `allow` is silent (`{}`, 0) -

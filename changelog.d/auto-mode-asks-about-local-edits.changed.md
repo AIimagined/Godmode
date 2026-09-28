@@ -1,0 +1,1 @@
+- In auto mode a local, reversible operation (a commit, a staged file, an in-tree delete, an inline script) is now asked about through the host instead of being refused outright; history, remote and release operations still refuse without a staged approval.

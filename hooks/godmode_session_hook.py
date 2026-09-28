@@ -184,6 +184,7 @@ from godmode_runtime.godmode_hostevent import (  # noqa: E402
     capture_payload_probe, field as host_field, is_pretool_event,
     malformed_apply_patch_preview, parse_host_payload,
     record_malformed_apply_patch, record_unrecognized_tool, render_decision,
+    render_spent_allow,
     unrecognized_tool_preview)
 from godmode_runtime.godmode_sentinel import (  # noqa: E402
     _NO_HUMAN_ASK_MODES, _TIER_BY_CATEGORY, GATE_MODE_OBSERVE, attended,
@@ -5036,6 +5037,12 @@ def main(argv: list[str] | None = None) -> int:
                 f"{preview['category']} ({preview.get('tier', 'R?')})"
                 + (f" - touches {impact}" if impact else "")
                 + ". Approve to run it." + governance_note
+                # Read by the agent when the answer finally comes, and the
+                # only moment it can be told: while the ask waits, no hook
+                # runs. The detached watcher below names the wait to the
+                # operator after thirty minutes.
+                + " If nobody answers within 30 minutes, continue on files "
+                "this call does not touch and leave it pending."
             )
             if operation:
                 # This used to LEAD with `godmode
@@ -5089,7 +5096,13 @@ def main(argv: list[str] | None = None) -> int:
             # would-ask folds to deny exactly as it does on a host with no
             # ask at all, and the record names the mode.
             permission_mode = str(host_field(submitted, "permission_mode") or "")
-            no_human_ask = permission_mode in _NO_HUMAN_ASK_MODES
+            # An R2 ask (a commit, a staged file, an in-tree delete, an
+            # inline script) is local and reversible: in auto mode it goes
+            # to the host's own classifier as an ask instead of folding to
+            # a refusal. 2026-09-28: every `git add` and `git commit` of a
+            # release was refused this way. R3 and above still fold.
+            no_human_ask = (permission_mode in _NO_HUMAN_ASK_MODES
+                            and str(preview.get("tier", "")) != "R2")
             # The one call site that resolves whether an operator is
             # presumed present and threads it into `_decision_for` - every
             # other call site in this file passes none and keeps the R5-only
@@ -5162,7 +5175,7 @@ def main(argv: list[str] | None = None) -> int:
                 # category, never the operation. Best-effort the same way
                 # the refusal record below degrades.
                 try:
-                    archive.append(
+                    asked = archive.append(
                         "action", "gate-asked",
                         {"tier": str(preview.get("tier", "R?")),
                          "category": preview.get("category", "unclassified"),
@@ -5170,6 +5183,14 @@ def main(argv: list[str] | None = None) -> int:
                          "permission_mode": permission_mode or "unknown"},
                         evidence=[],
                     )
+                    # A real host session (it states a session id) gets a
+                    # detached watcher that records and notifies a stall
+                    # after thirty minutes; a bare test payload does not.
+                    if host_field(submitted, "session_id"):
+                        from godmode_runtime.godmode_stallwatch import spawn_watch
+                        spawn_watch(str(anchor.project_root), int(asked["sequence"]),
+                                    f"{preview.get('category', 'operation')} "
+                                    f"({preview.get('tier', 'R?')}): {operation[:120]}")
                 except Exception:  # noqa: BLE001  # godmode: swallow-ok: an ask that already happened is best-effort to record
                     _report_ancillary_failure(archive)
             if effectively_denied:
@@ -5544,6 +5565,14 @@ def main(argv: list[str] | None = None) -> int:
                             or promotion)
                 body: dict[str, Any] = {}
                 host = current_host()
+                if preview.get("capability_consumed"):
+                    # The password already answered this call; said out
+                    # loud so the host does not ask a second time.
+                    body = render_spent_allow(
+                        host, "PreToolUse",
+                        f"godmode: approved by a staged capability "
+                        f"({preview.get('category', 'operation')}, "
+                        f"{preview.get('tier', 'R?')}); spent once")
                 if host == "grok":
                     # Everything parked (the continuity
                     # brief, the claim echo) rides the first allowed call as
@@ -5560,8 +5589,10 @@ def main(argv: list[str] | None = None) -> int:
                 if host == "antigravity":
                     # Antigravity reads a silent allow as a
                     # denial (agy 1.0.15, a memory plugin's bridge). Its contract
-                    # is {decision, reason} and nothing else.
-                    body = {"decision": "allow"}
+                    # is {decision, reason} and nothing else. A spent
+                    # staging's own reason survives below unless an
+                    # advisory replaces it.
+                    body = {"decision": "allow", **body}
                     if advisory:
                         body["reason"] = advisory
                     advisory = None

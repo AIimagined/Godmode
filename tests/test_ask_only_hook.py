@@ -178,7 +178,9 @@ class AskOnlyHookTests(unittest.TestCase):
                         if r.get("kind") == "action"
                         and (r.get("data") or {}).get("silenced_by") == "ask_only"]
         self.assertEqual(declared, "ask")
-        self.assertEqual(auto, "deny")
+        # R2 in auto mode is an ask the host's own classifier answers,
+        # never a silent allow; only R3 and above fold to deny there.
+        self.assertEqual(auto, "ask")
         self.assertEqual(silenced, [], "nothing may be silenced while unattended")
 
     def test_a_listed_category_still_asks(self) -> None:
@@ -188,7 +190,8 @@ class AskOnlyHookTests(unittest.TestCase):
 
     def test_r4_still_asks_whatever_the_list_says(self) -> None:
         with _project() as (root, _archive):
-            decision = _decide(root, "Bash", {"command": "rm -rf build"})
+            # Outside the tree: an in-tree delete is an R2 file edit now.
+            decision = _decide(root, "Bash", {"command": "rm -rf ../build"})
         self.assertEqual(decision, "ask")
 
 

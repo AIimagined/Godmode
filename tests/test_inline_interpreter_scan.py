@@ -142,9 +142,15 @@ class ScanPostureClassifierTests(unittest.TestCase):
                 self.assertEqual(verdict["category"], "interpreter-opaque-inline")
 
     def test_visible_r5_evidence_still_refuses_under_scan(self) -> None:
+        # Judged by what runs: a forced push handed to a subprocess refuses;
+        # the same words inside a printed string literal are text.
+        self.assertEqual(
+            _decision('python -c "import subprocess; subprocess.run([\'git\', \'push\', \'--force\'])"',
+                      inline_scan=True),
+            "refuse")
         self.assertEqual(
             _decision('python -c "print(\'git push --force origin main\')"', inline_scan=True),
-            "refuse")
+            "allow")
 
     def test_compound_lines_take_the_worst_part(self) -> None:
         self.assertEqual(_decision('python -c "print(1)" && git status', inline_scan=True), "allow")

@@ -1,0 +1,1 @@
+- A command approved with the password is no longer asked about a second time by the host: when the hook spends a staged approval it tells the host to allow that one call. Ordinary allows stay silent and ordinary asks stay asks.

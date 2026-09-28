@@ -1,0 +1,1 @@
+- An approval nobody answers within thirty minutes is recorded as a stall and announced once with a desktop notification naming what waits; the ask itself tells the agent to continue on files the pending call does not touch.
