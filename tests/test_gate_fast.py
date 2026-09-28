@@ -1383,6 +1383,33 @@ class EndToEndSmoke(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("could not decide", err.getvalue())
 
+    def test_a_read_or_local_run_past_the_deadline_is_allowed_without_the_archive(self) -> None:
+        """The archive lock is what hangs the full check while a suite
+        runs; a read or a local computation is judged without it."""
+        import io
+        from unittest import mock
+        sys.path.insert(0, str(HOOKS_DIR))
+        import godmode_stdin
+        with tempfile.TemporaryDirectory() as tmp:
+            hung = Path(tmp) / "hung.py"
+            hung.write_text("import time\ntime.sleep(30)\n", encoding="utf-8")
+            for command, expected in (("python -m pytest -q tests/test_x.py && echo done", 0),
+                                      ("git log --oneline -3 | head -2", 0),
+                                      ("rm -rf ../elsewhere", 2)):
+                payload = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                                      "tool_input": {"command": command}}).encode()
+                err, out = io.StringIO(), io.StringIO()
+                with self.subTest(command=command), \
+                        mock.patch.object(godmode_stdin, "read_first_json", lambda p=payload: p), \
+                        mock.patch.object(fast, "FULL_HOOK", hung), \
+                        mock.patch.object(fast, "FULL_HOOK_DEADLINE_SECONDS", 1), \
+                        mock.patch.object(fast, "ungoverned_project", lambda _p: False), \
+                        mock.patch.object(sys, "stderr", err), \
+                        mock.patch.object(sys, "stdout", out):
+                    self.assertEqual(fast.main(), expected, err.getvalue())
+                    if expected == 0:
+                        self.assertEqual(out.getvalue(), "")
+
 
 if __name__ == "__main__":
     unittest.main()

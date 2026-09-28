@@ -1653,6 +1653,32 @@ def uninitialized_body(payload: dict[str, Any], start: Path,
     return body
 
 
+def _decide_without_archive(payload: dict[str, Any], start: Path) -> str:
+    """`allow` when the full classifier, run in this process with no
+    archive, reads the shell command as R0/R1 and unprotected; `refuse`
+    for anything else, any other tool, or any failure. Reached only after
+    the full check timed out, so the import cost is paid where 25 s were
+    already spent, never on the silent-allow path."""
+    try:
+        tool = payload.get("toolName", payload.get("tool_name"))
+        tool_input = payload.get("toolInput", payload.get("tool_input"))
+        if not isinstance(tool, str) or tool not in _SHELL_TOOLS or not isinstance(tool_input, dict):
+            return "refuse"
+        command = tool_input.get("command", tool_input.get("CommandLine"))
+        if not isinstance(command, str) or not command.strip():
+            return "refuse"
+        scripts = str(HOOKS_DIR.parent / "scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        from godmode_runtime.godmode_sentinel import classify_action
+        verdict = classify_action(command, project_root=start, tool_name=tool)
+        if not verdict["protected"] and verdict["tier"] in ("R0", "R1"):
+            return "allow"
+        return "refuse"
+    except Exception:  # noqa: BLE001 - doubt refuses, exactly as the timeout did
+        return "refuse"
+
+
 def spoken_allow(payload: dict[str, Any]) -> None:
     """Antigravity reads a silent PreToolUse as a denial (a memory plugin's
     Antigravity bridge, verified on agy 1.0.15: a bare `{}` refuses every matched
@@ -1757,6 +1783,15 @@ def main() -> int:
             timeout=FULL_HOOK_DEADLINE_SECONDS,
         )
     except subprocess.TimeoutExpired:
+        # The full check hangs on the archive lock while a suite or a
+        # second session writes (0.3.31: recurring "could not decide"
+        # refusals on plain reads). A read or a local computation needs
+        # no archive to be judged: classified here without one, and
+        # allowed when the classifier itself says R0/R1 unprotected.
+        # Everything else keeps failing closed.
+        if _decide_without_archive(payload, start) == "allow":
+            spoken_allow(payload)
+            return 0
         sys.stderr.write(
             f"godmode: refused - the gate could not decide within "
             f"{FULL_HOOK_DEADLINE_SECONDS}s, and an undecided call is not an allowed one. "

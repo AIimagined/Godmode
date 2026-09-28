@@ -1,0 +1,1 @@
+- A read or a local test run is no longer refused with "the gate could not decide" while a suite or a second session holds the archive: when the full check runs past its deadline, the command is classified without the archive and allowed when it is read-only or local compute. Everything else still fails closed.
