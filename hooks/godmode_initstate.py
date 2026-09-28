@@ -143,7 +143,12 @@ def project_state(project: str) -> tuple[str, str | None]:
         located = _git_location(requested)
         if located is not None:
             root, common = located
-            if os.path.exists(os.path.join(common, _ARCHIVE_DIRNAME)):
+            # With `GODMODE_STATE_HOME` set the archive lives under the
+            # state home only (`godmode_anchor.resolve_anchor`), never under
+            # the git directory; the live `.git/godmode-state` of a checkout
+            # a test harness probes must not read as this run's archive.
+            if (not os.environ.get("GODMODE_STATE_HOME")
+                    and os.path.exists(os.path.join(common, _ARCHIVE_DIRNAME))):
                 return PRESENT, root
             if not os.path.isdir(projects):
                 return ABSENT, root

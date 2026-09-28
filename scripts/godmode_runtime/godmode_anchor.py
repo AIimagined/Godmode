@@ -186,8 +186,11 @@ def _head_identity(requested: Path) -> tuple[int, int] | None:
 
 
 # Bumped whenever a cached field's meaning changes; 2 = archive_root joined
-# onto the requested directory (the common-dir fix), not the toplevel.
-_ANCHOR_CACHE_FORMAT = 2
+# onto the requested directory (the common-dir fix), not the toplevel;
+# 3 = with `GODMODE_STATE_HOME` set the archive_root of a git project lives
+# under that home, so an entry cached under a long-lived state home before
+# that change would keep serving the `.git` path.
+_ANCHOR_CACHE_FORMAT = 3
 
 
 def _anchor_cache_path(requested: Path) -> Path:

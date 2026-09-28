@@ -362,7 +362,8 @@ class RefusalMessageTests(unittest.TestCase):
         self.assertEqual(decision, "ask")
         self.assertTrue(reason, "a prompt with no reason is not actionable")
         self.assertIn("Approve to run it", reason)
-        self.assertIn("filesystem-mutation", reason)
+        # An in-tree delete asks like a file edit since the 0.3.32 tiering.
+        self.assertIn("worktree-file-mutation", reason)
 
     def test_an_outright_refusal_still_names_what_unblocks_it(self) -> None:
         decision, reason = _decide(
