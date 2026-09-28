@@ -625,7 +625,9 @@ def push_preflight(project: Path | str,
     # `dirty=True` the gate validates a snapshot of the working tree's
     # tracked changes (`git stash create`, which leaves the tree untouched)
     # instead of HEAD; the report names which one it validated.
-    validated = "HEAD"
+    # The report says WHAT it checked, not just "clean": the committed tree
+    # at HEAD, or a stash snapshot of HEAD plus the tracked changes.
+    validated = f"HEAD {_head_sha(repo)[:12]}: the committed tree"
     ref = "HEAD"
     # Only TRACKED changes make a tree dirty here. The disposable worktree is
     # built from HEAD or a stash snapshot, and untracked files are in neither,
@@ -648,9 +650,10 @@ def push_preflight(project: Path | str,
         sha = snapshot.stdout.decode("utf-8", errors="replace").strip()
         if snapshot.returncode == 0 and sha:
             ref = sha
-            validated = f"working-tree snapshot {sha[:12]}"
+            validated = f"working-tree snapshot {sha[:12]}: HEAD plus the tracked changes"
         else:
-            validated = "HEAD (the tree had no tracked changes to snapshot)"
+            validated = (f"HEAD {_head_sha(repo)[:12]}: the committed tree "
+                         "(no tracked changes to snapshot)")
 
     mechanical: list[dict[str, Any]] = []
     judgment: list[dict[str, Any]] = []
