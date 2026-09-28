@@ -7,6 +7,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 import errno
 import hashlib
+import re
 import json
 import os
 import sys
@@ -273,8 +274,15 @@ def superseded_sequences(records: list[dict[str, Any]]) -> frozenset[int]:
     where "trust any stored citation" is still the read-time answer,
     because there is no target record here to compare against.
 
-    One field, not two: this reads `data["supersedes"]` and nothing else.
-    A claim's `data["resolves"]` is NOT read here, even though
+    The retirement cascades: a lesson or decision whose evidence cites a
+    superseded record (`seq:N` in its `evidence` list or `data["evidence"]`)
+    stood on that record, so it is superseded with it, and so on to a fixed
+    point. Only those two kinds cascade - a claim, an action or a
+    checkpoint citing a retired lesson is a fact about the past, not a
+    rule that still needs to be true.
+
+    `data["supersedes"]` starts the cascade and citations carry it; a
+    claim's `data["resolves"]` is NOT read here, even though
     `godmode_graph._supersedes_edges` renders it as a SUPERSEDES edge - a
     resolution answers a claim, it does not retire the record. The graph
     is therefore wider than this set by design, and the difference is
@@ -298,7 +306,37 @@ def superseded_sequences(records: list[dict[str, Any]]) -> frozenset[int]:
             continue
         if record_trust(record) >= record_trust(target_record):
             superseded.add(target_sequence)
-    return frozenset(superseded)
+    cascading = [r for r in records if r.get("kind") in _CASCADE_KINDS]
+    while True:
+        grew = False
+        for record in cascading:
+            sequence = _sequence_of(record)
+            if sequence in superseded:
+                continue
+            if any(cited in superseded for cited in _cited_sequences(record)):
+                superseded.add(sequence)
+                grew = True
+        if not grew:
+            return frozenset(superseded)
+
+
+_CASCADE_KINDS = frozenset({"lesson", "decision"})
+_SEQ_CITATION = re.compile(r"^(?:seq|verdict|diff):(\d+)$")
+
+
+def _cited_sequences(record: dict[str, Any]) -> set[int]:
+    """Every record sequence `record` cites deliberately, from its
+    `evidence` list and `data["evidence"]`."""
+    data = record.get("data")
+    cited: set[int] = set()
+    for source in (record.get("evidence"), data.get("evidence") if isinstance(data, dict) else None):
+        if not isinstance(source, list):
+            continue
+        for item in source:
+            match = _SEQ_CITATION.match(item.strip()) if isinstance(item, str) else None
+            if match is not None:
+                cited.add(int(match.group(1)))
+    return cited
 
 
 def open_reviews(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -395,7 +433,10 @@ def latest_by_subject(
     right answer for that shape; only the wiring is missing.
     """
     key_fn = key or (lambda record: str(record.get("subject", "")))
-    combine_fn = combine or _newest_wins
+    # One combine rule for every reader (`status`, `status --digest`, the
+    # closure verdict): the two used to disagree because the digest took
+    # plain recency while `status` took the trust rule below.
+    combine_fn = combine or prefer_latest_unless_contradicted
     excluded = superseded_sequences(records)
     latest: dict[str, dict[str, Any]] = {}
     for record in records:
@@ -407,13 +448,39 @@ def latest_by_subject(
 
 
 def _newest_wins(current: dict[str, Any] | None, record: dict[str, Any]) -> dict[str, Any]:
-    """`latest_by_subject`'s default `combine`: plain recency, the rule
-    every caller used before the supersession edge or the trust rule existed."""
+    """Plain recency, the rule every caller used before the supersession
+    edge or the trust rule existed; kept for a caller that asks for it."""
     if current is None:
         return record
     if _sequence_of(record) >= _sequence_of(current):
         return record
     return current
+
+
+def prefer_latest_unless_contradicted(
+    current_best: dict[str, Any] | None, record: dict[str, Any]
+) -> dict[str, Any]:
+    """`latest_by_subject`'s default `combine`, the status-trust rule:
+    latest-by-time is the base rule; trust only breaks a genuine
+    contradiction. The later record wins UNLESS the incumbent is strictly
+    higher trust AND the newcomer's `status` differs from the incumbent's -
+    a same-status update from a lower-trust writer contradicts nothing and
+    still wins by recency. Lives here, beside the supersession fold, so
+    `status`, `status --digest` and every other reader agree."""
+    if current_best is None:
+        return record
+    if _sequence_of(record) < _sequence_of(current_best):
+        # Records arrive in sequence order everywhere this is folded; a
+        # caller handing them out of order still gets recency, not
+        # position, as the base rule.
+        current_best, record = record, current_best
+    if record_trust(current_best) <= record_trust(record):
+        return record
+    incumbent_status = str((current_best.get("data") or {}).get("status", "")).strip().lower()
+    newcomer_status = str((record.get("data") or {}).get("status", "")).strip().lower()
+    if newcomer_status == incumbent_status:
+        return record
+    return current_best
 
 
 def _canonical_json(value: Any) -> bytes:
@@ -2042,6 +2109,17 @@ class Chronicle:
             return None
         if not isinstance(payload, dict) or payload.get("format") != self._COLD_REGISTRY_FORMAT:
             return None
+        # A registry's seal is checked here and REPORTED, never used to
+        # hide the registry: `verify_cold()` names a seal mismatch as its
+        # own break after its five content checks, so a doctored registry
+        # still gets the precise finding (a segment gone, a line dropped)
+        # and then the seal. A registry written before seals existed
+        # carries none (`seal_ok` None) and is read as before.
+        seal = payload.get("seal")
+        seal_ok: bool | None = None
+        if seal is not None:
+            body = {key: value for key, value in payload.items() if key != "seal"}
+            seal_ok = seal == self._cold_registry_seal(body)
         rotated = payload.get("rotated")
         hash_by_sequence = payload.get("hash_by_sequence")
         segments = payload.get("segments")
@@ -2073,16 +2151,29 @@ class Chronicle:
             "rotated": sorted(rotated),
             "hash_by_sequence": parsed_hashes,
             "segments": segments,
+            "seal_ok": seal_ok,
         }
 
     def _write_cold_registry(self, rotated: list[int], hash_by_sequence: dict[int, str],
                              segments: list[dict[str, Any]]) -> None:
-        _atomic_json(self.cold_registry, {
+        body = {
             "format": self._COLD_REGISTRY_FORMAT,
             "rotated": sorted(rotated),
             "hash_by_sequence": {str(k): v for k, v in hash_by_sequence.items()},
             "segments": segments,
-        })
+        }
+        _atomic_json(self.cold_registry, {**body, "seal": self._cold_registry_seal(body)})
+
+    def _cold_registry_seal(self, body: dict[str, Any]) -> str:
+        """A digest over the registry's own body, keyed to this archive's
+        project key, so an edited registry (a sequence quietly
+        removed from `rotated`, a refreshed segment digest) no longer reads
+        as a valid one. Tamper-evident against an edit that does not also
+        recompute the seal; it is not a secret, so a writer with the
+        archive in hand can forge it, exactly as the hash chain itself."""
+        canonical = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        key = str(getattr(self.anchor, "project_key", "") or "")
+        return hashlib.sha256(key.encode("utf-8") + canonical).hexdigest()
 
     def cold_segment_paths(self) -> list[Path]:
         """Every rotated segment file this archive's registry knows about,
@@ -4261,6 +4352,11 @@ class Chronicle:
                     f"cold record {sequence} does not match the hash the cold registry "
                     "recorded for it when it was rotated"
                 )
+        if registry and registry.get("seal_ok") is False:
+            # After the five content checks, so a doctored registry that
+            # also lost a segment or a line is named for that first.
+            return self._cold_broken(
+                "cold registry edited after rotation: its seal no longer matches its contents")
         hot_records = self.read_events(verify=False)
         hot_paths = self.event_paths()
         cold_by_sequence = {_sequence_of(record): record for record in cold_records}
@@ -4298,10 +4394,47 @@ class Chronicle:
                 return record
         return None
 
+    def cold_records(self) -> list[dict[str, Any]]:
+        """Every rotated record, in sequence order, each served only from a
+        segment whose bytes still match the digest recorded at rotation -
+        the same bar `find_by_sequence` holds a single cold hit to. A
+        segment that no longer matches contributes nothing here; `godmode
+        doctor` names it."""
+        registry = self._read_cold_registry()
+        found: list[dict[str, Any]] = []
+        for entry in (registry["segments"] if registry else []):
+            name = entry.get("file") if isinstance(entry, dict) else None
+            if not isinstance(name, str):
+                continue
+            try:
+                text = (self.root / name).read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if hashlib.sha256(text.encode("utf-8")).hexdigest() != entry.get("sha256"):
+                continue
+            for line in text.splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(record, dict):
+                    found.append(record)
+        return sorted(found, key=_sequence_of)
+
     def select(
-        self, *, kind: str | None = None, subject: str | None = None, limit: int = 50
+        self, *, kind: str | None = None, subject: str | None = None, limit: int = 50,
+        include_cold: bool = False,
     ) -> list[dict[str, Any]]:
+        """`include_cold=True` folds the rotated tier in ahead of the hot
+        records, so a reader that needs the whole history (a supersession
+        chain, an old lesson's evidence) can ask for it by name; every
+        ordinary read stays hot-only, which is the cold tier's point."""
         records = self.read_events()
+        if include_cold:
+            hot = {_sequence_of(record) for record in records}
+            records = [r for r in self.cold_records() if _sequence_of(r) not in hot] + records
         selected = [
             record
             for record in records

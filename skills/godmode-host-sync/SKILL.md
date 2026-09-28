@@ -1,6 +1,6 @@
 ---
 name: godmode-host-sync
-description: "Detect every installed AI CLI host, reconcile Godmode's hook manifests into each host's native format, and drift-repair the wiring with a shown diff before anything trusts interception. Use when a host's wiring needs reconciling or repairing after an install, an update, or reported drift. Not for a plain walkthrough of hook mechanics with no drift repair involved, or for authorizing an unrelated protected operation."
+description: "Detect every installed AI CLI host, reconcile Godmode's interception manifests into each one's native format, and drift-repair the installed configuration with a shown diff before anything trusts interception. Use when installed manifests need reconciling or repairing after an install, an update, or reported drift. Not for explaining what an event or a mechanism does, and not for authorizing an unrelated protected operation."
 ---
 
 # Godmode Host Sync

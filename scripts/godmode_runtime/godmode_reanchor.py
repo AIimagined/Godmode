@@ -224,11 +224,8 @@ _SNAPSHOT_PREFIX = "anchor:commit:"
 _REMAP_PREFIX = "anchor:remap:"
 
 
-# The fingerprint's commit-subject field. Not `subject`: that key inside a
-# `decision` record's data opts the record into the semantic-decision shape
-# (`godmode_invariants._semantic_decision_invariants`), which then
-# demands a `value` and `evidence` the snapshot does not have. A snapshot is
-# not a decision about a subject; it is a fingerprint of a commit - tree,
+# The fingerprint's commit-subject field. Not `subject`: a snapshot is not
+# a decision about a subject; it is a fingerprint of a commit - tree,
 # subject line, author date - taken so a later remap can find the commit
 # after a rewrite. The subject line is one of the three matching fields,
 # and it is named for what it is.

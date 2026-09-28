@@ -395,6 +395,25 @@ def _existing_approval(archive: Chronicle, promotion_seq: int) -> dict[str, Any]
     return None
 
 
+def _session_of(archive: Chronicle) -> str:
+    """The current chronicle session key, or "" when none is open."""
+    try:
+        from .godmode_attest import latest_session
+        return str(latest_session(archive) or "")
+    except Exception:  # noqa: BLE001 - no session is an empty key, never a raise here
+        return ""
+
+
+def _seq_cite_dangles(archive: Chronicle, citation: str) -> bool:
+    match = re.match(r"^(?:seq|verdict|diff):(\d+)$", citation.strip())
+    if match is None:
+        return False
+    try:
+        return archive.find_by_sequence(int(match.group(1))) is None
+    except Exception:  # noqa: BLE001 - a record that cannot be served dangles for this purpose
+        return True
+
+
 def promote(
     archive: Chronicle, lesson_seq: int, cite: list[str], rerun_hash: str,
 ) -> dict[str, Any]:
@@ -455,6 +474,13 @@ def promote(
             "`lessons promote` needs at least one --cite; an unevidenced "
             "promotion is a request, not a claim"
         )
+    # A `seq:` citation names a record; one that names nothing on record
+    # (hot or cold) is refused here, where the promoter can still fix it.
+    unresolved = [c for c in cite_list if _seq_cite_dangles(archive, c)]
+    if unresolved:
+        raise ArchiveError(
+            "`lessons promote` --cite names records the archive does not hold: "
+            + ", ".join(unresolved) + " - cite a seq that `godmode history --seq` can read")
     digest = _validate_rerun_hash(rerun_hash)
     actor = agent_id()
     record = archive.append(
@@ -464,6 +490,7 @@ def promote(
             "lesson_seq": int(lesson_seq), "actor": actor,
             "evidence": cite_list, "rerun_hash": digest,
             "binding": process_binding(),
+            "session": _session_of(archive),
         },
         evidence=cite_list + [f"seq:{lesson_seq}"],
     )
@@ -541,6 +568,15 @@ def approve(archive: Chronicle, promotion_seq: int, rerun_hash: str) -> dict[str
             "equals the promotion's own rerun_hash - the checker merely "
             "re-cited the author's re-run instead of running its own"
         )
+    # Verifier diversity: a different actor in the SAME session is one
+    # seat with two name tags. The promotion records its session; an
+    # approval from that session is refused.
+    promoted_in = str(promotion_data.get("session") or "")
+    if promoted_in and promoted_in == _session_of(archive):
+        raise ArchiveError(
+            f"Refusing to approve promotion {promotion_seq}: it was promoted in "
+            f"this same session ({promoted_in}); a guard is promoted only when a "
+            "second session verifies it - approve from a separate session")
     lesson_seq = int(promotion_data.get("lesson_seq", 0))
     lesson = _record_by_seq(archive, "lesson", lesson_seq)
     if lesson is None:

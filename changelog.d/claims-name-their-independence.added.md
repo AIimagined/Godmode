@@ -1,0 +1,1 @@
+- Every claim records an `independence` tier derived from its citations (attested, recorded, external, self); a `cmd:` citation is archived with any secret-shaped token redacted; `claim --verify` refuses a citation that needs a shell and shows the two forms that work; `--cite-timeout` names the per-check timeout.

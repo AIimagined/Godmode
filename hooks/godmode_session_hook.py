@@ -648,6 +648,25 @@ _ECHO_FIELDS = ("sentences", "obligations", "notices")
 _ECHO_MAX_SENTENCES = 6
 _ECHO_KEEP_SECONDS = 24 * 3600
 
+# Stop notices whose production already spent once-only state (a cooldown
+# record, the nag marker, a `*-nudge` receipt). The clip below the Stop
+# pass never drops one of these: a line whose silence is already paid for
+# would otherwise vanish into the "(N more)" tail and never be shown again.
+_BURNED_NOTICES: set[str] = set()
+_STOP_NOTICE_CAP = 2
+
+
+def _clip_notices(notices: list[str], burned: set[str] | None = None,
+                  cap: int = _STOP_NOTICE_CAP) -> list[str]:
+    """Burned lines first, in production order, never clipped; the free
+    slots go to the recomputable lines; the rest is counted."""
+    burned = _BURNED_NOTICES if burned is None else burned
+    kept = [line for line in notices if line in burned]
+    kept += [line for line in notices if line not in burned][:max(0, cap - len(kept))]
+    if len(notices) > len(kept):
+        kept.append(f"({len(notices) - len(kept)} more in `godmode doctor`)")
+    return kept
+
 
 def _echo_entry(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: payload[field] for field in _ECHO_FIELDS if payload.get(field)}
@@ -1796,6 +1815,11 @@ _PROCESS_SENTENCE = re.compile(
     r"opened|saved|attested|logged)\b")
 
 
+_HOOK_ECHO_SENTENCE = re.compile(
+    r"(?i)^\s*godmode\s*[:-]|\b(?:godmode|the hook|the done[- ]bar|the gate|the stop hook)"
+    r"\s+(?:said|says|reported|flagged|noted|asked|blocked|told|warned|passed|nagged)\b")
+
+
 def _unrecorded_done_claims(archive: Any, reply_text: str,
                             observed: str = "") -> list[str]:
     """DONE-shaped sentences in the reply with no claim record behind them.
@@ -1847,6 +1871,11 @@ def _unrecorded_done_claims(archive: Any, reply_text: str,
         if not judged.strip():
             continue
         if _PROCESS_SENTENCE.match(judged.strip()):
+            continue
+        # A sentence that refers back to this hook's own earlier feedback
+        # ("godmode said the done-bar passed", "the gate flagged X as
+        # complete") reports what the hook said, not what the agent did.
+        if _HOOK_ECHO_SENTENCE.search(judged):
             continue
         if not (_COMPLETION_VOCAB.search(judged)
                 or looks_like_fix_claim(judged)[0]
@@ -3139,6 +3168,25 @@ def _operator_authorization_reason(operation: str) -> str:
         '"<command>" --purpose "<why>"`.')
 
 
+def _three_zone_reason(reason: str) -> str:
+    """A pre-tool ask or refusal in the same layout as a Stop block: the
+    rule (the verdict and its category) on the first line, the detail
+    next, a closing checklist last. The text is unchanged; only its shape
+    is - every sentence the reader could act on is still there."""
+    text = " ".join(str(reason or "").split())
+    head, separator, rest = text.partition(". ")
+    if not separator:
+        return text
+    try:
+        from godmode_runtime.godmode_lens import render_three_zone
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: the plain text is the fallback layout
+        return text
+    return render_three_zone(head + ".", rest, [
+        "Approve only a command you asked for yourself.",
+        "To pre-approve it once, stage it with the password and rerun the same command.",
+    ])
+
+
 def _decision_for(preview: dict[str, Any], attended_flag: bool = True) -> str:
     """`ask` or `deny`, from the tier the classifier already computed.
 
@@ -3466,7 +3514,7 @@ def main(argv: list[str] | None = None) -> int:
                                           "pre-action", "user-prompt", "subagent-stop"])
     parser.add_argument("--project")
     parser.add_argument("--capture-payload", action="store_true",
-                        help="CX-2: record this call's structural shape (names/hashes "
+                        help="record this call's structural shape (names/hashes "
                              "only, never values) for building a future host fixture")
     args = parser.parse_args(argv)
     capture_payload = args.capture_payload or bool(os.environ.get(CAPTURE_PAYLOAD_ENV))
@@ -4154,10 +4202,14 @@ def main(argv: list[str] | None = None) -> int:
                         archive, Path(anchor.project_root), submitted, lean=True)
                     notices.extend(iteration_notes)
                 elif not quiet:
-                    notices.extend(_marginal_return_nudges(
-                        archive, submitted, _session_key(submitted)))
-                    notices.extend(_tripwire_nudges(
-                        archive, _session_key(submitted), Path(anchor.project_root)))
+                    # Both write a once-per-session receipt as they produce
+                    # a line, so the line must survive the clip below.
+                    for burned_line in (
+                            *_marginal_return_nudges(archive, submitted, _session_key(submitted)),
+                            *_tripwire_nudges(archive, _session_key(submitted),
+                                              Path(anchor.project_root))):
+                        notices.append(burned_line)
+                        _BURNED_NOTICES.add(burned_line)
                     if not subagent:
                         notices.extend(_external_verdict_nudge(
                             submitted, reply_text, Path(anchor.project_root)))
@@ -4184,19 +4236,22 @@ def main(argv: list[str] | None = None) -> int:
                         "godmode: open-operator-asks escalated for this "
                         f"session - {asks_escalation}")
                 elif touched:
-                    notices.append(
+                    # `_nag_once` already marked these subjects nagged.
+                    nag_line = (
                         "godmode: this reply relates to unfinished "
                         "promises on record: " + ", ".join(touched)
                         + ". Act on them, or close each with the command its "
                         "line shows - otherwise they keep coming back.")
+                    notices.append(nag_line)
+                    _BURNED_NOTICES.add(nag_line)
                 if resurfaced:
                     # The cooldown for each of these lines was already burned
-                    # (record_resurfaced, above) - insert at the front so the
-                    # notices[:2] clip below cannot drop a line whose silence
-                    # is already paid for.
-                    notices.insert(0,
-                        "godmode: idle and worth another look - "
-                        + "; ".join(resurfaced))
+                    # (record_resurfaced, above); `_clip_notices` keeps every
+                    # burned line whatever its position.
+                    resurfaced_line = ("godmode: idle and worth another look - "
+                                       + "; ".join(resurfaced))
+                    notices.insert(0, resurfaced_line)
+                    _BURNED_NOTICES.add(resurfaced_line)
                 if unsupported and not lean:
                     shown = "; ".join(
                         f"'{_ascii_echo(s)[:160]}'" for s in unsupported[:2])
@@ -4350,10 +4405,7 @@ def main(argv: list[str] | None = None) -> int:
                     # At most two notices per stop (S15 item 6): skimmed is
                     # dismissed, and every wire's receipt already guarantees
                     # its own turn will come.
-                    shown_notices = notices[:2]
-                    if len(notices) > 2:
-                        shown_notices.append(
-                            f"({len(notices) - 2} more in `godmode doctor`)")
+                    shown_notices = _clip_notices(notices)
                     print(json.dumps({"systemMessage": "\n".join(shown_notices)}))
                     # A Stop systemMessage reaches the operator
                     # only. Parked beside the claim echo, the notices reach the
@@ -5621,7 +5673,8 @@ def main(argv: list[str] | None = None) -> int:
             if not preview["allow"]:
                 body, _code = render_decision(
                     event.host, event.event,
-                    preview.get("forced_decision") or _decision_for(preview), preview["reason"])
+                    preview.get("forced_decision") or _decision_for(preview),
+                    _three_zone_reason(preview["reason"]))
                 print(json.dumps(body, ensure_ascii=False))
             elif current_host() == "antigravity":
                 # An allowed call with no operation text (a read tool):
@@ -5741,6 +5794,22 @@ def _degraded_exit(argv: list[str] | None) -> int:
     except Exception:  # noqa: BLE001  # godmode: swallow-ok: recording the degradation itself must not raise
         pass
     if event != "pre-action":
+        # Each event answers in its own contract rather than falling
+        # silent: the model learns at session start that no brief came,
+        # and the operator learns at a stop or prompt boundary that the
+        # bookkeeping for that turn did not happen.
+        try:
+            note = ("godmode: degraded - the archive could not be read for this "
+                    f"{event or 'event'}; nothing was recorded. Run `godmode doctor`.")
+            if event == "session-start":
+                print(json.dumps({"hookSpecificOutput": {
+                    "hookEventName": "SessionStart",
+                    "additionalContext": note + " No continuity brief is available; "
+                    "confirm the tree's state before acting on memory."}}))
+            elif event in ("stop", "subagent-stop", "user-prompt"):
+                print(json.dumps({"systemMessage": note}))
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: the exit code below is the answer either way
+            pass
         return 0
     try:
         reason = (

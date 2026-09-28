@@ -460,7 +460,7 @@ def deletion_verdict(archive: Chronicle, path: str, *, project_root: Path | str)
             "action", f"deletion-precheck-advisory:{relative}"[:200],
             {"path": relative,
              "detail": "no policy declares the deletion-provenance gate; recorded what a "
-                       "pre-check would have covered: git-history-read, C-16's "
+                       "pre-check would have covered: git-history-read, "
                        "reverse-impact traversal, and sole-carrier-of-open-obligation"},
             evidence=[],
         )

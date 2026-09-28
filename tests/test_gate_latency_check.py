@@ -235,6 +235,11 @@ class CliFloorAndExclusivityTests(unittest.TestCase):
             gate_latency.main()
         self.assertEqual(raised.exception.code, 2)
 
+    def test_the_release_notes_sample_floor_mirrors_the_benchmark(self) -> None:
+        # Two copies of one number: the pin is what keeps them one number.
+        from godmode_runtime import godmode_release_notes
+        self.assertEqual(godmode_release_notes._MIN_SAMPLES, gate_latency.MIN_SAMPLES)
+
 
 if __name__ == "__main__":
     unittest.main()

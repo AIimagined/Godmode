@@ -300,11 +300,14 @@ def _atlas_for_closure(project: Path) -> Atlas:
         if (report is not None and not report["stale"] and not report["missing"]
                 and report["atlas"]["files"] > 0):
             return rehydrate_index(index_path, project)
-    print(
-        f"godmode: no fresh atlas index on record - building one now "
-        f"(up to {_ATLAS_BUDGET_SECONDS:g}s)...",
-        file=sys.stderr,
-    )
+    if sys.stderr is not None:
+        # A host with no stderr (pythonw-style) would send `file=None` to
+        # stdout, inside the `--json` payload the pre-commit shim reads.
+        print(
+            f"godmode: no fresh atlas index on record - building one now "
+            f"(up to {_ATLAS_BUDGET_SECONDS:g}s)...",
+            file=sys.stderr,
+        )
     atlas = build_atlas(project, roots=_CLOSURE_ROOT_DIRS, budget_seconds=_ATLAS_BUDGET_SECONDS)
     if atlas.gap:
         scanned = int(atlas.gap.get("scanned", 0))
@@ -341,8 +344,9 @@ def refresh_atlas_index(project: Path) -> dict[str, Any] | None:
     time and keeps a budget trip a reachable, not hypothetical, remedy.
     """
     try:
-        print("godmode: rebuilding the closure atlas index (unbounded)...",
-              file=sys.stderr)
+        if sys.stderr is not None:
+            print("godmode: rebuilding the closure atlas index (unbounded)...",
+                  file=sys.stderr)
         atlas = build_atlas(project, roots=_CLOSURE_ROOT_DIRS)
         if atlas.gap:
             return None

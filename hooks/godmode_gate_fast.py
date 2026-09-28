@@ -127,8 +127,8 @@ _EXACT_ONLY_GIT_PHRASES = frozenset({"git branch", "git remote -v"})
 # group this module never needs (a redirect anywhere disqualifies the whole
 # segment; where it points is the full hook's question, not this one's).
 #
-# Synced with `godmode_sentinel._REDIRECT`'s own fix (task-3-4-review.md
-# Critical): the lookbehind used to also exclude a digit immediately before
+# Synced with `godmode_sentinel._REDIRECT`'s own fix: the lookbehind used
+# to also exclude a digit immediately before
 # `>`, which was meant to keep `2>&1` (fd duplication) from matching but
 # also blinded this check to `1>out.txt`/`2>err.log`/`0>f` - real,
 # digit-qualified file writes, invisible here exactly as they were in the
@@ -334,11 +334,28 @@ def _blanked_segments(command: str) -> list[str]:
     return segments
 
 
+def _host_floor_key() -> str:
+    """Which host's floor applies: the declared `GODMODE_HOST`, else the
+    host whose environment markers are present, else claude-code."""
+    declared = os.environ.get("GODMODE_HOST", "").strip().lower()
+    if declared:
+        return declared
+    if os.environ.get("ANTIGRAVITY_AGENT") or os.environ.get("ANTIGRAVITY_CONVERSATION_ID"):
+        return "antigravity"
+    if os.environ.get("GROK_AGENT") or os.environ.get("GROK_HOOK_EVENT"):
+        return "grok"
+    if os.environ.get("CODEX_HOME") or os.environ.get("CODEX_SANDBOX"):
+        return "codex"
+    if os.environ.get("CURSOR_TRACE_ID") or os.environ.get("CURSOR_AGENT"):
+        return "cursor"
+    return "claude-code"
+
+
 def _git_phrases(table: dict[str, Any]) -> list[list[str]] | None:
     floor = table.get("floor")
     if not isinstance(floor, dict):
         return None
-    entries = floor.get("claude-code")
+    entries = floor.get(_host_floor_key(), floor.get("claude-code"))
     if not isinstance(entries, list):
         return None
     phrases: list[list[str]] = []

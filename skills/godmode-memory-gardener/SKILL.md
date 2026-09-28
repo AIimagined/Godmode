@@ -1,6 +1,6 @@
 ---
 name: godmode-memory-gardener
-description: "Garden the continuity archive at session close or idle time: tell the session as dated prose, list near-duplicate or contradicting lessons and decisions, preview which old episodes expire into the cold tier, supersede a duplicate, and cluster correction candidates for a promotion that cites its rationale. Use when lessons pile up duplicated, stale records crowd the brief, or a candidate cluster is ripe to promote. Not for resuming work at session start, and not for scrubbing a secret."
+description: "Garden the local archive at session close or idle time: tell the session as dated prose, list near-duplicate or contradicting lessons and decisions, preview which old episodes expire into the cold tier, supersede a duplicate, and cluster correction candidates for a promotion that cites its rationale. Use when lessons pile up duplicated, stale records crowd the brief, or a candidate cluster is ripe to promote. Not for resuming work at session start, and not for scrubbing a secret."
 ---
 
 # Godmode Memory Gardener

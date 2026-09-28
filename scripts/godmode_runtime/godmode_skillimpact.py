@@ -171,6 +171,24 @@ def validate_pattern_seqs(patterns: list[int] | None) -> list[int]:
     return seqs
 
 
+def skill_score_reason(project: Path, skill: str) -> str | None:
+    """Why `skill_score` would read 0.0 for reasons other than a genuinely
+    zero score, or None when the skill is scorable: the three silent
+    branches below, each named so a rejection can say which one applied."""
+    try:
+        routing = routing_scores(project)
+    except GodmodeError as exc:
+        return f"no eval suite could be loaded for this project ({exc})"
+    if routing.get(skill) is None:
+        return (f"skill {skill!r} has no eval suite (skills/{skill}/godmode-evals.json is "
+                "absent or names another skill), so it cannot be scored")
+    try:
+        run_behavior_assertions(project)
+    except GodmodeError as exc:
+        return f"the behaviour assertions could not run ({exc})"
+    return None
+
+
 def skill_score(project: Path, skill: str) -> float:
     """The validation score the strict-improvement gate gates on - see the module docstring for
     the exact formula. Every failure mode (no suites at all, this skill
@@ -225,13 +243,20 @@ def scan_impacts(
     a re-proposal today.
     """
     wanted = canonical_target(target)
+    # The floor is skill-wide: the score a `skill_impact` stores is the
+    # whole skill's, whichever file the change touched, so the ceiling to
+    # beat is the best any target of this SKILL ever recorded. The
+    # rejected-diff match below stays keyed to the exact target.
+    skill = skill_name_from_target(wanted)
     best: float | None = None
     match: dict[str, Any] | None = None
     for record in archive.read_events(verify=False):
         if record.get("kind") != "skill_impact":
             continue
         data = record.get("data") or {}
-        if canonical_target(str(data.get("target", ""))) != wanted:
+        recorded_target = canonical_target(str(data.get("target", "")))
+        same_skill = skill is not None and skill_name_from_target(recorded_target) == skill
+        if recorded_target != wanted and not same_skill:
             continue
         outcome = data.get("outcome")
         if outcome == "accepted":
@@ -242,6 +267,7 @@ def scan_impacts(
         elif (
             outcome == "rejected"
             and diff_hash is not None
+            and recorded_target == wanted
             and data.get("diff_hash") == diff_hash
         ):
             match = record
@@ -494,12 +520,31 @@ def _is_protected(path: Path, protected: set[Path]) -> bool:
 
     A `check.command` argv token can name a DIRECTORY - the shipped
     skill-forge suite runs `skill validate --path skills/<name>`, so the
-    protected entry is the skill directory itself and every file beneath it
-    is a grading input. Exact-path membership would protect only the
-    directory's own name and leave the files that actually grade the change
-    writable by the change.
+    protected entry is the skill directory itself. Under such a directory
+    the GRADERS are protected - the suite file and any script - while the
+    documents the suite validates (SKILL.md, a reference file) are the
+    product the change is about, and stay ratifiable. Before this, a skill
+    whose suite validated its whole directory could be changed only by
+    `skill forge`, never through `atlas law ratify`.
+    An exact protected path is protected whatever it is.
     """
-    return any(path == entry or path.is_relative_to(entry) for entry in protected)
+    for entry in protected:
+        if path == entry:
+            return True
+        if not path.is_relative_to(entry):
+            continue
+        if not entry.is_dir():
+            return True
+        if path.name == "godmode-evals.json" or path.suffix.lower() in _GRADER_SUFFIXES:
+            return True
+        if any(part in ("scripts", "probes", "bin") for part in path.relative_to(entry).parts[:-1]):
+            return True
+    return False
+
+
+# File shape stands in for "the suite executes this"; a data file a probe
+# reads is the next thing to protect if a skill ever grades through one.
+_GRADER_SUFFIXES = frozenset({".py", ".sh", ".ps1", ".js", ".mjs", ".cmd", ".bat", ".exe"})
 
 
 def _restore(path: Path, pre_bytes: bytes | None, created_dirs: list[Path]) -> None:

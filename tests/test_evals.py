@@ -233,15 +233,17 @@ class AdversarialGridTests(unittest.TestCase):
         # laundered through a rec: citation of a prior unverified claim. The
         # runtime now refuses claim records as rec: support, so all 13
         # adversarial attacks are refused - and this test keeps that closed.
-        # The meta-gate suite adds 22 more cells (one guaranteed-deny fixture
-        # per protected class, including weakening Godmode's own protection
-        # and an agent opening the operator's approval prompt), for 35
-        # cells overall.
+        # The meta-gate suite adds one guaranteed-deny fixture per protected
+        # class (including weakening Godmode's own protection and an agent
+        # opening the operator's approval prompt); the count follows the
+        # fixture table, so retiring a class is not a silent breach.
+        from godmode_runtime.godmode_evals import META_FIXTURES
+        meta = sum(len(rows) for rows in META_FIXTURES.values())
         report = adversarial_grid()
         self.assertEqual(report["adversarial_cells"], 13)
-        self.assertEqual(report["meta_cells"], 22)
-        self.assertEqual(report["cells"], 35)
-        self.assertEqual(report["passed"], 35)
+        self.assertEqual(report["meta_cells"], meta)
+        self.assertEqual(report["cells"], 13 + meta)
+        self.assertEqual(report["passed"], 13 + meta)
         self.assertEqual(report["failed"], 0)
         self.assertEqual(report["not_executable"], 0)
         self.assertEqual(report["verdict"], "controls-held")

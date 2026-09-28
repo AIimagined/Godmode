@@ -182,10 +182,16 @@ class GrownArchiveStaysUnderTheCap(unittest.TestCase):
                                evidence=[])
             brief = build_context_brief(anchor, archive, token_budget=800)
             within = brief["estimated_tokens"] <= 800
-            emptied = not brief["records"] and brief.get("records_dropped")
-            self.assertTrue(within or emptied,
+            # The newest record is never dropped; past it the brief names
+            # what it dropped and why.
+            exhausted = len(brief["records"]) == 1 and brief.get("records_dropped")
+            self.assertTrue(within or exhausted,
                             "the ladder neither landed inside the budget nor "
                             "declared what it dropped")
+            self.assertTrue(brief["records"], "the newest record always survives")
+            if brief.get("records_dropped"):
+                self.assertEqual(brief["dropped"][-1]["reason"],
+                                 "oldest record over the token budget")
 
 
 if __name__ == "__main__":

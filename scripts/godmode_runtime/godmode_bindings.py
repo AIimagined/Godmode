@@ -368,7 +368,7 @@ def registration_report(project: Path | None = None) -> dict[str, Any]:
         "path": "hooks/hooks.json",
         "manifest_present": claude_path.is_file(),
         "declared_events": ["SessionStart", "UserPromptSubmit", "PreToolUse"],
-        "state": "see `last_proof`/`verdict` above (CX-1 live proof, not a structural check)",
+        "state": "see `last_proof`/`verdict` above (live proof, not a structural check)",
     }
 
     for host, spec in sorted(_hook_manifest_specs(source).items()):

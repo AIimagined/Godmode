@@ -243,7 +243,7 @@ rem is also why the interpreter is captured into a plain variable and run
 rem OUTSIDE any parenthesized block - `!ERRORLEVEL!` (delayed expansion)
 rem read at that point is the interpreter's own real exit code, not one
 rem frozen when the block was parsed.
-rem R-3 (2026-09-16): `%~dp0` already anchors the hook path to this
+rem (2026-09-16): `%~dp0` already anchors the hook path to this
 rem file's own directory, not to a host-supplied plugin-root variable -
 rem a host that runs this script with CLAUDE_PLUGIN_ROOT/PLUGIN_ROOT unset
 rem or empty (PowerShell's own empty-string default) still finds its
@@ -326,8 +326,8 @@ if not "!gm_keep!"=="1" set "gm_keep="
 if defined gm_keep set "gm_py=!gm_exe!"
 if defined gm_keep set "gm_flag="
 if not defined gm_py (
-  echo {"systemMessage": "godmode: no working python interpreter found (tried python, py -3, python3) - set GODMODE_PYTHON to the interpreter path; every godmode hook is inert until then"}
-  exit /b 0
+ echo {"systemMessage": "godmode: no working python interpreter found (tried python, py -3, python3) - set GODMODE_PYTHON to the interpreter path; every godmode hook is inert until then"}
+ exit /b 0
 )
 call "!gm_py!"!gm_flag! -I "!gm_bc!" "%~dp0!gm_hook!" %2 %3 %4 %5 %6
 exit /b !ERRORLEVEL!

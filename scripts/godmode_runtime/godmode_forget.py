@@ -69,7 +69,11 @@ CONTRADICTION_KINDS = ("decision", "lesson")
 # callers generally) treat as no longer standing - the same closed set
 # `godmode_hygiene._INACTIVE` uses, kept here as an independent literal on
 # purpose (this module stays free of that one's fuzzy-matching machinery).
-_INACTIVE_STATUSES = frozenset({"closed", "retired", "superseded", "withdrawn", "done", "waived"})
+# The chronicle's own closing set, plus the two statuses only this pass
+# folds over (a withdrawn proposal, a waived obligation); one source for
+# "no longer active" rather than a second hand-typed copy.
+from .godmode_chronicle import LESSON_CLOSING_STATUSES as _CHRONICLE_CLOSING
+_INACTIVE_STATUSES = _CHRONICLE_CLOSING | frozenset({"withdrawn", "waived"})
 
 # Sidecars this module's `--dry-run` digest deliberately excludes: every
 # one of them is documented elsewhere in this codebase as a disposable

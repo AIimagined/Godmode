@@ -1056,7 +1056,7 @@ def build_gemini_fragment() -> dict[str, Any]:
             "object only (Addendum 4a's I/O contract) - any other exit code "
             "than 0 or 2 is a non-fatal WARNING that proceeds with the "
             "original parameters (fail-open); never claim HARD interception "
-            "on Gemini without a fresh CX-1 probe proof."
+            "on Gemini without a fresh probe proof."
         ),
         "hooks": {
             "SessionStart": [

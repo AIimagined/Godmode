@@ -270,7 +270,13 @@ def _build_floor() -> dict[str, list[str]]:
             f"floor entry no longer classifies R0 in the full sentinel: {phrase!r} "
             f"-> {verdict['tier']} ({verdict['category']})"
         )
-    return {"claude-code": list(_GIT_FLOOR)}
+    # The same floor for every shipped plugin directory: the fast gate
+    # picks its host's entry (`_host_floor_key`) and falls back to
+    # claude-code's, so a host absent here is never silently unfloored.
+    return {host: list(_GIT_FLOOR) for host in _FLOOR_HOSTS}
+
+
+_FLOOR_HOSTS = ("claude-code", "codex", "cursor", "grok", "gemini", "antigravity", "kiro")
 
 
 def _build_read_heads() -> list[str]:

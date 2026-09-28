@@ -294,6 +294,57 @@ def session_timeline(transcript_path: Path) -> dict[str, Any]:
     return {"commands": commands, "mutation_turns": mutations}
 
 
+def merge_timelines(transcript_paths: list[Path]) -> dict[str, Any]:
+    """One timeline across several sessions, each transcript's turns
+    offset after the previous one's so turn numbers stay distinct.
+
+    `commands` and `mutation_turns` have `session_timeline`'s shape;
+    `sources` maps each transcript to its turn offset; `duplicates` counts
+    the (command, turn) pairs two transcripts both carried (a transcript
+    copied into two sessions); `conflicts` names the command digests whose
+    latest exit code differs between sessions with no mutation between
+    the two runs, so a reader can tell a flaky check from a fixed one.
+    """
+    commands: dict[str, list[tuple[int, int]]] = {}
+    mutations: list[int] = []
+    sources: dict[str, int] = {}
+    seen: set[tuple[str, int, int]] = set()
+    duplicates = 0
+    latest_by_session: dict[str, list[tuple[int, int, str]]] = {}
+    offset = 0
+    for path in transcript_paths:
+        own = session_timeline(Path(path))
+        sources[str(path)] = offset
+        last_turn = 0
+        for digest, runs in own["commands"].items():
+            for turn, code in runs:
+                key = (digest, turn, code)
+                if key in seen:
+                    duplicates += 1
+                    continue
+                seen.add(key)
+                commands.setdefault(digest, []).append((turn + offset, code))
+                last_turn = max(last_turn, turn)
+            if runs:
+                latest_by_session.setdefault(digest, []).append(
+                    (runs[-1][0] + offset, runs[-1][1], str(path)))
+        for turn in own["mutation_turns"]:
+            mutations.append(turn + offset)
+            last_turn = max(last_turn, turn)
+        offset += last_turn + 1
+    conflicts: list[str] = []
+    for digest, latest in latest_by_session.items():
+        ordered = sorted(latest)
+        for (turn_a, code_a, _), (turn_b, code_b, _) in zip(ordered, ordered[1:]):
+            if code_a != code_b and not any(turn_a < m < turn_b for m in mutations):
+                conflicts.append(digest)
+                break
+    for runs in commands.values():
+        runs.sort()
+    return {"commands": commands, "mutation_turns": sorted(mutations), "sources": sources,
+            "duplicates": duplicates, "conflicts": sorted(conflicts)}
+
+
 def _gap(archive: Any, session: str | None, reason: str) -> dict[str, Any]:
     return archive.append(
         "metric", _SUBJECT,

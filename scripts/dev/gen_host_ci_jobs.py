@@ -108,8 +108,11 @@ FIRE_BODY_LINES: tuple[str, ...] = (
     'python scripts/godmode.py --project "$project" init >/dev/null',
     'payload=\'{"hook_event_name":"PreToolUse","cwd":"\'"$project"\'","tool_name":"Bash",'
     f'"tool_input":{{"command":"{_PROTECTED_COMMAND}"}}}}\'',
-    'out=$(printf \'%s\' "$payload" | "$launcher" godmode_gate_fast.py) '
-    '|| { echo "hook exited non-zero"; exit 1; }',
+    # A host whose deny protocol is a non-zero exit (Claude Code reads
+    # exit 2 as a block) must not read as a broken launcher: the exit code
+    # is kept, and the verdict is the `"deny"` in stdout. A launcher that
+    # crashes prints no deny and still turns the job red below.
+    'out=$(printf \'%s\' "$payload" | "$launcher" godmode_gate_fast.py) || true',
     'printf \'%s\' "$out" | grep -q \'"deny"\' '
     '|| { echo "gate did not deny a protected command: $out"; exit 1; }',
     'echo "denied a protected command through the launcher: ok"',

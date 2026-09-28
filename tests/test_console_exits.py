@@ -141,7 +141,9 @@ class RegistryErrorSweepTests(unittest.TestCase):
                     code = _quiet_main(argv)
                 except SystemExit as exc:  # argparse rejected the dummy argv
                     self.fail(f"sweep argv invalid for {argv}: {exc}")
-                if code != 2:
+                # One typed code per error class (`godmode_errors`): a
+                # forced PrivacyError answers with its own, never 0.
+                if code != PrivacyError.exit_code:
                     failures.append(f"{' '.join(argv)} -> {code}")
         self.assertEqual(failures, [])
 

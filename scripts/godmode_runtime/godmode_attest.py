@@ -2584,6 +2584,66 @@ def _dependent_count(archive: Chronicle, sequence: int) -> int:
                if int(sequence) in [int(n) for n in ((record.get("data") or {}).get("depends_on") or [])])
 
 
+# Evidence independence, from the citation types alone. `attested` is a
+# run the runtime itself recorded (`cmd:`, `verdict:`), `recorded` is
+# another record on the chain (`seq:`, `diff:`, `receipt:`), `external`
+# is a source outside the archive (`doc:`, `url:`, `file:`), `self` is
+# the claimant's own word (no citation at all).
+INDEPENDENCE_TIERS = ("attested", "recorded", "external", "self")
+_INDEPENDENCE_BY_PREFIX = {
+    "cmd": "attested", "verdict": "attested",
+    "seq": "recorded", "diff": "recorded", "receipt": "recorded", "rec": "recorded",
+    "doc": "external", "url": "external", "file": "external",
+}
+
+
+def independence_tier(citations: list[str]) -> str:
+    """The strongest tier any citation reaches; `self` with none."""
+    best = len(INDEPENDENCE_TIERS) - 1
+    for citation in citations:
+        prefix = str(citation).split(":", 1)[0].strip().lower()
+        tier = _INDEPENDENCE_BY_PREFIX.get(prefix)
+        if tier is not None:
+            best = min(best, INDEPENDENCE_TIERS.index(tier))
+    return INDEPENDENCE_TIERS[best]
+
+
+def scrub_citation(citation: str) -> str:
+    """A `cmd:` citation with every secret-shaped token replaced, so the
+    archive keeps the command's identity and never the credential."""
+    text = str(citation)
+    if not text.startswith("cmd:"):
+        return text
+    from .godmode_sentinel import find_secret_shapes
+    body = text[len("cmd:"):]
+    if not find_secret_shapes(body):
+        return text
+    scrubbed = " ".join(
+        "[redacted]" if find_secret_shapes(token) else token for token in body.split())
+    return "cmd:" + scrubbed
+
+
+# Shell grammar a `cmd:` citation cannot carry: the checker runs argv, not
+# a shell, so a pipe, a redirect, a process substitution or a list would be
+# passed to the program as literal words and the run would prove nothing.
+_SHELL_GRAMMAR = re.compile(r"(?<!\\)(?:\|\|?|&&|;|<\(|>\(|[<>]|`|\$\()")
+
+
+def refuse_shell_grammar(command_text: str) -> None:
+    """Refuse a `cmd:` citation that needs a shell, naming the two forms
+    that work: wrap it in one, or cite the captured output as a file."""
+    if _SHELL_GRAMMAR.search(_without_quotes(command_text)):
+        raise ArchiveError(
+            "a cmd: citation runs as argv, not through a shell, so pipes, redirects, "
+            f"`<(`, `;` and `&&` are not executed: {command_text[:120]!r}. Either wrap "
+            "it - cmd:bash -c '<the whole line>' (or cmd:pwsh -Command '...') - or run "
+            "it yourself, capture the output to a file and cite file:<that path>.")
+
+
+def _without_quotes(text: str) -> str:
+    return re.sub(r"'[^']*'|\"[^\"]*\"", "", text)
+
+
 def record_claim(
     archive: Chronicle,
     project: Path,
@@ -2660,7 +2720,14 @@ def record_claim(
             f"Unknown blast_radius '{blast_radius}'; expected one of "
             f"{', '.join(BLAST_RADIUS_KINDS)}"
         )
-    citations = cites or []
+    # A `cmd:` citation is archived without any secret-shaped token it
+    # carried (a key pasted into a curl header, a password flag): the
+    # command still identifies its run, the secret never reaches the record.
+    citations = [scrub_citation(c) for c in (cites or [])]
+    # Where the evidence comes from, derived from the citations' own
+    # types: recorded on every claim so a reader can rank claims by how
+    # far from the claimant the proof sits without re-parsing citations.
+    independence = independence_tier(citations)
     # A fix claim names a real incident or nothing - a dangling
     # --fixes is a mistake in the claim itself, refused before grading.
     fix_incident = _fix_incident(archive, fixes) if fixes is not None else None
@@ -2715,7 +2782,7 @@ def record_claim(
         if loop_reason:
             return archive.append(
                 "claim", text[:120],
-                {"text": text, "grade": "hypothesis", "claimed_grade": grade,
+                {"text": text, "independence": independence, "grade": "hypothesis", "claimed_grade": grade,
                  "session": session, "downgraded": True, "unresolved": [],
                  "unsupported": [], "operator_asserted": [],
                  "blast_radius": blast_radius, "confidence": confidence,
@@ -2748,7 +2815,7 @@ def record_claim(
         if differential_reason:
             return archive.append(
                 "claim", text[:120],
-                {"text": text, "grade": "hypothesis", "claimed_grade": grade,
+                {"text": text, "independence": independence, "grade": "hypothesis", "claimed_grade": grade,
                  "session": session, "downgraded": True, "unresolved": [],
                  "operator_asserted": [], "blast_radius": blast_radius, "confidence": confidence,
                  "untrusted": untrusted,
@@ -2770,7 +2837,7 @@ def record_claim(
         if metric_reason:
             return archive.append(
                 "claim", text[:120],
-                {"text": text, "grade": "hypothesis", "claimed_grade": grade,
+                {"text": text, "independence": independence, "grade": "hypothesis", "claimed_grade": grade,
                  "session": session, "downgraded": True, "unresolved": [],
                  "operator_asserted": [], "blast_radius": blast_radius, "confidence": confidence,
                  "untrusted": untrusted,
@@ -2788,7 +2855,7 @@ def record_claim(
         if not primary:
             record = archive.append(
                 "claim", text[:120],
-                {"text": text, "grade": "hypothesis", "claimed_grade": grade, "session": session,
+                {"text": text, "independence": independence, "grade": "hypothesis", "claimed_grade": grade, "session": session,
                  "downgraded": True, "unresolved": [], "blast_radius": blast_radius, "confidence": confidence,
                  "untrusted": untrusted,
                  "reason": "external claim without a primary source read this session; "
@@ -3189,6 +3256,7 @@ def record_claim(
         {
             "session": session,
             "text": text,
+            "independence": independence,
             "claimed_grade": grade,
             "grade": effective,
             **composed,

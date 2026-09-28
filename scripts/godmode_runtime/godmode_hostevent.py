@@ -9,10 +9,10 @@ archive should not have to know any of that - they consume ONE shape,
 `HostEvent`, and this module is the only place host dialects are read or
 written.
 
-**What is BINDING here, and where it comes from** (see the
-Codex-compatibility plan's amendments 1-4 and its design's CX-2 unit and
-Addenda 2/6 - every literal spelling below is copied from one of those,
-never guessed):
+**What is BINDING here, and where it comes from**: every literal spelling
+below is copied from the host's own documented hook contract (Claude Code,
+Codex, Cursor, Grok, Antigravity), never guessed. A host that documents
+no key for a decision gets silence, which every host reads as proceed.
 
 - Dual-casing field normalization: `hookEventName`/`hook_event_name`,
   `toolName`/`tool_name`, `toolInput`/`tool_input`, `sessionId`/
