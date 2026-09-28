@@ -290,6 +290,15 @@ def write(project: Path) -> dict[str, Any]:
     """
     source = _load(project)
     written: list[str] = []
+    # A target whose manifest note could not be written: the write itself
+    # still succeeds, and the payload names what `hooks status` will not see.
+    unrecorded: list[dict[str, str]] = []
+
+    def _note(path: Path) -> None:
+        failure = host_manifests._record_installed(project, "bindings", path)
+        if failure:
+            unrecorded.append({"target": str(path), "reason": failure})
+
     for host, spec in sorted(source["hosts"].items()):
         target = project / spec["path"]
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -297,7 +306,7 @@ def write(project: Path) -> dict[str, Any]:
         if not target.is_file() or target.read_text(encoding="utf-8") != content:
             target.write_text(content, encoding="utf-8")
             written.append(spec["path"])
-        host_manifests._record_installed(project, "bindings", target)
+        _note(target)
 
     for host, spec in sorted(_hook_manifest_specs(source).items()):
         target = project / spec["path"]
@@ -306,7 +315,7 @@ def write(project: Path) -> dict[str, Any]:
         if not target.is_file() or target.read_text(encoding="utf-8") != content:
             target.write_text(content, encoding="utf-8")
             written.append(spec["path"])
-        host_manifests._record_installed(project, "bindings", target)
+        _note(target)
 
     for host, spec in sorted(_mcp_manifest_specs(source).items()):
         target = project / spec["path"]
@@ -315,7 +324,7 @@ def write(project: Path) -> dict[str, Any]:
         if not target.is_file() or target.read_text(encoding="utf-8") != content:
             target.write_text(content, encoding="utf-8")
             written.append(spec["path"])
-        host_manifests._record_installed(project, "bindings", target)
+        _note(target)
 
     portable_target = project / PORTABLE_MANIFEST
     portable = _portable_entry(project, source)
@@ -324,7 +333,7 @@ def write(project: Path) -> dict[str, Any]:
             existing = json.loads(portable_target.read_text(encoding="utf-8"))
             portable_target.write_text(_serialize(render_portable(source, existing)), encoding="utf-8")
             written.append(PORTABLE_MANIFEST)
-        host_manifests._record_installed(project, "bindings", portable_target)
+        _note(portable_target)
 
     # Regenerate the launcher pair the same run - one code path
     # (`bindings --write`) for every generated artifact this project ships,
@@ -335,12 +344,13 @@ def write(project: Path) -> dict[str, Any]:
     launcher_result = launchers.write_launchers(project)
     written.extend(launcher_result["written"])
     for spec in launchers.LAUNCHERS.values():
-        host_manifests._record_installed(project, "bindings", project / spec["path"])
+        _note(project / spec["path"])
 
     total = (len(source["hosts"]) + len(_hook_manifest_specs(source))
              + len(_mcp_manifest_specs(source)) + len(launchers.LAUNCHERS)
              + (1 if portable is not None else 0))
-    return {"source": SOURCE, "written": written, "unchanged": total - len(written)}
+    return {"source": SOURCE, "written": written, "unchanged": total - len(written),
+            "unrecorded": unrecorded}
 
 
 def registration_report(project: Path | None = None) -> dict[str, Any]:

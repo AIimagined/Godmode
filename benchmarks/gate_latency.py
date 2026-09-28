@@ -159,7 +159,11 @@ def measure(n: int = 21) -> dict[str, dict[str, float]]:
             samples = _sample(command, project, env, n)
             p50 = statistics.median(samples)
             p95 = _p95(samples)
-            results[phase] = {"p50_ms": p50 * 1000, "p95_ms": p95 * 1000, "n": n}
+            # The noise band beside the percentile: a p95 alone cannot say
+            # whether a 20% move is a regression or the machine's spread.
+            results[phase] = {"p50_ms": p50 * 1000, "p95_ms": p95 * 1000, "n": n,
+                              "min_ms": min(samples) * 1000, "max_ms": max(samples) * 1000,
+                              "noise_ms": (max(samples) - min(samples)) * 1000}
         return results
 
 
@@ -172,6 +176,7 @@ def check(baseline: dict, measured: dict, tolerance: float = 0.20) -> dict:
     as an actual regression."""
     regressions = []
     missing = []
+    phases = {}
     for phase, row in (baseline.get("phases") or {}).items():
         measured_row = measured.get(phase)
         if measured_row is None:
@@ -179,10 +184,16 @@ def check(baseline: dict, measured: dict, tolerance: float = 0.20) -> dict:
             continue
         base = float(row["p95_ms"])
         now = float(measured_row.get("p95_ms", 0.0))
+        noise = measured_row.get("noise_ms")
+        phases[phase] = {"baseline_p95_ms": base, "measured_p95_ms": now,
+                         "noise_ms": None if noise is None else round(float(noise), 1),
+                         "min_ms": measured_row.get("min_ms"), "max_ms": measured_row.get("max_ms")}
         if base > 0 and now >= base * (1.0 + tolerance):
             regressions.append({"phase": phase, "baseline_p95_ms": base,
-                                "measured_p95_ms": now, "ratio": round(now / base, 3)})
+                                "measured_p95_ms": now, "ratio": round(now / base, 3),
+                                "noise_ms": phases[phase]["noise_ms"]})
     return {"tolerance": tolerance, "regressions": regressions, "missing": missing,
+            "phases": phases,
             "verdict": "regression" if (regressions or missing) else "within-budget"}
 
 
@@ -326,7 +337,8 @@ def main() -> int:
         measured = measure(n)
         for phase, command in PHASES.items():
             row = measured[phase]
-            print(f"{phase} ({command}): p50={row['p50_ms']:.1f}ms p95={row['p95_ms']:.1f}ms (n={row['n']})")
+            print(f"{phase} ({command}): p50={row['p50_ms']:.1f}ms p95={row['p95_ms']:.1f}ms "
+                  f"noise={row['min_ms']:.1f}..{row['max_ms']:.1f}ms (n={row['n']})")
         BASELINE_PATH.write_text(json.dumps({
             "schema": BASELINE_SCHEMA,
             "n": n,

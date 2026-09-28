@@ -299,7 +299,19 @@ def _atlas_for_closure(project: Path) -> Atlas:
             report = None
         if (report is not None and not report["stale"] and not report["missing"]
                 and report["atlas"]["files"] > 0):
-            return rehydrate_index(index_path, project)
+            # A PARTIAL index - every stored file fresh, but files under the
+            # closure roots that it never stored - is refused the same as a
+            # stale one: `load_index` only checks the files the index
+            # names, so a map saved from a half-walked tree read as fully
+            # fresh and answered closure for files it had never seen.
+            uncovered = _uncovered_by_index(project, report)
+            if not uncovered:
+                return rehydrate_index(index_path, project)
+            print(
+                f"godmode: the saved atlas index is partial ({len(uncovered)} file(s) under "
+                f"the closure roots are not in it, e.g. {uncovered[0]}) - rebuilding",
+                file=sys.stderr,
+            )
     print(
         f"godmode: no fresh atlas index on record - building one now "
         f"(up to {_ATLAS_BUDGET_SECONDS:g}s)...",
@@ -309,13 +321,30 @@ def _atlas_for_closure(project: Path) -> Atlas:
     if atlas.gap:
         scanned = int(atlas.gap.get("scanned", 0))
         unscanned = int(atlas.gap.get("unscanned", 0))
-        raise GodmodeError(
+        message = (
             f"atlas build did not finish within {_ATLAS_BUDGET_SECONDS:g}s "
             f"({scanned} of {scanned + unscanned} files scanned); closure cannot "
             "be answered from a partial map; run `godmode retest --run` to build "
             "the index"
         )
+        # Named on stderr as well as raised: the caller folds the error into
+        # a refusal envelope, and the operator watching the terminal needs
+        # the trip named where the build-start line was.
+        print(f"godmode: {message}", file=sys.stderr)
+        raise GodmodeError(message)
     return atlas
+
+
+def _uncovered_by_index(project: Path, report: dict[str, Any]) -> list[str]:
+    """Code files under the closure roots that the saved index never
+    stored (its stored names are exactly `fresh + stale + missing`)."""
+    from .godmode_atlas import CODE_SUFFIXES, EXTRACTORS, _candidate_files
+
+    stored = set(report["fresh"]) | set(report["stale"]) | set(report["missing"])
+    allowed = set(CODE_SUFFIXES) | set(EXTRACTORS)
+    on_disk = [path.relative_to(project).as_posix()
+               for path in _candidate_files(project, allowed, roots=_CLOSURE_ROOT_DIRS)]
+    return sorted(name for name in on_disk if name not in stored)
 
 
 def refresh_atlas_index(project: Path) -> dict[str, Any] | None:

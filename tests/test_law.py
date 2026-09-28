@@ -35,6 +35,25 @@ from godmode_runtime.godmode_law import (  # noqa: E402
 )
 
 
+from _host_env import scrubbed_environment  # noqa: E402
+
+_HOST_ENV = None
+
+
+def setUpModule() -> None:
+    """Hook subprocesses below spread `os.environ`; a runner's own `CI` or
+    host marker must not flip their row. The same module-wide scrub
+    `test_ask_only_hook.py` runs from."""
+    global _HOST_ENV
+    _HOST_ENV = scrubbed_environment()
+    _HOST_ENV.start()
+
+
+def tearDownModule() -> None:
+    if _HOST_ENV is not None:
+        _HOST_ENV.stop()
+
+
 @contextmanager
 def _project():
     with tempfile.TemporaryDirectory(prefix="godmode-law-") as temporary:

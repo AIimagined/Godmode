@@ -352,8 +352,14 @@ class SavedIndexFreshnessTests(unittest.TestCase):
                 "fresh": ["scripts/widgetry.py"], "stale": [], "missing": [],
                 "confidence": 1.0,
             }
+            # The fabricated report names one file; the seeded tree holds
+            # more, and a real coverage check would (rightly) call the index
+            # partial. That guard has its own tests
+            # (test_closure_index_guard.py); here it is held complete so the
+            # fresh path alone is exercised.
             with mock.patch.object(godmode_closure, "load_index",
                                   return_value=genuinely_fresh), \
+                 mock.patch.object(godmode_closure, "_uncovered_by_index", return_value=[]), \
                  mock.patch.object(godmode_closure, "rehydrate_index") as mocked_rehydrate, \
                  mock.patch.object(godmode_closure, "build_atlas") as mocked_build:
                 godmode_closure._atlas_for_closure(project)

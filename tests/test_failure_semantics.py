@@ -69,6 +69,25 @@ from test_observe_mode import _decide, _enable_observe  # noqa: E402
 PASSWORD = "correct-horse-local-only"  # godmode: allow-secret
 
 
+from _host_env import scrubbed_environment  # noqa: E402
+
+_HOST_ENV = None
+
+
+def setUpModule() -> None:
+    """Hook subprocesses below spread `os.environ`; a runner's own `CI` or
+    host marker must not flip their row. The same module-wide scrub
+    `test_ask_only_hook.py` runs from."""
+    global _HOST_ENV
+    _HOST_ENV = scrubbed_environment()
+    _HOST_ENV.start()
+
+
+def tearDownModule() -> None:
+    if _HOST_ENV is not None:
+        _HOST_ENV.stop()
+
+
 def _git(*args: str, cwd: Path, env: dict | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", "-C", str(cwd), *args], capture_output=True, text=True, timeout=20, env=env,

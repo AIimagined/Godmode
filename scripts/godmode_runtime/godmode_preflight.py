@@ -658,10 +658,25 @@ def push_preflight(project: Path | str,
     # Which shards this process actually ran, so a report never implies the
     # whole suite when one leg of a fan-out is what happened.
     ran_shards: list[int] = []
-    if status.stdout.strip() and any(line.startswith("??") for line in
-                                     status.stdout.decode("utf-8", errors="replace").splitlines()):
+    # An untracked file is in neither HEAD nor the stash snapshot, so a green
+    # here says nothing about it. Named per path, and a finding rather than a
+    # footnote: an edit saved after the retest used to read as validated.
+    untracked_after_retest = sorted(
+        line[3:].strip().strip('"')
+        for line in status.stdout.decode("utf-8", errors="replace").splitlines()
+        if line.startswith("??")
+    )
+    if untracked_after_retest:
         skipped.append("untracked files are not in the snapshot: `git add -N` "
                        "them or commit first for full fidelity")
+        judgment.append({
+            "check": "untracked-after-retest",
+            "detail": f"{len(untracked_after_retest)} untracked path(s) are not in the "
+                      "validated snapshot, so this run does not validate them: "
+                      + ", ".join(untracked_after_retest[:8])
+                      + (" ..." if len(untracked_after_retest) > 8 else "")
+                      + "; `git add -N` or commit them, or push knowing they are unvalidated",
+        })
 
     # The worktree lives BESIDE the repo - the only location with a green
     # experiment behind it (3206 tests, 2026-09-04). The two special zones
@@ -1225,6 +1240,7 @@ def push_preflight(project: Path | str,
         "shards": shards_total,
         "shards_ran": ran_shards,
         "stopped_at": stopped_at,
+        "untracked_after_retest": untracked_after_retest,
         # The effect of a control action is confirmed, never assumed: the
         # cleanup claim is checked against the filesystem, and an
         # unconfirmed removal is stated rather than silently believed.
