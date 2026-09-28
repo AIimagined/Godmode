@@ -941,7 +941,7 @@ def edit_cleared(payload: dict[str, Any], start: Path, table: dict[str, Any] | N
 # and a harm sample list through the classifier and fails if any harm-class
 # command is not a candidate here.
 _HARM_HINT = re.compile(
-    r"(?:^|[^a-z0-9_])(?:push|reset|clean|branch|drop|truncate|rm|rmdir|rd|del|delete|"
+    r"(?:^|[^a-z0-9_])(?:push|reset|rebase|clean|branch|drop|truncate|rm|rmdir|rd|del|delete|"
     r"erase|unlink|remove|rmtree|move-item|new-item|set-content|add-content|out-file|"
     r"clear-content|rename-item|find|deploy|publish|release|upload|send|post|create|"
     r"eval|vssadmin|wmic|wbadmin|tmutil|password|godmode|uninitialized|config)"

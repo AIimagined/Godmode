@@ -26,10 +26,25 @@ class ComponentTests(unittest.TestCase):
         self.assertEqual(tiers[1], "R5")
         self.assertFalse(preview["components"][0]["protected"])
 
-    def test_unknown_component_denies_by_default(self) -> None:
-        preview = classify_action("ls && frobnicate --now", project_root=PLUGIN_ROOT)
+    def test_unknown_component_with_a_write_shaped_token_denies(self) -> None:
+        preview = classify_action("ls && frobnicate --force", project_root=PLUGIN_ROOT)
         self.assertTrue(preview["protected"])
         self.assertEqual(preview["components"][1]["category"], "unknown-command")
+
+    def test_unknown_component_without_write_evidence_is_recorded_r1(self) -> None:
+        # 2026-09-28 findings: deny-by-default after `&&` refused a `for`
+        # loop over a variable and the project's own test harness. An
+        # unrecognised name with no redirect, delete, force flag, network
+        # tool or shell pipe beside it runs and is recorded at R1.
+        for command in ("ls && frobnicate --now", "ls ; ./frobnicate.sh",
+                        "for b in $(git branch --list 'x-*'); do frob $b; done"):
+            with self.subTest(command=command):
+                preview = classify_action(command, project_root=PLUGIN_ROOT)
+                self.assertFalse(preview["protected"], preview)
+        for command in ("ls && frobnicate > out.txt", "ls && frobnicate -f x",
+                        "ls && frobnicate https://x.example/up", "ls && frobnicate | sh"):
+            with self.subTest(command=command):
+                self.assertTrue(classify_action(command, project_root=PLUGIN_ROOT)["protected"])
 
     def test_single_command_has_one_component(self) -> None:
         preview = classify_action("git status", project_root=PLUGIN_ROOT)
@@ -47,22 +62,22 @@ class SeparatorScopeTests(unittest.TestCase):
     is a filter, not a smuggled second command)."""
 
     def test_semicolon_denies_an_unrecognised_second_command(self) -> None:
-        preview = classify_action("ls ; frobnicate --now", project_root=PLUGIN_ROOT)
+        preview = classify_action("ls ; frobnicate --force", project_root=PLUGIN_ROOT)
         self.assertTrue(preview["protected"])
         self.assertEqual(preview["category"], "unknown-command")
 
     def test_a_newline_denies_an_unrecognised_second_command(self) -> None:
-        preview = classify_action("ls\nfrobnicate --now", project_root=PLUGIN_ROOT)
+        preview = classify_action("ls\nfrobnicate --force", project_root=PLUGIN_ROOT)
         self.assertTrue(preview["protected"])
         self.assertEqual(preview["category"], "unknown-command")
 
     def test_background_ampersand_denies_an_unrecognised_second_command(self) -> None:
-        preview = classify_action("ls & frobnicate --now", project_root=PLUGIN_ROOT)
+        preview = classify_action("ls & frobnicate --force", project_root=PLUGIN_ROOT)
         self.assertTrue(preview["protected"])
         self.assertEqual(preview["category"], "unknown-command")
 
     def test_or_denies_an_unrecognised_second_command(self) -> None:
-        preview = classify_action("ls || frobnicate --now", project_root=PLUGIN_ROOT)
+        preview = classify_action("ls || frobnicate --force", project_root=PLUGIN_ROOT)
         self.assertTrue(preview["protected"])
         self.assertEqual(preview["category"], "unknown-command")
 
@@ -78,12 +93,12 @@ class HeadShapeTests(unittest.TestCase):
     absolute path to it) was exactly the one the original regex missed."""
 
     def test_a_relative_path_head_is_denied(self) -> None:
-        preview = classify_action("ls ; ./frobnicate.sh", project_root=PLUGIN_ROOT)
+        preview = classify_action("ls ; ./frobnicate.sh --force", project_root=PLUGIN_ROOT)
         self.assertTrue(preview["protected"])
         self.assertEqual(preview["category"], "unknown-command")
 
     def test_a_quoted_head_is_denied(self) -> None:
-        preview = classify_action('ls && "frobnicate"', project_root=PLUGIN_ROOT)
+        preview = classify_action('ls && "frobnicate" --force', project_root=PLUGIN_ROOT)
         self.assertTrue(preview["protected"])
         self.assertEqual(preview["category"], "unknown-command")
 
@@ -96,7 +111,7 @@ class ResolvedHeadTests(unittest.TestCase):
     `_PLAIN_COMMAND_HEAD` correctly rejects, so the deny never fired)."""
 
     def test_an_env_assignment_prefix_does_not_hide_the_command(self) -> None:
-        preview = classify_action("ls && FOO=1 frobnicate", project_root=PLUGIN_ROOT)
+        preview = classify_action("ls && FOO=1 frobnicate --force", project_root=PLUGIN_ROOT)
         self.assertTrue(preview["protected"])
         self.assertEqual(preview["category"], "unknown-command")
 
@@ -110,7 +125,7 @@ class PrefixRunnerTests(unittest.TestCase):
     `time` is pinned, must stay allowed."""
 
     def test_a_prefix_runner_does_not_launder_an_unrecognised_command(self) -> None:
-        preview = classify_action("ls && time ./frobnicate.sh", project_root=PLUGIN_ROOT)
+        preview = classify_action("ls && time ./frobnicate.sh --force", project_root=PLUGIN_ROOT)
         self.assertTrue(preview["protected"])
         self.assertEqual(preview["category"], "unknown-command")
 
@@ -120,15 +135,15 @@ class PrefixRunnerTests(unittest.TestCase):
     # stripped before the recursive head test now, so this must deny
     # exactly the same as the bare `time ./frobnicate.sh` case above.
     def test_a_prefix_runner_option_does_not_launder_an_unrecognised_command(self) -> None:
-        preview = classify_action("ls && time -p ./frobnicate.sh", project_root=PLUGIN_ROOT)
+        preview = classify_action("ls && time -p ./frobnicate.sh --force", project_root=PLUGIN_ROOT)
         self.assertTrue(preview["protected"])
         self.assertEqual(preview["category"], "unknown-command")
 
     def test_an_option_value_goes_with_its_flag(self) -> None:
         """`-f %e` is one option: peeling `-f` alone left `%e` as the head."""
-        for command in ("ls && time -f %e ./frobnicate.sh",
-                        "ls && time -o t.txt ./frobnicate.sh",
-                        'ls && time --format "%e s" ./frobnicate.sh'):
+        for command in ("ls && time -f %e ./frobnicate.sh --force",
+                        "ls && time -o t.txt ./frobnicate.sh --force",
+                        'ls && time --format "%e s" ./frobnicate.sh --force'):
             with self.subTest(command=command):
                 preview = classify_action(command, project_root=PLUGIN_ROOT)
                 self.assertTrue(preview["protected"], preview)
@@ -140,7 +155,7 @@ class PrefixRunnerTests(unittest.TestCase):
         # `do` is not in `_PREFIX_RUNNER_HEADS` at all - `_categorize`'s own
         # `_CONTROL_PREFIX` strips it before a head is ever resolved, so
         # `do frobnicate` already reads as plain `frobnicate`.
-        preview = classify_action("ls && do frobnicate", project_root=PLUGIN_ROOT)
+        preview = classify_action("ls && do frobnicate --force", project_root=PLUGIN_ROOT)
         self.assertTrue(preview["protected"])
         self.assertEqual(preview["category"], "unknown-command")
 
@@ -162,18 +177,18 @@ class PrefixRunnerRemainderLocationTests(unittest.TestCase):
     a prefix-runner concept) and regressed to allowed at `7e5d887`."""
 
     def test_an_env_assignment_before_the_runner_still_denies(self) -> None:
-        preview = classify_action("ls && FOO=1 time ./frobnicate.sh", project_root=PLUGIN_ROOT)
+        preview = classify_action("ls && FOO=1 time ./frobnicate.sh --force", project_root=PLUGIN_ROOT)
         self.assertTrue(preview["protected"])
         self.assertEqual(preview["category"], "unknown-command")
 
     def test_a_stripped_control_keyword_before_the_runner_still_denies(self) -> None:
-        preview = classify_action("ls && do time ./frobnicate.sh", project_root=PLUGIN_ROOT)
+        preview = classify_action("ls && do time ./frobnicate.sh --force", project_root=PLUGIN_ROOT)
         self.assertTrue(preview["protected"])
         self.assertEqual(preview["category"], "unknown-command")
 
     def test_a_nested_control_structure_before_the_runner_still_denies(self) -> None:
         preview = classify_action(
-            "ls && if true; then time ./frobnicate.sh; fi", project_root=PLUGIN_ROOT)
+            "ls && if true; then time ./frobnicate.sh --force; fi", project_root=PLUGIN_ROOT)
         self.assertTrue(preview["protected"])
         self.assertEqual(preview["category"], "unknown-command")
 

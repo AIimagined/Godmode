@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_from": "12d359a242cd",
+  "generated_from": "31e38e6fca77",
   "floor": {
     "claude-code": [
       "git status",
@@ -81,26 +81,16 @@
   ],
   "git_ask": [
     "git push",
-    "git merge",
     "git rebase",
     "git reset",
     "git clean",
-    "git tag v1.0",
+    "git tag -d v1.0",
     "git checkout main",
-    "git switch feature",
-    "git branch -d old",
     "git worktree remove wt",
     "git worktree prune",
     "git worktree move wt new",
     "git stash drop",
-    "git stash pop",
     "git stash clear",
-    "git stash apply",
-    "git stash push",
-    "git stash save",
-    "git stash branch name",
-    "git stash create",
-    "git stash store abc",
     "git remote add name url",
     "git remote remove name",
     "git remote rm name",
@@ -119,7 +109,8 @@
     "git push --force-with-lease",
     "git reset --hard",
     "git clean --force",
-    "git branch -D old"
+    "git branch -D old",
+    "git rebase -i HEAD~3"
   ],
   "find_mutation_flags": [
     "-delete",

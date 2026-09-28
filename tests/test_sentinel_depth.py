@@ -78,12 +78,21 @@ def token_body(token: str) -> dict:
 
 
 class BranchMutationClassificationTests(unittest.TestCase):
-    def test_branch_delete_and_rename_forms_are_protected(self) -> None:
+    def test_branch_force_delete_forms_are_protected(self) -> None:
+        for operation in (
+            "git branch -D feature/login",
+            "git branch --delete --force feature/login",
+        ):
+            preview = classify_action(operation)
+            self.assertTrue(preview["protected"], operation)
+            self.assertEqual(preview["category"], "git-branch-mutation", operation)
+
+    def test_branch_reversible_forms_are_local_r1(self) -> None:
+        # `-d` refuses unmerged work and every other form is undone from the
+        # reflog: local, so R1 like a new branch, not an R3 ask.
         for operation in (
             "git branch -d feature/login",
-            "git branch -D feature/login",
             "git branch --delete feature/login",
-            "git branch --delete --force feature/login",
             "git branch -m old-name new-name",
             "git branch -M old-name new-name",
             "git branch --move old new",
@@ -92,8 +101,9 @@ class BranchMutationClassificationTests(unittest.TestCase):
             "git branch --force main HEAD~3",
         ):
             preview = classify_action(operation)
-            self.assertTrue(preview["protected"], operation)
-            self.assertEqual(preview["category"], "git-branch-mutation", operation)
+            self.assertFalse(preview["protected"], operation)
+            self.assertEqual(preview["category"], "git-local-reversible", operation)
+            self.assertEqual(preview["tier"], "R1", operation)
 
     def test_branch_listing_forms_stay_read_only_r0(self) -> None:
         for operation in (
@@ -122,9 +132,9 @@ class BranchMutationClassificationTests(unittest.TestCase):
         preview = classify_action("git branch -D feature/login")
         self.assertEqual(preview["tier"], "R5")
         self.assertTrue(preview["second_confirmation_required"])
-        # Plain delete is history mutation, not the irreversible tier.
+        # Plain delete is local and reversible, not the irreversible tier.
         gentle = classify_action("git branch -d feature/login")
-        self.assertEqual(gentle["tier"], "R3")
+        self.assertEqual(gentle["tier"], "R1")
         self.assertFalse(gentle["second_confirmation_required"])
         # --delete --force is the long spelling of -D.
         long_form = classify_action("git branch --delete --force feature/login")
@@ -141,7 +151,12 @@ class TagStashRemoteClassificationTests(unittest.TestCase):
             preview = classify_action(operation)
             self.assertFalse(preview["protected"], operation)
             self.assertEqual(preview["tier"], "R0", operation)
-        for operation in ("git tag v1.0.0", "git tag -a v1.0.0 -m release", "git tag -d v1.0.0"):
+        # A local tag is R1 until it is pushed; deleting or moving one asks.
+        for operation in ("git tag v1.0.0", "git tag -a v1.0.0 -m release"):
+            preview = classify_action(operation)
+            self.assertFalse(preview["protected"], operation)
+            self.assertEqual(preview["category"], "git-local-reversible", operation)
+        for operation in ("git tag -d v1.0.0", "git tag -f v1.0.0"):
             preview = classify_action(operation)
             self.assertTrue(preview["protected"], operation)
             self.assertEqual(preview["category"], "git-history-or-remote", operation)
@@ -150,7 +165,12 @@ class TagStashRemoteClassificationTests(unittest.TestCase):
         for operation in ("git stash list", "git stash show", "git stash show -p stash@{0}"):
             preview = classify_action(operation)
             self.assertFalse(preview["protected"], operation)
-        for operation in ("git stash drop stash@{0}", "git stash pop", "git stash clear", "git stash"):
+        # Stashing and unstashing keep the work; dropping or clearing loses it.
+        for operation in ("git stash", "git stash pop", "git stash push -m wip", "git stash apply"):
+            preview = classify_action(operation)
+            self.assertFalse(preview["protected"], operation)
+            self.assertEqual(preview["category"], "git-local-reversible", operation)
+        for operation in ("git stash drop stash@{0}", "git stash clear"):
             preview = classify_action(operation)
             self.assertTrue(preview["protected"], operation)
         # `git stash drop` is a git mutation; the word "drop" alone must not
@@ -186,7 +206,8 @@ class RiskTierTests(unittest.TestCase):
             "delete from users where id = 4": "R3",
             "git push origin main": "R4",
             "deploy the release to production": "R4",
-            "rm -rf build/": "R4",
+            "rm -rf build/": "R2",
+            "rm -rf ../build/": "R4",
         }
         for operation, tier in expectations.items():
             preview = classify_action(operation)
