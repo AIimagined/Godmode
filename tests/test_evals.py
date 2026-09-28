@@ -111,8 +111,9 @@ class RoutingEvalTests(unittest.TestCase):
         # misrouted prompts were reworded. Observed reality, kept current.
         report = run_routing_evals(PLUGIN_ROOT)
         totals = report["totals"]
-        self.assertEqual(totals["positives_total"], 44)
-        self.assertEqual(totals["positives_routed_correctly"], 44)
+        # 46 since the continuity corpus gained its resume and handoff prompts.
+        self.assertEqual(totals["positives_total"], 46)
+        self.assertEqual(totals["positives_routed_correctly"], 46)
         self.assertEqual(report["verdict"], "routing-sound")
         failing = {entry["prompt"] for entry in report["failing_prompts"]}
         self.assertEqual(failing, KNOWN_MISROUTED_POSITIVES)

@@ -1670,12 +1670,25 @@ def uninitialized_body(payload: dict[str, Any], start: Path,
     return body
 
 
+# The archive-free classification, run in a second interpreter exactly
+# like the escalation: this module imports no runtime module (the
+# dependency-direction gate pins that), and a classifier that hangs on
+# something other than the archive is bounded by its own deadline.
+_RUN_CLASSIFY = (
+    "import sys,json;sys.path.insert(0,sys.argv.pop(1));"
+    "from godmode_runtime.godmode_sentinel import classify_action as c;"
+    "v=c(sys.argv[1],project_root=sys.argv[2],tool_name=sys.argv[3]);"
+    "print('allow' if (not v['protected'] and v['tier'] in ('R0','R1')) else 'refuse')")
+CLASSIFY_DEADLINE_SECONDS = 10
+
+
 def _decide_without_archive(payload: dict[str, Any], start: Path) -> str:
-    """`allow` when the full classifier, run in this process with no
-    archive, reads the shell command as R0/R1 and unprotected; `refuse`
-    for anything else, any other tool, or any failure. Reached only after
-    the full check timed out, so the import cost is paid where 25 s were
-    already spent, never on the silent-allow path."""
+    """`allow` when the full classifier, run with no archive in its own
+    process, reads the shell command as R0/R1 and unprotected; `refuse`
+    for anything else, any other tool, a timeout or any failure. Reached
+    only after the full check timed out, so the second interpreter is paid
+    where 25 s were already spent, never on the silent-allow path."""
+    import subprocess
     try:
         tool = payload.get("toolName", payload.get("tool_name"))
         tool_input = payload.get("toolInput", payload.get("tool_input"))
@@ -1684,14 +1697,11 @@ def _decide_without_archive(payload: dict[str, Any], start: Path) -> str:
         command = tool_input.get("command", tool_input.get("CommandLine"))
         if not isinstance(command, str) or not command.strip():
             return "refuse"
-        scripts = str(HOOKS_DIR.parent / "scripts")
-        if scripts not in sys.path:
-            sys.path.insert(0, scripts)
-        from godmode_runtime.godmode_sentinel import classify_action
-        verdict = classify_action(command, project_root=start, tool_name=tool)
-        if not verdict["protected"] and verdict["tier"] in ("R0", "R1"):
-            return "allow"
-        return "refuse"
+        done = subprocess.run(
+            [sys.executable, "-I", *_bytecode_flags(), "-c", _RUN_CLASSIFY,
+             str(HOOKS_DIR.parent / "scripts"), command, str(start), tool],
+            capture_output=True, text=True, timeout=CLASSIFY_DEADLINE_SECONDS)
+        return "allow" if done.returncode == 0 and done.stdout.strip() == "allow" else "refuse"
     except Exception:  # noqa: BLE001 - doubt refuses, exactly as the timeout did
         return "refuse"
 
