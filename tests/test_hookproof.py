@@ -56,6 +56,27 @@ HOOK = PLUGIN_ROOT / "hooks" / "godmode_session_hook.py"
 GODMODE_CLI = PLUGIN_ROOT / "scripts" / "godmode.py"
 
 
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _host_env import scrubbed_environment  # noqa: E402
+
+_HOST_ENV = None
+
+
+def setUpModule() -> None:
+    """Hook subprocesses below spread `os.environ`; a runner's own `CI` or
+    host marker must not flip their row. The same module-wide scrub
+    `test_ask_only_hook.py` runs from."""
+    global _HOST_ENV
+    _HOST_ENV = scrubbed_environment()
+    _HOST_ENV.start()
+
+
+def tearDownModule() -> None:
+    if _HOST_ENV is not None:
+        _HOST_ENV.stop()
+
+
 def _no_denial_response() -> subprocess.CompletedProcess:
     # The reviewer's own live repro: a hook subprocess that returns 0 but
     # never emits a deny decision at all - a crashed, renamed, or silently

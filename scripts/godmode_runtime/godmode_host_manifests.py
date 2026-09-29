@@ -538,19 +538,22 @@ def _codex_project_entry(root, shared_command: str) -> dict:
     }
 
 
-def _record_installed(project, group: str, target) -> None:
+def _record_installed(project, group: str, target) -> str | None:
     """Note a host artifact in the project's install manifest.
 
     Without this the writers below create files and nothing records which files
     are ours, so "what did this install put here" is answerable only by
     matching a glob against paths someone remembered. Never raises: a manifest
-    that cannot be written must not cost the operator the install.
+    that cannot be written must not cost the operator the install. The failure
+    is returned instead (`"<ExceptionName>: <message>"`), so a caller can name
+    the target that went unrecorded; `None` means recorded.
     """
     try:
         from .godmode_installmanifest import record
         record(project, "godmode", group, [target])
-    except Exception:  # noqa: BLE001  # godmode: swallow-ok: the manifest is bookkeeping; an install must not fail because a note about it could not be written
-        pass
+    except Exception as exc:  # noqa: BLE001  # godmode: swallow-ok: the manifest is bookkeeping; an install must not fail because a note about it could not be written
+        return f"{type(exc).__name__}: {exc}"[:200]
+    return None
 
 
 def write_codex_project_hooks(plugin_root, project, *, force: bool = False) -> dict:

@@ -1497,5 +1497,38 @@ class CopilotAndKiroBindingsRegenerateTests(unittest.TestCase):
         self.assertEqual(before, after)
 
 
+class UnrecordedTargetsTests(unittest.TestCase):
+    """A manifest note that cannot be written never costs the install, and
+    it is no longer silent: the failure comes back from `_record_installed`
+    and `bindings.write` names every target it could not record."""
+
+    def test_record_installed_returns_the_failure_instead_of_swallowing_it(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            with unittest.mock.patch("godmode_runtime.godmode_installmanifest.record",
+                                     side_effect=OSError("manifest is read-only")):
+                failure = host_manifests._record_installed(Path(raw), "bindings", Path(raw) / "x")
+            self.assertEqual(failure, "OSError: manifest is read-only")
+            self.assertIsNone(host_manifests._record_installed(Path(raw), "bindings", Path(raw) / "x"))
+
+    def test_bindings_write_succeeds_and_names_every_unrecorded_target(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            project = Path(raw)
+            (project / "packaging").mkdir()
+            (project / "packaging" / "hosts.json").write_text(
+                (PLUGIN_ROOT / "packaging" / "hosts.json").read_text(encoding="utf-8"), encoding="utf-8")
+            (project / "hooks").mkdir()
+            (project / "hooks" / "hooks.json").write_text(
+                (PLUGIN_ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"), encoding="utf-8")
+            with unittest.mock.patch("godmode_runtime.godmode_installmanifest.record",
+                                     side_effect=OSError("manifest is read-only")):
+                result = bindings.write(project)
+            self.assertTrue(result["written"], result)
+            self.assertTrue(result["unrecorded"], result)
+            self.assertTrue(all(row["reason"].startswith("OSError") for row in result["unrecorded"]))
+            for written in result["written"]:
+                self.assertTrue((project / written).is_file(), written)
+            self.assertEqual(bindings.write(project)["unrecorded"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

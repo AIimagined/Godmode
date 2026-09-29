@@ -625,7 +625,9 @@ def push_preflight(project: Path | str,
     # `dirty=True` the gate validates a snapshot of the working tree's
     # tracked changes (`git stash create`, which leaves the tree untouched)
     # instead of HEAD; the report names which one it validated.
-    validated = "HEAD"
+    # The report says WHAT it checked, not just "clean": the committed tree
+    # at HEAD, or a stash snapshot of HEAD plus the tracked changes.
+    validated = f"HEAD {_head_sha(repo)[:12]}: the committed tree"
     ref = "HEAD"
     # Only TRACKED changes make a tree dirty here. The disposable worktree is
     # built from HEAD or a stash snapshot, and untracked files are in neither,
@@ -648,9 +650,10 @@ def push_preflight(project: Path | str,
         sha = snapshot.stdout.decode("utf-8", errors="replace").strip()
         if snapshot.returncode == 0 and sha:
             ref = sha
-            validated = f"working-tree snapshot {sha[:12]}"
+            validated = f"working-tree snapshot {sha[:12]}: HEAD plus the tracked changes"
         else:
-            validated = "HEAD (the tree had no tracked changes to snapshot)"
+            validated = (f"HEAD {_head_sha(repo)[:12]}: the committed tree "
+                         "(no tracked changes to snapshot)")
 
     mechanical: list[dict[str, Any]] = []
     judgment: list[dict[str, Any]] = []
@@ -658,10 +661,25 @@ def push_preflight(project: Path | str,
     # Which shards this process actually ran, so a report never implies the
     # whole suite when one leg of a fan-out is what happened.
     ran_shards: list[int] = []
-    if status.stdout.strip() and any(line.startswith("??") for line in
-                                     status.stdout.decode("utf-8", errors="replace").splitlines()):
+    # An untracked file is in neither HEAD nor the stash snapshot, so a green
+    # here says nothing about it. Named per path, and a finding rather than a
+    # footnote: an edit saved after the retest used to read as validated.
+    untracked_after_retest = sorted(
+        line[3:].strip().strip('"')
+        for line in status.stdout.decode("utf-8", errors="replace").splitlines()
+        if line.startswith("??")
+    )
+    if untracked_after_retest:
         skipped.append("untracked files are not in the snapshot: `git add -N` "
                        "them or commit first for full fidelity")
+        judgment.append({
+            "check": "untracked-after-retest",
+            "detail": f"{len(untracked_after_retest)} untracked path(s) are not in the "
+                      "validated snapshot, so this run does not validate them: "
+                      + ", ".join(untracked_after_retest[:8])
+                      + (" ..." if len(untracked_after_retest) > 8 else "")
+                      + "; `git add -N` or commit them, or push knowing they are unvalidated",
+        })
 
     # The worktree lives BESIDE the repo - the only location with a green
     # experiment behind it (3206 tests, 2026-09-04). The two special zones
@@ -1225,6 +1243,7 @@ def push_preflight(project: Path | str,
         "shards": shards_total,
         "shards_ran": ran_shards,
         "stopped_at": stopped_at,
+        "untracked_after_retest": untracked_after_retest,
         # The effect of a control action is confirmed, never assumed: the
         # cleanup claim is checked against the filesystem, and an
         # unconfirmed removal is stated rather than silently believed.

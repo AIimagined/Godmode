@@ -52,6 +52,28 @@ class PreflightOrderTests(unittest.TestCase):
             self.assertEqual(report["shards_ran"], [])
             self.assertEqual(report["verdict"], "findings")
 
+    def test_untracked_edit_after_retest_is_named_not_validated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _sharded_repo(Path(tmp), failing="c")
+            (repo / "late_edit.py").write_text("y = 2\n", encoding="utf-8")
+            (repo / "notes.txt").write_text("scratch\n", encoding="utf-8")
+            report = push_preflight(repo)
+            self.assertEqual(report["untracked_after_retest"], ["late_edit.py", "notes.txt"])
+            finding = [j for j in report["judgment"] if j["check"] == "untracked-after-retest"]
+            self.assertEqual(len(finding), 1, report["judgment"])
+            self.assertIn("late_edit.py", finding[0]["detail"])
+            self.assertEqual(report["verdict"], "findings")
+
+    def test_the_report_says_which_tree_it_validated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _sharded_repo(Path(tmp), failing="c")
+            report = push_preflight(repo)
+            self.assertRegex(report["validated"], r"^HEAD [0-9a-f]{12}: the committed tree")
+            (repo / "code.py").write_text("x = 2\n", encoding="utf-8")
+            report = push_preflight(repo, dirty=True)
+            self.assertRegex(report["validated"],
+                             r"^working-tree snapshot [0-9a-f]{12}: HEAD plus the tracked changes")
+
     def test_green_gates_still_run_every_shard(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = _sharded_repo(Path(tmp), failing="c")
