@@ -107,6 +107,13 @@ jobs:
       # instead of arriving as a single opaque non-zero exit.
       - name: Prove the controls enforce
         run: python scripts/godmode.py --project . selftest --brief
+      - name: Self-test from a foreign working directory
+        # The launchers and the runtime must find the project from any cwd
+        # (an editor's terminal, a hook fired elsewhere), not only its root.
+        run: |
+          project="$(pwd)"
+          cd "$(mktemp -d)"
+          python "$project/scripts/godmode.py" --project "$project" selftest --brief
 
       - name: Stage known failures and check something notices
         run: python scripts/godmode.py --project . scenarios --brief
