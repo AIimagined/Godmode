@@ -229,8 +229,17 @@ class MovedCheckoutSelfAdoptTests(unittest.TestCase):
             original = base / "original"
             original.mkdir()
             subprocess.run(["git", "init", "-q", str(original)], check=True)
-            with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(base / "state")},
-                                 clear=False):
+            # No state-home override here: with one set, a git project's
+            # archive lives under the home keyed by its git directory, so a
+            # moved checkout simply resolves a fresh archive and there is
+            # no identity to drift. The shipped default keeps the archive
+            # under `.git`, where it travels with the checkout - the case
+            # `adopt` exists for. The application home is still pointed at
+            # the temp dir so the anchor cache never touches the real one.
+            environment = {k: v for k, v in os.environ.items() if k != "GODMODE_STATE_HOME"}
+            environment["LOCALAPPDATA"] = str(base / "local")
+            environment["XDG_STATE_HOME"] = str(base / "local")
+            with mock.patch.dict(os.environ, environment, clear=True):
                 archive = Chronicle(resolve_anchor(original))
                 archive.initialize()
                 archive.append("decision", "before-move", {"value": 1}, evidence=[])

@@ -5,8 +5,12 @@ a 35-minute suite had run)."""
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 import tempfile
 import unittest
+
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from test_push_preflight import _git, _sharded_repo  # noqa: E402
 

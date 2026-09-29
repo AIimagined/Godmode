@@ -1,0 +1,21 @@
+{
+  "routes": {
+    "near_negative": {
+      "Re-explain the answer the operator did not follow": "godmode-repair",
+      "Root-cause why the nightly build fails on the integration test": "godmode-investigation",
+      "Sixty open operator asks repeat across sessions; promote the rules and close the noise by ask id": "godmode-triage"
+    },
+    "positive": {
+      "Before this fix-and-retry cycle starts, audit the loop contract, set the stop conditions, and read the transcript for repeating error signatures and overlapping hunks": "godmode-loop-warden",
+      "The agent has retried the same failing test nine times with edits on the same lines; declare an iteration cap, tick each retry with evidence, and cut the loop off at the cap": "godmode-loop-warden"
+    }
+  },
+  "schema": "godmode-routing-snapshot-v1",
+  "skill": "godmode-loop-warden",
+  "summary": {
+    "near_negatives_rejected": 3,
+    "near_negatives_total": 3,
+    "positives_routed_correctly": 2,
+    "positives_total": 2
+  }
+}

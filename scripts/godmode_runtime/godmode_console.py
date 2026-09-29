@@ -3021,8 +3021,11 @@ def cmd_forget(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     pass now always uses the real time; the preview is where a fabricated
     one belongs, because a preview writes nothing.
     """
-    from .godmode_forget import forget
+    from .godmode_forget import forget, rehydrate
     _require_archive(runtime)
+    rehydrate_seq = getattr(args, "rehydrate", None)
+    if rehydrate_seq is not None:
+        return CommandResult(rehydrate(runtime.archive, int(rehydrate_seq)))
     now = getattr(args, "now", None)
     dry_run = bool(getattr(args, "dry_run", False))
     if now is not None and not dry_run:
@@ -8600,6 +8603,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--now", default=None,
         help="ISO-8601 timestamp to measure every TTL against; accepted with "
              "--dry-run only, so a fabricated clock can never expire anything")
+    forget_parser.add_argument(
+        "--rehydrate", type=int, default=None, metavar="SEQ",
+        help="Bring one rotated record back into the hot tier as a new record "
+             "citing the cold original; the cold segment is never edited")
     forget_parser.set_defaults(handler=cmd_forget)
 
     oracle_parser = sub.add_parser(

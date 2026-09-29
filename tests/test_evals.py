@@ -39,7 +39,9 @@ from godmode_runtime.godmode_evals import (  # noqa: E402
 
 ALL_SKILLS = [
     "godmode",
+    "godmode-budget",
     "godmode-changelog",
+    "godmode-ci",
     "godmode-code-of-law",
     "godmode-codegraph",
     "godmode-continuity",
@@ -48,6 +50,7 @@ ALL_SKILLS = [
     "godmode-host-sync",
     "godmode-impact-gate",
     "godmode-investigation",
+    "godmode-loop-warden",
     "godmode-memory-gardener",
     "godmode-repair",
     "godmode-replicate",
@@ -111,9 +114,10 @@ class RoutingEvalTests(unittest.TestCase):
         # misrouted prompts were reworded. Observed reality, kept current.
         report = run_routing_evals(PLUGIN_ROOT)
         totals = report["totals"]
-        # 46 since the continuity corpus gained its resume and handoff prompts.
-        self.assertEqual(totals["positives_total"], 46)
-        self.assertEqual(totals["positives_routed_correctly"], 46)
+        # 52 since the loop-warden, budget and ci faces joined with two
+        # positives each (46 after the continuity corpus grew).
+        self.assertEqual(totals["positives_total"], 52)
+        self.assertEqual(totals["positives_routed_correctly"], 52)
         self.assertEqual(report["verdict"], "routing-sound")
         failing = {entry["prompt"] for entry in report["failing_prompts"]}
         self.assertEqual(failing, KNOWN_MISROUTED_POSITIVES)
@@ -121,7 +125,8 @@ class RoutingEvalTests(unittest.TestCase):
     def test_near_negatives_reported_not_hidden(self):
         report = run_routing_evals(PLUGIN_ROOT)
         totals = report["totals"]
-        self.assertEqual(totals["near_negatives_total"], 68)
+        # 77 since the loop-warden, budget and ci faces joined with three each.
+        self.assertEqual(totals["near_negatives_total"], 77)
         # Captured near-negatives are reported per skill with details.
         for skill, entry in report["skills"].items():
             captured = [m for m in entry["misrouted"] if m["kind"] == "near_negative"]

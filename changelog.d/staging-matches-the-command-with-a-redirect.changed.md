@@ -1,1 +1,0 @@
-- A staged approval now matches its command when it is run with a redirect into the working tree, a read-only filter after a pipe, or a read-only command beside it. A force flag, a redirect outside the tree, a pipe into a shell, a directory change or any other mutation beside it is still a mismatch.

@@ -957,7 +957,7 @@ class FileCache:
             temporary.write_bytes(pickle.dumps({"version": self.VERSION, "files": self.entries},
                                                protocol=pickle.HIGHEST_PROTOCOL))
             os.replace(temporary, self.path)
-        except OSError:
+        except OSError:  # godmode: swallow-ok: the stamp cache is derived state; a failed write costs one rescan, never correctness
             pass
 
     def stamp(self) -> tuple[int, int] | None:

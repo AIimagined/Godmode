@@ -23,6 +23,22 @@ from godmode_runtime.godmode_chronicle import latest_by_subject  # noqa: E402
 from godmode_runtime.godmode_errors import ArchiveError  # noqa: E402
 from godmode_runtime.godmode_skillimpact import _is_protected  # noqa: E402
 from test_godmode_runtime import isolated_project  # noqa: E402
+from _host_env import scrubbed_environment  # noqa: E402
+
+_HOST_ENV = None
+
+
+def setUpModule() -> None:
+    """Console subprocesses below spread `os.environ`; a runner's own `CI`
+    or host marker must not flip their row."""
+    global _HOST_ENV
+    _HOST_ENV = scrubbed_environment()
+    _HOST_ENV.start()
+
+
+def tearDownModule() -> None:
+    if _HOST_ENV is not None:
+        _HOST_ENV.stop()
 
 
 def _run(project: Path, *argv: str) -> tuple[int, dict]:

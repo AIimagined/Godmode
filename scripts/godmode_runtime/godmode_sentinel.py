@@ -1955,9 +1955,11 @@ def _interpreter_opacity(basename: str, rest: str, rest_tokens: list[str], *,
         # matched by the parameter test in either view.
         if (_inline_flag_in_tokens(family, rest_tokens)
                 or any(_pwsh_inline_flag_token(one) for one in (pwsh_tokens or ()))):
-            return _opaque_inline_verdict(evidence)
+            return _opaque_inline_verdict(evidence, shell=True)
     elif family is not None and _inline_flag_in_tokens(family, rest_tokens):
-        return _opaque_inline_verdict(evidence)
+        # A shell's inline payload is the command itself, so its quoted
+        # text is scanned as commands, not blanked as a string literal.
+        return _opaque_inline_verdict(evidence, shell=family in ("posix-shell", "cmd"))
     # `cmd` is exempt from the stdin rule: it is on the interpreter table for
     # its `/c` form alone (Critical 5), and a bare `cmd` opens an interactive
     # console rather than reading a payload nobody can see. Without this,
@@ -2024,10 +2026,47 @@ _PAYLOAD_EXEC_SURFACE = re.compile(
     r"Start-Process|Invoke-Expression|iex|exec|eval|system|run_command)\b")
 
 
-def _r5_payload_evidence(payload: str) -> bool:
-    if _PAYLOAD_EXEC_SURFACE.search(payload):
+# A shell running an inline command (`bash -lc "…"`, `sh -xc "…"`, `cmd /c
+# "…"`, `pwsh -Command "…"`): its quoted argument IS the command that runs,
+# so the literal-blanking rule below (written for `python -c "print('git
+# push --force')"`, where the words sit inside a string that only prints)
+# must not apply. Matched against a whole segment (the tier escalation
+# reads the segment) or against the text after the head (the category
+# decision reads that).
+_SHELL_INLINE_HEAD = re.compile(
+    r"(?i)^\s*\"?(?:[\w.:\\/~-]*[\\/])?"
+    r"(?:(?:ba|z|da|k|fi|tc|c)?sh(?:\.exe)?\"?\s+(?:-\S+\s+)*-[a-zA-Z]*c[a-zA-Z]*\b"
+    r"|cmd(?:\.exe)?\"?\s+(?:\S+\s+)*?[-/][ck]\b"
+    r"|(?:pwsh|powershell)(?:\.exe)?\"?\s+(?:\S+\s+)*?-c(?:ommand)?\b)")
+
+
+def _r5_payload_evidence(payload: str, *, shell: bool = False, argv: bool = True) -> bool:
+    """Visible protected-class evidence in an interpreter payload.
+
+    Words inside the payload's OWN string literals do not count (`python -c
+    "print('git push --force')"` prints; it does not push) unless the
+    payload also reaches an exec surface, or is a shell's inline command.
+    `argv=True` means `payload` is command-line text: the shell strips one
+    layer of quoting before the interpreter sees it, so that layer is
+    removed here first (`_argv_tokens`) and only the quotes that survive
+    are literals. `python -c "git push --force"` is then the bare command
+    it is; `sudo -E python "-c" "git push --force"` likewise. A heredoc
+    body (`argv=False`) is read as written."""
+    if shell or _SHELL_INLINE_HEAD.match(payload) or _PAYLOAD_EXEC_SURFACE.search(payload):
         return bool(_OPAQUE_R5_EVIDENCE.search(payload))
-    return bool(_OPAQUE_R5_EVIDENCE.search(_STRING_LITERALS.sub('""', payload)))
+    text = payload
+    # A heredoc body is not argv: the shell hands it over as written, so
+    # its quotes are the payload's own literals.
+    if argv and "<<" not in payload:
+        tokens = _argv_tokens(payload)
+        if tokens:
+            # A fused `-c"git push --force"` arrives as the one token
+            # `-cgit push --force`; the command starts after the cluster.
+            text = " ".join(_FUSED_C_CLUSTER.sub(r"\1 ", token) for token in tokens)
+    return bool(_OPAQUE_R5_EVIDENCE.search(_STRING_LITERALS.sub('""', text)))
+
+
+_FUSED_C_CLUSTER = re.compile(r"^(-[a-zA-Z]*c)(?=\S)")
 
 
 class _PayloadEvidence:
@@ -2042,7 +2081,8 @@ class _PayloadEvidence:
         return True if _r5_payload_evidence(text) else None
 
 
-def _opaque_inline_verdict(payload: str) -> tuple[str, bool, list[str]]:
+def _opaque_inline_verdict(payload: str, *, shell: bool = False,
+                           argv: bool = True) -> tuple[str, bool, list[str]]:
     """category/protected/impact for an opaque interpreter payload this
     module does not and must not try to parse. Always protected; the only
     open question is which tier, decided by `_OPAQUE_R5_EVIDENCE`/
@@ -2059,7 +2099,7 @@ def _opaque_inline_verdict(payload: str) -> tuple[str, bool, list[str]]:
         return ("worktree-file-mutation", True,
                 [f"an interpreter payload names {POLICY_FILENAME}; opaque "
                  "code is never trusted to only be reading it"])
-    if _r5_payload_evidence(payload):
+    if _r5_payload_evidence(payload, shell=shell, argv=argv):
         return ("interpreter-opaque-inline", True,
                 ["an interpreter payload; visible evidence of a "
                  "protected-class operation inside it (a forced push, a "
@@ -5294,7 +5334,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
             category, protected, impact = _scanned_inline_verdict(
                 body, body, _interpreter_family(head[0]) if head else None)
         else:
-            category, protected, impact = _opaque_inline_verdict(body or header)
+            category, protected, impact = _opaque_inline_verdict(body or header, argv=False)
         tier, second_confirmation = _risk_tier(category, normalized)
         digest = hashlib.sha256(normalized.encode()).hexdigest()
         heredoc_verdict: dict[str, Any] = {

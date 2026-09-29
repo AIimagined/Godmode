@@ -2,7 +2,7 @@
   "routes": {
     "near_negative": {
       "Brainstorm an uncommitted product idea before it has any defined shape.": "godmode-changelog",
-      "Cut a release: bump the version number and publish the changelog.": "godmode-changelog",
+      "Cut a release: bump the version number and publish the changelog.": "godmode-budget",
       "Draft user-facing release notes from the merged changelog fragments.": "godmode-changelog",
       "Implement an already specified change with a known mechanism.": "godmode-replicate",
       "Record a session handoff checkpoint before stopping work for the day.": "godmode-continuity",

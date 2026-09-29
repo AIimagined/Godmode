@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godmode Loop Warden"
+  short_description: "Bound a retry cycle and stop it when progress stops."
+  default_prompt: "Use $godmode-loop-warden to audit the loop contract, declare the iteration cap and stop conditions, tick each iteration with its evidence, read the transcript for repetition, check whether blaming the model is supported, and close the loop as finished or cut off."

@@ -697,14 +697,14 @@ def repeated_repairs(project: Path, threshold: int = REPAIR_THRESHOLD) -> list[d
             stored = json.loads(cache.read_text(encoding="utf-8"))
             if stored.get("key") == key and stored.get("threshold") == threshold:
                 return stored["findings"]
-        except (OSError, ValueError, KeyError, TypeError):
+        except (OSError, ValueError, KeyError, TypeError):  # godmode: swallow-ok: an unreadable cache means recompute, the same result a fresh run gives
             pass
     findings = _repeated_repairs(project, tags, threshold)
     if cache is not None:
         try:
             cache.write_text(json.dumps({"key": key, "threshold": threshold, "findings": findings}),
                              encoding="utf-8")
-        except OSError:
+        except OSError:  # godmode: swallow-ok: the cache is a speed-up; the findings are already computed and returned
             pass
     return findings
 

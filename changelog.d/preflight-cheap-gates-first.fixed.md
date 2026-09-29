@@ -1,1 +1,0 @@
-- The push preflight runs its seconds-long checks first: the decision-table freshness check and the workflow gates now run before the test suite, and a red one stops the suite from starting. The report names the check that stopped it and the command that reproduces it, and the attestation reads `failed` rather than `incomplete`.

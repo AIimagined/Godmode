@@ -57,6 +57,37 @@ TTL_DAYS: dict[str, int] = {
 
 EPISODIC_KINDS = frozenset(TTL_DAYS)
 
+# The shortest retention an operator may declare, in days: a pass that
+# expired the same session's actions would erase the evidence `session
+# close` and `roi` still read.
+MIN_RETENTION_DAYS = 1
+RETENTION_POLICY_KEY = "retention_days"
+
+
+def retention_days() -> dict[str, int]:
+    """The per-kind retention in force: `TTL_DAYS`, with any kind the
+    operator's machine policy (`retention_days: {"action": 14, ...}` in
+    the file beside the authorization password) sets to a whole number of
+    days at or above `MIN_RETENTION_DAYS`. An unknown kind, a non-integer
+    or a value under the floor is ignored, never applied - the file is
+    retention policy, not a lever to empty the hot tier."""
+    active = dict(TTL_DAYS)
+    try:
+        from .godmode_sentinel import operator_policy_path
+        declared = json.loads(operator_policy_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return active
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: a policy that cannot be read leaves the shipped retention in force
+        return active
+    overrides = declared.get(RETENTION_POLICY_KEY) if isinstance(declared, dict) else None
+    if not isinstance(overrides, dict):
+        return active
+    for kind, days in overrides.items():
+        if (kind in TTL_DAYS and isinstance(days, int) and not isinstance(days, bool)
+                and days >= MIN_RETENTION_DAYS):
+            active[kind] = days
+    return active
+
 # Kinds `flag_contradictions` compares for a same-subject value conflict -
 # the two kinds that actually carry `data["value"]` as their own recorded
 # fact (a decision's invariant; a lesson's own generalisation, the
@@ -308,11 +339,15 @@ def protected_sequences(records: list[dict[str, Any]]) -> set[int]:
     return protected
 
 
-def eligible_for_expiry(records: list[dict[str, Any]], *, now: datetime) -> list[dict[str, Any]]:
+def eligible_for_expiry(records: list[dict[str, Any]], *, now: datetime,
+                        ttl_days: dict[str, int] | None = None) -> list[dict[str, Any]]:
     """Episodic records past their kind's TTL, minus everything
     `protected_sequences` says is still load-bearing. A record with no
     `recorded_at` (older than this field, or hand-edited) is never
-    eligible - an unmeasurable age is not evidence of staleness."""
+    eligible - an unmeasurable age is not evidence of staleness.
+    `ttl_days` is the retention in force (`retention_days()`); the
+    shipped table when not given."""
+    ttl = ttl_days or TTL_DAYS
     protected = protected_sequences(records)
     # The newest record is never eligible.
     # `Chronicle._chain_tail` reads the tail off the last HOT record, so a
@@ -329,10 +364,46 @@ def eligible_for_expiry(records: list[dict[str, Any]], *, now: datetime) -> list
         if sequence in protected or sequence == tail:
             continue
         age = age_days(record, now=now)
-        if age is None or age < TTL_DAYS[kind]:
+        if age is None or age < ttl.get(kind, TTL_DAYS[kind]):
             continue
         eligible.append(record)
     return eligible
+
+
+def rehydrate(archive: Chronicle, sequence: int) -> dict[str, Any]:
+    """Bring one rotated record back into the hot tier as a NEW record:
+    the same kind, subject and data, citing the cold original (`seq:N`)
+    and carrying `rehydrated_from`. The cold segment is never edited and
+    the chain never reordered - a rehydration is an append like any
+    other, so the record is readable by every hot-tier reader (the brief,
+    `status`, law compilation) again and expires again on its own clock.
+    Refused when the sequence is not a rotated record."""
+    registry = archive._read_cold_registry()  # noqa: SLF001 - the same package owns both sides
+    rotated = set(registry["rotated"]) if registry else set()
+    if sequence not in rotated:
+        raise ArchiveError(
+            f"seq:{sequence} is not a rotated record; only a record `godmode forget` moved "
+            "to the cold tier can be rehydrated (`godmode history --seq` reads any record "
+            "in place)"
+        )
+    original = archive.find_by_sequence(sequence)
+    if original is None:
+        raise ArchiveError(
+            f"seq:{sequence} is registered as rotated but its cold segment no longer "
+            "serves it; run `godmode doctor`"
+        )
+    data = dict(original.get("data") or {})
+    data["rehydrated_from"] = sequence
+    evidence = [f"seq:{sequence}"]
+    record = archive.append(str(original["kind"]), str(original["subject"]), data,
+                            evidence=evidence)
+    return {
+        "operation": "rehydrate",
+        "from": sequence,
+        "sequence": int(record["sequence"]),
+        "kind": record["kind"],
+        "subject": record["subject"],
+    }
 
 
 def _digest_paths(root: Path) -> list[Path]:
@@ -380,13 +451,15 @@ def archive_digest(root: Path) -> str:
 
 def _expire(archive: Chronicle, records: list[dict[str, Any]], *,
             now: datetime, dry_run: bool) -> dict[str, Any]:
-    eligible = eligible_for_expiry(records, now=now)
+    ttl = retention_days()
+    eligible = eligible_for_expiry(records, now=now, ttl_days=ttl)
     sequences = sorted(int(record["sequence"]) for record in eligible)
     report: dict[str, Any] = {
         "operation": "expire",
         "eligible": sequences,
         "count": len(sequences),
         "rotated": False,
+        "retention_days": ttl,
     }
     if dry_run or not sequences:
         return report

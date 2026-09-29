@@ -143,7 +143,8 @@ STILL_PROTECTED = (
     # A safe head does not launder a dangerous tail.
     "git status && git push origin main",
     "ls | xargs rm",
-    "cat notes.txt; rm -rf /tmp/x",
+    # A delete outside the tree; a temp-folder delete is local compute since 0.3.32.
+    "cat notes.txt; rm -rf /srv/x",
 )
 
 # PowerShell's own verbs say which of these mutate. Most are protected by
@@ -632,7 +633,7 @@ class AssignmentTests(unittest.TestCase):
         # this test is the assignment-stripping recursion, not the
         # interpreter's own opacity rule.
         self.assertFalse(classify_action("GODMODE_STATE_HOME=/tmp/s python script.py")["protected"])
-        self.assertTrue(classify_action("FOO=bar rm -rf /tmp/x")["protected"])
+        self.assertTrue(classify_action("FOO=bar rm -rf /srv/x")["protected"])
 
 
 class ReadPrefixLaunderingTests(unittest.TestCase):

@@ -1,0 +1,53 @@
+{
+  "schema": "godmode-skill-eval-v1",
+  "skill": "godmode-ci",
+  "routing": {
+    "positive": [
+      "I am about to open the pull request for this branch; run CI's checks locally in CI's order, cheap gates first, on the exact tree CI will see",
+      "The CI job for shard two went red; reproduce that leg locally in a disposable worktree and refresh the self-test, the version reconcile and the hook proof"
+    ],
+    "near_negative": [
+      "Merge the changelog fragments and build the release notes for this version",
+      "Preview and authorize the history rewrite on this branch",
+      "Reconcile the drifted hook manifests on every installed host"
+    ]
+  },
+  "behavior_assertions": [
+    {
+      "assert": "The push preflight validates HEAD or a working-tree snapshot in a disposable worktree.",
+      "check": {
+        "command": "python scripts/godmode.py precheck --help",
+        "expect_exit": 0,
+        "expect_contains": "--dirty"
+      }
+    },
+    {
+      "assert": "One CI leg can be reproduced as a single shard.",
+      "check": {
+        "command": "python scripts/godmode.py precheck --help",
+        "expect_exit": 0,
+        "expect_contains": "--shard-index"
+      }
+    },
+    {
+      "assert": "The version is reconciled across every surface that states one.",
+      "check": {
+        "command": "python scripts/godmode.py version --help",
+        "expect_exit": 0,
+        "expect_contains": "--reconcile"
+      }
+    },
+    {
+      "assert": "The skill's own bundle validates structurally.",
+      "check": {
+        "command": "python scripts/godmode.py --project . skill validate --path skills/godmode-ci",
+        "expect_exit": 0,
+        "expect_contains": "\"valid\": true"
+      }
+    },
+    "The preflight report names the tree it validated and every untracked path it did not - proven in tests/test_preflight_order.py.",
+    "A shard is attested as one leg, never as the suite."
+  ],
+  "baseline_required": true,
+  "claims_require_evidence": true
+}

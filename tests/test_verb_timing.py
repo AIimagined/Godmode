@@ -16,6 +16,22 @@ if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 
 from _slow import slow  # noqa: E402
+from _host_env import scrubbed_environment  # noqa: E402
+
+_HOST_ENV = None
+
+
+def setUpModule() -> None:
+    """The timed verbs run as subprocesses that spread `os.environ`; a
+    runner's own `CI` or host marker must not change what they measure."""
+    global _HOST_ENV
+    _HOST_ENV = scrubbed_environment()
+    _HOST_ENV.start()
+
+
+def tearDownModule() -> None:
+    if _HOST_ENV is not None:
+        _HOST_ENV.stop()
 
 VERB_BOUND_SECONDS = 10.0
 BRIEF_BOUND_SECONDS = 2.0
@@ -31,7 +47,7 @@ def _timed(*verb: str) -> tuple[float, subprocess.CompletedProcess]:
 
 @slow
 class VerbTimingTests(unittest.TestCase):
-    def _bound(self, bound: float, *verb: str) -> None:
+    def assert_bound(self, bound: float, *verb: str) -> None:
         # Warm run: the first build of the atlas cache is the one-off cost
         # the cache exists to pay once.
         _timed(*verb)
@@ -40,25 +56,25 @@ class VerbTimingTests(unittest.TestCase):
                                      f"{done.stderr[-300:]}")
 
     def test_metrics(self) -> None:
-        self._bound(VERB_BOUND_SECONDS, "metrics")
+        self.assert_bound(VERB_BOUND_SECONDS, "metrics")
 
     def test_minimality(self) -> None:
-        self._bound(VERB_BOUND_SECONDS, "minimality")
+        self.assert_bound(VERB_BOUND_SECONDS, "minimality")
 
     def test_loop(self) -> None:
-        self._bound(VERB_BOUND_SECONDS, "loop")
+        self.assert_bound(VERB_BOUND_SECONDS, "loop")
 
     def test_evals_fast(self) -> None:
-        self._bound(VERB_BOUND_SECONDS, "evals", "--fast", "--brief")
+        self.assert_bound(VERB_BOUND_SECONDS, "evals", "--fast", "--brief")
 
     def test_doctor(self) -> None:
-        self._bound(VERB_BOUND_SECONDS, "doctor")
+        self.assert_bound(VERB_BOUND_SECONDS, "doctor")
 
     def test_resume(self) -> None:
-        self._bound(VERB_BOUND_SECONDS, "resume")
+        self.assert_bound(VERB_BOUND_SECONDS, "resume")
 
     def test_brief_is_hook_fast(self) -> None:
-        self._bound(BRIEF_BOUND_SECONDS, "brief")
+        self.assert_bound(BRIEF_BOUND_SECONDS, "brief")
 
 
 if __name__ == "__main__":

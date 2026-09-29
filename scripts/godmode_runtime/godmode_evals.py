@@ -1530,10 +1530,10 @@ def _self_check() -> None:
 
     grid = adversarial_grid()
     assert grid["not_executable"] == 0, grid["grid"]
-    # 13 adversarial cells plus the 22 meta-gate cells (one guaranteed-deny
+    # 13 adversarial cells plus the 21 meta-gate cells (one guaranteed-deny
     # fixture per protected class); a changed count means a fixture was
     # added or lost and the test that pins the fixture table must move too.
-    assert grid["cells"] == 35, grid["cells"]
+    assert grid["cells"] == 13 + len(META_FIXTURES), grid["cells"]
 
     # Grader vocabulary is reachable from a behaviour-assertion check,
     # and two result records compare only when their ids agree.

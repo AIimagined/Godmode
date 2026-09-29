@@ -1,1 +1,0 @@
-- A staged approval now lasts up to twelve hours instead of five minutes, so a push approved before a test suite or a CI run is still there when the push happens. It is still bound to the exact command, the repository, the worktree, the commit and the branch, and is spent once; a new commit invalidates it. The prompt and the dialog say so in hours and minutes.

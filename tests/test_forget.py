@@ -1374,5 +1374,73 @@ class RotationDoesNotErodeTheAcceleratorsTests(unittest.TestCase):
                              archive.read_events(verify=False)[-1]["sequence"])
 
 
+class RetentionPolicyTests(unittest.TestCase):
+    """The operator's machine policy may lengthen or shorten a kind's
+    retention down to the one-day floor; an unknown kind, a non-integer
+    or a value under the floor is ignored."""
+
+    def test_operator_retention_overrides_within_the_floor(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            from godmode_runtime.godmode_sentinel import operator_policy_path
+            path = operator_policy_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"retention_days": {
+                "action": 7, "refusal": 0, "decision": 1, "attestation": "long", "hypothesis": True,
+            }}), encoding="utf-8")
+            ttl = forget_mod.retention_days()
+            self.assertEqual(ttl["action"], 7)
+            self.assertEqual(ttl["refusal"], forget_mod.TTL_DAYS["refusal"])
+            self.assertEqual(ttl["attestation"], forget_mod.TTL_DAYS["attestation"])
+            self.assertEqual(ttl["hypothesis"], forget_mod.TTL_DAYS["hypothesis"])
+            self.assertNotIn("decision", ttl)
+            # Ten days old: kept under the shipped 30, expired under the override.
+            _append_at(archive, "action", "old", {}, NOW - timedelta(days=10))
+            archive.append("decision", "kept", {"value": "k"}, evidence=[])
+            code, payload = _run(project, "forget", "--dry-run", "--now", NOW.isoformat())
+            self.assertEqual(code, 0, payload)
+            self.assertEqual(payload["expire"]["count"], 1, payload["expire"])
+            self.assertEqual(payload["expire"]["retention_days"]["action"], 7)
+
+    def test_without_a_declaration_the_shipped_table_is_in_force(self) -> None:
+        with isolated_project() as (_project, _state, _anchor, archive):
+            archive.initialize()
+            self.assertEqual(forget_mod.retention_days(), forget_mod.TTL_DAYS)
+
+
+class RehydrateTests(unittest.TestCase):
+    def test_a_rotated_record_comes_back_as_a_new_hot_record_citing_the_cold_one(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            old = _append_at(archive, "action", "old", {"summary": "x"}, OLD_ACTION)
+            archive.append("decision", "kept", {"value": "k"}, evidence=[])
+            code, passed = _run(project, "forget", "--now", NOW.isoformat(), "--dry-run")
+            self.assertIn(old["sequence"], passed["expire"]["eligible"], passed)
+            # A real pass measures against the real clock: OLD_ACTION is a
+            # year of days behind it, so it rotates.
+            code, passed = _run(project, "forget")
+            self.assertEqual(code, 0, passed)
+            self.assertTrue(passed["expire"]["rotated"], passed["expire"])
+            code, back = _run(project, "forget", "--rehydrate", str(old["sequence"]))
+            self.assertEqual(code, 0, back)
+            self.assertEqual(back["from"], old["sequence"])
+            self.assertGreater(back["sequence"], old["sequence"])
+            fresh = archive.find_by_sequence(back["sequence"])
+            self.assertEqual(fresh["kind"], "action")
+            self.assertEqual(fresh["subject"], "old")
+            self.assertEqual(fresh["data"]["rehydrated_from"], old["sequence"])
+            self.assertIn(f"seq:{old['sequence']}", fresh["evidence"])
+            # The cold original is untouched and still served.
+            self.assertEqual(archive.find_by_sequence(old["sequence"])["data"], {"summary": "x"})
+
+    def test_a_hot_record_is_refused(self) -> None:
+        with isolated_project() as (project, _state, _anchor, archive):
+            archive.initialize()
+            hot = archive.append("decision", "kept", {"value": "k"}, evidence=[])
+            code, refusal = _run_refusal(project, "forget", "--rehydrate", str(hot["sequence"]))
+            self.assertNotEqual(code, 0)
+            self.assertIn("not a rotated record", json.dumps(refusal))
+
+
 if __name__ == "__main__":
     unittest.main()

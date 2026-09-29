@@ -1,9 +1,9 @@
 {
   "routes": {
     "near_negative": {
-      "Explain in plain language what a specific function returns to a teammate.": "godmode-codegraph",
+      "Explain in plain language what a specific function returns to a teammate.": "godmode-budget",
       "Rename an internal variable for clarity inside one method.": "godmode-governance",
-      "Summarize what changed in this release for the team.": "godmode-codegraph",
+      "Summarize what changed in this release for the team.": "godmode-budget",
       "Write a commit message for this change.": "godmode-codegraph"
     },
     "positive": {

@@ -1,0 +1,53 @@
+{
+  "schema": "godmode-skill-eval-v1",
+  "skill": "godmode-budget",
+  "routing": {
+    "positive": [
+      "This session has burned far more tokens and tool calls than the task warranted; check the spend against the declared ceilings and read the per-session spend series before continuing",
+      "The last release cost nine password rounds and five reruns of the full suite; fold the burn beside the gate activity per release and record what to cut"
+    ],
+    "near_negative": [
+      "The agent has retried the same failing test nine times on the same lines; cap the loop and cut it off",
+      "Merge the changelog fragments and build the release notes for this version",
+      "Score this skill's routing against its baseline and ratchet the regression"
+    ]
+  },
+  "behavior_assertions": [
+    {
+      "assert": "Reported spend is checked against declared run ceilings.",
+      "check": {
+        "command": "python scripts/godmode.py ceilings --help",
+        "expect_exit": 0,
+        "expect_contains": "--spent"
+      }
+    },
+    {
+      "assert": "Burn is folded per release tag range, counts only.",
+      "check": {
+        "command": "python scripts/godmode.py roi --help",
+        "expect_exit": 0,
+        "expect_contains": "--releases"
+      }
+    },
+    {
+      "assert": "The spend series states unmeasured sessions as gaps.",
+      "check": {
+        "command": "python scripts/godmode.py trends --help",
+        "expect_exit": 0,
+        "expect_contains": "--sessions"
+      }
+    },
+    {
+      "assert": "The skill's own bundle validates structurally.",
+      "check": {
+        "command": "python scripts/godmode.py --project . skill validate --path skills/godmode-budget",
+        "expect_exit": 0,
+        "expect_contains": "\"valid\": true"
+      }
+    },
+    "A breached ceiling exits non-zero and names the ceiling - proven in tests/test_godmode_budget.py on a bare temp project.",
+    "A release fold is counts only and carries no causal wording."
+  ],
+  "baseline_required": true,
+  "claims_require_evidence": true
+}

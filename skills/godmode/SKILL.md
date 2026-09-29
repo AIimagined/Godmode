@@ -70,6 +70,9 @@ advisories, and stage a protected operation with `authorize stage` before it.
 - Use `godmode-evidence` when a claim keeps being downgraded or cited evidence drifted:
   exit-bearing cites, falsifiers, stale-citation repair, one resolution.
 - Use `godmode-triage` to work open asks down to closed, promoted, mapped or parked.
+- Use `godmode-loop-warden` to cap a fix-and-retry cycle and cut it off when it repeats.
+- Use `godmode-budget` to check a session's or a release's spend against its ceilings.
+- Use `godmode-ci` to run CI's checks locally in CI's order before a PR, by shard.
 
 Do not invoke every specialist. One specialist owns each overlapping capability; use a
 second only when the request genuinely crosses its boundary.

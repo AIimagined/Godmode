@@ -1,1 +1,0 @@
-- The staging line a refusal prints now runs as pasted on bash and on PowerShell, quotes, dollar signs and newlines included, and stages exactly the refused command.

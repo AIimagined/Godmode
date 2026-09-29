@@ -692,9 +692,7 @@ def _park_echo(archive: Chronicle, submitted: dict[str, Any], *,
     key = _session_key(submitted)
     echo = archive.root / "godmode-claim-echo.json"
     with archive.write_lock():
-        parked = json.loads(echo.read_text(encoding="utf-8")) if echo.exists() else {}
-        if not isinstance(parked, dict):
-            parked = {}
+        parked = _read_json_sidecar(echo, {})
         now = _time.time()
         others = _echo_others(parked, now)
         own = _echo_entry(parked)
@@ -727,9 +725,7 @@ def _take_echo(archive: Chronicle, current: str | None) -> dict[str, Any]:
     with archive.write_lock():
         if not echo.exists():
             return {}
-        parked = json.loads(echo.read_text(encoding="utf-8"))
-        if not isinstance(parked, dict):
-            parked = {}
+        parked = _read_json_sidecar(echo, {})
         now = _time.time()
         others = _echo_others(parked, now)
         if current is None or parked.get("session") == current:
@@ -748,6 +744,26 @@ def _take_echo(archive: Chronicle, current: str | None) -> dict[str, Any]:
         else:
             echo.unlink()
         return taken
+
+
+def _read_json_sidecar(path: Path, fallback: Any) -> Any:
+    """A sidecar beside the archive (an echo, a parked list) read with its
+    own degradation: an unreadable or wrong-shaped file is `fallback`, the
+    state a fresh session starts from, and the degradation is recorded
+    once. Before this, three of these reads left a corrupt sidecar to the
+    entry-point guard, which turned the whole event into a degraded exit
+    instead of costing one parked echo."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return fallback  # no sidecar yet: the ordinary first-session state, not a degradation
+    except Exception as exc:  # noqa: BLE001  # godmode: swallow-ok: a sidecar is derived state; the archive is untouched
+        try:
+            _print_degraded_once(f"sidecar {path.name} unreadable: {type(exc).__name__}")
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: reporting the degradation must not fail the read
+            pass
+        return fallback
+    return value if isinstance(value, type(fallback)) else fallback
 
 
 def _session_key(submitted: dict[str, Any]) -> str | None:
@@ -2112,7 +2128,7 @@ def _flush_deferred_measurements(archive: Any) -> int:
     if not sidecar.is_file():
         return 0
     try:
-        pending = json.loads(sidecar.read_text(encoding="utf-8"))
+        pending = _read_json_sidecar(sidecar, [])
     finally:
         sidecar.unlink(missing_ok=True)
     if not isinstance(pending, list):
