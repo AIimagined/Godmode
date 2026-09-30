@@ -3,8 +3,8 @@
     "near_negative": {
       "Investigate a performance regression that has never come up before.": "godmode-investigation",
       "Review this PR.": "godmode-spec-lifecycle",
-      "Run the test suite once and record its result.": "godmode-evidence",
-      "Write documentation explaining how a brand-new configuration flag works.": "godmode-continuity"
+      "Run the test suite once and record its result.": "godmode-budget",
+      "Write documentation explaining how a brand-new configuration flag works.": "godmode-host-sync"
     },
     "positive": {
       "Give this already-merged change an independent recheck before its accepted verdict is trusted.": "godmode-second-look",

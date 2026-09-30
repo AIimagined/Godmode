@@ -372,7 +372,12 @@ class ResurfacedSurvivesEarlierNoticesTests(unittest.TestCase):
                 message.startswith("godmode: idle and worth another look"),
                 message)
             self.assertIn("refactor", message)
-            self.assertIn("more in `godmode doctor`", message)
+            # Every line here spent once-only state as it was produced (the
+            # resurface cooldown, the tripwire receipt, the nag marker), so
+            # none is clipped into the tail: three burned lines, no tail.
+            self.assertIn("paid-lane runaway shape", message)
+            self.assertIn("unfinished promises", message)
+            self.assertNotIn("more in `godmode doctor`", message)
 
             cooldown_records = [
                 r for r in archive.read_events()

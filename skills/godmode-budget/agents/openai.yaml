@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godmode Budget"
+  short_description: "Check spend against ceilings from local records."
+  default_prompt: "Use $godmode-budget to check the reported tokens, tool calls and seconds against the declared ceilings, read the per-session spend series with its gaps, fold burn beside gate activity per session and per release, measure the brief budgets locally, and record the decision the numbers support."

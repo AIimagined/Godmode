@@ -204,6 +204,11 @@ def _extract_json_version(path: str, text: str) -> list[dict[str, Any]]:
 
 
 def _walk_literals(project: Path) -> list[dict[str, Any]]:
+    from .godmode_atlas import FileCache
+
+    # Per-file cache keyed on (size, mtime): re-parsing every module on each
+    # run was 7 s of this report on this repo.
+    cache = FileCache(project, "literals")
     literals: list[dict[str, Any]] = []
     for path in sorted(project.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in (".py", ".json"):
@@ -211,14 +216,19 @@ def _walk_literals(project: Path) -> list[dict[str, Any]]:
         if any(part in IGNORED_DIRECTORY_NAMES for part in path.parts):
             continue
         relative = path.relative_to(project).as_posix()
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        if path.suffix.lower() == ".py":
-            literals.extend(_extract_python_literals(relative, text))
-        else:
-            literals.extend(_extract_json_version(relative, text))
+        found = cache.get(path, relative)
+        if found is None:
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if path.suffix.lower() == ".py":
+                found = _extract_python_literals(relative, text)
+            else:
+                found = _extract_json_version(relative, text)
+            cache.put(path, relative, found)
+        literals.extend(found)
+    cache.save()
     return literals
 
 

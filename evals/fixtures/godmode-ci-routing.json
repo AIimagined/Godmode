@@ -1,0 +1,21 @@
+{
+  "routes": {
+    "near_negative": {
+      "Merge the changelog fragments and build the release notes for this version": "godmode-changelog",
+      "Preview and authorize the history rewrite on this branch": "godmode-governance",
+      "Reconcile the drifted hook manifests on every installed host": "godmode-host-sync"
+    },
+    "positive": {
+      "I am about to open the pull request for this branch; run CI's checks locally in CI's order, cheap gates first, on the exact tree CI will see": "godmode-ci",
+      "The CI job for shard two went red; reproduce that leg locally in a disposable worktree and refresh the self-test, the version reconcile and the hook proof": "godmode-ci"
+    }
+  },
+  "schema": "godmode-routing-snapshot-v1",
+  "skill": "godmode-ci",
+  "summary": {
+    "near_negatives_rejected": 3,
+    "near_negatives_total": 3,
+    "positives_routed_correctly": 2,
+    "positives_total": 2
+  }
+}

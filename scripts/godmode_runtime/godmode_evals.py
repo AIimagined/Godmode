@@ -96,7 +96,11 @@ _MODELS_SETTINGS_FILE = ".godmode-evals.json"
 # edit) - it has no command string at all, let alone one `classify_action`
 # could categorize this way, so it is unreachable through this suite's one
 # entry point exactly like the member above, for the same reason.
-_RETIRED_CATEGORIES = frozenset({"unclassified-mutation", "fix-loop-reversal"})
+# `git-branch-mutation` is still emitted, for `git branch -D` and `-d
+# --force` only, and both escalate to R5 before any tier row is read; the
+# reversible `-d`/`-m`/`-f` forms moved to `git-local-reversible` (R1).
+_RETIRED_CATEGORIES = frozenset({
+    "unclassified-mutation", "fix-loop-reversal", "git-branch-mutation"})
 
 
 class _PinnedFixtureArchive:
@@ -157,9 +161,6 @@ META_FIXTURES: dict[str, list[dict[str, Any]]] = {
     "interpreter-opaque-inline": [
         {"command": 'python -c "print(1)"', "tier": "R2", "protected": True},
     ],
-    "git-branch-mutation": [
-        {"command": "git branch -d feature-x", "tier": "R3", "protected": True},
-    ],
     "git-history-or-remote": [
         {"command": "git commit --amend -m x", "tier": "R3", "protected": True},
     ],
@@ -188,7 +189,7 @@ META_FIXTURES: dict[str, list[dict[str, Any]]] = {
         {"command": "npm publish", "tier": "R4", "protected": True},
     ],
     "filesystem-mutation": [
-        {"command": "rm -rf build", "tier": "R4", "protected": True},
+        {"command": "rm -rf ../build", "tier": "R4", "protected": True},
     ],
     "protection-weakening": [
         {"command": "godmode config set uninitialized off", "tier": "R4", "protected": True},
@@ -1529,10 +1530,10 @@ def _self_check() -> None:
 
     grid = adversarial_grid()
     assert grid["not_executable"] == 0, grid["grid"]
-    # 13 adversarial cells plus the 22 meta-gate cells (one guaranteed-deny
+    # 13 adversarial cells plus the 21 meta-gate cells (one guaranteed-deny
     # fixture per protected class); a changed count means a fixture was
     # added or lost and the test that pins the fixture table must move too.
-    assert grid["cells"] == 35, grid["cells"]
+    assert grid["cells"] == 13 + len(META_FIXTURES), grid["cells"]
 
     # Grader vocabulary is reachable from a behaviour-assertion check,
     # and two result records compare only when their ids agree.

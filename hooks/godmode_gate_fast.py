@@ -127,8 +127,8 @@ _EXACT_ONLY_GIT_PHRASES = frozenset({"git branch", "git remote -v"})
 # group this module never needs (a redirect anywhere disqualifies the whole
 # segment; where it points is the full hook's question, not this one's).
 #
-# Synced with `godmode_sentinel._REDIRECT`'s own fix (task-3-4-review.md
-# Critical): the lookbehind used to also exclude a digit immediately before
+# Synced with `godmode_sentinel._REDIRECT`'s own fix: the lookbehind used
+# to also exclude a digit immediately before
 # `>`, which was meant to keep `2>&1` (fd duplication) from matching but
 # also blinded this check to `1>out.txt`/`2>err.log`/`0>f` - real,
 # digit-qualified file writes, invisible here exactly as they were in the
@@ -334,11 +334,28 @@ def _blanked_segments(command: str) -> list[str]:
     return segments
 
 
+def _host_floor_key() -> str:
+    """Which host's floor applies: the declared `GODMODE_HOST`, else the
+    host whose environment markers are present, else claude-code."""
+    declared = os.environ.get("GODMODE_HOST", "").strip().lower()
+    if declared:
+        return declared
+    if os.environ.get("ANTIGRAVITY_AGENT") or os.environ.get("ANTIGRAVITY_CONVERSATION_ID"):
+        return "antigravity"
+    if os.environ.get("GROK_AGENT") or os.environ.get("GROK_HOOK_EVENT"):
+        return "grok"
+    if os.environ.get("CODEX_HOME") or os.environ.get("CODEX_SANDBOX"):
+        return "codex"
+    if os.environ.get("CURSOR_TRACE_ID") or os.environ.get("CURSOR_AGENT"):
+        return "cursor"
+    return "claude-code"
+
+
 def _git_phrases(table: dict[str, Any]) -> list[list[str]] | None:
     floor = table.get("floor")
     if not isinstance(floor, dict):
         return None
-    entries = floor.get("claude-code")
+    entries = floor.get(_host_floor_key(), floor.get("claude-code"))
     if not isinstance(entries, list):
         return None
     phrases: list[list[str]] = []
@@ -941,7 +958,7 @@ def edit_cleared(payload: dict[str, Any], start: Path, table: dict[str, Any] | N
 # and a harm sample list through the classifier and fails if any harm-class
 # command is not a candidate here.
 _HARM_HINT = re.compile(
-    r"(?:^|[^a-z0-9_])(?:push|reset|clean|branch|drop|truncate|rm|rmdir|rd|del|delete|"
+    r"(?:^|[^a-z0-9_])(?:push|reset|rebase|clean|branch|drop|truncate|rm|rmdir|rd|del|delete|"
     r"erase|unlink|remove|rmtree|move-item|new-item|set-content|add-content|out-file|"
     r"clear-content|rename-item|find|deploy|publish|release|upload|send|post|create|"
     r"eval|vssadmin|wmic|wbadmin|tmutil|password|godmode|uninitialized|config)"
@@ -1653,6 +1670,42 @@ def uninitialized_body(payload: dict[str, Any], start: Path,
     return body
 
 
+# The archive-free classification, run in a second interpreter exactly
+# like the escalation: this module imports no runtime module (the
+# dependency-direction gate pins that), and a classifier that hangs on
+# something other than the archive is bounded by its own deadline.
+_RUN_CLASSIFY = (
+    "import sys,json;sys.path.insert(0,sys.argv.pop(1));"
+    "from godmode_runtime.godmode_sentinel import classify_action as c;"
+    "v=c(sys.argv[1],project_root=sys.argv[2],tool_name=sys.argv[3]);"
+    "print('allow' if (not v['protected'] and v['tier'] in ('R0','R1')) else 'refuse')")
+CLASSIFY_DEADLINE_SECONDS = 10
+
+
+def _decide_without_archive(payload: dict[str, Any], start: Path) -> str:
+    """`allow` when the full classifier, run with no archive in its own
+    process, reads the shell command as R0/R1 and unprotected; `refuse`
+    for anything else, any other tool, a timeout or any failure. Reached
+    only after the full check timed out, so the second interpreter is paid
+    where 25 s were already spent, never on the silent-allow path."""
+    import subprocess
+    try:
+        tool = payload.get("toolName", payload.get("tool_name"))
+        tool_input = payload.get("toolInput", payload.get("tool_input"))
+        if not isinstance(tool, str) or tool not in _SHELL_TOOLS or not isinstance(tool_input, dict):
+            return "refuse"
+        command = tool_input.get("command", tool_input.get("CommandLine"))
+        if not isinstance(command, str) or not command.strip():
+            return "refuse"
+        done = subprocess.run(
+            [sys.executable, "-I", *_bytecode_flags(), "-c", _RUN_CLASSIFY,
+             str(HOOKS_DIR.parent / "scripts"), command, str(start), tool],
+            capture_output=True, text=True, timeout=CLASSIFY_DEADLINE_SECONDS)
+        return "allow" if done.returncode == 0 and done.stdout.strip() == "allow" else "refuse"
+    except Exception:  # noqa: BLE001 - doubt refuses, exactly as the timeout did
+        return "refuse"
+
+
 def spoken_allow(payload: dict[str, Any]) -> None:
     """Antigravity reads a silent PreToolUse as a denial (a memory plugin's
     Antigravity bridge, verified on agy 1.0.15: a bare `{}` refuses every matched
@@ -1757,6 +1810,15 @@ def main() -> int:
             timeout=FULL_HOOK_DEADLINE_SECONDS,
         )
     except subprocess.TimeoutExpired:
+        # The full check hangs on the archive lock while a suite or a
+        # second session writes (0.3.31: recurring "could not decide"
+        # refusals on plain reads). A read or a local computation needs
+        # no archive to be judged: classified here without one, and
+        # allowed when the classifier itself says R0/R1 unprotected.
+        # Everything else keeps failing closed.
+        if _decide_without_archive(payload, start) == "allow":
+            spoken_allow(payload)
+            return 0
         sys.stderr.write(
             f"godmode: refused - the gate could not decide within "
             f"{FULL_HOOK_DEADLINE_SECONDS}s, and an undecided call is not an allowed one. "

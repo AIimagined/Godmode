@@ -211,8 +211,9 @@
   },
   {
     "operation": "rm -rf /tmp/godmode-gate-probe-does-not-exist",
-    "expected": "ask",
-    "class": "by-design"
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: a delete inside the temp folder is local compute, not a protected delete"
   },
   {
     "operation": "grep -n \"_CONFIG_CONTRACTS\" -A 14 scripts/godmode_runtime/godmode_console.py | head -18; echo \"=== which exist here:\"; for f in .godmode-docs.json .godmode-docslint.json .godmode-privacy.json .godmode-report.json .godmode-dependency-policy.json; do [ -f \"$f\" ] && echo \"present: $f\"; done",
@@ -261,8 +262,9 @@
   },
   {
     "operation": "rm -rf /tmp/godmode-live-probe-nonexistent",
-    "expected": "ask",
-    "class": "by-design"
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: a delete inside the temp folder is local compute, not a protected delete"
   },
   {
     "operation": "git push origin main && git log --oneline -3 && git rev-parse HEAD origin/main",
@@ -380,12 +382,12 @@
     "class": "by-design"
   },
   {
-    "operation": "git diff --numstat lib/captureModule.ts; echo \"=== RUN ===\"; npx vitest run lib/__tests__/captureModule.test.ts 2>&1 | grep -E \"AssertionError|Tests |\u00d7 |NOT DETECTED\" | head -12",
+    "operation": "git diff --numstat lib/captureModule.ts; echo \"=== RUN ===\"; npx vitest run lib/__tests__/captureModule.test.ts 2>&1 | grep -E \"AssertionError|Tests |× |NOT DETECTED\" | head -12",
     "expected": "allow",
     "class": "by-design"
   },
   {
-    "operation": "npx vitest run lib/__tests__/captureModule.test.ts 2>&1 | grep -E \"Tests |\u00d7|AssertionError\" | head -12",
+    "operation": "npx vitest run lib/__tests__/captureModule.test.ts 2>&1 | grep -E \"Tests |×|AssertionError\" | head -12",
     "expected": "allow",
     "class": "by-design"
   },
@@ -455,12 +457,12 @@
     "class": "FP2"
   },
   {
-    "operation": "node packages/render-headless/frames.js --frames 3 --fps 30 --pipe >/dev/null 2>&1; node -e \"const h=require('./out/frame-hashes.json');console.log('frame0:',h[0], h[0]==='ea69b40a'?'UNCHANGED \u2713':'CHANGED \u2717')\"",
+    "operation": "node packages/render-headless/frames.js --frames 3 --fps 30 --pipe >/dev/null 2>&1; node -e \"const h=require('./out/frame-hashes.json');console.log('frame0:',h[0], h[0]==='ea69b40a'?'UNCHANGED ✓':'CHANGED ✗')\"",
     "expected": "ask",
     "class": "by-design"
   },
   {
-    "operation": "git restore out/ && npm test 2>&1 | grep -E \"^\u2139 (tests|pass|fail)\"",
+    "operation": "git restore out/ && npm test 2>&1 | grep -E \"^ℹ (tests|pass|fail)\"",
     "expected": "ask",
     "class": "by-design"
   },
@@ -695,7 +697,7 @@
     "class": "FP2"
   },
   {
-    "operation": "try { $r = Invoke-WebRequest -Uri \"httPATH\" -UseBasicParsing -TimeoutSec 25; \"HTTP $($r.StatusCode) \u00b7 $($r.Content.Length) bytes\" } catch { \"REQUEST FAILED: $($_.Exception.Message)\" }",
+    "operation": "try { $r = Invoke-WebRequest -Uri \"httPATH\" -UseBasicParsing -TimeoutSec 25; \"HTTP $($r.StatusCode) · $($r.Content.Length) bytes\" } catch { \"REQUEST FAILED: $($_.Exception.Message)\" }",
     "expected": "allow",
     "class": "FP2"
   },
@@ -901,8 +903,9 @@
   },
   {
     "operation": "cd PROJ && git stash push -m \"release-prep (blocked)\" -- CHANGELOG.md changelog.d && git status --porcelain | head -5 && git stash list | head -2",
-    "expected": "ask",
-    "class": "field-recovered"
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: a stash is local and reversible; the stash it creates is restorable with `git stash pop`"
   },
   {
     "operation": "cd PROJ && git checkout -- hooks/gate_table.json tests/test_x.py 2>/dev/null; git status --porcelain | head -5 && python -m unittest tests.test_x 2>&1 | tail -2",
@@ -986,31 +989,31 @@
   },
   {
     "operation": "ls && frobnicate --now",
-    "expected": "ask",
+    "expected": "allow",
     "class": "by-design",
     "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
   },
   {
     "operation": "ls ; frobnicate --now",
-    "expected": "ask",
+    "expected": "allow",
     "class": "by-design",
     "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
   },
   {
     "operation": "ls\nfrobnicate --now",
-    "expected": "ask",
+    "expected": "allow",
     "class": "by-design",
     "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
   },
   {
     "operation": "ls & frobnicate --now",
-    "expected": "ask",
+    "expected": "allow",
     "class": "by-design",
     "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
   },
   {
     "operation": "ls || frobnicate --now",
-    "expected": "ask",
+    "expected": "allow",
     "class": "by-design",
     "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
   },
@@ -1021,55 +1024,55 @@
   },
   {
     "operation": "ls ; ./frobnicate.sh",
-    "expected": "ask",
+    "expected": "allow",
     "class": "by-design",
     "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
   },
   {
     "operation": "ls && \"frobnicate\"",
-    "expected": "ask",
+    "expected": "allow",
     "class": "by-design",
     "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
   },
   {
     "operation": "ls && FOO=1 frobnicate",
-    "expected": "ask",
+    "expected": "allow",
     "class": "by-design",
     "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
   },
   {
     "operation": "ls && time ./frobnicate.sh",
-    "expected": "ask",
+    "expected": "allow",
     "class": "by-design",
     "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
   },
   {
     "operation": "ls && time -p ./frobnicate.sh",
-    "expected": "ask",
+    "expected": "allow",
     "class": "by-design",
     "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
   },
   {
     "operation": "ls && do frobnicate",
-    "expected": "ask",
+    "expected": "allow",
     "class": "by-design",
     "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
   },
   {
     "operation": "ls && FOO=1 time ./frobnicate.sh",
-    "expected": "ask",
+    "expected": "allow",
     "class": "by-design",
     "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
   },
   {
     "operation": "ls && do time ./frobnicate.sh",
-    "expected": "ask",
+    "expected": "allow",
     "class": "by-design",
     "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
   },
   {
     "operation": "ls && if true; then time ./frobnicate.sh; fi",
-    "expected": "ask",
+    "expected": "allow",
     "class": "by-design",
     "note": "unknown head after a separator, prefix, env assignment or shell keyword asks, as a bare unknown head does (fix(gate) 2026-09-17: unknown head resolved past env prefixes and prefix runners)"
   },
@@ -1123,7 +1126,7 @@
     "note": "G-5 synthetic dialect pin: a PowerShell here-string holds quotes literally; read with Bash's rules its quotes swallowed the push"
   },
   {
-    "operation": "cat \"a\u201c; git push --force; cat \u201dx\"",
+    "operation": "cat \"a“; git push --force; cat ”x\"",
     "expected": "refuse",
     "class": "by-design",
     "tool": "PowerShell",
@@ -1277,28 +1280,28 @@
     "note": "G-5 synthetic dialect pin: a quoted path to a command is still that command; the head resolves to its base name (review round 2, F3)"
   },
   {
-    "operation": "g\u0456t push --force origin main",
+    "operation": "gіt push --force origin main",
     "expected": "ask",
     "class": "by-design",
     "tool": "Bash",
     "note": "a non-ASCII lookalike command name is an unknown command, never a read"
   },
   {
-    "operation": "g\u0456t status",
+    "operation": "gіt status",
     "expected": "ask",
     "class": "by-design",
     "tool": "Bash",
     "note": "a non-ASCII lookalike command name is an unknown command, never a read"
   },
   {
-    "operation": "echo \"h\u00e9llo w\u00f6rld\"",
+    "operation": "echo \"héllo wörld\"",
     "expected": "allow",
     "class": "by-design",
     "tool": "Bash",
     "note": "near-miss: non-ASCII data is not a command name"
   },
   {
-    "operation": "./donn\u00e9es/run.sh",
+    "operation": "./données/run.sh",
     "expected": "allow",
     "class": "by-design",
     "tool": "Bash",
@@ -1467,14 +1470,14 @@
   },
   {
     "operation": "ls && time -f %e ./frobnicate.sh",
-    "expected": "ask",
+    "expected": "allow",
     "class": "by-design",
     "tool": "Bash",
     "note": "a prefix runner's option value is peeled with its flag; the command it runs is judged"
   },
   {
     "operation": "ls && time --format \"%e s\" ./frobnicate.sh",
-    "expected": "ask",
+    "expected": "allow",
     "class": "by-design",
     "tool": "Bash",
     "note": "a prefix runner's quoted option value is peeled with its flag"
@@ -2136,5 +2139,349 @@
     "class": "by-design",
     "tool": "Bash",
     "note": "near-miss: the adopt preview changes nothing"
+  },
+  {
+    "operation": "ls && frobnicate --force",
+    "expected": "ask",
+    "class": "by-design"
+  },
+  {
+    "operation": "ls ; frobnicate --force",
+    "expected": "ask",
+    "class": "by-design"
+  },
+  {
+    "operation": "ls\nfrobnicate --force",
+    "expected": "ask",
+    "class": "by-design"
+  },
+  {
+    "operation": "ls & frobnicate --force",
+    "expected": "ask",
+    "class": "by-design"
+  },
+  {
+    "operation": "ls || frobnicate --force",
+    "expected": "ask",
+    "class": "by-design"
+  },
+  {
+    "operation": "ls ; ./frobnicate.sh --force",
+    "expected": "ask",
+    "class": "by-design"
+  },
+  {
+    "operation": "ls && \"frobnicate\" --force",
+    "expected": "ask",
+    "class": "by-design"
+  },
+  {
+    "operation": "ls && FOO=1 frobnicate --force",
+    "expected": "ask",
+    "class": "by-design"
+  },
+  {
+    "operation": "ls && time ./frobnicate.sh --force",
+    "expected": "ask",
+    "class": "by-design"
+  },
+  {
+    "operation": "ls && time -p ./frobnicate.sh --force",
+    "expected": "ask",
+    "class": "by-design"
+  },
+  {
+    "operation": "ls && do frobnicate --force",
+    "expected": "ask",
+    "class": "by-design"
+  },
+  {
+    "operation": "ls && FOO=1 time ./frobnicate.sh --force",
+    "expected": "ask",
+    "class": "by-design"
+  },
+  {
+    "operation": "ls && do time ./frobnicate.sh --force",
+    "expected": "ask",
+    "class": "by-design"
+  },
+  {
+    "operation": "ls && if true; then time ./frobnicate.sh --force; fi",
+    "expected": "ask",
+    "class": "by-design"
+  },
+  {
+    "operation": "ls && time -f %e ./frobnicate.sh --force",
+    "expected": "ask",
+    "class": "by-design"
+  },
+  {
+    "operation": "ls && time --format \"%e s\" ./frobnicate.sh --force",
+    "expected": "ask",
+    "class": "by-design"
+  },
+  {
+    "operation": "git pull",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git pull --ff-only",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git pull --rebase",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git switch -c feature",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git switch main",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git switch --discard-changes main",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git branch -d old-branch",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git branch -m old new",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git branch -f main origin/main",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git branch -D old-branch",
+    "expected": "refuse",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git branch --delete --force old-branch",
+    "expected": "refuse",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git stash",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git stash pop",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git stash push -m wip",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git stash drop",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git stash clear",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git merge --no-ff feature",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git merge --ff-only origin/main",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git tag v1.0.0",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git tag -a v1.0.0 -m msg",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git tag -d v1.0.0",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git tag -f v1.0.0",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git worktree add ../wt feature",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git worktree remove ../wt",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git submodule update --init",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git init",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git fetch -q origin main && git checkout -B main origin/main",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git fetch -q origin main && git switch -c sprint/x origin/main",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git rebase main",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git rebase -i HEAD~3",
+    "expected": "refuse",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git push --force",
+    "expected": "refuse",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git reset --hard HEAD~3",
+    "expected": "refuse",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "gh pr create --title x",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "rm -rf build/",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "rm -rf ../build/",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "rm -rf /",
+    "expected": "refuse",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "rm -rf .git",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "rm -rf /tmp/probe-x",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "python -c \"print('git reset --hard')\"",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "python - <<'EOF'\nprint('git push --force is bad')\nEOF",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "python -c \"import subprocess; subprocess.run(['git','push','--force'])\"",
+    "expected": "refuse",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "for b in $(git branch --list 'x-*'); do frob $b; done",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "ls && frobnicate https://x.example/up",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "ls && frobnicate | sh",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   }
 ]

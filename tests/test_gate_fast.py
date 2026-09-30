@@ -72,7 +72,7 @@ def payload(command: str, tool: str = "Bash") -> dict[str, Any]:
     }
 
 
-def _governed_project() -> Path:
+def _governed_project(home: Path | str | None = None) -> Path:
     """A fresh git checkout with its own initialized archive, so a
     subprocess driven against it is governed no matter whether THIS repo's
     own checkout has ever run `godmode init` - see `UngovernedProject`
@@ -81,14 +81,21 @@ def _governed_project() -> Path:
     on this checkout, so on a fresh, uninitialized install they fell
     through that same silent-allow path, and every assertion expecting a
     real escalation or denial found nothing on stdout instead. The caller
-    owns cleanup (`shutil.rmtree`)."""
+    owns cleanup (`shutil.rmtree`).
+
+    With `GODMODE_STATE_HOME` set the archive lives under that home, so a
+    test whose hook subprocesses run with their own `home` passes it here:
+    the archive must be created where those subprocesses will look."""
+    from unittest import mock
     project = Path(tempfile.mkdtemp(prefix="godmode-gate-fast-project-"))
     for command in (["init", "-q"], ["config", "user.email", "gate-fast@example.invalid"],
                     ["config", "user.name", "gate-fast"]):
         subprocess.run(["git", *command], cwd=project, check=True, capture_output=True)
     from godmode_runtime.godmode_anchor import resolve_anchor
     from godmode_runtime.godmode_chronicle import Chronicle
-    Chronicle(resolve_anchor(project)).initialize()
+    overrides = {"GODMODE_STATE_HOME": str(home)} if home is not None else {}
+    with mock.patch.dict(os.environ, overrides):
+        Chronicle(resolve_anchor(project)).initialize()
     return project
 
 
@@ -264,7 +271,12 @@ class UngovernedProject(unittest.TestCase):
 
     def test_an_archive_under_the_metadata_dir_means_governed(self) -> None:
         import tempfile
-        with tempfile.TemporaryDirectory() as temporary:
+        from unittest import mock
+        # Only without a state home override: with one set, the archive is
+        # under that home and a `.git/godmode-state` is somebody else's.
+        environment = {k: v for k, v in os.environ.items() if k != "GODMODE_STATE_HOME"}
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.dict(os.environ, environment, clear=True):
             root = Path(temporary)
             (self._git_dir(root) / "godmode-state").mkdir()
             self.assertFalse(fast.ungoverned_project(root))
@@ -311,8 +323,14 @@ class UngovernedProject(unittest.TestCase):
             (linked / ".git").write_text(f"gitdir: {admin}\n", encoding="utf-8")
             with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(base / "state")}):
                 self.assertTrue(fast.ungoverned_project(linked))
-                (git / "godmode-state").mkdir()
+                # With the state home set the archive lives under it, keyed
+                # by the COMMON dir, so the linked worktree and the main
+                # checkout share one archive.
+                from godmode_initstate import application_home, canonical, git_project_key
+                key = git_project_key(canonical(str(git)))
+                (Path(application_home()) / "projects" / key).mkdir(parents=True)
                 self.assertFalse(fast.ungoverned_project(linked))
+                self.assertFalse(fast.ungoverned_project(main))
 
     def test_the_gate_stays_silent_and_skips_the_full_hook_on_an_ungoverned_project(self) -> None:
         # D-3: "skips the full hook" used to be inferred from elapsed time
@@ -373,14 +391,14 @@ class EditClearance(unittest.TestCase):
     def setUp(self) -> None:
         self.base = Path(tempfile.mkdtemp(prefix="godmode-edit-clearance-"))
         self.addCleanup(shutil.rmtree, self.base, ignore_errors=True)
-        self.project = _governed_project()
+        self.home = self.base / "state"
+        self.project = _governed_project(self.home)
         self.addCleanup(shutil.rmtree, self.project, ignore_errors=True)
         (self.project / "app.py").write_text("def parse(text):\n    return text\n",
                                              encoding="utf-8")
         for command in (["add", "-A"], ["commit", "-qm", "seed"]):
             subprocess.run(["git", *command], cwd=self.project, check=True,
                            capture_output=True)
-        self.home = self.base / "state"
         self.target = str(self.project / "app.py")
 
     def _payload(self, target: str | None = None, tool: str = "Edit",
@@ -427,9 +445,11 @@ class EditClearance(unittest.TestCase):
         self.assertTrue(self._cleared(), "the second silent allow should clear the file")
 
     def _archive(self) -> Any:
+        from unittest import mock
         from godmode_runtime.godmode_anchor import resolve_anchor
         from godmode_runtime.godmode_chronicle import Chronicle
-        return Chronicle(resolve_anchor(self.project))
+        with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(self.home)}):
+            return Chronicle(resolve_anchor(self.project))
 
     def test_a_cleared_re_edit_needs_no_full_hook_and_the_full_hook_agrees(self) -> None:
         self._clear()
@@ -575,7 +595,7 @@ class EditClearance(unittest.TestCase):
 
     def test_a_project_whose_archive_is_gone_is_not_cleared(self) -> None:
         self._clear()
-        shutil.rmtree(self.project / ".git" / "godmode-state")
+        shutil.rmtree(self._archive().root)
         self.assertFalse(self._cleared())
 
     def test_a_host_that_hears_no_session_start_is_not_cleared(self) -> None:
@@ -1383,6 +1403,33 @@ class EndToEndSmoke(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("could not decide", err.getvalue())
 
+    def test_a_read_or_local_run_past_the_deadline_is_allowed_without_the_archive(self) -> None:
+        """The archive lock is what hangs the full check while a suite
+        runs; a read or a local computation is judged without it."""
+        import io
+        from unittest import mock
+        sys.path.insert(0, str(HOOKS_DIR))
+        import godmode_stdin
+        with tempfile.TemporaryDirectory() as tmp:
+            hung = Path(tmp) / "hung.py"
+            hung.write_text("import time\ntime.sleep(30)\n", encoding="utf-8")
+            for command, expected in (("python -m pytest -q tests/test_x.py && echo done", 0),
+                                      ("git log --oneline -3 | head -2", 0),
+                                      ("rm -rf ../elsewhere", 2)):
+                payload = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                                      "tool_input": {"command": command}}).encode()
+                err, out = io.StringIO(), io.StringIO()
+                with self.subTest(command=command), \
+                        mock.patch.object(godmode_stdin, "read_first_json", lambda p=payload: p), \
+                        mock.patch.object(fast, "FULL_HOOK", hung), \
+                        mock.patch.object(fast, "FULL_HOOK_DEADLINE_SECONDS", 1), \
+                        mock.patch.object(fast, "ungoverned_project", lambda _p: False), \
+                        mock.patch.object(sys, "stderr", err), \
+                        mock.patch.object(sys, "stdout", out):
+                    self.assertEqual(fast.main(), expected, err.getvalue())
+                    if expected == 0:
+                        self.assertEqual(out.getvalue(), "")
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -1449,7 +1496,9 @@ class PayloadGrammarParity(unittest.TestCase):
         # notes it used to spawn against the live archive here, and a
         # fresh, uninitialized install has no archive under THIS
         # checkout's `.git` for the full hook to gate against at all.
-        self.project = _governed_project()
+        self.state_home = tempfile.mkdtemp(prefix="godmode-parity-state-")
+        self.addCleanup(shutil.rmtree, self.state_home, ignore_errors=True)
+        self.project = _governed_project(self.state_home)
         # The full hook asks some things once per session (a fresh archive's
         # unread required sources, for one); whichever shape runs first would
         # get that ask instead of a silent allow, so the result depended on
@@ -1477,23 +1526,22 @@ class PayloadGrammarParity(unittest.TestCase):
         # home, racing the installed plugin's own hooks under a different
         # lock scheme. Every real-hook spawn gets its own state home AND
         # its own governed project (`self.project`, from `setUp`) rather
-        # than THIS checkout - a git project's archive lives under its own
-        # `.git`, which `GODMODE_STATE_HOME` does not redirect, so running
-        # with `cwd` on THIS checkout still reached the live archive (or,
-        # on a fresh install, no archive at all).
-        with tempfile.TemporaryDirectory() as state_home:
-            return subprocess.run(
-                [sys.executable, str(HOOKS_DIR / "godmode_session_hook.py"), "pre-action"],
-                input=raw, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                cwd=self.project, timeout=30,
-                env={**os.environ, "GODMODE_STATE_HOME": state_home},
-            )
+        # than THIS checkout. The state home is the one `setUp` created
+        # the project's archive under: with `GODMODE_STATE_HOME` set, that
+        # is where the archive lives.
+        return subprocess.run(
+            [sys.executable, str(HOOKS_DIR / "godmode_session_hook.py"), "pre-action"],
+            input=raw, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            cwd=self.project, timeout=30,
+            env={**os.environ, "GODMODE_STATE_HOME": self.state_home},
+        )
 
     def _fast(self, raw: bytes) -> subprocess.CompletedProcess[bytes]:
         return subprocess.run(
             [sys.executable, str(FAST_GATE)],
             input=raw, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             cwd=self.project, timeout=30,
+            env={**os.environ, "GODMODE_STATE_HOME": self.state_home},
         )
 
     def test_read_only_command_allows_on_both_stages_for_every_shape(self) -> None:

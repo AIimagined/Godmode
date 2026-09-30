@@ -243,7 +243,7 @@ rem is also why the interpreter is captured into a plain variable and run
 rem OUTSIDE any parenthesized block - `!ERRORLEVEL!` (delayed expansion)
 rem read at that point is the interpreter's own real exit code, not one
 rem frozen when the block was parsed.
-rem R-3 (2026-09-16): `%~dp0` already anchors the hook path to this
+rem 2026-09-16: `%~dp0` already anchors the hook path to this
 rem file's own directory, not to a host-supplied plugin-root variable -
 rem a host that runs this script with CLAUDE_PLUGIN_ROOT/PLUGIN_ROOT unset
 rem or empty (PowerShell's own empty-string default) still finds its

@@ -9,10 +9,10 @@ archive should not have to know any of that - they consume ONE shape,
 `HostEvent`, and this module is the only place host dialects are read or
 written.
 
-**What is BINDING here, and where it comes from** (see the
-Codex-compatibility plan's amendments 1-4 and its design's CX-2 unit and
-Addenda 2/6 - every literal spelling below is copied from one of those,
-never guessed):
+**What is BINDING here, and where it comes from**: every literal spelling
+below is copied from the host's own documented hook contract (Claude Code,
+Codex, Cursor, Grok, Antigravity), never guessed. A host that documents
+no key for a decision gets silence, which every host reads as proceed.
 
 - Dual-casing field normalization: `hookEventName`/`hook_event_name`,
   `toolName`/`tool_name`, `toolInput`/`tool_input`, `sessionId`/
@@ -1490,6 +1490,30 @@ def capture_payload_probe(archive: Any, raw: Any, event: HostEvent) -> None:
 # separately; `godmode_reach.py`'s `ask-decision` cell for grok stays
 # `partial` ("guide, live proof pending") until that proof lands.
 HOSTS_WITH_ASK = frozenset({"claude", "cursor", "antigravity", "codex", "grok"})
+
+
+def render_spent_allow(host: str, event_name: str, reason: str) -> dict[str, Any]:
+    """The one explicit `allow` this gate ever emits: an operator staged
+    this exact command with the password and the hook just spent it.
+    Spoken, not silent, so the host's own permission layer does not ask a
+    second time for a call the password already answered (0.3.31: the
+    host refused a push Godmode had approved). An ordinary allow stays
+    silent and an ordinary ask stays an ask - `render_decision`."""
+    claude_key = {"hookSpecificOutput": {
+        "hookEventName": event_name or "PreToolUse",
+        "permissionDecision": "allow",
+        "permissionDecisionReason": reason,
+    }}
+    if host in ("claude", "codex"):
+        return claude_key
+    if host == "antigravity":
+        return {"decision": "allow", "reason": reason}
+    if host == "grok":
+        return {**claude_key, "decision": "allow", "reason": reason}
+    if host == "cursor":
+        return {"permission": "allow", "user_message": reason, "agent_message": reason}
+    return {**claude_key, "decision": "allow", "reason": reason,
+            "permission": "allow", "user_message": reason, "agent_message": reason}
 
 
 def render_decision(host: str, event_name: str, base_decision: str,

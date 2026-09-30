@@ -52,10 +52,100 @@ travel outward.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
+from pathlib import Path
+import subprocess
 from typing import Any
 
 from .godmode_chronicle import Chronicle
+
+
+def release_tags(project: Path | str) -> list[tuple[str, datetime]]:
+    """`[(tag, created_at)]` oldest first, from git; `[]` outside a repo."""
+    try:
+        done = subprocess.run(
+            ["git", "for-each-ref", "--sort=creatordate",
+             "--format=%(refname:short) %(creatordate:iso-strict)", "refs/tags"],
+            cwd=str(project), capture_output=True, text=True, check=False, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    out: list[tuple[str, datetime]] = []
+    for line in done.stdout.splitlines():
+        name, _, stamp = line.strip().partition(" ")
+        try:
+            out.append((name, datetime.fromisoformat(stamp).astimezone(timezone.utc)))
+        except ValueError:
+            continue
+    return out
+
+
+def _when(record: dict[str, Any]) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(record.get("recorded_at"))).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def release_roi(records: list[dict[str, Any]],
+                tags: list[tuple[str, datetime]]) -> list[dict[str, Any]]:
+    """Per release range (records dated after the previous tag up to this
+    one, then `unreleased` after the last): password rounds (capability
+    issued / consumed), gate refusals by category, preflight runs with
+    their minutes, and suite runs repeated for one HEAD. Counts only."""
+    ordered = sorted(tags, key=lambda t: t[1])
+    rows: list[dict[str, Any]] = []
+    for name, _stamp in ordered + [("unreleased", None)]:
+        rows.append({"release": name, "passwords": 0, "consumed": 0, "refusals": {},
+                     "preflights": 0, "preflight_minutes": 0.0,
+                     "preflight_untimed": 0, "suite_repeats": 0, "_heads": {}})
+    for record in records:
+        when = _when(record)
+        if when is None:
+            continue
+        index = next((i for i, (_n, stamp) in enumerate(ordered) if when <= stamp), len(ordered))
+        row = rows[index]
+        kind = record.get("kind")
+        data = record.get("data") or {}
+        subject = str(record.get("subject") or "")
+        if kind == "action" and subject == "capability-issued":
+            row["passwords"] += 1
+        elif kind == "action" and subject == "capability-consumed":
+            row["consumed"] += 1
+        elif kind == "refusal" and data.get("observed") is not True:
+            category = str(data.get("category") or subject or "unknown")
+            row["refusals"][category] = row["refusals"].get(category, 0) + 1
+        elif kind == "attestation" and subject == "preflight":
+            row["preflights"] += 1
+            seconds = data.get("seconds")
+            if isinstance(seconds, (int, float)):
+                row["preflight_minutes"] += seconds / 60
+            else:
+                row["preflight_untimed"] += 1
+            if data.get("status") in ("ran", "failed") and data.get("head"):
+                heads = row["_heads"]
+                heads[data["head"]] = heads.get(data["head"], 0) + 1
+    for row in rows:
+        row["suite_repeats"] = sum(n - 1 for n in row.pop("_heads").values() if n > 1)
+        row["preflight_minutes"] = round(row["preflight_minutes"], 1)
+    return rows
+
+
+def render_release_roi(rows: list[dict[str, Any]]) -> str:
+    """One table, no prose. Minutes marks `+N?` when N runs carry no timing."""
+    header = ("release", "passwords", "consumed", "refusals", "preflights", "minutes", "suite-repeats")
+    body: list[tuple[str, ...]] = []
+    for row in rows:
+        refusals = ", ".join(f"{k}={v}" for k, v in sorted(row["refusals"].items())) or "-"
+        minutes = str(row["preflight_minutes"])
+        if row["preflight_untimed"]:
+            minutes += f" +{row['preflight_untimed']}?"
+        body.append((row["release"], str(row["passwords"]), str(row["consumed"]), refusals,
+                     str(row["preflights"]), minutes, str(row["suite_repeats"])))
+    widths = [max(len(r[i]) for r in [header, *body]) for i in range(len(header))]
+    lines = [" | ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)).rstrip()
+             for row in [header, tuple("-" * w for w in widths), *body]]
+    return "\n".join(lines) + "\n"
 
 # The closed vocabulary a future gate/precedent/fence emitter uses to tag an
 # `action` record as something this report folds. See the module docstring:

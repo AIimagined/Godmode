@@ -418,6 +418,7 @@ class BoundedMonotonicityPropertyTests(unittest.TestCase):
             module_names = retest_module_names(project, [self.PATH])
         self.assertTrue(module_names, "the seeded fixture must pin scripts/widgetry.py")
 
+        any_refused = False
         with mock.patch.object(
                 godmode_reversals, "retest_module_names",
                 lambda _project, _paths: module_names):
@@ -433,6 +434,7 @@ class BoundedMonotonicityPropertyTests(unittest.TestCase):
                                 _edit(archive, self.PATH)
                             finding = third_edit_without_incident(archive, self.PATH)
                             now_refused = finding is not None
+                            any_refused = any_refused or now_refused
                             if was_refused:
                                 self.assertTrue(
                                     now_refused,
@@ -440,6 +442,9 @@ class BoundedMonotonicityPropertyTests(unittest.TestCase):
                                     f"live refusal at step {step!r} with no "
                                     "incident recorded")
                             was_refused = now_refused
+        # Non-vacuity: the sweep must have met at least one live refusal,
+        # or a gate that never fires would leave the property trivially true.
+        self.assertTrue(any_refused, "no sequence refused; the property was vacuous")
 
 
 def _git_anchored_archive(project: Path):

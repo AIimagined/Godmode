@@ -2,7 +2,7 @@
   "routes": {
     "near_negative": {
       "Diagnose a reproducible regression whose root cause is unknown.": "godmode-investigation",
-      "Recover session continuity after a branch change stranded the archive.": "godmode-memory-gardener",
+      "Recover session continuity after a branch change stranded the archive.": "godmode-continuity",
       "Reply to a brand-new request while the requester seems perfectly satisfied.": "godmode",
       "Respond to a brand-new request that nobody has raised before now.": "godmode"
     },

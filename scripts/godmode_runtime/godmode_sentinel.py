@@ -90,8 +90,10 @@ def read_approval_password(operation: str, ttl_seconds: int,
     if _stdin_is_interactive():
         import getpass
 
-        print(f"Staging (one use, expires in {ttl_seconds} seconds): {operation}",
-              file=sys.stderr)
+        from .godmode_passdialog import lifetime_text
+
+        print(f"Staging (one use, this commit, expires in {lifetime_text(ttl_seconds)}): "
+              f"{operation}", file=sys.stderr)
         return getpass.getpass("Godmode authorization password: ")
     from .godmode_passdialog import DialogUnavailable, approval_message, ask_password
 
@@ -176,6 +178,69 @@ _GIT_LOCAL_CHANGE = re.compile(r"(?i)^\s*git\s+(?:add|commit)(?![-\w])(?!.*\s--a
 # branch to the given start point as well as creating one; treated the same
 # as `-b` here, since neither leaves the machine or discards committed work.
 _GIT_BRANCH_CREATE = re.compile(r"(?i)^\s*git\s+checkout\s+-[bB]\b")
+
+# Everyday git work that stays on this machine and is undone from the reflog
+# or the stash: a fast-forward pull, a switch, a local merge or tag, a stash,
+# a worktree, a submodule checkout, `git init`, and the non-destructive
+# `git branch` flags (`-d` refuses unmerged work; `-D` and `-d --force` stay
+# `git-branch-mutation` and escalate to R5). One release of this project
+# was refused on every one of these as R3 (2026-09-28 findings, table B),
+# so they are named at R1 (`git-local-reversible`). The forms that rewrite
+# shared history or discard work (`pull --rebase`, `stash drop|clear`,
+# `tag -d|-f`, `switch --discard-changes`) are excluded here and keep the
+# tier the patterns below give them.
+_GIT_LOCAL_REVERSIBLE = re.compile(
+    r"(?i)^\s*git\s+(?:"
+    r"switch(?![-\w])(?![^;|&]*\s(?:--discard-changes|-f|--force)\b)|"
+    r"pull(?![-\w])(?![^;|&]*\s(?:-r|--rebase)\b)|"
+    r"merge(?![-\w])|"
+    r"tag(?![-\w])(?![^;|&]*\s(?:-[a-z]*[df][a-z]*|--delete|--force)\b)|"
+    r"stash(?![-\w])(?!\s+(?:drop|clear|list|show)\b)|"
+    r"worktree\s+add\b|"
+    r"submodule\s+(?:update|init|sync|absorbgitdirs)\b|"
+    r"init(?![-\w])|"
+    r"branch(?![-\w])[^;|&]*\s(?:-[a-z]*[dmcf][a-z]*|--delete|--force|--move|--copy|"
+    r"--set-upstream-to(?:=\S+)?|--unset-upstream|--edit-description)\b"
+    r")")
+# The two `git branch` forms that lose work: `-D`, and `-d` joined with a
+# force flag. Mirrors the `git-branch-mutation` rows of `_R5_ESCALATIONS`.
+_GIT_BRANCH_DESTRUCTIVE = (
+    re.compile(r"(?i:\bgit\s+branch\b).*\s-[A-Za-z]*D[A-Za-z]*\b"),
+    re.compile(r"(?i)\bgit\s+branch\b(?=.*\s(?:-[a-z]*d[a-z]*|--delete)\b)"
+               r"(?=.*\s(?:-[a-z]*f[a-z]*|--force)\b)"),
+)
+
+# `rm`/`del`/`Remove-Item` aimed only at paths inside the working tree is a
+# file edit (R2, asked like one) and aimed only at the system temp directory
+# is scratch (R1); every other delete keeps the R4 `filesystem-mutation`
+# floor and its R5 root/home escalation. Findings 2026-09-28: `rm -rf build/`
+# and `rm -f "$TEMP/x"` were both R4.
+_DELETE_HEAD = re.compile(r"(?i)^\s*(?:rm|rmdir|rd|del|erase|remove-item|ri)(?![\w-])")
+
+
+def _contained_delete_verdict(normalized: str, project_root: Path | None
+                              ) -> tuple[str, bool, list[str]] | None:
+    if not _DELETE_HEAD.match(normalized):
+        return None
+    project_root = Path.cwd() if project_root is None else project_root
+    paths = [token for token in _argv_tokens(normalized)[1:] if not token.startswith("-")]
+    if not paths:
+        return None
+    expanded = [os.path.expandvars(path.strip().strip("\"'")) for path in paths]
+    if any(_UNRESOLVED_EXPANSION.search(path) or _SENSITIVE_EDIT.search(path)
+           or ".git" in Path(path).parts for path in expanded):
+        return None
+    if all(_is_scratch(Path(path), project_root) for path in expanded):
+        return ("local-compute-or-state", False,
+                ["deletes inside the system temp directory"])
+    root = Path(_canonical_path_text(Path(str(project_root))))
+    resolved = [Path(_canonical_path_text(Path(str(project_root)) / path)) for path in expanded]
+    if all(_contained(path, project_root) and target != root
+           for path, target in zip(expanded, resolved)):
+        return ("worktree-file-mutation", True,
+                ["deletes files inside the working tree; tracked files come "
+                 "back from git, untracked ones do not"])
+    return None
 
 # `git restore --staged <path>` moves a path from the index back to
 # HEAD - the exact inverse of `git add`, already unprotected two branches
@@ -666,10 +731,15 @@ def _protection_weakening(normalized: str, argv: list[str] | None,
     head = lowered[0].replace("\\", "/").rsplit("/", 1)[-1]
     reads_only = bool(_SAFE_SHELL_READS.match(normalized) or _POWERSHELL_READS.match(normalized)
                       or any(pattern.search(normalized) for pattern in _SAFE_INSPECTION_PATTERNS))
-    if not reads_only and any(settings in token for token in lowered[1:]):
+    # PowerShell's call operator: `& "<path>\godmode.cmd" resume` RUNS the
+    # launcher; the path after `&` is the program, not an argument that
+    # could be written to (2026-09-28: every launcher call by path on
+    # PowerShell read as a write to Godmode's own code, R4).
+    arguments = argv[2:] if head == "&" and len(argv) > 1 else argv[1:]
+    if not reads_only and any(settings in token.lower() for token in arguments):
         return "the machine-wide Godmode settings file"
     if not reads_only and any(_lands_in_godmode_code(token, project_root)
-                              for token in argv[1:] if not token.startswith("-")):
+                              for token in arguments if not token.startswith("-")):
         return "Godmode's own code or bytecode cache"
     if head in ("git", "git.exe") and len(lowered) > 1 and lowered[1] == "config":
         rest = lowered[2:]
@@ -1885,9 +1955,11 @@ def _interpreter_opacity(basename: str, rest: str, rest_tokens: list[str], *,
         # matched by the parameter test in either view.
         if (_inline_flag_in_tokens(family, rest_tokens)
                 or any(_pwsh_inline_flag_token(one) for one in (pwsh_tokens or ()))):
-            return _opaque_inline_verdict(evidence)
+            return _opaque_inline_verdict(evidence, shell=True)
     elif family is not None and _inline_flag_in_tokens(family, rest_tokens):
-        return _opaque_inline_verdict(evidence)
+        # A shell's inline payload is the command itself, so its quoted
+        # text is scanned as commands, not blanked as a string literal.
+        return _opaque_inline_verdict(evidence, shell=family in ("posix-shell", "cmd"))
     # `cmd` is exempt from the stdin rule: it is on the interpreter table for
     # its `/c` form alone (Critical 5), and a bare `cmd` opens an interactive
     # console rather than reading a payload nobody can see. Without this,
@@ -1940,7 +2012,77 @@ _OPAQUE_OPERATOR_AUTHORIZE = re.compile(
     r"authorize\s+(?!(?:request|requests|deny)(?![\w$`(@%{-]))[^\s;&|)]")
 
 
-def _opaque_inline_verdict(payload: str) -> tuple[str, bool, list[str]]:
+# A payload is judged by what it executes, not by the words inside its
+# string literals: a probe that prints "git push --force" is not a forced
+# push. Literals are blanked before the R5 scan UNLESS the payload shows an
+# execution surface (a subprocess, a shell, an eval), where the words inside
+# the literal are the command being run (`subprocess.run(['git','push',
+# '--force'])` - the audit's own repro) and must stay visible.
+_STRING_LITERALS = re.compile(
+    r"'''.*?'''|\"\"\".*?\"\"\"|'(?:\\.|[^'\\\n])*'|\"(?:\\.|[^\"\\\n])*\"", re.S)
+_PAYLOAD_EXEC_SURFACE = re.compile(
+    r"(?i)\b(?:subprocess|os\s*\.\s*(?:system|popen|exec\w*|spawn\w*)|popen|"
+    r"shell\s*=\s*True|child_process|execSync|spawnSync|execFile|"
+    r"Start-Process|Invoke-Expression|iex|exec|eval|system|run_command)\b")
+
+
+# A shell running an inline command (`bash -lc "…"`, `sh -xc "…"`, `cmd /c
+# "…"`, `pwsh -Command "…"`): its quoted argument IS the command that runs,
+# so the literal-blanking rule below (written for `python -c "print('git
+# push --force')"`, where the words sit inside a string that only prints)
+# must not apply. Matched against a whole segment (the tier escalation
+# reads the segment) or against the text after the head (the category
+# decision reads that).
+_SHELL_INLINE_HEAD = re.compile(
+    r"(?i)^\s*\"?(?:[\w.:\\/~-]*[\\/])?"
+    r"(?:(?:ba|z|da|k|fi|tc|c)?sh(?:\.exe)?\"?\s+(?:-\S+\s+)*-[a-zA-Z]*c[a-zA-Z]*\b"
+    r"|cmd(?:\.exe)?\"?\s+(?:\S+\s+)*?[-/][ck]\b"
+    r"|(?:pwsh|powershell)(?:\.exe)?\"?\s+(?:\S+\s+)*?-c(?:ommand)?\b)")
+
+
+def _r5_payload_evidence(payload: str, *, shell: bool = False, argv: bool = True) -> bool:
+    """Visible protected-class evidence in an interpreter payload.
+
+    Words inside the payload's OWN string literals do not count (`python -c
+    "print('git push --force')"` prints; it does not push) unless the
+    payload also reaches an exec surface, or is a shell's inline command.
+    `argv=True` means `payload` is command-line text: the shell strips one
+    layer of quoting before the interpreter sees it, so that layer is
+    removed here first (`_argv_tokens`) and only the quotes that survive
+    are literals. `python -c "git push --force"` is then the bare command
+    it is; `sudo -E python "-c" "git push --force"` likewise. A heredoc
+    body (`argv=False`) is read as written."""
+    if shell or _SHELL_INLINE_HEAD.match(payload) or _PAYLOAD_EXEC_SURFACE.search(payload):
+        return bool(_OPAQUE_R5_EVIDENCE.search(payload))
+    text = payload
+    # A heredoc body is not argv: the shell hands it over as written, so
+    # its quotes are the payload's own literals.
+    if argv and "<<" not in payload:
+        tokens = _argv_tokens(payload)
+        if tokens:
+            # A fused `-c"git push --force"` arrives as the one token
+            # `-cgit push --force`; the command starts after the cluster.
+            text = " ".join(_FUSED_C_CLUSTER.sub(r"\1 ", token) for token in tokens)
+    return bool(_OPAQUE_R5_EVIDENCE.search(_STRING_LITERALS.sub('""', text)))
+
+
+_FUSED_C_CLUSTER = re.compile(r"^(-[a-zA-Z]*c)(?=\S)")
+
+
+class _PayloadEvidence:
+    """`_r5_payload_evidence` with a pattern's `search` shape, so
+    `_R5_ESCALATIONS` (read by `_risk_tier`) applies the same literal-
+    blanking rule the category decision used."""
+
+    pattern = _OPAQUE_R5_EVIDENCE.pattern
+
+    @staticmethod
+    def search(text: str) -> bool | None:
+        return True if _r5_payload_evidence(text) else None
+
+
+def _opaque_inline_verdict(payload: str, *, shell: bool = False,
+                           argv: bool = True) -> tuple[str, bool, list[str]]:
     """category/protected/impact for an opaque interpreter payload this
     module does not and must not try to parse. Always protected; the only
     open question is which tier, decided by `_OPAQUE_R5_EVIDENCE`/
@@ -1957,7 +2099,7 @@ def _opaque_inline_verdict(payload: str) -> tuple[str, bool, list[str]]:
         return ("worktree-file-mutation", True,
                 [f"an interpreter payload names {POLICY_FILENAME}; opaque "
                  "code is never trusted to only be reading it"])
-    if _OPAQUE_R5_EVIDENCE.search(payload):
+    if _r5_payload_evidence(payload, shell=shell, argv=argv):
         return ("interpreter-opaque-inline", True,
                 ["an interpreter payload; visible evidence of a "
                  "protected-class operation inside it (a forced push, a "
@@ -2163,7 +2305,7 @@ def _scanned_inline_verdict(evidence: str, code: str | None,
     category, protected, impact = _opaque_inline_verdict(evidence)
     if (family == "python" and code is not None
             and category == "interpreter-opaque-inline"
-            and not _OPAQUE_R5_EVIDENCE.search(evidence)
+            and not _r5_payload_evidence(evidence)
             and _python_payload_reads_only(code)):
         return ("interpreter-inline-read-only", False,
                 ["a Python payload read with ast under the inline_interpreter "
@@ -2172,7 +2314,7 @@ def _scanned_inline_verdict(evidence: str, code: str | None,
                  "for writing"])
     if (family == "node" and code is not None
             and category == "interpreter-opaque-inline"
-            and not _OPAQUE_R5_EVIDENCE.search(evidence)
+            and not _r5_payload_evidence(evidence)
             and _node_payload_reads_only(code)):
         return ("interpreter-inline-read-only", False,
                 ["a node payload read as tokens under the inline_interpreter "
@@ -3410,6 +3552,10 @@ _TIER_BY_CATEGORY = {
     # state` sits at, for the same reason: it changes nothing that isn't
     # trivially reversed and nothing leaves the machine.
     "git-branch-create": "R1",
+    # `_GIT_LOCAL_REVERSIBLE`: pull --ff-only, switch, stash, local merge or
+    # tag, worktree add, submodule update, init, branch -d/-m/-f. Local and
+    # undone from the reflog, so the same tier a new branch sits at.
+    "git-local-reversible": "R1",
     "worktree-file-mutation": "R2",
     # PRD X-1: hooks-as-code, freeze markers, and a docker socket mount sit
     # with history mutation, not with an ordinary file write.
@@ -3436,7 +3582,8 @@ _TIER_BY_CATEGORY = {
     # script file. A policy that names the category in `password_required`
     # or `approval_required` still asks for it.
     "interpreter-inline-read-only": "R1",
-    "git-branch-mutation": "R3",
+    # `git-branch-mutation` has no row: only `-D` and `-d --force` reach it
+    # now, and both escalate to R5 in `_R5_ESCALATIONS` before a row is read.
     "git-history-or-remote": "R3",
     "worktree-discard": "R3",
     # The recovered field ask this restores was tiered R3, and the operator
@@ -3484,12 +3631,15 @@ _PASSWORD_PIPED_LITERAL = re.compile(
 # the category whose text it inspects, so `git stash drop` (a git mutation)
 # is not escalated by the SQL DROP rule. The `-D` rule is case-sensitive on
 # purpose: `-d` refuses to delete an unmerged branch, `-D` does not.
-_R5_ESCALATIONS: tuple[tuple[str, re.Pattern[str]], ...] = (
+_R5_ESCALATIONS: tuple[tuple[str, Any], ...] = (
     (
         "git-history-or-remote",
         re.compile(r"(?i)\bgit\s+push\b.*\s(?:--force(?:-with-lease)?|-[a-z]*f[a-z]*)\b"),
     ),
     ("git-history-or-remote", re.compile(r"(?i)\bgit\s+reset\b.*\s--hard\b")),
+    # An interactive rebase rewrites history the same way `reset --hard`
+    # discards it; sat at R3 beside a local tag until the 2026-09-28 findings.
+    ("git-history-or-remote", re.compile(r"(?i)\bgit\s+rebase\b.*\s(?:-i|--interactive)\b")),
     (
         "git-history-or-remote",
         re.compile(r"(?i)\bgit\s+clean\b.*\s(?:--force|-[a-z]*f[a-z]*)\b"),
@@ -3532,7 +3682,7 @@ _R5_ESCALATIONS: tuple[tuple[str, re.Pattern[str]], ...] = (
     # this table so `_risk_tier` (the single place a category becomes a
     # tier) is still the only thing that ever produces R5 - no second,
     # independently-maintained tier decision for this category.
-    ("interpreter-opaque-inline", _OPAQUE_R5_EVIDENCE),
+    ("interpreter-opaque-inline", _PayloadEvidence()),
 )
 
 
@@ -3898,7 +4048,8 @@ def _categorize(normalized: str, project_root: Path | None = None,
                 [f"weakens Godmode's own protection: {weakened}",
                  "only the operator should change it"])
 
-    if _GIT_BRANCH_MUTATION.search(command_position):
+    if (_GIT_BRANCH_MUTATION.search(command_position)
+            and any(pattern.search(command_position) for pattern in _GIT_BRANCH_DESTRUCTIVE)):
         impact = ["branch refs", "possibly unmerged local work"]
         # Absorbed 2026-09-11 from a multi-agent workspace's review rules:
         # deleting a branch auto-closes every open pull request based on
@@ -3912,6 +4063,10 @@ def _categorize(normalized: str, project_root: Path | None = None,
     if write_target is None and any(
             pattern.search(normalized) for pattern in _SAFE_INSPECTION_PATTERNS):
         return "read-only-inspection", False, ["local read-only state"]
+    if write_target is None and _GIT_LOCAL_REVERSIBLE.match(executable):
+        return ("git-local-reversible", False,
+                ["local git state that the reflog or the stash restores; "
+                 "nothing leaves the machine"])
     # Checked after the branch mutation and before the protected patterns, so
     # a commit is ordinary while `--amend` still falls through to them.
     #
@@ -4014,6 +4169,9 @@ def _categorize(normalized: str, project_root: Path | None = None,
                              "numbers it produces stop meaning anything"])
             category, protected, impact = _write_verdict(destination, project_root, archive)
             return category, protected, list(impact)
+        contained_delete = _contained_delete_verdict(normalized, project_root)
+        if contained_delete is not None:
+            return contained_delete
         for category, pattern, impact in _ACTION_PATTERNS:
             # Field feedback 2026-09-11: `sed -i ... docs/release-notes.md`
             # read as a release. The external-write verbs are judged on the
@@ -4219,6 +4377,13 @@ def _categorize(normalized: str, project_root: Path | None = None,
         head = segment.head.lower()
         if head in ("export", "unset"):
             detail = f"an environment variable outside the bookkeeping allowance: {segment.head}"
+        elif head == "gh":
+            # Not "unknown": every `gh` verb past the read set writes to
+            # GitHub, and the refusal should say so.
+            return ("release-or-external-write", True,
+                    [f"a gh command that writes to GitHub: "
+                     f"{(segment.subcommand or '').strip() or '(none)'}",
+                     "other users or consumers"])
         else:
             detail = (f"an unrecognised {head} subcommand or flag: "
                        f"{(segment.subcommand or '').strip() or '(none)'}")
@@ -4489,6 +4654,23 @@ _SEQUENCED_READ_ONLY_HEADS = frozenset({
 # defect silently introduced by this fix.
 _PREFIX_RUNNER_HEADS = frozenset({"time", "try"})
 
+# What turns an unrecognised component after `&&`/`;` from "record and run"
+# (R1) into an ask: a redirect, a delete/move/copy/install verb, a force or
+# delete flag, a network tool or URL, or a pipe into a shell. Without one of
+# these the component carries no evidence of a write, and the 2026-09-28
+# findings measured the deny-by-default it replaced as pure friction (a
+# `for` loop over a variable, the project's own test harness).
+_WRITE_SHAPED = re.compile(
+    r"(?i)(?:^|[\s;&|(])(?:sudo|doas|rm|rmdir|rd|del|erase|remove-item|mv|move|"
+    r"cp|copy|push|deploy|publish|install|uninstall|curl|wget|ssh|scp|rsync|"
+    r"chmod|chown|kill|dd|mkfs|format|tee|truncate)(?![\w-])"
+    r"|(?:^|\s)-{1,2}[a-z]*f(?:orce)?(?![\w-])|--delete\b|>|://"
+    r"|\|\s*(?:sh|bash|zsh|pwsh|powershell|python[\d.]*|node|iex)\b")
+
+
+def _write_shaped(text: str) -> bool:
+    return bool(_WRITE_SHAPED.search(_executable_text(text)))
+
 
 # Distinct from `None` (a real "nothing follows the
 # runner" - a bare `time` alone), returned by `_prefix_runner_remainder`
@@ -4666,10 +4848,17 @@ def _changed_directory(current: str | None, target: str | None, kind: str) -> st
     return os.path.normpath(os.path.join(current, target))
 
 
-def _segment_directories(segments: list[str], root: Path) -> list[str | None]:
+def _segment_directories(segments: list[str], root: Path,
+                         operators: list[str | None] | None = None) -> list[str | None]:
     """The directory each segment runs in: the project root until a `cd`,
     `pushd`, `popd` or `Set-Location` earlier in the same text moves it.
-    None where the move names a directory the text cannot resolve."""
+    None where the move names a directory the text cannot resolve.
+
+    A `cd` behind `&&`/`||` whose left side is not itself a directory
+    change may not run (`cd .git; false && cd ..; echo x >> config`), so
+    of the two directories the text could be in, the one away from the
+    root is kept: a later relative write is judged from the more
+    sensitive place."""
     start = os.path.normpath(os.path.abspath(str(root)))
     current: str | None = start
     # `cd -` returns to the directory the last change left (OLDPWD); the
@@ -4677,10 +4866,16 @@ def _segment_directories(segments: list[str], root: Path) -> list[str | None]:
     previous: str | None = None
     stack: list[str | None] = []
     directories: list[str | None] = []
-    for text in segments:
+    for index, text in enumerate(segments):
         directories.append(current)
         change = _directory_change(text)
         if change is None:
+            continue
+        operator = operators[index] if operators and index < len(operators) else None
+        conditional = (operator in ("&&", "||") and index > 0
+                       and _directory_change(segments[index - 1]) is None
+                       and current != start)
+        if conditional:
             continue
         kind, target = change
         if kind == "popd":
@@ -5139,7 +5334,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
             category, protected, impact = _scanned_inline_verdict(
                 body, body, _interpreter_family(head[0]) if head else None)
         else:
-            category, protected, impact = _opaque_inline_verdict(body or header)
+            category, protected, impact = _opaque_inline_verdict(body or header, argv=False)
         tier, second_confirmation = _risk_tier(category, normalized)
         digest = hashlib.sha256(normalized.encode()).hexdigest()
         heredoc_verdict: dict[str, Any] = {
@@ -5339,7 +5534,7 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
         # project root. A segment that writes is judged a second time with
         # its paths spelled from the root, and the stricter verdict holds.
         if project_root is not None:
-            directories = _segment_directories(resolved_segments, Path(project_root))
+            directories = _segment_directories(resolved_segments, Path(project_root), operators)
             _relocate_verdicts(
                 resolved_segments, directories, verdicts, Path(project_root),
                 lambda text: classify_action(text, extra_protected, project_root, archive,
@@ -5440,17 +5635,27 @@ def classify_action(operation: str, extra_protected: tuple[str, ...] = (),
                                         and inner_head
                                         and _PLAIN_COMMAND_HEAD.match(inner_head)
                                         and inner_head not in _SEQUENCED_READ_ONLY_HEADS):
-                                    comp_category = "unknown-command"
-                                    comp_protected = True
-                                    comp_tier, _ = _risk_tier(comp_category, text)
+                                    if _write_shaped(stripped_remainder):
+                                        comp_category = "unknown-command"
+                                        comp_protected = True
+                                        comp_tier, _ = _risk_tier(comp_category, text)
+                                    else:
+                                        comp_category = "local-compute-or-state"
+                                        comp_tier, _ = _risk_tier(comp_category, text)
                     elif head not in _SEQUENCED_READ_ONLY_HEADS:
-                        comp_category = "unknown-command"
-                        comp_protected = True
-                        # Tiered through `_risk_tier` like every other
-                        # `unknown-command` verdict in this module, rather
-                        # than a magic `"R3"` default `_TIER_BY_CATEGORY`
-                        # does not actually carry a key for.
-                        comp_tier, _ = _risk_tier(comp_category, text)
+                        if _write_shaped(text):
+                            comp_category = "unknown-command"
+                            comp_protected = True
+                            # Tiered through `_risk_tier` like every other
+                            # `unknown-command` verdict in this module, rather
+                            # than a magic `"R3"` default `_TIER_BY_CATEGORY`
+                            # does not actually carry a key for.
+                            comp_tier, _ = _risk_tier(comp_category, text)
+                        else:
+                            # Recorded, not asked: an unrecognised name with
+                            # no write-shaped token beside it.
+                            comp_category = "local-compute-or-state"
+                            comp_tier, _ = _risk_tier(comp_category, text)
             components.append({"text": text, "category": comp_category,
                                "tier": comp_tier, "protected": comp_protected})
 
@@ -5754,10 +5959,13 @@ GATE_MODE_OBSERVE = "observe"
 SUBJECT_OBSERVE_ENTERED = "observe-mode-entered"
 SUBJECT_OBSERVE_EXITED = "observe-mode-exited"
 
-# 180 expired under an agent's ordinary retry latency (a slow tool round-trip
-# plus one retry could outlast it); 300 measured comfortable while staying
-# one short conversation, not an open-ended window.
-_DEFAULT_TTL_SECONDS = 300
+# A staged approval is bound to the exact operation, the repository, the
+# worktree, HEAD and the branch (`_mint_context`), and is spent once. Those
+# bindings are what make it safe; the clock is not. At 300 seconds every
+# approval that waited on a suite or on CI died and was re-staged (nine
+# password rounds for one release, 2026-09-25..27), while a new commit
+# already invalidated it. Twelve hours: one working day, still one commit.
+_DEFAULT_TTL_SECONDS = 12 * 3600
 
 # The bounds `issue()` validates an explicit `--ttl` against. Named so the
 # unattended halving below clamps back to the same floor it validated
@@ -5765,7 +5973,7 @@ _DEFAULT_TTL_SECONDS = 300
 # unattended `--ttl 10` used to mint a 5-second capability - below the
 # floor this very constant advertises).
 _EXPLICIT_TTL_FLOOR_SECONDS = 10
-_EXPLICIT_TTL_CEILING_SECONDS = 600
+_EXPLICIT_TTL_CEILING_SECONDS = 12 * 3600
 
 # The unattended gating tier. An operator present to answer an "ask"
 # is what makes an ask meaningful at all - a session nobody is watching
@@ -6034,7 +6242,7 @@ class CapabilityBroker:
         if ttl is not None:
             if isinstance(ttl, bool) or not isinstance(ttl, int):
                 raise AuthorizationError("capability_ttl_seconds must be an integer")
-            policy["capability_ttl_seconds"] = min(900, max(60, ttl))
+            policy["capability_ttl_seconds"] = min(_EXPLICIT_TTL_CEILING_SECONDS, max(60, ttl))
         required = raw.get("password_required")
         if required is not None:
             if not isinstance(required, list) or not all(
@@ -6293,7 +6501,7 @@ class CapabilityBroker:
         if not classification["protected"]:
             raise AuthorizationError("Read-only inspection does not need a capability")
         if ttl_seconds is None:
-            # The policy value was already clamped to 60..900 when read.
+            # The policy value was already clamped to 60..ceiling when read.
             ttl_seconds = policy.get("capability_ttl_seconds", _DEFAULT_TTL_SECONDS)
         elif (ttl_seconds < _EXPLICIT_TTL_FLOOR_SECONDS
               or ttl_seconds > _EXPLICIT_TTL_CEILING_SECONDS):
@@ -6381,6 +6589,7 @@ class CapabilityBroker:
         ]
         staged.append({
             "operation_digest": body["operation_digest"],
+            "core_digest": staging_core_digest(operation, self._project_root()),
             "category": body["category"],
             "expires_at": body["expires_at"],
             "token": token,
@@ -6410,22 +6619,35 @@ class CapabilityBroker:
 
         digest = classification["operation_digest"]
         now = int(time.time())
-        for entry in list(data.get("staged", [])):
-            if entry.get("operation_digest") != digest:
-                continue
-            # Removed before the token is spent, so a store that fails to write
-            # cannot leave a capability that is both staged and consumed.
-            data["staged"] = [
-                other for other in data.get("staged", []) if other is not entry
-            ]
-            self._store(data)
-            if int(entry.get("expires_at", 0)) < now:
+        entries = list(data.get("staged", []))
+        exact = [entry for entry in entries if entry.get("operation_digest") == digest]
+        if exact:
+            matched = exact[0]
+        else:
+            # The strict normalised form (`staging_core`): the same command
+            # with a redirect into the tree, a read filter or a read beside
+            # it. A staging carries the digest of its own core.
+            core = staging_core_digest(operation, self._project_root())
+            loose = [entry for entry in entries if entry.get("core_digest") == core]
+            if not loose:
                 return None
-            try:
-                return self.consume(operation, str(entry.get("token", "")))
-            except AuthorizationError:
-                return None
-        return None
+            matched = loose[0]
+        # Removed before the token is spent, so a store that fails to write
+        # cannot leave a capability that is both staged and consumed.
+        data["staged"] = [other for other in entries if other is not matched]
+        self._store(data)
+        if int(matched.get("expires_at", 0)) < now:
+            return None
+        try:
+            return self.consume(operation, str(matched.get("token", "")),
+                                staged_digest=str(matched.get("operation_digest", "")))
+        except AuthorizationError:
+            return None
+
+    def _project_root(self) -> Path | None:
+        anchor = getattr(self.archive, "anchor", None)
+        root = getattr(anchor, "project_root", None)
+        return Path(root) if root else None
 
     def issue_interactive(self, operation: str, ttl_seconds: int | None = None) -> str:
         import getpass
@@ -6551,8 +6773,13 @@ class CapabilityBroker:
         return {"request": identifier, "state": "denied", "reason": reason[:300]}
 
     def consume(
-        self, operation: str, token: str, context: dict[str, str] | None = None
+        self, operation: str, token: str, context: dict[str, str] | None = None,
+        staged_digest: str | None = None,
     ) -> dict[str, Any]:
+        """`staged_digest`: the digest the token was minted for when
+        `consume_staged` matched `operation` by its normalised core rather
+        than byte for byte; the token is still checked against exactly the
+        text that was approved."""
         import hmac
         classification = self._classify(operation)
         if not classification["protected"]:
@@ -6571,7 +6798,7 @@ class CapabilityBroker:
             raise AuthorizationError("Capability payload is invalid") from exc
         if not hmac.compare_digest(expected, supplied):
             raise AuthorizationError("Capability signature is invalid")
-        if body.get("operation_digest") != classification["operation_digest"]:
+        if body.get("operation_digest") != (staged_digest or classification["operation_digest"]):
             raise AuthorizationError("Capability is scoped to a different operation")
         if int(body.get("expires_at", 0)) < int(time.time()):
             raise AuthorizationError("Capability has expired")
@@ -6771,17 +6998,72 @@ def design_edit_operation(relative: str) -> str:
     return f"edit file {relative}"
 
 
+# A trailing redirect on a segment: `> out.log`, `>> x`, `2>&1`, `&> x`.
+_TRAILING_REDIRECT = re.compile(
+    r"\s+(?:2>&1|[12&]?>>?\s*(\"[^\"]*\"|'[^']*'|[^\s;&|<>]+))\s*$")
+
+
+def staging_core(operation: str, project_root: Path | None = None) -> str:
+    """The part of `operation` a staged approval has to match, strictly.
+
+    0.3.31 required the staged text to equal the command byte for byte, so
+    `git push origin main > push.log 2>&1` and `git status && git push
+    origin main` each cost another password. Dropped here, and only here:
+    a trailing redirect into the working tree or the null device, a read-
+    only filter after a pipe, and a `&&`/`;` segment that is R0 on its own
+    and changes no directory. Everything else stays, so `--force`, a
+    redirect outside the tree, `| sh`, `cd elsewhere &&` and `&& rm -rf /`
+    are mismatches, never matches."""
+    kept: list[str] = []
+    for text, _operator in _component_boundaries(operation.strip()):
+        text = text.strip()
+        while True:
+            match = _TRAILING_REDIRECT.search(text)
+            if not match:
+                break
+            target = (match.group(1) or "").strip().strip("\"'")
+            if target and not (_NULL_DEVICE.match(target) or (
+                    _contained(target, project_root) and not _SENSITIVE_EDIT.search(target))):
+                break
+            text = text[:match.start()].rstrip()
+        if not text:
+            continue
+        verdict = classify_action(text, project_root=project_root)
+        if (not verdict["protected"] and verdict["tier"] == "R0"
+                and _directory_change(text) is None):
+            continue
+        kept.append(text)
+    return " && ".join(kept)
+
+
+def staging_core_digest(operation: str, project_root: Path | None = None) -> str:
+    return hashlib.sha256(staging_core(operation, project_root).encode()).hexdigest()
+
+
 def stage_operation_hint(plugin_root: Path | str, operation: str) -> str:
     """`stage_hint` for one named operation rather than the last refusal:
     the operator's own runnable command, both launcher forms."""
     root = Path(plugin_root).resolve()
-    quoted = json.dumps(operation, ensure_ascii=False)
     hint = (f'`! "{(root / "bin" / "godmode").as_posix()}" authorize stage '
-            f'--operation {quoted}` (Claude prompt / bash; opens a password dialog)')
+            f'--operation {bash_quoted(operation)}` (Claude prompt / bash; opens a password dialog)')
     if os.name == "nt":
         hint += (f' or `& "{root / "bin" / "godmode.cmd"}" authorize stage '
-                 f'--operation {quoted}` (PowerShell)')
+                 f'--operation {powershell_quoted(operation)}` (PowerShell)')
     return hint
+
+
+def bash_quoted(operation: str) -> str:
+    """`operation` as one bash word that reads back byte for byte. A JSON
+    string was printed here before, and `"$VAR"` inside it expanded when
+    pasted, so the staged text never matched the command it was for."""
+    import shlex
+    return shlex.quote(operation)
+
+
+def powershell_quoted(operation: str) -> str:
+    """`operation` as one PowerShell word: single quotes, where nothing
+    expands and the only escape is a doubled quote."""
+    return "'" + operation.replace("'", "''") + "'"
 
 
 def stage_hint(plugin_root: Path | str) -> str:

@@ -70,7 +70,9 @@ class GovernanceNoteTests(unittest.TestCase):
             archive.initialize()
             done = _run_hook(project, {
                 "hook_event_name": "PreToolUse", "tool_name": "Bash",
-                "tool_input": {"command": "rm -rf build"},
+                # Outside the tree: an in-tree delete asks at R2 since 0.3.32
+                # and carries no preview note.
+                "tool_input": {"command": "rm -rf ../elsewhere"},
             }, {"GODMODE_STATE_HOME": str(state)})
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertIn("godmode-governance", done.stdout)

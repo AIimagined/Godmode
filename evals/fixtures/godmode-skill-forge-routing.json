@@ -1,8 +1,8 @@
 {
   "routes": {
     "near_negative": {
-      "Add a duplicate tool when an installed one already does the job.": "godmode-evidence",
-      "Suggest a new tool after a single occurrence hinted it could help.": "godmode-changelog",
+      "Add a duplicate tool when an installed one already does the job.": "godmode-budget",
+      "Suggest a new tool after a single occurrence hinted it could help.": "godmode-budget",
       "Write standing instructions meant for a single throwaway request.": "godmode",
       "Write throwaway instructions for a single one-off request.": "godmode"
     },

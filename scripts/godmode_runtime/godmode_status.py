@@ -16,7 +16,8 @@ import re
 from typing import Any
 
 from .godmode_chronicle import (CLOSING_STATUSES, Chronicle, latest_by_subject,
-                               open_reviews, record_trust)
+                               open_reviews, prefer_latest_unless_contradicted,
+                               record_trust)
 from .godmode_errors import ArchiveError
 
 STATES = ("proposed", "ready", "active", "blocked", "review", "verified", "closed")
@@ -505,32 +506,10 @@ def _age_days(recorded_at: Any, now: Any = None) -> int | None:
     return max(0, int((current - written).total_seconds() // 86_400))
 
 
-def _prefer_latest_unless_contradicted(
-    current_best: dict[str, Any] | None, record: dict[str, Any]
-) -> dict[str, Any]:
-    """The status-trust rule: latest-by-time stays the
-    BASE rule; trust only breaks a genuine contradiction.
-
-    The old rule (`record_trust(record) >= record_trust(current_best)`) let
-    trust dominate every later record on a subject, not only a contradictory
-    one - once any operator or checker record touched a subject, no agent
-    record on it ever surfaced in `remaining()` again, including the owning
-    agent legitimately progressing or re-closing its own obligation. The
-    fix: the later record wins UNLESS the incumbent is strictly higher trust
-    AND the newcomer's `status` actually differs from the incumbent's. A
-    same-status update from a lower-trust writer contradicts nothing and
-    still wins by recency, exactly as it always did when every writer on a
-    subject shared the same trust (the overwhelmingly common case).
-    """
-    if current_best is None:
-        return record
-    if record_trust(current_best) <= record_trust(record):
-        return record
-    incumbent_status = str(current_best["data"].get("status", "")).strip().lower()
-    newcomer_status = str(record["data"].get("status", "")).strip().lower()
-    if newcomer_status == incumbent_status:
-        return record
-    return current_best
+# The status-trust rule lives beside the supersession fold in the
+# chronicle, as `latest_by_subject`'s own default, so `status` and
+# `status --digest` can no longer disagree on the trust axis.
+_prefer_latest_unless_contradicted = prefer_latest_unless_contradicted
 
 
 def remaining(

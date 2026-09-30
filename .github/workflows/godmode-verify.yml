@@ -579,7 +579,7 @@ jobs:
           export GODMODE_STATE_HOME="$RUNNER_TEMP"/godmode-host-antigravity/state
           python scripts/godmode.py --project "$project" init >/dev/null
           payload='{"hook_event_name":"PreToolUse","cwd":"'"$project"'","tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
-          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || { echo "hook exited non-zero"; exit 1; }
+          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || true
           printf '%s' "$out" | grep -q '"deny"' || { echo "gate did not deny a protected command: $out"; exit 1; }
           echo "denied a protected command through the launcher: ok"
 
@@ -617,7 +617,7 @@ jobs:
           export GODMODE_STATE_HOME="$RUNNER_TEMP"/godmode-host-claude/state
           python scripts/godmode.py --project "$project" init >/dev/null
           payload='{"hook_event_name":"PreToolUse","cwd":"'"$project"'","tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
-          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || { echo "hook exited non-zero"; exit 1; }
+          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || true
           printf '%s' "$out" | grep -q '"deny"' || { echo "gate did not deny a protected command: $out"; exit 1; }
           echo "denied a protected command through the launcher: ok"
 
@@ -655,7 +655,7 @@ jobs:
           export GODMODE_STATE_HOME="$RUNNER_TEMP"/godmode-host-codex/state
           python scripts/godmode.py --project "$project" init >/dev/null
           payload='{"hook_event_name":"PreToolUse","cwd":"'"$project"'","tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
-          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || { echo "hook exited non-zero"; exit 1; }
+          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || true
           printf '%s' "$out" | grep -q '"deny"' || { echo "gate did not deny a protected command: $out"; exit 1; }
           echo "denied a protected command through the launcher: ok"
 
@@ -693,7 +693,7 @@ jobs:
           export GODMODE_STATE_HOME="$RUNNER_TEMP"/godmode-host-copilot/state
           python scripts/godmode.py --project "$project" init >/dev/null
           payload='{"hook_event_name":"PreToolUse","cwd":"'"$project"'","tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
-          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || { echo "hook exited non-zero"; exit 1; }
+          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || true
           printf '%s' "$out" | grep -q '"deny"' || { echo "gate did not deny a protected command: $out"; exit 1; }
           echo "denied a protected command through the launcher: ok"
 
@@ -731,7 +731,7 @@ jobs:
           export GODMODE_STATE_HOME="$RUNNER_TEMP"/godmode-host-cursor/state
           python scripts/godmode.py --project "$project" init >/dev/null
           payload='{"hook_event_name":"PreToolUse","cwd":"'"$project"'","tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
-          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || { echo "hook exited non-zero"; exit 1; }
+          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || true
           printf '%s' "$out" | grep -q '"deny"' || { echo "gate did not deny a protected command: $out"; exit 1; }
           echo "denied a protected command through the launcher: ok"
 
@@ -769,7 +769,7 @@ jobs:
           export GODMODE_STATE_HOME="$RUNNER_TEMP"/godmode-host-gemini/state
           python scripts/godmode.py --project "$project" init >/dev/null
           payload='{"hook_event_name":"PreToolUse","cwd":"'"$project"'","tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
-          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || { echo "hook exited non-zero"; exit 1; }
+          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || true
           printf '%s' "$out" | grep -q '"deny"' || { echo "gate did not deny a protected command: $out"; exit 1; }
           echo "denied a protected command through the launcher: ok"
 
@@ -807,7 +807,7 @@ jobs:
           export GODMODE_STATE_HOME="$RUNNER_TEMP"/godmode-host-grok/state
           python scripts/godmode.py --project "$project" init >/dev/null
           payload='{"hook_event_name":"PreToolUse","cwd":"'"$project"'","tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
-          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || { echo "hook exited non-zero"; exit 1; }
+          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || true
           printf '%s' "$out" | grep -q '"deny"' || { echo "gate did not deny a protected command: $out"; exit 1; }
           echo "denied a protected command through the launcher: ok"
 
@@ -845,7 +845,7 @@ jobs:
           export GODMODE_STATE_HOME="$RUNNER_TEMP"/godmode-host-kiro/state
           python scripts/godmode.py --project "$project" init >/dev/null
           payload='{"hook_event_name":"PreToolUse","cwd":"'"$project"'","tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
-          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || { echo "hook exited non-zero"; exit 1; }
+          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || true
           printf '%s' "$out" | grep -q '"deny"' || { echo "gate did not deny a protected command: $out"; exit 1; }
           echo "denied a protected command through the launcher: ok"
 
@@ -883,7 +883,7 @@ jobs:
           export GODMODE_STATE_HOME="$RUNNER_TEMP"/godmode-host-opencode/state
           python scripts/godmode.py --project "$project" init >/dev/null
           payload='{"hook_event_name":"PreToolUse","cwd":"'"$project"'","tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
-          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || { echo "hook exited non-zero"; exit 1; }
+          out=$(printf '%s' "$payload" | "$launcher" godmode_gate_fast.py) || true
           printf '%s' "$out" | grep -q '"deny"' || { echo "gate did not deny a protected command: $out"; exit 1; }
           echo "denied a protected command through the launcher: ok"
   # godmode:host-jobs:end

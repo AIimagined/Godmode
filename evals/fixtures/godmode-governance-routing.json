@@ -4,7 +4,7 @@
       "Change a local setting that never leaves this machine.": "godmode-codegraph",
       "Inspect a local file and explain its contents.": "godmode-changelog",
       "Read repository status without changing state.": "godmode",
-      "Run the automated checks for the gate module before merging.": "godmode-changelog"
+      "Run the automated checks for the gate module before merging.": "godmode-ci"
     },
     "positive": {
       "Govern a destructive file, database migration, release, or external write.": "godmode-governance",

@@ -70,7 +70,11 @@ class QuotedWordsNeverClassify(unittest.TestCase):
     def test_real_mutation_still_caught(self) -> None:
         tiers = ["R0", "R1", "R2", "R3", "R4", "R5"]
         verdict = classify_action("rm -rf build")
-        self.assertGreaterEqual(tiers.index(verdict["tier"]), tiers.index("R4"))  # green control
+        # An in-tree delete asks at R2 since 0.3.32; still protected.
+        self.assertTrue(verdict["protected"])
+        self.assertGreaterEqual(tiers.index(verdict["tier"]), tiers.index("R2"))  # green control
+        verdict = classify_action("rm -rf ../elsewhere")
+        self.assertGreaterEqual(tiers.index(verdict["tier"]), tiers.index("R4"))
 
 
 class ArgumentPathsNeverConvict(unittest.TestCase):

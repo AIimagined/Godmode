@@ -10,12 +10,14 @@ parity is asserted directly, not inferred from the Stop-side tests.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
 from contextlib import contextmanager
+from unittest import mock
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 HOOK = PLUGIN_ROOT / "hooks" / "godmode_session_hook.py"
@@ -42,9 +44,13 @@ def _project():
         root.mkdir()
         state = base / "state"
         subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
-        archive = Chronicle(resolve_anchor(root))
-        archive.initialize()
-        yield root, state, archive
+        # The archive is created under the same state home the hook and
+        # CLI subprocesses below run with: with `GODMODE_STATE_HOME` set,
+        # that is where a git project's archive lives.
+        with mock.patch.dict(os.environ, {"GODMODE_STATE_HOME": str(state)}):
+            archive = Chronicle(resolve_anchor(root))
+            archive.initialize()
+            yield root, state, archive
 
 
 def _transcript(base: Path, text: str) -> Path:

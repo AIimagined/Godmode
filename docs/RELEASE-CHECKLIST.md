@@ -35,3 +35,9 @@ would fail every ordinary commit if wired into the suite. Run it by hand,
 here, once the version bump for this release is committed and before the
 tag is created; `verdict=ok` (or `no-tags` on a project with none yet) is
 the only passing state at that point.
+
+Test modules: the accepted count is 416 (0.3.31). A release may add a
+module only when the module is the named guard of a change that has no
+existing home - the fragment or the commit names the change it guards.
+A module added for convenience, or one that duplicates a neighbour's
+fixture, is folded into that neighbour before the release ships.

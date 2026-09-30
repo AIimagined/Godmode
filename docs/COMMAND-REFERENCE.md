@@ -69,7 +69,7 @@ Every top-level verb, its purpose, and a command that verifies it is real. Gener
 | `inventory` | Repository inventory operations | `godmode inventory --help` |
 | `law` | The generated per-project Code of Law (Sprint L1: compile guarded lessons into GODMODE-CODE-OF-LAW.md + wrapper skill) | `godmode law --help` |
 | `lessons` | The promote-or-retire pipeline over recorded lessons | `godmode lessons --help` |
-| `license` | B3-5: license/provenance gate for external-repo interaction | `godmode license --help` |
+| `license` | license/provenance gate for external-repo interaction | `godmode license --help` |
 | `locale` | Localized guidance surfaces | see README "Quality, freshness, and the watchdog" |
 | `loop` | Detect repetition the repeating agent cannot see | `godmode loop --help` |
 | `method` | Select an analysis method from the evidence shape | `godmode method --help` |
@@ -78,11 +78,11 @@ Every top-level verb, its purpose, and a command that verifies it is real. Gener
 | `minimality` | Rank existing duplicate/orphan/seam/decay surfaces into one report | `godmode minimality --help` |
 | `mistakes` | Run the mistake-class detectors | `godmode mistakes --help` |
 | `netgate` | Prove the CLI surfaces make zero network connections | `godmode netgate --help` |
-| `observe` | B4-10: what an observe-mode trial recorded - tier-shaped would-have counts; --report lists the decisions themselves | `godmode observe --help` |
+| `observe` | what an observe-mode trial recorded - tier-shaped would-have counts; --report lists the decisions themselves | `godmode observe --help` |
 | `operator` | Validate the typed operator profile | `godmode operator --help` |
 | `oracle` | Held-back checks the operator designates; the done bar runs them, the agent never picks them | `godmode oracle --help` |
 | `ownership` | Show which gate rule owns each path or command, and refuse a stale decision table | `godmode ownership --help` |
-| `paired-artifact` | Artifacts declared to change together (GAP-2) | `godmode paired-artifact --help` |
+| `paired-artifact` | Artifacts declared to change together | `godmode paired-artifact --help` |
 | `parity` | Compare neutral structure with an explicit local reference | `godmode parity --help` |
 | `perimeter` | Perimeter checks (a boot, an import walk, a typed route) that must run this session before `session close` - the check a green unit suite never performs | `godmode perimeter --help` |
 | `plan` | Record a private execution contract | `godmode plan --help` |
@@ -125,10 +125,10 @@ Every top-level verb, its purpose, and a command that verifies it is real. Gener
 | `status` | Single writable status store | `godmode status --help` |
 | `swallow` | Scan for silent/swallowed-error shapes; ratchets a per-file baseline | `godmode swallow --help` |
 | `topology` | The archive's record-kind transitions as a map - transitions seen mostly in failing sessions are named as warnings; association, not cause | `godmode topology --help` |
-| `trends` | B4-5: per-session token/tool-call/test-run counts as a time series - unmeasured sessions stated as gaps, never interpolated | `godmode trends --help` |
+| `trends` | per-session token/tool-call/test-run counts as a time series - unmeasured sessions stated as gaps, never interpolated | `godmode trends --help` |
 | `trust` | Report what checked-in agent configuration would run or permit | `godmode trust --help` |
 | `untrusted` | Report repository text shaped like an instruction | `godmode untrusted --help` |
-| `upstream` | B3-1: diff a named package's (or a forked/copied tree's) shipped surface against this project's own equivalents - GAP-1 | `godmode upstream --help` |
+| `upstream` | diff a named package's (or a forked/copied tree's) shipped surface against this project's own equivalents - | `godmode upstream --help` |
 | `verdict` | Run an independent checker against a witness; the claim's admissibility | `godmode verdict --help` |
 | `verify` | Run a declared check and attest its exit code | `godmode verify --help` |
 | `version` | Record a version fact, or reconcile every surface | `godmode version --help` |

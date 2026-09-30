@@ -18,6 +18,20 @@ LAUNCHER = PLUGIN_ROOT / "hooks" / "run-hook.cmd"
 LAUNCHER_SH = PLUGIN_ROOT / "hooks" / "run-hook.sh"
 PROBE = "godmode_gate_fast.py"
 
+
+def _initialised(env: dict) -> dict:
+    """`env` with this checkout initialised under its own state home.
+
+    With `GODMODE_STATE_HOME` set a git project's archive lives under that
+    home, so the checkout's own `.git` archive is not this run's: a test
+    that needs a governed project (a concrete ask or deny, not the
+    uninitialised guard's answer) creates the archive where its hook
+    subprocess will look."""
+    subprocess.run([sys.executable, str(PLUGIN_ROOT / "scripts" / "godmode.py"),
+                    "--project", str(PLUGIN_ROOT), "init"],
+                   env=env, capture_output=True, check=True, timeout=120)
+    return env
+
 if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 from _slow import slow  # noqa: E402
@@ -111,9 +125,9 @@ class LauncherTests(unittest.TestCase):
         # concrete, parseable decision envelope that the fail-open path
         # never produces - proof the launcher found its root, found a
         # working interpreter, and ran the real hook, not just "exited 0".
-        payload = '{"hook_event_name":"PreToolUse","cwd":".","tool_name":"Bash","tool_input":{"command":"rm -rf build"}}'
+        payload = '{"hook_event_name":"PreToolUse","cwd":".","tool_name":"Bash","tool_input":{"command":"rm -rf ../godmode-launcher-probe"}}'
         proc = subprocess.run(["cmd", "/c", str(LAUNCHER), PROBE], input=payload, capture_output=True, text=True,
-                              cwd=LAUNCHER.parent.parent, env=self._env())
+                              cwd=LAUNCHER.parent.parent, env=_initialised(self._env()))
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertNotIn("no working python interpreter", proc.stdout)
         body = json.loads(proc.stdout.strip())
@@ -136,7 +150,7 @@ class LauncherTests(unittest.TestCase):
         # parsed field, not a substring of the reason text.
         payload = '{"hook_event_name":"PreToolUse","cwd":".","tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
         proc = subprocess.run(["cmd", "/c", str(LAUNCHER), PROBE], input=payload, capture_output=True, text=True,
-                              cwd=LAUNCHER.parent.parent, env=self._env())
+                              cwd=LAUNCHER.parent.parent, env=_initialised(self._env()))
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         body = json.loads(proc.stdout.strip())
         self.assertEqual(body["hookSpecificOutput"].get("permissionDecision"), "deny", body)
@@ -409,8 +423,8 @@ class ShLauncherTests(unittest.TestCase):
         # real gate chain to answer with a parseable decision envelope,
         # proof the launcher found its root, found a working interpreter,
         # and ran the real hook.
-        payload = '{"hook_event_name":"PreToolUse","cwd":".","tool_name":"Bash","tool_input":{"command":"rm -rf build"}}'
-        proc = self._run(payload, self._env())
+        payload = '{"hook_event_name":"PreToolUse","cwd":".","tool_name":"Bash","tool_input":{"command":"rm -rf ../godmode-launcher-probe"}}'
+        proc = self._run(payload, _initialised(self._env()))
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertNotIn("no working python interpreter", proc.stdout)
         body = json.loads(proc.stdout.strip())
@@ -419,7 +433,7 @@ class ShLauncherTests(unittest.TestCase):
 
     def test_deny_exit_code_passes_through(self) -> None:
         payload = '{"hook_event_name":"PreToolUse","cwd":".","tool_name":"Bash","tool_input":{"command":"git push --force origin main"}}'
-        proc = self._run(payload, self._env())
+        proc = self._run(payload, _initialised(self._env()))
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         body = json.loads(proc.stdout.strip())
         self.assertEqual(body["hookSpecificOutput"].get("permissionDecision"), "deny", body)

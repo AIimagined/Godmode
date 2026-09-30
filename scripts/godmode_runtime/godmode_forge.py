@@ -72,7 +72,7 @@ class SkillProposal:
             # object.
             raise ForgeError(
                 "A new skill requires at least three recorded successes of "
-                "one task type (NS-11d, tightened from two)"
+                "one task type (tightened from two)"
             )
         if len(self.positive_triggers) < 2 or len(self.negative_triggers) < 2:
             raise ForgeError("Provide at least two positive and two near-negative triggers")

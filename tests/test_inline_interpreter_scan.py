@@ -98,6 +98,27 @@ STILL_OPAQUE = (
 )
 
 
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _host_env import scrubbed_environment  # noqa: E402
+
+_HOST_ENV = None
+
+
+def setUpModule() -> None:
+    """Hook subprocesses below spread `os.environ`; a runner's own `CI` or
+    host marker must not flip their row. The same module-wide scrub
+    `test_ask_only_hook.py` runs from."""
+    global _HOST_ENV
+    _HOST_ENV = scrubbed_environment()
+    _HOST_ENV.start()
+
+
+def tearDownModule() -> None:
+    if _HOST_ENV is not None:
+        _HOST_ENV.stop()
+
+
 def _decision(operation: str, **kwargs) -> str:
     verdict = classify_action(operation, project_root=PLUGIN_ROOT, **kwargs)
     if not verdict["protected"]:
@@ -142,9 +163,15 @@ class ScanPostureClassifierTests(unittest.TestCase):
                 self.assertEqual(verdict["category"], "interpreter-opaque-inline")
 
     def test_visible_r5_evidence_still_refuses_under_scan(self) -> None:
+        # Judged by what runs: a forced push handed to a subprocess refuses;
+        # the same words inside a printed string literal are text.
+        self.assertEqual(
+            _decision('python -c "import subprocess; subprocess.run([\'git\', \'push\', \'--force\'])"',
+                      inline_scan=True),
+            "refuse")
         self.assertEqual(
             _decision('python -c "print(\'git push --force origin main\')"', inline_scan=True),
-            "refuse")
+            "allow")
 
     def test_compound_lines_take_the_worst_part(self) -> None:
         self.assertEqual(_decision('python -c "print(1)" && git status', inline_scan=True), "allow")

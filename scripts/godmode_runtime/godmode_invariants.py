@@ -253,70 +253,17 @@ def _register_invariants(data: dict[str, Any]) -> None:
         )
 
 
-# The semantic layer's ontology for a `decision` - subject, value,
-# evidence - checked the same way `_register_invariants` above already
-# checks a register-shaped one: from `data` alone, because `Chronicle.
-# append()` calls a kind's validator with `data` only, never the separate
-# `evidence=` argument it also stores (see that function's own docstring).
-#
-# This CANNOT be a blanket rule on every `decision` record without
-# rewriting roughly twenty existing call sites across this codebase (leases,
-# delegations, removals, register entries, parity observations, skill
-# lifecycle, absorb verdicts, ...), each with its own bespoke `data` shape
-# and its own already-established validation - and several of them are
-# exercised by name in tests this sprint keeps green with no evidence at
-# all (`tests/test_writer_trust.py`, `tests/test_supersession.py`: bare
-# `remember --kind decision --subject s --value v` and
-# `archive.append("decision", "d", {"value": "v1"})` with no `--evidence`,
-# asserting `code == 0`). A mandatory, unconditional evidence requirement
-# would refuse both.
-#
-# So this is declared-contract, exactly the way `register_key` gates the
-# check above: a decision only enters the new ontology by declaring its own
-# semantic `data["subject"]`, distinct from the record's own label subject,
-# which is often a compound/prefixed key like `"removal:foo"` or
-# `"skill-created:bar"`. No writer in this tree sets that key today, so
-# this cannot regress a single one of them; any future write that wants the
-# memory contract's semantic-fact shape opts in by setting it, and gets
-# refused with a named remedy the moment it does so incompletely.
-#
-# This comment previously claimed that the label subject is
-# "unsuitable for the contradiction-detection grouping the semantic-fact
-# work needs". That grouping work has since landed, and
-# `godmode_forget._flag_contradictions` groups by exactly that label
-# subject. The honest statement of where this stands: the opt-in key has no
-# writer, so the ontology is unreached rather than bypassable, and the
-# consumer this comment named consumes the other subject. Deciding whether
-# it becomes mandatory (behind a compatibility shim for the ~20 existing
-# writers) or is dropped is left for 0.3.29; nothing here should be read
-# as a claim that another module is already using it.
-_SEMANTIC_DECISION_FIELDS = ("subject", "value", "evidence")
-
-
-def _semantic_decision_invariants(data: dict[str, Any]) -> None:
-    if "subject" not in data:
-        return
-    missing = [field for field in _SEMANTIC_DECISION_FIELDS if not data.get(field)]
-    if missing:
-        raise ArchiveError(
-            "A semantic decision (data['subject'] present) must carry "
-            "subject, value and evidence, all non-empty (NS-11c); missing: "
-            + ", ".join(missing)
-            + " - remedy: supply every field, e.g. "
-              "data={'subject': '<the fact this is about>', "
-              "'value': '<what is true>', 'evidence': ['seq:<n>']}, or "
-              "drop data['subject'] entirely for a decision that predates "
-              "this contract"
-        )
-
-
+# A decision's semantic-fact shape (subject, value, evidence in `data`)
+# was an opt-in contract no writer in this tree ever used and no reader
+# grouped by (`godmode_forget._flag_contradictions` groups by the record's
+# label subject). Retired 2026-09-28: a decision's `data` is whatever its
+# writer's own validation says, and nothing here reads `data["subject"]`.
 def _decision_invariants(data: dict[str, Any]) -> None:
     """Dispatcher for the `decision` kind: register-shaped records keep
-    `_register_invariants`'s existing rule unchanged; every decision (
-    register-shaped or not) also passes through the semantic-fact
-    check above, which is a no-op unless the record opts in."""
+    `_register_invariants`'s rule. The opt-in semantic-fact shape that
+    used to be checked here had no writer in this tree and no consumer
+    grouping by its key, so it was retired rather than left unreached."""
     _register_invariants(data)
-    _semantic_decision_invariants(data)
 
 
 # B3-1's paired-verdict rule, checkable from `data` alone. Kept in sync with
@@ -567,18 +514,22 @@ def _improvement_verdict_invariants(data: dict[str, Any]) -> None:
         raise ArchiveError(
             "an improvement_verdict must carry a non-empty 'actor'"
         )
-    for field in ("proposal_seq", "bond_seq"):
+    verdict = data.get("verdict")
+    # `withdrawn` is the proposer taking an open proposal back (no bond
+    # involved); `ratified` needs the bond that earned it.
+    fields = ("proposal_seq",) if verdict == "withdrawn" else ("proposal_seq", "bond_seq")
+    for field in fields:
         value = data.get(field)
         if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
             raise ArchiveError(
                 f"an improvement_verdict's '{field}' must be a positive "
                 "sequence number"
             )
-    if data.get("verdict") != "ratified":
+    if verdict not in ("ratified", "withdrawn"):
         raise ArchiveError(
-            "an improvement_verdict's 'verdict' must be \"ratified\" - a "
-            "refused ratification is never archived (godmode_bonds.ratify "
-            "raises instead of writing a record)"
+            "an improvement_verdict's 'verdict' must be \"ratified\" or "
+            "\"withdrawn\" - a refused ratification is never archived "
+            "(godmode_bonds.ratify raises instead of writing a record)"
         )
 
 
@@ -731,7 +682,7 @@ def _skill_impact_invariants(data: dict[str, Any]) -> None:
     if data.get("outcome") not in ("accepted", "rejected"):
         raise ArchiveError(
             "a skill_impact's 'outcome' must be \"accepted\" or \"rejected\" "
-            "- NS-12d's gate has no third state (neutral folds into "
+            "- gate has no third state (neutral folds into "
             "rejected)"
         )
     patterns = data.get("patterns", [])

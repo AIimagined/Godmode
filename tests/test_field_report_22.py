@@ -82,7 +82,8 @@ class DirtyPreflightTests(unittest.TestCase):
             (project / "a.txt").write_text("one\n", encoding="utf-8")
             _git(project, "add", "a.txt")
             _git(project, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "first")
-            self.assertEqual(push_preflight(project, dirty=True)["validated"], "HEAD")
+            # The report names the tree: "HEAD <sha>: the committed tree" since 0.3.32.
+            self.assertTrue(push_preflight(project, dirty=True)["validated"].startswith("HEAD "))
 
 
 if __name__ == "__main__":

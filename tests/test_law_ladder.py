@@ -82,7 +82,8 @@ class PromoteTests(unittest.TestCase):
             record = promote_candidate(
                 archive, cluster["first_seq"],
                 guard="verify against the registry before ranking",
-                subject="registry-check-before-ranking")
+                subject="registry-check-before-ranking",
+                refuted_by="a ranking lands with the registry unread and nobody objects")
             laws = top_laws(archive, 3)
         self.assertEqual(record["data"]["generalized_guard"],
                          "verify against the registry before ranking")
@@ -102,7 +103,8 @@ class PromoteTests(unittest.TestCase):
                 record = promote_candidate(
                     archive, cluster["first_seq"],
                     guard="verify against the registry before ranking",
-                    subject="registry-check-before-ranking")
+                    subject="registry-check-before-ranking",
+                    refuted_by="a ranking lands with the registry unread and nobody objects")
             promotion_seq = record["promotion"]["sequence"]
             with mock.patch.dict(os.environ, {"GODMODE_AGENT_ID": "checker-agent"}):
                 approve(archive, promotion_seq,
@@ -117,12 +119,12 @@ class PromoteTests(unittest.TestCase):
             cluster = law_candidates(archive)[0]
             with self.assertRaises(ArchiveError):
                 promote_candidate(archive, cluster["first_seq"],
-                                  guard="g", subject="too-early")
+                                  guard="g", subject="too-early", refuted_by="it recurs")
 
     def test_promotion_of_an_unknown_candidate_is_refused(self) -> None:
         with _project() as (_root, archive):
             with self.assertRaises(ArchiveError):
-                promote_candidate(archive, 99999, guard="g", subject="ghost")
+                promote_candidate(archive, 99999, guard="g", subject="ghost", refuted_by="it recurs")
 
 
 class DormancyTests(unittest.TestCase):

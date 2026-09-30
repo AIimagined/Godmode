@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godmode CI"
+  short_description: "Run CI's checks locally, in CI's order, before a PR."
+  default_prompt: "Use $godmode-ci to precheck the task, run the fragment gate against the base branch, preflight HEAD or a working-tree snapshot in a disposable worktree with the cheap gates before the suite, prove the install with the self-test and the grid, reconcile the version, refresh the hook proof, and retest what the change reaches."

@@ -4,7 +4,9 @@
   "routing": {
     "positive": [
       "Explain the current context after changing branches or worktrees: obligations, drift, and the next action.",
-      "Detect context drift after changing branches or worktrees."
+      "Detect context drift after changing branches or worktrees.",
+      "Reconstruct project continuity from local evidence when resuming work in this archive after a restart.",
+      "Record a handoff so the next session resumes with the obligations and drift preserved."
     ],
     "near_negative": [
       "Start a stateless one-off task with nothing carried over from before.",

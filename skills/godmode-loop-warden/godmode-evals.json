@@ -1,0 +1,53 @@
+{
+  "schema": "godmode-skill-eval-v1",
+  "skill": "godmode-loop-warden",
+  "routing": {
+    "positive": [
+      "The agent has retried the same failing test nine times with edits on the same lines; declare an iteration cap, tick each retry with evidence, and cut the loop off at the cap",
+      "Before this fix-and-retry cycle starts, audit the loop contract, set the stop conditions, and read the transcript for repeating error signatures and overlapping hunks"
+    ],
+    "near_negative": [
+      "Root-cause why the nightly build fails on the integration test",
+      "Sixty open operator asks repeat across sessions; promote the rules and close the noise by ask id",
+      "Re-explain the answer the operator did not follow"
+    ]
+  },
+  "behavior_assertions": [
+    {
+      "assert": "A loop's readiness is audited before cycle one.",
+      "check": {
+        "command": "python scripts/godmode.py loop --help",
+        "expect_exit": 0,
+        "expect_contains": "--preflight"
+      }
+    },
+    {
+      "assert": "A loop is declared with a fixed iteration cap.",
+      "check": {
+        "command": "python scripts/godmode.py loop declare --help",
+        "expect_exit": 0,
+        "expect_contains": "--max-iterations"
+      }
+    },
+    {
+      "assert": "A close names finished or cut-off, never a third outcome.",
+      "check": {
+        "command": "python scripts/godmode.py loop close --help",
+        "expect_exit": 0,
+        "expect_contains": "cut-off"
+      }
+    },
+    {
+      "assert": "The skill's own bundle validates structurally.",
+      "check": {
+        "command": "python scripts/godmode.py --project . skill validate --path skills/godmode-loop-warden",
+        "expect_exit": 0,
+        "expect_contains": "\"valid\": true"
+      }
+    },
+    "A loop declared with a cap refuses a tick past it and closes cut off - proven in tests/test_godmode_loop_warden.py on a bare temp project.",
+    "A close as finished carries the passing check's evidence."
+  ],
+  "baseline_required": true,
+  "claims_require_evidence": true
+}

@@ -424,8 +424,9 @@ class PolicyRowTests(unittest.TestCase):
         self.assertEqual(unattended_row["without_preflight"], "refused")
 
     def test_falls_back_to_the_default_ttl_when_unset(self) -> None:
+        from godmode_runtime.godmode_sentinel import _DEFAULT_TTL_SECONDS
         row = policy_row({}, True)
-        self.assertEqual(row["capability_ttl_seconds"], 300)
+        self.assertEqual(row["capability_ttl_seconds"], _DEFAULT_TTL_SECONDS)
 
 
 class ExplainPolicyRowsTests(unittest.TestCase):

@@ -32,12 +32,12 @@ class Case(unittest.TestCase):
     def verdict(self, command: str) -> dict:
         return classify_action(command, project_root=PLUGIN_ROOT)
 
-    def allowed(self, command: str) -> None:
+    def assert_allowed(self, command: str) -> None:
         result = self.verdict(command)
         self.assertFalse(result["protected"],
                          f"refused ordinary work: {command} -> {result['category']}")
 
-    def asks(self, command: str, category: str | None = None) -> None:
+    def assert_asks(self, command: str, category: str | None = None) -> None:
         """Protected, but not at the tier that refuses outright."""
         result = self.verdict(command)
         self.assertTrue(result["protected"], f"permitted: {command}")
@@ -45,7 +45,7 @@ class Case(unittest.TestCase):
         if category:
             self.assertEqual(result["category"], category, command)
 
-    def refuses(self, command: str) -> None:
+    def assert_refuses(self, command: str) -> None:
         result = self.verdict(command)
         self.assertTrue(result["protected"], f"permitted: {command}")
         self.assertEqual(result["tier"], "R5", f"should refuse outright: {command}")
@@ -65,19 +65,20 @@ class DeleteBlastRadiusTests(Case):
                         "rm -rf C:/", "rm -rf C:\\", "sudo rm -rf /",
                         "rm -fr /", "rm --recursive --force /"):
             with self.subTest(command=command):
-                self.refuses(command)
+                self.assert_refuses(command)
 
     def test_an_ordinary_delete_asks(self) -> None:
         for command in ("rm probe-tmp.mjs", "rm lib/brandImageColors.ts",
                         "rm out/one.txt", "rm -rf build", "rm -rf node_modules",
                         "rm -rf ./dist", "rm -f probe.log"):
             with self.subTest(command=command):
-                self.asks(command, "filesystem-mutation")
+                # In-tree deletes ask like a file edit since the 0.3.32 tiering.
+                self.assert_asks(command, "worktree-file-mutation")
 
     def test_recursion_is_required_for_the_refusal(self) -> None:
         """`rm /etc/hosts` is bad and stoppable at the asking tier. `rm -rf /`
         is not a thing to confirm in passing."""
-        self.asks("rm /etc/hosts")
+        self.assert_asks("rm /etc/hosts")
 
 
 class ProcessControlTests(Case):
@@ -89,7 +90,7 @@ class ProcessControlTests(Case):
                         "Stop-Process -Id 3", "pkill node", "killall node",
                         "systemctl stop nginx"):
             with self.subTest(command=command):
-                self.asks(command, "process-control")
+                self.assert_asks(command, "process-control")
 
     def test_the_word_kill_in_an_argument_is_not_a_process(self) -> None:
         """Written as `anywhere in the line` first, which made a search into a
@@ -98,7 +99,7 @@ class ProcessControlTests(Case):
         for command in ("grep -rn kill src/", "cat docs/killswitch.md",
                         "ls | grep taskkill", "echo kill"):
             with self.subTest(command=command):
-                self.allowed(command)
+                self.assert_allowed(command)
 
 
 class NodeToolingTests(Case):
@@ -110,10 +111,10 @@ class NodeToolingTests(Case):
                         "npm ci", "npm install", "npm run build:prod",
                         "npm run lint-fix"):
             with self.subTest(command=command):
-                self.allowed(command)
+                self.assert_allowed(command)
 
     def test_a_delete_after_it_is_still_seen(self) -> None:
-        self.refuses("npx tsc --noEmit && rm -rf /")
+        self.assert_refuses("npx tsc --noEmit && rm -rf /")
 
 
 class HeredocTests(Case):
@@ -136,21 +137,21 @@ class HeredocTests(Case):
     SCRIPT = "python - <<'PY'\nimport json\nprint(json.dumps({'ok': 1}))\nPY"
 
     def test_a_heredoc_body_is_data(self) -> None:
-        self.asks(self.SCRIPT, "interpreter-opaque-inline")
+        self.assert_asks(self.SCRIPT, "interpreter-opaque-inline")
         self.assertEqual(shell_segments(self.SCRIPT), ["python - <<'PY'"])
 
     def test_a_command_after_the_delimiter_is_still_a_command(self) -> None:
-        self.asks(self.SCRIPT + "\ngit status --short")
-        self.refuses(self.SCRIPT + "\nrm -rf /")
+        self.assert_asks(self.SCRIPT + "\ngit status --short")
+        self.assert_refuses(self.SCRIPT + "\nrm -rf /")
 
     def test_a_substitution_inside_a_body_is_still_run(self) -> None:
         """The shell really does expand it, so the gate has to see it."""
-        self.asks("cat <<EOF\nvalue is $(rm -rf build)\nEOF")
+        self.assert_asks("cat <<EOF\nvalue is $(rm -rf build)\nEOF")
 
     def test_an_unterminated_heredoc_does_not_classify_the_rest(self) -> None:
         """Still asks, exactly like the terminated form - not a crash, and
         not a misread of `print(1)` as a bare, separately-judged command."""
-        self.asks("python - <<'PY'\nprint(1)", "interpreter-opaque-inline")
+        self.assert_asks("python - <<'PY'\nprint(1)", "interpreter-opaque-inline")
 
 
 class ConfigDiscoveryTests(unittest.TestCase):

@@ -268,7 +268,7 @@ class BoundaryLockTests(unittest.TestCase):
         self.assertEqual(right[1]["lifecycle"], "deprecated")
 
 
-_REMEDY = re.compile(r'`! "(?P<launcher>[^"]+)" (?P<command>authorize stage --operation "[^"]+")`')
+_REMEDY = re.compile(r"`! \"(?P<launcher>[^\"]+)\" (?P<command>authorize stage --operation '[^']+')`")
 
 
 def _stage_as_printed(test: unittest.TestCase, project: Path, refusal: str) -> str:

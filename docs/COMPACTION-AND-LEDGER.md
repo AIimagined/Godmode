@@ -86,3 +86,22 @@ transcript. That record exists because a compaction destroys the evidence that
 it happened: without it a session cannot say it compacted at all, and every
 later statement about what it has seen rests on a gap it cannot see. Read them
 with `godmode status remaining --digest` or by selecting `action` records.
+
+## Where records live: three tiers
+
+**Hot.** One file per record under the archive's `godmode-events` directory,
+hash-chained in sequence order. Every ordinary read (`resume`, `status`, the
+hooks) walks this tier and only this tier.
+
+**Warm.** Sidecars the hot tier is rebuilt from faster: the read index, the
+verified-checkpoint registry, the enforce index. Each is an accelerator and
+never an authority - a missing or poisoned sidecar costs one slower read and
+is rewritten clean by the next full walk, and `godmode doctor` says so.
+
+**Cold.** Records `godmode forget` has rotated out of the hot tier into
+immutable segment files, listed in a sealed cold registry with the hash each
+record was sealed with. A cold record is reached by name (`godmode history
+--seq <n>`) or by asking for it (`select(include_cold=True)`); nothing on the
+ordinary read path opens a segment. `godmode doctor` re-walks every segment,
+checks each against the digest recorded at rotation, and checks the registry
+against its seal.

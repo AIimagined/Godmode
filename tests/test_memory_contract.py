@@ -147,49 +147,23 @@ class ContradictionTests(unittest.TestCase):
             self.assertIn(second["sequence"], live_sequences)
 
 
-class SemanticDecisionInvariantTests(unittest.TestCase):
-    """NS-11c: a decision that opts into the semantic-fact contract by
-    carrying its own `data['subject']` must also carry `value` and
-    `evidence`, or the write is refused naming what is missing. Declared-
-    contract, not blanket - every existing decision writer this sprint
-    already ships (register-shaped, `absorb:`, plain `remember`) sets no
-    such key and is untouched by it; see `godmode_invariants.
-    _semantic_decision_invariants`'s own docstring for why a blanket rule
-    is not possible here."""
+class DecisionDataShapeTests(unittest.TestCase):
+    """A decision's `data` is its writer's own shape. The opt-in
+    semantic-fact contract keyed on `data['subject']` was retired unused,
+    so a decision carrying that key is an ordinary decision."""
 
-    def test_a_semantic_decision_missing_value_and_evidence_is_refused(self) -> None:
-        with isolated_project() as (_project, _state, _anchor, archive):
-            archive.initialize()
-            set_project_mode(archive, "strict")  # pins the full Stop and brief output
-            with self.assertRaises(ArchiveError) as ctx:
-                archive.append(
-                    "decision", "some-label",
-                    {"subject": "database-choice"},  # value, evidence missing
-                    evidence=[],
-                )
-            message = str(ctx.exception)
-            self.assertIn("value", message)
-            self.assertIn("evidence", message)
-
-    def test_a_complete_semantic_decision_is_accepted(self) -> None:
+    def test_a_decision_with_a_data_subject_and_nothing_else_is_accepted(self) -> None:
         with isolated_project() as (_project, _state, _anchor, archive):
             archive.initialize()
             set_project_mode(archive, "strict")  # pins the full Stop and brief output
             record = archive.append(
-                "decision", "some-label",
-                {"subject": "database-choice", "value": "postgres",
-                 "evidence": ["seq:1"]},
-                evidence=[],
-            )
-            self.assertEqual(record["data"]["value"], "postgres")
+                "decision", "some-label", {"subject": "database-choice"}, evidence=[])
+            self.assertEqual(record["data"]["subject"], "database-choice")
 
-    def test_absorb_and_plain_decisions_without_the_opt_in_key_are_unaffected(self) -> None:
+    def test_plain_decisions_stay_legal(self) -> None:
         with isolated_project() as (project, _state, _anchor, archive):
             archive.initialize()
             set_project_mode(archive, "strict")  # pins the full Stop and brief output
-            # A plain decision via `remember`, with no --evidence at all -
-            # the exact shape `tests/test_writer_trust.py` and
-            # `tests/test_supersession.py` rely on staying legal.
             code, payload = _run(
                 project, "remember", "--kind", "decision", "--subject", "plain",
                 "--value", "x")

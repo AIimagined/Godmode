@@ -1294,7 +1294,7 @@ def law_candidates(archive: Any) -> list[dict[str, Any]]:
 
 
 def promote_candidate(archive: Any, first_seq: int, *, guard: str,
-                      subject: str) -> dict[str, Any]:
+                      subject: str, refuted_by: str | None = None) -> dict[str, Any]:
     """Promote a candidate cluster into a `lesson_promotion` - NOT directly
     into a law: the ladder now feeds the same
     approval-gated pipeline `lessons promote`/`lessons approve` use. The
@@ -1321,8 +1321,15 @@ def promote_candidate(archive: Any, first_seq: int, *, guard: str,
 
     guard = " ".join(str(guard).split())
     subject = str(subject).strip()
+    refuted_by = " ".join(str(refuted_by or "").split())
     if not guard or not subject:
         raise ArchiveError("Promotion needs --guard and --subject, both non-empty")
+    # The falsifier is the reviewer's own sentence: a synthesized "the
+    # same correction recurs" is true of every guard and tests nothing.
+    if not refuted_by or refuted_by.lower().startswith("the same correction recurs"):
+        raise ArchiveError(
+            "Promotion needs --refuted-by: the observation that would show this "
+            "guard wrong, written by the reviewer, not the generic recurrence line")
     cluster = next(
         (c for c in law_candidates(archive) if c["first_seq"] == int(first_seq)), None)
     if cluster is None:
@@ -1348,8 +1355,7 @@ def promote_candidate(archive: Any, first_seq: int, *, guard: str,
             "reflection": f"the cluster at seq:{cluster['first_seq']} repeated "
                           f"{cluster['occurrences']} time(s) before this guard "
                           "was reviewed and written",
-            "refuted_by": "the same correction recurs again after this guard "
-                          "is delivered",
+            "refuted_by": refuted_by,
             "promoted_from": cluster["first_seq"],
             "occurrences": cluster["occurrences"],
             "distinct_sessions": cluster["distinct_sessions"],
@@ -1367,7 +1373,7 @@ def promote_candidate(archive: Any, first_seq: int, *, guard: str,
     return {**lesson, "promotion": promotion}
 
 
-def debrief(archive: Any) -> dict[str, Any]:
+def debrief(archive: Any, *, retire_failed: bool = False) -> dict[str, Any]:
     """The amendment loop (S10; loopy 4112's adopted-but-unbuilt half).
 
     Reads the archive once and answers, per law: how often was it DELIVERED
@@ -1438,6 +1444,22 @@ def debrief(archive: Any) -> dict[str, Any]:
             entry["recommendation"] = "keep"
         entries.append(entry)
     promotable = [c["first_seq"] for c in law_candidates(archive) if c["promotable"]]
+    retired: list[int] = []
+    if retire_failed:
+        # A guard that was delivered and whose correction recurred twice
+        # anyway has failed its own falsifier: retired now, by appending
+        # the subject's newest record with status retired, so the next
+        # compile lifts it. The amended guard is a fresh candidate.
+        for entry in amend:
+            law = next(l for l in laws if l["sequence"] == entry["seq"])
+            archive.append("lesson", law["subject"], {
+                "status": "retired", "value": law["why"],
+                "generalized_guard": law["guard"],
+                "retired_reason": "the correction recurred after delivery "
+                                  f"(seq {', '.join(str(s) for s in entry['recurred_after_delivery'])})",
+            }, evidence=[f"seq:{entry['seq']}"] + [f"seq:{s}" for s in entry["recurred_after_delivery"]])
+            entry["recommendation"] = "retired"
+            retired.append(entry["seq"])
     receipt = archive.append("action", "law-debrief", {
         "window": [last_debrief, int(records[-1]["sequence"]) if records else 0],
         "laws": len(laws), "amend": len(amend), "retire": len(retire),
@@ -1450,6 +1472,7 @@ def debrief(archive: Any) -> dict[str, Any]:
         "laws": entries,
         "autonomous": {"promote_ready": promotable,
                        "note": "the ladder already gates these; `law promote` acts"},
+        "retired": retired,
         "needs_operator": {
             "amend_guard": [e["seq"] for e in amend],
             "retire_candidate": [e["seq"] for e in retire],
@@ -1697,6 +1720,37 @@ def grandfather_pre_gate_lessons(archive: Any) -> dict[str, Any] | None:
     }
 
 
+_SEQ_EVIDENCE = re.compile(r"^(?:seq|verdict|diff):(\d+)$")
+
+
+def _moved_evidence(archive: Any, lesson_seq: int) -> list[str]:
+    """The `seq:`-shaped citations of the lesson at `lesson_seq` that no
+    record in either tier answers to any more."""
+    try:
+        record = archive.find_by_sequence(lesson_seq) if hasattr(archive, "find_by_sequence") else None
+    except Exception:  # noqa: BLE001 - a lesson that cannot be served is `doctor`'s finding, not this compile's
+        record = None
+    if record is None:
+        return []
+    data = record.get("data") or {}
+    cited: list[str] = []
+    for source in (record.get("evidence"), data.get("evidence")):
+        if isinstance(source, list):
+            cited.extend(str(item) for item in source)
+    missing: list[str] = []
+    for citation in cited:
+        match = _SEQ_EVIDENCE.match(citation.strip())
+        if match is None:
+            continue
+        try:
+            present = archive.find_by_sequence(int(match.group(1)))
+        except Exception:  # noqa: BLE001 - a record that cannot be served has moved for this purpose
+            present = None
+        if present is None:
+            missing.append(citation)
+    return missing
+
+
 def compile_laws(archive: Any, project: Path | str, *, cap: int = LAW_CAP) -> dict[str, Any]:
     """Fold guarded lessons into the law file and its wrapper skill.
 
@@ -1707,6 +1761,21 @@ def compile_laws(archive: Any, project: Path | str, *, cap: int = LAW_CAP) -> di
     root = Path(project)
     migration = grandfather_pre_gate_lessons(archive)
     lessons = _guarded_lessons(archive)
+    # A law whose cited evidence has left the archive (a record it names
+    # no longer exists in either tier) is DORMANT, not advisory: the
+    # reasoning behind the guard cannot be read any more, so the guard is
+    # withheld from the file and named in the report until it is re-cited
+    # or retired.
+    dormant: list[dict[str, Any]] = []
+    standing: list[dict[str, Any]] = []
+    for lesson in lessons:
+        missing = _moved_evidence(archive, lesson["sequence"])
+        if missing:
+            dormant.append({"sequence": lesson["sequence"], "subject": lesson["subject"],
+                            "missing_evidence": missing})
+        else:
+            standing.append(lesson)
+    lessons = standing
     skipped = sum(
         1 for record in archive.read_events()
         if record.get("kind") == "lesson"
@@ -1723,6 +1792,7 @@ def compile_laws(archive: Any, project: Path | str, *, cap: int = LAW_CAP) -> di
         "skipped_without_guard": skipped,
         "grandfathered": sum(1 for lesson in kept if lesson.get("grandfathered")),
         "pending_amendments": sum(1 for lesson in kept if lesson.get("pending_amendment")),
+        "dormant_evidence_moved": dormant,
         "migration": migration,
         "cap": cap,
         "path": LAW_FILENAME,

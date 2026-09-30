@@ -197,7 +197,10 @@
     "godmode-research": "S4",
     "godmode-replicate": "S4",
     "godmode-evidence": "S4",
-    "godmode-triage": "S4"
+    "godmode-triage": "S4",
+    "godmode-loop-warden": "S4",
+    "godmode-budget": "S4",
+    "godmode-ci": "S4"
   },
   "work_items": {
     "roadmap-1.1": "S3",

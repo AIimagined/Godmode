@@ -439,7 +439,8 @@ class LadderFeedsPromotionTests(unittest.TestCase):
             record = promote_candidate(
                 archive, cluster["first_seq"],
                 guard="verify against the registry before ranking",
-                subject="registry-check-before-ranking")
+                subject="registry-check-before-ranking",
+                refuted_by="a ranking lands with the registry unread and nobody objects")
         self.assertEqual(record["data"]["status"], "candidate")
         self.assertIn("promotion", record)
         self.assertEqual(record["promotion"]["lesson_seq"], record["sequence"])
@@ -474,7 +475,8 @@ class HygieneStaleCandidateTests(unittest.TestCase):
                     session=session)
             cluster = law_candidates(archive)[0]
             promote_candidate(
-                archive, cluster["first_seq"], guard="g", subject="s")
+                archive, cluster["first_seq"], guard="g", subject="s",
+                refuted_by="the guard is followed and the failure still recurs")
             findings = [f for f in hygiene(archive)["findings"]
                         if f["check"] == "stale-candidate"]
         self.assertEqual(findings, [])

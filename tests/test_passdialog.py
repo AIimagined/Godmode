@@ -108,7 +108,8 @@ class PipeDialogTests(unittest.TestCase):
             shown = " ".join(popen.call_args[0][0])
             self.assertIn(OPERATION, shown)
             self.assertIn("one use", shown)
-            self.assertIn("expires in 300 seconds", shown)
+            self.assertIn("expires in 5 minutes", shown)
+            self.assertIn("this commit", shown)
 
     def test_cancel_returns_none(self) -> None:
         self.assertIsNone(self._ask(("osascript", "/usr/bin/osascript"), b"", 1,

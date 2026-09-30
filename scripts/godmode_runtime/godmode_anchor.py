@@ -186,8 +186,11 @@ def _head_identity(requested: Path) -> tuple[int, int] | None:
 
 
 # Bumped whenever a cached field's meaning changes; 2 = archive_root joined
-# onto the requested directory (the common-dir fix), not the toplevel.
-_ANCHOR_CACHE_FORMAT = 2
+# onto the requested directory (the common-dir fix), not the toplevel;
+# 3 = with `GODMODE_STATE_HOME` set the archive_root of a git project lives
+# under that home, so an entry cached under a long-lived state home before
+# that change would keep serving the `.git` path.
+_ANCHOR_CACHE_FORMAT = 3
 
 
 def _anchor_cache_path(requested: Path) -> Path:
@@ -371,7 +374,15 @@ def resolve_anchor(project: str | Path) -> ProjectAnchor:
         ).hexdigest()[:24]
         head_value, branch_value = _head_and_branch(project_root)
         archive_root = canonical_path(common_path / ARCHIVE_DIRNAME)
-        if not archive_root.exists() and not os.access(common_path, os.W_OK):
+        if os.environ.get("GODMODE_STATE_HOME"):
+            # The variable means what its name says: with it set, every
+            # state file lands under it, the git archive included, under
+            # the same git-derived key. Before this a test harness that set
+            # it and ran a probe against a checkout still wrote into the
+            # developer's live `.git/godmode-state` (0.3.28 release
+            # preflight, shard 3).
+            archive_root = canonical_path(application_home() / "projects" / project_key)
+        elif not archive_root.exists() and not os.access(common_path, os.W_OK):
             # Codex assessment 2026-09-10: a host that protects git metadata
             # made every archive write fail (session open, resume --refresh,
             # checkpoint). Before the first record exists, an unwritable

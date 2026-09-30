@@ -33,6 +33,19 @@ class LatencyCheckTests(unittest.TestCase):
                     "escalate": {"p95_ms": 470.0, "p50_ms": 300.0, "n": 21}}
         self.assertEqual(gate_latency.check(BASELINE, measured)["verdict"], "within-budget")
 
+    def test_check_carries_the_noise_band_per_phase(self) -> None:
+        measured = {"fast_allow": {"p95_ms": 115.0, "p50_ms": 90.0, "n": 21,
+                                   "min_ms": 80.0, "max_ms": 120.0, "noise_ms": 40.0},
+                    "escalate": {"p95_ms": 480.0, "p50_ms": 300.0, "n": 21,
+                                 "min_ms": 250.0, "max_ms": 500.0, "noise_ms": 250.0}}
+        report = gate_latency.check(BASELINE, measured)
+        self.assertEqual(report["phases"]["fast_allow"]["noise_ms"], 40.0)
+        self.assertEqual(report["phases"]["escalate"]["min_ms"], 250.0)
+        self.assertEqual(report["regressions"][0]["noise_ms"], 250.0)
+        # An older measurement without a band still checks; the band reads None.
+        legacy = {"fast_allow": {"p95_ms": 100.0}, "escalate": {"p95_ms": 400.0}}
+        self.assertIsNone(gate_latency.check(BASELINE, legacy)["phases"]["escalate"]["noise_ms"])
+
     def test_twenty_percent_regression_fails(self) -> None:
         measured = {"fast_allow": {"p95_ms": 100.0, "p50_ms": 90.0, "n": 21},
                     "escalate": {"p95_ms": 480.0, "p50_ms": 300.0, "n": 21}}
@@ -234,6 +247,11 @@ class CliFloorAndExclusivityTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as raised:
             gate_latency.main()
         self.assertEqual(raised.exception.code, 2)
+
+    def test_the_release_notes_sample_floor_mirrors_the_benchmark(self) -> None:
+        # Two copies of one number: the pin is what keeps them one number.
+        from godmode_runtime import godmode_release_notes
+        self.assertEqual(godmode_release_notes._MIN_SAMPLES, gate_latency.MIN_SAMPLES)
 
 
 if __name__ == "__main__":

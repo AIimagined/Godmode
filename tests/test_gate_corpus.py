@@ -145,7 +145,10 @@ class GitReadSubcommandTests(GateCase):
         """The word boundary after `merge` falls inside the hyphen, so a
         read reported as history mutation."""
         self.allowed("git merge-base main HEAD")
-        self.refused("git merge main", "git-history-or-remote")
+        # A local merge is undone from the reflog: R1, not history mutation.
+        self.assertEqual(classify_action("git merge main", project_root=PROJECT)["category"],
+                         "git-local-reversible")
+        self.refused("git merge --abort && git push", "git-history-or-remote")
 
     def test_the_plumbing_that_writes_still_fails_closed(self) -> None:
         for command in ("git update-ref refs/heads/main HEAD",
@@ -178,7 +181,7 @@ class HelpFlagTests(GateCase):
         self.refused("curl --help > ~/.bashrc", "unknown-command")
 
     def test_a_help_flag_does_not_excuse_a_second_command(self) -> None:
-        self.refused("gh --help && rm -rf build", "filesystem-mutation")
+        self.refused("gh --help && rm -rf build", "worktree-file-mutation")
 
     def test_single_letter_forms_are_not_trusted(self) -> None:
         """`sort -h` sorts and `du -h` formats; one letter means whatever
@@ -428,7 +431,7 @@ class EnvironmentBindingTests(GateCase):
                 self.refused(command)
 
     def test_a_binding_cannot_carry_a_command(self) -> None:
-        self.refused("export A=1 && rm -rf x", "filesystem-mutation")
+        self.refused("export A=1 && rm -rf x", "worktree-file-mutation")
 
 
 class QuotedSeparatorTests(GateCase):
@@ -470,7 +473,7 @@ class QuotedSeparatorTests(GateCase):
 
     def test_an_unescaped_separator_still_splits(self) -> None:
         self.assertEqual(shell_segments("ls; rm -rf x"), ["ls", "rm -rf x"])
-        self.refused("ls; rm -rf x", "filesystem-mutation")
+        self.refused("ls; rm -rf x", "worktree-file-mutation")
 
 
 class StillClosedTests(GateCase):

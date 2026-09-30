@@ -1,9 +1,9 @@
 {
   "routes": {
     "near_negative": {
-      "Erase a leaked credential from an archived record": "godmode-evidence",
+      "Erase a leaked credential from an archived record": "godmode-budget",
       "Follow the compiled code of law before starting a new task": "godmode-code-of-law",
-      "Resume where the last session stopped and rebuild the lost context brief": "godmode"
+      "Resume where the last session stopped and rebuild the lost context brief": "godmode-budget"
     },
     "positive": {
       "Cluster the recurring correction candidates and promote the ripe lesson with a cited rationale and a second actor's approval": "godmode-memory-gardener",

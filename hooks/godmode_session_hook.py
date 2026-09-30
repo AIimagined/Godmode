@@ -184,6 +184,7 @@ from godmode_runtime.godmode_hostevent import (  # noqa: E402
     capture_payload_probe, field as host_field, is_pretool_event,
     malformed_apply_patch_preview, parse_host_payload,
     record_malformed_apply_patch, record_unrecognized_tool, render_decision,
+    render_spent_allow,
     unrecognized_tool_preview)
 from godmode_runtime.godmode_sentinel import (  # noqa: E402
     _NO_HUMAN_ASK_MODES, _TIER_BY_CATEGORY, GATE_MODE_OBSERVE, attended,
@@ -647,6 +648,25 @@ _ECHO_FIELDS = ("sentences", "obligations", "notices")
 _ECHO_MAX_SENTENCES = 6
 _ECHO_KEEP_SECONDS = 24 * 3600
 
+# Stop notices whose production already spent once-only state (a cooldown
+# record, the nag marker, a `*-nudge` receipt). The clip below the Stop
+# pass never drops one of these: a line whose silence is already paid for
+# would otherwise vanish into the "(N more)" tail and never be shown again.
+_BURNED_NOTICES: set[str] = set()
+_STOP_NOTICE_CAP = 2
+
+
+def _clip_notices(notices: list[str], burned: set[str] | None = None,
+                  cap: int = _STOP_NOTICE_CAP) -> list[str]:
+    """Burned lines first, in production order, never clipped; the free
+    slots go to the recomputable lines; the rest is counted."""
+    burned = _BURNED_NOTICES if burned is None else burned
+    kept = [line for line in notices if line in burned]
+    kept += [line for line in notices if line not in burned][:max(0, cap - len(kept))]
+    if len(notices) > len(kept):
+        kept.append(f"({len(notices) - len(kept)} more in `godmode doctor`)")
+    return kept
+
 
 def _echo_entry(payload: dict[str, Any]) -> dict[str, Any]:
     return {field: payload[field] for field in _ECHO_FIELDS if payload.get(field)}
@@ -672,9 +692,7 @@ def _park_echo(archive: Chronicle, submitted: dict[str, Any], *,
     key = _session_key(submitted)
     echo = archive.root / "godmode-claim-echo.json"
     with archive.write_lock():
-        parked = json.loads(echo.read_text(encoding="utf-8")) if echo.exists() else {}
-        if not isinstance(parked, dict):
-            parked = {}
+        parked = _read_json_sidecar(echo, {})
         now = _time.time()
         others = _echo_others(parked, now)
         own = _echo_entry(parked)
@@ -707,9 +725,7 @@ def _take_echo(archive: Chronicle, current: str | None) -> dict[str, Any]:
     with archive.write_lock():
         if not echo.exists():
             return {}
-        parked = json.loads(echo.read_text(encoding="utf-8"))
-        if not isinstance(parked, dict):
-            parked = {}
+        parked = _read_json_sidecar(echo, {})
         now = _time.time()
         others = _echo_others(parked, now)
         if current is None or parked.get("session") == current:
@@ -728,6 +744,26 @@ def _take_echo(archive: Chronicle, current: str | None) -> dict[str, Any]:
         else:
             echo.unlink()
         return taken
+
+
+def _read_json_sidecar(path: Path, fallback: Any) -> Any:
+    """A sidecar beside the archive (an echo, a parked list) read with its
+    own degradation: an unreadable or wrong-shaped file is `fallback`, the
+    state a fresh session starts from, and the degradation is recorded
+    once. Before this, three of these reads left a corrupt sidecar to the
+    entry-point guard, which turned the whole event into a degraded exit
+    instead of costing one parked echo."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return fallback  # no sidecar yet: the ordinary first-session state, not a degradation
+    except Exception as exc:  # noqa: BLE001  # godmode: swallow-ok: a sidecar is derived state; the archive is untouched
+        try:
+            _print_degraded_once(f"sidecar {path.name} unreadable: {type(exc).__name__}")
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: reporting the degradation must not fail the read
+            pass
+        return fallback
+    return value if isinstance(value, type(fallback)) else fallback
 
 
 def _session_key(submitted: dict[str, Any]) -> str | None:
@@ -1795,6 +1831,11 @@ _PROCESS_SENTENCE = re.compile(
     r"opened|saved|attested|logged)\b")
 
 
+_HOOK_ECHO_SENTENCE = re.compile(
+    r"(?i)^\s*godmode\s*[:-]|\b(?:godmode|the hook|the done[- ]bar|the gate|the stop hook)"
+    r"\s+(?:said|says|reported|flagged|noted|asked|blocked|told|warned|passed|nagged)\b")
+
+
 def _unrecorded_done_claims(archive: Any, reply_text: str,
                             observed: str = "") -> list[str]:
     """DONE-shaped sentences in the reply with no claim record behind them.
@@ -1846,6 +1887,11 @@ def _unrecorded_done_claims(archive: Any, reply_text: str,
         if not judged.strip():
             continue
         if _PROCESS_SENTENCE.match(judged.strip()):
+            continue
+        # A sentence that refers back to this hook's own earlier feedback
+        # ("godmode said the done-bar passed", "the gate flagged X as
+        # complete") reports what the hook said, not what the agent did.
+        if _HOOK_ECHO_SENTENCE.search(judged):
             continue
         if not (_COMPLETION_VOCAB.search(judged)
                 or looks_like_fix_claim(judged)[0]
@@ -2082,7 +2128,7 @@ def _flush_deferred_measurements(archive: Any) -> int:
     if not sidecar.is_file():
         return 0
     try:
-        pending = json.loads(sidecar.read_text(encoding="utf-8"))
+        pending = _read_json_sidecar(sidecar, [])
     finally:
         sidecar.unlink(missing_ok=True)
     if not isinstance(pending, list):
@@ -3138,6 +3184,25 @@ def _operator_authorization_reason(operation: str) -> str:
         '"<command>" --purpose "<why>"`.')
 
 
+def _three_zone_reason(reason: str) -> str:
+    """A pre-tool ask or refusal in the same layout as a Stop block: the
+    rule (the verdict and its category) on the first line, the detail
+    next, a closing checklist last. The text is unchanged; only its shape
+    is - every sentence the reader could act on is still there."""
+    text = " ".join(str(reason or "").split())
+    head, separator, rest = text.partition(". ")
+    if not separator:
+        return text
+    try:
+        from godmode_runtime.godmode_lens import render_three_zone
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: the plain text is the fallback layout
+        return text
+    return render_three_zone(head + ".", rest, [
+        "Approve only a command you asked for yourself.",
+        "To pre-approve it once, stage it with the password and rerun the same command.",
+    ])
+
+
 def _decision_for(preview: dict[str, Any], attended_flag: bool = True) -> str:
     """`ask` or `deny`, from the tier the classifier already computed.
 
@@ -3465,7 +3530,7 @@ def main(argv: list[str] | None = None) -> int:
                                           "pre-action", "user-prompt", "subagent-stop"])
     parser.add_argument("--project")
     parser.add_argument("--capture-payload", action="store_true",
-                        help="CX-2: record this call's structural shape (names/hashes "
+                        help="record this call's structural shape (names/hashes "
                              "only, never values) for building a future host fixture")
     args = parser.parse_args(argv)
     capture_payload = args.capture_payload or bool(os.environ.get(CAPTURE_PAYLOAD_ENV))
@@ -4153,10 +4218,14 @@ def main(argv: list[str] | None = None) -> int:
                         archive, Path(anchor.project_root), submitted, lean=True)
                     notices.extend(iteration_notes)
                 elif not quiet:
-                    notices.extend(_marginal_return_nudges(
-                        archive, submitted, _session_key(submitted)))
-                    notices.extend(_tripwire_nudges(
-                        archive, _session_key(submitted), Path(anchor.project_root)))
+                    # Both write a once-per-session receipt as they produce
+                    # a line, so the line must survive the clip below.
+                    for burned_line in (
+                            *_marginal_return_nudges(archive, submitted, _session_key(submitted)),
+                            *_tripwire_nudges(archive, _session_key(submitted),
+                                              Path(anchor.project_root))):
+                        notices.append(burned_line)
+                        _BURNED_NOTICES.add(burned_line)
                     if not subagent:
                         notices.extend(_external_verdict_nudge(
                             submitted, reply_text, Path(anchor.project_root)))
@@ -4183,19 +4252,22 @@ def main(argv: list[str] | None = None) -> int:
                         "godmode: open-operator-asks escalated for this "
                         f"session - {asks_escalation}")
                 elif touched:
-                    notices.append(
+                    # `_nag_once` already marked these subjects nagged.
+                    nag_line = (
                         "godmode: this reply relates to unfinished "
                         "promises on record: " + ", ".join(touched)
                         + ". Act on them, or close each with the command its "
                         "line shows - otherwise they keep coming back.")
+                    notices.append(nag_line)
+                    _BURNED_NOTICES.add(nag_line)
                 if resurfaced:
                     # The cooldown for each of these lines was already burned
-                    # (record_resurfaced, above) - insert at the front so the
-                    # notices[:2] clip below cannot drop a line whose silence
-                    # is already paid for.
-                    notices.insert(0,
-                        "godmode: idle and worth another look - "
-                        + "; ".join(resurfaced))
+                    # (record_resurfaced, above); `_clip_notices` keeps every
+                    # burned line whatever its position.
+                    resurfaced_line = ("godmode: idle and worth another look - "
+                                       + "; ".join(resurfaced))
+                    notices.insert(0, resurfaced_line)
+                    _BURNED_NOTICES.add(resurfaced_line)
                 if unsupported and not lean:
                     shown = "; ".join(
                         f"'{_ascii_echo(s)[:160]}'" for s in unsupported[:2])
@@ -4349,10 +4421,7 @@ def main(argv: list[str] | None = None) -> int:
                     # At most two notices per stop (S15 item 6): skimmed is
                     # dismissed, and every wire's receipt already guarantees
                     # its own turn will come.
-                    shown_notices = notices[:2]
-                    if len(notices) > 2:
-                        shown_notices.append(
-                            f"({len(notices) - 2} more in `godmode doctor`)")
+                    shown_notices = _clip_notices(notices)
                     print(json.dumps({"systemMessage": "\n".join(shown_notices)}))
                     # A Stop systemMessage reaches the operator
                     # only. Parked beside the claim echo, the notices reach the
@@ -5036,6 +5105,12 @@ def main(argv: list[str] | None = None) -> int:
                 f"{preview['category']} ({preview.get('tier', 'R?')})"
                 + (f" - touches {impact}" if impact else "")
                 + ". Approve to run it." + governance_note
+                # Read by the agent when the answer finally comes, and the
+                # only moment it can be told: while the ask waits, no hook
+                # runs. The detached watcher below names the wait to the
+                # operator after thirty minutes.
+                + " If nobody answers within 30 minutes, continue on files "
+                "this call does not touch and leave it pending."
             )
             if operation:
                 # This used to LEAD with `godmode
@@ -5089,7 +5164,13 @@ def main(argv: list[str] | None = None) -> int:
             # would-ask folds to deny exactly as it does on a host with no
             # ask at all, and the record names the mode.
             permission_mode = str(host_field(submitted, "permission_mode") or "")
-            no_human_ask = permission_mode in _NO_HUMAN_ASK_MODES
+            # An R2 ask (a commit, a staged file, an in-tree delete, an
+            # inline script) is local and reversible: in auto mode it goes
+            # to the host's own classifier as an ask instead of folding to
+            # a refusal. 2026-09-28: every `git add` and `git commit` of a
+            # release was refused this way. R3 and above still fold.
+            no_human_ask = (permission_mode in _NO_HUMAN_ASK_MODES
+                            and str(preview.get("tier", "")) != "R2")
             # The one call site that resolves whether an operator is
             # presumed present and threads it into `_decision_for` - every
             # other call site in this file passes none and keeps the R5-only
@@ -5162,7 +5243,7 @@ def main(argv: list[str] | None = None) -> int:
                 # category, never the operation. Best-effort the same way
                 # the refusal record below degrades.
                 try:
-                    archive.append(
+                    asked = archive.append(
                         "action", "gate-asked",
                         {"tier": str(preview.get("tier", "R?")),
                          "category": preview.get("category", "unclassified"),
@@ -5170,6 +5251,14 @@ def main(argv: list[str] | None = None) -> int:
                          "permission_mode": permission_mode or "unknown"},
                         evidence=[],
                     )
+                    # A real host session (it states a session id) gets a
+                    # detached watcher that records and notifies a stall
+                    # after thirty minutes; a bare test payload does not.
+                    if host_field(submitted, "session_id"):
+                        from godmode_runtime.godmode_stallwatch import spawn_watch
+                        spawn_watch(str(anchor.project_root), int(asked["sequence"]),
+                                    f"{preview.get('category', 'operation')} "
+                                    f"({preview.get('tier', 'R?')}): {operation[:120]}")
                 except Exception:  # noqa: BLE001  # godmode: swallow-ok: an ask that already happened is best-effort to record
                     _report_ancillary_failure(archive)
             if effectively_denied:
@@ -5544,6 +5633,14 @@ def main(argv: list[str] | None = None) -> int:
                             or promotion)
                 body: dict[str, Any] = {}
                 host = current_host()
+                if preview.get("capability_consumed"):
+                    # The password already answered this call; said out
+                    # loud so the host does not ask a second time.
+                    body = render_spent_allow(
+                        host, "PreToolUse",
+                        f"godmode: approved by a staged capability "
+                        f"({preview.get('category', 'operation')}, "
+                        f"{preview.get('tier', 'R?')}); spent once")
                 if host == "grok":
                     # Everything parked (the continuity
                     # brief, the claim echo) rides the first allowed call as
@@ -5560,8 +5657,10 @@ def main(argv: list[str] | None = None) -> int:
                 if host == "antigravity":
                     # Antigravity reads a silent allow as a
                     # denial (agy 1.0.15, a memory plugin's bridge). Its contract
-                    # is {decision, reason} and nothing else.
-                    body = {"decision": "allow"}
+                    # is {decision, reason} and nothing else. A spent
+                    # staging's own reason survives below unless an
+                    # advisory replaces it.
+                    body = {"decision": "allow", **body}
                     if advisory:
                         body["reason"] = advisory
                     advisory = None
@@ -5590,7 +5689,8 @@ def main(argv: list[str] | None = None) -> int:
             if not preview["allow"]:
                 body, _code = render_decision(
                     event.host, event.event,
-                    preview.get("forced_decision") or _decision_for(preview), preview["reason"])
+                    preview.get("forced_decision") or _decision_for(preview),
+                    _three_zone_reason(preview["reason"]))
                 print(json.dumps(body, ensure_ascii=False))
             elif current_host() == "antigravity":
                 # An allowed call with no operation text (a read tool):
@@ -5710,6 +5810,22 @@ def _degraded_exit(argv: list[str] | None) -> int:
     except Exception:  # noqa: BLE001  # godmode: swallow-ok: recording the degradation itself must not raise
         pass
     if event != "pre-action":
+        # Each event answers in its own contract rather than falling
+        # silent: the model learns at session start that no brief came,
+        # and the operator learns at a stop or prompt boundary that the
+        # bookkeeping for that turn did not happen.
+        try:
+            note = ("godmode: degraded - the archive could not be read for this "
+                    f"{event or 'event'}; nothing was recorded. Run `godmode doctor`.")
+            if event == "session-start":
+                print(json.dumps({"hookSpecificOutput": {
+                    "hookEventName": "SessionStart",
+                    "additionalContext": note + " No continuity brief is available; "
+                    "confirm the tree's state before acting on memory."}}))
+            elif event in ("stop", "subagent-stop", "user-prompt"):
+                print(json.dumps({"systemMessage": note}))
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: the exit code below is the answer either way
+            pass
         return 0
     try:
         reason = (

@@ -819,13 +819,18 @@ def build_context_brief(
         brief["records"] = compress_brief(archive, selected)
         brief["compression"] = "typed; every view lists removed fields and its seq: handle"
     cap_brief_sections(brief)
-    dropped = 0
-    while brief["records"] and estimated() > token_budget:
-        brief["records"].pop(0)
-        dropped += 1
+    # The newest record always survives: a brief that names nothing tells
+    # the reader nothing about where to look. Each drop names its record
+    # and why, so "trimmed" is a list a reader can follow, not a count.
+    dropped: list[dict[str, Any]] = []
+    while len(brief["records"]) > 1 and estimated() > token_budget:
+        gone = brief["records"].pop(0)
+        dropped.append({"sequence": gone.get("sequence"), "kind": gone.get("kind"),
+                        "reason": "oldest record over the token budget"})
     if dropped:
-        brief["records_dropped"] = dropped
-        _note_trim(brief, "records", dropped)
+        brief["records_dropped"] = len(dropped)
+        brief["dropped"] = dropped[-8:]
+        _note_trim(brief, "records", len(dropped))
     brief["estimated_tokens"] = estimated()
     brief["token_budget"] = token_budget
     return brief

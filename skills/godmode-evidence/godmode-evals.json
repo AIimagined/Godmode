@@ -18,7 +18,7 @@
       "check": {
         "command": "python scripts/godmode.py claim --help",
         "expect_exit": 0,
-        "expect_contains": "--refuted-by"
+        "expect_contains": "--verify"
       }
     },
     {

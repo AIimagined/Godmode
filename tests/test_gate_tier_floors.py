@@ -26,6 +26,7 @@ LOW_TIER_PINS: dict[str, tuple[str, dict, str]] = {
     "read-only-inspection": ("git status", {}, "R0"),
     "local-compute-or-state": ("python build_tool.py", {}, "R1"),
     "git-branch-create": ("git checkout -b feature-x", {}, "R1"),
+    "git-local-reversible": ("git switch -c feature-x", {}, "R1"),
     "interpreter-inline-read-only": ('python -c "print(1)"', {"inline_scan": True}, "R1"),
 }
 

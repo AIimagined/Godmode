@@ -282,6 +282,13 @@ def _term_list(repo: Path) -> Path | None:
 WORKFLOW_FILE = Path(".github") / "workflows" / "godmode-verify.yml"
 _RUN_LINE = re.compile(r"^\s*(?:-\s*)?run:\s*(?P<cmd>python\s.+?)\s*$")
 _SKIP_GATE = re.compile(r"unittest discover|--version\b")
+# How to reproduce a red cheap gate, by check name; a workflow gate
+# carries its own command on the finding.
+_REPRODUCE = {
+    "banned-term": "godmode scrub",
+    "swallow-ratchet": "godmode swallow",
+    "gate-table": "python scripts/dev/build_decision_table.py",
+}
 PUSH_SHAPED = re.compile(r"(?i)^\s*(?:git\s+push\b|gh\s+release\s+create\b)")
 
 
@@ -597,6 +604,7 @@ def push_preflight(project: Path | str,
                    shard_index: int | None = None,
                    session: str | None = None) -> dict[str, Any]:
     repo = Path(project)
+    started = time.monotonic()
     # A shard index is a usage error before it is anything else, so it is
     # refused before a worktree exists to clean up. Out of range is named,
     # never clamped: a CI leg asking for shard 4 of 4 has a broken matrix,
@@ -617,7 +625,9 @@ def push_preflight(project: Path | str,
     # `dirty=True` the gate validates a snapshot of the working tree's
     # tracked changes (`git stash create`, which leaves the tree untouched)
     # instead of HEAD; the report names which one it validated.
-    validated = "HEAD"
+    # The report says WHAT it checked, not just "clean": the committed tree
+    # at HEAD, or a stash snapshot of HEAD plus the tracked changes.
+    validated = f"HEAD {_head_sha(repo)[:12]}: the committed tree"
     ref = "HEAD"
     # Only TRACKED changes make a tree dirty here. The disposable worktree is
     # built from HEAD or a stash snapshot, and untracked files are in neither,
@@ -640,9 +650,10 @@ def push_preflight(project: Path | str,
         sha = snapshot.stdout.decode("utf-8", errors="replace").strip()
         if snapshot.returncode == 0 and sha:
             ref = sha
-            validated = f"working-tree snapshot {sha[:12]}"
+            validated = f"working-tree snapshot {sha[:12]}: HEAD plus the tracked changes"
         else:
-            validated = "HEAD (the tree had no tracked changes to snapshot)"
+            validated = (f"HEAD {_head_sha(repo)[:12]}: the committed tree "
+                         "(no tracked changes to snapshot)")
 
     mechanical: list[dict[str, Any]] = []
     judgment: list[dict[str, Any]] = []
@@ -650,10 +661,28 @@ def push_preflight(project: Path | str,
     # Which shards this process actually ran, so a report never implies the
     # whole suite when one leg of a fan-out is what happened.
     ran_shards: list[int] = []
-    if status.stdout.strip() and any(line.startswith("??") for line in
-                                     status.stdout.decode("utf-8", errors="replace").splitlines()):
+    # An untracked file is in neither HEAD nor the stash snapshot, so a green
+    # here says nothing about it. Named per path, and a finding rather than a
+    # footnote: an edit saved after the retest used to read as validated.
+    untracked_after_retest = sorted(
+        line[3:].strip().strip('"')
+        for line in status.stdout.decode("utf-8", errors="replace").splitlines()
+        if line.startswith("??")
+    )
+    if untracked_after_retest:
         skipped.append("untracked files are not in the snapshot: `git add -N` "
                        "them or commit first for full fidelity")
+        judgment.append({
+            "check": "untracked-after-retest",
+            # Named, never failing on its own: an untracked scratch file
+            # must not refuse a push whose committed tree validated green.
+            "severity": "advisory",
+            "detail": f"{len(untracked_after_retest)} untracked path(s) are not in the "
+                      "validated snapshot, so this run does not validate them: "
+                      + ", ".join(untracked_after_retest[:8])
+                      + (" ..." if len(untracked_after_retest) > 8 else "")
+                      + "; `git add -N` or commit them, or push knowing they are unvalidated",
+        })
 
     # The worktree lives BESIDE the repo - the only location with a green
     # experiment behind it (3206 tests, 2026-09-04). The two special zones
@@ -727,6 +756,38 @@ def push_preflight(project: Path | str,
         if ratchet is not None:
             ratchet.setdefault("class", "blocked-by-guard")
             mechanical.append(ratchet)
+        # Cheap gates before the long run (0.3.31 lesson: seconds-long
+        # checks refused pushes AFTER a 35-minute suite). The decision-table
+        # freshness check and the workflow's own gates run here, before the
+        # suite, and a red one stops the suite from starting at all.
+        from .godmode_ownership import table_is_stale
+        table = table_is_stale(worktree)
+        if table["stale"]:
+            mechanical.append({
+                "check": "gate-table",
+                "detail": f"hooks/gate_table.json recorded {table['recorded']}, "
+                          f"sentinel is {table['current']}; regenerate: "
+                          "python scripts/dev/build_decision_table.py",
+            })
+        # The workflow's own gates, in the worktree, first red stops. These
+        # are the steps only CI ran before 2026-09-10. Unconditional: a red
+        # gate is the same finding whether or not the suite would be red.
+        import sys as _sys
+        for command in workflow_gate_commands(repo):
+            argv = command.split()
+            if argv and argv[0] == "python":
+                argv[0] = _sys.executable
+            try:
+                gate = subprocess.run(argv, cwd=worktree, capture_output=True, check=False, timeout=900)
+            except (OSError, subprocess.SubprocessError) as exc:
+                mechanical.append({"check": "workflow-gate", "command": command,
+                                   "detail": f"{command}: {exc.__class__.__name__}"})
+                break
+            if gate.returncode != 0:
+                tail = (gate.stdout or gate.stderr or b"")[-400:].decode("utf-8", errors="replace").strip()
+                mechanical.append({"check": "workflow-gate", "command": command,
+                                   "detail": f"{command} exited {gate.returncode}: {tail[-200:]}"})
+                break
         # THE RATCHET RULE, applied to this gate's own miss: three releases
         # went red in CI on stale pins because "run the full suite first"
         # lived as a lesson, and the suite hook here waited on a per-call
@@ -755,6 +816,15 @@ def push_preflight(project: Path | str,
             import shlex
             suite = shlex.split(suite[0])
         suite_designated = bool(suite)
+        # A red cheap gate means the suite does not run: the report names
+        # the check and its reproduce command, and `skipped` says so.
+        stopped_at = next(({"check": f["check"],
+                            "command": f.get("command") or _REPRODUCE.get(f["check"], "godmode preflight")}
+                           for f in mechanical), None)
+        if suite and stopped_at is not None:
+            skipped.append(f"suite: not run - {stopped_at['check']} is red; "
+                           f"reproduce: {stopped_at['command']}")
+            suite = None
         if suite:
             # This IS the release check (the once-per-release full run, or
             # its CI-gate equivalent): the suite it runs is the whole
@@ -895,26 +965,6 @@ def push_preflight(project: Path | str,
             skipped.append(
                 "suite: no command designated - pass --suite once, or record "
                 "it durably: precheck --designate-suite \"<cmd>\"")
-        # The workflow's own gates, in the worktree, first red stops. These
-        # are the steps only CI ran before 2026-09-10. A history-terms or
-        # open-ask finding is about the past or the record; the gates are
-        # about the tree, so only a red suite skips them.
-        if not any(j.get("check") == "suite" for j in judgment):
-            import sys as _sys
-            for command in workflow_gate_commands(repo):
-                argv = command.split()
-                if argv and argv[0] == "python":
-                    argv[0] = _sys.executable
-                try:
-                    gate = subprocess.run(argv, cwd=worktree, capture_output=True, check=False, timeout=900)
-                except (OSError, subprocess.SubprocessError) as exc:
-                    mechanical.append({"check": "workflow-gate", "detail": f"{command}: {exc.__class__.__name__}"})
-                    break
-                if gate.returncode != 0:
-                    tail = (gate.stdout or gate.stderr or b"")[-400:].decode("utf-8", errors="replace").strip()
-                    mechanical.append({"check": "workflow-gate",
-                                       "detail": f"{command} exited {gate.returncode}: {tail[-200:]}"})
-                    break
         # Standing process debt rides the preflight as judgment findings:
         # a push that never saw the dormant census is how commit stacks
         # queue over unstated criteria and assumptions (operator finding,
@@ -1156,7 +1206,11 @@ def push_preflight(project: Path | str,
         # A preflight that ran no suite attests `incomplete`, never `ran`.
         try:
             suite_red = any(j.get("check") == "suite" for j in judgment)
-            if suite_skipped:
+            # Failed before incomplete: a gate-red run whose suite never
+            # started attests `failed`, not a suite merely skipped.
+            if mechanical or suite_red:
+                status = "failed"
+            elif suite_skipped:
                 status = "incomplete"
             elif shard_index is not None and len(ran_shards) < shards_total:
                 # One leg of a fan-out is not the suite. `authorize stage`
@@ -1165,8 +1219,6 @@ def push_preflight(project: Path | str,
                 # to judge, and a quarter of the suite must never stage a
                 # push on its own.
                 status = "incomplete"
-            elif mechanical or suite_red:
-                status = "failed"
             else:
                 # Judgment findings (open asks, host reach, stale claims, standing
                 # history terms) are the operator's to weigh at the password; the
@@ -1178,6 +1230,7 @@ def push_preflight(project: Path | str,
                 "session": session or "",
                 "head": _head_sha(repo), "tree": _head_tree(repo), "validated": validated,
                 "shards": shards_total, "shards_ran": list(ran_shards),
+                "seconds": round(time.monotonic() - started, 1),
                 "findings": len(mechanical) + len(judgment), "gates": len(workflow_gate_commands(repo)),
                 "classes": _classes_tally(mechanical + judgment),
             }, evidence=[])
@@ -1192,6 +1245,8 @@ def push_preflight(project: Path | str,
         "validated": validated,
         "shards": shards_total,
         "shards_ran": ran_shards,
+        "stopped_at": stopped_at,
+        "untracked_after_retest": untracked_after_retest,
         # The effect of a control action is confirmed, never assumed: the
         # cleanup claim is checked against the filesystem, and an
         # unconfirmed removal is stated rather than silently believed.

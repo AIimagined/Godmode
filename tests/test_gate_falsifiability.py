@@ -35,6 +35,8 @@ import unittest
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
+if str(PLUGIN_ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
 
 # The gate list is read from the workflow, so a gate added to CI without a
 # falsification proof is reported here rather than assumed covered.
@@ -268,7 +270,12 @@ class GateFalsifiabilityTests(unittest.TestCase):
             capture_output=True, text=True, check=True, timeout=30).stdout.strip()
         source_state = (PLUGIN_ROOT / common).resolve() / "godmode-state"
         if source_state.is_dir():
-            shutil.copytree(source_state, cls.project / ".git" / "godmode-state")
+            # Copied to wherever the CLONE's anchor resolves its archive:
+            # `.git/godmode-state` by default, or under `GODMODE_STATE_HOME`
+            # when a harness (tests/conftest.py) set one for the run.
+            from godmode_runtime.godmode_anchor import resolve_anchor
+            target = Path(resolve_anchor(cls.project).archive_root)
+            shutil.copytree(source_state, target, dirs_exist_ok=True)
 
     @classmethod
     def tearDownClass(cls) -> None:

@@ -1,0 +1,21 @@
+{
+  "routes": {
+    "near_negative": {
+      "Merge the changelog fragments and build the release notes for this version": "godmode-changelog",
+      "Score this skill's routing against its baseline and ratchet the regression": "godmode-skill-eval",
+      "The agent has retried the same failing test nine times on the same lines; cap the loop and cut it off": "godmode-loop-warden"
+    },
+    "positive": {
+      "The last release cost nine password rounds and five reruns of the full suite; fold the burn beside the gate activity per release and record what to cut": "godmode-budget",
+      "This session has burned far more tokens and tool calls than the task warranted; check the spend against the declared ceilings and read the per-session spend series before continuing": "godmode-budget"
+    }
+  },
+  "schema": "godmode-routing-snapshot-v1",
+  "skill": "godmode-budget",
+  "summary": {
+    "near_negatives_rejected": 3,
+    "near_negatives_total": 3,
+    "positives_routed_correctly": 2,
+    "positives_total": 2
+  }
+}

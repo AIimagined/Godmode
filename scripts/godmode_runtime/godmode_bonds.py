@@ -158,10 +158,10 @@ def propose(
         raise ArchiveError(
             f"{count}/{MAX_PROPOSALS_PER_SPRINT} improvement proposals are still "
             f"open (MAX_PROPOSALS_PER_SPRINT={MAX_PROPOSALS_PER_SPRINT}); this is a "
-            "quality filter, not a truncation - the one thing that frees a slot "
-            "today is `atlas law ratify <proposal-seq>`, which needs a second "
-            "agent holding an operator-granted checker session and a bond for "
-            "that proposal's own target. No verb withdraws an open proposal."
+            "quality filter, not a truncation - a slot is freed by `atlas law "
+            "ratify <proposal-seq>` (a second agent holding an operator-granted "
+            "checker session and a bond for that proposal's own target) or by the "
+            "proposer's own `atlas law withdraw <proposal-seq> --reason <why>`."
         )
     cite_list = list(cite or [])
     if not cite_list:
@@ -202,6 +202,41 @@ def propose(
         "proposals_this_sprint": count + 1,
         "cap": MAX_PROPOSALS_PER_SPRINT,
     }
+
+
+def withdraw(archive: Chronicle, proposal_seq: int, reason: str) -> dict[str, Any]:
+    """`atlas law withdraw <proposal-seq> --reason <why>`: the proposer takes
+    an open proposal back. Writes an `improvement_verdict` with `verdict:
+    "withdrawn"`, which frees the proposal's slot under the cap exactly as
+    a ratification does. Refused when the proposal does not exist, already
+    has a verdict, or the caller is not the actor who proposed it - a
+    withdrawal is the proposer's own act, never a second agent's veto."""
+    proposal = _record_by_sequence(archive, "improvement_proposal", proposal_seq)
+    if proposal is None:
+        raise ArchiveError(f"No improvement_proposal at sequence {proposal_seq}")
+    reason = " ".join(str(reason or "").split())
+    if not reason:
+        raise ArchiveError("`atlas law withdraw` needs --reason; a silent withdrawal is a gap")
+    for record in archive.read_events(verify=False):
+        if (record.get("kind") == "improvement_verdict"
+                and (record.get("data") or {}).get("proposal_seq") == proposal["sequence"]):
+            raise ArchiveError(
+                f"Proposal {proposal_seq} already has an improvement_verdict "
+                f"({(record.get('data') or {}).get('verdict')}) at seq {record['sequence']}")
+    actor = agent_id()
+    proposer = (proposal.get("data") or {}).get("actor")
+    if proposer and actor != proposer:
+        raise ArchiveError(
+            f"Proposal {proposal_seq} was made by {proposer}; only that actor may "
+            f"withdraw it (this caller is {actor})")
+    record = archive.append(
+        "improvement_verdict", f"withdrawn:{proposal_seq}",
+        {"proposal_seq": int(proposal_seq), "verdict": "withdrawn", "actor": actor,
+         "reason": reason[:300]},
+        evidence=[f"seq:{proposal_seq}"],
+    )
+    return {"sequence": record["sequence"], "proposal_seq": int(proposal_seq),
+            "verdict": "withdrawn", "proposals_this_sprint": proposals_this_sprint(archive)}
 
 
 def bond_test(
@@ -423,11 +458,15 @@ def ratify(
             )
         impact = apply_skill_diff(archive, project, proposal_target, diff_path, patterns)
         if impact["outcome"] != "accepted":
+            from .godmode_skillimpact import skill_score_reason
+            unscorable = skill_score_reason(project, skill) if impact["score_after"] == 0.0 else None
             raise ArchiveError(
                 f"Proposal {proposal_seq}'s change to {proposal_target} did "
                 f"not strictly improve ({impact['score_before']} -> "
                 f"{impact['score_after']}, best recorded so far "
-                f"{impact['best_recorded']}): the skill file was restored "
+                f"{impact['best_recorded']})"
+                + (f" - {unscorable}" if unscorable else "")
+                + ": the skill file was restored "
                 "to its pre-change bytes (never the operator's own git "
                 f"checkout) and this stays an open proposal with a "
                 f"rejected skill_impact at seq:{impact['sequence']}."

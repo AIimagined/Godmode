@@ -93,7 +93,8 @@ class PromotedClusterIsConsumedTests(unittest.TestCase):
             cluster = law_candidates(archive)[0]
             promote_candidate(archive, cluster["first_seq"],
                               guard="Preview destructive removals first.",
-                              subject="preview-first")
+                              subject="preview-first",
+                              refuted_by="a removal previewed first still deletes the wrong thing")
             self.assertEqual(law_candidates(archive), [])
 
 

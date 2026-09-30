@@ -187,28 +187,22 @@ _READ_HEADS = [
 # mutation named here - bare `git tag` and `git checkout` (no args) are
 # themselves read-only (`_SAFE_GIT_TAG`, and `checkout` with nothing after it
 # falls elsewhere) and are already covered by `_GIT_FLOOR`/read allowances.
+#
+# A local merge, tag, switch, stash and `branch -d` are `git-local-reversible`
+# (R1) since the 2026-09-28 friction findings and are absent here on purpose;
+# the fast gate escalates them to the full sentinel, which allows them.
 _GIT_ASK_CANDIDATES = [
     "git push",
-    "git merge",
     "git rebase",
     "git reset",
     "git clean",
-    "git tag v1.0",
+    "git tag -d v1.0",
     "git checkout main",
-    "git switch feature",
-    "git branch -d old",
     "git worktree remove wt",
     "git worktree prune",
     "git worktree move wt new",
     "git stash drop",
-    "git stash pop",
     "git stash clear",
-    "git stash apply",
-    "git stash push",
-    "git stash save",
-    "git stash branch name",
-    "git stash create",
-    "git stash store abc",
     "git remote add name url",
     "git remote remove name",
     "git remote rm name",
@@ -229,6 +223,7 @@ _GIT_REFUSE_CANDIDATES = [
     "git reset --hard",
     "git clean --force",
     "git branch -D old",
+    "git rebase -i HEAD~3",
 ]
 
 # --- mutation_heads: only categories whose regex is a plain command-name
@@ -275,7 +270,13 @@ def _build_floor() -> dict[str, list[str]]:
             f"floor entry no longer classifies R0 in the full sentinel: {phrase!r} "
             f"-> {verdict['tier']} ({verdict['category']})"
         )
-    return {"claude-code": list(_GIT_FLOOR)}
+    # The same floor for every shipped plugin directory: the fast gate
+    # picks its host's entry (`_host_floor_key`) and falls back to
+    # claude-code's, so a host absent here is never silently unfloored.
+    return {host: list(_GIT_FLOOR) for host in _FLOOR_HOSTS}
+
+
+_FLOOR_HOSTS = ("claude-code", "codex", "cursor", "grok", "gemini", "antigravity", "kiro")
 
 
 def _build_read_heads() -> list[str]:
@@ -341,7 +342,9 @@ def _build_mutation_heads() -> dict[str, list[str]]:
     for category, heads in _MUTATION_HEAD_CANDIDATES.items():
         verified = []
         for head in heads:
-            verdict = classify_action(f"{head} target")
+            # `../target`: a delete aimed inside the tree is a file edit
+            # (R2) since 2026-09-28; the head's own category shows outside it.
+            verdict = classify_action(f"{head} ../target")
             assert verdict["protected"] and verdict["category"] == category, (
                 f"mutation-head candidate no longer classifies as {category!r}: "
                 f"{head!r} -> protected={verdict['protected']} "

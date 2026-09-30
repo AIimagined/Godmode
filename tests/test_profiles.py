@@ -187,7 +187,8 @@ class TightenOnlyRatchet(unittest.TestCase):
 
             with redirect_stdout(io.StringIO()), redirect_stderr(buffer):
                 exit_code = main(["--project", str(project), "init", "--profile", "novice"])
-            self.assertEqual(exit_code, 2)
+            # An authorization refusal exits 4 since 0.3.32 (one code per error class).
+            self.assertEqual(exit_code, 4)
             self.assertIn("release-or-external-write", buffer.getvalue())
 
     def test_a_hand_edited_policy_is_equally_protected(self) -> None:
@@ -235,7 +236,8 @@ class MalformedApprovalRequired(unittest.TestCase):
             buffer = io.StringIO()
             with redirect_stdout(io.StringIO()), redirect_stderr(buffer):
                 exit_code = main(["--project", str(project), "init", "--profile", "novice"])
-            self.assertEqual(exit_code, 2)
+            # An authorization refusal exits 4 since 0.3.32 (one code per error class).
+            self.assertEqual(exit_code, 4)
             payload = json.loads(buffer.getvalue())
             self.assertEqual(payload["error"], "AuthorizationError")
             self.assertIn("approval_required", payload["message"])

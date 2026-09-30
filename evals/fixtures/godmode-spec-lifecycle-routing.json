@@ -2,7 +2,7 @@
   "routes": {
     "near_negative": {
       "Create a new skill after a repeated capability gap has been proven at least twice": "godmode-skill-forge",
-      "Review this pull request's code changes for bugs": "godmode",
+      "Review this pull request's code changes for bugs": "godmode-ci",
       "Write a one-off design note with nobody asked to sign off on it": "godmode-changelog",
       "Write the design doc": "godmode-governance"
     },

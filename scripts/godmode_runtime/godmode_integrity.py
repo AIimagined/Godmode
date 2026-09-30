@@ -761,7 +761,10 @@ _TEMPORARY = re.compile(
 # stays non-blocking.
 _ASSERTISH = re.compile(
     r"\bassert\b|\.assert[A-Z]|assertRaises|pytest\.raises|\braise\b"
-    r"|\bself\.fail\b|\bunittest\.skip")
+    r"|\bself\.fail\b|\bunittest\.skip"
+    # A shared helper named `assert_<thing>(self, ...)` is an assertion the
+    # test delegates (the skill-face bundle checks); the name says so.
+    r"|\bassert_[a-z]\w*\(")
 # An except arm that swallows without reporting. Inside a test this deletes
 # the only path by which the failure it guards could surface; the suite stays
 # green while the covered defect is live.

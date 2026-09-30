@@ -92,6 +92,12 @@ it.
 Read [godmode-evidence-cycle.md](references/godmode-evidence-cycle.md) for the attempt
 record and completion checklist.
 
+Orchestration gate: before a fix is handed to another agent or a subagent, the
+incident is on record with its reproduction (`godmode remember --kind incident
+--repro "<the failing command>"`) and the retest list is named (`godmode atlas
+closure <files>`); a hand-off carrying neither is a guess passed along, and the
+hand-back must cite the incident's seq and the retest's attestation.
+
 ## Postmortem flow
 
 After a fix ships, run the postmortem in

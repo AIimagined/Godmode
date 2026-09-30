@@ -39,7 +39,9 @@ from godmode_runtime.godmode_evals import (  # noqa: E402
 
 ALL_SKILLS = [
     "godmode",
+    "godmode-budget",
     "godmode-changelog",
+    "godmode-ci",
     "godmode-code-of-law",
     "godmode-codegraph",
     "godmode-continuity",
@@ -48,6 +50,7 @@ ALL_SKILLS = [
     "godmode-host-sync",
     "godmode-impact-gate",
     "godmode-investigation",
+    "godmode-loop-warden",
     "godmode-memory-gardener",
     "godmode-repair",
     "godmode-replicate",
@@ -111,8 +114,10 @@ class RoutingEvalTests(unittest.TestCase):
         # misrouted prompts were reworded. Observed reality, kept current.
         report = run_routing_evals(PLUGIN_ROOT)
         totals = report["totals"]
-        self.assertEqual(totals["positives_total"], 44)
-        self.assertEqual(totals["positives_routed_correctly"], 44)
+        # 52 since the loop-warden, budget and ci faces joined with two
+        # positives each (46 after the continuity corpus grew).
+        self.assertEqual(totals["positives_total"], 52)
+        self.assertEqual(totals["positives_routed_correctly"], 52)
         self.assertEqual(report["verdict"], "routing-sound")
         failing = {entry["prompt"] for entry in report["failing_prompts"]}
         self.assertEqual(failing, KNOWN_MISROUTED_POSITIVES)
@@ -120,7 +125,8 @@ class RoutingEvalTests(unittest.TestCase):
     def test_near_negatives_reported_not_hidden(self):
         report = run_routing_evals(PLUGIN_ROOT)
         totals = report["totals"]
-        self.assertEqual(totals["near_negatives_total"], 68)
+        # 77 since the loop-warden, budget and ci faces joined with three each.
+        self.assertEqual(totals["near_negatives_total"], 77)
         # Captured near-negatives are reported per skill with details.
         for skill, entry in report["skills"].items():
             captured = [m for m in entry["misrouted"] if m["kind"] == "near_negative"]
@@ -233,15 +239,17 @@ class AdversarialGridTests(unittest.TestCase):
         # laundered through a rec: citation of a prior unverified claim. The
         # runtime now refuses claim records as rec: support, so all 13
         # adversarial attacks are refused - and this test keeps that closed.
-        # The meta-gate suite adds 22 more cells (one guaranteed-deny fixture
-        # per protected class, including weakening Godmode's own protection
-        # and an agent opening the operator's approval prompt), for 35
-        # cells overall.
+        # The meta-gate suite adds one guaranteed-deny fixture per protected
+        # class (including weakening Godmode's own protection and an agent
+        # opening the operator's approval prompt); the count follows the
+        # fixture table, so retiring a class is not a silent breach.
+        from godmode_runtime.godmode_evals import META_FIXTURES
+        meta = sum(len(rows) for rows in META_FIXTURES.values())
         report = adversarial_grid()
         self.assertEqual(report["adversarial_cells"], 13)
-        self.assertEqual(report["meta_cells"], 22)
-        self.assertEqual(report["cells"], 35)
-        self.assertEqual(report["passed"], 35)
+        self.assertEqual(report["meta_cells"], meta)
+        self.assertEqual(report["cells"], 13 + meta)
+        self.assertEqual(report["passed"], 13 + meta)
         self.assertEqual(report["failed"], 0)
         self.assertEqual(report["not_executable"], 0)
         self.assertEqual(report["verdict"], "controls-held")

@@ -132,6 +132,29 @@ def _resolved_godmode_py() -> Path:
     return _PACKAGE_ROOT / "scripts" / "godmode.py"
 
 
+def _regenerate_gate_table(project_root: Path) -> bool:
+    """Run the table generator and stage its output; False when the
+    generator is absent, fails, or the result could not be staged."""
+    import sys
+    generator = project_root / "scripts" / "dev" / "build_decision_table.py"
+    if not generator.is_file():
+        return False
+    try:
+        done = subprocess.run([sys.executable, str(generator)], cwd=str(project_root),
+                              capture_output=True, text=True, timeout=120)
+        if done.returncode != 0:
+            return False
+        staged = _git("add", "hooks/gate_table.json", cwd=project_root)
+        if staged.returncode != 0:
+            return False
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if sys.stderr is not None:
+        print("godmode: hooks/gate_table.json was stale; regenerated and staged it for this commit",
+              file=sys.stderr)
+    return True
+
+
 def _git(*args: str, cwd: Path, timeout: int = 15) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", "-C", str(cwd), *args], capture_output=True, text=True, timeout=timeout
@@ -441,7 +464,7 @@ KNOWN_BYPASS = (
     "`git -c core.hooksPath=<elsewhere>`) skips every client-side hook including "
     "this one - git's own documented escape hatch. This backstop raises the floor "
     "for the default/cooperative path; it is not an unbypassable wall for a caller "
-    "with ordinary git-CLI access. Only host-level interception (CX-1/CX-2/CX-3), "
+    "with ordinary git-CLI access. Only host-level interception, "
     "where a matching adapter exists, closes that specific gap."
 )
 
@@ -760,7 +783,8 @@ def _table_freshness_check_failed(archive: Any, detail: str) -> dict[str, Any]:
         "category": "gate-table-stale-check-failed",
         "reason": (
             f"refused: the gate-table freshness check failed ({detail}); this check has no "
-            "declared-policy gate, so its own failed inspection blocks unconditionally too"
+            "declared-policy gate, so its own failed inspection blocks unconditionally too. "
+            "Regenerate the table with `python scripts/dev/build_decision_table.py` and commit it"
         ),
     }
 
@@ -840,6 +864,12 @@ def _evaluate_pre_commit(archive: Any, project_root: Path) -> dict[str, Any]:
         freshness = table_is_stale(project_root)
     except Exception as exc:  # noqa: BLE001  # godmode: swallow-ok: this file's own standard - a failed inspection blocks with a reason, never a bare traceback
         return _table_freshness_check_failed(archive, str(exc))
+    if freshness["stale"]:
+        # Regenerate and stage the table instead of only blocking: the
+        # remedy is mechanical and the generator is in the tree. The block
+        # stays for a generator that fails or a table still stale after it.
+        if _regenerate_gate_table(project_root):
+            freshness = table_is_stale(project_root)
     if freshness["stale"]:
         return {
             "git_hook": "pre-commit", "verdict": "block", "protected": True,

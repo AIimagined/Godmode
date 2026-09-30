@@ -59,9 +59,13 @@ _POLICY = _ROOT / ".godmode-authorization-policy.json"
 _PARKED = _ROOT / ".godmode-authorization-policy.test-parked.json"
 
 _STATE_HOME_ENV = "GODMODE_STATE_HOME"
-_parked_state_home_dir: Path | None = None
-_prior_state_home: str | None = None
-_state_home_parked = False
+# One frame per park_local_policy() call, popped by restore_local_policy():
+# (moved the project file?, prior GODMODE_STATE_HOME, this frame's temp dir).
+# Nesting is real, not theoretical: `tests/conftest.py` parks once for the
+# whole pytest session, and the modules that park for themselves (or the
+# helper's own tests, which set a fake home first) still get exactly the
+# state they started from back when they restore.
+_frames: list[tuple[bool, str | None, Path]] = []
 
 
 def park_local_policy() -> None:
@@ -70,32 +74,30 @@ def park_local_policy() -> None:
     fresh, empty temp directory - so operator_policy_path() resolves to a
     file that does not exist, regardless of what the operator has actually
     declared under their real ~/.godmode."""
+    moved = False
     if _POLICY.exists():
         _POLICY.replace(_PARKED)
-    global _parked_state_home_dir, _prior_state_home, _state_home_parked
-    if _state_home_parked:
-        return
-    _prior_state_home = os.environ.get(_STATE_HOME_ENV)
-    _parked_state_home_dir = Path(tempfile.mkdtemp(prefix="godmode-state-home-park-"))
-    os.environ[_STATE_HOME_ENV] = str(_parked_state_home_dir)
-    _state_home_parked = True
+        moved = True
+    prior = os.environ.get(_STATE_HOME_ENV)
+    parked_dir = Path(tempfile.mkdtemp(prefix="godmode-state-home-park-"))
+    os.environ[_STATE_HOME_ENV] = str(parked_dir)
+    _frames.append((moved, prior, parked_dir))
 
 
 def restore_local_policy() -> None:
-    """Put a parked declaration back, if one is waiting, and restore
-    whatever GODMODE_STATE_HOME held (or its absence) before
-    park_local_policy() ran."""
-    if _PARKED.exists():
-        _PARKED.replace(_POLICY)
-    global _parked_state_home_dir, _prior_state_home, _state_home_parked
-    if not _state_home_parked:
+    """Put a parked declaration back, if this park moved it, and restore
+    whatever GODMODE_STATE_HOME held (or its absence) before the matching
+    park_local_policy() ran. A restore with no park outstanding only puts a
+    stranded declaration back (a run that died between park and restore)."""
+    if not _frames:
+        if _PARKED.exists():
+            _PARKED.replace(_POLICY)
         return
-    if _prior_state_home is None:
+    moved, prior, parked_dir = _frames.pop()
+    if moved and _PARKED.exists():
+        _PARKED.replace(_POLICY)
+    if prior is None:
         os.environ.pop(_STATE_HOME_ENV, None)
     else:
-        os.environ[_STATE_HOME_ENV] = _prior_state_home
-    if _parked_state_home_dir is not None:
-        shutil.rmtree(_parked_state_home_dir, ignore_errors=True)
-    _parked_state_home_dir = None
-    _prior_state_home = None
-    _state_home_parked = False
+        os.environ[_STATE_HOME_ENV] = prior
+    shutil.rmtree(parked_dir, ignore_errors=True)

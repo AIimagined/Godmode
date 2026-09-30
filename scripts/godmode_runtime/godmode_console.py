@@ -61,7 +61,7 @@ from .godmode_atlas import build as build_atlas
 from .godmode_atlas import direction_findings, load_index, save_index, slice_file
 from .godmode_attest import (
     GRADES, RESOLUTION_OUTCOMES, STATUSES, plant_and_observe, recurrences,
-    reflect, run_check,
+    reflect, refuse_shell_grammar, run_check,
 )
 from .godmode_bindings import check as bindings_check
 from .godmode_bindings import dependency_gate, release_checksums, sbom_cyclonedx, sbom_spdx
@@ -191,7 +191,9 @@ from .godmode_plan import bind_execution, mutation_verdict
 from .godmode_plan import SPEC_FIELDS
 from .godmode_plan import specify as plan_specify
 from .godmode_plan import start as plan_start
-from .godmode_scenarios import run as run_scenarios
+# godmode_scenarios pulls unittest.mock and asyncio: about one second of
+# every CLI start (measured with -X importtime), paid by every hook and
+# every eval probe. Imported where it is used instead.
 from .godmode_scope import scope as scope_change
 from .godmode_status import ITEM_TYPES, STATES, handover, record_item, remaining, render_view, survey
 from .godmode_corpus import build_brief, resolve_roles
@@ -1396,6 +1398,7 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
                     "remedy": ("cite one command, or put the multi-step check in "
                                "a script and cite that script by path"),
                 }, exit_code=1)
+            refuse_shell_grammar(str(cite)[len("cmd:"):])
             outcome = run_check(
                 runtime.archive, _session(runtime, args.session),
                 Path(runtime.anchor.project_root),
@@ -2381,6 +2384,13 @@ def session_digest(runtime: Runtime, session: str | None, transcript: str | None
 def cmd_status_survey(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     _require_archive(runtime)
     report = survey(runtime.archive, Path(runtime.anchor.project_root))
+    # The highest sequence ever sealed, cold tier included - the number
+    # that never shrinks when storage moves (`verify()`'s own field).
+    try:
+        report["sealed_records"] = runtime.archive.verify(
+            runtime.archive.read_events()).get("sealed_records")
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: the survey stands without the count; doctor names a broken chain
+        report["sealed_records"] = None
     from .godmode_skillchange import unattended_changes
     changed = unattended_changes(runtime.archive, latest_session(runtime.archive))
     if changed:
@@ -2557,14 +2567,16 @@ def cmd_law_debrief(args: argparse.Namespace, runtime: Runtime) -> CommandResult
     _require_archive(runtime)
     from .godmode_law import debrief
 
-    return CommandResult(debrief(runtime.archive))
+    return CommandResult(debrief(runtime.archive,
+                                 retire_failed=bool(getattr(args, "retire_failed", False))))
 
 
 def cmd_law_promote(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     from .godmode_law import promote_candidate
 
     return CommandResult(promote_candidate(
-        runtime.archive, args.candidate, guard=args.guard, subject=args.subject))
+        runtime.archive, args.candidate, guard=args.guard, subject=args.subject,
+        refuted_by=getattr(args, "refuted_by", None)))
 
 
 def cmd_benchmark(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
@@ -3009,8 +3021,11 @@ def cmd_forget(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     pass now always uses the real time; the preview is where a fabricated
     one belongs, because a preview writes nothing.
     """
-    from .godmode_forget import forget
+    from .godmode_forget import forget, rehydrate
     _require_archive(runtime)
+    rehydrate_seq = getattr(args, "rehydrate", None)
+    if rehydrate_seq is not None:
+        return CommandResult(rehydrate(runtime.archive, int(rehydrate_seq)))
     now = getattr(args, "now", None)
     dry_run = bool(getattr(args, "dry_run", False))
     if now is not None and not dry_run:
@@ -3465,6 +3480,8 @@ def cmd_recurrences(args: argparse.Namespace, runtime: Runtime) -> CommandResult
 
 
 def cmd_scenarios(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
+    from .godmode_scenarios import run as run_scenarios
+
     report = run_scenarios(only=args.only)
     # A control that passes its unit test and misses the failure it was written
     # for is the expensive kind of green, so a miss fails the command. A
@@ -3701,6 +3718,9 @@ def _atlas_law(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
             patterns=list(getattr(args, "pattern", None) or []),
         )
         return CommandResult(outcome)
+    if law_command == "withdraw":
+        from .godmode_bonds import withdraw as bonds_withdraw
+        return CommandResult(bonds_withdraw(runtime.archive, args.proposal_seq, args.reason))
     raise GodmodeError(f"Unknown atlas law subcommand: {law_command}")
 
 
@@ -4360,6 +4380,13 @@ def _require_request_closure_target(runtime: Runtime, subject: str) -> None:
         if wanted in (str(record.get("subject", "")).strip(), identifier) or \
                 request_text_digest(wanted) == identifier:
             return
+    # An ask closed without a delivery citation is `answered`; it left the
+    # open list but may still be closed for real once the commit exists.
+    for record in _requests:
+        if (record.get("kind") == "request"
+                and str(record.get("subject", "")).strip() == wanted
+                and str((record.get("data") or {}).get("status", "")).lower() == "answered"):
+            return
     if not opened:
         raise ArchiveError(f"no open ask matches '{wanted[:80]}' - there are no open asks on record")
     listed = "; ".join(
@@ -4582,6 +4609,16 @@ def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         return CommandResult({"record": _event_view(record)})
     status = args.status or ("open" if args.kind in ("request", "review") else "active")
     data: dict[str, Any] = {"value": args.value, "status": status}
+    if args.kind == "request" and status == "closed":
+        # A closure names what delivered it. Without a commit, diff or
+        # record citation the ask is `answered`, which leaves the open list
+        # exactly as `closed` does but never claims delivery.
+        delivering = [str(item) for item in (args.evidence or [])
+                      if str(item).startswith(("commit:", "diff:", "seq:", "verdict:"))]
+        if not delivering:
+            data["status"] = status = "answered"
+            data["closure"] = ("answered, not closed: no delivering commit cited - "
+                               "cite commit:<sha>, diff:<n> or seq:<n> to close")
     if args.kind == "review":
         # A flagged contradiction is closed
         # the way an ask is - by subject and status - and the finding's own
@@ -5157,18 +5194,38 @@ def _doctor_host(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     }, exit_code=0)
 
 
-def _secret_scan_targets(root: Path) -> Iterator[tuple[str, Any]]:
+DOCTOR_SECRET_SCAN_RECORDS = 500
+
+
+def _secret_scan_targets(root: Path, newest: int | None = None) -> Iterator[tuple[str, Any]]:
     """Every JSON value under `root` a secret-shape scan should examine:
     each `*.json` file whole, and each line of a `*.jsonl` cold segment
     as its own record - a secret rotated
     into a cold segment by `godmode forget` must stay exactly as findable
     here as it was while hot, one file-glob was never the security
-    boundary."""
-    for path in root.rglob("*.json"):
+    boundary. `newest` bounds the scan to the N last record files by name
+    (record files are sequence-numbered) and skips the cold segments and
+    the derived sidecars (read index, atlas cache), whose contents are
+    those same records."""
+    if newest is not None:
+        # One directory listing of the record files, not a walk of the
+        # whole state tree (28,000 paths sorted: two seconds on this repo).
+        events = root / "godmode-events"
+        try:
+            with os.scandir(events) as entries:
+                names = sorted(e.name for e in entries if e.name.lower().endswith(".godmode.json"))
+        except OSError:
+            names = []
+        files = [events / name for name in names[-newest:]]
+    else:
+        files = sorted(root.rglob("*.json"), key=lambda p: p.name)
+    for path in files:
         try:
             yield path.name, json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
+    if newest is not None:
+        return
     for path in root.rglob("*.jsonl"):
         try:
             text = path.read_text(encoding="utf-8")
@@ -5308,7 +5365,14 @@ def cmd_doctor(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
                        "`godmode verify` and `godmode doctor` are both clean."),
         })
     secret_locations: list[str] = []
-    for label, value in _secret_scan_targets(runtime.archive.root):
+    # Every append already refuses secret-shaped material
+    # (`enforce_private_payload`), so this is a bounded re-check of the
+    # newest records, not the exhaustive pass: rescanning all 28,000 event
+    # files took two minutes of every doctor run. `godmode privacy` scans
+    # everything.
+    scanned_recent = 0
+    for label, value in _secret_scan_targets(runtime.archive.root, newest=DOCTOR_SECRET_SCAN_RECORDS):
+        scanned_recent += 1
         secret_locations.extend(f"{label}:{item}" for item in find_secret_shapes(value))
     if secret_locations:
         issues.append(
@@ -6010,6 +6074,14 @@ def cmd_roi(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     separate fold (`roi_digest`), never merged into the real-denial counts
     above. JSON with --json, prose otherwise, either way."""
     _require_archive(runtime)
+    if getattr(args, "releases", False):
+        from .godmode_roi import release_roi, release_tags, render_release_roi
+
+        project = Path(runtime.anchor.project_root)
+        rows = release_roi(runtime.archive.read_events(verify=False), release_tags(project))
+        if getattr(args, "json", False):
+            return CommandResult({"releases": rows})
+        return CommandResult({"report": render_release_roi(rows)})
     if getattr(args, "digest", False):
         digest = roi_digest(runtime.archive, sessions=args.sessions)
         # S11-B: the enforce-era section rides the same digest.
@@ -6172,7 +6244,7 @@ def cmd_upstream(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
                               "next": ("read each listed file before the parity verdict; record it with "
                                        "`godmode remember --kind decision --subject \"absorb:<item>\"`")},
                              exit_code=0 if hits else 1)
-    """B3-1 (GAP-1): one `upstream-diff` record per run - a named package's
+    """One `upstream-diff` record per run - a named package's
     (or, via `--path`, a forked/fully-copied external repo's) shipped
     surface diffed against this project's own equivalents. Each `--dispose
     SYMBOL=DISPOSITION:BEHAVIOR_VERDICT` supplies the paired import+behavior
@@ -6813,12 +6885,22 @@ def cmd_evals(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
         "withhold_memory": True, "diffs": [],
         "verdict": "snapshot-mode-withheld",
     }
-    assertions = run_behavior_assertions(project, withhold_memory=withhold_memory)
+    if getattr(args, "fast", False):
+        # The behaviour probes and the cross-model matrix are 80 CLI
+        # subprocesses (two to three seconds each on this repo); the rest
+        # of the evals runs in-process in seconds.
+        assertions = {"verdict": "assertions-skipped",
+                      "skipped": "--fast: behaviour probes not run; drop --fast to run them"}
+        models = {"skipped": "--fast: cross-model matrix not run"}
+    else:
+        print("evals: running the behaviour probes as subprocesses "
+              "(minutes on a large suite; --fast skips them)", file=sys.stderr, flush=True)
+        assertions = run_behavior_assertions(project, withhold_memory=withhold_memory)
+        # One row per skill per declared model. A dict, so `--brief`
+        # (scalars only) leaves the headline untouched.
+        models = cross_model_matrix(project, withhold_memory=withhold_memory)
     charter = charter_snapshot(project)
     ranking = ranking_snapshot(project, withhold_memory=withhold_memory)
-    # One row per skill per declared model. A dict, so `--brief`
-    # (scalars only) leaves the headline untouched.
-    models = cross_model_matrix(project, withhold_memory=withhold_memory)
     payload = {**routing, "snapshots": snapshots, "assertions": assertions,
                "charter": charter, "ranking": ranking, "models": models}
     # A mode-differing ranking comparison is out of contract, not a failure:
@@ -6827,7 +6909,7 @@ def cmd_evals(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     gates = {
         "routing": routing["verdict"] == "routing-sound",
         "snapshots": snapshots["verdict"] in ("behaviour-stable", "snapshot-mode-withheld"),
-        "assertions": assertions["verdict"] == "assertions-held",
+        "assertions": assertions["verdict"] in ("assertions-held", "assertions-skipped"),
         "charter": charter["verdict"] == "charter-stable",
         "ranking": ranking["verdict"] in (
             "ranking-stable", "ranking-mode-differs", "ranking-mode-withheld"),
@@ -7187,7 +7269,7 @@ def cmd_skill_forge(args: argparse.Namespace, runtime: Runtime) -> CommandResult
     if len(success_evidence) < 3:
         raise ArchiveError(
             "skill forge needs --success-evidence seq:<n> at least three "
-            "times (NS-11d): a method becomes a skill candidate only after "
+            "times: a method becomes a skill candidate only after "
             "three recorded successes of one task type, each cited by the "
             f"archive record that proves it; got {len(success_evidence)}"
         )
@@ -7224,7 +7306,7 @@ def cmd_skill_forge(args: argparse.Namespace, runtime: Runtime) -> CommandResult
     cited = [int(item.split(":", 1)[1]) for item in success_evidence]
     if len(set(cited)) < 3:
         raise ArchiveError(
-            "--success-evidence needs three DISTINCT records (NS-11d): one "
+            "--success-evidence needs three DISTINCT records: one "
             "success cited three times is one success; got "
             f"{len(set(cited))} distinct of {len(cited)}"
         )
@@ -7234,7 +7316,7 @@ def cmd_skill_forge(args: argparse.Namespace, runtime: Runtime) -> CommandResult
                 if sequence not in existing]
     if dangling:
         raise ArchiveError(
-            "--success-evidence must cite records that exist (NS-11d): "
+            "--success-evidence must cite records that exist: "
             "`godmode history` lists them. No record at: "
             + ", ".join(sorted(set(dangling)))
         )
@@ -7265,6 +7347,18 @@ def cmd_skill_forge(args: argparse.Namespace, runtime: Runtime) -> CommandResult
             destination = str(project_root / ".grok" / "skills")
         else:
             destination = str(project_root / "skills")
+    # A skill forged outside `skills/` (or `.grok/skills/`) is never found
+    # by the eval suites, so it scores 0.0 and the strict-improvement gate
+    # rejects it every time; refused here by name instead of silently.
+    project_root = Path(runtime.anchor.project_root).resolve()
+    resolved_destination = Path(destination).expanduser().resolve()
+    allowed = (project_root / "skills", project_root / ".grok" / "skills")
+    if not any(resolved_destination == root or root in resolved_destination.parents
+               for root in allowed):
+        raise ArchiveError(
+            f"--destination {destination!r} is outside skills/ (or .grok/skills/); a skill "
+            "there is invisible to the eval suites, scores 0.0 and can never be accepted - "
+            "forge into skills/<name> instead")
     # A boundary-listed skill is refused to the forge as to every other writer.
     _refuse_locked_skill(runtime, Path(destination).expanduser() / args.name, "forge",
                          _resolve_operator_verified(runtime, args), primary="SKILL.md")
@@ -7325,8 +7419,8 @@ def _operator_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--as-operator", dest="as_operator", action="store_true",
         help="Claim this write as the human operator - outranks agent/checker/"
-             "hook records for this subject (NS-8k) and is exempt from the "
-             "single-writer close guard (NS-11h). A claim alone is not a "
+             "hook records for this subject and is exempt from the "
+             "single-writer close guard. A claim alone is not a "
              "credential: when `authorize setup` has configured a password, "
              "it is verified via --password-stdin or an interactive prompt - "
              "and refused outright (no silent downgrade to agent) if neither "
@@ -7601,7 +7695,7 @@ def _build_parser() -> argparse.ArgumentParser:
              "and when the password matters")
     guide_parser.add_argument(
         "--tier", type=int, choices=(1, 2, 3, 4),
-        help="C-61: print one tier of docs/LADDER.md instead of the orientation page")
+        help="print one tier of docs/LADDER.md instead of the orientation page")
 
     init_parser = sub.add_parser("init", help="Initialize the private local archive")
     init_parser.add_argument("--roles", action="store_true",
@@ -7632,7 +7726,7 @@ def _build_parser() -> argparse.ArgumentParser:
     brief.add_argument("--token-budget", type=int, default=DEFAULT_CONTEXT_BUDGET)
     brief.add_argument("--full", action="store_true", help="Include segment bodies, not just the map")
     brief.add_argument("--measure", action="store_true",
-                       help="B4-2: bytes + estimated tokens per brief section, "
+                       help="bytes + estimated tokens per brief section, "
                             "counts only - no bodies")
     brief.set_defaults(handler=cmd_brief)
 
@@ -7659,19 +7753,19 @@ def _build_parser() -> argparse.ArgumentParser:
     lessons.set_defaults(handler=cmd_lessons)
     lessons_sub = lessons.add_subparsers(dest="lessons_command")
     lessons_add = lessons_sub.add_parser(
-        "add", help="B4-7: record one lesson into the flat ledger")
+        "add", help="record one lesson into the flat ledger")
     lessons_add.add_argument("subject", help="What failed, in one line")
     lessons_add.add_argument("--guard", required=True,
                              help="The rule that prevents its recurrence")
     lessons_add.add_argument("--status", default="open")
     lessons_add.set_defaults(handler=cmd_lessons)
     lessons_list = lessons_sub.add_parser(
-        "list", help="B4-7: the recorded lessons, newest last, bounded")
+        "list", help="the recorded lessons, newest last, bounded")
     lessons_list.add_argument("--limit", type=int, default=20)
     lessons_list.set_defaults(handler=cmd_lessons)
     lessons_promote = lessons_sub.add_parser(
         "promote",
-        help="NS-2 + NS-10j: cite a structured lesson for graduation, with an "
+        help="cite a structured lesson for graduation, with an "
              "independent re-run hash; refused naming any missing structured field")
     lessons_promote.add_argument("lesson_seq", type=int, help="The lesson record's own sequence number")
     lessons_promote.add_argument("--cite", "--evidence", dest="cite", action="append", default=[],
@@ -7681,7 +7775,7 @@ def _build_parser() -> argparse.ArgumentParser:
     lessons_promote.set_defaults(handler=cmd_lessons)
     lessons_approve = lessons_sub.add_parser(
         "approve",
-        help="NS-2: approve a promotion with an independent re-run - refused when the "
+        help="approve a promotion with an independent re-run - refused when the "
              "approver is the promoter, or the rerun hash repeats the promotion's own")
     lessons_approve.add_argument("promotion_seq", type=int, help="The lesson_promotion's own sequence number")
     lessons_approve.add_argument("--rerun-hash", dest="rerun_hash", required=True,
@@ -7766,7 +7860,7 @@ def _build_parser() -> argparse.ArgumentParser:
                               help="This session's host transcript; reads in it count toward the required sources")
     session_open.add_argument(
         "--role", choices=["agent", "checker"], default="agent",
-        help="Declares this session's role (NS-8k). `checker` is OPERATOR-"
+        help="Declares this session's role. `checker` is OPERATOR-"
              "GRANTED, not self-declared: it requires --as-operator "
              "verification (see below) and is refused otherwise. Chronicled "
              "on the session record itself (with `role_granted_by: "
@@ -7925,8 +8019,9 @@ def _build_parser() -> argparse.ArgumentParser:
     claim.add_argument("--stale", action="store_true",
                        help="List claims whose cited file evidence changed or "
                             "vanished since they were recorded (grounded claims)")
-    claim.add_argument("--timeout", type=int, default=900,
-                       help="--verify only: seconds per check (default 900)")
+    claim.add_argument("--timeout", "--cite-timeout", dest="timeout", type=int, default=900,
+                       help="--verify only: seconds each cited check may run before it is "
+                            "attested `blocked` as timed out (default 900)")
     claim.add_argument("--refuted-by", dest="refuted_by", default=None,
                        help="Hypotheses only: the one command or observation "
                             "that would refute this claim")
@@ -8508,6 +8603,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--now", default=None,
         help="ISO-8601 timestamp to measure every TTL against; accepted with "
              "--dry-run only, so a fabricated clock can never expire anything")
+    forget_parser.add_argument(
+        "--rehydrate", type=int, default=None, metavar="SEQ",
+        help="Bring one rotated record back into the hot tier as a new record "
+             "citing the cold original; the cold segment is never edited")
     forget_parser.set_defaults(handler=cmd_forget)
 
     oracle_parser = sub.add_parser(
@@ -8576,7 +8675,7 @@ def _build_parser() -> argparse.ArgumentParser:
     atlas_sub.add_parser("orphans").set_defaults(handler=cmd_atlas)
     atlas_sub.add_parser("diagnose").set_defaults(handler=cmd_atlas)
     atlas_graph = atlas_sub.add_parser(
-        "graph", help="NS-3: a typed, time-valid evidence graph derived from the archive's own records")
+        "graph", help="a typed, time-valid evidence graph derived from the archive's own records")
     atlas_graph.set_defaults(handler=cmd_atlas)
     atlas_graph_sub = atlas_graph.add_subparsers(dest="graph_command", required=False)
     atlas_graph_sub.add_parser(
@@ -8592,7 +8691,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "verify", help="Rebuild fresh and fail (exit 1) when the hash disagrees with the last snapshot"
     ).set_defaults(handler=cmd_atlas)
     atlas_loop = atlas_sub.add_parser(
-        "loop", help="NS-1: loop records - a chained failure signature per retry attempt")
+        "loop", help="loop records - a chained failure signature per retry attempt")
     atlas_loop.set_defaults(handler=cmd_atlas)
     atlas_loop_sub = atlas_loop.add_subparsers(dest="loop_command", required=False)
     atlas_loop_advance = atlas_loop_sub.add_parser(
@@ -8620,7 +8719,7 @@ def _build_parser() -> argparse.ArgumentParser:
     atlas_loop_resume.set_defaults(handler=cmd_atlas)
 
     atlas_law = atlas_sub.add_parser(
-        "law", help="NS-4: falsification bonds gate ratification - the checker must prove it can fail")
+        "law", help="falsification bonds gate ratification - the checker must prove it can fail")
     atlas_law.set_defaults(handler=cmd_atlas)
     # `dest="atlas_law_command"`, distinct from the unrelated top-level
     # `law` verb's own `law_command` dest just below - two separate
@@ -8650,13 +8749,18 @@ def _build_parser() -> argparse.ArgumentParser:
     atlas_law_ratify.add_argument("proposal_seq", type=int, help="The improvement_proposal's own sequence number")
     atlas_law_ratify.add_argument(
         "--diff", default=None,
-        help="Required when the proposal targets a skills/<name>/... path (NS-12d): "
+        help="Required when the proposal targets a skills/<name>/... path: "
              "the SAME diff file --diff hashed at propose time; applied and scored "
              "before the verdict is written, and restored on anything short of a "
              "strict score improvement")
     atlas_law_ratify.add_argument(
         "--pattern", dest="pattern", action="append", type=int, default=[],
         help="A pattern record's own sequence this skill_impact cites; repeatable")
+    atlas_law_withdraw = atlas_law_sub.add_parser(
+        "withdraw", help="Take back your own open proposal; frees its slot under the cap")
+    atlas_law_withdraw.add_argument("proposal_seq", type=int, help="The improvement_proposal's own sequence number")
+    atlas_law_withdraw.add_argument("--reason", required=True, help="Why it is withdrawn")
+    atlas_law_withdraw.set_defaults(handler=cmd_atlas)
     atlas_law_ratify.set_defaults(handler=cmd_atlas)
 
     sliced = sub.add_parser("slice", help="Read a bounded window that declares its own edges")
@@ -8698,13 +8802,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--host", help="Host label to read the proof for (default: detected)")
     hooks_status.add_argument(
         "--git", action="store_true",
-        help="CX-4: report the git-hook backstop's own state instead of host hook wiring")
+        help="report the git-hook backstop's own state instead of host hook wiring")
     hooks_status.add_argument(
         "--matrix", action="store_true",
-        help="R-4: regenerate docs/HOST-FEATURE-REACH.md's tables from "
+        help="regenerate docs/HOST-FEATURE-REACH.md's tables from "
              "godmode_reach and HOST_CAPABILITIES instead of reporting one "
              "host's wiring; refuses (exit 2) if a hook host cites no "
-             "reference and no replicating test (R-0 guard)")
+             "reference and no replicating test (guard)")
     hooks_status.add_argument(
         "--write", action="store_true",
         help="Only valid with --matrix: write the regenerated doc instead "
@@ -8743,7 +8847,7 @@ def _build_parser() -> argparse.ArgumentParser:
              "that is malformed or an unrecognized shape (INVALID) - fix or remove it")
     hooks_wire.add_argument(
         "--all", action="store_true",
-        help="R-5: wire every known host (codex, antigravity, opencode, copilot, kiro) "
+        help="wire every known host (codex, antigravity, opencode, copilot, kiro) "
              "through the one code path [CREATE]/[UPDATE]/[OK]/[CONFLICT]/[INVALID] lines "
              "report, dry-run or not")
     hooks_wire.add_argument(
@@ -8764,7 +8868,7 @@ def _build_parser() -> argparse.ArgumentParser:
              "or a `grok inspect --json` capture) instead of auto-discovering one")
     hooks_install.add_argument(
         "--git", action="store_true",
-        help="CX-4: install the git-hook backstop (pre-commit/pre-push/pre-rebase/"
+        help="install the git-hook backstop (pre-commit/pre-push/pre-rebase/"
              "post-checkout) instead of verifying a host manifest; refuses unless "
              "{\"git_backstop\": true} is declared")
     hooks_install.add_argument(
@@ -8773,7 +8877,7 @@ def _build_parser() -> argparse.ArgumentParser:
     hooks_install.set_defaults(handler=cmd_hooks)
     hooks_verify = hooks_sub.add_parser(
         "verify",
-        help="CX-4: run a synthetic protected push through the real pre-push hook "
+        help="run a synthetic protected push through the real pre-push hook "
              "mechanics in a throwaway repo, and record a live proof (host=git) if it "
              "actually blocks")
     hooks_verify.add_argument(
@@ -8810,7 +8914,7 @@ def _build_parser() -> argparse.ArgumentParser:
     context_sub.add_parser("rebuild").set_defaults(handler=cmd_context_rebuild)
     context_structure = context_sub.add_parser(
         "structure",
-        help="B4-6: incremental structural index (Python symbols via ast, "
+        help="incremental structural index (Python symbols via ast, "
              "file-level otherwise; names and hashes only) + bounded outline")
     context_structure.add_argument("--limit-lines", type=int, default=200,
                                    dest="limit_lines")
@@ -8832,7 +8936,7 @@ def _build_parser() -> argparse.ArgumentParser:
     history.add_argument("--limit", type=int, default=50)
     history.add_argument("--seq", type=int, default=None,
                          help="Read one record by sequence number, hot or cold "
-                              "(NS-11g: reaches a godmode-forget-rotated cold segment)")
+                              "(reaches a godmode-forget-rotated cold segment)")
     history.set_defaults(handler=cmd_history)
 
     plan = sub.add_parser("plan", help="Record a private execution contract")
@@ -8940,7 +9044,8 @@ def _build_parser() -> argparse.ArgumentParser:
                                "string; the subject is derived from its opening "
                                "words when --subject is not given")
     remember.add_argument("--subject", default=None, type=subject_text)
-    remember.add_argument("--value", default=None)
+    remember.add_argument("--value", "--data", dest="value", default=None,
+                          help="The record's value (`--data` is accepted as the same thing)")
     remember.add_argument("--status", default=None,
                           help="Default: active, or open for a request or a review; a "
                                "review closes with acknowledged or dismissed")
@@ -8952,13 +9057,13 @@ def _build_parser() -> argparse.ArgumentParser:
     # guards) is untouched. `--falsifier`, not `--refuted-by`: that flag
     # already means something else for `--kind incident`.
     remember.add_argument("--root-cause", dest="root_cause", default=None,
-                          help="Lessons (NS-10j): why the failure happened")
+                          help="Lessons: why the failure happened")
     remember.add_argument("--correction", dest="correction", default=None,
-                          help="Lessons (NS-10j): what was actually done to fix it")
+                          help="Lessons: what was actually done to fix it")
     remember.add_argument("--reflection", dest="reflection", default=None,
-                          help="Lessons (NS-10j): what generalizes beyond this one instance")
+                          help="Lessons: what generalizes beyond this one instance")
     remember.add_argument("--falsifier", dest="falsifier", default=None,
-                          help="Lessons (NS-10j): what observation would show the guard "
+                          help="Lessons: what observation would show the guard "
                                "is wrong (stored as this lesson's own 'refuted_by' - "
                                "distinct from --refuted-by, which is --kind incident's "
                                "own field)")
@@ -9044,7 +9149,7 @@ def _build_parser() -> argparse.ArgumentParser:
                           help="Requests only: whether the operator stated this ask "
                                "or the agent inferred it on their behalf")
     remember.add_argument("--supersedes", type=int, default=None, metavar="SEQ",
-                          help="NS-10e: this record replaces the record at sequence "
+                          help="this record replaces the record at sequence "
                                "SEQ - same --kind, not already itself superseded. "
                                "`history --subject <s>` then renders the chain "
                                "(seq -> seq) instead of a flat, ambiguous overwrite; "
@@ -9102,12 +9207,12 @@ def _build_parser() -> argparse.ArgumentParser:
     ).set_defaults(handler=cmd_fence_acceptance)
     fence_delete_check = fence_sub.add_parser(
         "delete-check",
-        help="B3-6: whether a deletion the fence would otherwise allow may proceed")
+        help="whether a deletion the fence would otherwise allow may proceed")
     fence_delete_check.add_argument("--path", required=True)
     fence_delete_check.set_defaults(handler=cmd_fence_delete_check)
     fence_delete_precheck = fence_sub.add_parser(
         "delete-precheck",
-        help="B3-6: attest the provenance pre-check before a tracked file is deleted")
+        help="attest the provenance pre-check before a tracked file is deleted")
     fence_delete_precheck.add_argument("--path", required=True)
     fence_delete_precheck.add_argument(
         "--history-read", required=True,
@@ -9123,7 +9228,7 @@ def _build_parser() -> argparse.ArgumentParser:
                                  help="The task, in the words you would describe it")
     precheck_parser.add_argument("--changed", nargs="+", default=None,
                                  help="Changed paths, for the paired-artifact check "
-                                      "(GAP-2); defaults to the working tree")
+                                      "; defaults to the working tree")
     precheck_parser.add_argument("--dirty", action="store_true",
                                  help="--preflight only: validate a snapshot of the "
                                       "working tree's tracked changes instead of "
@@ -9159,7 +9264,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # subcommand under it would make `--about` a required argument of
     # `declare-pair` too and break that documented surface for no reason.
     paired_artifact = sub.add_parser(
-        "paired-artifact", help="Artifacts declared to change together (GAP-2)")
+        "paired-artifact", help="Artifacts declared to change together")
     paired_artifact_sub = paired_artifact.add_subparsers(
         dest="paired_artifact_command", required=True)
     paired_artifact_declare = paired_artifact_sub.add_parser(
@@ -9205,6 +9310,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "debrief",
         help="The amendment loop: per law, delivered/cited/recurred counts and "
              "triaged recommendations; receipted so staleness is measurable")
+    law_debrief.add_argument(
+        "--retire-failed", action="store_true",
+        help="Retire every law whose correction recurred twice after delivery, now")
     law_debrief.set_defaults(handler=cmd_law_debrief)
     law_amend = law_sub.add_parser(
         "amend", help="Append a reviewed replacement guard for a living law "
@@ -9240,6 +9348,8 @@ def _build_parser() -> argparse.ArgumentParser:
                              help="The cluster's first_seq from `law candidates`")
     law_promote.add_argument("--guard", required=True)
     law_promote.add_argument("--subject", required=True)
+    law_promote.add_argument("--refuted-by", required=True,
+                             help="The observation that would show this guard wrong, in your words")
     law_promote.set_defaults(handler=cmd_law_promote)
 
     retest = sub.add_parser(
@@ -9308,7 +9418,7 @@ def _build_parser() -> argparse.ArgumentParser:
                       help="Task 10b: audit .godmode-loop.json readiness (stop contract, "
                            "budget, verdict path, escalation thresholds) before cycle one")
     loop.add_argument("--transcript", default=None,
-                        help="Read iteration episodes from this host transcript (PRD P-1/P-3): "
+                        help="Read iteration episodes from this host transcript: "
                              "error signature, overlapping hunks, no new files, no new assertion")
     loop.add_argument("--episodes", action="store_true",
                         help="With --transcript: list every episode and the backtrack context for each loop")
@@ -9382,14 +9492,14 @@ def _build_parser() -> argparse.ArgumentParser:
     guard_target.add_argument("--operation")
     guard_target.add_argument(
         "--git-hook", choices=GIT_HOOK_NAMES,
-        help="CX-4: evaluate the git-hook backstop for this hook name, reading git's own "
+        help="evaluate the git-hook backstop for this hook name, reading git's own "
              "hook-specific context (stdin for pre-push; nothing for the others) instead "
              "of an --operation string. What every installed git hook script calls.")
     guard.add_argument("--capability")
     guard.set_defaults(handler=cmd_guard)
 
     license_parser = sub.add_parser(
-        "license", help="B3-5: license/provenance gate for external-repo interaction")
+        "license", help="license/provenance gate for external-repo interaction")
     license_sub = license_parser.add_subparsers(dest="license_command", required=True)
     license_check = license_sub.add_parser(
         "check", help="Whether an operation naming an external repo may proceed")
@@ -9509,7 +9619,7 @@ def _build_parser() -> argparse.ArgumentParser:
     database.add_argument("--status")
     database.add_argument(
         "--reanchor", action="store_true",
-        help="B4-1: accept a tail-truncated chain as the chain - rewrites "
+        help="accept a tail-truncated chain as the chain - rewrites "
              "the sidecar anchor to the records that remain and chronicles "
              "the acceptance (an explicit operator decision)")
     database.add_argument("--rollback")
@@ -9552,11 +9662,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="U-E7: would-have-caught view over gate_mode=observe records only "
              "(would-have-denied/would-have-asked by category), never merged "
              "with the real denial counts above")
+    roi_parser.add_argument(
+        "--releases", action="store_true",
+        help="Per release tag range: password rounds, gate refusals by "
+             "category, preflight runs and minutes, suite runs repeated "
+             "for one HEAD - one table, no prose")
     roi_parser.set_defaults(handler=cmd_roi)
 
     trends_parser = sub.add_parser(
         "trends",
-        help="B4-5: per-session token/tool-call/test-run counts as a time "
+        help="per-session token/tool-call/test-run counts as a time "
              "series - unmeasured sessions stated as gaps, never interpolated",
     )
     trends_parser.add_argument(
@@ -9567,7 +9682,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     observe_parser = sub.add_parser(
         "observe",
-        help="B4-10: what an observe-mode trial recorded - tier-shaped "
+        help="what an observe-mode trial recorded - tier-shaped "
              "would-have counts; --report lists the decisions themselves",
     )
     observe_parser.add_argument(
@@ -9598,8 +9713,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     upstream_parser = sub.add_parser(
         "upstream",
-        help="B3-1: diff a named package's (or a forked/copied tree's) shipped "
-             "surface against this project's own equivalents - GAP-1",
+        help="diff a named package's (or a forked/copied tree's) shipped "
+             "surface against this project's own equivalents -",
     )
     upstream_target = upstream_parser.add_mutually_exclusive_group(required=True)
     upstream_target.add_argument(
@@ -9777,6 +9892,9 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="Raise the committed routing-score baseline to the current scores (refused on any regression)")
     evals_mode.add_argument("--determinism", action="store_true",
                        help="Run the offline routing harness twice and name any case whose route differs")
+    evals.add_argument("--fast", action="store_true",
+                       help="Skip the behaviour probes and the cross-model matrix (the subprocess-heavy "
+                            "part); everything else runs in-process in seconds")
     evals.add_argument("--withhold-memory", action="store_true",
                        help="Score with this project's lessons and compiled law withheld from the subject brief, "
                             "so the number measures the skill rather than the memory; the baseline keeps a "
@@ -9834,7 +9952,7 @@ def _build_parser() -> argparse.ArgumentParser:
     skill_forge = skill_sub.add_parser("forge")
     skill_forge.add_argument(
         "--destination", default=None,
-        help="Skill output directory. Default: .grok/skills/ on Grok (CX-3, Addendum 6's "
+        help="Skill output directory. Default: .grok/skills/ on Grok (, Addendum 6's "
              "roster-gap fix), else skills/ under the project root.")
     skill_forge.add_argument("--name", required=True)
     skill_forge.add_argument("--purpose", required=True)
@@ -9842,7 +9960,7 @@ def _build_parser() -> argparse.ArgumentParser:
     skill_forge.add_argument("--repeated-uses", type=int, required=True)
     skill_forge.add_argument(
         "--success-evidence", action="append", default=[],
-        help="NS-11d: cite a real archive record proving one recorded success "
+        help="cite a real archive record proving one recorded success "
              "of the task type this skill covers (`seq:<n>`, from `godmode "
              "history`); at least three, and refused unless they are three "
              "DISTINCT sequences that each name a record that exists. That "
@@ -9922,7 +10040,24 @@ def main(argv: list[str] | None = None) -> int:
     mode = os.environ.get("GODMODE_MODE", "standard")
     if mode == "expert" and not getattr(args, "json", False):
         args.brief = True
-    return _dispatch(args, mode=mode)
+    # An interrupted or terminated verb answers with the conventional
+    # signal codes instead of a traceback: 130 for SIGINT, 143 for
+    # SIGTERM. Nothing is left half-written - every archive write is
+    # atomic on its own - so there is nothing to clean up here.
+    import signal
+
+    def _terminated(_signum: int, _frame: Any) -> None:
+        raise SystemExit(143)
+
+    try:
+        signal.signal(signal.SIGTERM, _terminated)
+    except (ValueError, OSError):  # godmode: swallow-ok: not the main thread, or a platform without SIGTERM; the verb still runs
+        pass
+    try:
+        return _dispatch(args, mode=mode)
+    except KeyboardInterrupt:
+        print("godmode: interrupted", file=sys.stderr)
+        return 130
 
 
 def _reports_error(payload: Any) -> bool:
@@ -9943,6 +10078,13 @@ def _dispatch(args: argparse.Namespace, mode: str = "standard") -> int:
     """
     try:
         runtime = _runtime(args.project)
+        # One directory scan per process, as the hook already does: `resume`
+        # read the archive ten times and re-stat-ed 28,000 record files on
+        # each read (6 of its 10 seconds). A write by this process re-pins.
+        try:
+            runtime.archive.pin_identity()
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unpinned read is the slow path, never a failure
+            pass
         handler: Callable[[argparse.Namespace, Runtime], CommandResult] = args.handler
         result = handler(args, runtime)
         if result.exit_code == 0 and _reports_error(result.payload):
@@ -9986,7 +10128,9 @@ def _dispatch(args: argparse.Namespace, mode: str = "standard") -> int:
         return result.exit_code
     except GodmodeError as exc:
         print(_cli_error_text(exc, getattr(args, "brief", False)), file=sys.stderr)
-        return 2
+        # One exit code per error class (`godmode_errors`); 2 stays the
+        # refused-or-malformed default every class answered with before.
+        return int(getattr(exc, "exit_code", 2) or 2)
 
 
 if __name__ == "__main__":
