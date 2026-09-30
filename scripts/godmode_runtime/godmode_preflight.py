@@ -674,6 +674,9 @@ def push_preflight(project: Path | str,
                        "them or commit first for full fidelity")
         judgment.append({
             "check": "untracked-after-retest",
+            # Named, never failing on its own: an untracked scratch file
+            # must not refuse a push whose committed tree validated green.
+            "severity": "advisory",
             "detail": f"{len(untracked_after_retest)} untracked path(s) are not in the "
                       "validated snapshot, so this run does not validate them: "
                       + ", ".join(untracked_after_retest[:8])

@@ -66,7 +66,9 @@ class PreflightOrderTests(unittest.TestCase):
             finding = [j for j in report["judgment"] if j["check"] == "untracked-after-retest"]
             self.assertEqual(len(finding), 1, report["judgment"])
             self.assertIn("late_edit.py", finding[0]["detail"])
-            self.assertEqual(report["verdict"], "findings")
+            # Named, and advisory: an untracked file never refuses a push alone.
+            self.assertEqual(finding[0]["severity"], "advisory")
+            self.assertNotEqual(report["verdict"], "findings")
 
     def test_the_report_says_which_tree_it_validated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

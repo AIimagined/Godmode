@@ -4,7 +4,7 @@ All notable changes to Godmode will be documented in this file.
 
 The format follows Keep a Changelog principles, and releases use semantic versioning.
 
-## [0.3.32] - 2026-09-29
+## [0.3.32] - 2026-09-30
 
 ### Added
 
@@ -36,6 +36,7 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 - The staging line a refusal prints now runs as pasted on bash and on PowerShell, quotes, dollar signs and newlines included, and stages exactly the refused command.
 - A stop notice that already spent its once-per-session budget (a nag, a nudge, an idle-ask resurface) is never clipped out of the two-line stop message; a sentence that only repeats the hook's own earlier feedback no longer counts as a completion claim; a pre-tool refusal now reads rule, detail, checklist like a stop block; a hook whose archive read fails still answers each event in its own contract; the continuity brief never drops its newest record and names each record it drops; the stale gate-table refusal names the regenerate command.
 - A shell's inline command (`bash -lc "…"`, `sh -xc "…"`, `cmd /c "…"`, `pwsh -Command "…"`) is scanned as the command it runs, so a forced push inside it still refuses; the string-literal rule that lets `python -c "print('git push --force')"` through applies to interpreters only.
+- An untracked path the push preflight could not validate is named as an advisory finding and no longer refuses the push on its own; the verb timing bounds run as a separate benchmark (`GODMODE_RUN_TIMING=1`), not inside a loaded suite.
 
 ## [0.3.31] - 2026-09-28
 
