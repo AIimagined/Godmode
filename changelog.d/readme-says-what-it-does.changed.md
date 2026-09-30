@@ -1,1 +1,0 @@
-- The README gains a "What it can do" table (code graph, push preflight, one-shot approvals, loop detection, spend, plans, falsifiers, ask triage, citation repair, leases, release notes), an approvals paragraph, a flow diagram, a banner and a gate-tiers illustration, and current counts; the social preview image is replaced.

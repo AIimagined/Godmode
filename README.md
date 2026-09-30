@@ -100,7 +100,7 @@ over since they were graded; `godmode freshness` names every one of them:
 $ godmode scenarios --brief
 all-caught | total=29
 $ godmode grid --brief
-controls-held | passed=34
+controls-held | passed=36
 $ godmode untrusted --brief
 data-only
 $ godmode sbom --brief
@@ -124,8 +124,8 @@ row names the command that shows it.
 |---|---|---|
 | Know what a change reaches before you make it | reads a local code graph: who calls a symbol, what depends on a file, which tests have to rerun | `godmode atlas affected <symbol>`, `godmode retest` |
 | Push without a half-hour surprise | runs CI's cheap gates first and the suite after, on the committed tree in a disposable worktree, and names the tree it validated | `godmode precheck --preflight` |
-| Approve one risky command, once | binds a password approval to the exact command, commit and branch; it is spent on first use | `godmode authorize stage --from-last-refusal` |
-| Keep everyday work moving | tiers a command by what it does: reads, in-tree edits and local reversible git run free, history and remote changes ask or refuse | `godmode forecast --operation "<command>"` |
+| Approve one harmful command, once | binds a password approval to the exact command, commit and branch; it is spent on first use | `godmode authorize stage --from-last-refusal` |
+| Keep everyday work moving | tiers a command by what it does: reads, in-tree edits and local reversible git run free; a commit, a feature-branch push or a new pull request is an ordinary ask; the password is kept for a force push, a push to the default branch, a release, a history rewrite and a delete outside the tree | `godmode forecast --operation "<command>"` |
 | Catch an agent that is looping | reads the transcript for repeating error signatures and overlapping hunks; a declared loop carries a cap and stop conditions | `godmode loop --transcript <path> --episodes` |
 | See what a session or a release cost | counts only: spend per session, against declared ceilings, and per release beside gate activity | `godmode trends`, `godmode ceilings`, `godmode roi --releases` |
 | Hold work to an approved plan | records the spec, refuses a plan approved by its own author, and checks each edit against the plan | `godmode planmode check` |
@@ -255,7 +255,9 @@ $ godmode doctor              # archive health, calibration, dormant machinery
 flowchart LR
     A[Agent tool call] --> G{Gate}
     G -- "read, in-tree edit, local git" --> R[(Hash-chained record)]
-    G -- "history, remote, release" --> Q[Ask or refuse]
+    G -- "commit, branch push, new PR" --> H[Host asks]
+    G -- "force push, release, history rewrite" --> Q[Password or refuse]
+    H --> R
     Q --> R
     R --> B[Session brief and resume]
     R --> D{Done bar}
@@ -367,9 +369,9 @@ The CLI verbs need no host at all: they run wherever the model can run a shell.
 | What | Reproduce it |
 |---|---|
 | 29 staged failure and attack shapes, all caught | `godmode scenarios --brief` |
-| 34 attacks on the controls, all held | `godmode grid --brief` |
+| 36 attacks on the controls, all held | `godmode grid --brief` |
 | 105 capability entries reconciled, no dead pointers either way | `godmode capabilities --reconcile` |
-| 424 recorded commands replayed against today's classifier | `python -m unittest tests.test_gate_corpus` |
+| 438 recorded commands replayed against today's classifier | `python -m unittest tests.test_gate_corpus` |
 | Thirteen integrity monitors over the diff since the last green | `godmode integrity --base HEAD`; the table is `MONITORS` in `scripts/godmode_runtime/godmode_integrity.py` |
 | Repository text clean of instruction-shaped strings | `godmode untrusted --brief` |
 | Zero runtime dependencies, standard library only | `godmode sbom` |

@@ -90,8 +90,37 @@ def module_imports(path: Path) -> set[str]:
     return names
 
 
+# A change that touches only prose and images: the README, the docs, a
+# changelog fragment, an asset. The name-mention rule below selected 59 test
+# modules for one README edit (every module whose source says "README.md"),
+# and a push waited on all of them. These are the modules that actually read
+# those files. `skills/` is not docs here: a skill's text is routed and
+# evaluated, so it takes the ordinary path.
+DOCS_SUFFIXES = frozenset({".md", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"})
+DOCS_SET = ["tests.test_readme_commands", "tests.test_claim_scan", "tests.test_docs_lint",
+            "tests.test_prose_lint", "tests.test_stale_figures", "tests.test_docslint_contracts",
+            "tests.test_ladder_doc", "tests.test_no_external_source_names",
+            "tests.test_command_reference_drift", "tests.test_changelog_gate"]
+
+
+def docs_only(changed: set[Path]) -> bool:
+    """Every changed path is prose or an image outside `skills/`."""
+    if not changed:
+        return False
+    for path in changed:
+        try:
+            parts = path.relative_to(REPO_ROOT).parts
+        except ValueError:
+            parts = path.parts
+        if path.suffix.lower() not in DOCS_SUFFIXES or (parts and parts[0] == "skills"):
+            return False
+    return True
+
+
 def select(changed: set[Path], modules: dict[str, Path]) -> list[str]:
     """Test module names (dotted, e.g. tests.test_x) affected by `changed`."""
+    if docs_only(changed):
+        return sorted(name for name in DOCS_SET if name.split(".", 1)[1] in modules)
     changed_py = {p for p in changed if p.suffix == ".py"}
     changed_stems = {stem for stem, path in modules.items() if path in changed_py}
 

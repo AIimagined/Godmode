@@ -158,6 +158,12 @@ META_FIXTURES: dict[str, list[dict[str, Any]]] = {
     "local-repository-change": [
         {"command": "git commit -m x", "tier": "R2", "protected": True},
     ],
+    "reversible-remote-write": [
+        {"command": "gh pr create --base main --title x --body y", "tier": "R2", "protected": True},
+    ],
+    "unknown-command": [
+        {"command": "curl -X POST https://example.invalid/api -d x=1", "tier": "R2", "protected": True},
+    ],
     "interpreter-opaque-inline": [
         {"command": 'python -c "print(1)"', "tier": "R2", "protected": True},
     ],
@@ -174,7 +180,7 @@ META_FIXTURES: dict[str, list[dict[str, Any]]] = {
         },
     ],
     "scripted-source-edit": [
-        {"command": "sed -i s/foo/bar/ src/app.py", "tier": "R3", "protected": True},
+        {"command": "sed -i s/foo/bar/ src/app.py", "tier": "R2", "protected": True},
     ],
     "process-control": [
         {"command": "kill -9 1234", "tier": "R3", "protected": True},

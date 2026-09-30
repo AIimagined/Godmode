@@ -199,7 +199,6 @@ _GIT_ASK_CANDIDATES = [
     "git tag -d v1.0",
     "git checkout main",
     "git worktree remove wt",
-    "git worktree prune",
     "git worktree move wt new",
     "git stash drop",
     "git stash clear",

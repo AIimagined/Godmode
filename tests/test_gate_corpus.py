@@ -148,7 +148,8 @@ class GitReadSubcommandTests(GateCase):
         # A local merge is undone from the reflog: R1, not history mutation.
         self.assertEqual(classify_action("git merge main", project_root=PROJECT)["category"],
                          "git-local-reversible")
-        self.refused("git merge --abort && git push", "git-history-or-remote")
+        # Named target: a bare `git push` is judged by the branch HEAD is on.
+        self.refused("git merge --abort && git push origin main", "git-history-or-remote")
 
     def test_the_plumbing_that_writes_still_fails_closed(self) -> None:
         for command in ("git update-ref refs/heads/main HEAD",

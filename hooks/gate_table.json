@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_from": "4212457e4e27",
+  "generated_from": "ea14562113f0",
   "floor": {
     "claude-code": [
       "git status",
@@ -171,7 +171,6 @@
     "git tag -d v1.0",
     "git checkout main",
     "git worktree remove wt",
-    "git worktree prune",
     "git worktree move wt new",
     "git stash drop",
     "git stash clear",

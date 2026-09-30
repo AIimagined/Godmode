@@ -2483,5 +2483,89 @@
     "expected": "ask",
     "class": "by-design",
     "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
+  },
+  {
+    "operation": "git clean -n",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.33 tiering: the host decides ordinary work and the password is for harmful operations; a read-only or local-cleanup git verb runs free, a local commit or an opened pull request asks, and a setting that decides what code git runs stays protected"
+  },
+  {
+    "operation": "git clean --dry-run -d",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.33 tiering: the host decides ordinary work and the password is for harmful operations; a read-only or local-cleanup git verb runs free, a local commit or an opened pull request asks, and a setting that decides what code git runs stays protected"
+  },
+  {
+    "operation": "git worktree prune",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.33 tiering: the host decides ordinary work and the password is for harmful operations; a read-only or local-cleanup git verb runs free, a local commit or an opened pull request asks, and a setting that decides what code git runs stays protected"
+  },
+  {
+    "operation": "git config user.name",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.33 tiering: the host decides ordinary work and the password is for harmful operations; a read-only or local-cleanup git verb runs free, a local commit or an opened pull request asks, and a setting that decides what code git runs stays protected"
+  },
+  {
+    "operation": "git config --global --get user.email",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.33 tiering: the host decides ordinary work and the password is for harmful operations; a read-only or local-cleanup git verb runs free, a local commit or an opened pull request asks, and a setting that decides what code git runs stays protected"
+  },
+  {
+    "operation": "git config --list",
+    "expected": "allow",
+    "class": "by-design",
+    "note": "0.3.33 tiering: the host decides ordinary work and the password is for harmful operations; a read-only or local-cleanup git verb runs free, a local commit or an opened pull request asks, and a setting that decides what code git runs stays protected"
+  },
+  {
+    "operation": "git cherry-pick abc1234",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.33 tiering: the host decides ordinary work and the password is for harmful operations; a read-only or local-cleanup git verb runs free, a local commit or an opened pull request asks, and a setting that decides what code git runs stays protected"
+  },
+  {
+    "operation": "git revert abc1234",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.33 tiering: the host decides ordinary work and the password is for harmful operations; a read-only or local-cleanup git verb runs free, a local commit or an opened pull request asks, and a setting that decides what code git runs stays protected"
+  },
+  {
+    "operation": "git rm --cached notes.txt",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.33 tiering: the host decides ordinary work and the password is for harmful operations; a read-only or local-cleanup git verb runs free, a local commit or an opened pull request asks, and a setting that decides what code git runs stays protected"
+  },
+  {
+    "operation": "git mv a.txt b.txt",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.33 tiering: the host decides ordinary work and the password is for harmful operations; a read-only or local-cleanup git verb runs free, a local commit or an opened pull request asks, and a setting that decides what code git runs stays protected"
+  },
+  {
+    "operation": "gh pr create --base main --title t --body b",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.33 tiering: the host decides ordinary work and the password is for harmful operations; a read-only or local-cleanup git verb runs free, a local commit or an opened pull request asks, and a setting that decides what code git runs stays protected"
+  },
+  {
+    "operation": "git config core.hooksPath /dev/null",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.33 tiering: the host decides ordinary work and the password is for harmful operations; a read-only or local-cleanup git verb runs free, a local commit or an opened pull request asks, and a setting that decides what code git runs stays protected"
+  },
+  {
+    "operation": "git push origin main",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.33 tiering: the host decides ordinary work and the password is for harmful operations; a read-only or local-cleanup git verb runs free, a local commit or an opened pull request asks, and a setting that decides what code git runs stays protected"
+  },
+  {
+    "operation": "gh pr merge 4 --merge",
+    "expected": "ask",
+    "class": "by-design",
+    "note": "0.3.33 tiering: the host decides ordinary work and the password is for harmful operations; a read-only or local-cleanup git verb runs free, a local commit or an opened pull request asks, and a setting that decides what code git runs stays protected"
   }
 ]
