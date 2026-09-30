@@ -21,6 +21,10 @@
   or rewritten history because it sounded sure.
 </p>
 
+<p align="center">
+  <img src="./assets/godmode-hero.png" alt="Tool calls flow into a sealed chain of records; a gate lets some continue and stops others" width="100%">
+</p>
+
 ---
 
 ## See it decide
@@ -109,6 +113,12 @@ stale
 
 The gate and the record are the core. Everything below is built on them, and each
 row names the command that shows it.
+
+<p align="center">
+  <img src="./assets/godmode-tiers.png" alt="Five lanes reach a gate: three pass straight through, one pauses before continuing, one ends at the gate" width="100%">
+</p>
+
+<p align="center"><sub>How the gate tiers a command: reads, in-tree edits and local git pass; a risky one waits for you; an irreversible one stops.</sub></p>
 
 | You want to | Godmode | Try it |
 |---|---|---|
