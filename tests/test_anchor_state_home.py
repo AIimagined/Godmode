@@ -55,7 +55,9 @@ class StateHomeContainsEveryWriteTests(unittest.TestCase):
             written = [p for p in state.rglob("*") if p.is_file()]
             self.assertTrue(written)
             for path in written:
-                self.assertTrue(path.is_relative_to(state.resolve()), path)
+                # Resolved on both sides: a runner's temp dir can be spelled
+                # with a short (8.3) name on one side and the long name on the other.
+                self.assertTrue(path.resolve().is_relative_to(state.resolve()), path)
 
     def test_without_the_variable_the_git_archive_stays_beside_the_repository(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

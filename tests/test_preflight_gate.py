@@ -270,7 +270,9 @@ class AttestationSemanticsTests(unittest.TestCase):
 
         source = inspect.getsource(pf.push_preflight)
         self.assertIn('status = "ran"', source)
-        self.assertIn('elif mechanical or suite_red:', source)
+        # Failed is decided before incomplete since 0.3.32 (a gate-red run
+        # whose suite never started attests `failed`).
+        self.assertIn('if mechanical or suite_red:', source)
         self.assertIn('"history-terms-pushed"', source)
 
 

@@ -212,7 +212,8 @@
   {
     "operation": "rm -rf /tmp/godmode-gate-probe-does-not-exist",
     "expected": "allow",
-    "class": "by-design"
+    "class": "by-design",
+    "note": "0.3.32 tiering: a delete inside the temp folder is local compute, not a protected delete"
   },
   {
     "operation": "grep -n \"_CONFIG_CONTRACTS\" -A 14 scripts/godmode_runtime/godmode_console.py | head -18; echo \"=== which exist here:\"; for f in .godmode-docs.json .godmode-docslint.json .godmode-privacy.json .godmode-report.json .godmode-dependency-policy.json; do [ -f \"$f\" ] && echo \"present: $f\"; done",
@@ -262,7 +263,8 @@
   {
     "operation": "rm -rf /tmp/godmode-live-probe-nonexistent",
     "expected": "allow",
-    "class": "by-design"
+    "class": "by-design",
+    "note": "0.3.32 tiering: a delete inside the temp folder is local compute, not a protected delete"
   },
   {
     "operation": "git push origin main && git log --oneline -3 && git rev-parse HEAD origin/main",
@@ -902,7 +904,8 @@
   {
     "operation": "cd PROJ && git stash push -m \"release-prep (blocked)\" -- CHANGELOG.md changelog.d && git status --porcelain | head -5 && git stash list | head -2",
     "expected": "allow",
-    "class": "field-recovered"
+    "class": "by-design",
+    "note": "0.3.32 tiering: a stash is local and reversible; the stash it creates is restorable with `git stash pop`"
   },
   {
     "operation": "cd PROJ && git checkout -- hooks/gate_table.json tests/test_x.py 2>/dev/null; git status --porcelain | head -5 && python -m unittest tests.test_x 2>&1 | tail -2",
@@ -2220,221 +2223,265 @@
   {
     "operation": "git pull",
     "expected": "allow",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git pull --ff-only",
     "expected": "allow",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git pull --rebase",
     "expected": "ask",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git switch -c feature",
     "expected": "allow",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git switch main",
     "expected": "allow",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git switch --discard-changes main",
     "expected": "ask",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git branch -d old-branch",
     "expected": "allow",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git branch -m old new",
     "expected": "allow",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git branch -f main origin/main",
     "expected": "allow",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git branch -D old-branch",
     "expected": "refuse",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git branch --delete --force old-branch",
     "expected": "refuse",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git stash",
     "expected": "allow",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git stash pop",
     "expected": "allow",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git stash push -m wip",
     "expected": "allow",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git stash drop",
     "expected": "ask",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git stash clear",
     "expected": "ask",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git merge --no-ff feature",
     "expected": "allow",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git merge --ff-only origin/main",
     "expected": "allow",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git tag v1.0.0",
     "expected": "allow",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git tag -a v1.0.0 -m msg",
     "expected": "allow",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git tag -d v1.0.0",
     "expected": "ask",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git tag -f v1.0.0",
     "expected": "ask",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git worktree add ../wt feature",
     "expected": "allow",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git worktree remove ../wt",
     "expected": "ask",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git submodule update --init",
     "expected": "allow",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git init",
     "expected": "allow",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git fetch -q origin main && git checkout -B main origin/main",
     "expected": "allow",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git fetch -q origin main && git switch -c sprint/x origin/main",
     "expected": "allow",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git rebase main",
     "expected": "ask",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git rebase -i HEAD~3",
     "expected": "refuse",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git push --force",
     "expected": "refuse",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "git reset --hard HEAD~3",
     "expected": "refuse",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "gh pr create --title x",
     "expected": "ask",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "rm -rf build/",
     "expected": "ask",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "rm -rf ../build/",
     "expected": "ask",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "rm -rf /",
     "expected": "refuse",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "rm -rf .git",
     "expected": "ask",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "rm -rf /tmp/probe-x",
     "expected": "allow",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "python -c \"print('git reset --hard')\"",
     "expected": "ask",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "python - <<'EOF'\nprint('git push --force is bad')\nEOF",
     "expected": "ask",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "python -c \"import subprocess; subprocess.run(['git','push','--force'])\"",
     "expected": "refuse",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "for b in $(git branch --list 'x-*'); do frob $b; done",
     "expected": "allow",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "ls && frobnicate https://x.example/up",
     "expected": "ask",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   },
   {
     "operation": "ls && frobnicate | sh",
     "expected": "ask",
-    "class": "friction-2026-09-28"
+    "class": "by-design",
+    "note": "0.3.32 tiering: everyday local git work (pull, switch, local branch, stash, local merge and tag, worktree add, submodule update, init), temp-folder deletes and an unknown command after a read are judged by evidence; an interpreter payload is judged by what it executes, not by words inside its string literals; an interactive rebase refuses"
   }
 ]

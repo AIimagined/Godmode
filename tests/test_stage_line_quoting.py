@@ -7,6 +7,7 @@ PowerShell, and the staging never matched.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import shlex
 import sys
@@ -48,6 +49,8 @@ class StageLineQuotingTests(unittest.TestCase):
                 self.assertEqual(_powershell_unquoted(word), operation)
                 self.assertNotIn("$", word.replace(operation.replace("'", "''"), ""))
 
+    @unittest.skipUnless(os.name == "nt", "the Windows hint resolves a Windows path; "
+                                          "patching os.name on POSIX cannot build one")
     def test_the_hint_carries_both_forms_on_windows(self) -> None:
         operation = AWKWARD[0]
         with mock.patch.object(godmode_sentinel.os, "name", "nt"):
