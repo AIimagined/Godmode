@@ -157,7 +157,7 @@ WINDOWS_STILL_PROTECTED = (
     "Out-File -FilePath notes.txt",
     # A directory outside the tree; one inside it is local state since
     # 0.3.33, like `mkdir -p`.
-    "New-Item -ItemType Directory ..\\elsewhere\\build",
+    "New-Item -ItemType Directory ../elsewhere/build",
     "New-Item -ItemType File notes.txt",
     "Clear-Content log.txt",
     "Rename-Item a.txt b.txt",

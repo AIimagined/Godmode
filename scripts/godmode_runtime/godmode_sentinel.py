@@ -266,7 +266,7 @@ def _git_refs(common: Path) -> set[str]:
                 parts = line.split()
                 if len(parts) == 2 and parts[1].startswith("refs/"):
                     names.add(parts[1])
-    except OSError:
+    except OSError:  # godmode: swallow-ok: refs that cannot be read are refs not found, and every caller treats a missing ref as "keep the protected tier"
         pass
     return names
 
@@ -373,7 +373,7 @@ def _plain_branch_push(executable: str, project_root: Path | None) -> bool:
             encoding="utf-8", errors="replace").strip()
         if remote_head.startswith("ref: refs/remotes/"):
             protected.add(remote_head.split("/", 3)[-1])
-    except OSError:
+    except OSError:  # godmode: swallow-ok: no recorded remote HEAD leaves `main` and `master` as the protected names
         pass
     for branch in branches:
         if branch == "HEAD":

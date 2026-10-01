@@ -162,7 +162,7 @@ META_FIXTURES: dict[str, list[dict[str, Any]]] = {
         {"command": "gh pr create --base main --title x --body y", "tier": "R2", "protected": True},
     ],
     "unknown-command": [
-        {"command": "curl -X POST https://example.invalid/api -d x=1", "tier": "R2", "protected": True},
+        {"command": "git frobnicate --now", "tier": "R2", "protected": True},
     ],
     "interpreter-opaque-inline": [
         {"command": 'python -c "print(1)"', "tier": "R2", "protected": True},

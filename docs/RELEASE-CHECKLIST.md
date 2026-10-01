@@ -36,6 +36,20 @@ here, once the version bump for this release is committed and before the
 tag is created; `verdict=ok` (or `no-tags` on a project with none yet) is
 the only passing state at that point.
 
+Order of the release verification, and what it runs on: review fixes, notes,
+versions and generated files are finished first, then the candidate is frozen
+and verified as it will ship. The verification is the workflow gate list, the
+full suite with the slow modules on (`GODMODE_RUN_SLOW=1`), the other Python
+version CI runs when the machine has it (`python scripts/dev/ci_local.py
+--matrix`), the corpus differential against the merge base
+(`python scripts/dev/corpus_differential.py --base <sha>`), and the portability
+check on changed tests (`tests.test_posix_assumptions`). The push goes through
+the pre-push hook; a green run already recorded for exactly that tree is
+reused rather than repeated (`scripts/dev/affected_tests.py` records every
+run), so the hook is never bypassed. CI is a second check on three operating
+systems, not the test runner: a red run on the Actions page is a process
+failure, not a discovery.
+
 Test modules: the accepted count is 416 (0.3.31). A release may add a
 module only when the module is the named guard of a change that has no
 existing home - the fragment or the commit names the change it guards.

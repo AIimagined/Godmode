@@ -2496,6 +2496,53 @@ def subject_files(project: Path, text: str, limit: int = 6) -> list[str]:
     return out
 
 
+FRESH_EXECUTION_SECONDS = 3600
+
+
+def fresh_execution(archive: Chronicle, project: Path, citation: str,
+                    max_age_seconds: int = FRESH_EXECUTION_SECONDS) -> dict[str, Any] | None:
+    """The newest attestation that already ran exactly this `cmd:` check on
+    the current HEAD within `max_age_seconds`, or None.
+
+    An agent that ran the deciding test a minute ago was told by the
+    completion gate to run `claim --verify`, which ran the same test again
+    for no reason but the ledger. The first run's attestation is the
+    evidence; a claim references it. Scope and freshness are the guards: a
+    different command, another HEAD, or an older run all mean a fresh run."""
+    import subprocess
+    from datetime import datetime, timezone
+    if not str(citation).startswith("cmd:"):
+        return None
+    try:
+        done = subprocess.run(["git", "rev-parse", "HEAD"], cwd=project,
+                              capture_output=True, text=True, timeout=30)
+        head = done.stdout.strip()[:12] if done.returncode == 0 else ""
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: no head means no match, which means the check runs
+        head = ""
+    if not head:
+        return None
+    now = datetime.now(timezone.utc)
+    for record in reversed(archive.select(kind="attestation", limit=500)):
+        data = record.get("data") or {}
+        if str(citation) not in [str(e) for e in record.get("evidence") or []]:
+            continue
+        if data.get("status") != "ran" or (data.get("worktree") or {}).get("head") != head:
+            continue
+        try:
+            age = (now - datetime.fromisoformat(str(record.get("recorded_at")))).total_seconds()
+        except (TypeError, ValueError):
+            continue
+        if age > max_age_seconds:
+            continue
+        result = str(data.get("result", ""))
+        match = re.search(r"exit (\d+)", result)
+        exit_code = int(match.group(1)) if match else None
+        return {"sequence": record.get("sequence"), "citation": str(citation),
+                "exit_code": exit_code, "passed": exit_code == 0,
+                "age_seconds": int(age), "head": head}
+    return None
+
+
 def executed_predicates(archive: Chronicle, project: Path,
                         citations: list[str],
                         transcript_path: str | Path | None = None) -> dict[str, Any]:

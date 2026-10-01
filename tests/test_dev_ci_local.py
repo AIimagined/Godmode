@@ -104,5 +104,42 @@ class PathSelectionTests(unittest.TestCase):
         run_runner.assert_not_called()
 
 
+class MatrixTests(unittest.TestCase):
+    """The local check runs the Python versions CI runs, read from the
+    workflow rather than typed by hand, and names a version this machine
+    cannot run instead of silently skipping it."""
+
+    def test_versions_come_from_the_workflow_matrix(self) -> None:
+        text = 'matrix:\n  os: [ubuntu-latest]\n  python-version: ["3.11", "3.13"]\n'
+        self.assertEqual(ci_local.ci_python_versions(text), ["3.11", "3.13"])
+        self.assertEqual(ci_local.ci_python_versions("jobs:\n  x:\n"), [])
+
+    def test_the_committed_workflow_names_at_least_two_versions(self) -> None:
+        versions = ci_local.ci_python_versions(ci_local.WORKFLOW.read_text(encoding="utf-8"))
+        self.assertGreaterEqual(len(versions), 2, versions)
+        current = f"{sys.version_info[0]}.{sys.version_info[1]}"
+        self.assertEqual(ci_local.interpreter_for(current), [sys.executable])
+
+    def test_a_missing_interpreter_is_named_not_skipped(self) -> None:
+        args = mock.Mock(full=False, base="origin/main", jobs=1, matrix=True)
+        with mock.patch.object(ci_local, "select", return_value=["tests.test_x"]), \
+             mock.patch.object(ci_local, "changed_files", return_value=set()), \
+             mock.patch.object(ci_local, "module_map", return_value={}), \
+             mock.patch.object(ci_local.subprocess, "call", return_value=0) as call, \
+             mock.patch.object(ci_local, "ci_python_versions", return_value=["3.11", "9.9"]), \
+             mock.patch.object(ci_local, "interpreter_for",
+                               side_effect=lambda v: ["py", "-3.11"] if v == "3.11" else None), \
+             mock.patch("builtins.print") as printed:
+            code = ci_local.run_native(args)
+        self.assertEqual(code, 0)
+        argvs = [c.args[0] for c in call.call_args_list]
+        self.assertEqual(len(argvs), 2, argvs)
+        self.assertEqual(argvs[1][:2], ["py", "-3.11"])
+        self.assertIn("tests.test_x", argvs[1])
+        said = " ".join(str(c.args[0]) for c in printed.call_args_list)
+        self.assertIn("9.9", said)
+        self.assertIn("not on this machine", said)
+
+
 if __name__ == "__main__":
     unittest.main()

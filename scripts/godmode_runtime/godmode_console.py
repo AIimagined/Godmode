@@ -1399,6 +1399,16 @@ def cmd_claim(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
                                "a script and cite that script by path"),
                 }, exit_code=1)
             refuse_shell_grammar(str(cite)[len("cmd:"):])
+            # A check already run on this HEAD within the hour is the
+            # evidence; running it again would only feed the ledger.
+            from .godmode_attest import fresh_execution
+            fresh = None if getattr(args, "rerun", False) else fresh_execution(
+                runtime.archive, Path(runtime.anchor.project_root), str(cite))
+            if fresh is not None:
+                check_results.append({"citation": fresh["citation"], "passed": fresh["passed"],
+                                      "exit_code": fresh["exit_code"], "executed": True,
+                                      "reused": fresh["sequence"], "age_seconds": fresh["age_seconds"]})
+                continue
             outcome = run_check(
                 runtime.archive, _session(runtime, args.session),
                 Path(runtime.anchor.project_root),
@@ -8022,6 +8032,9 @@ def _build_parser() -> argparse.ArgumentParser:
     claim.add_argument("--timeout", "--cite-timeout", dest="timeout", type=int, default=900,
                        help="--verify only: seconds each cited check may run before it is "
                             "attested `blocked` as timed out (default 900)")
+    claim.add_argument("--rerun", action="store_true",
+                       help="--verify only: run each cited check again even when an attestation "
+                            "of the same check on this HEAD from the last hour already exists")
     claim.add_argument("--refuted-by", dest="refuted_by", default=None,
                        help="Hypotheses only: the one command or observation "
                             "that would refute this claim")

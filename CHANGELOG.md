@@ -4,7 +4,11 @@ All notable changes to Godmode will be documented in this file.
 
 The format follows Keep a Changelog principles, and releases use semantic versioning.
 
-## [0.3.33] - 2026-09-30
+## [0.3.33] - 2026-10-01
+
+### Added
+
+- Verification evidence is reused, not repeated: the test runner records every run (tree, modules, interpreter, platform, minutes, whether this tree ran before), the push preflight accepts a green record for exactly the tree being pushed instead of running the suite again, and a partial run never satisfies a full-release requirement. `claim --verify` references a check already run on this HEAD within the hour instead of running it a second time (`--rerun` runs it anyway). The pre-push hook also runs the other Python version CI runs when the machine has it and names the one it does not (`ci_local.py --matrix`).
 
 ### Changed
 
@@ -14,6 +18,7 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 ### Fixed
 
 - A push that changes only prose and images (Markdown, pictures, changelog fragments, outside `skills/`) runs the ten test modules that read those files instead of every module whose source mentions a changed file's name; one README edit had selected 59.
+- The prompt hook reads the archive's head hint instead of every record for the turn baseline (1.5 s to 1.0 s on a 28,000-record archive); the main skill has one entry path that consumes the brief the hooks already delivered instead of repeating `context status`, `resume` and `session open`; the turn-cost benchmark reports a hook that crashed as a failure, not as a fast step, and counts the commands a hook asks the agent to run as a separate number from hook seconds; a Windows-only literal in a changed test (a backslash parent path, `$env:TEMP`) is named before a push, on every platform.
 
 ## [0.3.32] - 2026-09-30
 

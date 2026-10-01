@@ -4,6 +4,7 @@ repository, because the branch and push rules read the project's own refs."""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -150,11 +151,12 @@ class EverydayTierTests(unittest.TestCase):
         # Against the plugin checkout: the fixture repository itself lives
         # in the temp directory, where "inside temp" and "inside the tree"
         # are the same place.
-        scratch = classify_action('Remove-Item -Recurse -Force "$env:TEMP\\godmode-probe-x"',
-                                  project_root=PLUGIN_ROOT)
-        self.assertFalse(scratch["protected"], scratch)
-        self.assert_needs_the_password("New-Item -ItemType Directory -Force ..\\elsewhere")
-        self.assert_needs_the_password("New-Item -ItemType File ..\\elsewhere\\a.txt")
+        if os.name == "nt":  # `$env:TEMP` and a backslash path are Windows forms
+            scratch = classify_action('Remove-Item -Recurse -Force "$env:TEMP\\godmode-probe-x"',
+                                      project_root=PLUGIN_ROOT)
+            self.assertFalse(scratch["protected"], scratch)
+        self.assert_needs_the_password("New-Item -ItemType Directory -Force ../elsewhere")
+        self.assert_needs_the_password("New-Item -ItemType File ../elsewhere/a.txt")
 
 
 if __name__ == "__main__":

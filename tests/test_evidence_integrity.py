@@ -117,7 +117,8 @@ class ScriptedSourceEditTests(unittest.TestCase):
         verdict = classify_action("sed -i 's/old/new/' src/app.py")
         self.assertEqual(verdict["category"], "scripted-source-edit")
         self.assertTrue(verdict["protected"])
-        self.assertEqual(verdict["tier"], "R3")
+        # Asked about, not password-gated, since 0.3.33.
+        self.assertEqual(verdict["tier"], "R2")
 
     def test_perl_in_place_is_named(self):
         verdict = classify_action("perl -pi -e 's/old/new/' src/app.py")
