@@ -90,12 +90,16 @@
         23
       ],
       [
-        "docs/RELEASE-CHECKLIST.md",
+        "OPERATOR.md",
         1
       ],
       [
         "GODMODE.md",
         34
+      ],
+      [
+        "GODMODE-CODE-OF-LAW.md",
+        63
       ]
     ]
   }

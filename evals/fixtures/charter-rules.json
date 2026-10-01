@@ -42,12 +42,6 @@
       "trigger": "always",
       "verify": "none"
     },
-    "R-49416e27a9": {
-      "enforcement": "HARD",
-      "text_hash": "0c57c273c9c2a6b4",
-      "trigger": "before_completion",
-      "verify": "differential_cited"
-    },
     "R-4a822893ce": {
       "enforcement": "ADVISORY",
       "text_hash": "3e2cdc0324c558ad",
@@ -57,6 +51,12 @@
     "R-4bc7e312ad": {
       "enforcement": "ADVISORY",
       "text_hash": "ab33182039ebbf36",
+      "trigger": "always",
+      "verify": "none"
+    },
+    "R-551c8de7ce": {
+      "enforcement": "ADVISORY",
+      "text_hash": "91205af4d502f30d",
       "trigger": "always",
       "verify": "none"
     },
@@ -172,8 +172,8 @@
   "schema": "godmode-charter-snapshot-v1",
   "summary": {
     "enforcement": {
-      "ADVISORY": 17,
-      "HARD": 11,
+      "ADVISORY": 18,
+      "HARD": 10,
       "SOFT": 0
     },
     "rules": 28
