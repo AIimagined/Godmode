@@ -42,6 +42,12 @@
       "trigger": "always",
       "verify": "none"
     },
+    "R-49416e27a9": {
+      "enforcement": "HARD",
+      "text_hash": "0c57c273c9c2a6b4",
+      "trigger": "before_completion",
+      "verify": "differential_cited"
+    },
     "R-4a822893ce": {
       "enforcement": "ADVISORY",
       "text_hash": "3e2cdc0324c558ad",
@@ -167,9 +173,9 @@
   "summary": {
     "enforcement": {
       "ADVISORY": 17,
-      "HARD": 10,
+      "HARD": 11,
       "SOFT": 0
     },
-    "rules": 27
+    "rules": 28
   }
 }
