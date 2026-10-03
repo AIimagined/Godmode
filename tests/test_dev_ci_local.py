@@ -120,21 +120,29 @@ class MatrixTests(unittest.TestCase):
         current = f"{sys.version_info[0]}.{sys.version_info[1]}"
         self.assertEqual(ci_local.interpreter_for(current), [sys.executable])
 
+    def test_a_shim_on_path_is_resolved_to_the_interpreter_it_starts(self) -> None:
+        probe = mock.Mock(returncode=0, stdout="/real/python8.8\n")
+        with mock.patch.object(ci_local.os, "name", "posix"), \
+             mock.patch.object(ci_local.shutil, "which", return_value="/shim/python8.8"), \
+             mock.patch.object(ci_local.subprocess, "run", return_value=probe):
+            self.assertEqual(ci_local.interpreter_for("8.8"), ["/real/python8.8"])
+
     def test_a_missing_interpreter_is_named_not_skipped(self) -> None:
         args = mock.Mock(full=False, base="origin/main", jobs=1, matrix=True)
         with mock.patch.object(ci_local, "select", return_value=["tests.test_x"]), \
              mock.patch.object(ci_local, "changed_files", return_value=set()), \
              mock.patch.object(ci_local, "module_map", return_value={}), \
              mock.patch.object(ci_local.subprocess, "call", return_value=0) as call, \
-             mock.patch.object(ci_local, "ci_python_versions", return_value=["3.11", "9.9"]), \
+             mock.patch.object(ci_local, "ci_python_versions", return_value=["8.8", "9.9"]), \
              mock.patch.object(ci_local, "interpreter_for",
-                               side_effect=lambda v: ["py", "-3.11"] if v == "3.11" else None), \
+                               side_effect=lambda v: ["py", "-8.8"] if v == "8.8" else None), \
              mock.patch("builtins.print") as printed:
             code = ci_local.run_native(args)
         self.assertEqual(code, 0)
         argvs = [c.args[0] for c in call.call_args_list]
+        # Neither version is ever the running one, so this holds under every interpreter CI uses.
         self.assertEqual(len(argvs), 2, argvs)
-        self.assertEqual(argvs[1][:2], ["py", "-3.11"])
+        self.assertEqual(argvs[1][:2], ["py", "-8.8"])
         self.assertIn("tests.test_x", argvs[1])
         said = " ".join(str(c.args[0]) for c in printed.call_args_list)
         self.assertIn("9.9", said)

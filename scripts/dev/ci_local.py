@@ -117,7 +117,15 @@ def interpreter_for(version: str) -> list[str] | None:
             if probe.returncode == 0:
                 return [launcher, f"-{version}"]
     found = shutil.which(f"python{version}")
-    return [found] if found else None
+    if not found:
+        return None
+    # A shim on PATH can export its own PYTHONHOME to every child, and a child
+    # `python` of another version then loads the wrong standard library; the
+    # interpreter the shim starts carries no such setting.
+    probe = subprocess.run([found, "-c", "import sys; print(sys._base_executable)"],
+                           capture_output=True, text=True)
+    real = probe.stdout.strip() if probe.returncode == 0 else ""
+    return [real or found]
 
 
 def run_native(args: argparse.Namespace) -> int:
@@ -149,7 +157,9 @@ def run_native(args: argparse.Namespace) -> int:
             print(f"ci_local: CI also runs Python {version}; running the same modules under it")
             argv = [*interpreter, "scripts/dev/affected_tests.py", "--jobs", str(args.jobs),
                     *(["--all"] if modules is None else modules)]
-            code = subprocess.call(argv, cwd=REPO_ROOT) or code
+            # `python` inside the leg is the leg's own version, as it is on CI.
+            env = dict(os.environ, PATH=os.path.dirname(interpreter[0]) + os.pathsep + os.environ.get("PATH", ""))
+            code = subprocess.call(argv, cwd=REPO_ROOT, env=env) or code
     return code
 
 
