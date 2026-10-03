@@ -19,6 +19,7 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 - A push that changes only prose and images (Markdown, pictures, changelog fragments, outside `skills/`) runs the ten test modules that read those files instead of every module whose source mentions a changed file's name; one README edit had selected 59.
 - The prompt hook reads the archive's head hint instead of every record for the turn baseline (1.5 s to 1.0 s on a 28,000-record archive); the main skill has one entry path that consumes the brief the hooks already delivered instead of repeating `context status`, `resume` and `session open`; the turn-cost benchmark reports a hook that crashed as a failure, not as a fast step, and counts the commands a hook asks the agent to run as a separate number from hook seconds; a Windows-only literal in a changed test (a backslash parent path, `$env:TEMP`) is named before a push, on every platform.
+- `ci_local.py --matrix` starts the interpreter a version shim on PATH points to and puts that version first on PATH for its run, so a shim that exports its own `PYTHONHOME` no longer makes child `python` processes of another version load the wrong standard library.
 
 ## [0.3.32] - 2026-09-30
 
