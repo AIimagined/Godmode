@@ -21,6 +21,10 @@
   or rewritten history because it sounded sure.
 </p>
 
+<p align="center">
+  <img src="./assets/godmode-hero.png" alt="Tool calls flow into a sealed chain of records; a gate lets some continue and stops others" width="100%">
+</p>
+
 ---
 
 ## See it decide
@@ -96,7 +100,7 @@ over since they were graded; `godmode freshness` names every one of them:
 $ godmode scenarios --brief
 all-caught | total=29
 $ godmode grid --brief
-controls-held | passed=33
+controls-held | passed=36
 $ godmode untrusted --brief
 data-only
 $ godmode sbom --brief
@@ -104,6 +108,37 @@ no-runtime-dependencies | dependency_count=0
 $ godmode freshness --brief
 stale
 ```
+
+## What it can do
+
+The gate and the record are the core. Everything below is built on them, and each
+row names the command that shows it.
+
+<p align="center">
+  <img src="./assets/godmode-tiers.png" alt="Five lanes reach a gate: three pass straight through, one pauses before continuing, one ends at the gate" width="100%">
+</p>
+
+<p align="center"><sub>How the gate tiers a command: reads, in-tree edits and local git pass; a risky one waits for you; an irreversible one stops.</sub></p>
+
+| You want to | Godmode | Try it |
+|---|---|---|
+| Know what a change reaches before you make it | reads a local code graph: who calls a symbol, what depends on a file, which tests have to rerun | `godmode atlas affected <symbol>`, `godmode retest` |
+| Push without a half-hour surprise | runs CI's cheap gates first and the suite after, on the committed tree in a disposable worktree, and names the tree it validated | `godmode precheck --preflight` |
+| Approve one harmful command, once | binds a password approval to the exact command, commit and branch; it is spent on first use | `godmode authorize stage --from-last-refusal` |
+| Keep everyday work moving | tiers a command by what it does: reads, in-tree edits and local reversible git run free; a commit, a feature-branch push or a new pull request is an ordinary ask; the password is kept for a force push, a push to the default branch, a release, a history rewrite and a delete outside the tree | `godmode forecast --operation "<command>"` |
+| Catch an agent that is looping | reads the transcript for repeating error signatures and overlapping hunks; a declared loop carries a cap and stop conditions | `godmode loop --transcript <path> --episodes` |
+| See what a session or a release cost | counts only: spend per session, against declared ceilings, and per release beside gate activity | `godmode trends`, `godmode ceilings`, `godmode roi --releases` |
+| Hold work to an approved plan | records the spec, refuses a plan approved by its own author, and checks each edit against the plan | `godmode planmode check` |
+| Keep a hypothesis honest | a hypothesis names the check that would refute it, and a falsifier left unrun comes due | `godmode verify --falsifiers --dry-run` |
+| Close what the operator asked for | tracks every ask until it is answered, mapped to a task or parked, and lists duplicate or contradicting lessons | `godmode checkpoint --review`, `godmode hygiene` |
+| Rewrite history without orphaning evidence | fingerprints every cited commit before a rewrite and finds each one again after | `godmode reanchor --snapshot`, `godmode reanchor --remap` |
+| Run several agents in one repository | exclusive leases on a resource and a delegation graph that refuses a cycle | `godmode fleet show` |
+| Ship notes that match the release | one fragment per user-visible change, merged into the changelog, with the notes checked against it | `godmode changelog check`, `godmode release-notes check` |
+| Be covered before setup | in a project nobody initialized, a destructive command still asks instead of running | `python -m unittest tests.test_hook_uninitialized_fast_exit` |
+
+Twenty-two agent skills front these verbs as named workflows a host discovers on
+its own - continuity, investigation, evidence, triage, code graph, CI, budget,
+loop warden and the rest ([skills/](./skills/)).
 
 ## Install
 
@@ -216,6 +251,20 @@ $ godmode doctor              # archive health, calibration, dormant machinery
 
 ## How it works
 
+```mermaid
+flowchart LR
+    A[Agent tool call] --> G{Gate}
+    G -- "read, in-tree edit, local git" --> R[(Hash-chained record)]
+    G -- "commit, branch push, new PR" --> H[Host asks]
+    G -- "force push, release, history rewrite" --> Q[Password or refuse]
+    H --> R
+    Q --> R
+    R --> B[Session brief and resume]
+    R --> D{Done bar}
+    D -- "evidence on record" --> V[verified]
+    D -- "nothing on record" --> X[declared]
+```
+
 **The record.** A hash-chained archive lives beside the repository's git metadata
 rather than in the working tree, so it survives whatever a session does to files.
 It holds relative paths, statuses, hashes, keywords and digests - never prompts,
@@ -235,6 +284,13 @@ command. Thirteen integrity monitors read the diff since the last green for the
 shapes that make a suite go green dishonestly: an assertion removed, a skip
 added, a literal moved to match new output, a test weakened in the same change as
 the code it checks (`godmode integrity --base HEAD`).
+
+**Approvals.** A command the gate will not pass on its own is approved by the
+password holder, for that command alone: `godmode authorize stage
+--from-last-refusal` stages exactly what was refused. The approval is tied to the
+repository, the worktree, the commit and the branch, and a new commit voids it.
+A staged approval is valid for up to twelve hours and is spent on its first use (`python -m unittest tests.test_staging_lifetime`).
+An approval nobody answers is named after thirty minutes, and the agent is told to carry on with files the pending call does not touch (`python -m unittest tests.test_stall_watch`).
 
 **What it learns.** Corrections and standing instructions become candidate
 lessons - keywords and a digest, never the sentence. A candidate that recurs can
@@ -313,13 +369,13 @@ The CLI verbs need no host at all: they run wherever the model can run a shell.
 | What | Reproduce it |
 |---|---|
 | 29 staged failure and attack shapes, all caught | `godmode scenarios --brief` |
-| 33 attacks on the controls, all held | `godmode grid --brief` |
+| 36 attacks on the controls, all held | `godmode grid --brief` |
 | 105 capability entries reconciled, no dead pointers either way | `godmode capabilities --reconcile` |
-| 214 recorded commands replayed against today's classifier | `python -m unittest tests.test_gate_corpus` |
+| 438 recorded commands replayed against today's classifier | `python -m unittest tests.test_gate_corpus` |
 | Thirteen integrity monitors over the diff since the last green | `godmode integrity --base HEAD`; the table is `MONITORS` in `scripts/godmode_runtime/godmode_integrity.py` |
 | Repository text clean of instruction-shaped strings | `godmode untrusted --brief` |
 | Zero runtime dependencies, standard library only | `godmode sbom` |
-| 13 agent skills hosts discover natively | [skills/](./skills/) |
+| 22 agent skills hosts discover natively | [skills/](./skills/) |
 
 Run `python -m unittest discover -s tests` for today's pass count rather than
 trust a number printed here that could go stale on the next commit.

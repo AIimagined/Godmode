@@ -91,6 +91,43 @@ def run_via_local_runner(jobs: list[str], *, workflow: Path = WORKFLOW,
     return code
 
 
+_MATRIX_VERSIONS = re.compile(r"python-version:\s*\[([^\]]*)\]")
+
+
+def ci_python_versions(workflow_text: str) -> list[str]:
+    """The interpreter versions CI's verify matrix runs, read from the
+    workflow itself so the local check cannot drift from it by hand."""
+    match = _MATRIX_VERSIONS.search(workflow_text)
+    if not match:
+        return []
+    return [v.strip().strip("\"'") for v in match.group(1).split(",") if v.strip()]
+
+
+def interpreter_for(version: str) -> list[str] | None:
+    """argv that starts CPython `version` on this machine, or None: the `py`
+    launcher on Windows (`py -3.11`), `python3.11` on PATH elsewhere. The
+    running interpreter answers for its own version."""
+    if f"{sys.version_info[0]}.{sys.version_info[1]}" == version:
+        return [sys.executable]
+    if os.name == "nt":
+        launcher = shutil.which("py")
+        if launcher:
+            probe = subprocess.run([launcher, f"-{version}", "-c", "import sys; print(sys.version_info[:2])"],
+                                   capture_output=True, text=True)
+            if probe.returncode == 0:
+                return [launcher, f"-{version}"]
+    found = shutil.which(f"python{version}")
+    if not found:
+        return None
+    # A shim on PATH can export its own PYTHONHOME to every child, and a child
+    # `python` of another version then loads the wrong standard library; the
+    # interpreter the shim starts carries no such setting.
+    probe = subprocess.run([found, "-c", "import sys; print(sys._base_executable)"],
+                           capture_output=True, text=True)
+    real = probe.stdout.strip() if probe.returncode == 0 else ""
+    return [real or found]
+
+
 def run_native(args: argparse.Namespace) -> int:
     command = [sys.executable, "scripts/godmode.py", "--project", ".", "precheck", "--preflight"]
     # The suite runs one module per process, several at once, as CI's parallel
@@ -98,11 +135,32 @@ def run_native(args: argparse.Namespace) -> int:
     runner = f"python scripts/dev/affected_tests.py --jobs {args.jobs} "
     if args.full:
         command.append("--suite=" + runner + "--all")
+        modules = None
     else:
         # One string: argparse would read a bare `-m` as an option of its own.
         modules = select(changed_files(args.base), module_map())
         command.append("--suite=" + runner + " ".join(modules))
-    return subprocess.call(command, cwd=REPO_ROOT)
+    code = subprocess.call(command, cwd=REPO_ROOT)
+    if args.matrix:
+        # The other interpreters CI runs: the same modules under each one
+        # this machine has, and a named gap for each one it does not - a
+        # local check that says "3.11 and 3.13" because the workflow does.
+        versions = ci_python_versions(WORKFLOW.read_text(encoding="utf-8"))
+        current = f"{sys.version_info[0]}.{sys.version_info[1]}"
+        for version in versions:
+            if version == current:
+                continue
+            interpreter = interpreter_for(version)
+            if interpreter is None:
+                print(f"ci_local: CI also runs Python {version}; not on this machine, so that leg is unverified here")
+                continue
+            print(f"ci_local: CI also runs Python {version}; running the same modules under it")
+            argv = [*interpreter, "scripts/dev/affected_tests.py", "--jobs", str(args.jobs),
+                    *(["--all"] if modules is None else modules)]
+            # `python` inside the leg is the leg's own version, as it is on CI.
+            env = dict(os.environ, PATH=os.path.dirname(interpreter[0]) + os.pathsep + os.environ.get("PATH", ""))
+            code = subprocess.call(argv, cwd=REPO_ROOT, env=env) or code
+    return code
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -114,6 +172,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="test modules to run at once (default: half the CPUs)")
     parser.add_argument("--native", action="store_true",
                         help="skip the local-runner path even when one is on PATH")
+    parser.add_argument("--matrix", action="store_true",
+                        help="also run the selected modules under every other Python version the CI "
+                             "matrix lists, when that interpreter is on this machine; name the ones that are not")
     args = parser.parse_args(argv)
 
     if not args.native and local_runner_ready():

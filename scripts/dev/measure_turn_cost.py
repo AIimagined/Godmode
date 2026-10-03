@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import statistics
@@ -118,7 +119,11 @@ def _texts(stdout: str) -> tuple[str, str]:
 
 
 def _run(hook: str, args: list[str], payload: dict, env: dict[str, str],
-         flags: list[str]) -> tuple[float, str]:
+         flags: list[str]) -> tuple[float, str, dict]:
+    """(seconds, stdout, outcome). The outcome carries the exit code and the
+    last stderr line, so a hook that crashed is a reported failure and not
+    a fast step with empty output: an earlier version of this benchmark
+    read a traceback as "0 tokens, 0.1 s"."""
     # The launcher sends session events through the small front door.
     if hook == "godmode_session_hook.py":
         hook = "godmode_session_entry.py"
@@ -127,11 +132,28 @@ def _run(hook: str, args: list[str], payload: dict, env: dict[str, str],
         [sys.executable, *flags, str(HOOKS / hook), *args],
         input=json.dumps(payload).encode("utf-8"), capture_output=True, env=env,
         timeout=120)
-    return time.perf_counter() - started, result.stdout.decode("utf-8", "replace")
+    stderr = result.stderr.decode("utf-8", "replace").strip()
+    # A deny exits 2 by contract; anything else non-zero, or a traceback on
+    # stderr, is the hook failing rather than deciding.
+    failed = result.returncode not in (0, 2) or "Traceback (most recent call last)" in stderr
+    outcome = {"exit": result.returncode, "failed": failed,
+               "stderr_tail": stderr.splitlines()[-1][:200] if stderr else ""}
+    return time.perf_counter() - started, result.stdout.decode("utf-8", "replace"), outcome
 
 
 def _tokens(text: str) -> int:
     return (len(text) + 3) // 4
+
+
+_COMMAND_LINE = re.compile(r"`godmode [^`]+`|^\s*\$ godmode ", re.M)
+
+
+def _induced_commands(text: str) -> int:
+    """How many commands the hook's text asks the agent to run next. Hook
+    seconds are the plugin's own cost; each of these is a further tool call
+    the agent makes because of the hook, which the benchmark used to fold
+    into nothing."""
+    return len(_COMMAND_LINE.findall(text))
 
 
 def _steps(project: Path, transcript: Path) -> list[tuple[str, str, list[str], dict]]:
@@ -203,6 +225,7 @@ def measure(runs: int, flagsets: list[list[str]]) -> list[dict]:
             json.dumps({"post_edit_quality": True}), encoding="utf-8")
         timings = [{name: [] for name, *_ in steps} for _ in flagsets]
         texts: list[dict[str, tuple[str, str]]] = [{} for _ in flagsets]
+        outcomes: list[dict[str, dict]] = [{} for _ in flagsets]
         for flags in flagsets:
             for _name, hook, args, payload in steps:
                 _run(hook, args, {**payload, "session_id": f"{SESSION}-warm"}, env, flags)
@@ -212,19 +235,26 @@ def measure(runs: int, flagsets: list[list[str]]) -> list[dict]:
                 session = f"{SESSION}-{index}-{which}"
                 for name, hook, args, payload in steps:
                     payload = {**payload, "session_id": session}
-                    elapsed, stdout = _run(hook, args, payload, env, flags)
+                    elapsed, stdout, outcome = _run(hook, args, payload, env, flags)
                     timings[which][name].append(elapsed)
                     if index == 0:
                         texts[which][name] = _texts(stdout)
+                    # A failure on any run is the step's failure.
+                    if outcome["failed"] or name not in outcomes[which]:
+                        outcomes[which][name] = outcome
         reports = []
         for which, flags in enumerate(flagsets):
             rows = []
             for name, *_ in steps:
                 model, operator = texts[which].get(name, ("", ""))
+                outcome = outcomes[which].get(name, {"exit": None, "failed": False, "stderr_tail": ""})
                 rows.append({"step": name,
                              "median_s": round(statistics.median(timings[which][name]), 3),
                              "max_s": round(max(timings[which][name]), 3),
                              "model_tokens": _tokens(model), "operator_tokens": _tokens(operator),
+                             "induced_commands": _induced_commands(model),
+                             "exit": outcome["exit"], "failed": outcome["failed"],
+                             "stderr_tail": outcome["stderr_tail"],
                              "model_text": model[:300]})
             turn = [r for r in rows if r["step"] != "session-start"
                     and not r["step"].startswith("turn 2:")]
@@ -232,13 +262,18 @@ def measure(runs: int, flagsets: list[list[str]]) -> list[dict]:
             reports.append({
                 "flags": flags,
                 "rows": rows,
+                "failed_steps": [r["step"] for r in rows if r["failed"]],
                 "brief_tokens": rows[0]["model_tokens"],
                 "turn_model_tokens": sum(r["model_tokens"] for r in turn),
                 "turn_operator_tokens": sum(r["operator_tokens"] for r in turn),
                 "turn_hook_seconds": round(sum(r["median_s"] for r in turn), 3),
+                # The plugin's own cost (hook seconds) and the work it induces
+                # in the agent (commands it asks for) are two numbers, not one.
+                "turn_induced_commands": sum(r["induced_commands"] for r in turn),
                 "steady_turn_model_tokens": sum(r["model_tokens"] for r in steady),
                 "steady_turn_operator_tokens": sum(r["operator_tokens"] for r in steady),
                 "steady_turn_hook_seconds": round(sum(r["median_s"] for r in steady), 3),
+                "steady_turn_induced_commands": sum(r["induced_commands"] for r in steady),
             })
         return reports
     finally:
@@ -260,23 +295,31 @@ def main() -> int:
         reports = measure(args.runs, flagsets)
     finally:
         shutil.rmtree(cache, ignore_errors=True)
+    failed = any(report["failed_steps"] for report in reports)
     if args.json:
         print(json.dumps(reports, indent=2))
-        return 0
+        return 1 if failed else 0
     for report in reports:
         print(f"flags: {' '.join(report['flags'])}")
-        print(f"{'step':28} {'median s':>9} {'max s':>7} {'model tok':>10} {'oper tok':>9}")
+        print(f"{'step':28} {'median s':>9} {'max s':>7} {'model tok':>10} {'oper tok':>9} "
+              f"{'asks cmds':>9} {'exit':>5}")
         for row in report["rows"]:
             print(f"{row['step']:28} {row['median_s']:>9.3f} {row['max_s']:>7.3f} "
-                  f"{row['model_tokens']:>10} {row['operator_tokens']:>9}")
+                  f"{row['model_tokens']:>10} {row['operator_tokens']:>9} "
+                  f"{row['induced_commands']:>9} {str(row['exit']):>5}"
+                  + (f"  FAILED: {row['stderr_tail']}" if row["failed"] else ""))
         print(f"session brief (model tokens, once per session): {report['brief_tokens']}")
         print(f"ordinary turn: model tokens {report['turn_model_tokens']}, operator tokens "
-              f"{report['turn_operator_tokens']}, hook seconds {report['turn_hook_seconds']}")
+              f"{report['turn_operator_tokens']}, hook seconds {report['turn_hook_seconds']}, "
+              f"commands the hooks ask the agent to run {report['turn_induced_commands']}")
         print(f"steady turn (same session): model tokens {report['steady_turn_model_tokens']}, "
               f"operator tokens {report['steady_turn_operator_tokens']}, hook seconds "
-              f"{report['steady_turn_hook_seconds']}")
+              f"{report['steady_turn_hook_seconds']}, commands asked {report['steady_turn_induced_commands']}")
+        if report["failed_steps"]:
+            print(f"FAILED hook steps (the numbers above are not a measurement of a working plugin): "
+                  f"{', '.join(report['failed_steps'])}")
         print()
-    return 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

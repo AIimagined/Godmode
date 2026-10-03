@@ -155,7 +155,10 @@ WINDOWS_STILL_PROTECTED = (
     "Remove-Item -Path .git -Recurse",
     "Set-Content -Path README.md -Value 'x'",
     "Out-File -FilePath notes.txt",
-    "New-Item -ItemType Directory build",
+    # A directory outside the tree; one inside it is local state since
+    # 0.3.33, like `mkdir -p`.
+    "New-Item -ItemType Directory ../elsewhere/build",
+    "New-Item -ItemType File notes.txt",
     "Clear-Content log.txt",
     "Rename-Item a.txt b.txt",
     # U-B2 fix-round-1 (task-7 review, Critical): `Move-Item`/`Copy-Item`

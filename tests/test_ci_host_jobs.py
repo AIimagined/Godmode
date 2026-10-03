@@ -14,6 +14,7 @@ itself) fail alongside it.
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import shutil
 import subprocess
 import sys
@@ -115,6 +116,9 @@ def _sh() -> str | None:
 
 
 def _run(sh: str, script: str, env: dict) -> subprocess.CompletedProcess:
+    # Git for Windows' sh.exe, called directly, does not add its own usr/bin
+    # (cp, grep, test) to PATH the way a login shell would; put it first.
+    env = {**env, "PATH": str(Path(sh).parent) + os.pathsep + env.get("PATH", "")}
     return subprocess.run(
         [sh, "-c", script], cwd=PLUGIN_ROOT, capture_output=True, text=True,
         encoding="utf-8", errors="replace", timeout=120, env=env, stdin=subprocess.DEVNULL,

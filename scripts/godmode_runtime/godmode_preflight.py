@@ -23,10 +23,12 @@ not a state anyone can push.
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -570,6 +572,78 @@ def ci_verified_branch_push(repo: Path, operation: str) -> bool:
     return True
 
 
+def _tree_of(repo: Path, ref: str) -> str:
+    done = _git(repo, "rev-parse", f"{ref}^{{tree}}")
+    return done.stdout.decode("utf-8", errors="replace").strip() if done.returncode == 0 else ""
+
+
+def suite_signature(suite: list[str] | None) -> dict[str, str]:
+    """What a suite command covers, for matching evidence to a request.
+    `scope` is `full` for a whole-suite run (`--all`, `discover`) and
+    `selection` otherwise; `digest` names the exact module set of a
+    selection (the sorted `tests.*` names), or the whole command when the
+    runner is not the repository's own."""
+    tokens = list(suite or [])
+    text = " ".join(tokens)
+    modules = sorted(t for t in tokens if t.startswith("tests."))
+    if "--all" in tokens or "discover" in tokens or not tokens:
+        return {"scope": "full", "suite_digest": hashlib.sha256(b"full").hexdigest()}
+    if modules:
+        return {"scope": "selection",
+                "suite_digest": hashlib.sha256("\n".join(modules).encode("utf-8")).hexdigest()}
+    return {"scope": "selection", "suite_digest": hashlib.sha256(text.encode("utf-8")).hexdigest()}
+
+
+def _runtime_signature() -> dict[str, str]:
+    return {"python": f"{sys.version_info[0]}.{sys.version_info[1]}", "platform": sys.platform}
+
+
+def reusable_suite_evidence(archive: Any, tree: str, suite: list[str] | None) -> dict[str, Any] | None:
+    """The newest green run that already covers `suite` on exactly this
+    tree, under this Python and platform, or None.
+
+    Two record kinds count: a `preflight` attestation (gates and suite,
+    status `ran`) and a `suite-run` attestation written by the test runner
+    itself (status `green`). A full-scope record covers any request; a
+    selection covers only the same module set. A partial run never
+    satisfies a full-release requirement, and a different tree, interpreter
+    or platform is different evidence. Reuse is the fix for the pre-push
+    hook restarting an hour of tests that a manual run finished minutes
+    earlier - the reason the hook kept being bypassed."""
+    if archive is None or not tree:
+        return None
+    want = suite_signature(suite)
+    runtime = _runtime_signature()
+    newest = None
+    try:
+        records = archive.select(kind="attestation", limit=2000)
+    except Exception:  # noqa: BLE001  # godmode: swallow-ok: no readable record means no reuse; the run happens
+        return None
+    for record in records:
+        subject = str(record.get("subject", ""))
+        data = record.get("data") or {}
+        if subject == "preflight":
+            green = data.get("status") == "ran"
+        elif subject == "suite-run":
+            green = data.get("status") == "green"
+        else:
+            continue
+        if not green or str(data.get("tree", "")) != tree:
+            continue
+        if data.get("python") != runtime["python"] or data.get("platform") != runtime["platform"]:
+            continue
+        if data.get("scope") != "full" and data.get("suite_digest") != want["suite_digest"]:
+            continue
+        newest = record
+    if newest is None:
+        return None
+    data = newest.get("data") or {}
+    return {"sequence": newest.get("sequence"), "subject": str(newest.get("subject")),
+            "covers": "preflight" if newest.get("subject") == "preflight" else "suite",
+            "scope": data.get("scope"), "recorded_at": newest.get("recorded_at"),
+            "seconds": data.get("seconds")}
+
+
 def preflight_gate(archive: Any, project: Path, operation: str) -> str | None:
     """The reason a push-shaped operation may not be staged: no green
     preflight attestation at the current HEAD. None when one exists or
@@ -605,6 +679,7 @@ def push_preflight(project: Path | str,
                    session: str | None = None) -> dict[str, Any]:
     repo = Path(project)
     started = time.monotonic()
+    requested_suite = list(suite) if suite else None
     # A shard index is a usage error before it is anything else, so it is
     # refused before a worktree exists to clean up. Out of range is named,
     # never clamped: a CI leg asking for shard 4 of 4 has a broken matrix,
@@ -661,6 +736,33 @@ def push_preflight(project: Path | str,
     # Which shards this process actually ran, so a report never implies the
     # whole suite when one leg of a fan-out is what happened.
     ran_shards: list[int] = []
+    # Evidence already on record for exactly this tree: a green preflight
+    # covers everything below; a green run of the same suite by the test
+    # runner covers the suite and the cheap gates still run.
+    tree_validated = _tree_of(repo, ref)
+    reused = None if shard_index is not None else reusable_suite_evidence(archive, tree_validated, suite)
+    if reused is not None and reused["covers"] == "preflight":
+        try:
+            archive.append("attestation", "preflight", {
+                "status": "ran", "judgment": [], "session": session or "",
+                "head": _head_sha(repo), "tree": tree_validated, "validated": validated,
+                "shards": shards_total, "shards_ran": [], "seconds": 0.0, "findings": 0,
+                "gates": len(workflow_gate_commands(repo)), "classes": {},
+                "reused_from": reused["sequence"], **suite_signature(suite), **_runtime_signature(),
+            }, evidence=[f"seq:{reused['sequence']}"])
+        except Exception:  # noqa: BLE001  # godmode: swallow-ok: the report still prints; the gate reads the earlier record
+            pass
+        return {
+            "mechanical": [], "judgment": [], "skipped": [], "verdict": "clean", "suite_ran": True,
+            "validated": validated, "shards": shards_total, "shards_ran": [], "stopped_at": None,
+            "untracked_after_retest": [], "cleanup": "confirmed", "swept_stale_scratch": [],
+            "unswept_scratch": [], "skipped_scratch": [], "reused": reused,
+            "feeds": "the password gate; preflight never bypasses it",
+        }
+    if reused is not None:
+        skipped.append(f"suite reused: green run seq:{reused['sequence']} on this tree "
+                       f"({reused['scope']}, {reused.get('seconds')}s); the gates still run")
+        suite = None
     # An untracked file is in neither HEAD nor the stash snapshot, so a green
     # here says nothing about it. Named per path, and a finding rather than a
     # footnote: an edit saved after the retest used to read as validated.
@@ -815,7 +917,7 @@ def push_preflight(project: Path | str,
         if suite and len(suite) == 1 and " " in suite[0]:
             import shlex
             suite = shlex.split(suite[0])
-        suite_designated = bool(suite)
+        suite_designated = bool(suite) or reused is not None
         # A red cheap gate means the suite does not run: the report names
         # the check and its reproduce command, and `skipped` says so.
         stopped_at = next(({"check": f["check"],
@@ -1233,7 +1335,9 @@ def push_preflight(project: Path | str,
                 "seconds": round(time.monotonic() - started, 1),
                 "findings": len(mechanical) + len(judgment), "gates": len(workflow_gate_commands(repo)),
                 "classes": _classes_tally(mechanical + judgment),
-            }, evidence=[])
+                **suite_signature(requested_suite), **_runtime_signature(),
+                **({"reused_from": reused["sequence"]} if reused else {}),
+            }, evidence=[f"seq:{reused['sequence']}"] if reused else [])
         except Exception:  # noqa: BLE001  # godmode: swallow-ok: the report still prints; the gate simply finds no attestation
             pass
     return {
@@ -1254,5 +1358,6 @@ def push_preflight(project: Path | str,
         "swept_stale_scratch": [p.name for p in swept],
         "unswept_scratch": [p.name for p in unswept],
         "skipped_scratch": [p.name for p in skipped_scratch],
+        "reused": reused,
         "feeds": "the password gate; preflight never bypasses it",
     }

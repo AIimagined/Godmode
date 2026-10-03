@@ -54,6 +54,12 @@
       "trigger": "always",
       "verify": "none"
     },
+    "R-551c8de7ce": {
+      "enforcement": "ADVISORY",
+      "text_hash": "91205af4d502f30d",
+      "trigger": "always",
+      "verify": "none"
+    },
     "R-56305a9e8f": {
       "enforcement": "HARD",
       "text_hash": "9e9404b494b372e4",
@@ -166,10 +172,10 @@
   "schema": "godmode-charter-snapshot-v1",
   "summary": {
     "enforcement": {
-      "ADVISORY": 17,
+      "ADVISORY": 18,
       "HARD": 10,
       "SOFT": 0
     },
-    "rules": 27
+    "rules": 28
   }
 }

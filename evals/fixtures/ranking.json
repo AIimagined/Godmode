@@ -86,16 +86,12 @@
     ],
     "prepare a release: changelog, version surfaces, and docs": [
       [
-        "docs/RELEASE-CHECKLIST.md",
-        1
-      ],
-      [
         "GODMODE-CODE-OF-LAW.md",
         23
       ],
       [
-        "GODMODE-CODE-OF-LAW.md",
-        63
+        "OPERATOR.md",
+        1
       ],
       [
         "GODMODE.md",
@@ -103,7 +99,7 @@
       ],
       [
         "GODMODE-CODE-OF-LAW.md",
-        78
+        63
       ]
     ]
   }
