@@ -18,6 +18,7 @@ The format follows Keep a Changelog principles, and releases use semantic versio
 
 ### Fixed
 
+- In a project Godmode was never initialized in, a harm-class command (a force push, a history rewrite, a delete outside the tree, a release) is now refused when the host runs in auto, dontAsk or bypass mode. It used to get an ask, and in those modes the host answers its own ask, so the command ran with no person approving it. With a person at the prompt it still asks.
 - `gh run watch` is classified as the read it is and runs free, like `gh run view` and `gh pr checks --watch`; `gh run rerun` and `gh run cancel` still ask.
 - A command that reads no archive record no longer scans every record file first: the scan now happens on the first read. Reading one record by sequence on a 29,000-record archive went from about 3.7 s to about 2.6 s.
 - `godmode --version` prints its banner without loading the runtime or building the command parser (about 0.1 s instead of 0.4 s or more).

@@ -631,10 +631,13 @@ class UninitializedGuard(unittest.TestCase):
 
     def _run(self, command: str, tool: str = "Bash", cwd: Path | None = None,
              session: str = "s-1", event: str = "PreToolUse",
+             permission_mode: str | None = None,
              **env: str) -> dict[str, Any] | None:
         cwd = cwd or self.project
         body = {"hook_event_name": event, "tool_name": tool, "session_id": session,
                 "tool_input": {"command": command}, "cwd": str(cwd)}
+        if permission_mode:
+            body["permission_mode"] = permission_mode
         done = subprocess.run(
             [sys.executable, "-I", "-B", str(FAST_GATE)], input=json.dumps(body).encode(),
             capture_output=True, cwd=str(cwd), timeout=60,
@@ -673,6 +676,14 @@ class UninitializedGuard(unittest.TestCase):
         reason = body["hookSpecificOutput"]["permissionDecisionReason"]
         self.assertIn("godmode config set uninitialized off", reason)
         self.assertIn("godmode init", reason)
+        self._assert_nothing_created()
+
+    def test_a_force_push_is_denied_when_the_host_would_answer_its_own_ask(self) -> None:
+        for mode in ("auto", "dontAsk", "bypassPermissions"):
+            with self.subTest(mode=mode):
+                body = self._run(self.FORCE_PUSH, permission_mode=mode)
+                self.assertEqual(self._decision(body), "deny")
+        self.assertEqual(self._decision(self._run(self.FORCE_PUSH, permission_mode="default")), "ask")
         self._assert_nothing_created()
 
     def test_a_force_push_is_denied_with_the_remedy_on_a_host_without_ask(self) -> None:
