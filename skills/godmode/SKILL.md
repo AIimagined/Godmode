@@ -10,29 +10,26 @@ description: Coordinate local context continuity, evidence, and guarded coding w
 Establish what is true now, choose one bounded workflow, and leave locally verifiable
 continuity without placing operational memory in tracked project files.
 
-## Entry sequence
+## Entry: one path
 
-1. Identify the project root and read its active instructions.
-2. Resolve the bundled `scripts/godmode.py` from the plugin root: use `$GROK_PLUGIN_ROOT`
-   if set, else `$CLAUDE_PLUGIN_ROOT` if set, else the directory two levels above this
-   skill file. Do not assume the user's project contains this script.
-3. If Godmode is initialized, run `<plugin-root>/bin/godmode --project <root> context status`
-   (`bin\godmode.cmd` on Windows). The shim probes `python3`, then `python`,
-   then `py`, and honours `GODMODE_PYTHON`; a bare `python` does not exist on
-   stock macOS, so never write it into a command.
-4. For a new or uncertain session, use `resume --refresh`; otherwise use `resume`.
-5. Separate observed facts, declared intent, assumptions, conflicts, and open obligations.
-6. Route to the narrowest specialist below.
+1. If the session hooks already delivered a brief (identity, last checkpoint, open
+   obligations, standing laws, the host's enforcement table), that IS the entry: consume
+   it. Do not run `context status`, `resume` or `session open` again for what it gave.
+2. Run a verb only for what is missing or task-specific: `resume --refresh` after a
+   compaction, a branch switch or an identity-drift finding; `session open` when no brief
+   arrived (a host whose reach is not HARD, read from `hooks status`); `context status
+   --scan` when filesystem drift matters; `charter` when the project's rules changed.
+3. The CLI is the bundled `scripts/godmode.py` under the plugin root (`$GROK_PLUGIN_ROOT`,
+   else `$CLAUDE_PLUGIN_ROOT`, else two levels above this file), called through
+   `<plugin-root>/bin/godmode` (`bin\godmode.cmd` on Windows); it probes `python3`,
+   `python`, `py` and honours `GODMODE_PYTHON`. Never write a bare `python` into a command.
+4. Separate observed facts, declared intent, assumptions, conflicts and open obligations,
+   then route to the narrowest specialist below.
 
-## Day one on a host whose reach is PARTIAL or SOFT
-
-`godmode hooks status` (or the first line of `session open`) names the host's
-reach. Where the pre-tool gate is not HARD, the ceremony above buys nothing the
-host will enforce; the path is six verbs and no more: `init` once, `session open`,
-`resume`, `remember`, `claim`, `checkpoint`. Everything else is `godmode guide
---tier N` when a task asks for it. On Grok the session brief rides the next
-allowed call and a refusal reaches the model after the call; treat both as
-advisories, and stage a protected operation with `authorize stage` before it.
+On a host whose reach is PARTIAL or SOFT, the path is six verbs: `init` once, `session
+open`, `resume`, `remember`, `claim`, `checkpoint`; stage a protected operation with
+`authorize stage` before it. On Grok a brief rides the next allowed call and a refusal
+reaches the model after the call; both are advisories.
 
 ## Routing
 
@@ -103,16 +100,14 @@ DEGRADED, SOFT or UNAVAILABLE means the host is not proven to call the
 hook: say that the CLI refused, or that the preview would refuse, and
 never that the host stopped the tool.
 
-## Session gates
+## Closing
 
-Open substantive work with `session open` (the handshake states identity, dirty
-files, active plan, obligations, invariants, and the host's enforcement table),
-compile the project's rules with `charter`, and close through `session close` —
-an unattested HARD rule, an uncited claim, a half-done pair, a regression (a step
-green earlier this session and red since), or a declared perimeter check that
-never ran this session (`perimeter add|run`) blocks closure.
-`config check`, `roles`, and `operator` validate the project's declared
-configuration; `locale check` validates translated guidance.
+Close substantive work through `session close` once. An unattested HARD rule, an
+uncited claim, a half-done pair, a regression (a step green earlier this session and red
+since), or a declared perimeter check that never ran (`perimeter add|run`) blocks it.
+A check already run on this HEAD this hour is evidence: `claim --verify` reuses its
+attestation instead of running it again. `config check`, `roles` and `operator`
+validate declared configuration; `locale check` validates translated guidance.
 
 Read [godmode-command-surface.md](references/godmode-command-surface.md) only when the
 requested operation needs exact CLI syntax. On a host with no godmode hook

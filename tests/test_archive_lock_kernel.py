@@ -461,7 +461,11 @@ class NoDuplicateSequenceTests(unittest.TestCase):
                 result = Chronicle(resolve_anchor(Path(root))).verify()
                 self.assertTrue(result["ok"], result)
                 self.assertEqual(result["anchor"], "anchored")
-                self.assertLess(elapsed, 90)
+                # Fairness is `busy == 0` above; the wall bound only catches a
+                # stall. 480 serialized appends take 60-150 s on a laptop whose
+                # file scanner inspects every sealed record, so the bound is the
+                # join deadline, not a throughput figure.
+                self.assertLess(elapsed, 180)
 
     def test_pinned_writer_behind_a_lagging_head_hint_does_not_fork(self) -> None:
         """The field fork: a hook process pinned its directory identity, a

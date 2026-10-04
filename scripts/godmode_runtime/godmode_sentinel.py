@@ -196,12 +196,198 @@ _GIT_LOCAL_REVERSIBLE = re.compile(
     r"merge(?![-\w])|"
     r"tag(?![-\w])(?![^;|&]*\s(?:-[a-z]*[df][a-z]*|--delete|--force)\b)|"
     r"stash(?![-\w])(?!\s+(?:drop|clear|list|show)\b)|"
-    r"worktree\s+add\b|"
+    r"worktree\s+(?:add|prune)\b|"
     r"submodule\s+(?:update|init|sync|absorbgitdirs)\b|"
     r"init(?![-\w])|"
     r"branch(?![-\w])[^;|&]*\s(?:-[a-z]*[dmcf][a-z]*|--delete|--force|--move|--copy|"
     r"--set-upstream-to(?:=\S+)?|--unset-upstream|--edit-description)\b"
     r")")
+# --- `git checkout <branch>` and the plain branch push (0.3.33) -------------
+#
+# `git switch main` ran free while `git checkout main`, the same operation
+# under its older spelling, was refused as a history change. And every push
+# needed the password, a non-force push of a feature branch included, though
+# deleting the remote branch undoes it. Both are decided from the project's
+# own refs, so they need an explicit project root: without one (a bare
+# `classify_action(text)`), nothing here fires and the old tier stands.
+
+_CHECKOUT_PLAIN_FLAGS = frozenset({
+    "-q", "--quiet", "--progress", "--no-progress", "--detach", "-t", "--track",
+    "--no-track", "--guess", "--no-guess", "-m", "--merge"})
+_PUSH_PLAIN_FLAGS = frozenset({
+    "-u", "--set-upstream", "-q", "--quiet", "-v", "--verbose", "--progress", "--porcelain"})
+_REF_NAME = re.compile(r"^[A-Za-z0-9][\w./-]*$")
+_REMOTE_NAME = re.compile(r"^[A-Za-z0-9][\w.-]*$")
+_VERSION_SHAPED = re.compile(r"(?i)^v?\d+(?:\.\d+)+\S*$")
+_SHA_SHAPED = re.compile(r"^[0-9a-f]{7,40}$")
+_DEFAULT_BRANCHES = frozenset({"main", "master"})
+
+
+def _git_dirs(project_root: Path | None) -> tuple[Path, Path] | None:
+    """(this worktree's git dir, the common git dir) for `project_root`,
+    read from the filesystem; None when there is no root or no repository."""
+    if project_root is None:
+        return None
+    try:
+        start = Path(str(project_root))
+        for directory in (start, *start.parents):
+            marker = directory / ".git"
+            if marker.is_dir():
+                return marker, marker
+            if marker.is_file():
+                line = marker.read_text(encoding="utf-8", errors="replace").strip()
+                if not line.startswith("gitdir:"):
+                    return None
+                pointed = Path(line[len("gitdir:"):].strip())
+                git_dir = pointed if pointed.is_absolute() else directory / pointed
+                common = git_dir
+                commondir = git_dir / "commondir"
+                if commondir.is_file():
+                    named = Path(commondir.read_text(encoding="utf-8", errors="replace").strip())
+                    common = named if named.is_absolute() else git_dir / named
+                return git_dir, common
+    except OSError:
+        return None
+    return None
+
+
+def _git_refs(common: Path) -> set[str]:
+    """Every ref name the repository holds, loose or packed (`refs/...`)."""
+    names: set[str] = set()
+    try:
+        refs = common / "refs"
+        if refs.is_dir():
+            for path in refs.rglob("*"):
+                if path.is_file():
+                    names.add(path.relative_to(common).as_posix())
+        packed = common / "packed-refs"
+        if packed.is_file():
+            for line in packed.read_text(encoding="utf-8", errors="replace").splitlines():
+                parts = line.split()
+                if len(parts) == 2 and parts[1].startswith("refs/"):
+                    names.add(parts[1])
+    except OSError:  # godmode: swallow-ok: refs that cannot be read are refs not found, and every caller treats a missing ref as "keep the protected tier"
+        pass
+    return names
+
+
+def _current_branch(git_dir: Path) -> str | None:
+    try:
+        head = (git_dir / "HEAD").read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return None
+    prefix = "ref: refs/heads/"
+    return head[len(prefix):] if head.startswith(prefix) else None
+
+
+_SHELL_OPERATOR_TOKEN = re.compile(r"^(?:&&|\|\||[;|&<>]|\d*>>?|\d*>&\d+|<<.*)$")
+
+
+def _git_argv(segment: str, verb: str) -> list[str] | None:
+    """The arguments after `git <verb>` in one command segment, quotes
+    removed, or None when this is not that command, carries a shell operator,
+    or cannot be split. Read from the segment itself: the classifier's
+    "executable text" blanks quoted arguments, so `git push origin "main"`
+    and `git config core.fsmonitor 'curl x | sh'` would each lose the one
+    argument that decides them."""
+    tokens = _argv_tokens(segment)
+    if not tokens or len(tokens) < 2 or tokens[0].lower() != "git" or tokens[1] != verb:
+        return None
+    rest = tokens[2:]
+    if any(_SHELL_OPERATOR_TOKEN.match(token) or "$(" in token or "`" in token for token in rest):
+        return None
+    return rest
+
+
+def _checkout_switches_branch(executable: str, project_root: Path | None) -> bool:
+    """`git checkout <ref>` that only moves HEAD: one operand that names a
+    ref this repository holds (a branch, a remote branch to track, a tag, a
+    commit), no `--`, no force, no pathspec. The pathspec and `--` forms
+    discard working-tree changes and keep their protected tier; git itself
+    refuses a switch that would overwrite local changes."""
+    rest = _git_argv(executable, "checkout")
+    if not rest:
+        return False
+    tokens = ["git", "checkout", *rest]
+    operands: list[str] = []
+    for token in tokens[2:]:
+        if token == "-":
+            operands.append(token)
+        elif token.startswith("-"):
+            if token not in _CHECKOUT_PLAIN_FLAGS:
+                return False
+        else:
+            operands.append(token)
+    if len(operands) != 1:
+        return False
+    ref = operands[0]
+    dirs = _git_dirs(project_root)
+    if dirs is None:
+        return False
+    if ref in ("-", "HEAD") or ref.startswith("@{-"):
+        return True
+    if not _REF_NAME.match(ref):
+        return False
+    # A name that is also a path here is a pathspec to git unless `--` says
+    # otherwise; that form discards the file's changes.
+    if (Path(str(project_root)) / ref).exists():
+        return False
+    refs = _git_refs(dirs[1])
+    if f"refs/heads/{ref}" in refs or f"refs/tags/{ref}" in refs or f"refs/remotes/{ref}" in refs:
+        return True
+    if any(name.startswith("refs/remotes/") and name.split("/", 3)[-1] == ref for name in refs):
+        return True
+    return bool(_SHA_SHAPED.match(ref))
+
+
+def _plain_branch_push(executable: str, project_root: Path | None) -> bool:
+    """`git push [-u] <remote> [<branch>...]` with no force, no delete, no
+    refspec mapping, no tag and no default branch: it publishes a feature
+    branch and nothing else, and deleting the remote branch undoes it. A
+    bare `git push` is judged by the branch HEAD is on. Anything else - a
+    flag outside the plain set (`--force`, `--no-verify`, `--tags`,
+    `--mirror`, `--delete`), a URL for a remote, `main`/`master`, the
+    remote's own default branch, a tag - keeps the password tier."""
+    rest = _git_argv(executable, "push")
+    if rest is None:
+        return False
+    operands: list[str] = []
+    for token in rest:
+        if token.startswith("-"):
+            if token not in _PUSH_PLAIN_FLAGS:
+                return False
+        else:
+            operands.append(token)
+    dirs = _git_dirs(project_root)
+    if dirs is None:
+        return False
+    git_dir, common = dirs
+    remote = operands[0] if operands else "origin"
+    if not _REMOTE_NAME.match(remote):
+        return False
+    branches = operands[1:] or [_current_branch(git_dir) or ""]
+    refs = _git_refs(common)
+    protected = set(_DEFAULT_BRANCHES)
+    try:
+        remote_head = (common / "refs" / "remotes" / remote / "HEAD").read_text(
+            encoding="utf-8", errors="replace").strip()
+        if remote_head.startswith("ref: refs/remotes/"):
+            protected.add(remote_head.split("/", 3)[-1])
+    except OSError:  # godmode: swallow-ok: no recorded remote HEAD leaves `main` and `master` as the protected names
+        pass
+    for branch in branches:
+        if branch == "HEAD":
+            branch = _current_branch(git_dir) or ""
+        if (not branch or not _REF_NAME.match(branch) or branch in protected
+                or _VERSION_SHAPED.match(branch) or f"refs/tags/{branch}" in refs
+                or f"refs/heads/{branch}" not in refs):
+            return False
+    return True
+
+
+_GH_PR_CREATE = re.compile(r"(?i)^\s*gh\s+pr\s+create(?![-\w])")
+
+
 # The two `git branch` forms that lose work: `-D`, and `-d` joined with a
 # force flag. Mirrors the `git-branch-mutation` rows of `_R5_ESCALATIONS`.
 _GIT_BRANCH_DESTRUCTIVE = (
@@ -216,6 +402,110 @@ _GIT_BRANCH_DESTRUCTIVE = (
 # floor and its R5 root/home escalation. Findings 2026-09-28: `rm -rf build/`
 # and `rm -f "$TEMP/x"` were both R4.
 _DELETE_HEAD = re.compile(r"(?i)^\s*(?:rm|rmdir|rd|del|erase|remove-item|ri)(?![\w-])")
+_POWERSHELL_ENV = re.compile(r"(?i)\$env:(\w+)")
+
+
+def _expand_shell_variables(path: str) -> str:
+    """`$TEMP`, `%TEMP%` and PowerShell's `$env:TEMP`, from this process's
+    environment. `Remove-Item "$env:TEMP\\x"` read as an unresolved path, so
+    a scratch delete was tiered with a delete outside the tree."""
+    return os.path.expandvars(
+        _POWERSHELL_ENV.sub(lambda match: os.environ.get(match.group(1), match.group(0)), path))
+
+
+# `New-Item -ItemType Directory` (and `md`) is PowerShell's `mkdir`. Inside
+# the working tree or the temp directory it is local state, like `mkdir -p`;
+# it was tiered with a delete outside the tree because `new-item` sits in
+# the filesystem-mutation vocabulary.
+_NEW_DIRECTORY_HEAD = re.compile(
+    r"(?i)^\s*(?:md(?![\w-])|(?:new-item|ni)(?![\w-])(?=.*\s-(?:ItemType|Type)\s+Directory\b))")
+
+
+def _new_directory_verdict(normalized: str, project_root: Path | None
+                           ) -> tuple[str, bool, list[str]] | None:
+    if not _NEW_DIRECTORY_HEAD.match(normalized):
+        return None
+    project_root = Path.cwd() if project_root is None else project_root
+    tokens = _argv_tokens(normalized) or []
+    paths = [token for index, token in enumerate(tokens[1:], 1)
+             if not token.startswith("-")
+             and tokens[index - 1].lower() not in ("-itemtype", "-type")]
+    if not paths:
+        return None
+    expanded = [_expand_shell_variables(path.strip().strip("\"'")) for path in paths]
+    if any(_UNRESOLVED_EXPANSION.search(path) or _SENSITIVE_EDIT.search(path)
+           or ".git" in Path(path).parts for path in expanded):
+        return None
+    if all(_is_scratch(Path(path), project_root) or _contained(path, project_root)
+           for path in expanded):
+        return ("local-compute-or-state", False,
+                ["creates a directory inside the working tree or the temp directory"])
+    return None
+
+
+# Git verbs that change only local, recoverable state and were unknown to
+# the classifier (R3, refused in auto mode): a cherry-pick or a revert makes
+# new local commits; `rm --cached` untracks without touching the file; `rm`
+# and `mv` change tracked files git itself restores; `clean -n` and a
+# `config` read change nothing.
+_GIT_NEW_LOCAL_COMMIT = re.compile(r"(?i)^\s*git\s+(?:cherry-pick|revert)(?![-\w])")
+_GIT_RM = re.compile(r"(?i)^\s*git\s+rm(?![-\w])")
+_GIT_RM_CACHED = re.compile(r"(?i)^\s*git\s+rm\b[^;|&]*\s--cached\b")
+_GIT_MV = re.compile(r"(?i)^\s*git\s+mv(?![-\w])")
+_GIT_CLEAN_DRY_RUN = re.compile(
+    r"(?i)^\s*git\s+clean\b(?=[^;|&]*\s(?:-[a-z]*n[a-z]*|--dry-run)\b)")
+_GIT_CONFIG_PLAIN_READ_FLAGS = frozenset({
+    "--get", "--get-all", "--get-regexp", "--list", "-l", "--global", "--local", "--system",
+    "--worktree", "--show-origin", "--show-scope", "--null", "-z"})
+# Keys that decide what code git runs or where it sends things. Writing one
+# is a change to hooks-as-code, not an ordinary setting: `core.hooksPath
+# /dev/null` switches off every git hook, the pre-push gate included.
+_GIT_CONFIG_CODE_KEY = re.compile(
+    r"(?i)^(?:core\.(?:hookspath|sshcommand|fsmonitor|editor|pager)|credential\..+|alias\..+|"
+    r"url\..+\.(?:insteadof|pushinsteadof)|include\.path|includeif\..+|filter\..+|diff\..+\.textconv)$")
+
+
+_GIT_CONFIG_KEY = re.compile(r"^[A-Za-z][\w.-]*$")
+
+
+def _git_config_reads(executable: str) -> bool:
+    rest = _git_argv(executable, "config")
+    if not rest:
+        return False
+    flags = [token for token in rest if token.startswith("-")]
+    operands = [token for token in rest if not token.startswith("-")]
+    if any(flag not in _GIT_CONFIG_PLAIN_READ_FLAGS for flag in flags):
+        return False
+    if len(operands) == 1:
+        return bool(_GIT_CONFIG_KEY.match(operands[0]))
+    return not operands and any(f in ("--list", "-l") for f in flags)
+
+
+def _git_config_writes_a_code_key(executable: str) -> bool:
+    tokens = _argv_tokens(executable) or []
+    if len(tokens) < 3 or tokens[0].lower() != "git" or tokens[1] != "config":
+        return False
+    return (not _git_config_reads(executable)
+            and any(_GIT_CONFIG_CODE_KEY.match(token) for token in tokens[2:]))
+
+
+def _git_everyday_verdict(executable: str) -> tuple[str, bool, list[str]] | None:
+    if _git_config_writes_a_code_key(executable):
+        return ("hook-as-code-write", True,
+                ["a git setting that decides what code git runs or where it sends data "
+                 "(hooks path, aliases, credentials, URL rewrites)"])
+    if _GIT_CLEAN_DRY_RUN.match(executable) or _git_config_reads(executable):
+        return "read-only-inspection", False, ["local read-only state"]
+    if _GIT_NEW_LOCAL_COMMIT.match(executable):
+        return ("local-repository-change", True,
+                ["new local commits the reflog undoes; nothing leaves the machine"])
+    if _GIT_RM_CACHED.match(executable):
+        return ("local-repository-change", True,
+                ["removes a path from the index; the file stays on disk"])
+    if _GIT_RM.match(executable) or _GIT_MV.match(executable):
+        return ("worktree-file-mutation", True,
+                ["removes or renames tracked files; git restores them"])
+    return None
 
 
 def _contained_delete_verdict(normalized: str, project_root: Path | None
@@ -226,7 +516,7 @@ def _contained_delete_verdict(normalized: str, project_root: Path | None
     paths = [token for token in _argv_tokens(normalized)[1:] if not token.startswith("-")]
     if not paths:
         return None
-    expanded = [os.path.expandvars(path.strip().strip("\"'")) for path in paths]
+    expanded = [_expand_shell_variables(path.strip().strip("\"'")) for path in paths]
     if any(_UNRESOLVED_EXPANSION.search(path) or _SENSITIVE_EDIT.search(path)
            or ".git" in Path(path).parts for path in expanded):
         return None
@@ -3566,6 +3856,19 @@ _TIER_BY_CATEGORY = {
     # Recorded at the same tier as a file edit: it changes local state and
     # nothing leaves the machine.
     "local-repository-change": "R2",
+    # A non-force push of a feature branch, or opening a pull request: it
+    # leaves the machine, so it is asked about, and it is undone from the
+    # remote (delete the branch, close the request), so it needs no password.
+    "reversible-remote-write": "R2",
+    # 0.3.33, operator rule: the host decides ordinary work and the password
+    # is for harmful operations. A command the classifier cannot name, and a
+    # scripted in-place edit of a file, are asked about (in auto mode the ask
+    # goes to the host's own classifier) instead of refused until a password
+    # is staged. Neither is known to be harmful; the classes that are -
+    # history rewrites, discards, database writes, deletes outside the tree,
+    # releases - keep their tiers.
+    "unknown-command": "R2",
+    "scripted-source-edit": "R2",
     # I-4 (two-reversals gate, `godmode_reversals.third_edit_without_incident`,
     # called from `hooks/godmode_session_hook.py`'s Edit/Write path): never
     # produced by `classify_action` itself (this category names an Edit/Write
@@ -3590,7 +3893,6 @@ _TIER_BY_CATEGORY = {
     # judged that ask correct - recoverable (the source can be removed), but
     # not before everything it serves has been offered as trusted.
     "agent-trust-mutation": "R3",
-    "scripted-source-edit": "R3",
     "process-control": "R3",
     "database-mutation": "R3",
     # A `$(...)`/backtick substitution this module's
@@ -4067,6 +4369,24 @@ def _categorize(normalized: str, project_root: Path | None = None,
         return ("git-local-reversible", False,
                 ["local git state that the reflog or the stash restores; "
                  "nothing leaves the machine"])
+    # These read the segment itself, not `executable`: that text blanks
+    # quoted arguments, and the operands are what decide each of them.
+    if write_target is None:
+        everyday = _git_everyday_verdict(normalized)
+        if everyday is not None:
+            return everyday
+    if write_target is None and _checkout_switches_branch(normalized, project_root):
+        return ("git-local-reversible", False,
+                ["moves HEAD to a ref this repository holds; git refuses the "
+                 "switch if it would overwrite local changes"])
+    if write_target is None and _plain_branch_push(normalized, project_root):
+        return ("reversible-remote-write", True,
+                ["publishes a feature branch to the remote, without force; "
+                 "deleting the remote branch undoes it"])
+    if (write_target is None and _GH_PR_CREATE.match(executable)
+            and not _is_help_request(_argv_tokens(normalized) or [])):
+        return ("reversible-remote-write", True,
+                ["opens a pull request; closing it undoes it"])
     # Checked after the branch mutation and before the protected patterns, so
     # a commit is ordinary while `--amend` still falls through to them.
     #
@@ -4172,6 +4492,9 @@ def _categorize(normalized: str, project_root: Path | None = None,
         contained_delete = _contained_delete_verdict(normalized, project_root)
         if contained_delete is not None:
             return contained_delete
+        new_directory = _new_directory_verdict(normalized, project_root)
+        if new_directory is not None:
+            return new_directory
         for category, pattern, impact in _ACTION_PATTERNS:
             # Field feedback 2026-09-11: `sed -i ... docs/release-notes.md`
             # read as a release. The external-write verbs are judged on the
@@ -4489,7 +4812,16 @@ def _risk_tier(category: str, normalized: str) -> tuple[str, bool]:
             return "R5", True
     if category == "git-history-or-remote" and _GIT_PUSH.search(canonical):
         return "R4", False
+    # An unnamed command is an ordinary ask (R2) only while its text is what
+    # will run. A word the shell builds or completes at run time (`git
+    # pu{s,}h -f`, `git pu?h -f`, `$cmd push`) cannot be read here, so it
+    # keeps the tier it had before unnamed commands were lowered.
+    if category == "unknown-command" and _RUNTIME_BUILT_WORD.search(normalized):
+        return "R3", False
     return _TIER_BY_CATEGORY.get(category, _FALLBACK_TIER), False
+
+
+_RUNTIME_BUILT_WORD = re.compile(r"[$`{}?*\[\]]|%\w+%")
 
 
 # B4-9: heads that can EXECUTE or re-dispatch whatever a pipeline hands

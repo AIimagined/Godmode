@@ -73,13 +73,19 @@ class TierFloorTests(unittest.TestCase):
                     self.assertEqual(_verdict(command, kwargs)["tier"], _SWAPPED_FALLBACK)
 
     def test_a_category_with_no_row_takes_the_fallback(self) -> None:
-        """`unknown-command` has no row on purpose."""
-        self.assertNotIn("unknown-command", godmode_sentinel._TIER_BY_CATEGORY)
+        """`unknown-command` has its own row since 0.3.33 (R2: asked, never
+        password-gated for being unnamed). With the row taken away it falls
+        to the fallback, like any category the table does not name."""
+        self.assertEqual(godmode_sentinel._TIER_BY_CATEGORY["unknown-command"], "R2")
         verdict = _verdict("frobnicate > /etc/hosts", {})
         self.assertEqual(verdict["category"], "unknown-command")
-        self.assertEqual(verdict["tier"], "R3")
-        with mock.patch.object(godmode_sentinel, "_FALLBACK_TIER", _SWAPPED_FALLBACK):
-            self.assertEqual(_verdict("frobnicate > /etc/hosts", {})["tier"], _SWAPPED_FALLBACK)
+        self.assertEqual(verdict["tier"], "R2")
+        table = dict(godmode_sentinel._TIER_BY_CATEGORY)
+        table.pop("unknown-command")
+        with mock.patch.object(godmode_sentinel, "_TIER_BY_CATEGORY", table):
+            self.assertEqual(_verdict("frobnicate > /etc/hosts", {})["tier"], "R3")
+            with mock.patch.object(godmode_sentinel, "_FALLBACK_TIER", _SWAPPED_FALLBACK):
+                self.assertEqual(_verdict("frobnicate > /etc/hosts", {})["tier"], _SWAPPED_FALLBACK)
 
 
 if __name__ == "__main__":

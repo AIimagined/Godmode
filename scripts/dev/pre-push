@@ -18,4 +18,6 @@ if [ "$saw_line" = 1 ] && [ "$skip" = 1 ]; then
     echo "pre-push: skipping the local run - no branch code in this push (delete/tag only)" >&2
     exit 0
 fi
-exec python scripts/dev/ci_local.py
+# --matrix: the other Python versions CI runs, when this machine has them.
+# A green run already recorded for this exact tree is reused, not repeated.
+exec python scripts/dev/ci_local.py --matrix

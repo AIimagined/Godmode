@@ -970,9 +970,16 @@ def _record_turn_baseline(archive: Any, project: Path, submitted: dict) -> None:
             sha = (run_git(project, "rev-parse", "HEAD") or "").strip()
         if not sha:
             return
+        # The head hint, not a read of every record: `select(limit=1)` parsed
+        # all 28k records of one archive (0.64 s of a 1.5 s prompt hook) to
+        # learn the last sequence number the hint already carries.
         last = 0
-        for record in archive.select(limit=1):
-            last = int(record.get("sequence", 0))
+        try:
+            hint = json.loads(Path(archive.head).read_text(encoding="utf-8"))
+            last = int(hint.get("sequence") or 0)
+        except (OSError, ValueError, TypeError, AttributeError):
+            for record in archive.select(limit=1):
+                last = int(record.get("sequence", 0))
         (archive.root / _TURN_BASELINE).write_text(json.dumps({
             "session": _session_key(submitted), "sha": sha, "sequence": last}),
             encoding="utf-8")
