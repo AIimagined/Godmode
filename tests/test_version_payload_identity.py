@@ -288,5 +288,15 @@ class MainCLITests(unittest.TestCase):
             self.assertEqual(V.main(repo.root), 0)
 
 
+class VersionBannerTests(unittest.TestCase):
+    def test_the_banner_is_printed_without_loading_the_runtime(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-X", "importtime", str(PLUGIN_ROOT / "scripts" / "godmode.py"), "--version"],
+            capture_output=True, text=True, timeout=60, cwd=PLUGIN_ROOT)
+        self.assertEqual(result.returncode, 0, result.stderr[-400:])
+        self.assertRegex(result.stdout.strip(), r"^Godmode \d+\.\d+\.\d+$")
+        self.assertNotIn("godmode_console", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

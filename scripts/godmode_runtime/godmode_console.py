@@ -4475,6 +4475,27 @@ def cmd_remember(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # hand-written request therefore landed in the archive and was read by
     # nothing. The default is now per-kind; an explicit --status still wins,
     # which is what keeps `--kind request --status closed` a closure.
+    subjects_file = getattr(args, "subjects_file", None)
+    if subjects_file:
+        # One process for many closures: a launch per ask cost seconds each
+        # on a large archive, and a triage pass closes them by the hundred.
+        status = str(args.status or "").strip().lower()
+        if args.kind != "request" or status not in _CLOSED_REQUEST_STATUSES or args.subject:
+            raise ArchiveError(
+                "--subjects-file closes asks: it needs --kind request and a closing "
+                "--status, and takes the place of --subject")
+        subjects = [line.strip() for line in
+                    Path(subjects_file).read_text(encoding="utf-8").splitlines() if line.strip()]
+        if not subjects:
+            raise ArchiveError(f"--subjects-file {subjects_file} names no ask")
+        # All or nothing at the check: a typo on line 90 must not leave 89 closed.
+        for subject in subjects:
+            _require_request_closure_target(runtime, subject)
+        closed = []
+        for subject in subjects:
+            one = argparse.Namespace(**{**vars(args), "subjects_file": None, "subject": subject})
+            closed.append(cmd_remember(one, runtime).payload["record"]["sequence"])
+        return CommandResult({"closed": len(closed), "status": status, "sequences": closed})
     text = _one_text(args, "text", "value", "remember text")
     if args.value is None and text:
         args.value = text
@@ -9057,6 +9078,10 @@ def _build_parser() -> argparse.ArgumentParser:
                                "string; the subject is derived from its opening "
                                "words when --subject is not given")
     remember.add_argument("--subject", default=None, type=subject_text)
+    remember.add_argument("--subjects-file", dest="subjects_file", default=None,
+                          help="With --kind request and --status: a file of ask ids, one "
+                               "per line, closed in this one process; every id is checked "
+                               "against the open list before the first is written")
     remember.add_argument("--value", "--data", dest="value", default=None,
                           help="The record's value (`--data` is accepted as the same thing)")
     remember.add_argument("--status", default=None,
