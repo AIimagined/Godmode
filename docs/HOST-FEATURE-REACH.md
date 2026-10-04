@@ -46,7 +46,7 @@ Every hook host cites the source read, or names the source still to read, and/or
 
 | Host | Reference (read / still to read) | Replication test | Next live probe | Live proof |
 |---|---|---|---|---|
-| claude | (not required - live proof) | (none) | (none scheduled) | live proof, 2026-09-13, hook 0.3.26 |
+| claude | (not required - live proof) | (none) | (none scheduled) | live proof, 2026-10-04, hook 0.3.33 |
 | codex | (read) | `tests.test_launcher_root_fallback.LauncherTests.test_windows_prefers_py_launcher_with_3_flag` | post-0.3.28 | (none) |
 | grok | (not required - live proof) | (none) | (none scheduled) | live proof, 2026-08-19, hook 0.3.0 |
 | cursor | (still to read) | (none) | (none scheduled) | (none) |

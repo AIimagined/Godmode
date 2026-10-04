@@ -197,14 +197,15 @@ class ForgeReadTests(GateCase):
     def test_the_read_verbs_are_reads(self) -> None:
         for command in ("gh auth status", "gh repo view AIimagined/Godmode --json name",
                         "gh run list --limit 5", "gh pr view 12",
-                        "gh release list", "gh workflow list"):
+                        "gh release list", "gh workflow list",
+                        "gh run watch 12 --exit-status"):
             with self.subTest(command=command):
                 self.allowed(command)
 
     def test_the_write_verbs_are_not(self) -> None:
         for command in ("gh release create v0.3.0", "gh pr merge 12 --squash",
                         "gh repo delete AIimagined/Godmode", "gh pr close 12",
-                        "gh secret set TOKEN"):
+                        "gh secret set TOKEN", "gh run rerun 12", "gh run cancel 12"):
             with self.subTest(command=command):
                 self.refused(command)
 

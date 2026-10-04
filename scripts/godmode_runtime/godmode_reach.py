@@ -263,7 +263,7 @@ _TABLE: dict[str, dict[str, tuple[str, str]]] = {
 # unchanged.
 REACH: dict[str, dict[str, str]] = {
     "claude": {"reference": "", "replication_test": "", "next_probe": "",
-               "live_proof": "seq:13288 (2026-09-13, hook_version 0.3.26)"},
+               "live_proof": "seq:29086 (2026-10-04, hook_version 0.3.33)"},
     "codex": {"reference": "ledger:193",
               "replication_test": "tests.test_launcher_root_fallback.LauncherTests.test_windows_prefers_py_launcher_with_3_flag",
               "next_probe": "post-0.3.28", "live_proof": ""},
