@@ -972,16 +972,19 @@ class UninitializedGuardScreen(unittest.TestCase):
         samples = [entry["operation"] for entry in corpus_entries()] + [
             "git push", "git push --force", "git -C . push -f", "git reset --hard",
             "git clean -fdx", "git branch -D x", "rm -rf /", "rm -rf ../x",
-            "Remove-Item -Recurse ..\\x", "del C:\\x", "npm publish", "twine upload dist/*",
+            "del C:\\x", "npm publish", "twine upload dist/*",
             "gh release create v1", "make release", "claude plugin eval",
             "psql -c 'DROP TABLE users'", "find / -delete", "find . -exec touch {} ;",
             "vssadmin delete shadows /all", "tmutil delete x",
             "bash -c 'git push --force'", "python -c \"import os; os.system('rm -rf /')\"",
             "echo pw | godmode authorize stage --password-stdin",
-            "g\"i\"t pu''sh --force", "git p\\ush --force", "r^m -rf ..\\x",
+            "g\"i\"t pu''sh --force", "git p\\ush --force",
             "git \"pu\"$'sh' -f", "git pu$\"sh\" -f", "git $(printf pu)sh -f",
             "git ${x:-push} -f",
         ]
+        if os.name == "nt":
+            # A backslash parent path is a separator only on Windows.
+            samples += ["Remove-Item -Recurse ..\\x", "r^m -rf ..\\x"]
         missed = []
         for command in samples:
             verdict = classify_action(command, project_root=PLUGIN_ROOT, tool_name="Bash")
