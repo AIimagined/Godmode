@@ -1,1 +1,0 @@
-`godmode remember --kind request --subjects-file <file> --status answered` closes every ask id listed in the file in one process, after checking all of them against the open list; closing 150 asks one launch at a time took 45 minutes on a 29,000-record archive.

@@ -1,1 +1,0 @@
-A command that reads no archive record no longer scans every record file first: the scan now happens on the first read. Reading one record by sequence on a 29,000-record archive went from about 3.7 s to about 2.6 s.
