@@ -88,7 +88,10 @@ _TABLE: dict[str, dict[str, tuple[str, str]]] = {
         # cell (this module's `REACH[...]["live_proof"]`, a different, per-
         # host field from these per-feature cells) stays empty until that
         # session happens.
-        "pre-tool-gate": (_Y, "PreToolUse wired; pinned live on 1.0.13 Windows via project-scope hooks"),
+        "pre-tool-gate": (_P, "PreToolUse wired; pinned live on 1.0.13 Windows via project-scope hooks in "
+                              "an interactive session. In single-turn mode (`grok -p`) build 1.0.41 "
+                              "loads no hooks and approves every tool call itself, trusted folder or "
+                              "not (observed 2026-10-05 on Windows): the gate is never asked there"),
         "advisories": (_Y, "PreToolUse additionalContext delivered after the call"),
         "continuity-brief": (_Y, "SessionStart stdout ignored by Grok; the brief rides the first allowed call, pinned live"),
         "prompt-nudges": (_N, "an allowing UserPromptSubmit hook's stdout is discarded by Grok; only parked echoes re-route"),

@@ -165,6 +165,16 @@ class EligibilityTests(unittest.TestCase):
                   "sequence": 1}
         self.assertEqual(forget_mod.eligible_for_expiry([record], now=NOW), [])
 
+    def test_an_old_snapshot_expires_and_the_newest_one_stays(self) -> None:
+        old = (NOW - timedelta(days=forget_mod.TTL_DAYS["inventory"] + 1)).isoformat()
+        records = [
+            {"kind": "inventory", "subject": "repository-snapshot", "recorded_at": old, "sequence": 1},
+            {"kind": "inventory", "subject": "resume-refresh", "recorded_at": old, "sequence": 2},
+            {"kind": "inventory", "subject": "repository-snapshot", "recorded_at": old, "sequence": 3},
+            {"kind": "decision", "recorded_at": NOW.isoformat(), "sequence": 4},
+        ]
+        self.assertEqual([r["sequence"] for r in forget_mod.eligible_for_expiry(records, now=NOW)], [1, 2])
+
     def test_missing_recorded_at_is_never_eligible(self) -> None:
         record = {"kind": "action", "sequence": 1}
         self.assertEqual(forget_mod.eligible_for_expiry([record], now=NOW), [])
