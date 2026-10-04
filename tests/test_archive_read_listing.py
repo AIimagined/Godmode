@@ -89,6 +89,20 @@ class FreshReadListsOnceTests(unittest.TestCase):
                             if Path(c.args[0]).name.endswith(".godmode.json")]
             self.assertEqual(len(record_reads), 1, f"only the record after the index is parsed: {record_reads}")
 
+    def test_a_lazy_pin_scans_on_the_first_read_and_only_once(self) -> None:
+        with isolated_project() as (_project, _state, anchor, archive):
+            archive.initialize()
+            _fabricate(archive, COUNT)
+            total = len(archive.read_events())
+            fresh = Chronicle(anchor)
+            with mock.patch.object(Chronicle, "_events_identity", autospec=True,
+                                   side_effect=Chronicle._events_identity) as scans:
+                fresh.pin_identity(lazy=True)
+                self.assertEqual(scans.call_count, 0, "a verb that reads nothing pays for no scan")
+                self.assertEqual(len(fresh.read_events()), total)
+                self.assertEqual(len(fresh.read_events()), total)
+                self.assertEqual(scans.call_count, 1)
+
     def test_a_record_rewritten_in_place_is_still_caught(self) -> None:
         with isolated_project() as (_project, _state, anchor, archive):
             archive.initialize()

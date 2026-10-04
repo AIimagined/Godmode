@@ -10119,8 +10119,10 @@ def _dispatch(args: argparse.Namespace, mode: str = "standard") -> int:
         # One directory scan per process, as the hook already does: `resume`
         # read the archive ten times and re-stat-ed 28,000 record files on
         # each read (6 of its 10 seconds). A write by this process re-pins.
+        # Lazy: the scan happens on the first read, so a verb that reads
+        # nothing does not pay for it.
         try:
-            runtime.archive.pin_identity()
+            runtime.archive.pin_identity(lazy=True)
         except Exception:  # noqa: BLE001  # godmode: swallow-ok: an unpinned read is the slow path, never a failure
             pass
         handler: Callable[[argparse.Namespace, Runtime], CommandResult] = args.handler

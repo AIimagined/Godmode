@@ -1749,8 +1749,11 @@ class Chronicle:
     # opt-in: a short-lived process pins the identity it scanned once, its
     # own appends refresh the pin, and every append still lists the
     # directory fresh under the write lock for the chain tail.
-    def pin_identity(self) -> None:
-        self._pinned_identity = (True, self._events_identity())
+    def pin_identity(self, *, lazy: bool = False) -> None:
+        # `lazy` defers the scan to the first read: a command that reads no
+        # record (a banner, a help page, one record by sequence) was paying
+        # for a stat of every record file before it did anything.
+        self._pinned_identity = (False, None) if lazy else (True, self._events_identity())
 
     def unpin_identity(self) -> None:
         self._pinned_identity = None
@@ -1758,6 +1761,8 @@ class Chronicle:
     def _current_identity(self) -> str | None:
         pinned = self._pinned_identity
         if pinned is not None:
+            if not pinned[0]:
+                pinned = self._pinned_identity = (True, self._events_identity())
             return pinned[1]
         return self._events_identity()
 
