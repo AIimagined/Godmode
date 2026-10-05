@@ -12,11 +12,13 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 
 if str(Path(__file__).parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent))
 from _slow import slow  # noqa: E402
+from _host_env import scrubbed_env  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 
@@ -181,7 +183,16 @@ class SharedCommandStringTests(unittest.TestCase):
         pwsh = shutil.which("pwsh") or shutil.which("powershell")
         if not pwsh:
             self.skipTest("no PowerShell on this machine")
-        env = {**os.environ, "CLAUDE_PLUGIN_ROOT": str(PLUGIN_ROOT)}
+        # Its own state home: fired with the live environment, this deny was
+        # written to the checkout's real archive, and `authorize stage
+        # --from-last-refusal` then offered the operator a force push to
+        # main that nobody had attempted.
+        state = tempfile.TemporaryDirectory()
+        self.addCleanup(state.cleanup)
+        env = scrubbed_env(CLAUDE_PLUGIN_ROOT=str(PLUGIN_ROOT), GODMODE_STATE_HOME=state.name)
+        subprocess.run([sys.executable, str(PLUGIN_ROOT / "scripts" / "godmode.py"),
+                        "--project", str(PLUGIN_ROOT), "init"],
+                       env=env, capture_output=True, check=True, timeout=120)
         # Grok's runner (10-hooks.md, "Using variables in command"): on
         # Windows PowerShell known `$VAR`/`${VAR}` refs are rewritten to
         # `$env:VAR` before the string runs. Apply the same rewrite here;

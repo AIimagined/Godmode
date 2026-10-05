@@ -53,6 +53,12 @@ TTL_DAYS: dict[str, int] = {
     # it; one a live fix claim cites (`hyp:<seq>`) stays hot with its kill
     # result - see `protected_sequences`.
     "hypothesis": 90,
+    # A repository snapshot is read as "the latest one": drift is measured
+    # against the newest, never an older one. Field archive 2026-10-05: 27
+    # snapshots held 18.7 MB of a 42.9 MB read index, one of them 15.2 MB,
+    # parsed by every command that reads a record. The newest snapshot
+    # never expires - see `eligible_for_expiry`.
+    "inventory": 14,
 }
 
 EPISODIC_KINDS = frozenset(TTL_DAYS)
@@ -355,13 +361,16 @@ def eligible_for_expiry(records: list[dict[str, Any]], *, now: datetime,
     # sequence number already sealed. `rotate_to_cold` refuses it outright as
     # defense in depth; this is what keeps an ordinary pass from ever asking.
     tail = max((int(record.get("sequence", 0) or 0) for record in records), default=0)
+    # The newest snapshot is the baseline in force, however old it is.
+    keep = {max((int(record.get("sequence", 0) or 0) for record in records
+                 if record.get("kind") == "inventory"), default=0)}
     eligible = []
     for record in records:
         kind = record.get("kind")
         if kind not in EPISODIC_KINDS:
             continue
         sequence = int(record.get("sequence", 0) or 0)
-        if sequence in protected or sequence == tail:
+        if sequence in protected or sequence == tail or sequence in keep:
             continue
         age = age_days(record, now=now)
         if age is None or age < ttl.get(kind, TTL_DAYS[kind]):

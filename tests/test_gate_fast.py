@@ -631,10 +631,13 @@ class UninitializedGuard(unittest.TestCase):
 
     def _run(self, command: str, tool: str = "Bash", cwd: Path | None = None,
              session: str = "s-1", event: str = "PreToolUse",
+             permission_mode: str | None = None,
              **env: str) -> dict[str, Any] | None:
         cwd = cwd or self.project
         body = {"hook_event_name": event, "tool_name": tool, "session_id": session,
                 "tool_input": {"command": command}, "cwd": str(cwd)}
+        if permission_mode:
+            body["permission_mode"] = permission_mode
         done = subprocess.run(
             [sys.executable, "-I", "-B", str(FAST_GATE)], input=json.dumps(body).encode(),
             capture_output=True, cwd=str(cwd), timeout=60,
@@ -673,6 +676,14 @@ class UninitializedGuard(unittest.TestCase):
         reason = body["hookSpecificOutput"]["permissionDecisionReason"]
         self.assertIn("godmode config set uninitialized off", reason)
         self.assertIn("godmode init", reason)
+        self._assert_nothing_created()
+
+    def test_a_force_push_is_denied_when_the_host_would_answer_its_own_ask(self) -> None:
+        for mode in ("auto", "dontAsk", "bypassPermissions"):
+            with self.subTest(mode=mode):
+                body = self._run(self.FORCE_PUSH, permission_mode=mode)
+                self.assertEqual(self._decision(body), "deny")
+        self.assertEqual(self._decision(self._run(self.FORCE_PUSH, permission_mode="default")), "ask")
         self._assert_nothing_created()
 
     def test_a_force_push_is_denied_with_the_remedy_on_a_host_without_ask(self) -> None:
@@ -961,16 +972,19 @@ class UninitializedGuardScreen(unittest.TestCase):
         samples = [entry["operation"] for entry in corpus_entries()] + [
             "git push", "git push --force", "git -C . push -f", "git reset --hard",
             "git clean -fdx", "git branch -D x", "rm -rf /", "rm -rf ../x",
-            "Remove-Item -Recurse ..\\x", "del C:\\x", "npm publish", "twine upload dist/*",
+            "del C:\\x", "npm publish", "twine upload dist/*",
             "gh release create v1", "make release", "claude plugin eval",
             "psql -c 'DROP TABLE users'", "find / -delete", "find . -exec touch {} ;",
             "vssadmin delete shadows /all", "tmutil delete x",
             "bash -c 'git push --force'", "python -c \"import os; os.system('rm -rf /')\"",
             "echo pw | godmode authorize stage --password-stdin",
-            "g\"i\"t pu''sh --force", "git p\\ush --force", "r^m -rf ..\\x",
+            "g\"i\"t pu''sh --force", "git p\\ush --force",
             "git \"pu\"$'sh' -f", "git pu$\"sh\" -f", "git $(printf pu)sh -f",
             "git ${x:-push} -f",
         ]
+        if os.name == "nt":
+            # A backslash parent path is a separator only on Windows.
+            samples += ["Remove-Item -Recurse ..\\x", "r^m -rf ..\\x"]
         missed = []
         for command in samples:
             verdict = classify_action(command, project_root=PLUGIN_ROOT, tool_name="Bash")

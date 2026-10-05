@@ -1286,7 +1286,7 @@ _SAFE_PREFIXES = re.compile(
 _SAFE_GH = re.compile(
     r"(?i)^[ \t]*gh[ \t]+(?:"
     r"auth[ \t]+status|"
-    r"[a-z-]+[ \t]+(?:view|list|status|diff|checks)\b|"
+    r"[a-z-]+[ \t]+(?:view|list|status|diff|checks|watch)\b|"
     r"api\b(?![^\n]*(?:-X[ \t]+(?!GET\b)|--method[ \t]+(?!GET\b)|"
     r"[ \t]-[fF][ \t]|--field[ \t]|--raw-field[ \t]|--input[ \t]))"
     r")"

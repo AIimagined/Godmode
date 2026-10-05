@@ -34,7 +34,7 @@ no rule lives only as an open request.
 5. **Dispose each ask, one of four ways.**
    - Rule-shaped: `godmode remember --kind invariant --subject "<the rule>" --value "<the rule, stated once>" --evidence seq:<the ask's seq>`, then close the ask citing it: `godmode remember --kind request --subject "ask:<hex>" --status superseded --evidence seq:<the invariant's seq>`.
    - Work-shaped: `godmode remember --kind obligation --subject "<plan task id>" --value "maps ask:<hex>"`; the ask stays open until that task's acceptance claim exists, then `godmode remember --kind request --subject "ask:<hex>" --status done --evidence seq:<the acceptance claim>`.
-   - Answered or control noise: `godmode remember --kind request --subject "ask:<hex>" --status answered`.
+   - Answered or control noise: `godmode remember --kind request --subject "ask:<hex>" --status answered`. For many at once, list the ids one per line in a file: `godmode remember --kind request --subjects-file <file> --status answered` checks every id, then closes them in one process.
    - Parked: the ask stays open and the reason is recorded beside it - `godmode remember --kind decision --subject "parked:ask:<hex>" --value "<why, and when to revisit>"`.
    - Fallback: a closure naming no open ask is refused with the open list, paste-ready; copy the id from that list, never retype the ask's words as the subject.
 6. **Run the aged falsifiers.** `godmode verify --falsifiers` - each due falsifier runs and attests on its own.

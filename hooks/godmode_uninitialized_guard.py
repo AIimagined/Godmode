@@ -160,10 +160,15 @@ def guard_decision(payload: dict[str, Any], root: str) -> dict[str, Any] | None:
             sys.path.insert(0, scripts)
         from godmode_gate_fast import _disables_guard, _harm_category
         from godmode_runtime import godmode_hostevent as hostevent
-        from godmode_runtime.godmode_sentinel import _contained, classify_action
+        from godmode_runtime.godmode_sentinel import _NO_HUMAN_ASK_MODES, _contained, classify_action
         event = hostevent.parse_host_payload(payload)
         host, event_name = event.host, event.event or "PreToolUse"
-        can_ask = host in hostevent.HOSTS_WITH_ASK
+        # An ask is an approval only when a person answers it. In auto,
+        # dontAsk and bypass modes the host answers its own prompt, and a
+        # force push here went through on that answer (field report
+        # 2026-10-05, six repositories).
+        can_ask = (host in hostevent.HOSTS_WITH_ASK
+                   and str(payload.get("permission_mode") or "") not in _NO_HUMAN_ASK_MODES)
 
         def body(kind: str, label: str = "") -> dict[str, Any]:
             decision = "ask" if can_ask else "deny"

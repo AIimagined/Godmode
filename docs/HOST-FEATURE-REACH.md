@@ -46,7 +46,7 @@ Every hook host cites the source read, or names the source still to read, and/or
 
 | Host | Reference (read / still to read) | Replication test | Next live probe | Live proof |
 |---|---|---|---|---|
-| claude | (not required - live proof) | (none) | (none scheduled) | live proof, 2026-09-13, hook 0.3.26 |
+| claude | (not required - live proof) | (none) | (none scheduled) | live proof, 2026-10-04, hook 0.3.33 |
 | codex | (read) | `tests.test_launcher_root_fallback.LauncherTests.test_windows_prefers_py_launcher_with_3_flag` | post-0.3.28 | (none) |
 | grok | (not required - live proof) | (none) | (none scheduled) | live proof, 2026-08-19, hook 0.3.0 |
 | cursor | (still to read) | (none) | (none scheduled) | (none) |
@@ -61,7 +61,7 @@ Legend: **yes** = event wired, channel declared, live proof; **partial** = wired
 
 | Feature | claude | codex | grok | cursor | gemini | antigravity | copilot | kiro | opencode | pi | goose |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| pre-tool-gate | yes | yes | yes | partial | partial | yes | partial | partial | partial | partial | no |
+| pre-tool-gate | yes | yes | partial | partial | partial | yes | partial | partial | partial | partial | no |
 | advisories | yes | partial | yes | partial | no | partial | partial | partial | no | no | no |
 | continuity-brief | yes | partial | yes | partial | no | no | partial | no | no | no | partial |
 | prompt-nudges | yes | partial | no | partial | no | partial | partial | no | no | no | no |
@@ -89,6 +89,7 @@ The reason behind every non-`yes` cell above, `reach_table()`'s own per-cell tex
 | codex | stop-notices | partial | Stop declared since 2026-09-08; unproven live |
 | codex | subagent-stop | partial | SubagentStop declared since 2026-09-08; unproven live |
 | codex | ask-decision | partial | PreToolUse ask accepted by its wire; PermissionRequest deny dialect projected; unproven live |
+| grok | pre-tool-gate | partial | PreToolUse wired; pinned live on 1.0.13 Windows via project-scope hooks in an interactive session. In single-turn mode (`grok -p`) build 1.0.41 loads no hooks and approves every tool call itself, trusted folder or not (observed 2026-10-05 on Windows): the gate is never asked there |
 | grok | prompt-nudges | no | an allowing UserPromptSubmit hook's stdout is discarded by Grok; only parked echoes re-route |
 | grok | post-edit-findings | partial | supported per Grok 1.0.41 guide, live proof pending - its docs now read PostToolUse stdout (additionalContext delivered with the tool result) |
 | grok | stop-notices | partial | operator text only; the model copy rides the next allowed call |

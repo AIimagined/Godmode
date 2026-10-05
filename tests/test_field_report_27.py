@@ -92,6 +92,26 @@ class ClosureRefusalTests(unittest.TestCase):
             self.assertIn("video", message)
             self.assertEqual(len(open_stated_requests(archive.select(kind="request", limit=50))), 1)
 
+    def test_a_file_of_ask_ids_closes_them_in_one_call_or_none(self) -> None:
+        with isolated_project() as (project, _s, _a, archive):
+            archive.initialize()
+            subjects = [record_request(archive, text, session="s")["subject"] for text in (
+                "the image video is still blank at the end",
+                "rename the launcher directory variable everywhere",
+                "update the about text on the repository")]
+            ids = project / "ask-ids.txt"
+            argv = ["--project", str(project), "remember", "--kind", "request",
+                    "--subjects-file", str(ids), "--status", "answered"]
+            ids.write_text(subjects[2] + "\nask:000000000000\n", encoding="utf-8")
+            code, _payload = _main(argv)
+            self.assertEqual(code, 2)
+            self.assertEqual(len(open_stated_requests(archive.select(kind="request", limit=50))), 3)
+            ids.write_text("\n".join(subjects[:2]) + "\n", encoding="utf-8")
+            code, payload = _main(argv)
+            self.assertEqual(code, 0, payload)
+            self.assertEqual(payload["closed"], 2)
+            self.assertEqual(len(open_stated_requests(archive.select(kind="request", limit=50))), 1)
+
     def test_the_paste_ready_closure_closes(self) -> None:
         with isolated_project() as (project, _s, _a, archive):
             archive.initialize()
