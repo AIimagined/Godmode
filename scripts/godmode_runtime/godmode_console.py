@@ -117,7 +117,7 @@ from .godmode_minimality import (
 )
 from .godmode_removal import REQUIRED_FIELDS as REMOVAL_FIELDS
 from .godmode_report import completion_report, render_markdown
-from .godmode_docslint import lint_docs
+from .godmode_docslint import lint_docs, readme_review
 from .godmode_quality import quality_report, render_editor, render_sarif
 from .godmode_examples import check_examples, load_examples
 from .godmode_freshness import freshness_report
@@ -718,6 +718,17 @@ def cmd_init(args: argparse.Namespace, runtime: Runtime) -> CommandResult:
     # `--profile` (including the no-op `standard`) reaches `apply_profile`.
     if getattr(args, "profile", None):
         payload["profile"] = apply_profile(Path(runtime.anchor.project_root), args.profile)
+    if not already:
+        # Said once, on the day the project is taken on, and only when there
+        # is something to say: a README carrying session state is the first
+        # thing a stranger reads.
+        review = readme_review(Path(runtime.anchor.project_root))
+        if review["findings"] or review["advisories"]:
+            payload["readme"] = {
+                "path": review["path"],
+                "findings": review["findings"] + review["advisories"],
+                "more": "godmode docs --lint",
+            }
     if not orphaned:
         # The orphaned case already carries next_action with a stronger claim
         # on attention; an ordinary init adds its own, less urgent list.
