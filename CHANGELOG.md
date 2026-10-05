@@ -4,6 +4,12 @@ All notable changes to Godmode will be documented in this file.
 
 The format follows Keep a Changelog principles, and releases use semantic versioning.
 
+## [0.3.35] - 2026-10-05
+
+### Added
+
+- `godmode docs --lint` now checks that a README is doing a README's job. A section about where work stands (`Current Sprint`, `Handoff`, `Session notes`) or a line sending the reader to a handoff file is a high-severity `readme-session-state` finding; `ignore_checks` switches it off. A new `repo_standards` block, which never changes the verdict, advises when the README has no opening sentence or no install/usage section and lists which of README, LICENSE, CONTRIBUTING, SECURITY and CHANGELOG are absent. A link to the repository's own file by full address is a low-severity `absolute-self-link` finding outside release notes. `godmode init` names the README findings on a project's first run.
+
 ## [0.3.34] - 2026-10-04
 
 ### Added

@@ -730,6 +730,178 @@ def _title_collision_findings(documents: list[tuple[str, str]]) -> list[dict[str
     return findings
 
 
+# 2026-10-05: a README opened with "after a system restart, use
+# docs/RESTART_HANDOFF.md" and carried a "Current Sprint" section for three
+# months. Every sentence in it was true, so the claim checks passed it: they
+# ask whether prose is provable, never whether the file is doing a README's
+# job. A README tells a stranger what the project does, why it is useful and
+# how to start; where a session stopped belongs in a handoff file.
+# The three places a host surfaces a README from, in its lookup order.
+_README_ORDER = (".github/README.md", "README.md", "docs/README.md")
+_README = re.compile(r"(?i)^(?:\.github/|docs/)?README\.md$")
+_SESSION_HEADING = re.compile(
+    r"(?i)\b(?:current sprint|sprint \d+|hand-?(?:off|over)|session (?:state|notes|log)|"
+    r"in progress|todo|current status|where we left off)\b")
+_SESSION_POINTER = re.compile(
+    r"(?i)[\w./-]*(?:hand-?off|hand-?over|session[-_ ]state|resume[-_ ]here)[\w.-]*\.mdx?\b")
+# A synonym set, not one title: `Install`, `Quick start` and `Usage` all
+# answer "how do I start", and a project should not be made to rename one.
+_GET_STARTED = re.compile(
+    r"(?i)\b(?:install(?:ation|ing)?|quick ?start|get(?:ting)? started|usage|set ?up|"
+    r"how to (?:run|use)|running|first \w+ minutes)\b")
+_NOT_PROSE = re.compile(r"\s*(?:$|#|<|!\[|\[!\[|-{3,}\s*$|={3,}\s*$)")
+
+
+def _readme_session_findings(relative: str, text: str) -> list[dict[str, Any]]:
+    """Session state in a README: a heading that names where work stands, or
+    a line that sends the reader to a handoff file."""
+    findings: list[dict[str, Any]] = []
+    for title, line in _headings(text):
+        match = _SESSION_HEADING.search(title)
+        if match:
+            findings.append({
+                "path": relative, "line": line, "check": "readme-session-state",
+                "severity": "high",
+                "why": f"a README section about where work stands (`{match.group(0)}`), "
+                       "not about the project",
+                "remedy": "move it to a handoff or status file; the README says what the "
+                          "project does, why it is useful and how to start",
+                "excerpt": title[:160],
+            })
+    lines = text.splitlines()
+    mask = _fence_mask(lines)
+    for index, line in enumerate(lines):
+        if mask[index] or re.match(r"\s{0,3}#{1,6}\s", line):
+            continue
+        match = _SESSION_POINTER.search(line)
+        if match:
+            findings.append({
+                "path": relative, "line": index + 1, "check": "readme-session-state",
+                "severity": "high",
+                "why": f"the README sends its reader to a handoff file (`{match.group(0)}`)",
+                "remedy": "drop the pointer; a contributor guide may link it, the front "
+                          "page does not",
+                "excerpt": line.strip()[:160],
+            })
+    return findings
+
+
+def _readme_shape_advisories(relative: str, text: str) -> list[dict[str, Any]]:
+    """What a README owes when the project declared no contract for it: an
+    opening that says what the project is, and one section on how to start."""
+    advisories: list[dict[str, Any]] = []
+    lines = text.splitlines()
+    mask = _fence_mask(lines)
+    opening = False
+    for index, line in enumerate(lines):
+        if re.match(r"\s{0,3}#{2,6}\s", line) and not mask[index]:
+            break
+        if not mask[index] and not _NOT_PROSE.match(line):
+            opening = True
+            break
+    if not opening:
+        advisories.append({
+            "path": relative, "line": 1, "check": "readme-no-opening",
+            "severity": "advisory",
+            "why": "no sentence before the first section says what the project does",
+            "remedy": "open with one paragraph: what it is and why it is useful",
+        })
+    if not any(_GET_STARTED.search(title) for title, _ in _headings(text)):
+        advisories.append({
+            "path": relative, "line": 1, "check": "readme-no-get-started",
+            "severity": "advisory",
+            "why": "no section tells a reader how to install or run the project",
+            "remedy": "add an `Install`, `Quick start` or `Usage` section, or declare "
+                      f"the README's own contract in `{CONFIG_FILENAME}`",
+        })
+    return advisories
+
+
+# The files a host looks for beside the README. Listed, never demanded: a
+# private prototype owes none of them, so their absence is information.
+_STANDARD_FILES: dict[str, tuple[str, ...]] = {
+    "README": _README_ORDER,
+    "LICENSE": ("LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING"),
+    "CONTRIBUTING": ("CONTRIBUTING.md", ".github/CONTRIBUTING.md", "docs/CONTRIBUTING.md"),
+    "SECURITY": ("SECURITY.md", ".github/SECURITY.md", "docs/SECURITY.md"),
+    "CHANGELOG": ("CHANGELOG.md", "HISTORY.md", "CHANGES.md"),
+}
+
+
+def _absent_standard_files(project: Path) -> list[str]:
+    return [name for name, places in _STANDARD_FILES.items()
+            if not any((project / place).is_file() for place in places)]
+
+
+def readme_review(project: Path) -> dict[str, Any]:
+    """The README a host would surface, judged on shape alone. Reads one file,
+    so `init` can say it on day one without paying for a whole-tree lint."""
+    project = Path(project)
+    declared, _ = _declared_contracts(_config(project))
+    for relative in _README_ORDER:
+        path = project / relative
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        governed = any(_matches(relative, pattern) for pattern in declared)
+        return {
+            "path": relative,
+            "findings": _readme_session_findings(relative, text),
+            "advisories": [] if governed else _readme_shape_advisories(relative, text),
+        }
+    return {"path": None, "findings": [], "advisories": []}
+
+
+# A link to this repository's own file by its full address breaks in a clone,
+# a fork and a renamed repository; the relative path works in all three.
+# Release notes are exempt: their text is also shown outside the repository,
+# where a relative path has nothing to resolve against.
+_REMOTE_SLUG = re.compile(r"github\.com[:/](?P<slug>[^/\s]+/[^/\s]+?)(?:\.git)?/?$")
+
+
+def _repository_slug(project: Path) -> str | None:
+    environment = os.environ.copy()
+    environment["GIT_OPTIONAL_LOCKS"] = "0"
+    environment["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(project), "config", "--get", "remote.origin.url"],
+            check=False, capture_output=True, timeout=5, env=environment)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    match = _REMOTE_SLUG.search(result.stdout.decode("utf-8", errors="replace").strip())
+    return match.group("slug") if match else None
+
+
+def _self_link_findings(relative: str, text: str, slug: str | None) -> list[dict[str, Any]]:
+    if not slug or not relative.lower().endswith((".md", ".mdx")) or _HISTORICAL.search(relative):
+        return []
+    link = re.compile(
+        r"(?i)https?://github\.com/" + re.escape(slug) + r"/(?:blob|tree)/[^/\s)]+/(?P<file>[^\s)#]+)")
+    lines = text.splitlines()
+    mask = _fence_mask(lines)
+    findings: list[dict[str, Any]] = []
+    for index, line in enumerate(lines):
+        if mask[index]:
+            continue
+        match = link.search(line)
+        if match:
+            findings.append({
+                "path": relative, "line": index + 1, "check": "absolute-self-link",
+                "severity": "low",
+                "why": "a full address to a file in this repository, which breaks in a "
+                       "clone or a fork",
+                "remedy": f"link `{match.group('file')}` by its relative path",
+                "excerpt": line.strip()[:160],
+            })
+    return findings
+
+
 def lint_docs(project: Path) -> dict[str, Any]:
     """Lint every public document in the project.
 
@@ -750,6 +922,7 @@ def lint_docs(project: Path) -> dict[str, Any]:
     living_documents: list[tuple[str, str]] = []
     prose_advisories: list[dict[str, Any]] = []
     counts: dict[str, int] | None = None
+    slug = _repository_slug(project) if "absolute-self-link" not in ignore else None
     for path in candidates:
         relative = relatives[path]
         if relative in ignored:
@@ -768,6 +941,9 @@ def lint_docs(project: Path) -> dict[str, Any]:
             counts = _actual_counts(project)
         findings.extend(_figure_findings(relative, text, project, counts))
         findings.extend(_self_pin_findings(relative, text, RUNTIME_VERSION))
+        findings.extend(_self_link_findings(relative, text, slug))
+        if _README.match(relative) and "readme-session-state" not in ignore:
+            findings.extend(_readme_session_findings(relative, text))
         prose_advisories.extend(_stale_open_marker_findings(relative, text))
     prose_advisories.extend(_title_collision_findings(living_documents))
     high = [f for f in findings if f["severity"] == "high"]
@@ -781,7 +957,16 @@ def lint_docs(project: Path) -> dict[str, Any]:
         prose_advisories.extend(lint_charter_prose(compile_charter(project))["findings"])
     except GodmodeError:  # godmode: swallow-ok: best-effort read: the failure is the non-event here
         pass
+    readme = readme_review(project)
     return {
+        # Its own key, beside the verdict and never part of it: the README's
+        # shape and the standard files are advice a private prototype may
+        # decline, so neither can turn `clean` into `findings`.
+        "repo_standards": {
+            "readme": readme["path"],
+            "readme_advisories": readme["advisories"],
+            "absent": _absent_standard_files(project),
+        },
         "documents_scanned": scanned,
         "findings": findings,
         "high_severity": len(high),
